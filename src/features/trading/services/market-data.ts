@@ -21,10 +21,13 @@
  *
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Export the two Alpaca primitives a sibling leg needs to speak to the same vendor with the same policy: alpacaAuthHeaders() (the key headers, or null when unconfigured) and alpacaFetch() (the shared abort-timeout fetch). ADR-143 D5's REST screener lives in its own module (alpaca-screener.ts) rather than growing this file, and a second private copy of the key resolution + timeout would be free to drift from this one.
  *
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | adata() honours the vendor's documented rate-limit contract (market-data-rate-limit.ts): every response's X-RateLimit-* headers feed a process-shared quota window, a documented 429 becomes AlpacaRateLimitError and is retried with the vendor-indicated wait, and every other status still raises on the first response. Before this, one 429 anywhere in barsBatch's 8-page loop threw and took its caller's whole run with it — on 2026-09-15 the 00:01Z trading-assess run lost its entire per-algo record that way.
+ *
  * @module market-data
  */
 
 import { createChildLogger } from '@/shared/logger';
+import { AlpacaRateLimitError, RATE_LIMIT_STATUS, noteRateLimitHeaders, withAlpacaRateLimit } from './market-data-rate-limit';
 
 const logger = createChildLogger({ module: 'market-data' });
 
@@ -120,11 +123,19 @@ export function alpacaFetch(url: string, init: RequestInit = {}): Promise<Respon
 }
 
 async function adata<T>(pathname: string): Promise<T> {
-  const k = keys();
-  const r = await fetchT(`${DATA_BASE}${pathname}`, { headers: { 'APCA-API-KEY-ID': k.id, 'APCA-API-SECRET-KEY': k.secret } });
-  const j = (await r.json().catch(() => ({}))) as { message?: string } & Record<string, unknown>;
-  if (!r.ok) throw new Error(j.message || `alpaca-data ${pathname} ${r.status}`);
-  return j as T;
+  // Every data-API read funnels through here, so the vendor's documented rate-limit contract is
+  // applied once: pace against the shared X-RateLimit-* window, retry a 429 (and only a 429) with
+  // the wait the vendor's own headers ask for. `barsBatch` paginates through this call, so a
+  // mid-batch 429 no longer kills the whole batch — and its caller's whole run with it.
+  return withAlpacaRateLimit(pathname, async () => {
+    const k = keys();
+    const r = await fetchT(`${DATA_BASE}${pathname}`, { headers: { 'APCA-API-KEY-ID': k.id, 'APCA-API-SECRET-KEY': k.secret } });
+    noteRateLimitHeaders(r.headers);
+    const j = (await r.json().catch(() => ({}))) as { message?: string } & Record<string, unknown>;
+    if (r.status === RATE_LIMIT_STATUS) throw new AlpacaRateLimitError(j.message || `alpaca-data ${pathname} ${r.status}`, r.headers);
+    if (!r.ok) throw new Error(j.message || `alpaca-data ${pathname} ${r.status}`);
+    return j as T;
+  });
 }
 
 /** ISO date (YYYY-MM-DD) `days` before now — the Alpaca `start` param every bars call needs. */
