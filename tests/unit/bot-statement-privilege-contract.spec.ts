@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The bot grant contract, proved by RUNNING the statements. Three gaps were open on the box at once and every one of them was caught and swallowed: the ticket_task_links upsert answered permission denied inside a warn-level catch, the ticket_agent_assignments upsert would have done the same the moment a bot reached it, and durable swarm-memory recall failed closed to "no memory" behind one warning. No existing guard could see any of them, because every guard over this contract reads the allowlist and compares it to itself - and a column allowlist that is missing a column is perfectly self-consistent. This one provisions a real oshal_bot on a private server from the SHIPPED grant text, then issues each statement the bot runtime actually issues and requires it to succeed; a statement needing a privilege the allowlist does not carry raises 42501 and the case is red. The allowlist's two halves (the SQL that grants and the map that verifies) are compared to each other here as well, so updating one and not the other is also red.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The reader helper had to be able to say WITHHELD. Returning only the permitted rows made a row the database refused this reader look exactly like a work item with no ledger row - and the recall path lets a missing row through, so the memory came back judged only by the metadata copied into the vector index at index time. Two cases cover it: the helper answers for every id that exists and marks each answer readable or withheld while disclosing nothing but the identifier of a withheld one, and the real recall path over the real oshal_bot pool DENIES a withheld row, still returns an absent-row memory untrusted, and reaches the same verdict as the controller's untouched table reach on the same three work items.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -88,6 +89,15 @@ const TASK = 'bot-contract-task';
 const WORKLOAD_SHARED = 'wi-shared';
 const WORKLOAD_MINE = 'wi-mine';
 const WORKLOAD_THEIRS = 'wi-theirs';
+/** Deliberately never inserted: a retrieved memory whose ledger row does not exist at all. */
+const WORKLOAD_ABSENT = 'wi-absent';
+
+/** One answer from oshal_swarm_memory_readable: the mapped columns plus the readable marker. */
+interface HelperRow {
+  work_item_id: string;
+  readable: boolean;
+  [column: string]: unknown;
+}
 
 let owner: Pool;
 let bot: Pool;
@@ -448,21 +458,59 @@ describe('the allowlist stops where the contract says it stops', () => {
 
     const client = await bot.connect();
     try {
-      const readable = await client.query<{ work_item_id: string }>(
+      const readable = await client.query<HelperRow>(
         'SELECT * FROM oshal_swarm_memory_readable($1::text[], $2)',
         [[WORKLOAD_MINE, WORKLOAD_THEIRS, WORKLOAD_SHARED], OWNER],
       );
-      expect(readable.rows.map((r) => r.work_item_id).sort())
+      expect(readable.rows.filter((r) => r.readable).map((r) => r.work_item_id).sort())
         .toEqual([WORKLOAD_MINE, WORKLOAD_SHARED].sort());
-      expect(Object.keys(readable.rows[0]), 'the helper returns the seventeen mapped columns')
-        .toHaveLength(17);
+      expect(Object.keys(readable.rows[0]), 'the seventeen mapped columns plus the readable marker')
+        .toHaveLength(18);
 
-      const anonymous = await client.query<{ work_item_id: string }>(
+      const anonymous = await client.query<HelperRow>(
         'SELECT * FROM oshal_swarm_memory_readable($1::text[], $2)',
         [[WORKLOAD_MINE, WORKLOAD_THEIRS, WORKLOAD_SHARED], null],
       );
-      expect(anonymous.rows.map((r) => r.work_item_id), 'no reader subject means shared memories only')
+      expect(anonymous.rows.filter((r) => r.readable).map((r) => r.work_item_id), 'no reader subject means shared memories only')
         .toEqual([WORKLOAD_SHARED]);
+    } finally {
+      client.release();
+    }
+  });
+
+  it('the helper tells a withheld row from a row that does not exist, and withholds its content', async () => {
+    // The caller lets a memory with no ledger row through — bindDurableTrust returns it untrusted
+    // rather than dropping it. So the helper answering with the permitted rows ALONE made a
+    // withheld row indistinguishable from an absent one, and the entry was let through. Three
+    // states have to be three answers, and this is the source they come from.
+    const client = await bot.connect();
+    try {
+      const { rows } = await client.query<HelperRow>(
+        'SELECT * FROM oshal_swarm_memory_readable($1::text[], $2)',
+        [[WORKLOAD_MINE, WORKLOAD_THEIRS, WORKLOAD_SHARED, WORKLOAD_ABSENT], OWNER],
+      );
+      const byId = new Map(rows.map((row) => [row.work_item_id, row]));
+
+      expect(byId.get(WORKLOAD_MINE)?.readable, 'the reader own memory is readable').toBe(true);
+      expect(byId.get(WORKLOAD_SHARED)?.readable, 'a shared memory is readable').toBe(true);
+      expect(
+        byId.get(WORKLOAD_THEIRS)?.readable,
+        'another owner private memory must come back marked withheld — omitting it is what made it '
+          + 'look like a memory with no ledger row, which the recall path lets through',
+      ).toBe(false);
+      expect(
+        byId.has(WORKLOAD_ABSENT),
+        'a work item with no ledger row must produce NO answer, so absence stays a distinct state',
+      ).toBe(false);
+
+      const heldBack = byId.get(WORKLOAD_THEIRS)!;
+      const disclosed = Object.entries(heldBack)
+        .filter(([column]) => column !== 'work_item_id' && column !== 'readable')
+        .filter(([, value]) => value !== null);
+      expect(
+        disclosed,
+        'a withheld answer carries the identifier the caller already supplied and nothing else',
+      ).toEqual([]);
     } finally {
       client.release();
     }
@@ -495,6 +543,59 @@ describe('the allowlist stops where the contract says it stops', () => {
       recalled.map((entry) => entry.metadata.work_item_id).sort(),
       'the bot recalled nothing — the durable ledger read was refused and swallowed',
     ).toEqual([WORKLOAD_MINE, WORKLOAD_SHARED].sort());
+  }, 30_000);
+
+  it('a withheld ledger row DENIES the memory; an absent one keeps the behaviour it always had', async () => {
+    // The fail-open this case closes. The vector index is a COPY of the ledger taken at index
+    // time, and it drifts: a memory re-scoped to private after it was indexed still carries the
+    // metadata it was indexed with. That metadata clears the first filter in queryRelevant, so
+    // the ledger row is the only thing standing between a bot and another owner's memory — and
+    // when the helper answered with the permitted rows alone, a withheld row fell out of the
+    // answer, reached the `!ledger` arm that exists for memories with NO ledger row, and was
+    // returned. Three hits, one of each state, over the real oshal_bot pool and the real grants.
+    const hits: RagSearchResult[] = [WORKLOAD_MINE, WORKLOAD_THEIRS, WORKLOAD_ABSENT].map((id) => ({
+      id,
+      text: 'doc',
+      score: 0.9,
+      collection: 'swarm-memory',
+      // Every hit claims to be shared, so every hit clears canReadRagMetadata and the verdict is
+      // the durable ledger's alone. For WORKLOAD_THEIRS that claim is a lie the index is telling:
+      // its ledger row is private to another owner.
+      metadata: {
+        work_item_id: id,
+        owner_sub: '',
+        visibility: 'shared',
+        source: 'test',
+        created_by_workload: 'workload',
+      },
+    }));
+    const ragDouble = { search: async () => hits } as unknown as RagService;
+    const access = { userSub: OWNER, isOperator: false, allowPublic: true };
+
+    const viaHelper = await new SwarmMemoryService(ragDouble, bot, 'reader-helper')
+      .queryRelevant('anything', 5, access);
+    expect(
+      viaHelper.map((entry) => entry.metadata.work_item_id).sort(),
+      `${WORKLOAD_THEIRS} has a ledger row private to another owner and the database withheld it. `
+        + 'A withheld row must DENY. If it appears here, a refusal is being read as an absence and '
+        + 'the memory is coming back on its indexed metadata alone — fail-open on an authorization '
+        + 'check, which is the defect this whole contract exists to remove.',
+    ).toEqual([WORKLOAD_ABSENT, WORKLOAD_MINE].sort());
+    expect(
+      viaHelper.find((entry) => entry.metadata.work_item_id === WORKLOAD_ABSENT)?.provenance.trustLevel,
+      'a memory with no ledger row is still returned, still untrusted — unchanged',
+    ).toBe('untrusted');
+
+    // The same three hits down the controller's untouched table reach, which withholds nothing
+    // because oshal_swarm_memory's only policy carries no owner predicate. Same verdict on all
+    // three ids: the helper reach now agrees with the path it was derived from, and the
+    // absent-row arm is demonstrably the behaviour that was already there.
+    const viaTable = await new SwarmMemoryService(ragDouble, owner, 'table')
+      .queryRelevant('anything', 5, access);
+    expect(
+      viaTable.map((entry) => entry.metadata.work_item_id).sort(),
+      'the controller reach must reach the same verdict — and it is unchanged by this fix',
+    ).toEqual([WORKLOAD_ABSENT, WORKLOAD_MINE].sort());
   }, 30_000);
 
   it('a bot node is wired to the helper reach, not the table', () => {

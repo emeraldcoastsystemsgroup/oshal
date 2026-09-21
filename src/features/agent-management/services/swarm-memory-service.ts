@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 audit: bind trust to returned text bytes, require content-bound operator approval, and enforce owner/workspace ACL context on retrieval.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 audit: route every durable ledger statement through an explicit connection-scoped broker transaction so FORCE RLS cannot silently disable ordinary storage and retrieval.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | A bot node reads the durable ledger through the derived helper (migration 152) instead of the table. oshal_bot has no privilege on oshal_swarm_memory at all, so the read at bindDurableTrust threw permission denied inside queryRelevant's catch and every bot ran with zero memory - one warning, no error anyone chased. A plain grant was the wrong repair: the table's only policy keys on a transaction-local broker marker with no owner predicate, so it would have moved a bot from reading nothing to reading every owner's memories. `durableLedgerReach` names what this process can reach; the controller keeps the table read unchanged, and the bot path gets the same rows scoped in SQL to shared memories plus the reader's own.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | The reader-helper reach was fail-OPEN on the very check it exists to make. bindDurableTrust lets a memory with no ledger row through (`!ledger || canReadRagMetadata(...)`, returned untrusted), and the helper answered with the permitted rows ALONE - so a row the database WITHHELD from this reader simply vanished from the answer, landed on the missing-row arm and was returned anyway, judged only by the metadata copied into the vector index at index time. Migration 152 now answers for every id that has a row and marks each answer readable or withheld; readDurableLedger separates the two, and bindDurableTrust denies a withheld id before it can reach that arm. The three states are distinct at the source now: seen, refused, never existed. A withheld id is evicted from the in-process ledger cache as well, because this process did not read that row and any copy it still holds is unverified. The controller's table reach withholds nothing and is unchanged.
  */
 
 import { createHash } from 'node:crypto';
@@ -206,6 +207,18 @@ interface SwarmMemoryRow {
   metadata: Record<string, string> | null;
   indexed_at: Date | string | null;
 }
+
+/**
+ * One answer from oshal_swarm_memory_readable. The helper answers for every requested work item
+ * that HAS a ledger row, and `readable` says which of the two answers it is: the mapped row when
+ * this reader may see it, or the identifier alone when the owner rule withheld it. A work item
+ * absent from the answer entirely has no ledger row. The union is the type, not a convenience:
+ * a withheld answer carries no attribute but the identifier the caller supplied, so nothing can
+ * read content off one by accident.
+ */
+type LedgerReaderRow =
+  | (SwarmMemoryRow & { readable: true })
+  | { work_item_id: string; readable: false };
 
 /**
  * @description Shared swarm memory service — the "circle of life" pattern from the legacy implementation.
@@ -475,35 +488,70 @@ export class SwarmMemoryService {
     this.durableEntries.set(entry.workItemId, mapDurableRow(result.rows[0]));
   }
 
+  /**
+   * @description Reads the durable ledger rows behind a set of retrieved memories and reports,
+   * separately, which of those work items have a ledger row this reader was NOT allowed to see.
+   * The distinction is the point: the caller lets a memory with no ledger row through, so a
+   * withheld row that merely went missing from the answer would be let through as well.
+   * @param ids - Work item identifiers to look up.
+   * @param access - Server-derived caller ACL; its subject is the reader the helper scopes to.
+   * @returns The rows this process may see, and the ids that exist but were withheld from it.
+   * Nothing is ever withheld on the controller's table reach: it reads oshal_swarm_memory itself
+   * and that table's only policy carries no owner predicate, so every existing row comes back.
+   */
+  private async readDurableLedger(
+    ids: string[],
+    access: SwarmMemoryAccessContext,
+  ): Promise<{ rows: SwarmMemoryRow[]; withheld: Set<string> }> {
+    if (this.durableLedgerReach !== 'reader-helper') {
+      const result = await this.withLedgerBroker((client) => client.query<SwarmMemoryRow>(
+        'SELECT * FROM oshal_swarm_memory WHERE work_item_id = ANY($1::text[])',
+        [ids],
+      ));
+      return { rows: result.rows, withheld: new Set<string>() };
+    }
+    // A bot node has no privilege on oshal_swarm_memory, so it asks the derived helper, which
+    // enforces the owner rule in SQL rather than leaving it to canReadRagMetadata alone. The
+    // helper answers for every id that HAS a row and marks each answer readable or withheld, so
+    // the three states stay apart here: seen, refused, and never existed.
+    const result = await this.withLedgerBroker((client) => client.query<LedgerReaderRow>(
+      'SELECT * FROM oshal_swarm_memory_readable($1::text[], $2)',
+      [ids, access.userSub || null],
+    ));
+    return {
+      rows: result.rows.filter((row): row is SwarmMemoryRow & { readable: true } => row.readable),
+      withheld: new Set(result.rows.filter((row) => !row.readable).map((row) => row.work_item_id)),
+    };
+  }
+
   private async bindDurableTrust(
     entries: SwarmMemoryEntry[],
     access: SwarmMemoryAccessContext,
   ): Promise<SwarmMemoryEntry[]> {
     if (entries.length === 0) return entries;
     const ids = [...new Set(entries.map(memoryWorkItemId).filter(Boolean))];
+    let withheld = new Set<string>();
     if (this.pool && ids.length > 0) {
-      // A bot node has no privilege on oshal_swarm_memory, so it asks the derived helper for the
-      // rows it may see - shared memories plus its reader's own - and the owner rule is enforced
-      // by the database rather than only by canReadRagMetadata below.
-      const result = this.durableLedgerReach === 'reader-helper'
-        ? await this.withLedgerBroker((client) => client.query<SwarmMemoryRow>(
-          'SELECT * FROM oshal_swarm_memory_readable($1::text[], $2)',
-          [ids, access.userSub || null],
-        ))
-        : await this.withLedgerBroker((client) => client.query<SwarmMemoryRow>(
-          'SELECT * FROM oshal_swarm_memory WHERE work_item_id = ANY($1::text[])',
-          [ids],
-        ));
-      const foundIds = new Set(result.rows.map((row) => row.work_item_id));
+      const ledgerRead = await this.readDurableLedger(ids, access);
+      withheld = ledgerRead.withheld;
+      const foundIds = new Set(ledgerRead.rows.map((row) => row.work_item_id));
+      // A withheld id is evicted here too: this process did not read that row, so whatever copy
+      // it still holds is unverified for every reader, not only this one.
       for (const id of ids) if (!foundIds.has(id)) this.durableEntries.delete(id);
-      for (const row of result.rows) {
+      for (const row of ledgerRead.rows) {
         const durable = mapDurableRow(row);
         this.durableEntries.set(durable.workItemId, durable);
       }
     }
     return entries
       .filter((entry) => {
-        const ledger = this.durableEntries.get(memoryWorkItemId(entry));
+        const workItemId = memoryWorkItemId(entry);
+        // Withheld is a DENIAL, not an absence. The ledger row exists and the database's owner
+        // rule refused it to this reader; letting it reach the `!ledger` arm below would return
+        // the memory on the strength of its indexed metadata, which is a copy of the ledger made
+        // at index time and not the authority over who may read it.
+        if (withheld.has(workItemId)) return false;
+        const ledger = this.durableEntries.get(workItemId);
         return !ledger || canReadRagMetadata(durableAclMetadata(ledger), access);
       })
       .map((entry) => bindEntryTrust(entry, this.durableEntries));
