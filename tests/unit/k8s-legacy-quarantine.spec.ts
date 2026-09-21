@@ -3,7 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for remote-cluster work package item 9: the legacy Kubernetes generation is quarantined, and the docs stop routing readers to it. The refusal is a SAFETY property, so it is tested by RUNNING every legacy entry point (the known set plus whatever package.json's k8:* scripts and k8s bin resolve to). Each run gets a minimal environment in which recording stand-ins for kubectl, helm, docker, kind, kustomize, python3, node and npm are the only such tools on PATH. Each entry point must refuse in its own name, name the Helm chart path, and reach none of the stand-ins. A control run with OSHAL_ALLOW_LEGACY_K8S=1 proves the stand-ins record what a run reaches, and that the override still gets to the legacy path. The docs half fails when any doc under docs/ mentions oshal-api-server outside a legacy marker, when a doc hands a reader a legacy entry-point command outside a legacy marker, or when the five routing docs stop pointing at docs/k8/README.md and ADR-129. The last block pins the other item 9 reconciliations: the Argo bot-image default, the competitive scorer's k8s check, ADR-035's status, ADR-129's toggle caveat, the BACKLOG chart version, and the whitepaper's elastic-scale claim.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for remote-cluster work package item 9: the legacy Kubernetes generation is quarantined, and the docs stop routing readers to it. The refusal is a SAFETY property, so it is tested by RUNNING every legacy entry point (the known set plus whatever package.json's k8:* scripts and k8s bin resolve to). Each run gets a minimal environment in which recording stand-ins for kubectl, helm, docker, kind, kustomize, python3, node and npm are the only such tools on PATH. Each entry point must refuse in its own name, name the Helm chart path, and reach none of the stand-ins. A control run with OSHAL_ALLOW_LEGACY_K8S=1 proves the stand-ins record what a run reaches, and that the override still gets to the legacy path. The docs half fails when any doc under docs/ mentions oshal-api-server outside a legacy marker, when a doc hands a reader a legacy entry-point command outside a legacy marker, or when the five routing docs stop pointing at docs/k8/README.md and ADR-129. The last block pins the other item 9 reconciliations: the Argo bot-image default, the Argo README's corrected claims (every entrypoint it names exists), the competitive scorer's k8s check, ADR-035's status, ADR-129's toggle caveat, the BACKLOG chart version, and the whitepaper's elastic-scale claim.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -313,6 +313,17 @@ describe('the other item 9 reconciliations stay reconciled', () => {
     const at = lines.findIndex((l) => /-\s*name:\s*bot-image\s*$/.test(l));
     expect(at).toBeGreaterThan(-1);
     expect(/value:\s*"([^"]+)"/.exec(lines[at + 1])?.[1]).toBe('oshal-bot:latest');
+  });
+
+  it('the Argo README names batch entrypoints that exist and drops the two disproved blockers', () => {
+    const readme = read('ops/deployment/argo/README.md');
+    const section = readme.slice(readme.indexOf('## What this is NOT'));
+    const named = [...section.matchAll(/`((?:scripts|src\/app)\/[\w./-]+\.(?:sh|ts))`/g)].map((m) => m[1]);
+    expect(named.length, 'the section names no entrypoint files — the check would be vacuous').toBeGreaterThanOrEqual(3);
+    expect(named.filter((rel) => !fs.existsSync(path.join(REPO, rel)))).toEqual([]);
+    expect(section).not.toMatch(/not built yet/i);
+    expect(section).not.toMatch(/needs a running cluster with a\s+NetworkPolicy-enforcing CNI/);
+    expect(section).not.toContain('`**/*.tf` → none');
   });
 
   it('the competitive scorer reads the Helm chart, and a legacy script on disk no longer satisfies it', () => {
