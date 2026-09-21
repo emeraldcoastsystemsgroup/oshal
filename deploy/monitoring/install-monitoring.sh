@@ -4,10 +4,31 @@
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — k8s monitoring for an OSHAL helm release (the cluster form of scripts/monitoring-up.sh). Installs kube-prometheus-stack with deploy/monitoring/kube-prometheus-stack.values.yaml, loads ops/monitoring/alert-rules.yml VERBATIM as a PrometheusRule (one rule source for compose and k8s), and wires the fail-closed alert webhook: one ALERT_WEBHOOK_TOKEN held by the api (oshal-api-env) and by Alertmanager (oshal-alert-webhook). Idempotent; secrets are generated once and never printed.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Refuses every argument before it touches anything. It had no argument parsing, so `install-monitoring.sh --help` silently ignored the flag and ran a REAL install (helm upgrade --install, secret and PrometheusRule applies) against whatever cluster kubectl pointed at - which happened on 2026-09-21 while this script was being checked. -h/--help now prints the usage and exits 0; anything else prints it and exits 2. Configuration stays in the environment (OSHAL_NS, MON_NS, KUBE_CONTEXT, KPS_VERSION).
 #
 # Usage: deploy/monitoring/install-monitoring.sh
 #   env: OSHAL_NS (default oshal)  MON_NS (default monitoring)  KUBE_CONTEXT (default current)
+#        KPS_VERSION (default 91.4.1)
+# It takes NO arguments: running it installs for real. -h/--help prints this usage and exits.
 set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+usage: deploy/monitoring/install-monitoring.sh
+  Installs kube-prometheus-stack and the OSHAL swarm alert rules into the cluster kubectl
+  points at. It takes no arguments; configure it with environment variables:
+    OSHAL_NS (default oshal)  MON_NS (default monitoring)
+    KUBE_CONTEXT (default: the current context)  KPS_VERSION (default 91.4.1)
+USAGE
+}
+# Any argument stops the script before it reaches a cluster: an unknown flag used to be
+# ignored, and the install ran for real.
+if [ "$#" -gt 0 ]; then
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    *) printf 'install-monitoring.sh: unexpected argument(s): %s - nothing was changed\n' "$*" >&2; usage >&2; exit 2 ;;
+  esac
+fi
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 OSHAL_NS=${OSHAL_NS:-oshal}

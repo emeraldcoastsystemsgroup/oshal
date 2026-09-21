@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for deploy/monitoring, the cluster form of the compose monitoring stack (kube-prometheus-stack), first run live on Docker Desktop Kubernetes on 2026-09-21. Its promise is parity with ops/monitoring: the ADR-119 alert rules, unchanged, over the same job names, reaching the same fail-closed intake. Each way that promise breaks silently is held here against its source: (1) every job="..." an alert rule reads is a scrape job, and together those jobs select the api and every bot the REAL chart renders (a rule over a job nobody scrapes never fires); (2) Alertmanager's routing tree, evaluated the way Alertmanager evaluates it, sends every alert in ops/monitoring/alert-rules.yml to a receiver that posts to the route the api actually mounts (read from src/app, not copied) - a narrowed matcher drops an alert into "null" without a sound; (3) the webhook host is a Service the chart renders in the namespace the install script targets, with the bearer token file the script creates; (4) install-monitoring.sh GENERATES the PrometheusRule from ops/monitoring/alert-rules.yml. (4) runs the real script with recording kubectl/helm stand-ins first on a minimal PATH, against a scratch copy of the tree whose rule file carries an extra sentinel group - a copy of the rules pasted into the script would still match today's file but not the sentinel. The stand-ins are outside the boundary (they record; the cluster is not the claim); the live cluster run is the companion recorded in docs/governance/real-boundary-regression-audit.md.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Two more ways the promise breaks. (a) A rule that selects its job by regex (job=~"...") was not read at all, so it could name a job nobody scrapes; every positive job selector, exact or anchored regex, must now select a scrape job, and the pod-selection check runs over the jobs those selectors pick. (b) install-monitoring.sh ignored its arguments, so `--help` ran a real install against the live cluster on 2026-09-21. The script now refuses every argument; this runs it with --help, -h and two unknown arguments in fresh sandboxes and requires the usage, the exit status (0 for help, 2 otherwise) and NO call to the kubectl or helm stand-in. Sandbox setup and the run are split (makeSandbox / runScript) so both describes use the same minimal-PATH stand-in harness.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -146,13 +147,33 @@ function receiversFor(route: Route, labels: Record<string, string>, inherited?: 
   return hits.length ? hits : [own];
 }
 
-describe('deploy/monitoring scrapes what the ADR-119 rules read', () => {
-  const jobsRead = [...new Set(alertRules.flatMap((r) => [...String(r.expr).matchAll(/\bjob\s*=\s*"([^"]+)"/g)].map((m) => m[1])))].sort();
+/**
+ * @description The positive job selectors the alert rules use: `job="x"` (exact) and `job=~"re"`
+ * (anchored regex, the PromQL rule). Negative selectors (!=, !~) name no job a rule depends on.
+ * @param rules alerting rules
+ * @returns {Array<{ text: string, matches: (job: string) => boolean }>} one entry per distinct selector
+ */
+function jobSelectors(rules: Rule[]): Array<{ text: string; matches: (job: string) => boolean }> {
+  const seen = new Map<string, (job: string) => boolean>();
+  for (const r of rules) {
+    for (const m of String(r.expr).matchAll(/\bjob\s*(=~|=)\s*"([^"]+)"/g)) {
+      const text = `job${m[1]}"${m[2]}"`;
+      const re = m[1] === '=~' ? anchored(m[2]) : null;
+      if (!seen.has(text)) seen.set(text, re ? (job) => re.test(job) : (job) => job === m[2]);
+    }
+  }
+  return [...seen].map(([text, matches]) => ({ text, matches }));
+}
 
-  it('every job="..." in ops/monitoring/alert-rules.yml is a scrape job', () => {
-    expect(jobsRead.length, 'the rules read no job - the parse is broken').toBeGreaterThan(0);
-    const scraped = scrapeJobs.map((j) => j.job_name);
-    expect(jobsRead.filter((j) => !scraped.includes(j)), 'alert rules read a job deploy/monitoring does not scrape').toEqual([]);
+describe('deploy/monitoring scrapes what the ADR-119 rules read', () => {
+  const selectors = jobSelectors(alertRules);
+  const scraped: string[] = scrapeJobs.map((j) => j.job_name);
+  const jobsRead = [...new Set(scraped.filter((name) => selectors.some((s) => s.matches(name))))].sort();
+
+  it('every job="..." and job=~"..." in ops/monitoring/alert-rules.yml selects a scrape job', () => {
+    expect(selectors.length, 'the rules read no job - the parse is broken').toBeGreaterThan(0);
+    expect(selectors.filter((s) => !scraped.some((name) => s.matches(name))).map((s) => s.text),
+      'alert rules read a job deploy/monitoring does not scrape').toEqual([]);
   });
 
   it('those jobs select the api and every bot the chart renders for the Docker Desktop overlay', () => {
@@ -162,6 +183,7 @@ describe('deploy/monitoring scrapes what the ADR-119 rules read', () => {
       && (o.metadata.name === 'oshal-api' || o.metadata.labels?.['oshal.io/bot'] === 'true')).map((o) => o.metadata.name);
     expect(runtimes.length, 'the overlay rendered no bots - nothing was checked').toBeGreaterThan(1);
     const selected = new Set<string>();
+    expect(jobsRead.length, 'no scrape job is read by any rule').toBeGreaterThan(0);
     for (const name of jobsRead) {
       const kept = keptBy(scrapeJobs.find((j) => j.job_name === name) ?? {}, targets);
       expect(kept.length, `scrape job ${name} selects no pod the chart renders`).toBeGreaterThan(0);
@@ -244,16 +266,16 @@ exit 0
 /** A sentinel rule group appended to the scratch copy of alert-rules.yml. */
 const SENTINEL = '  - name: oshal-guard-sentinel\n    rules:\n      - alert: SwarmGuardSentinel\n        expr: vector(1)\n';
 
-let installRun: { status: number | null; out: string; applied: K8sObject[]; helmLog: string; kubectlLog: string; root: string; rulesGroups: unknown } | null = null;
+/** A scratch copy of what the script reads, and the directory its recording stand-ins log into. */
+interface Sandbox { root: string; shims: string; rulesFile: string }
 
 /**
- * @description Run the real install-monitoring.sh from a scratch copy of the tree (the script, the
- * values file and alert-rules.yml plus a sentinel group) with recording kubectl/helm first on a
- * minimal PATH, a context that exists nowhere, and no kubeconfig. Memoised.
- * @returns what the script applied and asked helm to do
+ * @description A scratch copy of the tree install-monitoring.sh reads (the script, the values file
+ * and alert-rules.yml plus a sentinel group) and a directory holding the recording kubectl/helm.
+ * Removed after the suite.
+ * @returns {Sandbox}
  */
-function runInstall(): NonNullable<typeof installRun> {
-  if (installRun) return installRun;
+function makeSandbox(): Sandbox {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-monitoring-install-'));
   sandboxes.push(root);
   for (const rel of [INSTALL_SCRIPT, KPS_VALUES, ALERT_RULES]) {
@@ -266,22 +288,57 @@ function runInstall(): NonNullable<typeof installRun> {
   fs.mkdirSync(shims);
   fs.writeFileSync(path.join(shims, 'kubectl'), KUBECTL_STANDIN, { mode: 0o755 });
   fs.writeFileSync(path.join(shims, 'helm'), HELM_STANDIN, { mode: 0o755 });
+  return { root, shims, rulesFile };
+}
+
+const posix = (p: string): string => p.replace(/\\/g, '/');
+
+/**
+ * @description Run the sandbox's install-monitoring.sh with the recording stand-ins first on a
+ * minimal PATH, a context that exists nowhere, and no kubeconfig - never the real kubectl or helm.
+ * @param box sandbox from makeSandbox
+ * @param args command-line arguments for the script
+ * @returns {{ status: number | null, out: string }} exit status and combined output
+ */
+function runScript(box: Sandbox, args: string[]): { status: number | null; out: string } {
   const { bash, minimalPath } = resolveBash();
-  const posix = (p: string): string => p.replace(/\\/g, '/');
-  const res = spawnSync(bash, [posix(path.join(root, INSTALL_SCRIPT))], {
-    cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: RENDER_TIMEOUT_MS,
+  const res = spawnSync(bash, [posix(path.join(box.root, INSTALL_SCRIPT)), ...args], {
+    cwd: box.root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: RENDER_TIMEOUT_MS,
     env: {
-      PATH: [shims, minimalPath].join(path.delimiter), HOME: root, TMPDIR: root, SYSTEMROOT: process.env.SYSTEMROOT ?? '',
-      SHIM_DIR: posix(shims), KUBE_CONTEXT: 'oshal-guard-no-such-context', KUBECONFIG: posix(path.join(root, 'no-kubeconfig')),
+      PATH: [box.shims, minimalPath].join(path.delimiter), HOME: box.root, TMPDIR: box.root, SYSTEMROOT: process.env.SYSTEMROOT ?? '',
+      SHIM_DIR: posix(box.shims), KUBE_CONTEXT: 'oshal-guard-no-such-context', KUBECONFIG: posix(path.join(box.root, 'no-kubeconfig')),
     },
   });
-  const applied = fs.readdirSync(shims).filter((f) => f.startsWith('apply-'))
-    .flatMap((f) => yaml.loadAll(fs.readFileSync(path.join(shims, f), 'utf8')) as K8sObject[]).filter(Boolean);
-  const logOf = (name: string): string => (fs.existsSync(path.join(shims, name)) ? fs.readFileSync(path.join(shims, name), 'utf8') : '');
+  return { status: res.status, out: `${res.stdout ?? ''}${res.stderr ?? ''}` };
+}
+
+/**
+ * @description What one stand-in recorded (empty when it was never called).
+ * @param box sandbox
+ * @param name log file name (kubectl.log / helm.log)
+ * @returns {string} recorded command lines
+ */
+function standInLog(box: Sandbox, name: string): string {
+  const file = path.join(box.shims, name);
+  return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+}
+
+let installRun: { status: number | null; out: string; applied: K8sObject[]; helmLog: string; kubectlLog: string; root: string; rulesGroups: unknown } | null = null;
+
+/**
+ * @description Run the real install-monitoring.sh, with no arguments, in a fresh sandbox. Memoised.
+ * @returns what the script applied and asked helm to do
+ */
+function runInstall(): NonNullable<typeof installRun> {
+  if (installRun) return installRun;
+  const box = makeSandbox();
+  const res = runScript(box, []);
+  const applied = fs.readdirSync(box.shims).filter((f) => f.startsWith('apply-'))
+    .flatMap((f) => yaml.loadAll(fs.readFileSync(path.join(box.shims, f), 'utf8')) as K8sObject[]).filter(Boolean);
   installRun = {
-    status: res.status, out: `${res.stdout ?? ''}${res.stderr ?? ''}`, applied, root,
-    helmLog: logOf('helm.log'), kubectlLog: logOf('kubectl.log'),
-    rulesGroups: (yaml.load(fs.readFileSync(rulesFile, 'utf8')) as { groups: unknown }).groups,
+    ...res, applied, root: box.root,
+    helmLog: standInLog(box, 'helm.log'), kubectlLog: standInLog(box, 'kubectl.log'),
+    rulesGroups: (yaml.load(fs.readFileSync(box.rulesFile, 'utf8')) as { groups: unknown }).groups,
   };
   return installRun;
 }
@@ -312,5 +369,18 @@ describe('install-monitoring.sh generates the swarm rules from ops/monitoring/al
       .map((w: Record<string, any>) => w.http_config?.authorization?.credentials_file)).filter(Boolean);
     expect(files.length).toBeGreaterThan(0);
     for (const f of files) expect(f).toBe(`/etc/alertmanager/secrets/${secret}/${key}`);
+  }, RENDER_TIMEOUT_MS);
+});
+
+describe('install-monitoring.sh refuses arguments before it reaches a cluster', () => {
+  // The script used to ignore its arguments, so `install-monitoring.sh --help` ran a real install
+  // against the live cluster on 2026-09-21. Every argument must stop it before kubectl or helm runs.
+  it.each([['--help', 0], ['-h', 0], ['--dry-run', 2], ['oshal', 2]] as const)('%s exits %i and calls neither kubectl nor helm', (arg, code) => {
+    const box = makeSandbox();
+    const res = runScript(box, [arg]);
+    const calls = `${standInLog(box, 'kubectl.log')}${standInLog(box, 'helm.log')}`;
+    expect(calls, `install-monitoring.sh ${arg} reached kubectl/helm - an argument ran the install`).toBe('');
+    expect(res.status, res.out).toBe(code);
+    expect(res.out, 'the refusal does not print the usage').toMatch(/usage: deploy\/monitoring\/install-monitoring\.sh/);
   }, RENDER_TIMEOUT_MS);
 });
