@@ -55,3 +55,12 @@ OOM pairing); the installer refuses to create that shape.
   pre-chart `any-bot-k8s` render/apply workspace (`npm run k8:install:any-bot`,
   Keycloak-era stack, builds from source). Superseded by the chart path above for
   new installs; kept while the rendered stacks it produced remain in service.
+
+## The remote-cluster work package
+
+[remote-cluster-work-package.md](remote-cluster-work-package.md) — every Kubernetes item in this
+repository, gathered for a machine that runs a real cluster. The development box runs the whole
+swarm in docker compose and does not host one, so the package also states what must never be
+attempted there. It carries the measured state of the chart, the Argo and Terraform material, the
+guards that pass with no cluster present, the work in dependency order with each item's done-when,
+and the proofs that only a live cluster can give.
