@@ -1,10 +1,19 @@
 # =============================================================================
+# LEGACY — DO NOT DEPLOY
+# Part of the quarantined pre-chart Kubernetes generation. Its entrypoint is the
+# legacy any-bot installer CLI, which renders ops/any-bot-k8s with
+# oshal-api-server:latest (an image nothing in this repo builds) and refuses to run
+# unless the container gets OSHAL_ALLOW_LEGACY_K8S=1. The current Kubernetes path is
+# the Helm chart at deploy/helm/oshal: read docs/k8/README.md and
+# docs/adr/129-codeless-k8s-install-path.md.
+# =============================================================================
 # CHANGE LOG
 # -----------------------------------------------------------------------------
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Added Docker-based installer image for local no-registry distribution of the any-bot Kubernetes setup workflow
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | Repointed the installer image payload to the converted OSHAL root runtime build context
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | Quarantined as legacy (remote-cluster work package item 9): LEGACY banner. The override is deliberately NOT baked in as an ENV, so the entrypoint refuses unless the operator passes -e OSHAL_ALLOW_LEGACY_K8S=1 at run time.
 # =============================================================================
 
 FROM node:20-alpine

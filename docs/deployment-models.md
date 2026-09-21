@@ -4,6 +4,7 @@ CHANGE LOG
 SEQ                 | AUTHOR                      | DESCRIPTION
 -----------------------------------------------------------------------------
 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — operator-facing map of the supported deployment models, the platform-vs-experiment promise: pick a model, run one command, get a working OSHAL.
+2 | maintainer@emeraldcoastsystemsgroup.com   | Model 4 pointed at the Helm chart path (docs/k8/README.md, ADR-129) instead of the legacy ops/deployment/kubernetes manifests, which run an image nothing in this repo builds (remote-cluster work package item 9).
 -->
 
 # Deployment Models
@@ -27,7 +28,7 @@ what), see [deployment-runtime-topology.md](architecture/deployment-runtime-topo
 | **1. Zero-keys demo** | try it / CI / contributors | mock | `noop` | localhost | one line, no secrets |
 | **2. Local self-host** | run *your* OSHAL on a home PC | mock (local) | your Claude/Codex login or local Ollama | localhost | + your connector keys |
 | **3. Tunneled prod** | the live, internet-reachable deploy | Google/Entra OIDC | real providers | cloudflared → real domain | + OIDC + `SESSION_SECRET` |
-| **4. Kubernetes** | scaled / team | OIDC | real providers | Ingress | `ops/deployment/kubernetes` |
+| **4. Kubernetes** | a cluster you run (single-node is the supported default) | mock by default; real OIDC through [deploy/terraform](../deploy/terraform/README.md) | hosted/BYO through the `/welcome` wizard | NodePort | `oshal-install.sh --mode 4` — see [k8/README.md](k8/README.md) |
 | **5. Home appliance** *(roadmap)* | non-technical home user | one-click | bring-your-own | LAN/local | one-click installer (not built) |
 
 All models persist data in named volumes (Postgres, the `api-output` volume holding
@@ -105,13 +106,27 @@ tunneled (it would let anyone in as a mock user). `SESSION_SECRET` lives only on
 controller, never on a bot-node (token-broker model). See the route-auth audit in
 [BACKLOG.md](BACKLOG.md) (public controller is fully `requiresAuth`-gated).
 
-## 4. Kubernetes — scaled / team
+## 4. Kubernetes — a cluster you run
 
-The compose topology mirrors the K8s layout. Manifests live in
-[ops/deployment/kubernetes](../ops/deployment/kubernetes) and `kubernetes/`. Same image,
-same `BOT_RUNTIME` split; secrets via K8s Secrets, exposure via Ingress. See
-[deployment-runtime-topology.md](architecture/deployment-runtime-topology.md) for the
-K8s topology diagram.
+The Kubernetes path is the Helm chart at [deploy/helm/oshal](../deploy/helm/oshal/README.md),
+installed with no source checkout and no build:
+
+```bash
+bash scripts/oshal-install.sh --mode 4 --admin-email you@example.com
+```
+
+Start with [k8/README.md](k8/README.md); the decision is
+[ADR-129](adr/129-codeless-k8s-install-path.md). Same image, same `BOT_RUNTIME` split as
+compose, and the chart's bot fleet is generated from `docker-compose.oshal-local.yml`. The
+installer exposes the cockpit on a NodePort. The shared workspace volume is ReadWriteOnce, so a
+single-node cluster is the supported default. The chart defaults to mock OIDC. Multi-user
+public tenants go through [deploy/terraform](../deploy/terraform/README.md) instead: with
+`mock_oidc=false` it refuses to deploy until the real OIDC values and a `jwt_secret` are set.
+See [deployment-runtime-topology.md](architecture/deployment-runtime-topology.md) for the K8s
+topology diagram.
+
+The manifests under `ops/deployment/kubernetes/` and `ops/any-bot-k8s/` are the legacy,
+pre-chart generation. They are quarantined and are not a deploy path.
 
 ## 5. Home appliance *(roadmap — not built)*
 
@@ -127,7 +142,7 @@ click-connectors); what's unbuilt is the one-click packaging. Tracked in [ROADMA
 - **Just looking?** → 1 (zero-keys).
 - **Want it working for yourself on your machine?** → 2 (local self-host).
 - **Putting it on the internet for real login?** → 3 (tunneled prod).
-- **Team / scale?** → 4 (Kubernetes).
+- **Running it on a Kubernetes cluster?** → 4 (Kubernetes).
 
 Every model is the same image and the same `docker-compose.oshal-local.yml` (or its K8s
 equivalent); you are only ever changing env + exposure. That sameness — one build, four

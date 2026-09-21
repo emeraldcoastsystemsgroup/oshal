@@ -73,12 +73,32 @@ OOM pairing); the installer refuses to create that shape.
 What a live run of both measured is recorded in the
 [remote-cluster work package](remote-cluster-work-package.md) status note (2026-09-21).
 
+## The legacy generation — quarantined
+
+The pre-chart Kubernetes generation is still in the tree, and it is **not a deploy path**. Its
+stacks run `oshal-api-server:latest`, an image nothing in this repo builds, on a Keycloak-era
+topology. It is quarantined rather than deleted while the operator decides between deleting it
+and keeping it:
+
+- Every legacy manifest opens with a `LEGACY — DO NOT DEPLOY` banner:
+  `ops/deployment/kubernetes/*.yaml`, `ops/any-bot-k8s/*.yaml` and
+  `ops/deployment/presentron-integration.yaml`.
+- Every legacy entry point refuses to run and prints this path instead:
+  `scripts/setup-oshal-k8s.sh`, `scripts/install-k8s.sh`, `scripts/setup-any-bot-k8s.sh`,
+  `scripts/setup-any-bot-k8s-cli.js` (the `oshal-any-bot-k8s-setup` bin) and the
+  `build-any-bot-k8s-*` scripts. That also covers every `k8:*` npm script, since each one calls
+  one of them. Set `OSHAL_ALLOW_LEGACY_K8S=1` to run one anyway.
+- `tests/unit/k8s-legacy-quarantine.spec.ts` keeps it that way. It runs each entry point with
+  recording stand-ins for kubectl, helm and docker on `PATH`, and fails if any of them is reached
+  without the override. It also fails if a doc under `docs/` routes a reader to
+  `oshal-api-server:latest` outside a legacy marker.
+
 ## Available documents
 
-- [`any-bot-kubernetes-setup.md`](any-bot-kubernetes-setup.md) — **legacy**: the
-  pre-chart `any-bot-k8s` render/apply workspace (`npm run k8:install:any-bot`,
-  Keycloak-era stack, builds from source). Superseded by the chart path above for
-  new installs; kept while the rendered stacks it produced remain in service.
+- [`any-bot-kubernetes-setup.md`](any-bot-kubernetes-setup.md) — **legacy, quarantined**: the
+  pre-chart `ops/any-bot-k8s` render/apply workspace (`npm run k8:install:any-bot`,
+  Keycloak-era stack, builds from source). Superseded by the chart path above; its scripts refuse
+  to run unless `OSHAL_ALLOW_LEGACY_K8S=1` is set.
 
 ## The remote-cluster work package
 
