@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | The static BUG-12 gate proves a surface CONSUMES theme tokens; it cannot see a role mapped onto a plausible-but-wrong token, because such a mapping is still a `var()`, nor a dark-authored `rgba()` left behind outside a `:root` block. This walk renders the converted surfaces in a real Chromium in one light theme and one dark theme and measures the RESULT: every run of text is compared against the pixel actually painted behind it, so gradients, translucency and blur composite exactly as an operator sees them, and every declared border must paint a pixel that differs from the fill on at least one side. `.auth-ok` shipped with `background` and `color` both `var(--status-success)` — a static check reads two correct tokens, an operator reads an empty green lozenge.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Scoped the claim to what is measured. This walk covers FOUR surfaces — the four largest remaps — not every surface the BUG-12 gate governs, which is forty-nine. The same machinery run over all forty-nine measures 584 runs of text below their WCAG floor and 64 declared-but-unpainted borders still live on 34 of them, in shapes this change does not address: the dark-authored `rgba()` fill repeated in seven more dashboard stylesheets, a `--text-muted` too pale for a light page, and `api/technology`'s 22 invisible borders. Extending the walk to those is separate work; what must not happen is this file reading as though the whole set were already green.
  */
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -20,9 +21,11 @@ const THEMES = ['daylight', 'midnight'] as const;
 interface SurfaceState { selector: string; className?: string; html?: string; enable?: boolean; provenance: string }
 
 /**
- * The converted surfaces this walk covers. `source` is the file whose script produces the states;
- * `minBorders` is the number of bordered panels the anonymous view is known to paint — /applications
- * paints none, because every bordered block on it is an operator panel served `display: none`.
+ * The four converted surfaces this walk covers — the largest remaps, not the whole governed set
+ * (see the SEQ 2 note above: the gate governs forty-nine, and most of the rest still fail).
+ * `source` is the file whose script produces the states; `minBorders` is the number of bordered
+ * panels the anonymous view is known to paint — /applications paints none, because every bordered
+ * block on it is an operator panel served `display: none`.
  */
 const WALK: { name: string; path: string; source: string; minBorders: number; states: SurfaceState[] }[] = [
   {
