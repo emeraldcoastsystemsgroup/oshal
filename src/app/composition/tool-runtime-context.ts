@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Included persona system_prompt in workspace context files so spec-driven swarm personas keep their operating procedure
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read two of the six and fell back to <cwd>/workspace where everything else falls back to workspace-shared - and what it writes is the file the agent then reads back through its sandboxed read_file, so the two roots disagreeing means the agent cannot see its own input.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | CKR-15 / D11: the chat path assembles its system prompt through assembleContainedPrompt instead of a bare sections.join, so the 23 registry rows that execute inline in the api container get the same containment frame the layered swarm path has had - TRUST CONTRACT first, the server authority rebind last. The three fragments are unchanged in content, and all three are server-authored (the persona YAML on disk, the tool catalogue from the registry, environment facts the server holds), so each declares that and names its own contentSource. Severity here is defence in depth, not a live hole: no untrusted party can author this prompt today - every input traced is operator- or server-authored, and the one raw interpolation is whitespace-collapsed and 120-char capped - but one path having a frame while its sibling does not is the divergence that becomes a hole the first time an input changes hands. Deliberately the SAME function rather than a second assembly, for the reason CKR-5 exists.
  */
 
 import type { AgentProfileService } from '@/features/agent-profile';
@@ -28,7 +29,8 @@ import { ClineRuntimeConfigSyncService } from '@/features/llm-provider/services'
 import { readChatAgentProfileConfig, readJsonConfig, parseSelectorSkills, readNonEmptyString, runtimeDefaults } from './provider-runtime';
 import fs from 'fs';
 import path from 'path';
-import { loadPersonaFromFile } from '@/features/swarm-orchestration';
+import { assembleContainedPrompt, loadPersonaFromFile } from '@/features/swarm-orchestration';
+import type { PersonaLayer } from '@/features/agent-management';
 import { createChildLogger } from '@/shared/logger';
 import type { DynamicToolExecutorRegistry } from '@/features/tool-registry';
 import {
@@ -358,11 +360,10 @@ export function formatLayeredSystemPrompt(
   enabledAgentTools: AgentTool[],
   mcpSettings: Record<string, unknown>,
   basePrompt?: string,
+  binding?: { agentId: string; taskId?: string },
 ): string {
-  const sections = [
-    basePrompt ?? runtimeDefaults.level0SystemPrompt,
-    formatToolsForPrompt(tools),
-  ];
+  const identity = basePrompt ?? runtimeDefaults.level0SystemPrompt;
+  const toolCatalog = formatToolsForPrompt(tools);
 
   const contextLines: string[] = [];
   const selectorSkills = parseSelectorSkills(profile.selectorSkillsText);
@@ -404,13 +405,49 @@ export function formatLayeredSystemPrompt(
     }
   }
 
-  sections.push(
-    contextLines.length > 0
-      ? `Layer-1 environment and skill context:\n${contextLines.join('\n')}`
-      : 'Layer-1 environment and skill context:\nNo additional environment context configured.',
-  );
+  const environment = contextLines.length > 0
+    ? `Layer-1 environment and skill context:\n${contextLines.join('\n')}`
+    : 'Layer-1 environment and skill context:\nNo additional environment context configured.';
 
-  return sections.join('\n\n');
+  // CKR-15. Every fragment above is server-authored - the persona YAML on disk, the tool catalogue
+  // from the registry, and environment facts the server holds - so each declares that and carries
+  // its own contentSource. The frame is the same one the layered swarm path uses, and deliberately
+  // the SAME function: two assemblies that agree only by coincidence drift, which is exactly what
+  // CKR-5's parity guard exists to catch.
+  const layers: PersonaLayer[] = [
+    {
+      layerType: 'platform',
+      priority: 10,
+      promptFragment: identity,
+      metadata: {
+        serverAuthored: true,
+        contentSource: basePrompt ? 'chat-persona-yaml' : 'chat-default-system-prompt',
+      },
+    },
+    {
+      layerType: 'tenant',
+      priority: 20,
+      promptFragment: toolCatalog,
+      metadata: { serverAuthored: true, promptTrust: 'trusted-configuration', contentSource: 'chat-tool-catalog' },
+    },
+    {
+      layerType: 'tenant',
+      priority: 30,
+      promptFragment: environment,
+      metadata: { serverAuthored: true, promptTrust: 'trusted-configuration', contentSource: 'chat-environment-context' },
+    },
+  ];
+
+  // The user's message is NOT in this string - it arrives as its own chat turn - so the untrusted
+  // body is empty here. The section still renders, because the frame's SHAPE is what the model is
+  // told to rely on, and a frame that changes shape with its contents teaches nothing.
+  return assembleContainedPrompt(layers, '', {
+    userSub: null,
+    ticketId: binding?.taskId?.trim() || 'chat-session',
+    workloadId: binding?.agentId ?? 'chat',
+    allowedTools: tools.map((tool) => tool.name).filter((name): name is string => Boolean(name)),
+    scopes: [],
+  });
 }
 
 /**
@@ -593,7 +630,7 @@ export function createSystemPromptResolver(
       }
     }
 
-    return formatLayeredSystemPrompt(tools, profile, enabledAgentTools, mcpSettings, basePrompt);
+    return formatLayeredSystemPrompt(tools, profile, enabledAgentTools, mcpSettings, basePrompt, { agentId, taskId });
   };
 }
 
