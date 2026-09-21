@@ -1,0 +1,25 @@
+# A build in the open maker-reference library. Recorded, cited, never vendored.
+# Written by `node scripts/maker-reference.mjs add` — doc_id and reuse are derived, not typed.
+docId: web:learn.adafruit.com/crickit-controlled-animatronic-eyeball
+title: Crickit-controlled animatronic eyeball (Adafruit)
+whatItIs: >-
+  A single printed eyeball moved on two servos from a Circuit Playground Express with the Crickit
+  servo and motor board.
+mechanism: >-
+  Two-axis gimbal behind the eyeball - one servo pans, one tilts - instead of the classic
+  four-pushrod eye linkage.
+actuators:
+  - two hobby servos (TowerPro SG-5010 standard
+  - or a micro servo)
+controller: Circuit Playground Express with the Adafruit CRICKIT board
+licence: unknown
+reuse: not-to-copy
+sourceUrl: https://learn.adafruit.com/crickit-controlled-animatronic-eyeball
+takeaway: >-
+  The argument for a gimbal over eye linkages on a small prop: two servos, no pushrods, and
+  calibration becomes two angle ranges instead of four rod lengths.
+addedOn: '2026-09-21'
+licenceNote: >-
+  The guide page states no licence for its text or its code. Adafruit publishes much of its
+  learn-guide code under MIT elsewhere, but that is not stated here, so the catalogue treats it as
+  not-to-copy until someone establishes it.

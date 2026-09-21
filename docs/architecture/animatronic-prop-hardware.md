@@ -67,6 +67,10 @@ peaks at **three times** a motion's average speed. That is why a fast blink is c
 The operator's survey, recorded so the reasoning behind the design is traceable. None of this code
 is vendored; what we took is the shape.
 
+This table is the origin of the survey; it is no longer where it grows. Builds are now recorded
+one document per build in the `maker-references` RAG collection, which the engineering bots search
+and cite - see [the maker-reference library](./maker-reference-library.md).
+
 | Build | What it is | What we took |
 |---|---|---|
 | Two-axis animatronic eye (Adafruit) | A pan/tilt gimbal instead of eye linkages | The first mechanism, and the argument for it |

@@ -1,0 +1,24 @@
+# A build in the open maker-reference library. Recorded, cited, never vendored.
+# Written by `node scripts/maker-reference.mjs add` — doc_id and reuse are derived, not typed.
+docId: web:github.com/simplefoc/arduino-foc
+title: SimpleFOC (Arduino-FOC)
+whatItIs: >-
+  An open field-oriented-control library for brushless and stepper motors on Arduino-class
+  microcontrollers.
+mechanism: >-
+  Closed-loop torque, velocity and position control of a BLDC by field-oriented control, with a
+  position sensor in the loop.
+actuators:
+  - BLDC gimbal and hobby outrunner motors
+  - bipolar stepper motors
+controller: >-
+  Arduino-compatible MCU (ATmega, STM32, ESP32, SAMD) driving a gate driver board of the DRV8302 or
+  L6234 class
+licence: MIT
+reuse: allowed
+sourceUrl: https://github.com/simplefoc/Arduino-FOC
+takeaway: >-
+  FOC is a library, not a board: a small motor gets smooth torque control from the same MCU already
+  running the rig, so -this needs a servo- is often -this needs a position sensor and a current
+  loop-.
+addedOn: '2026-09-21'

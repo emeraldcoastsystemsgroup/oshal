@@ -157,6 +157,12 @@ binding; it is never prompt text.
 
 ### Feature & Data-Plane Architecture
 
+- [maker-reference-library.md](./maker-reference-library.md)
+  - the `maker-references` RAG collection the engineering bots cite: the fixed field set every
+    open build is recorded with, the one command that adds a build from its URL plus a note (and
+    updates rather than duplicates on a re-run), the licence rule that derives `not-to-copy`
+    instead of trusting a declaration, and the citation contract whose review an uncited answer
+    fails
 - [native-compiled-kernel.md](./native-compiled-kernel.md)
   - why compiling the control plane buys nothing (it is I/O-bound: 4-5ms of JS against LLM
     dispatches of 2-120s) and why the ADR-116 indicator layer was the one worth porting — the

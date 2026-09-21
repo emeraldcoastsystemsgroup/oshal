@@ -22,6 +22,13 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial: identity-based device
  *   authorization for internal dispatchers (canUseDevice / filterUsableDevices / assertDeviceUsable),
  *   mirroring canAccessResource for callers that have a user sub rather than an Express Request.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | describeDeviceOwnership: the same ownership fact,
+ *   shaped for a VIEWER. A node's whole enrolment is judged on whether it came up bound to a person,
+ *   and no cockpit surface could say - the device list rendered name, status and heartbeat only, so
+ *   an unowned node (enrolment silently incomplete) and a correctly bound one looked identical. The
+ *   decision stays on the server beside the gates it mirrors, and the view it returns carries a
+ *   label rather than the owner's subject id, so a page can render it without holding a second,
+ *   driftable answer to "whose computer is this?".
  *
  * @module features/remote-client/services/device-access
  */
@@ -120,4 +127,60 @@ export function assertDeviceUsable(
     'Device dispatch denied: requester is not the owner of this computer',
   );
   return 'That computer is not registered to your account.';
+}
+
+/** How a device's binding reads to ONE viewer. Relative to the viewer, never a raw subject id. */
+export type DeviceOwnershipState = 'you' | 'another-person' | 'unowned';
+
+/**
+ * A viewer-facing description of a device's binding.
+ *
+ * `owned` is the fact the enrolment flow is judged on — a computer that finished enrolment is bound
+ * to a person, one that did not is bound to nobody — and `state` says to whom, without ever carrying
+ * the owner's subject id off the server.
+ */
+export interface DeviceOwnershipView {
+  state: DeviceOwnershipState;
+  owned: boolean;
+  label: string;
+  hint: string;
+}
+
+const OWNERSHIP_VIEWS: Record<DeviceOwnershipState, { owned: boolean; label: string; hint: string }> = {
+  you: {
+    owned: true,
+    label: 'You',
+    hint: 'This computer is bound to your account, so work dispatched to you can run here.',
+  },
+  'another-person': {
+    owned: true,
+    label: 'Another person',
+    hint: 'Bound to a different account. You can see it because you are an operator.',
+  },
+  unowned: {
+    owned: false,
+    label: 'Unowned',
+    hint: 'Bound to nobody: enrolment did not complete, so no owner-scoped work is dispatched here.',
+  },
+};
+
+/**
+ * @description Describes a device's binding FROM ONE VIEWER'S SEAT, so a surface can show whether a
+ * computer is owned without holding any ownership logic of its own and without ever receiving the
+ * owner's subject id. The decision is made here, from the verified caller, for the same reason the
+ * gates above are: a page that compared subject ids itself would be a second answer to the question
+ * `canUseDevice` already answers, free to drift from it.
+ * @param requester - The identity doing the viewing (its `sub` is the only field read).
+ * @param device - The device being described (only `ownerSub` is read).
+ * @returns The viewer-relative ownership view: state, the owned fact, and text safe to render.
+ */
+export function describeDeviceOwnership(
+  requester: DeviceRequester,
+  device: DeviceOwnership,
+): DeviceOwnershipView {
+  const sub = requester.sub ? String(requester.sub) : null;
+  const ownerSub = device.ownerSub ? String(device.ownerSub) : null;
+  if (!ownerSub) return { state: 'unowned', ...OWNERSHIP_VIEWS.unowned };
+  const state: DeviceOwnershipState = sub !== null && ownerSub === sub ? 'you' : 'another-person';
+  return { state, ...OWNERSHIP_VIEWS[state] };
 }
