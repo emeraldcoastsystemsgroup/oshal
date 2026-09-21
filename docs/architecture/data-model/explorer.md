@@ -156,7 +156,7 @@ layer fills in. That is what makes every store doubleable in tests.
 ## Tests
 
 ```bash
-npm run test:data-model     # 92 tests; needs Docker (disposable Postgres) and Playwright Chromium
+npm run test:data-model     # 11 spec files; needs Docker (disposable Postgres), Playwright Chromium and mermaid installed
 ```
 
 | Spec | Proves |
