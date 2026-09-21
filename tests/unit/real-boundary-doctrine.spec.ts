@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | The guard drives main() - the function the CLI entry calls - rather than the body beneath it, and pins the argv to exactly the parsed list with no flags appended, so an entry that re-points the list or adds --grep-invert goes red (fourth review, X6/X6b).
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | The program is run out of process with a recording npx (a copy of the runner, its parser and the list in a scratch tree shaped like the repo), and the argv it hands playwright is pinned to the parsed list with no flags - the only drive that reaches the module default list path and the entry line (fifth review: X10, X6', X8 passed the in-process drive). The in-process drive stays as the fast path and no longer supplies listPath, so main's own default is exercised. The "only the exit is undriven" wording is withdrawn.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Pin the planted-fixture secret-scan proof as the scanner boundary run that actually happened. Entry 2 pinned the DOUBLE and the audit row that says a real run is still owed; the detection half of that debt is now paid by a guard that runs the real gitleaks image, so this case keeps it real - no stand-in on PATH, the production gate text rather than a paraphrase, a planted token that is never contiguous in the source (which is why it needs no .gitleaks.toml allowlist entry), and an audit row linked to evidence carrying the red verdict verbatim.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | Pin the PARTIAL-SCAN proof and retire the last locally reachable `Owed` in the audit. Entry 9 paid the detection half of the scanner debt; the half the gate was actually written for - gitleaks exiting 0 on a tree it could not fully read - was still only a recording. This case keeps the new companion real (no stand-in on PATH, the production scanner function and both gate_secrets lines rather than a paraphrase, both verdict strings, and the floating-tag wording read out of the shipped helper instead of copied into the guard), and the scanner-double case above now requires its row to name that companion rather than to read as owed.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -188,7 +189,7 @@ describe('real-boundary regression doctrine', () => {
     expect(regression).not.toContain("vi.mock('tsconfig-paths'");
   });
 
-  it('registers the ci-local secret-scan scanner double and the real run it still owes', () => {
+  it('registers the ci-local secret-scan scanner double and the real run that has now paid for it', () => {
     const audit = read('docs/governance/real-boundary-regression-audit.md');
     const guard = read('tests/unit/ci-local-secret-scan.spec.ts');
     const gate = read('scripts/ci-local.sh');
@@ -203,7 +204,12 @@ describe('real-boundary regression doctrine', () => {
       .split('\n')
       .find((line) => line.includes('tests/unit/ci-local-secret-scan.spec.ts'));
     expect(row, 'the scanner double must be registered in the audit').toBeTruthy();
-    expect(row, 'the real gitleaks run is not done; the row must not read as closed').toContain('Owed');
+    // The partial-scan run has happened (2026-09-21), so this row may no longer read as owed - and
+    // it has to say which guard paid the debt, or "not owed" is an unsourced claim.
+    expect(row, 'the row must not read as an owed boundary now that the real run exists')
+      .not.toMatch(/\|\s*Owed\b/);
+    expect(row, 'the row must name the companion that made the real image skip a path')
+      .toContain('tests/unit/ci-local-secret-scan-unreadable-path.spec.ts');
 
     // The row has to name what the gate actually runs and the version its wording list came
     // from, so bumping either without re-recording the companion turns this red.
@@ -251,6 +257,47 @@ describe('real-boundary regression doctrine', () => {
     expect(evidence, 'the evidence must name the scanner the gate runs').toContain(tag!);
     expect(evidence, 'the evidence must carry the red verdict verbatim')
       .toContain('secret-scan: FAIL scanner rc=1 unread=0 of 4 exported files');
+  });
+
+  it('registers the partial-scan proof: a real image that skipped a path, and a gate that refused the PASS', () => {
+    const audit = read('docs/governance/real-boundary-regression-audit.md');
+    const guard = read('tests/unit/ci-local-secret-scan-unreadable-path.spec.ts');
+    const gate = read('scripts/ci-local.sh');
+    const helper = read('scripts/ci/ci-secret-scan.sh');
+    const evidence = read('docs/security/secret-scan-unreadable-path-proof.md');
+
+    // The whole value of this guard is that the image runs and really fails to read a path.
+    expect(guard, 'a stand-in scanner would hollow out this proof').not.toContain('fakeBin');
+    expect(guard, 'nothing may be put in front of the real docker').not.toContain('export PATH=');
+    expect(guard, 'only the real image writes its scan line').toContain('scanned ~');
+
+    // Production text, not a paraphrase: the scanner function and both gate_secrets lines.
+    expect(guard).toContain("ciFunction('gitleaks_container_scan')");
+    expect(guard).toContain("gateLine('git archive')");
+    expect(guard).toContain('gateLine(\'run_secret_scan "$exp"\')');
+
+    // The defect itself: the scanner exits 0 on a partial scan and the gate must still say FAIL,
+    // with the count in the verdict, and PASS on the same export once the read is given back.
+    expect(guard).toContain('secret-scan: FAIL unread=1 of 4 exported files (scanner rc=0)');
+    expect(guard).toContain('secret-scan: PASS unread=0 of 4 exported files (scanner rc=0)');
+
+    // The floating-tag check has to read the wording list out of the shipped helper. A copy of the
+    // pattern inside the guard would keep passing after the image reworded its skip line.
+    expect(helper, 'the helper must still own the wording list').toContain('GITLEAKS_UNREAD_PATTERN=');
+    expect(guard).toContain('GITLEAKS_UNREAD_PATTERN');
+    expect(guard).toContain('readFileSync(SCAN_HELPER');
+    // And it must refuse to run at all if the unreadable path could not be created.
+    expect(guard).toContain('could not make');
+
+    const tag = /zricethezav\/gitleaks:[\w.-]+/.exec(gate)?.[0];
+    expect(tag, 'ci-local.sh must still name the scanner image').toBeTruthy();
+    const row = audit.split('\n')
+      .find((line) => line.startsWith('| `tests/unit/ci-local-secret-scan-unreadable-path.spec.ts`'));
+    expect(row, 'the partial-scan companion must be registered in the audit').toBeTruthy();
+    expect(row, 'the audit row must link the evidence').toContain('secret-scan-unreadable-path-proof.md');
+    expect(evidence, 'the evidence must name the scanner the gate runs').toContain(tag!);
+    expect(evidence, 'the evidence must carry the red verdict verbatim')
+      .toContain('secret-scan: FAIL unread=1 of 4 exported files (scanner rc=0)');
   });
 
   it('mutation-tests exact package artifacts in addition to probing the image', () => {

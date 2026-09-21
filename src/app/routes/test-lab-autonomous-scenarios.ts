@@ -16,6 +16,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Register the provider-embedded tool tier: per-agent grants read from the agent's own persona, a fail-closed refusal at execution, and a run trace that names the tier and the provider operation.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Register the trading spec bare-cluster prerequisite guard on the isolated nightly scenario. It owns its PostgreSQL and asserts the trading DB specs' shared prologue builds every relation they touch on an EMPTY server, which is the gate that made three of them runnable anywhere but the operator's own database.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Register the planted-fixture secret-scan proof on the isolated nightly scenario, beside the partial-scan guard it completes. That guard replaces docker on PATH; this one runs the real gitleaks image over a disposable repository and requires the gate to go red on a planted synthetic credential and green once it is removed, so the scenario now lists a run that actually exercises the scanner.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | Register the partial-scan secret-scan proof beside the other two. It is the only one of the three that makes the real gitleaks image actually skip a path and exit 0, which is the failure shape the gate was written for, so the scenario now lists a run that exercises the refusal as well as the detection.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -65,6 +66,7 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/ci-local-inherited-export.spec.ts' },
     { level: 'integration', path: 'tests/unit/ci-local-secret-scan.spec.ts' },
     { level: 'integration', path: 'tests/unit/ci-local-secret-scan-planted-fixture.spec.ts' },
+    { level: 'integration', path: 'tests/unit/ci-local-secret-scan-unreadable-path.spec.ts' },
     { level: 'unit', path: 'tests/unit/ci-gate-streak.spec.ts' },
     { level: 'integration', path: 'tests/unit/trading-engine-cost-basis-postgres.spec.ts' },
     { level: 'integration', path: 'tests/unit/trading-event-plans.spec.ts' },
