@@ -1350,7 +1350,7 @@ the false Change Log at `src/app/extensions/swarm/index.ts:28`.
 
 </details>
 
-### CKR-19 — interactive spend is invisible to the trace and to the budget caps (R1.1) — M
+### CKR-19 — interactive spend is invisible to the trace and to the budget caps (R1.1) — M — **SHIPPED 2026-09-20; the live-box counts are owed after the next deploy**
 
 **The gap is not "no record".** Every interactive call writes an `oshal_cost_events` row and a `chat_tasks`
 rollup, and both chat surfaces already open a real ticket per thread with status history and an openable
@@ -1381,6 +1381,61 @@ linking after `executeBotOrInline` returns — **not** by adding an `externalId`
 `SELECT count(*) FROM chat_tasks WHERE status='processing' AND created_at > '<deploy timestamp>' AND
 updated_at < NOW() - INTERVAL '1 day'` returns 0; the pre-existing 683 rows are explicitly out of scope, no
 backfill.
+
+**SHIPPED, at the chokepoint rather than per caller.** `executeBotOrInline` derives the bot node's
+own cost task id after the remote call returns and joins it to whatever ticket the THREAD's task
+already belongs to, then stamps that row terminal.
+
+**Done-when (C) falls out of where it was put.** The entry warned that a fix reaching only core route
+modules leaves 25 store-package modules across 19 packages unattributed. `executeBotOrInline` is the
+single chokepoint every one of them calls, core and store alike, so no caller had to change and none
+can be missed. That is the whole reason it is there and not in the routes.
+
+**The id is DERIVED, exactly as the entry demands** —
+`canonicalBotWorkspaceId(request.workspaceFolderId) + '::' + agentId`, mirroring
+`bot-node-server.ts:369` and the handler's own `${workspaceFolderId}::${agentId}`. Not an `externalId`
+added to `BotNodeRequest`, and **not** `BotNodeResponse.taskId`: trusting the response would make a
+remote node the authority over which ticket its spend lands on, and a case pins that the doubled node's
+echoed value is linked to nothing.
+
+**Two things it deliberately does not do.** It never fails the execution — this is telemetry, and a
+missing link must not lose a completed turn. And it links only to tickets the thread task already
+belongs to, so it can add an attribution but never invent one; a case pins that an orphan thread gets
+no ticket invented for it.
+
+**Done-when (B) is satisfied for every row written from here on.** `persistCostEvent` hard-codes
+`processing` and nothing ever closed these, so they accumulated as permanently in-progress tasks. The
+settle stamps `completed` / `failed` from the turn's own outcome, and only touches a row still sitting
+in `processing`, so an operator or a later write wins. The 683 pre-existing rows are out of scope and
+are not backfilled, as the entry says.
+
+**One case the derivation cannot cover, named rather than guessed at.** A PROTECTED application
+execution makes the handler use `protectedExecution.workspaceId` instead, which the controller does not
+hold at this point. Those calls are left unlinked rather than linked to a guess.
+
+**Proven against a real database, because the claim is a join.**
+`tests/unit/interactive-cost-ticket-link-postgres.spec.ts` runs migrations 001/005/078/100 as shipped on
+a disposable `postgres:16-alpine` and drives the REAL `executeBotOrInline` down its remote branch, with
+only the node's HTTP call doubled. A mocked store would have proven nothing about a foreign key, an
+`ON CONFLICT`, or the shape of the write. Eight cases including a schema self-check, the two negative
+controls the fix could have broken (a sibling with no `chat_tasks` row must not be linked — `task_id`
+carries a foreign key — and a thread with no ticket must not get one invented) and an idempotency case.
+**Red first: 5 of 8 fail without the settle; the 3 that stay green are the self-check and the two
+negative controls, which is correct — they assert that nothing is linked.**
+
+**⚠ STILL OWED, and it needs a deploy.** Done-when (A) is stated as two live-box readings, and neither
+can be taken from here:
+
+1. `SELECT count(*) FROM tickets t WHERE t.ticket_type='chat' AND EXISTS (SELECT 1 FROM
+   ticket_task_links l JOIN oshal_cost_events e ON e.task_id=l.task_id WHERE l.ticket_id=t.ticket_id)`
+   must return > 0 (it was 0 of 123).
+2. `GET /api/trace/<that ticket id>` must return at least one `llm-call` span carrying a model and a
+   cost.
+
+Both are about rows this change has not had a chance to write yet. Re-run them after the next deploy
+and after at least one interactive turn; the spec above is what says the write is correct, and those
+two are what say it reached production. Done-when (B)'s query is the same shape and the same timing —
+it reads rows created AFTER the deploy timestamp.
 
 ### CKR-20 — cross-ticket and cross-owner workspace isolation does not exist (R3.3) — **MEASURED and PINNED 2026-09-19; the decision is open** — **DECIDED 2026-09-20: ACCEPTED, RUNTIME ASSIGNMENT IS THE CONTROL**
 
