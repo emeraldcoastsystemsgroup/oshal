@@ -24,6 +24,10 @@ Security posture, hardening guidance, and control evidence for OSHAL.
   three `/api` mounts registered without `requiresAuth` (`/api/authorization`,
   `/api/authorization/tenant-memberships`, `/api/user-directory`): per-route exposure, the internal
   guard each one carries, and why both route-auth classifiers report them red.
+- [secret-scan-planted-fixture-proof.md](./secret-scan-planted-fixture-proof.md) — the
+  `ci-local.sh` `secret-scan` gate proven to go red on a planted synthetic credential and green
+  once it is removed, against the real gitleaks image, with the two mutations that were watched
+  turning the guard red.
 
 Related:
 

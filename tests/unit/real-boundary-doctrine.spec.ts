@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | The guard drives the runner body with a recording spawner and pins the playwright ARGV to the parsed list; `--list` compared the parser to itself through a second derivation, and a filter at the spawn site passed it (third review, X1-X4). parseGreenSuite gets its own case for CRLF, indentation, trailing whitespace, `#` lines and blanks.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | The guard drives main() - the function the CLI entry calls - rather than the body beneath it, and pins the argv to exactly the parsed list with no flags appended, so an entry that re-points the list or adds --grep-invert goes red (fourth review, X6/X6b).
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | The program is run out of process with a recording npx (a copy of the runner, its parser and the list in a scratch tree shaped like the repo), and the argv it hands playwright is pinned to the parsed list with no flags - the only drive that reaches the module default list path and the entry line (fifth review: X10, X6', X8 passed the in-process drive). The in-process drive stays as the fast path and no longer supplies listPath, so main's own default is exercised. The "only the exit is undriven" wording is withdrawn.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Pin the planted-fixture secret-scan proof as the scanner boundary run that actually happened. Entry 2 pinned the DOUBLE and the audit row that says a real run is still owed; the detection half of that debt is now paid by a guard that runs the real gitleaks image, so this case keeps it real - no stand-in on PATH, the production gate text rather than a paraphrase, a planted token that is never contiguous in the source (which is why it needs no .gitleaks.toml allowlist entry), and an audit row linked to evidence carrying the red verdict verbatim.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -212,6 +213,44 @@ describe('real-boundary regression doctrine', () => {
     expect(calibrated, 'ci-secret-scan.sh must still name the version its wordings came from').toBeTruthy();
     expect(row, 'the audit row must name the scanner the gate runs').toContain(tag!);
     expect(row, 'the audit row must name the calibrated wording version').toContain(calibrated!);
+  });
+
+  it('registers the planted-fixture proof as the scanner run that really happened, with no stand-in on PATH', () => {
+    const audit = read('docs/governance/real-boundary-regression-audit.md');
+    const guard = read('tests/unit/ci-local-secret-scan-planted-fixture.spec.ts');
+    const gate = read('scripts/ci-local.sh');
+    const evidence = read('docs/security/secret-scan-planted-fixture-proof.md');
+
+    // The whole value of this guard is that the image runs. A stand-in `docker` first on PATH —
+    // the sibling guard's technique — would silently turn it back into a recording.
+    expect(guard, 'a stand-in scanner would hollow out this proof').not.toContain('fakeBin');
+    expect(guard, 'nothing may be put in front of the real docker').not.toContain('export PATH=');
+    expect(guard, 'only the real image writes its scan line').toContain('scanned ~');
+    // It must run the production gate text, not a paraphrase of it.
+    expect(guard).toContain("['gitleaks_container_scan', 'gate_secrets']");
+
+    // Fail, then pass, decided by the scanner's own exit code rather than by the guard.
+    expect(guard).toContain('secret-scan: FAIL scanner rc=1 unread=0 of 4 exported files');
+    expect(guard).toContain('secret-scan: PASS unread=0 of 3 exported files (scanner rc=0)');
+
+    // The planted value is assembled at runtime, so the source never carries the token and the
+    // fixture allowlist never has to be widened to accommodate this file.
+    // The allowlisted documentation dummy is the one AWS-shaped token allowed to be spelled out.
+    const withoutDocumented = guard.replace(/AKIA[0-9A-Z]*EXAMPLE/g, '<documented>');
+    expect(withoutDocumented, 'the planted token must never appear contiguously in the source')
+      .not.toMatch(/AKIA[0-9A-Z]{16}/);
+    expect(read('.gitleaks.toml'), 'this guard must not need an allowlist entry')
+      .not.toContain('ci-local-secret-scan-planted-fixture');
+
+    const tag = /zricethezav\/gitleaks:[\w.-]+/.exec(gate)?.[0];
+    expect(tag, 'ci-local.sh must still name the scanner image').toBeTruthy();
+    const row = audit.split('\n')
+      .find((line) => line.includes('tests/unit/ci-local-secret-scan-planted-fixture.spec.ts'));
+    expect(row, 'the real companion must be registered in the audit').toBeTruthy();
+    expect(row, 'the audit row must link the evidence').toContain('secret-scan-planted-fixture-proof.md');
+    expect(evidence, 'the evidence must name the scanner the gate runs').toContain(tag!);
+    expect(evidence, 'the evidence must carry the red verdict verbatim')
+      .toContain('secret-scan: FAIL scanner rc=1 unread=0 of 4 exported files');
   });
 
   it('mutation-tests exact package artifacts in addition to probing the image', () => {
