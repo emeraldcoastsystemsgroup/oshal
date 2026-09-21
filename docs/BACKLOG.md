@@ -1241,6 +1241,17 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### GitHub-side residue of the 2026-09-12 attribution scrub
 - **Remaining:** closed-PR refs `refs/pull/N/head` still reach the old commits (verified on core #426 and #430 after the push) and old SHAs stay viewable at `/commit/<sha>` until GitHub garbage-collects. Only GitHub Support can purge unreachable objects; nothing on any branch carries the attribution and the contributors graph is computed from `main`.
 - **Done when:** either a support request is filed for the three repos and a sample old SHA returns 404 while `git ls-remote origin 'refs/pull/*/head'` no longer reaches an attributed commit, or the operator records here that the residue is accepted.
+- **Decision (operator, 2026-09-21): the GitHub-side residue is ACCEPTED — no support request will be
+  filed, and this entry is closed on that.** Measured the same morning, which is what the acceptance
+  rests on: `main` carries no attribution line in its last 400 commits; the closed-PR refs do still
+  reach the pre-scrub commits (`refs/pull/426/head` = `50401ad3` and `refs/pull/430/head` =
+  `82e46010`, one attribution line each), and there are 704 such refs on this repo and 240 on the
+  store repo. Nothing on any branch carries the strings, the contributors graph is computed from
+  `main`, and reaching the residue requires knowing a SHA or walking `refs/pull/*/head`. The second
+  done-when clause — "or the operator records here that the residue is accepted" — is therefore met.
+  If the posture ever changes, the path stays the one documented in
+  [runbooks/model-attribution-scrub.md](runbooks/model-attribution-scrub.md): only GitHub Support can
+  purge unreachable objects and closed-PR refs. (PM recommended acceptance; the operator agreed.)
 
 ### An abort inside the local embedding runtime takes the whole api process down (2026-09-15)
 - ✅ **CLOSED 2026-09-18 (branch `fix/embedding-abort-containment`).** The re-check the ⚠ below
