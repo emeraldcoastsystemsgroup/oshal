@@ -7,6 +7,7 @@
 # 3 | maintainer@emeraldcoastsystemsgroup.com   | swarm.extraEnv (default {}): non-secret env rendered into the oshal-shared-env ConfigMap, so it reaches EVERY runtime (the api and every bot envFrom it). Found on the first Docker Desktop install (2026-09-21): compose sets platform switches such as APP_PACKAGE_DYNAMIC_ROUTES=1 for every container and the chart had no way to, so every ADR-149 protected store app failed activation closed. Secrets never go here (api.envSecret / botDefaults.envSecret). A key the chart already sets in that ConfigMap fails the render (templates/shared-env-configmap.yaml), and explicit per-workload env still wins over it. Guard: tests/unit/chart-shared-env-extra.spec.ts.
 # 4 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — the rbac.botLauncher comment records that the api keeps BOT_DATABASE_URL with the launcher off (templates/api.yaml SEQ 6): its bootstrap provisions oshal_bot for the chart-declared bots and refused to start without it. Guard: tests/unit/chart-bootstrap-env.spec.ts.
 # 5 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — infra.postgres.appPassword / botPassword (dev defaults oshal-app-dev / oshal-bot-dev): the oshal_app and oshal_bot passwords get a values path. api.yaml hardcoded oshal_app:oshal-app-dev, so the only escape was taking Postgres out of the cluster. jwtSecret, arangodb.rootUser/rootPassword and botDatabaseUrl are now rendered into chart-managed Secrets instead of the ConfigMap or literal env (templates/secrets.yaml), and the swarm.extraEnv comment records that the render refuses a chart-owned or credential-shaped key there. Guard: tests/unit/chart-credentials.spec.ts.
+# 6 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — infra.vault leaves dev mode: devRootToken is gone, and storage / ui / tls (enabled, secretName) configure a server-mode Vault on its own claim. tls defaults off (plain in-cluster listener) and the backup destination is unset, both because the operator has not named them yet; the comments say so. Guard: tests/unit/chart-vault-server.spec.ts.
 #
 # Defaults model the compose stack (docker-compose.oshal-local.yml) with DNS parity:
 # Services are named oshal-redis / oshal-db / oshal-chromadb / oshal-api / oshal-local-api
@@ -121,13 +122,26 @@ infra:
     rootPassword: oshal
     storage: 4Gi
   vault:
-    # DEV MODE, exactly like compose: in-memory, auto-unsealed, fixed root token.
-    # Fine for a single-box swarm; a real secrets posture replaces this (point
-    # VAULT_ADDR/VAULT_TOKEN at a real Vault via api.envSecret and set
-    # inCluster: false).
+    # SERVER MODE (never -dev): file storage on its own claim (data-oshal-vault-0),
+    # config rendered from these values. The chart ships NO root token and gives the
+    # api NO Vault token. Unseal custody is Shamir, held by the operator: a fresh
+    # install comes up SEALED and UNINITIALIZED, and so does every restart after the
+    # operator's `vault operator unseal`. Until then the DevOps Vault console answers
+    # 503; everything else runs. README "Vault runbook" has init/unseal.
     inCluster: true
     image: hashicorp/vault:1.18
-    devRootToken: oshal-dev-root
+    storage: 1Gi
+    ui: true
+    tls:
+      # NOT DECIDED YET: the certificate source. Default off = the plain in-cluster
+      # listener (http://oshal-vault:8200). On = the listener serves the
+      # kubernetes.io/tls Secret named in secretName, which you create (tls.crt,
+      # tls.key, ca.crt; the certificate must name oshal-vault); the api then dials
+      # https://oshal-vault:8200 and trusts ca.crt through NODE_EXTRA_CA_CERTS.
+      enabled: false
+      secretName: oshal-vault-tls
+    # Backups: NOT DECIDED YET either. The chart ships no backup job for
+    # data-oshal-vault-0 (README "Durability boundary").
   codeServer:
     # Workspace IDE the cockpit's /code bridge redirects to. Serves the shared
     # workspace PVC read-write.

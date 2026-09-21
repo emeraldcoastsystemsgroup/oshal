@@ -1,3 +1,11 @@
+{{- /*
+CHANGE LOG
+-----------------------------------------------------------------------------
+SEQ                 | AUTHOR                      | DESCRIPTION
+-----------------------------------------------------------------------------
+1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — post-install notes per role: how to reach the cockpit, fleet summary, relay/tailnet steps (ADR-129).
+2 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — with in-cluster Vault, say it comes up SEALED and uninitialized (server mode, Shamir keys held by the operator), what answers 503 until it is unsealed, and the two kubectl exec commands; the README "Vault runbook" has the rest.
+*/ -}}
 oshal {{ .Values.role }} cluster deployed (chart {{ .Chart.Version }}).
 
 {{- if eq .Values.role "main" }}
@@ -25,6 +33,13 @@ Relay disabled — single-cluster tenant (relay.enabled=true for tailnet federat
 {{- end }}
 Swarm apps: the manifests baked into the image (swarm-apps/*.yaml) auto-load at
 api boot — same as compose. Store packages install from the cockpit (Explore Apps).
+{{- if .Values.infra.vault.inCluster }}
+Vault: server mode, SEALED and uninitialized until you unseal it (Shamir keys stay
+with you). Until then the DevOps Vault console answers 503; nothing else waits on it.
+  kubectl -n {{ .Release.Namespace }} exec -ti oshal-vault-0 -- vault operator init
+  kubectl -n {{ .Release.Namespace }} exec -ti oshal-vault-0 -- vault operator unseal
+Runbook: deploy/helm/oshal/README.md ("Vault runbook").
+{{- end }}
 {{- else }}
 
 Bot pod for contributor "{{ .Values.contributor }}" — bots: {{ range .Values.bots }}{{ .name }} {{ end }}

@@ -98,7 +98,8 @@ Two security decisions came out of doing it properly rather than fast:
 workspace; compose contains that by binding `127.0.0.1`, and the cluster
 equivalent is a port-forward — a NodePort default would have published an
 unauthenticated IDE with full workspace access), and **Vault ships dev-mode with
-no PVC**, so it cannot imply durability it does not have.
+no PVC**, so it cannot imply durability it does not have. *(Vault half superseded
+by Amendment 4: the chart's Vault now runs in server mode on its own claim.)*
 
 Guard: [tests/unit/chart-infra-parity.spec.ts](../../tests/unit/chart-infra-parity.spec.ts)
 derives the shared-service set **from compose**, so a future profile-less infra
@@ -192,6 +193,30 @@ non-zero, names the missing tool, and leaves the sandboxed HOME empty — the
 safety property is behavioral, so grepping the source would not have proven it.
 Mutation-tested five ways; the one that matters (making the non-interactive branch
 consent) turns the behavioral test red by actually downloading a binary.
+
+## Amendment 4 (2026-09-21): the chart's dev postures, closed without a cluster
+
+Chart 0.5.0 closes items 2-4 of the
+[remote-cluster work package](../k8/remote-cluster-work-package.md). All of it is
+render-level work. The cluster proofs that remain are listed in that package.
+
+11. **Vault runs in server mode.** No `server -dev`, no `devRootToken`, and no
+    Vault token on the api. This is the Helm half of the approved "Production
+    Vault hardening". Vault keeps file storage on its own claim, and its listener
+    and storage config are rendered from `infra.vault`. TLS is a switch that
+    defaults to the plain in-cluster listener. Unseal custody is Shamir with the
+    operator, so a fresh install comes up sealed. Until the operator unseals it,
+    the DevOps Vault console answers 503 and nothing else waits on Vault. `src/`
+    has no AppRole login, so the chart has no scoped credential to hand the api.
+    Guard: [tests/unit/chart-vault-server.spec.ts](../../tests/unit/chart-vault-server.spec.ts).
+12. **Credentials live in Secrets.** `JWT_SECRET` and the ArangoDB root
+    credentials moved out of the ConfigMap into `oshal-shared-secret`. The
+    database URLs moved out of literal env into `oshal-db-credentials`, where a
+    bot can read only its own key. `oshal_app` and `oshal_bot` get a values path.
+    Guard: [tests/unit/chart-credentials.spec.ts](../../tests/unit/chart-credentials.spec.ts).
+13. **`rbac.botLauncher=false` boots.** The api's app-role bootstrap receives
+    `BOT_DATABASE_URL` whatever the launcher setting. Guard:
+    [tests/unit/chart-bootstrap-env.spec.ts](../../tests/unit/chart-bootstrap-env.spec.ts).
 
 ## Consequences
 

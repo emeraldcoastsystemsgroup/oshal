@@ -125,7 +125,7 @@ behind `infra.<name>.inCluster`:
 | `infra.chromadb` | `oshal-chromadb` | RAG + swarm memory | on |
 | `infra.tsdb` | `oshal-tsdb` | trading + world series (`TSDB_URL`) | on |
 | `infra.arangodb` | `oshal-arangodb` | graph tier, `/api/graph` (`ARANGO_URL`) | on |
-| `infra.vault` | `oshal-vault` | devops vault — **dev mode**, in-memory | on |
+| `infra.vault` | `oshal-vault` | devops vault — **server mode**, sealed until you unseal it | on |
 | `infra.codeServer` | `code-server` | workspace IDE behind the cockpit's `/code` | on |
 | `infra.diarization` | `speaker-diarization` | local transcription (audio stays in-cluster) | on |
 | `infra.ollama` | `oshal-ollama` | local models (`OLLAMA_HOST`) | **off** (compose gates it behind `local-llm`) |
@@ -142,10 +142,62 @@ that by binding `127.0.0.1`; here, use
 `kubectl -n <ns> port-forward svc/code-server 8444:8080`. Do not expose it
 without putting authentication in front of it.
 
-⚠ **Vault is `server -dev`** (compose parity): in-memory, auto-unsealed, fixed
-root token, no PVC — it loses everything on restart. Real deployments set
-`infra.vault.inCluster: false` and point `VAULT_ADDR`/`VAULT_TOKEN` at a real
-Vault.
+⚠ **Vault comes up sealed.** It runs in server mode on its own claim, with no root
+token anywhere in the chart and no Vault token on the api. See the
+[Vault runbook](#vault-runbook) before you rely on it.
+
+## Vault runbook
+
+The in-cluster Vault (`infra.vault.inCluster: true`, the default) runs `vault server`
+with file storage on the claim `data-oshal-vault-0` and a config rendered from
+`infra.vault` into the `oshal-vault-config` ConfigMap. Unseal custody is Shamir and the
+key shares stay with you. Nothing in the cluster can unseal it: there is no cloud-KMS
+auto-unseal. So a fresh install comes up **sealed and uninitialized**. Every restart
+of `oshal-vault-0` seals it again: an upgrade that changes its pod, a node drain, an
+eviction.
+
+Initialize once, then unseal with the threshold of shares:
+
+```bash
+kubectl -n oshal exec -ti oshal-vault-0 -- vault operator init -key-shares=5 -key-threshold=3
+kubectl -n oshal exec -ti oshal-vault-0 -- vault operator unseal   # once per share, up to the threshold
+kubectl -n oshal exec -ti oshal-vault-0 -- vault status            # Sealed: false
+```
+
+`init` prints the unseal key shares and an initial root token, once. Keep the shares
+apart; that is the point of Shamir. Use the root token to set up policies and auth
+methods, then revoke it (`vault token revoke <token>`). It belongs in no Kubernetes
+Secret and no values file. After any restart, run the `unseal` line again until the
+threshold is met.
+
+What degrades, and what does not:
+
+- **The api has no Vault token.** The chart sets `VAULT_ADDR` only. The api reads its
+  token from `VAULT_TOKEN` alone
+  (`src/features/devops-vault/services/vault-console-service.ts`), and `src/` has no
+  AppRole login that could mint a scoped one. So with the defaults the DevOps Vault
+  console (`/api/devops/*`) answers 503 `vault_not_configured`, whether Vault is sealed
+  or not.
+- **With a token you supply.** You can put a policy-scoped `VAULT_TOKEN` in the
+  `api.envSecret` Secret; never the root token. Then, while Vault is sealed, the
+  console's status reads `sealed` and its reads and writes fail with Vault's own
+  "Vault is sealed" (502).
+- **Nothing else waits on Vault.** The api, the bots and every other service start and
+  run whether Vault is sealed or not; the console routes are the only reader of
+  `VAULT_ADDR`/`VAULT_TOKEN` in `src/`. `oshal-vault-0` is Ready while sealed. Its
+  probes accept sealed and uninitialized on purpose, so `helm --wait` completes and a
+  sealed pod is not restarted in a loop.
+
+Not decided yet, so the chart ships defaults and says so:
+
+- **TLS source.** `infra.vault.tls.enabled` defaults to `false`, the plain in-cluster
+  listener. When you turn it on, `infra.vault.tls.secretName` (default
+  `oshal-vault-tls`) names a `kubernetes.io/tls` Secret you create: `tls.crt`, `tls.key` and `ca.crt`, for a certificate that names
+  `oshal-vault`. The listener then serves it, the api dials `https://oshal-vault:8200`,
+  and it trusts that `ca.crt` (only that key is mounted into the api) through
+  `NODE_EXTRA_CA_CERTS`.
+- **Backup destination.** None. `data-oshal-vault-0` is an ordinary claim, like every
+  other one in the durability boundary below.
 
 ## Durability boundary
 
@@ -166,25 +218,26 @@ What persists, by the claim name `kubectl -n <ns> get pvc` shows:
 | `data-oshal-chromadb-0` | Chroma: RAG + swarm memory |
 | `data-oshal-redis-0` | Redis append-only file: the swarm mesh |
 | `data-oshal-arangodb-0` | ArangoDB: the graph tier |
+| `data-oshal-vault-0` | Vault's file storage (encrypted by Vault; unreadable until unsealed) |
 | `oshal-workspace` | the shared workspace, including staged store packages |
 | `oshal-api-output` | the api's `/app/output`, where its seeded config lives |
 | `models-oshal-ollama-0` | pulled local models (only with `infra.ollama.inCluster: true`) |
 | `oshal-relay-state` | the tailnet relay's node state (only with `relay.enabled: true`) |
 
-Vault has no claim at all: `server -dev` keeps everything in memory.
-
 | Out of scope here | Boundary switch | The tenant supplies, in the `api.envSecret` Secret |
 |---|---|---|
 | Durable Postgres: replication, backups, point-in-time restore | `infra.postgres.inCluster: false` | `DATABASE_URL`, `BOOTSTRAP_DATABASE_URL`, `BOT_DATABASE_URL`; chart-declared bots take theirs from `swarm.botDatabaseUrl` |
 | Durable Timescale for the trading + world series | `infra.tsdb.inCluster: false` | `TSDB_URL` |
-| A real Vault: persistent storage, sealing, a token that is not the dev root | `infra.vault.inCluster: false` | `VAULT_ADDR`, `VAULT_TOKEN` |
+| A Vault operated outside this release (HA, your own unseal custody and backups) | `infra.vault.inCluster: false` | `VAULT_ADDR` |
 | Backup and restore of `oshal-workspace`, `data-oshal-chromadb-0` and every other claim above | none: the chart ships no backup job, snapshot or restore path | nothing: these are ordinary PVCs, so protecting them belongs to whatever backs up volumes on your cluster |
 
 Turning a switch off removes that in-cluster workload and withholds exactly the
 env listed, so the Secret's value is the one the api reads. The chart has to
 withhold it rather than merely allow an override, because an explicit container
 `env` entry beats `envFrom`. From there the managed service's own durability
-(replicas, backups, restore drills) is the operator's, not the chart's.
+(replicas, backups, restore drills) is the operator's, not the chart's. The chart
+sets no Vault token for the api in either Vault posture; the token question is the
+[Vault runbook](#vault-runbook)'s.
 
 On the [Terraform](../../terraform/README.md) tenant path the module forwards only
 the Postgres switch (`postgres_in_cluster`, with the URLs through

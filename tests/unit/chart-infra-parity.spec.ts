@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the ADR-129 shared-service tier (chart 0.3.0). The defect it prevents is the one the operator caught by reading, not by testing: the chart shipped WITHOUT tsdb/arango/vault/code-server/diarization even though none of them carries a compose profile — they start on every default `up`, so k8s silently ran a degraded platform (no trading series, graph 503, no vault, no IDE, no local transcription). This derives the shared-service set FROM compose, so adding a profile-less infra service there without templating it here goes red. Also pins: every templated service's URL env is actually wired (a StatefulSet nothing points at is a no-op), profile-gated services stay OFF by default (ollama), code-server is never exposed by default (it runs --auth none over a read-write workspace — compose contains it by binding 127.0.0.1), and store-package staging lands before the api boots.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The Vault case pinned the 0.3.0 dev posture (`server -dev`, no PVC). Chart 0.5.0 replaces it (server mode, file storage on its own claim, no root token), so the case now pins the opposite: no -dev flag, no dev root token, a StatefulSet with a volumeClaimTemplate and file storage. The render-level guard, including the sealed/degraded path, is tests/unit/chart-vault-server.spec.ts.
  */
 
 import fs from 'fs';
@@ -162,10 +163,16 @@ describe('ADR-129 shared-service safety + package staging', () => {
     expect(cs.includes('nodePort:'), 'code-server must not template a nodePort by default').toBe(false);
   });
 
-  it('vault ships dev-mode without a PVC (it must not imply durability it lacks)', () => {
+  it('vault runs in server mode on its own claim, never -dev (the chart ships no root token)', () => {
+    // The 0.3.0 posture was `server -dev` with no PVC; chart 0.5.0 replaced it with server mode on
+    // file storage (the Helm half of "Production Vault hardening"). The full render-level guard
+    // is tests/unit/chart-vault-server.spec.ts; this keeps the template-level shape pinned here.
     const v = code(templateSources.find((t) => t.file === 'vault.yaml')!.text);
-    expect(v).toContain('"server", "-dev"');
-    expect(v.includes('PersistentVolumeClaim'), 'dev-mode vault is in-memory — a PVC would imply persistence it does not have').toBe(false);
+    expect(/["\s]-dev\b/.test(v), 'vault.yaml passes a -dev flag').toBe(false);
+    expect(v.includes('devRootToken'), 'vault.yaml still reads a dev root token').toBe(false);
+    expect(v).toMatch(/kind:\s*StatefulSet/);
+    expect(v).toContain('volumeClaimTemplates:');
+    expect(v).toMatch(/storage "file"/);
   });
 
   it('store packages stage BEFORE the api container starts, and fail loudly', () => {
