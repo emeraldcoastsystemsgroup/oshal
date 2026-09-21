@@ -19,6 +19,7 @@
  */
 
 import type { AppContext } from '@/app/composition/app-context';
+import { canonicalBotWorkspaceId } from '@/app/bot-node-request-scope';
 import type { BotNodeClient, BotNodeRequest, BotNodeResponse } from '@/features/agent-management';
 import type { TaskUsageSummary } from '@/shared/types';
 import { createChildLogger } from '@/shared/logger';
@@ -507,7 +508,9 @@ export async function executeBotOrInline(
     // cli as the authoritative provider (the demo operator's mounted login), hosted riding as
     // byoLlmConnection. See stampRemoteBrain; explicit caller choices pass through untouched.
     await stampRemoteBrain(ctx.pool, agentId, request);
-    return botClient.execute(agentId, request);
+    const remote = await botClient.execute(agentId, request);
+    await settleBotNodeCostTask(ctx, agentId, request, remote);
+    return remote;
   }
 
   const start = Date.now();
@@ -580,6 +583,81 @@ export async function executeBotOrInline(
     durationMs: Date.now() - start,
     taskId: request.taskId,
   };
+}
+
+/**
+ * @description Joins the bot node's own cost task to the ticket the calling thread belongs to, and
+ * stamps it terminal. CKR-19 part A.
+ *
+ * The bot node REWRITES the cost task id: it records every call under
+ * `${canonicalBotWorkspaceId(workspaceFolderId)}::${agentId}`, while `ticket_task_links` holds the
+ * THREAD's task id. Both rows are real - an `oshal_cost_events` row and a `chat_tasks` rollup are
+ * written for every interactive call - but the trace join and the ticket/app budget joins both read
+ * `ticket_task_links`, so neither could see the money. Measured on the box: 0 of 123 chat tickets
+ * showed an llm-call span, and the ticket- and app-scoped spend caps were blind to interactive spend
+ * entirely.
+ *
+ * The id is DERIVED here rather than read off the response, deliberately: `BotNodeResponse.taskId`
+ * is whatever the node chose to echo, and trusting it would make a remote node the authority over
+ * which ticket its spend lands on. The derivation mirrors bot-node-server.ts:369 (`workspaceTaskId =
+ * canonicalBotWorkspaceId(body.workspaceFolderId)`) and the handler's `${workspaceFolderId}::${agentId}`.
+ *
+ * Two things it deliberately does NOT do. It never fails the execution - this is telemetry, and a
+ * missing link must not lose a completed turn. And it links only to tickets the THREAD task already
+ * belongs to, so it can add an attribution but never invent one.
+ *
+ * A PROTECTED application execution is the one case the derivation cannot cover: the handler uses
+ * `protectedExecution.workspaceId` instead, which the controller does not hold here. Those calls are
+ * left unlinked rather than linked to a guess.
+ *
+ * @param ctx - App context; only its pool is used.
+ * @param agentId - Target bot, the second half of the sibling id.
+ * @param request - The dispatched request; its taskId is the thread, its workspaceFolderId the scope.
+ * @param response - The node's response, read only for the terminal status.
+ * @returns Resolves when the link and status write have been attempted.
+ */
+async function settleBotNodeCostTask(
+  ctx: AppContext,
+  agentId: string,
+  request: BotNodeRequest,
+  response: BotNodeResponse,
+): Promise<void> {
+  if (!ctx.pool) return;
+  let siblingTaskId: string;
+  try {
+    siblingTaskId = `${canonicalBotWorkspaceId(request.workspaceFolderId)}::${agentId}`;
+  } catch {
+    return; // an unusable workspace id is the node's problem to refuse, not ours to guess around
+  }
+  if (siblingTaskId === request.taskId) return; // nothing was rewritten; the existing link stands
+
+  try {
+    // One statement: for every ticket the thread's task is linked to, link the sibling too. The
+    // chat_tasks EXISTS guard is load-bearing - task_id carries a foreign key, and the node writes
+    // that row while it works, so a call that recorded no cost has no row to link.
+    await ctx.pool.query(
+      `INSERT INTO ticket_task_links (ticket_id, task_id, role)
+       SELECT l.ticket_id, $2, 'swarm-execution'
+         FROM ticket_task_links l
+        WHERE l.task_id = $1
+          AND EXISTS (SELECT 1 FROM chat_tasks c WHERE c.task_id = $2)
+       ON CONFLICT DO NOTHING`,
+      [request.taskId, siblingTaskId],
+    );
+    // persistCostEvent hard-codes 'processing' and nothing ever closed these, so they accumulated
+    // as permanently in-progress tasks (683 of them before this landed, explicitly not backfilled).
+    // Only a row still sitting in 'processing' is touched, so an operator or a later write wins.
+    await ctx.pool.query(
+      `UPDATE chat_tasks SET status = $2, updated_at = NOW()
+        WHERE task_id = $1 AND status = 'processing'`,
+      [siblingTaskId, response.success === false ? 'failed' : 'completed'],
+    );
+  } catch (error) {
+    logger.warn(
+      { err: error as Error, agentId, taskId: request.taskId, siblingTaskId },
+      'Bot-node cost task could not be joined to its ticket - execution unaffected',
+    );
+  }
 }
 
 function firstUsageModel(usage?: TaskUsageSummary): string | null {
