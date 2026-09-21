@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted the machine-write HTTP driver infrastructure and the five final proof-debt drivers from the class-gate spec so both files remain below the repository code-line decomposition threshold.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Name deterministic test credentials as placeholders so the fail-closed repository secret scanner can distinguish fixtures from deployable secret material.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Prove CORE-05 live verification preserves one operator PAT owner across its loopback message request and into the owner-scoped chat-task write seam.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Drive the ADR-100 Test Lab attributed-ingest fixture: a real HTTP request through its strict service-secret gate, observing the connection identity and the owner column at the consent and ask INSERTs. A valid secret makes the server's global stamp an operator over FORCE-RLS ambient tables, so the proof that matters is that the router re-entered the request as the caller's own non-operator subject first.
  */
 
 import crypto from 'node:crypto';
@@ -31,6 +32,10 @@ import { createRemoteClientRoutes } from '@/app/routes/remote-client-routes';
 import { createCliTokenAuthMiddleware, generateCliToken } from '@/app/routes/cli-token-routes';
 import { createLocalAuthRoutes } from '@/app/routes/local-auth-routes';
 import { createInstallVerificationRoutes } from '@/app/routes/install-verification-routes';
+import {
+  AMBIENT_FIXTURE_VOICE_LABEL,
+  createAmbientTestFixtureRoutes,
+} from '@/app/routes/ambient-test-fixture-routes';
 import { createMessageRoutes } from '@/app/routes/message-routes';
 import { authorizeBotNodeExecutionCall } from '@/app/bot-node-request-auth';
 import { runBotNodeExecutionWithSystemIdentity } from '@/app/bot-node-request-identity';
@@ -425,6 +430,97 @@ async function driveInstallVerificationIdentity(): Promise<WriteObservation[]> {
 }
 
 /** Machine-write proofs extracted from the class-gate spec to keep it below the file cap. */
+
+/** The fixture profile/segment ids the ambient driver pins, so the observed owner is unambiguous. */
+const AMBIENT_FIXTURE_DRIVER_OWNER = 'auth0|ambient-fixture-driver-owner';
+const AMBIENT_FIXTURE_DRIVER_PROFILE = '2f9d6c71-0a1e-4a7b-9d3c-6b0f5e8a1c42';
+const AMBIENT_FIXTURE_DRIVER_SEGMENT = 'seg-ambient-fixture-driver';
+
+/** Answers the two INSERTs the real enrichBatch needs to persist an ask; everything else is empty. */
+function ambientFixtureDriverRows(sql: string): { rows: unknown[]; rowCount: number } {
+  if (/INSERT INTO ambient_utterance_enrichment/i.test(sql)) {
+    return { rows: [{ segment_id: AMBIENT_FIXTURE_DRIVER_SEGMENT }], rowCount: 1 };
+  }
+  if (/INSERT INTO ambient_person_asks/i.test(sql)) {
+    return { rows: [{ ask_id: 'ambient-fixture-driver-ask' }], rowCount: 1 };
+  }
+  return { rows: [], rowCount: 0 };
+}
+
+/** Serves a router behind an injected OIDC session, the way requiresAuth leaves the request. */
+async function serveWithSession(
+  mount: string,
+  router: express.Router,
+  sub: string | null,
+): Promise<{ url: string; close: () => Promise<void> }> {
+  const app = express();
+  app.use(express.json());
+  app.use((req, _res, next) => {
+    if (sub) (req as express.Request & { oidc?: unknown }).oidc = { user: { sub }, isAuthenticated: () => true };
+    next();
+  });
+  app.use(mount, router);
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = (server.address() as { port: number }).port;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  };
+}
+
+/** Collaborator doubles OUTSIDE the identity boundary; the router, its gate and enrichBatch are real. */
+function ambientFixtureDriverCollaborators(): Parameters<typeof createAmbientTestFixtureRoutes>[1] {
+  return {
+    service: {
+      getSettings: async () => ({ timeZone: 'UTC' }) as never,
+      appendAttributedSegments: async () => ({
+        accepted: 1,
+        duplicates: 0,
+        segments: [{ segmentId: AMBIENT_FIXTURE_DRIVER_SEGMENT, text: 'fixture line', capturedAt: new Date() }],
+      }) as never,
+    },
+    store: {
+      identify: async () => ({
+        profile: { profileId: AMBIENT_FIXTURE_DRIVER_PROFILE }, similarity: 1, created: true,
+      }) as never,
+      assignProfile: async () => ({ assignment: { customName: AMBIENT_FIXTURE_VOICE_LABEL } }) as never,
+    },
+  };
+}
+
+/**
+ * @description Drives the ADR-100 Test Lab attributed-ingest fixture over real HTTP through its own
+ * strict service-secret gate, and observes the identity on the connection at the two owner-scoped
+ * INSERTs it performs (the consent ledger and the ask ledger). A valid secret makes the server's
+ * global stamp an OPERATOR, so the assertion that matters is that the router replaced it with the
+ * caller's own non-operator subject before either write.
+ * @returns One observation per owner-scoped INSERT the real handler reached.
+ */
+async function driveAmbientTestFixtureIdentity(): Promise<WriteObservation[]> {
+  vi.stubEnv('SWARM_SERVICE_SECRET', SERVICE_USER_PLACEHOLDER);
+  const observations: WriteObservation[] = [];
+  const pool = capturingPool(
+    observations,
+    ambientFixtureDriverRows,
+    /INSERT INTO (ambient_speaker_consents|ambient_person_asks)/i,
+    0,
+  );
+  const router = createAmbientTestFixtureRoutes({ pool } as never, ambientFixtureDriverCollaborators());
+  const mount = '/api/jarvis/ambient/test-fixture';
+  const { url, close } = await serveWithSession(mount, router, AMBIENT_FIXTURE_DRIVER_OWNER);
+  try {
+    const body = JSON.stringify({ token: 'drivertoken1' });
+    const headers = { 'content-type': 'application/json', 'x-service-secret': SERVICE_USER_PLACEHOLDER };
+    const response = await fetch(`${url}${mount}/attributed-line`, { method: 'POST', headers, body });
+    await requireHttpStatus(response, 201, 'ambient fixture identity probe');
+    await waitForObservation(observations);
+  } finally {
+    await close();
+  }
+  return observations;
+}
+
 export const MACHINE_WRITE_IDENTITY_RESIDUAL_DRIVERS: Record<string, MachineWriteIdentityDriver> = {
   'a2a-rpc': driveA2aRpcIdentity,
   'remote-client-plane': driveRemoteClientIdentity,
@@ -432,4 +528,5 @@ export const MACHINE_WRITE_IDENTITY_RESIDUAL_DRIVERS: Record<string, MachineWrit
   'cli-token-auth': driveCliTokenIdentity,
   'local-auth': driveLocalAuthIdentity,
   'install-verification-live': driveInstallVerificationIdentity,
+  'ambient-test-fixture': driveAmbientTestFixtureIdentity,
 };

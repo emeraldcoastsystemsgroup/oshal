@@ -14,6 +14,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Inventory connector-oauth-ceremony.ts, which the 2026-08-06 connectors-routes decomposition split out. It carries the Meta signed_request HMAC check but no database access at all, so it takes the webhook-ingress-core shape: no-owner-scoped-write, with the deletion identity left where the DELETE lives. Discovery caught this the way it is meant to — the guard went red the moment a machine-auth surface appeared without an entry.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Inventory artifact-exchange-routes.ts (ADR-139). It authenticates a machine caller over the service rail and threads that sub explicitly, but owns no owner-scoped write: the handle ledger and destination registry are in-process Maps, the storage built-in writes the caller's own filesystem path, and the email built-in only reads their connector token. Same no-owner-scoped-write shape as connector-oauth-ceremony-core.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Inventory guest-seed-orchestrator.ts (ADR-144 guest-seed contract). Discovery caught it the moment the guest-seed work landed a machine-auth surface under src/app/routes with no entry. It is the inventory's first OUTBOUND caller rather than an inbound route: nothing authenticates TO it, it PRESENTS the service rail on the loopback and stamps x-oshal-user-sub = the fresh guest sub. It owns no database access at all, so it takes the no-owner-scoped-write shape - but it is precisely the place the accountable identity for every downstream app seed is established, which is the question this inventory exists to answer.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | Inventory ambient-test-fixture-routes.ts (ADR-100 Test Lab attributed-ingest fixture). Discovery caught it the moment the router landed: a strict requireServiceSecret over eight owner-scoped ambient/person-model tables. It is caller-scoped by construction — the owner comes only from the validated OIDC session and the handler runs inside runWithRequestIdentity(isOperator:false), so the operator stamp a valid secret earns from the global middleware never reaches the writes.
  */
 
 /**
@@ -664,6 +665,36 @@ export const MACHINE_WRITE_INVENTORY: readonly MachineWriteEntry[] = [
       + 'that a missing secret or port no-ops instead of proceeding identity-less. Same shape as '
       + 'artifact-exchange-core: the write that ultimately happens belongs to the DESTINATION app, behind '
       + 'the gate that app owns, under the sub stamped here.',
+  },
+  {
+    id: 'ambient-test-fixture',
+    entryPoint: 'POST /api/jarvis/ambient/test-fixture/attributed-line',
+    file: 'src/app/routes/ambient-test-fixture-routes.ts',
+    auth: 'service-secret',
+    ownerScopedTables: [
+      'ambient_speaker_profiles', 'ambient_speaker_assignments', 'ambient_transcript_segments',
+      'ambient_speaker_consents', 'ambient_utterance_enrichment', 'ambient_person_asks',
+      'ambient_person_topic_daily', 'ambient_person_relations',
+    ],
+    identity: {
+      kind: 'caller-scoped',
+      via:
+        'runWithRequestIdentity({ sub: req.oidc.user.sub, isOperator: false }) wraps the whole handler '
+        + 'before any collaborator runs (fixtureRoute in ambient-test-fixture-routes.ts)',
+    },
+    behaviorallyProven: true,
+    note:
+      'The ADR-100 Test Lab attributed-ingest fixture. It is the class textbook case: a VALID service '
+      + 'secret makes the global stamp in server.ts isOperator:TRUE, which on these FORCE-RLS ambient '
+      + 'tables is exactly the cross-tenant reach this inventory exists to stop, so the router '
+      + 're-enters the request as the caller with isOperator:false before it touches anything. It also '
+      + 'narrows the blast radius at the source: the owner is read ONLY from the validated OIDC session '
+      + '(callerSub reads req.oidc.user.sub and nothing else), never from a body, query or forwarded-sub '
+      + 'header, so unlike the trusted-service-user rail a secret holder cannot choose whose transcript '
+      + 'store to seed. The strict requireServiceSecret lives INSIDE the router, so an ordinary '
+      + 'signed-in session is refused 401 and an unconfigured deployment is refused 503. Driver: '
+      + 'driveAmbientTestFixtureIdentity observes the real handler at the ambient_speaker_consents and '
+      + 'ambient_person_asks INSERTs and checks both the connection identity and the owner column.',
   },
 ];
 

@@ -199,6 +199,7 @@
  * 183 | maintainer@emeraldcoastsystemsgroup.com   | ADR-145 D5: the swarm-apps router receives recentAppTasks, the kernel-owned jarvis_tasks read behind a status card for an app that declares no summary: probe. The router owns no pool, so the composition root binds it here. Same-line wiring; no new code line in this file.
  * 184 | maintainer@emeraldcoastsystemsgroup.com | Resolve artifact destination tiers for the complete verified principal.
  * 185 | maintainer@emeraldcoastsystemsgroup.com   | Install the LLM provider switch snapshot (migration 147, "a bot's LLM provider is a row in a table") once the DB bootstrap completes: one awaited read of oshal_bot_provider_switch under the SYSTEM identity, then the periodic refresh. Independent of the autoload chain; a failed read logs and leaves the registry behaviour in place.
+ * 186 | maintainer@emeraldcoastsystemsgroup.com   | Mounted /api/jarvis/ambient/test-fixture (requiresAuth + a strict in-router service-secret gate) ahead of the general ambient routers. POST /api/jarvis/ambient/segments refuses speaker ids, so the AI Test Lab could only ever prove the UNATTRIBUTED path; this router seeds one attributed line for a stable per-owner fixture voice so asks, per-person profiles and consent are provable without a microphone.
  */
 
 require('dotenv').config();
@@ -256,6 +257,7 @@ import {
   registerLegacyEngineeringCompatRoutes,
   createAmbientListeningRoutes,
   createAmbientSpeakerRoutes,
+  createAmbientTestFixtureRoutes,
 } from './routes';
 import { createVerificationRoutes } from './routes/verification-routes';
 import { createInstallVerificationRoutes } from './routes/install-verification-routes';
@@ -1403,6 +1405,11 @@ function createApp(): express.Application {
   startAmbientEnrichmentRuntime(ctx);
   // ADR-100 Phase 2: daily person-model retention purge — always on (pure SQL, no LLM).
   startPersonModelMaintenanceRuntime(ctx.pool);
+  // ADR-100 Test Lab fixture: the only attributed-ingest path outside the trusted audio pipeline.
+  // Mounted BEFORE the general ambient routers, and fail-closed twice over — requiresAuth here plus
+  // a strict X-Service-Secret inside the router, so a normal signed-in session cannot reach it and a
+  // secret holder can only ever seed the caller's own store.
+  app.use('/api/jarvis/ambient/test-fixture', requiresAuth, createAmbientTestFixtureRoutes(ctx));
   app.use('/api/jarvis/ambient', requiresAuth, createAmbientSpeakerRoutes(ctx));
   app.use('/api/jarvis/ambient', requiresAuth, createAmbientListeningRoutes(ctx));
   // Morning brief claims ONLY GET /brief + /brief.html with per-route user auth and passes every
