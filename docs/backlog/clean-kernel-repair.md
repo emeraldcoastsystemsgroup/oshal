@@ -22,6 +22,23 @@ severity, and one was overturned outright.
 This file is the queue. It replaces the repair spec's own wave/sizing tables, which are superseded by
 the measurements below.
 
+## Where the queue stands, 2026-09-20
+
+**Every item is shipped or explicitly blocked on something that is not work.** Nothing here is waiting
+on a decision any more.
+
+| state | items |
+|---|---|
+| **Shipped** | CV-1, CV-2, CV-3, CV-4, CKR-1 … CKR-12, CKR-13 (a)(b), CKR-14 … CKR-19 |
+| **Closed as a recorded decision** | CKR-20 — accepted, with the two triggers that reverse it and the exposure demonstrated rather than assumed |
+| **Blocked on the live box, not on work** | CKR-13 (c) — gated on a ticket count reaching 0; re-measured 2026-09-20, still 5. CKR-19 done-when (A) and (B) — two live readings that can only be taken after a deploy and one interactive turn. |
+| **Overturned** | R3.2 |
+
+**Named separately rather than folded in, as the entries instruct:**
+[workspace-root-remaining-vocabularies.md](./workspace-root-remaining-vocabularies.md) (the `any-bot/`
+vocabulary and two compose files) and
+[spec-database-gate-vs-negative-control.md](./spec-database-gate-vs-negative-control.md) (resolved).
+
 | | count |
 |---|---|
 | claims assessed | 21 |
@@ -832,6 +849,10 @@ on 2026-09-19 it returns **5**:
 Three of them are parked at a gate right now. Retiring the legacy read would strand exactly those —
 they are the tickets it exists for. The fallback stays, and `readResumePoint` flags when it fired so
 the count can be watched rather than guessed at. Re-run the query before revisiting this.
+
+**Re-measured 2026-09-20 — still 5.** The query is the gate and the gate still says no, so the
+fallback stays and this clause stays open. Nothing about it is stale: it is blocked on tickets
+moving, not on work. Re-run it again before revisiting.
 
 **Still out of scope, unchanged:** whether position becomes a first-class column or a distinct
 in-flight status. And the consequence this entry records but does not fix — a graph ticket whose
