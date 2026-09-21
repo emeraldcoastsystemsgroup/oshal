@@ -23,6 +23,7 @@
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | Inject the work-item repository into the durable settlement publisher so landing persistence is acknowledged by the journal outbox rather than by the lossy compatibility mesh consumer.
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | Extract mesh task validation and owner-scoped injection checks into a focused module, keeping this route file below the 1,000-physical-line governance limit.
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | Preserve exact device owner and trusted machine-chat subjects during reassignment, node-token rotation, and detached chat identity; empty still clears/falls back, but case and whitespace no longer rebind work or credentials to another principal.
+ * 21 | maintainer@emeraldcoastsystemsgroup.com   | The device LIST now tells a session caller who each computer is bound to. A node's enrolment is judged on coming up OWNED, and the only cockpit surface that lists computers showed name, status and heartbeat - so a node that enrolled and a node whose enrolment silently left it bound to nobody rendered identically, and the one thing that decides whether work reaches it was invisible. Each record a SESSION caller receives now carries `ownership` (describeDeviceOwnership against the verified caller): viewer-relative, labelled, and carrying no subject id. Machine callers - the node daemon and the platform dispatchers - keep the exact record shape they parse today.
  */
 
 import { randomUUID } from 'crypto';
@@ -46,6 +47,7 @@ import {
 } from '@/features/agent-management';
 import {
   createRemoteClientRateLimiter,
+  describeDeviceOwnership,
   sharedSecretRetired,
   nodeTokenBindingMatches,
   PostgresRemoteTaskJournalRepository,
@@ -560,11 +562,25 @@ async function handleRegisterClient(req: Request, res: Response, context: Remote
 /**
  * @description Lists registered remote clients. A device list is a list of real people's computers,
  * so session callers see only the ones they may act on (owner, or operator = whole fleet). Machine
- * callers — the node daemon and the platform dispatchers — still need the full fleet to route work.
+ * callers — the node daemon and the platform dispatchers — still need the full fleet to route work,
+ * and get the record shape they have always parsed. A session caller additionally gets `ownership`:
+ * the viewer-relative binding, so the cockpit can show that an enrolled computer came up OWNED.
  */
 async function handleListClients(req: Request, res: Response): Promise<void> {
   const all = registry.listClients();
-  const clients = isMachineCaller(req) ? all : all.filter((c) => canAccessResource(req, c.ownerSub ?? null));
+  if (isMachineCaller(req)) {
+    res.json({ clients: all, count: all.length });
+    return;
+  }
+
+  // A session caller is a person looking at a list of computers, and the one fact that decides
+  // whether a freshly enrolled node actually works - is it bound to somebody? - was not in it. The
+  // description is derived HERE, from the verified caller, so the surface never compares subject ids
+  // (it is not given one) and can never answer differently from the gates above.
+  const caller = getCaller(req);
+  const clients = all
+    .filter((c) => canAccessResource(req, c.ownerSub ?? null))
+    .map((c) => ({ ...c, ownership: describeDeviceOwnership(caller, c) }));
   res.json({ clients, count: clients.length });
 }
 

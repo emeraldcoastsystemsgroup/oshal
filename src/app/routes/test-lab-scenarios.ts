@@ -74,6 +74,7 @@
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | Attached the fallback-ORDER guards to the provider-switch regressionTests: provider-fallback-chain, antigravity-cli-harness and bot-node-config-bootstrap. Migration 148 added fallback_order to the same row the scenario already reads, and its guards shipped registered nowhere - a test file on disk is not Test Lab registration.
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | Attached the database-less completion floor guard (CKR-8): a bot node with no database repository resolved to zero tools including attempt_completion, so it could not say it was finished. The Helm federated bot-pod topology ships database-less on purpose.
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | Registered the messaging-channels card (CHANNEL_SCENARIOS): a read-only step over GET /api/channels that checks the surface reports which inbound channels this deployment has wired and which identities are bound to the caller. Guard: tests/unit/test-lab-channel-registration.spec.ts.
+ * 25 | maintainer@emeraldcoastsystemsgroup.com   | Registered the remote-node binding card (DEVICE_SCENARIOS): a read-only step over GET /api/remote-clients that checks the surface can say, per computer, whether it finished enrolling and who it is bound to. A node bound to nobody heartbeats like a working one and receives no owner-scoped work, and nothing in the cockpit used to say so. Guard: tests/unit/device-ownership-visible.spec.ts.
  * @module test-lab-scenarios
  */
 
@@ -89,6 +90,7 @@ import { AMBIENT_SCENARIOS } from './test-lab-ambient-scenarios';
 import { DATA_MODEL_SCENARIOS } from './test-lab-data-model-scenarios';
 import { NOTIFICATION_SCENARIOS } from './test-lab-notification-scenarios';
 import { CHANNEL_SCENARIOS } from './test-lab-channel-scenarios';
+import { DEVICE_SCENARIOS } from './test-lab-device-scenarios';
 import { renderCatalogVisual, VISUAL_CATALOG } from './test-lab-visual-catalog';
 
 const SELF_PORT = process.env.PORT || '5000';
@@ -251,6 +253,7 @@ export const SCENARIOS: Scenario[] = [
   ...DATA_MODEL_SCENARIOS,
   ...NOTIFICATION_SCENARIOS,
   ...CHANNEL_SCENARIOS,
+  ...DEVICE_SCENARIOS,
   // ── Rich visuals — every kind rendered deterministically through the real renderer ──────────
   ...VISUAL_CATALOG.map((entry): Scenario => ({
     id: `visual-${entry.kind}`,
