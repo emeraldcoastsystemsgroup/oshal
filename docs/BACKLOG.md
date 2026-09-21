@@ -881,6 +881,7 @@ including across a directory belonging to a different owner. Full reasoning and 
 
 ### Rides map and fare follow-ups
 - **Remaining:** install the merged [`rides`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/rides) package; decide optional OSRM/Valhalla and Google Maps billing paths; make geocode/tile configuration operator-owned and the normalized-address cache durable.
+- **Decision (operator, 2026-09-20):** (1) keyless routing = straight-line x 1.3, ACCEPTED, to be labelled as an estimate in the surface; `OSHAL_ROUTING_URL` is to be built as an optional override so a routing engine can be plugged in later without a code change; (2) maps = OSM only -- no Google browser key and no Google billing; (3) install `rides` 1.3.0 on the box -- APPROVED, after the 2026-09-20 deploy lands. The remaining code (durable geocode cache, configurable geocoder endpoint) follows from these and is actionable. (PM recommended exactly this; the operator agreed.)
 - **Done when:** the live package serves vendored Leaflet and reports `provider: "osm"`; keyless routing is either backed by `OSHAL_ROUTING_URL` or explicitly accepted as straight-line-plus-factor; any Google browser key is referrer-restricted; restarts do not repeat cached geocodes.
 
 ### Guest Jarvis turn and public demo card
