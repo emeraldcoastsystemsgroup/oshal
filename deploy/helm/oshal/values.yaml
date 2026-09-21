@@ -4,6 +4,7 @@
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — defaults for the MAIN role (controller + infra + relay). Bot-pod overrides in values-bot-pod.example.yaml. Trust rule: bot-pod clusters NEVER receive DATABASE_URL.
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | 0.2.0 (ADR-129) — codeless-install defaults: image pulls ghcr.io/emeraldcoastsystemsgroup/oshal-bot (was a CHANGE-ME under a retired image name); relay + Kyma APIRule default OFF (generic clusters have neither headscale nor the APIRule CRD — both stay as opt-ins); api Service gains type/nodePort; LLM defaults follow the codex fleet floor (openai-codex / gpt-5.5 / CODEX_REASONING_EFFORT, compose SEQ-13 parity); fleet presets kernel|full|custom with the lists GENERATED from docker-compose.oshal-local.yml by scripts/generate-chart-fleet.mjs (guard: tests/unit/chart-fleet-parity.spec.ts); bots connect as oshal_bot (K5), overridable via swarm.botDatabaseUrl.
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | swarm.extraEnv (default {}): non-secret env rendered into the oshal-shared-env ConfigMap, so it reaches EVERY runtime (the api and every bot envFrom it). Found on the first Docker Desktop install (2026-09-21): compose sets platform switches such as APP_PACKAGE_DYNAMIC_ROUTES=1 for every container and the chart had no way to, so every ADR-149 protected store app failed activation closed. Secrets never go here (api.envSecret / botDefaults.envSecret). A key the chart already sets in that ConfigMap fails the render (templates/shared-env-configmap.yaml), and explicit per-workload env still wins over it. Guard: tests/unit/chart-shared-env-extra.spec.ts.
 #
 # Defaults model the compose stack (docker-compose.oshal-local.yml) with DNS parity:
 # Services are named oshal-redis / oshal-db / oshal-chromadb / oshal-api / oshal-local-api
@@ -216,7 +217,9 @@ swarm:
   # target — schedule every pod together; multi-node needs an RWX StorageClass).
   workspaceStorage: 5Gi
   # Non-secret env for EVERY runtime (api + bots), rendered into the shared ConfigMap.
-  # Secrets never go here — use api.envSecret / botDefaults.envSecret.
+  # Secrets never go here — use api.envSecret / botDefaults.envSecret. A key the chart
+  # already sets in that ConfigMap (REDIS_URL, LOG_LEVEL, ...) fails the render: set
+  # it through the chart's own value instead.
   extraEnv: {}
 
 # ── Bots (both roles) ─────────────────────────────────────────────────────────

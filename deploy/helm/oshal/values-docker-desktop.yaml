@@ -2,7 +2,7 @@
 # -----------------------------------------------------------------------------
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
-# 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — overlay for Docker Desktop's built-in Kubernetes (kind provisioning) running a locally built image and the full compose-parity fleet. Found on the first install: (a) the kind node does not see the host engine's images, so the locally built oshal-bot is side-loaded (see below) and never pulled — GHCR latest is only published by a manual workflow and goes stale; (b) Docker Desktop does not publish NodePorts to Windows but DOES map LoadBalancer services to localhost:<port>; (c) the chart's 256Mi-per-bot request cannot schedule 20 bots on a ~7.6 GiB node while compose bots idle at ~64 MiB.
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — overlay for Docker Desktop's built-in Kubernetes (kind provisioning) running a locally built image and the full compose-parity fleet. Found on the first install: (a) the kind node does not see the host engine's images, so the locally built oshal-bot is side-loaded (see below) and never pulled — GHCR latest is only published by a manual workflow and goes stale; (b) Docker Desktop does not publish NodePorts to Windows but DOES map LoadBalancer services to localhost:<port>; (c) the chart's 256Mi-per-bot request cannot schedule 21 bots on a ~7.6 GiB node while compose bots idle at ~64 MiB.
 #
 # Install (identity is per operator — pass it, never commit it):
 #   docker save oshal-bot:latest | docker exec -i desktop-control-plane ctr -n k8s.io images import --all-platforms -

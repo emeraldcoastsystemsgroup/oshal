@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for swarm.extraEnv and the Docker Desktop overlay's use of it. On the first Docker Desktop Kubernetes install (2026-09-21) every ADR-149 protected store app failed activation closed with "Protected application routes require APP_PACKAGE_DYNAMIC_ROUTES=1": compose sets that switch by default and the chart had no way to set it, so the apps' bots were never registered. The fix renders swarm.extraEnv into the oshal-shared-env ConfigMap, which the api and every bot envFrom. This renders the REAL chart for both roles (main and bot-pod) and requires a --set key to arrive in that ConfigMap as a string and to reach every oshal runtime; and it reads the flag's NAME and its accepted values out of the platform source that raises that refusal, rather than copying either, so renaming the flag in src/ without the overlay following goes red here.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | swarm.extraEnv shares a data map with the keys the chart sets itself, and a clash used to render a duplicate data key (last-wins for one client, an apply error for another). For both roles this now reads every key the default render emits, sets ALL of them through extraEnv in one render, and requires the chart to refuse it and name each clashing key. A key the chart emits only while its service is in-cluster (ARANGO_URL) must stay settable through extraEnv once that service is off.
  */
 
 import fs from 'node:fs';
@@ -109,5 +110,28 @@ describe('the Docker Desktop overlay turns on the switch protected apps need', (
     // An explicit container env entry beats envFrom: one set to anything else would switch it back off.
     if (explicit) expect(flag.accepted).toContain(explicit.value);
     expect((api.envFrom ?? []).map((e: { configMapRef?: { name: string } }) => e.configMapRef?.name)).toContain(SHARED_ENV);
+  }, RENDER_TIMEOUT_MS);
+});
+
+describe('swarm.extraEnv cannot redefine a key the chart owns', () => {
+  // extraEnv is appended to the same data map as the chart's own keys. Before the check, a clash
+  // rendered a duplicate data key: last-wins for one client, an apply error for another.
+  it.each(['main', 'bot-pod'])('role=%s: every chart-owned key set through extraEnv fails the render, each one named', (role) => {
+    const owned = Object.keys(sharedEnv(helmTemplate({ sets: [`role=${role}`] })));
+    expect(owned.length, `role=${role}: the default render owns too few keys - the read is broken`).toBeGreaterThan(10);
+    let message = '';
+    try {
+      helmTemplate({ sets: [`role=${role}`, ...owned.map((k) => `swarm.extraEnv.${k}=guard-clash`)] });
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message, `role=${role}: extraEnv redefining chart-owned keys rendered without the chart refusing it`).toMatch(/chart-owned/);
+    const unnamed = owned.filter((k) => !new RegExp(`swarm\\.extraEnv\\.${k}(?![A-Za-z0-9_])`).test(message));
+    expect(unnamed, 'the refusal does not name every clashing key').toEqual([]);
+  }, RENDER_TIMEOUT_MS);
+
+  it('a key the chart owns only while its service is in-cluster stays settable once that service is off', () => {
+    const objects = helmTemplate({ sets: ['infra.arangodb.inCluster=false', 'swarm.extraEnv.ARANGO_URL=http://graph.example:8529'] });
+    expect(sharedEnv(objects).ARANGO_URL).toBe('http://graph.example:8529');
   }, RENDER_TIMEOUT_MS);
 });
