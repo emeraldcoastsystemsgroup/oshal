@@ -6,6 +6,7 @@
   1 | maintainer@emeraldcoastsystemsgroup.com   | Native PowerShell port of scripts/install.sh for the one-click Windows installer: preflight -> .env seed (mints REMOTE_CLIENT_SHARED_SECRET) -> build -> up -> health -> verify -> firewall -> print join code.
   2 | maintainer@emeraldcoastsystemsgroup.com   | Added the resource doctor, minting of the three fail-closed secrets (JWT/ENCRYPTION/SWARM_SERVICE), -Dev hot-swap mode, and -OffLan (Headscale pre-auth key packed into a v2 join code).
   3 | maintainer@emeraldcoastsystemsgroup.com   | Fixed a hard parse error that made the whole Windows installer dead-on-arrival: `$env$env:FORCE_LLM_PROVIDER` (doubled sigil) -> `$env:FORCE_LLM_PROVIDER`, so zero-keys mode sets noop as intended. Dropped the stale `--profile little-monsters` compose arg (profile left with the ADR-085 store carve; matches scripts/install.sh's empty PROFILE_ARGS).
+  4 | maintainer@emeraldcoastsystemsgroup.com   | The cockpit firewall rule is named for the product as it is called today, and an upgrade renames it in place (operator decision 2026-09-20). Windows matches firewall rules by DisplayName, so simply changing the string would have left an upgraded box carrying two rules for the same port -- the old one still advertising the retired standalone name. Open-CockpitFirewallPort now looks the old rule up once, removes it, then creates the oshal-named one, which is the only place in the installer that still knows the old name.
 
   installer/lib/install-swarm.ps1 -- make THIS machine the swarm controller.
 
@@ -371,12 +372,25 @@ controller, so we say exactly that instead of failing the whole install.
 #>
 function Open-CockpitFirewallPort {
     Write-Step "Opening the firewall for other machines"
-    $ruleName = "Open Swarm cockpit ($CockpitPort)"
+    $ruleName = "oshal cockpit ($CockpitPort)"
+    # RETIRED-NAME MIGRATION -- rename in place on upgrade (operator decision, 2026-09-20).
+    # A box installed before the rename carries this rule under the retired standalone product
+    # name, and Windows matches firewall rules by DisplayName: creating the oshal-named one
+    # without removing that would leave the machine with TWO rules opening the same port, one
+    # of them advertising a name the product no longer uses. This is the ONLY place that still
+    # knows the old name, it is consumed by a REMOVE, and nothing reads it afterwards -- so the
+    # dual-name lookup does not survive past this one-time upgrade.
+    $legacyRuleName = "Open Swarm cockpit ($CockpitPort)"
     if (-not (Test-Administrator)) {
         Write-Warn "Not running as Administrator -- skipped the firewall rule."
         Write-Info "Other machines will not reach this swarm until you allow TCP $CockpitPort inbound."
         Write-Info "To do it later, right-click Install-OpenSwarm.bat and choose 'Run as administrator'."
         return
+    }
+    $legacy = Get-NetFirewallRule -DisplayName $legacyRuleName -ErrorAction SilentlyContinue
+    if ($legacy) {
+        Remove-NetFirewallRule -DisplayName $legacyRuleName -ErrorAction SilentlyContinue
+        Write-Info "Removed the cockpit firewall rule an earlier install left under the old name."
     }
     $existing = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
     if ($existing) { Write-Ok "Firewall rule already present"; return }

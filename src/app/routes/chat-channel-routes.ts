@@ -22,6 +22,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — Telegram inbound channel: public webhook (secret-verified) → link resolution / one-time-code linking → dispatch to the Jarvis bot → reply in-channel; plus auth-gated link/list/unlink/register-webhook endpoints for the cockpit Channels card.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: stop forwarding connector credentials into the Jarvis/model request; retain exact linked-owner identity and BYO inference selection only.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | SMS is a second channel on the same identity store: mint/unlink endpoints for provider 'sms'. The inbound webhook (POST /api/sms/inbound) redeems the minted code when the user texts LINK <code>, which is the SMS equivalent of Telegram's /start deep link — without a way to MINT one, the caller-scoped inbound dispatch had no binding to resolve. The number is normalized on both sides so one phone cannot become two identities.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The two replies an unlinked chat gets — the greeting and the linking prompt — name the product as it is called today. They were the retired standalone form, and they are the only product name a Telegram user ever sees, read before that person has any other context for what they are talking to.
  *
  * @module chat-channel-routes
  */
@@ -108,7 +109,7 @@ async function handleInbound(ctx: AppContext, links: ChannelLinkService, msg: In
   const link = await links.resolveLink(msg.provider, msg.channelUserId);
   if (!link) {
     await sendTelegramMessage(msg.chatId,
-      'This chat isn\'t linked to an Open Swarm account yet. Open your cockpit → Channels → Connect Telegram to get a one-time link.');
+      'This chat isn\'t linked to an oshal account yet. Open your cockpit → Channels → Connect Telegram to get a one-time link.');
     return;
   }
   await sendTelegramTyping(msg.chatId);
@@ -125,7 +126,7 @@ async function handleInbound(ctx: AppContext, links: ChannelLinkService, msg: In
 async function handleStart(links: ChannelLinkService, msg: InboundChannelMessage, code?: string): Promise<void> {
   if (!code) {
     await sendTelegramMessage(msg.chatId,
-      'Welcome to Open Swarm. To connect this chat to your account, open your cockpit → Channels → Connect Telegram and tap the link.');
+      'Welcome to oshal. To connect this chat to your account, open your cockpit → Channels → Connect Telegram and tap the link.');
     return;
   }
   const sub = await links.redeemLinkCode(msg.provider, code, msg.channelUserId, msg.chatId, msg.displayName);
