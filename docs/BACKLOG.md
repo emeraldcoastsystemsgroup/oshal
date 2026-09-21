@@ -1198,6 +1198,19 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### The nightly gate has been red for 46 consecutive runs — trivy is a budget decision, not a fix
 - **Remaining:** [BUG-22](operations/bug-log.md) recorded twelve straight failed nights on 2026-08-13; the streak is now **46 runs, first failure 2026-07-27**, and `trivy` is red in nearly all of them. The gate scans a `docker save` tarball of the freshly built image and fails on its findings, so "fix trivy" means one of three things and only the operator can choose: accept a documented CVE budget (severity floor, allowlisted CVE ids with expiry dates), rebase the image onto a base with fewer findings, or downgrade the gate to advisory and report findings without failing. Today it fails on a set nobody has read, which is the same as not scanning. The last full report on disk is `%LOCALAPPDATA%\oshal\trivy-report.txt` and it is from 2026-07-09 — nine weeks stale, so the current finding set is not actually known.
 - **Done when:** a fresh trivy report is captured and read; the chosen posture is written into `scripts/ci-local.sh` next to `gate_trivy` with its rationale (budget file with expiries, new base image, or advisory-only); and the gate's result is either green or deliberately non-failing — never red-and-ignored.
+- **Decision (operator, 2026-09-21): (a) a CVE BUDGET with expiries — the gate stays a gate.** Not
+  advisory-only, and no base-image rebase (`node:20-alpine` is already the slim base, and distroless
+  would remove the shell `scripts/bot-entrypoint.sh` needs). The fresh report the entry asked for was
+  captured the same morning against the DEPLOYED image (`oshal-bot:latest`, commit cf8439c0, built
+  2026-09-21T05:47Z) with the gate's own filters (`--severity CRITICAL,HIGH --ignore-unfixed
+  --skip-dirs /usr/local/bin`): **11 findings, 0 CRITICAL, 11 HIGH, every one a JavaScript dependency
+  (`lang-pkgs`), every one with a fix published** — `multer` 2.2.0 (x3, fix 2.3.0), `undici` 5.29.0
+  (x3, fix 6.24.0+), `js-yaml` 4.3.0 (x2, fix 4.3.2), `nodemailer` 9.0.1 and 9.0.3 (fix 9.1.0),
+  `sharp` 0.35.3 (fix 0.35.4). No OS-package findings at all. So the order of work is: take the
+  upgrades first, re-scan, and only then write a budget entry for whatever genuinely cannot move —
+  each with its reason and an expiry no more than 90 days out — plus the posture comment next to
+  `gate_trivy` in `scripts/ci-local.sh`. A `.trivyignore` entry without a reason and an expiry is not
+  the approved posture. (PM recommended (a); the operator chose it.)
 
 ### `unit` and `e2e-green` have been red for 46 nights and have never been triaged
 - **Remaining:** both gates appear in essentially every failed run since 2026-07-27, and no run log records WHICH specs fail — `ci-local.log` keeps only the per-gate PASS/FAIL line, and `ci-local-last-run.log` is overwritten each night. So the failure set is unknown, and it is not safe to assume it is the same set it was in July: BUG-15/16/17 are three known-red specs, but `unit` was already red on 2026-08-03, eight days before the PR that landed two of those guards. The obvious first move is a single clean run against a pinned `origin/main` export on a quiet box, with the spec-level output kept.
