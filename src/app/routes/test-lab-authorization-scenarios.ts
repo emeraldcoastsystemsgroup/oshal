@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Register the package grant plan guards with the access-administration scenario: the resolver runs against the real PostgreSQL policy store and its HTTP adapter against the real routes, so the Lab lists them beside the rest of this feature. Also restores authorization-readiness-consumers.spec.ts to the test:authorization command - it was registered here but missing from the command, which had left this scenario's own registration assertion red on main.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Attach the principal-qualified app-access proofs beside package-plan and readiness regressions.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Register issuer pool reset, lifecycle authority and reviewed package assignment browser regressions.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com | Register the bot statement privilege contract: the guard that provisions a real oshal_bot from the shipped grant text and runs every statement a bot container issues, which is what caught three open grant gaps that every existing guard over this contract was blind to.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -78,6 +79,7 @@ export const AUTHORIZATION_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/external-tenant-memberships.spec.ts' },
     { level: 'unit', path: 'tests/unit/authorization-policy.spec.ts' },
     { level: 'unit', path: 'tests/unit/bot-db-least-privilege.spec.ts' },
+    { level: 'integration', path: 'tests/unit/bot-statement-privilege-contract.spec.ts' },
     { level: 'integration', path: 'tests/unit/local-postgres-provisioning.spec.ts' },
     { level: 'unit', path: 'tests/unit/authorization-contract-files.spec.ts' },
     { level: 'integration', path: 'tests/unit/authorization-postgres-integration.spec.ts' },

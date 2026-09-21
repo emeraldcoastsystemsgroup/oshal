@@ -7,12 +7,14 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Align the writable-CA fixture with the launcher's path-component walker (0666 trips the component guard first) and add a 0640 case so the specific 0600-or-0644 mode guard stays covered.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Permit explicit ADMIN convergence only inside the superuser branch; preserve managed creator membership guards.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | The governed contract now carries a fourth approved helper, oshal_application_execution_claims (migration 142), EXECUTE for oshal_app and oshal_bot and never PUBLIC; the static contract and the live migrated-helper counts include it.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Follow two contract changes. The bot role's connection ceiling is now sized to the declared bot fleet rather than fixed at 8, so it is read from the exported ROLE_CONNECTION_LIMITS both the SQL and the wrapper agree on. And DB_MAX_CONNECTIONS, new on x-bot-env, is reset for the two DB-less model bots - this file's own datastore-key list already named it, which is how the leak was caught.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { ROLE_CONNECTION_LIMITS } from '../../scripts/governance/provision-app-role.mjs';
 
 const root = process.cwd();
 const provisionPath = path.resolve(root, 'scripts/governance/provision-app-role.mjs');
@@ -204,8 +206,12 @@ describe('PostgreSQL 18 role and ownership contract', () => {
     expect(provision).toContain("'search_path=public, pg_temp'");
     expect(provision).toContain('runtime-role default privileges are incomplete or unexpected');
     expect(sql).toContain('CONNECTION LIMIT 24');
-    expect(sql).toContain('CONNECTION LIMIT 8');
-    expect(provision).toContain("role.rolname === 'oshal_app' ? 24 : 8");
+    // The bot ceiling is sized to the declared fleet rather than fixed, so it is read from the
+    // exported constant the wrapper verifies against — and both files must name the same number.
+    // tests/unit/managed-postgres-pool-budget.spec.ts checks it against the fleet and the server.
+    expect(sql).toContain(`CONNECTION LIMIT ${ROLE_CONNECTION_LIMITS.oshal_app}`);
+    expect(sql).toContain(`CONNECTION LIMIT ${ROLE_CONNECTION_LIMITS.oshal_bot}`);
+    expect(provision).toContain('ROLE_CONNECTION_LIMITS[role.rolname]');
     expect(sql).not.toMatch(/ALTER DEFAULT PRIVILEGES FOR ROLE oshal\b/);
   });
 

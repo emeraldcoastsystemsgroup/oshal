@@ -93,6 +93,7 @@ export {
   type SwarmMemoryEntry,
   type SwarmContextBlock,
   type SwarmMemoryAccessContext,
+  type DurableLedgerReach,
   type SwarmMemoryPromotion,
   type SwarmMemoryProvenance,
   type SwarmMemoryVisibility,

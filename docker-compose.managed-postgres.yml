@@ -3,6 +3,7 @@
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com | Keep newly inherited bot provisioning credentials confined to the finite managed database initializer.
+# 2 | maintainer@emeraldcoastsystemsgroup.com | Reset DB_MAX_CONNECTIONS for the two DB-less model bots. The key is new on x-bot-env (the local bot fleet needs a declared per-container pool ceiling so 38 services fit inside oshal_bot's connection limit), and these two services deliberately carry no datastore configuration at all - tests/unit/managed-postgres-bootstrap.spec.ts counts it among the keys that must be absent here.
 # CRM-only DigitalOcean Managed PostgreSQL override.
 # Requires Docker Compose >= 2.24.4 (`!override`/`!reset`). Do not invoke this
 # file directly; scripts/managed-postgres-compose.sh always composes it with
@@ -123,6 +124,7 @@ services:
       ARANGO_ROOT_USER: !reset null
       ARANGO_ROOT_PASSWORD: !reset null
       OSHAL_DB_GUC: !reset null
+      DB_MAX_CONNECTIONS: !reset null
       OSHAL_SCHEMA_BOOTSTRAP: validate-only
 
   sales-bot:
@@ -149,4 +151,5 @@ services:
       ARANGO_ROOT_USER: !reset null
       ARANGO_ROOT_PASSWORD: !reset null
       OSHAL_DB_GUC: !reset null
+      DB_MAX_CONNECTIONS: !reset null
       OSHAL_SCHEMA_BOOTSTRAP: validate-only

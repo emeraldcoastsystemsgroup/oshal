@@ -6,12 +6,18 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise actual runtime-role provisioning against disposable PostgreSQL16 for local superuser and managed creator membership paths.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Converge legacy broad app defaults through the full final provisioner and verify PostgreSQL16 worker ACLs and future object privileges.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Seed the fourth approved helper, oshal_application_execution_claims (migration 142), so the real provisioner converges and verifies the bot contract with both derived bot helpers present.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Stop hand-copying the contract into the fixture. The table/column lists here were a transcription of BOT_COLUMN_PRIVILEGES, so the first change to the allowlist (agent_tools gaining the four link columns its resolver selects) broke this file for no defect at all - the provisioner correctly refused to grant a column the fixture had not created. The schema is now derived from the exported maps, with the deliberate over-grant sentinels (agents.private_secret, fixture_sensitive) kept, and the approved helper set is derived the same way, so a fifth helper needs no edit here either.
  */
 import { execFileSync } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { provisionRuntimeRoles } from '../../scripts/governance/provision-app-role.mjs';
+import {
+  BOT_COLUMN_PRIVILEGES,
+  BOT_TABLE_PRIVILEGES,
+  EXPECTED_HELPERS,
+  provisionRuntimeRoles,
+} from '../../scripts/governance/provision-app-role.mjs';
 
 const appPassword = randomBytes(24).toString('hex');
 const botPassword = randomBytes(24).toString('hex');
@@ -65,20 +71,24 @@ async function memberships() {
     WHERE role.rolname IN ('oshal_app','oshal_bot') GROUP BY role.rolname,member.rolname ORDER BY 1,2`)).rows;
 }
 
-const FINAL_TABLE_COLUMNS: Record<string, string> = {
-  agents: 'agent_id,name,status,api_provider_id,model_id,persona,metadata,base_capabilities,base_selector_descriptor,base_routing_keywords,updated_at,private_secret',
-  tools: 'tool_id,name,type,display_name,description,category,install_spec,version,skills,selector_fragment,routing_tags,input_schema,output_schema,usage_instructions,examples,auth_group,default_auth_mode,requires_approval,timeout_ms,tags,enabled,registered_by,registered_at,created_at,updated_at',
-  agent_tools: 'agent_id,tool_id,auth_mode,installed',
-  persona_layers: 'fixture_id',
-  work_items: 'status,assigned_agent_id,execution_output,updated_at',
-  chat_tasks: 'task_id,title,status,processing_mode,agent_id,provider_id,message_count,turn_count,total_input_tokens,total_output_tokens,total_input_cost,total_output_cost,total_cost,total_requests,cost_currency,usage_by_model,metadata,owner_sub,created_at,updated_at',
-  oshal_cost_events: 'task_id,owner_sub,agent_id,provider_id,model_id,cost_usd,input_tokens,output_tokens,duration_ms',
-  tickets: 'status,state_group,execution_phase,metadata,assigned_agent_id,updated_at',
-  ticket_task_links: 'task_id,ticket_id,role',
-  ticket_status_history: 'ticket_id,from_status,to_status,changed_by,changed_by_label,metadata',
-  ticket_agent_assignments: 'ticket_id,agent_id,role,phase',
-  fixture_sensitive: 'secret',
-};
+/**
+ * The fixture schema is DERIVED from the contract rather than transcribed from it: the provisioner
+ * refuses to grant a column that does not exist, so a hand-copied list turns every allowlist change
+ * into a red spec with no defect behind it. Two additions are deliberate — agents.private_secret
+ * and the whole fixture_sensitive table are over-granted below, and the point of the case is that
+ * the provisioner strips them.
+ */
+const FINAL_TABLE_COLUMNS: Record<string, string> = (() => {
+  const tables: Record<string, Set<string>> = {};
+  for (const table of BOT_TABLE_PRIVILEGES.keys()) tables[table] ??= new Set(['fixture_id']);
+  for (const [table, privileges] of BOT_COLUMN_PRIVILEGES) {
+    tables[table] ??= new Set();
+    for (const columns of Object.values(privileges)) for (const column of columns) tables[table].add(column);
+  }
+  tables.agents.add('private_secret');
+  tables.fixture_sensitive = new Set(['secret']);
+  return Object.fromEntries(Object.entries(tables).map(([table, columns]) => [table, [...columns].join(',')]));
+})();
 
 /** @description Seed only the worker ACL contract, with no application records or historical migrations.
  * @returns Completion after fixture tables, safe helpers and deliberately excessive grants exist.
@@ -88,8 +98,7 @@ async function seedFinalSchema(): Promise<void> {
     await pool.query(`CREATE TABLE ${table} (${columns.split(',').map(column => `${column} text`).join(',')})`);
   }
   await pool.query('CREATE SEQUENCE oshal_cost_events_id_seq');
-  for (const signature of ['oshal_is_tenant_member(text)', 'oshal_owns_task(text)', 'oshal_owns_ticket(uuid)',
-    'oshal_application_execution_claims(text,text,text,boolean)']) {
+  for (const signature of EXPECTED_HELPERS) {
     await pool.query(`CREATE FUNCTION ${signature} RETURNS boolean LANGUAGE sql SECURITY DEFINER
       SET search_path=public,pg_temp AS 'SELECT false'`);
   }

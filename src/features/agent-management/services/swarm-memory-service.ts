@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: add durable memory provenance, validated/operator promotion, trust-aware retrieval, and fenced re-injection of unreviewed agent output.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 audit: bind trust to returned text bytes, require content-bound operator approval, and enforce owner/workspace ACL context on retrieval.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 audit: route every durable ledger statement through an explicit connection-scoped broker transaction so FORCE RLS cannot silently disable ordinary storage and retrieval.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | A bot node reads the durable ledger through the derived helper (migration 152) instead of the table. oshal_bot has no privilege on oshal_swarm_memory at all, so the read at bindDurableTrust threw permission denied inside queryRelevant's catch and every bot ran with zero memory - one warning, no error anyone chased. A plain grant was the wrong repair: the table's only policy keys on a transaction-local broker marker with no owner predicate, so it would have moved a bot from reading nothing to reading every owner's memories. `durableLedgerReach` names what this process can reach; the controller keeps the table read unchanged, and the bot path gets the same rows scoped in SQL to shared memories plus the reader's own.
  */
 
 import { createHash } from 'node:crypto';
@@ -178,6 +179,14 @@ interface DurableSwarmMemoryEntry {
   indexedAt?: string;
 }
 
+/**
+ * How a process reaches the durable ledger. The controller owns oshal_swarm_memory and reads it
+ * directly inside the broker transaction; a bot node holds no privilege on that table at all and
+ * reaches the same rows through oshal_swarm_memory_readable (migration 152), which applies the
+ * owner rule in SQL rather than leaving it to the filter above it.
+ */
+export type DurableLedgerReach = 'table' | 'reader-helper';
+
 interface SwarmMemoryRow {
   work_item_id: string;
   title: string;
@@ -213,13 +222,27 @@ interface SwarmMemoryRow {
 export class SwarmMemoryService {
   private readonly ragService: RagService;
   private readonly pool?: Pick<Pool, 'connect'>;
+  private readonly durableLedgerReach: DurableLedgerReach;
   private initialized = false;
   private readonly storedWorkItems: Set<string> = new Set();
   private readonly durableEntries = new Map<string, DurableSwarmMemoryEntry>();
 
-  constructor(ragService: RagService, pool?: Pick<Pool, 'connect'>) {
+  /**
+   * @description Builds the service over a RAG index and, optionally, the durable ledger.
+   * @param ragService - Vector index the memories are retrieved from.
+   * @param pool - Database pool for the durable ledger; omitted for an in-memory-only service.
+   * @param durableLedgerReach - What this process may reach: 'table' for the controller, which
+   * owns oshal_swarm_memory and reads it inside the broker transaction, or 'reader-helper' for a
+   * bot node, which has no privilege on that table and asks the derived helper instead.
+   */
+  constructor(
+    ragService: RagService,
+    pool?: Pick<Pool, 'connect'>,
+    durableLedgerReach: DurableLedgerReach = 'table',
+  ) {
     this.ragService = ragService;
     this.pool = pool;
+    this.durableLedgerReach = durableLedgerReach;
   }
 
   // ─── Store Learnings ─────────────────────────────────────────────────
@@ -459,7 +482,15 @@ export class SwarmMemoryService {
     if (entries.length === 0) return entries;
     const ids = [...new Set(entries.map(memoryWorkItemId).filter(Boolean))];
     if (this.pool && ids.length > 0) {
-      const result = await this.withLedgerBroker((client) => client.query<SwarmMemoryRow>(
+      // A bot node has no privilege on oshal_swarm_memory, so it asks the derived helper for the
+      // rows it may see - shared memories plus its reader's own - and the owner rule is enforced
+      // by the database rather than only by canReadRagMetadata below.
+      const result = this.durableLedgerReach === 'reader-helper'
+        ? await this.withLedgerBroker((client) => client.query<SwarmMemoryRow>(
+          'SELECT * FROM oshal_swarm_memory_readable($1::text[], $2)',
+          [ids, access.userSub || null],
+        ))
+        : await this.withLedgerBroker((client) => client.query<SwarmMemoryRow>(
           'SELECT * FROM oshal_swarm_memory WHERE work_item_id = ANY($1::text[])',
           [ids],
         ));

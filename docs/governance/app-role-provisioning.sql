@@ -5,6 +5,7 @@
 -- 1 | maintainer@emeraldcoastsystemsgroup.com | Converge superuser-created runtime role ADMIN membership without regranting it from managed non-superuser creators.
 -- 2 | maintainer@emeraldcoastsystemsgroup.com | Reset legacy app table and sequence default grants before establishing the exact runtime privilege allowlist.
 -- 3 | maintainer@emeraldcoastsystemsgroup.com | Add the derived application-execution-ownership helper (migration 142) to the bot contract: EXECUTE for oshal_app and oshal_bot, never PUBLIC. A bot node's ADR-149 posture guard needs that one decision; the tables behind it stay outside the contract, which is why migration 140's direct grants were stripped here on every boot.
+-- 4 | maintainer@emeraldcoastsystemsgroup.com | Close three measured bot gaps without widening the contract. (a) Both ticket upserts read the columns their conflict target and update expression name, so PostgreSQL requires SELECT on exactly those columns: ticket_task_links gains SELECT(role) and ticket_agent_assignments gains SELECT(ticket_id, agent_id, role). Measured by running the two statements as oshal_bot against a private server with the shipped migrations - with the previous grants both raise 42501 permission denied, with these they succeed, and created_at/assigned_at stay ungranted because neither statement needs them. (b) The durable swarm-memory recall reaches the new derived helper (migration 152) instead of the table: oshal_swarm_memory stays entirely outside the contract, and the owner rule lives in SQL rather than in an application filter. (c) the agent-tool resolver's join selects install_verified, tool_config, created_at and updated_at, none of which the allowlist carried, so agent_tools answered 42501 too - measured the same way. (d) oshal_bot's connection limit follows the declared bot fleet - 38 bot-node services at DB_MAX_CONNECTIONS=3 is 114 - instead of 8, which every fleet boot exhausted; the ceiling still fits inside max_connections=200 beside oshal_app's 24.
 -- ===========================================================================
 -- app-role-provisioning.sql  (ADR-076)
 --
@@ -62,9 +63,18 @@ $$;
 ALTER ROLE oshal_app WITH PASSWORD :'app_pw'
   LOGIN NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT
   CONNECTION LIMIT 24 VALID UNTIL 'infinity';
+-- The ceiling is the DECLARED bot fleet, not a round number: 38 bot-node services in
+-- docker-compose.oshal-local.yml, each pool capped at DB_MAX_CONNECTIONS=3, is 114, and the
+-- spare six covers the one-shot oshal_bot callers (bot-node-batch, record-cost,
+-- finalize-incident). 120 + oshal_app's 24 + superuser_reserved_connections sits well inside
+-- max_connections=200. The old ceiling of 8 was below a single container's pool times two, so
+-- a fleet boot raised FATAL too many connections for role "oshal_bot" in 24 of 36 containers
+-- and the bots that lost the race refused execution with an authorization-shaped message.
+-- tests/unit/managed-postgres-pool-budget.spec.ts derives all three numbers and fails when a
+-- new bot service pushes the fleet past this ceiling.
 ALTER ROLE oshal_bot WITH PASSWORD :'bot_pw'
   NOLOGIN NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT
-  CONNECTION LIMIT 8 VALID UNTIL 'infinity';
+  CONNECTION LIMIT 120 VALID UNTIL 'infinity';
 ALTER ROLE oshal_app RESET ALL;
 ALTER ROLE oshal_bot RESET ALL;
 
@@ -342,7 +352,11 @@ GRANT SELECT (
   created_at, updated_at
 ) ON TABLE public.tools TO oshal_bot;
 
-GRANT SELECT (agent_id, tool_id, auth_mode, installed)
+-- The tool resolver selects the whole link row (agent-tool-repository.ts), so the allowlist has
+-- to carry install_verified, tool_config and the two timestamps as well; installed_at is not
+-- selected and stays out. agent_tools is swarm configuration, not anyone's data.
+GRANT SELECT (agent_id, tool_id, auth_mode, installed, install_verified, tool_config,
+              created_at, updated_at)
   ON TABLE public.agent_tools TO oshal_bot;
 
 GRANT SELECT ON TABLE public.persona_layers TO oshal_bot;
@@ -378,7 +392,10 @@ GRANT UPDATE (
   status, state_group, execution_phase, metadata, assigned_agent_id, updated_at
 ) ON TABLE public.tickets TO oshal_bot;
 
-GRANT SELECT (task_id, ticket_id)
+-- ON CONFLICT DO UPDATE needs SELECT on every column the statement names: the two conflict
+-- target columns and `role`, which the update expression reads. created_at is never named, so
+-- it stays ungranted.
+GRANT SELECT (task_id, ticket_id, role)
   ON TABLE public.ticket_task_links TO oshal_bot;
 GRANT INSERT (task_id, ticket_id, role)
   ON TABLE public.ticket_task_links TO oshal_bot;
@@ -389,7 +406,9 @@ GRANT INSERT (
   ticket_id, from_status, to_status, changed_by, changed_by_label, metadata
 ) ON TABLE public.ticket_status_history TO oshal_bot;
 
-GRANT SELECT (phase)
+-- Same rule, same statement shape: the three conflict target columns plus `phase`, which the
+-- COALESCE in the update expression reads. assigned_at stays ungranted.
+GRANT SELECT (ticket_id, agent_id, role, phase)
   ON TABLE public.ticket_agent_assignments TO oshal_bot;
 GRANT INSERT (ticket_id, agent_id, role, phase)
   ON TABLE public.ticket_agent_assignments TO oshal_bot;
@@ -400,20 +419,24 @@ GRANT USAGE ON SEQUENCE public.oshal_cost_events_id_seq TO oshal_bot;
 
 RESET ROLE;
 
--- Only derived helpers are part of the bot contract: ticket ownership, and
+-- Only derived helpers are part of the bot contract: ticket ownership,
 -- application execution ownership (which application claims a bot or tool,
 -- and whether it is protected - the ADR-149 posture guard a bot node runs
--- before accepting any execution). The bot gets those decisions, never the
--- tables behind them. Every SECURITY DEFINER helper is private by default; the
--- app gets all four.
+-- before accepting any execution), and durable swarm-memory recall scoped to
+-- the reader (shared memories plus the reader's own). The bot gets those
+-- decisions, never the tables behind them - oshal_swarm_memory in particular
+-- stays entirely outside the contract. Every SECURITY DEFINER helper is
+-- private by default; the app gets all five.
 REVOKE EXECUTE ON FUNCTION public.oshal_is_tenant_member(text) FROM PUBLIC, oshal_bot;
 REVOKE EXECUTE ON FUNCTION public.oshal_owns_task(text) FROM PUBLIC, oshal_bot;
 REVOKE EXECUTE ON FUNCTION public.oshal_owns_ticket(uuid) FROM PUBLIC, oshal_bot;
 REVOKE EXECUTE ON FUNCTION public.oshal_application_execution_claims(text, text, text, boolean) FROM PUBLIC, oshal_bot;
+REVOKE EXECUTE ON FUNCTION public.oshal_swarm_memory_readable(text[], text) FROM PUBLIC, oshal_bot;
 GRANT EXECUTE ON FUNCTION public.oshal_is_tenant_member(text) TO oshal_app;
 GRANT EXECUTE ON FUNCTION public.oshal_owns_task(text) TO oshal_app;
 GRANT EXECUTE ON FUNCTION public.oshal_owns_ticket(uuid) TO oshal_app, oshal_bot;
 GRANT EXECUTE ON FUNCTION public.oshal_application_execution_claims(text, text, text, boolean) TO oshal_app, oshal_bot;
+GRANT EXECUTE ON FUNCTION public.oshal_swarm_memory_readable(text[], text) TO oshal_app, oshal_bot;
 
 COMMIT;
 

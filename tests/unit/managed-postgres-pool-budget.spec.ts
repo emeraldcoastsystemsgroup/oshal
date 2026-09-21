@@ -7,16 +7,19 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove actual local Compose applies the existing managed API pool budget, preserves explicit overrides and leaves other services unchanged after a live role-limit saturation.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Fixes a RED main, and the cause was the guard, not the code. The bot ceiling MOVED from bot-node-runtime.ts to bot-node-database-pool.ts in a decomposition - the call byte-identical, the behaviour untouched - and this case failed because it pinned a file PATH. It now locates each ceiling by its CALL anywhere under src/ and requires exactly one occurrence, so a move passes, a deletion fails, and a second inconsistent call site fails too.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Walk the tree ONCE. The previous entry's fix called sourceFilesUnder inside the per-call loop, re-walking and re-reading everything four times - 6,212 reads instead of 1,553. Warm that is about 1.6s and green; on a COLD checkout it is 11-23s against vitest's default 5000ms timeout, and a cold checkout is precisely how ci-local.sh runs this: git archive into a purged directory, then test:unit. So a guard added to make main green was itself red the first time the real gate would have seen it, and green every time it was checked by hand.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | The BOT fleet had no budget case at all, and it is the one that was actually over: 38 bot-node services against a role capped at 8 connections produced FATAL too many connections for role "oshal_bot" in 24 of 36 containers on a fleet boot - the most widespread failure on the box, and it presents as an authorization refusal rather than as a pool outage. The api's budget was guarded from the start; this adds the bot half, deriving every number from a tracked file (the declared fleet and its per-container ceiling from compose, both role ceilings from the role SQL, max_connections from the database service) so adding a bot service or raising a ceiling past what the server can serve is red instead of discovered at the next boot.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
+import { load } from 'js-yaml';
 import {
   postgresApplicationName,
   resolvePoolMax,
 } from '../../src/shared/services/database/pool-sizing';
+import { ROLE_CONNECTION_LIMITS } from '../../scripts/governance/provision-app-role.mjs';
 
 const root = process.cwd();
 const read = (relative: string) => fs.readFileSync(path.resolve(root, relative), 'utf8');
@@ -84,6 +87,55 @@ describe('local API PostgreSQL role budget', () => {
     });
     for (const key of poolKeys) after['oshal-api'].environment![key] = before['oshal-api'].environment![key];
     expect(after).toEqual(before);
+  });
+});
+
+describe('local bot-fleet PostgreSQL role budget', () => {
+  /** The compose file as YAML, so the anchors resolve without starting or configuring anything. */
+  const deployment = load(read('docker-compose.oshal-local.yml')) as {
+    services: Record<string, { command?: string[]; environment?: Record<string, string> }>;
+  };
+  /** A `${NAME:-default}` expression's default — the value a box with nothing in .env runs on. */
+  const composeDefault = (expression: string | undefined): string | undefined =>
+    /^\$\{\w+:-([^}]*)\}$/.exec(expression ?? '')?.[1];
+
+  it('the declared bot fleet fits inside the bot role ceiling, and both roles inside the server ceiling', () => {
+    const bots = Object.entries(deployment.services)
+      .filter(([, service]) => service.environment?.BOT_RUNTIME === 'bot-node');
+    expect(bots.length, 'compose must still declare a bot fleet').toBeGreaterThan(0);
+
+    // Every bot service inherits x-bot-env, so one anchor entry is the fleet's ceiling. A service
+    // that overrode it would show up here as a second distinct value.
+    const ceilings = new Set(bots.map(([, service]) => service.environment?.DB_MAX_CONNECTIONS));
+    expect(ceilings.size, 'every bot service must take the same declared pool ceiling').toBe(1);
+    const perBot = resolvePoolMax(composeDefault([...ceilings][0]), 5);
+    const fleetDemand = bots.length * perBot;
+
+    const botRoleLimit = Number(/ALTER ROLE oshal_bot[\s\S]*?CONNECTION LIMIT (\d+)/
+      .exec(read('docs/governance/app-role-provisioning.sql'))?.[1]);
+    const appRoleLimit = Number(/ALTER ROLE oshal_app[\s\S]*?CONNECTION LIMIT (\d+)/
+      .exec(read('docs/governance/app-role-provisioning.sql'))?.[1]);
+    // The SQL grants the ceiling and the wrapper verifies it; they have to be the same number.
+    expect(botRoleLimit).toBe(ROLE_CONNECTION_LIMITS.oshal_bot);
+    expect(appRoleLimit).toBe(ROLE_CONNECTION_LIMITS.oshal_app);
+
+    expect(
+      fleetDemand,
+      `the declared fleet can demand ${fleetDemand} connections against a role capped at `
+        + `${botRoleLimit}. A fleet boot exhausts the cap, bots that lose the race answer with a `
+        + 'pool-outage refusal that reads like an authorization failure, and nothing in the logs '
+        + 'says "connection limit". Lower DB_MAX_CONNECTIONS in x-bot-env or raise the role '
+        + 'ceiling — and if you raise it, this case also checks it against max_connections.',
+    ).toBeLessThanOrEqual(botRoleLimit);
+
+    const maxConnections = Number(/max_connections=(\d+)/
+      .exec((deployment.services['oshal-db'].command ?? []).join(' '))?.[1]);
+    expect(maxConnections).toBeGreaterThan(0);
+    expect(
+      botRoleLimit + appRoleLimit,
+      'the two role ceilings together must leave the server room for the bootstrap/migration '
+        + 'connections, superuser_reserved_connections and an operator session',
+    ).toBeLessThan(maxConnections);
   });
 });
 
