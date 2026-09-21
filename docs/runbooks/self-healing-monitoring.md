@@ -164,6 +164,33 @@ It fails loudly when Prometheus is unreachable, has discovered no targets, or an
 discovered target is down, and names the ones that are. `bash scripts/oshal-up.sh`
 brings the overlay back as part of the ordered bring-up.
 
+### Something that is not a human runs that check
+
+The **OSHAL Stack Watchdog** scheduled task (every 5 minutes,
+`scripts/oshal-stack-watchdog.ps1`) runs it — *including while the watchdog is
+paused*. The pause file `%LOCALAPPDATA%\oshal\stack-watchdog.pause` is an opt-out
+from **acting**, not from **looking** (operator decision 2026-09-20), so a paused
+run:
+
+- takes **no** Docker action — no `docker start`, no Docker Desktop launch, no
+  `wsl --shutdown`, no `scripts/oshal-up.sh`. The pause gate is the first
+  statement of the script's main section, above every recovery primitive;
+- exits quietly when the Docker engine named pipe is absent — an overlay cannot
+  be watching when there is no engine, and that is the operator's own choice;
+- otherwise runs `scripts/monitoring-liveness-check.sh --strict` and, when it is
+  red, raises the watchdog's existing alert path (best-effort email through
+  `oshal-local-api` plus an `OSHAL-Watchdog` Application event-log warning) and
+  exits **1**, which Task Scheduler records as the task's last result.
+
+Repeat alerts are throttled to one per `-MonitoringAlertCooldownMin` (default 60)
+so a red overlay does not mail every five minutes; the throttle resets as soon as
+a run sees the overlay watching again. `tests/unit/watchdog-paused-monitoring-observation.spec.ts`
+is the guard: it runs the real script with a pause file present and asserts no
+start primitive is reached, and drives the real observe-only code through a real
+Bash for the engine-absent, green, red, throttled and recovered cases.
+
+No scheduled task was added — this is the task that already runs.
+
 ## The bootstrap caveat (important)
 
 If **`oshal-local-api` itself** is the thing that's down, the ticket-based heal
