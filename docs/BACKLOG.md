@@ -1211,6 +1211,51 @@ including across a directory belonging to a different owner. Full reasoning and 
   each with its reason and an expiry no more than 90 days out — plus the posture comment next to
   `gate_trivy` in `scripts/ci-local.sh`. A `.trivyignore` entry without a reason and an expiry is not
   the approved posture. (PM recommended (a); the operator chose it.)
+- **Built 2026-09-21 on `trivy-cve-budget`.** The order the decision asked for, in that order.
+  **Eight of the eleven findings were fixed, not budgeted**, because `--ignore-unfixed` meant each
+  already had a published release and all eight were this tree's own dependencies: `multer`
+  2.2.0 → 2.4.0 (CVE-2026-77037, CVE-2026-77078, CVE-2026-82333), `js-yaml` 4.3.0 → 4.3.2
+  (CVE-2026-84375, GHSA-5p4m-2wfm-xmqj), `nodemailer` 9.0.3 → 9.1.1 and `sharp` 0.35.3 → 0.35.4
+  (GHSA-2x7j-588g-ccc2, GHSA-rgj7-g3m4-5g8c). None needed a major bump. The second `nodemailer`
+  in the report was `imapflow` 1.4.2's, pinned to an exact `9.0.1` that no range could move;
+  `imapflow` dropped the dependency entirely in 1.6.0, which the already-declared `^1.4.2` caret
+  had allowed all along — the lockfile was simply stale — so the duplicate left the tree instead
+  of being papered over with an `overrides` entry.
+  **The `undici` trio is not this repo's dependency and the decision's premise was wrong about
+  it.** `undici` has no node in `package-lock.json` at all; the copy trivy reports is vendored
+  inside the globally installed `cline` CLI (`Dockerfile.oshal` pins 3.0.62) at
+  `/usr/local/lib/node_modules/cline/node_modules/dify-ai-provider/node_modules/undici`. It has no
+  in-range fix anywhere in its chain: `dify-ai-provider` 1.1.1 is the newest release and wants
+  `@ai-sdk/provider-utils ^3.0.3`, and every published 3.x of that package (3.0.3 → 3.0.37) pins
+  `undici ^5.29.0`, while the fixes land only at 6.24.0/6.27.0, 7.24.0/7.28.0 and 8.5.0 — there is
+  no fixed 5.x release. So those three CVE ids are the entire budget, each with its reason and
+  `exp:2026-12-20` (90 days), retiring when `CLINE_VERSION` moves to a tree carrying undici 6.28+.
+  **The re-scan found three findings the morning evidence did not have, and they were taken too.**
+  `browserslist` 4.28.4 (CVE-2026-73088, CVE-2026-73089) and `nanoid` 3.3.17 (CVE-2026-67213) are
+  at identical versions on `origin/main`, so nothing here introduced them — trivy's database moved
+  between the 05:47Z scan and the re-scan. Both fixes were inside ranges already declared, so
+  `npm update` reached them without touching `package.json`: browserslist → 4.29.0 (fixed 4.28.7)
+  and nanoid → 3.3.19 (fixed 3.3.18). Eleven findings fixed in total, across seven packages.
+  **Re-scan evidence**, `gate_trivy`'s exact filters against an image built from this branch's
+  committed HEAD: `Total: 3 (HIGH: 3, CRITICAL: 0)` — the undici trio and nothing else — without
+  the budget file; with it the scan reports no findings at all (every summary row `0`) and the
+  gate's own `--exit-code 1` invocation exits **0**. Down from 11.
+  **One honest limit on that evidence.** The scanned artifact is the image truncated after
+  `npm install -g ./packages/swarm-cli` (Dockerfile.oshal line 319) rather than the full image: two
+  full builds of committed HEAD died at `RUN npx tsc -p tsconfig.server.json` with
+  `failed to solve: Unavailable: error reading from server: EOF`, the Docker engine 500ing on every
+  API call around it — the saturated-box failure this file already tracks, not a defect in the
+  change. Nothing after line 319 installs a package (checked), so the truncated image's
+  `/app/node_modules` and `/usr/local/lib/node_modules` are the same trees the full image carries,
+  and every finding in this gate's history has come from one of them. The full build did get past
+  `npm ci` on both attempts, so the lockfile installs cleanly; what has not been re-proven on this
+  box is the `tsc` compile inside the image.
+  The posture comment sits above `gate_trivy` in `scripts/ci-local.sh`: the floor stays
+  CRITICAL,HIGH with `--ignore-unfixed`, the gate still fails the run, the budget lives in
+  `.trivyignore`, and every entry needs a reason and an expiry. **Trivy enforces the expiry itself
+  — measured, not assumed:** on `aquasec/trivy` 0.72.0, one image and one CVE id, no `exp:`
+  suppressed the finding, a future `exp:` suppressed it, and a past `exp:` reported it again, so an
+  unrenewed budget line reddens the gate on its own.
 
 ### `unit` and `e2e-green` have been red for 46 nights and have never been triaged
 - **Remaining:** both gates appear in essentially every failed run since 2026-07-27, and no run log records WHICH specs fail — `ci-local.log` keeps only the per-gate PASS/FAIL line, and `ci-local-last-run.log` is overwritten each night. So the failure set is unknown, and it is not safe to assume it is the same set it was in July: BUG-15/16/17 are three known-red specs, but `unit` was already red on 2026-08-03, eight days before the PR that landed two of those guards. The obvious first move is a single clean run against a pinned `origin/main` export on a quiet box, with the spec-level output kept.

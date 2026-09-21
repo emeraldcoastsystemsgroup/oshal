@@ -2,9 +2,61 @@
 # file from the committed tree it is judging and passes it via --ignorefile). Every entry must
 # carry: why it is not fixable today, why the real risk is acceptable, and the BACKLOG done-when
 # that retires it. An entry with no justification is a gate bypass — reject it in review.
+#
+# POSTURE — operator decision 2026-09-21, recorded in docs/BACKLOG.md under "The nightly gate has
+# been red for 46 consecutive runs". This file is a CVE BUDGET, not a mute button. The gate keeps
+# its CRITICAL,HIGH floor, keeps --ignore-unfixed, and keeps failing the run; because
+# --ignore-unfixed means every finding already has a published upstream release, the first response
+# to a red gate is always to TAKE that release. A line lands here only for a finding that survives
+# that attempt, and every line carries an `exp:` date no more than 90 days out. Trivy enforces the
+# date itself — measured on aquasec/trivy 0.72.0 against one image and one CVE id: no `exp:`
+# suppressed the finding, a future `exp:` suppressed it, and a past `exp:` reported it again — so a
+# line nobody renews turns the gate red on its own. That is what makes this a budget.
 
-# No active quarantines. CVE-2026-14257 (brace-expansion DoS) was retired 2026-08-02: upstream
-# backported the fix to the 1.x and 2.x lines (1.1.17 / 2.1.3, published 2026-07-28..30), which the
-# original entry could not assume because only v5.0.8 existed at the time and v5 changed the export
-# shape. `npm update brace-expansion` moved every copy clear (1.1.18 / 2.1.4 / 5.0.9) without a
-# major bump, so the minimatch@3/@5 breakage that blocked it never came into play.
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# undici 5.29.0 — three WebSocket denial-of-service advisories. Expires 2026-12-20.
+#
+# Not a dependency of this repo. `undici` has no node in package-lock.json at all (arangojs
+# declares it as an OPTIONAL peer, which is not installed). This copy is vendored inside the
+# globally installed cline CLI that Dockerfile.oshal pins at 3.0.62, at exactly:
+#   /usr/local/lib/node_modules/cline/node_modules/dify-ai-provider/node_modules/undici
+#
+# It cannot move, and the chain is closed at both ends. dify-ai-provider 1.1.1 is its newest
+# published release and depends on `@ai-sdk/provider-utils: ^3.0.3`; every published 3.x of that
+# package — 3.0.3 through 3.0.37, the newest — pins `undici: ^5.29.0`. Upstream fixed these three
+# only in 6.24.0/6.27.0, 7.24.0/7.28.0 and 8.5.0. There is NO fixed release on the 5.x line, so no
+# in-range bump exists anywhere in that chain. Forcing 6.x into a package that declares ^5 is a
+# major-version swap inside a third-party CLI this repo cannot test — unlike the fast-uri swap in
+# Dockerfile.oshal above it, which was a drop-in patch release and is not a precedent for this.
+#
+# Residual risk, stated narrowly. All three are unbounded memory growth driven by a peer on an
+# already-open WebSocket (permessage-deflate handling), so they need a WebSocket this undici
+# opened. No oshal code path reaches it: nothing in this repo imports undici, and the copy is
+# reachable only through @ai-sdk/provider-utils as vendored under dify-ai-provider. That is NOT the
+# same as unreachable — `dify` is a selectable provider in
+# src/features/llm-provider/services/provider-definitions.ts, so a deployment that configures Dify
+# through cline could load the adapter. The 90-day expiry is the mitigation for that residual, not
+# a formality. The other four undici copies in the same cline tree are already 6.28.0+ and clear.
+#
+# Retires when cline's own tree carries a fixed undici: bump CLINE_VERSION in Dockerfile.oshal,
+# re-run the gate, delete these three lines. Renew only after re-reading the chain above — if a
+# 5.x backport or a provider-utils 4.x path appears in range, take it instead of renewing.
+CVE-2026-12151 exp:2026-12-20
+CVE-2026-1526 exp:2026-12-20
+CVE-2026-2229 exp:2026-12-20
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# Retired 2026-09-21. Eleven findings were FIXED rather than budgeted, which is the order the
+# posture above requires: fix first, budget last. Eight were the rest of the 46-run red streak —
+# multer 2.2.0 → 2.4.0, js-yaml 4.3.0 → 4.3.2, nodemailer 9.0.3 → 9.1.1, sharp 0.35.3 → 0.35.4,
+# and imapflow 1.4.2 → 1.7.8, which dropped the exactly-pinned nested nodemailer 9.0.1 that no
+# range could have moved. Three more appeared in the re-scan itself, disclosed after that morning's
+# report and present at identical versions on origin/main: browserslist 4.28.4 → 4.29.0 and nanoid
+# 3.3.17 → 3.3.19, both reachable by `npm update` inside ranges already declared. None of the
+# eleven needed a major bump.
+#
+# Retired 2026-08-02: CVE-2026-14257 (brace-expansion DoS). Upstream backported the fix to the 1.x
+# and 2.x lines (1.1.17 / 2.1.3, published 2026-07-28..30), which the original entry could not
+# assume because only v5.0.8 existed at the time and v5 changed the export shape. `npm update
+# brace-expansion` moved every copy clear (1.1.18 / 2.1.4 / 5.0.9) without a major bump, so the
+# minimatch@3/@5 breakage that blocked it never came into play.
