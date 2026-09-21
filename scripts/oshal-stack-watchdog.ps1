@@ -26,7 +26,8 @@
     - Lock file: a recovery in flight blocks a concurrent run. A lock is eligible for stale-owner
       recovery after 35 min, but it is never stolen while its recorded PID is still alive.
     - Backoff: after 3 consecutive FAILED recoveries, the cooldown extends to 120 min.
-    - Pause file: %LOCALAPPDATA%\oshal\stack-watchdog.pause present -> do nothing (operator opt-out).
+    - Pause file: %LOCALAPPDATA%\oshal\stack-watchdog.pause present -> take no Docker action at all
+      (operator opt-out from ACTING). A paused run still OBSERVES: see the observe-only section.
 
   2026-07-21 16:26 revision: judge recovery success by the ACTUAL end state (Wait-Healthy) instead
   of intermediate return codes - the first live wedges (15:38 + 15:57) recovered fine but were
@@ -56,6 +57,7 @@
   2 | maintainer@emeraldcoastsystemsgroup.com   | Resolve Git Bash through the shared bounded validator, reject System32/WSL launchers, and fail closed when no validated Bash can perform routing checks or recovery.
   3 | maintainer@emeraldcoastsystemsgroup.com   | Stabilize the fallback process-tree snapshot across consecutive CIM reads and kill captured descendants before the root, preventing a failed taskkill from orphaning a child that was reparented before verification.
   4 | maintainer@emeraldcoastsystemsgroup.com   | Extend the bounded CIM union to three observations on each pre-kill pass so a newly visible descendant cannot escape the failed-taskkill fallback under host contention.
+  5 | maintainer@emeraldcoastsystemsgroup.com   | Make a paused run observe-only instead of silent: it still runs scripts/monitoring-liveness-check.sh --strict and raises the existing alert path when the overlay is not watching, while every Docker-touching action stays behind the pause gate. Answers the BUG-21 tail's "nothing runs the check when nobody is watching": after an ungraceful engine stop the fleet came back with Prometheus and Alertmanager Exited(255) and nothing said so until a human ran oshal-up.sh. Why exit 255 defeats restart:unless-stopped is still undiagnosed and is not addressed here.
 
   Register (every 5 min, windowless - launch through oshal-stack-watchdog-hidden.vbs so a bare
   powershell action doesn't flash a console every run):
@@ -68,6 +70,9 @@ param(
   [string]$Repo = '',
   [int]$EngineTimeoutSec = 25,
   [int]$CooldownMin = 20,
+  # A red overlay stays red until a human acts, and this task runs every 5 minutes. Re-alerting
+  # every run would train everyone to ignore the mail, so repeat monitoring alerts are throttled.
+  [int]$MonitoringAlertCooldownMin = 60,
   [switch]$Force
 )
 $ErrorActionPreference = 'Continue'
@@ -85,7 +90,10 @@ function Format-ErrorText($errorRecord) {
   return [string]$errorRecord
 }
 
-if (Test-Path $pauseFile) { Log "paused (stack-watchdog.pause present) - skipping"; exit 0 }
+# The pause gate is NOT here. It is the first statement of main, below every recovery primitive,
+# so a paused run can still observe (Invoke-PausedMonitoringObservation) while every Docker-
+# touching action stays unreachable. Nothing between here and that gate starts anything: the
+# resolver only locates a shell, and the state file is only read.
 
 # A missing or unvalidated shell makes both the routability probe and recovery impossible. Resolve
 # it once per watchdog run so a PATH-order change can never turn System32's WSL launcher into a
@@ -108,7 +116,7 @@ if (-not $script:gitBash) {
 }
 
 # ---- state (last recovery time + consecutive-failure count) ----
-$state = @{ lastRecovery = ''; consecutiveFailures = 0 }
+$state = @{ lastRecovery = ''; consecutiveFailures = 0; lastMonitoringAlert = '' }
 if (Test-Path $stateFile) {
   try { (Get-Content $stateFile -Raw | ConvertFrom-Json).psobject.properties | ForEach-Object { $state[$_.Name] = $_.Value } }
   catch { Log "state file is unreadable; using safe defaults: $(Format-ErrorText $_)" }
@@ -400,7 +408,124 @@ function Send-Alert([string]$subject, [string]$body) {
   } catch { Log "Windows event-log alert failed: $(Format-ErrorText $_)" }
 }
 
+# ---- observe-only (the watchdog is PAUSED) ----
+# The pause file is an operator opt-out from ACTING: never start Docker Desktop, never
+# `wsl --shutdown`, never run the bring-up script. It was never an opt-out from LOOKING, and the
+# gap between those two is BUG-21's tail. After an ungraceful engine stop the fleet auto-restarts
+# while oshal-local-prometheus and oshal-local-alertmanager stay Exited(255) with RestartCount 0
+# despite `restart: unless-stopped` (observed twice on 2026-09-14). `docker ps` shows what IS
+# running, not what is missing, so the swarm runs monitored by nothing until a human happens to
+# run oshal-up.sh. A paused run therefore still executes monitoring-liveness-check.sh --strict and
+# raises a red result through the alert path this script already has. Engine absent -> log and exit
+# quietly: an overlay cannot be watching when there is no engine, and the operator already knows.
+function ConvertTo-AlertSafeText([string]$value) {
+  <#
+    .SYNOPSIS
+    Flattens captured output into one alert-safe line.
+    .DESCRIPTION
+    Send-Alert hands its body to a native docker command line and ConvertTo-NativeAlertArgument
+    refuses a double quote, while the liveness check's own failure hints are multi-line and full
+    of them. Collapse the whitespace, trade double quotes for apostrophes, and cap the length so a
+    verbose failure costs a few words instead of the whole alert.
+    .PARAMETER value
+    Raw captured stdout/stderr.
+    .OUTPUTS
+    System.String - single line, no double quotes, at most 400 characters plus an ellipsis.
+  #>
+  $flat = (([string]$value) -replace '[\r\n]+', ' ') -replace '"', "'"
+  $flat = ($flat -replace '\s{2,}', ' ').Trim()
+  if ($flat.Length -gt 400) { return $flat.Substring(0, 400) + '...' }
+  return $flat
+}
+function Test-DockerEnginePipePresent {
+  <#
+    .SYNOPSIS
+    True when the Docker engine's named pipe exists.
+    .DESCRIPTION
+    Deliberately NOT Get-EngineState: that spawns the docker CLI with a 25-second budget, and a
+    paused run must be able to prove it spawned nothing that could act. The engine pipe is the
+    engine's own presence signal and disappears the instant the Docker VM stops, which is exactly
+    the condition this path must stay quiet for.
+    .OUTPUTS
+    System.Boolean - false when the pipe is absent or cannot be inspected.
+  #>
+  try { return [bool](Test-Path -LiteralPath '\\.\pipe\docker_engine') }
+  catch { Log "docker engine pipe probe failed; treating the engine as absent: $(Format-ErrorText $_)"; return $false }
+}
+function Test-MonitoringAlertAllowed {
+  <#
+    .SYNOPSIS
+    True when a monitoring alert may be raised again.
+    .DESCRIPTION
+    Throttles repeats to one per -MonitoringAlertCooldownMin. Unreadable state alerts rather than
+    suppressing: losing one duplicate mail is cheaper than losing the first real one.
+    .OUTPUTS
+    System.Boolean
+  #>
+  if (-not $state.lastMonitoringAlert) { return $true }
+  try { $mins = ((Get-Date) - [datetime]$state.lastMonitoringAlert).TotalMinutes }
+  catch { Log "invalid lastMonitoringAlert state; alerting this run: $(Format-ErrorText $_)"; return $true }
+  return ($mins -ge $MonitoringAlertCooldownMin)
+}
+function Invoke-MonitoringLivenessCheck {
+  <#
+    .SYNOPSIS
+    Runs scripts/monitoring-liveness-check.sh --strict through the validated Git Bash.
+    .DESCRIPTION
+    The check is the single source of truth for "is monitoring actually monitoring"; this only
+    transports its verdict. A check that does not answer counts as red - a silent observer is the
+    failure being guarded against.
+    .OUTPUTS
+    System.Collections.Hashtable with Ok (System.Boolean) and Detail (System.String).
+  #>
+  $repoArg = ConvertTo-BashSingleQuoted ($Repo.Replace('\', '/'))
+  $r = Invoke-Timed $script:gitBash "-lc `"cd $repoArg && bash scripts/monitoring-liveness-check.sh --strict`"" 120000
+  if (-not $r.Exited) { return @{ Ok = $false; Detail = "the liveness check did not answer within 120s: $(ConvertTo-AlertSafeText $r.Err)" } }
+  if ($r.ExitCode -eq 0) { return @{ Ok = $true; Detail = (ConvertTo-AlertSafeText $r.Out) } }
+  return @{ Ok = $false; Detail = "exit $($r.ExitCode): $(ConvertTo-AlertSafeText ($r.Out + ' ' + $r.Err))" }
+}
+function Invoke-PausedMonitoringObservation {
+  <#
+    .SYNOPSIS
+    The entire paused run: observe monitoring, touch nothing.
+    .DESCRIPTION
+    Runs the liveness check when the engine is present and raises Send-Alert on a red result,
+    subject to the repeat throttle. Takes no recovery action of any kind - that is what the pause
+    file means, and tests/unit/watchdog-paused-monitoring-observation.spec.ts proves it.
+    .OUTPUTS
+    System.Int32 - the process exit code: 0 quiet or watching, 1 the overlay is NOT watching.
+  #>
+  Log 'paused (stack-watchdog.pause present) - observe-only: no docker start, no bring-up'
+  if (-not (Test-DockerEnginePipePresent)) {
+    Log 'paused observe-only: the docker engine is not running - nothing to observe, exiting quietly'
+    return 0
+  }
+  $check = Invoke-MonitoringLivenessCheck
+  if ($check.Ok) {
+    Log "paused observe-only: monitoring is watching - $($check.Detail)"
+    if ($state.lastMonitoringAlert) { $state.lastMonitoringAlert = ''; Save-State }
+    return 0
+  }
+  Log "paused observe-only: MONITORING IS NOT WATCHING - $($check.Detail)"
+  if (-not (Test-MonitoringAlertAllowed)) {
+    Log "paused observe-only: repeat alert suppressed (last $($state.lastMonitoringAlert), cooldown $MonitoringAlertCooldownMin min)"
+    return 1
+  }
+  $state.lastMonitoringAlert = (Get-Date).ToString('o')
+  Save-State
+  Send-Alert 'OSHAL monitoring overlay is NOT watching' ("scripts/monitoring-liveness-check.sh --strict is red on $env:COMPUTERNAME ($($check.Detail)). The stack watchdog is PAUSED, so nothing will fix this automatically and docker ps will keep looking correct. Bring the overlay back with: bash scripts/oshal-up.sh")
+  return 1
+}
+
 # =========================== main ===========================
+# The pause gate is the FIRST statement of main, so every Docker-touching action below it - the
+# process kills, wsl --shutdown, the Docker Desktop launch and oshal-up.sh - is unreachable on a
+# paused run. An observe-only run reports through its exit code as well as the alert path.
+if (Test-Path $pauseFile) {
+  $pausedOutput = @(Invoke-PausedMonitoringObservation)   # last value is the code; stray output cannot change it
+  exit ([int]$pausedOutput[-1])
+}
+
 $engine = Get-EngineState
 $needFull = $false; $needLight = $false; $reason = ''
 
