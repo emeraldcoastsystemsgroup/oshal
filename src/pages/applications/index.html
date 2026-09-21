@@ -5,6 +5,7 @@ SEQ | AUTHOR | DESCRIPTION
 -----------------------------------------------------------------------------
 1 | maintainer@emeraldcoastsystemsgroup.com | Adopt the shared live theme bootstrap and semantic surface colors.
 2 | maintainer@emeraldcoastsystemsgroup.com | Openability comes from the manifest, not from a list of names typed into this page. The WORKING array plus "manifestPath contains deployed-apps" let a store package through on its path while a CORE manifest could only qualify by being typed in, so five shipped apps with real rail surfaces rendered a disabled "Coming soon" — the Security Center said it was unreleased while sitting on the operator's own rail. Rows now read summary.hasSurface (derived by hasCockpitSurface from ui.static / ui.dynamic / a group's toolbar) through js/app-catalog-openability.js, every row shows its real active/inactive status, and an app that declares no surface says THAT instead of claiming to be unfinished.
+3 | maintainer@emeraldcoastsystemsgroup.com | A swarm CATALOG, not a flat tile list: every row now shows the providers its bundle includes and each provider's live state, so an operator can tell a connected bundle from one waiting on a credential from one this deployment cannot offer at all. The page read the app registry and the store catalog and never the connector broker, so the five states the catalog is supposed to distinguish collapsed into three. Bundle providers come from the manifest dependency tiers (listing summary for installed apps, marketplace entry for store rows); live state comes from GET /api/connect/list, token-free. The decision lives in js/app-connector-readiness.js so a guard can drive it, and a broker that cannot be read renders "connections unknown" rather than accusing the operator of having connected nothing.
 -->
 <!--
   Applications — the operator app-admin console AND the signed-in app catalog, one page.
@@ -170,6 +171,30 @@ SEQ | AUTHOR | DESCRIPTION
     .status-inactive { color: var(--ink-muted); }
     .status-coming { color: var(--ink-muted); }
 
+    /* Bundle connector readiness — the providers a bundle includes, and their live broker state.
+       Tones are deliberately only three: ok (connected), warn (something to do), off (nothing this
+       viewer can act on — unavailable here, or unknown because the broker could not be read). */
+    .ready-badge {
+      border-radius: 999px; padding: 2px 9px; font-size: 0.68rem; font-weight: 700; white-space: nowrap;
+      border: 1px solid var(--line-dark); color: var(--ink-muted); background: rgba(20, 23, 26, 0.04);
+    }
+    .ready-ok { color: var(--green); border-color: rgba(95, 138, 63, 0.4); background: rgba(95, 138, 63, 0.1); }
+    .ready-warn { color: var(--status-warning); border-color: rgba(255, 176, 32, 0.45); background: rgba(255, 176, 32, 0.14); }
+    .ready-off { color: var(--ink-muted); }
+    .conn-list { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 5px; }
+    .conn-label { font-size: 0.68rem; color: var(--ink-muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 800; }
+    .conn-chip {
+      display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 1px 9px;
+      font-size: 0.7rem; font-weight: 650; border: 1px solid var(--line-dark); color: var(--ink-muted);
+      background: var(--panel); white-space: nowrap;
+    }
+    .conn-chip::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: 0.85; }
+    .conn-chip.state-connected, .conn-chip.state-platform { color: var(--green); border-color: rgba(95, 138, 63, 0.4); }
+    .conn-chip.state-expired, .conn-chip.state-needs-credential { color: var(--status-warning); border-color: rgba(255, 176, 32, 0.45); }
+    .conn-chip.state-unavailable, .conn-chip.state-unknown { color: var(--ink-muted); opacity: 0.8; }
+    .conn-chip .conn-state { opacity: 0.75; font-weight: 600; }
+    .conn-chip.tier-optional { border-style: dashed; }
+
     .app-right { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
     .open-link { background: var(--navy); color: var(--text-on-accent, #fff); border-color: var(--navy); font-weight: 700; padding: 7px 14px; }
     .open-link:hover { background: var(--teal); color: var(--text-on-accent, #fff); border-color: var(--teal); }
@@ -221,7 +246,8 @@ SEQ | AUTHOR | DESCRIPTION
         Apps launch from the cockpit ribbon on the left — this console is for <strong>managing</strong> them.
         <span class="op-only">Load, import, build, activate, or unload the manifests loaded from
         <code>swarm-apps/*.yaml</code> without restarting containers.</span>
-        <span class="muted">Greyed rows are on the roadmap.</span>
+        <span class="muted">Each row lists the providers its bundle plugs into and whether they are
+        connected on this deployment.</span>
       </div>
     </div>
 
@@ -288,6 +314,9 @@ SEQ | AUTHOR | DESCRIPTION
     // Absolute path: this page serves at both /applications and /applications/, and a relative
     // specifier resolves against the document URL, so it would 404 on one of them.
     import { catalogRank, openControl } from '/applications/js/app-catalog-openability.js';
+    // Connector readiness is the broker's answer joined to the manifest's declaration — never a
+    // guess made here, and never "not connected" when the broker simply could not be read.
+    import { bundleReadiness, indexProviders, PROVIDER_STATE_LABELS } from '/applications/js/app-connector-readiness.js';
 
     const appsEl = document.getElementById('apps');
     const errorBox = document.getElementById('errorBox');
@@ -362,10 +391,44 @@ SEQ | AUTHOR | DESCRIPTION
       } catch { return {}; }
     }
 
+    // The caller's own connector state, token-free (GET /api/connect/list returns status and
+    // account selectors only). `null` means the broker could NOT be read — kept distinct from an
+    // empty list on purpose: an empty index would render every declared provider as "not
+    // connected", turning a 401 or an outage into a false accusation on every row.
+    let connectorIndex = null;
+    async function fetchConnections() {
+      try {
+        const res = await fetch('/api/connect/list', { credentials: 'same-origin' });
+        if (!res.ok) return null;
+        return indexProviders(await res.json());
+      } catch { return null; }
+    }
+
+    // One bundle's providers + its single readiness verdict, rendered identically for an installed
+    // app and a store row because both carry the same manifest-derived `connectors` block.
+    function readinessBadge(bundle) {
+      const readiness = bundleReadiness(bundle, connectorIndex);
+      if (!readiness.badge) return '';
+      return `<span class="ready-badge ready-${readiness.badge.tone}" title="${escapeHtml(readiness.title)}">${escapeHtml(readiness.badge.label)}</span>`;
+    }
+    function connectorChips(bundle) {
+      const readiness = bundleReadiness(bundle, connectorIndex);
+      if (!readiness.providers.length) return '';
+      const chips = readiness.providers.map((provider) => `
+        <span class="conn-chip state-${escapeHtml(provider.state)} tier-${escapeHtml(provider.tier)}"
+              title="${escapeHtml(provider.id)} — ${escapeHtml(provider.tier)} for this bundle">
+          ${escapeHtml(provider.label)}<span class="conn-state">${escapeHtml(PROVIDER_STATE_LABELS[provider.state] || provider.state)}</span>
+        </span>`).join('');
+      return `<div class="conn-list"><span class="conn-label">Providers</span>${chips}</div>`;
+    }
+
     async function fetchApps() {
       showError('');
       try {
-        const [res, updates] = await Promise.all([fetch('/api/swarm/apps'), fetchStoreUpdates()]);
+        const [res, updates, connections] = await Promise.all([
+          fetch('/api/swarm/apps'), fetchStoreUpdates(), fetchConnections(),
+        ]);
+        connectorIndex = connections;
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         storeUpdates = updates;
@@ -458,6 +521,7 @@ SEQ | AUTHOR | DESCRIPTION
               <span class="app-version">v${escapeHtml(a.version)}</span>
               ${storeUpdates[a.name] ? `<span class="update-badge" title="A newer version is published in the app store. Update via: node scripts/oshal-app.js install ${escapeHtml(a.name)}">v${escapeHtml(storeUpdates[a.name])} available</span>` : ''}
               <span class="status-badge status-${badgeClass}">${badgeText}</span>
+              ${readinessBadge(a)}
             </div>
             <div class="app-desc">${escapeHtml(a.description)}</div>
             <div class="app-meta">
@@ -465,6 +529,7 @@ SEQ | AUTHOR | DESCRIPTION
               <span><strong>${a.toolCount}</strong> tools</span>
               <span class="app-path muted">${escapeHtml(a.manifestPath)}</span>
             </div>
+            ${connectorChips(a)}
           </div>
           <div class="app-right">
             <div class="op-actions">
@@ -667,9 +732,11 @@ SEQ | AUTHOR | DESCRIPTION
               <span class="app-name">${escapeHtml(a.displayName)}</span>
               ${a.version ? `<span class="app-version">v${escapeHtml(a.version)}</span>` : ''}
               <span class="status-badge status-${installable ? 'active' : 'coming'}">${escapeHtml(a.status)}</span>
+              ${readinessBadge(a)}
             </div>
             <div class="app-desc">${escapeHtml(a.description)}</div>
             <div class="app-desc">${escapeHtml(a.registryLabel || 'Public app store')}${installedNames.has(a.name) ? ' · A package with this name is installed' : ''}</div>
+            ${connectorChips(a)}
           </div>
           <div class="app-right">
             <div class="op-actions">

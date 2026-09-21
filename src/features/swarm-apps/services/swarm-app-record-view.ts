@@ -6,8 +6,10 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extract the record presentation and listing-visibility helpers verbatim out of swarm-app-service.ts, which reached 1082 code lines against the 1000-line hard cap. These three are pure functions of a record — no pool, no registry, no service state — so they read and test better beside each other than buried above a 1400-line class.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | toSummary now redacts owner identity for a viewer who is neither the owner nor an operator. A public-scoped app keeps its stamped owner_sub, and the listing serialized it to EVERY caller — a guest (mintable with no credentials) read the deployment operator's real OIDC subject off /api/swarm/apps. Redaction is viewer-CONDITIONAL, never unconditional: global search calls the listing with no viewer and compares summary.ownerSub to decide person-scope visibility, so blanking it always would silently hide a user's own apps from their own search.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The summary carries hasSurface, so a listing surface can tell an app that opens into a cockpit from one that genuinely has no screen without re-reading a manifest it is not given. The applications catalog was deciding that from a hand-typed name array, which no core manifest could ever join by shipping a rail; five apps with real surfaces rendered "Coming soon". Derived here beside firstAppIcon because it reads the same manifest.ui block, and a second copy of the rule is how two surfaces start disagreeing about which apps are openable.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The summary carries the bundle's declared connector provider ids, split into the ADR-085 required/optional tiers. The applications catalog listed installed and available packages with no way to show which providers a bundle includes, so it could not distinguish a connected bundle from one waiting on a credential - the whole of the "apps page as a swarm catalog" gap. Read through the SHARED tier contract (@/shared/app-dependencies), which the installer and the loader already use, rather than the raw `dependencies` keys: the flat and tiered forms differ, and a second reader of them is how two surfaces start disagreeing about what a package depends on. Lenient by design (inspect, not read): a stored record whose block is malformed contributes no connectors instead of making the whole listing throw.
  */
 
+import { inspectAppDependencies } from '@/shared/app-dependencies';
 import type { SwarmApplicationRecord, SwarmApplicationSummary } from '../types';
 
 /**
@@ -78,6 +80,32 @@ export function hasCockpitSurface(manifest: SwarmApplicationRecord['manifest'] |
 }
 
 /**
+ * @description The connector provider ids a manifest declares, split into the ADR-085 tiers —
+ * `required` (the app cannot do its job without the provider) and `optional` (it works without
+ * it). Read through the shared dependency contract rather than the raw `dependencies` keys,
+ * because the legacy flat form and the tiered form put the same list in different places and a
+ * second reader of them is how two surfaces start disagreeing about a package.
+ *
+ * Deliberately lenient: {@link inspectAppDependencies} collects problems instead of throwing, so a
+ * stored record with a hand-edited block contributes no connectors rather than failing the whole
+ * listing. An id here is a DECLARATION only — it says the bundle includes that provider, never
+ * that anything is connected; live state comes from the broker, which a listing joins separately.
+ * @param manifest - Parsed app manifest (may be undefined for bare records).
+ * @returns The declared provider ids per tier; empty lists when the manifest declares none.
+ */
+export function declaredConnectors(
+  manifest: SwarmApplicationRecord['manifest'] | undefined,
+): { required: string[]; optional: string[] } {
+  if (!manifest) return { required: [], optional: [] };
+  const tiers = inspectAppDependencies(manifest);
+  const required = [...new Set(tiers.required.connectors)];
+  const requiredSet = new Set(required);
+  // A provider named in both tiers is required: the stricter tier is the honest one, and the
+  // contract already reports the duplicate as a problem the loader surfaces at install time.
+  return { required, optional: [...new Set(tiers.optional.connectors)].filter((id) => !requiredSet.has(id)) };
+}
+
+/**
  * @description Project a stored application record into the summary shape every listing surface
  * consumes, resolving the display icon and the ADR-097 primary suite along the way.
  *
@@ -104,6 +132,7 @@ export function toSummary(r: SwarmApplicationRecord, viewer?: SummaryViewer | nu
     icon: firstAppIcon(r.manifest),
     hasSurface: hasCockpitSurface(r.manifest),
     suite: r.manifest?.suite ?? null,
+    connectors: declaredConnectors(r.manifest),
     manifestPath: r.manifestPath,
     loadedAt: r.loadedAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),

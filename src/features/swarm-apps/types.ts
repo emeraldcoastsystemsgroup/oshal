@@ -32,6 +32,7 @@
  * 26 | maintainer@emeraldcoastsystemsgroup.com   | Removed `phases` from SwarmAppWorkflow (CKR-1 / D1+D3). It was declared here, written in 16 shipped manifests across both repos, and taught by ADR-033b's canonical example - and copied by NOTHING. The bridge in swarm-app-service registerWorkflow is a hand-written object literal, the destination WorkflowDefinition has no slot for it, so it was never plumbed at all: authors were declaring a field that could not do anything. The same literal had already lost `reviewerBot` in production, which made every app-contributed reviewer fall through to graceful completion. Deleting rather than plumbing, because there is no staged dispatcher for phases to drive (CKR-10). Existing manifests keep the key harmlessly - the loader tolerates unknown keys, and a fail-closed unknown-key pass would break 13 installed store packages.
  * 27 | maintainer@emeraldcoastsystemsgroup.com   | Removed `stages` and SwarmAppWorkflowStage (CKR-10 / D2). The staged EXECUTOR was retired in favour of the graph engine, so a hand-authored `pipeline: staged` fell through chooseDispatchPath to manifest-worker and ran only workerBot - dropping every approval gate the author wrote, silently. The field was still typed on both sides and copied by the registry bridge, so the manifest format kept advertising a shape nothing could execute. Live blast radius was zero: no manifest in either repo declared it and Publish structurally cannot emit it - the studio compiles its own staged mode INTO a graph and never touches this type. Deleting rather than restoring an executor, which is what the repair entry recommends: the graph engine supersedes it. A manifest declaring it is now REFUSED by readManifest and pointed at graph.
  * 28 | maintainer@emeraldcoastsystemsgroup.com   | Removed `foundation?: { persona: string }` (CKR-14 / D7). The key was declared here and in five store manifests and read by NOTHING - not either persona parser, not either bot-node provider. Its only other appearance is GROUP_FORBIDDEN_KEYS, which checks for its ABSENCE and is left in place: a group manifest declaring it is still rejected, which costs nothing and keeps group manifests clean. Deleted only AFTER the five store manifests dropped the key and shipped (oshal-applications #240) - core-first would have left the store validating a path field core no longer typed. Existing manifests keep the key harmlessly, as entry 26 records: the loader tolerates unknown keys.
+ * 29 | maintainer@emeraldcoastsystemsgroup.com   | SwarmApplicationSummary gained `connectors: {required, optional}` - the provider ids this bundle includes, projected from the ADR-085 dependency tiers. The applications catalog could list installed and available packages but had no way to say which providers a bundle uses or whether they are connected, so it could not tell a connected bundle from one waiting on a credential. Projected here, beside icon/hasSurface, because a second reader of the raw dependencies keys would disagree with the shared tier contract the installer and loader already use.
  */
 
 import type { BriefingDeclaration } from '@/shared/briefings';
@@ -927,6 +928,13 @@ export interface SwarmApplicationSummary {
   hasSurface: boolean;
   /** ADR-097 primary catalog shelf; null only for pre-097 installed packages. */
   suite: SwarmAppSuite | null;
+  /** The connector provider ids this bundle includes, read through the shared ADR-085 dependency
+   *  tier contract (`required` = the app cannot do its job without it, `optional` = it works
+   *  without it). Both lists are empty when the manifest declares no connectors. A listing surface
+   *  joins these ids against the broker's own per-provider state (GET /api/connect/list) to say
+   *  whether a bundle is connected, waiting on a credential, or not offered by this deployment —
+   *  the ids alone are a declaration and never a claim that anything is connected. */
+  connectors: { required: string[]; optional: string[] };
   manifestPath: string;
   loadedAt: string;
   updatedAt: string;
