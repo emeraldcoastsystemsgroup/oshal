@@ -1400,6 +1400,33 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### Connector-token KEK and DEK-fallback hardening
 - **Remaining:** promote the completed local `hkdf1:`/`k2:` migration with mixed legacy/v2/current live-database fixtures; add operator rotation/recovery tooling; move production master-key custody from `SESSION_SECRET` to a KMS/HSM-backed, key-id-aware rail; and exercise the explicit `shared-hkdf` incident break-glass against real connector refreshes before immediately returning to deny mode.
 - **Done when:** a live migration proves owner isolation across legacy/v2/current rows, key rotation and recovery do not strand users, all supported providers refresh through the shared codec, the default forced DEK-store failure denies without a write, the explicit break-glass is observable and reversible, and production can revoke a KEK generation without retaining an application-readable master secret indefinitely.
+- **Decision (operator, 2026-09-21): build the CUSTODY SEAM first; Vault Transit is named backend #1;
+  nothing here is deferred, but it is queued LAST.** The operator's framing is the decision: which
+  KMS is a *configuration* choice, so the code must not pick one. Work order, and every item before
+  the backend is backend-independent: (1) a `KekProvider` seam in the shape this repo already uses
+  for LLM, camera, drone and TTS providers — implementations `hkdf-session` (what exists today,
+  development only), `vault-transit`, and `cloud-kms` — selected by configuration; (2) a **key id and
+  generation in the envelope header**, which is the missing primitive: `v2:`/`k2:`/`hkdf1:` record a
+  *format* and no key identity, so today no stored row can say which KEK wrapped it and no generation
+  can be revoked; (3) rotation, rewrap and recovery tooling (none exists — `git ls-files scripts |
+  grep -iE 'rotat|rewrap|kek|dek|recover'` returns nothing relevant); (4) live mixed-row
+  legacy/v2/current fixtures against a real database, replacing the in-memory `fakePool` in
+  `tests/connector-token-crypto.spec.ts`. **Backend #1 is Vault Transit**, chosen on these facts:
+  it is open source and free, keys are generated inside Vault and never become
+  application-readable, `transit/keys/<name>/rotate` mints a generation and
+  `min_decryption_version` revokes one — which is exactly the entry's deciding clause — and
+  `transit/rewrap` re-wraps stored rows without decrypting the payload; the box already runs a Vault
+  container and already has a client (`scripts/oshal-vault.js`,
+  `src/features/devops-vault/services/vault-console-service.ts`). Its prerequisite is the existing
+  **"Production Vault hardening"** entry: `oshal-local-vault` runs `server -dev` today, which is
+  in-memory and auto-unsealed and loses every key on restart, so Transit cannot hold custody until
+  that lands. Cloud KMS (AWS/GCP/Azure) remains a supported configuration behind the same seam and
+  is **not** a dependency — it would put cloud credentials in the api environment and make connector
+  decryption fail when the network does. The break-glass drill
+  (`OSHAL_ENVELOPE_DEK_FAILURE=shared-hkdf` against real connector refreshes, then straight back to
+  deny) is not authorized in this decision and is asked for separately when the tooling exists.
+  (PM laid out the free-vs-paid custody options and recommended this; the operator chose it and set
+  the priority.)
 
 ### ADR-087 access-role deferred layers
 - **Remaining:** add per-user Jarvis visibility overrides, sandbox enforcement for restricted tools, manifest declarations, and the small cleanup items listed in [ADR-087](adr/087-access-roles-jarvis-visibility-scoping.md).
