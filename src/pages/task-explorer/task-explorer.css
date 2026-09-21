@@ -4,19 +4,20 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added styling for the OSHAL-native task explorer engineering page
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Finish the BUG-12 conversion this file only half received. The gate that enforced it reads bare hex inside a `:root` block, so 28 dark-authored `rgba()` values — every panel fill, every border, the `--surface-glow` gradient behind ALL SIX panel classes — sailed through untouched and kept painting near-opaque navy under whatever theme was selected. In a light theme the page put `--text-primary` (#1a1a2e) on that navy: the Refresh button measured 1.03:1, panel titles 1.26:1, twelve runs of text unreadable. Fills now derive from `--bg-*`, borders from `--border-color*`, and each accent wash is a `color-mix` of the token it was imitating. `--accent` moved off `--status-success` (a decorative mint was never a status) onto `--accent-primary`, and `--surface-alt` off `--border-color` onto a surface token.
  */
 
 :root {
-  color-scheme: dark;
+  color-scheme: light dark;
   --bg: var(--bg-secondary);
   --surface: var(--bg-tertiary);
-  --surface-alt: var(--border-color);
-  --surface-glow: linear-gradient(180deg, rgba(45, 84, 123, 0.28), rgba(15, 25, 39, 0.86));
-  --border: rgba(132, 168, 211, 0.22);
+  --surface-alt: var(--bg-card-hover);
+  --surface-glow: linear-gradient(180deg, color-mix(in srgb, var(--accent-primary) 7%, var(--bg-secondary)), var(--bg-card));
+  --border: var(--border-color-hover);
   --text: var(--text-primary);
   --muted: var(--text-secondary);
-  --accent: var(--status-success);
-  --accent-strong: var(--accent-primary);
+  --accent: var(--accent-primary);
+  --accent-strong: var(--accent-primary-hover);
   --warning: var(--status-warning);
   --success: var(--status-success);
   --danger: var(--status-error);
@@ -36,8 +37,8 @@ body {
   font-family: var(--font-sans);
   color: var(--text);
   background:
-    radial-gradient(circle at top left, rgba(63, 119, 175, 0.22), transparent 32%),
-    radial-gradient(circle at top right, rgba(103, 213, 181, 0.18), transparent 28%),
+    radial-gradient(circle at top left, color-mix(in srgb, var(--accent-primary) 22%, transparent), transparent 32%),
+    radial-gradient(circle at top right, color-mix(in srgb, var(--status-success) 18%, transparent), transparent 28%),
     linear-gradient(180deg, var(--bg-primary), var(--bg-tertiary) 52%, var(--bg-primary));
 }
 
@@ -115,8 +116,8 @@ select {
 select,
 button {
   border-radius: 999px;
-  border: 1px solid rgba(123, 165, 215, 0.3);
-  background: rgba(8, 14, 24, 0.82);
+  border: 1px solid var(--border-color-hover);
+  background: var(--bg-tertiary);
   color: var(--text);
   padding: 12px 16px;
 }
@@ -128,7 +129,7 @@ button {
 
 button:hover {
   transform: translateY(-1px);
-  border-color: rgba(103, 213, 181, 0.6);
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
 }
 
 .metrics-grid {
@@ -174,7 +175,7 @@ button:hover {
   align-items: center;
   padding: 16px 18px;
   border-bottom: 1px solid var(--border);
-  background: rgba(8, 14, 24, 0.55);
+  background: var(--bg-tertiary);
 }
 
 .panel-title {
@@ -218,17 +219,17 @@ button:hover {
   margin-bottom: 6px;
   border-radius: 14px;
   border: 1px solid transparent;
-  background: rgba(13, 23, 36, 0.72);
+  background: var(--bg-tertiary);
   color: var(--text);
 }
 
 .tree-row.is-selected {
-  border-color: rgba(103, 213, 181, 0.45);
-  background: rgba(29, 59, 69, 0.78);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-card-hover));
 }
 
 .tree-row.is-parent {
-  background: rgba(18, 32, 49, 0.85);
+  background: var(--bg-card-hover);
 }
 
 .tree-row .toggle {
@@ -264,7 +265,7 @@ button:hover {
 
 .resize-handle {
   cursor: col-resize;
-  background: linear-gradient(180deg, rgba(47, 208, 255, 0), rgba(47, 208, 255, 0.55), rgba(47, 208, 255, 0));
+  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--accent-strong) 55%, transparent), transparent);
   border-radius: 999px;
   margin: 16px 0;
 }
@@ -276,8 +277,8 @@ button:hover {
 }
 
 .tab.active {
-  background: rgba(47, 208, 255, 0.14);
-  border-color: rgba(47, 208, 255, 0.45);
+  background: color-mix(in srgb, var(--accent-strong) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent-strong) 55%, transparent);
 }
 
 .tab-panel {
@@ -301,7 +302,7 @@ button:hover {
 .section-card {
   border-radius: 18px;
   border: 1px solid var(--border);
-  background: rgba(8, 14, 24, 0.56);
+  background: var(--bg-tertiary);
   padding: 18px;
 }
 
@@ -332,8 +333,8 @@ button:hover {
 .stat-strip article {
   padding: 14px;
   border-radius: 16px;
-  background: rgba(13, 23, 36, 0.76);
-  border: 1px solid rgba(132, 168, 211, 0.12);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
 }
 
 .detail-item span,
@@ -361,8 +362,8 @@ button:hover {
   gap: 14px;
   padding: 14px;
   border-radius: 16px;
-  background: rgba(13, 23, 36, 0.76);
-  border: 1px solid rgba(132, 168, 211, 0.12);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
 }
 
 .timeline-time {
@@ -401,8 +402,8 @@ button:hover {
   width: 100%;
   padding: 12px 14px;
   border-radius: 14px;
-  border: 1px solid rgba(132, 168, 211, 0.12);
-  background: rgba(13, 23, 36, 0.76);
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
   color: var(--text);
   text-align: left;
 }
@@ -431,7 +432,7 @@ button:hover {
   max-height: 420px;
   padding: 16px;
   border-radius: 14px;
-  background: rgba(6, 10, 18, 0.94);
+  background: var(--bg-primary);
   font-family: var(--font-mono);
   font-size: 0.8rem;
 }
@@ -499,7 +500,7 @@ button:hover {
   flex: 1;
   min-width: 180px;
   padding: 7px 14px;
-  background: rgba(255, 255, 255, 0.04);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
   border: 1px solid var(--border);
   border-radius: 999px;
   color: var(--text);
@@ -518,7 +519,7 @@ button:hover {
 
 .toolbar-select {
   padding: 7px 12px;
-  background: rgba(255, 255, 255, 0.04);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
   border: 1px solid var(--border);
   border-radius: 999px;
   color: var(--text);
@@ -562,7 +563,7 @@ button:hover {
   font-size: 10px;
   font-weight: 600;
   border-radius: 999px;
-  background: rgba(99, 102, 241, 0.15);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
   color: var(--accent);
   margin-left: 6px;
   text-transform: uppercase;
@@ -574,7 +575,7 @@ button:hover {
   padding: 1px 6px;
   font-size: 10px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
   color: var(--muted);
   margin-left: 6px;
 }
@@ -608,6 +609,6 @@ button:hover {
 
 .cost-table td {
   padding: 6px 10px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid var(--border-color);
   color: var(--text);
 }

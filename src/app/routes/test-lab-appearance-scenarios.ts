@@ -13,6 +13,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Register real Profile dialog and abandoned workspace HTTP coverage, with shared fixed-asset readiness.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Register the per-surface in-app help contract: the covered-surface list the cockpit header reads, and a representative deep link, so a deployment that ships without the guide corpus (or with a mapping to a guide nobody wrote) reports it here instead of failing in front of a stuck reader.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Link the default-rail band guard. config-seed/profiles/oshal-framework.json is hand-maintained with no linkage to install state, so a tile drifting between rail groups — or out of the rail entirely — went unnoticed until somebody opened the cockpit and looked.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Link the light/dark contrast walk. The existing appearance coverage proves a surface consumes theme tokens and inherits a live change; none of it measures what the pixels come out as, which is where a wrongly mapped role hides.
  * =============================================================================
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
@@ -89,6 +90,7 @@ export const APPEARANCE_SCENARIOS: Scenario[] = [{
     { level: 'browser', path: 'tests/unit/workspace-chat-theme-browser.spec.ts' },
     { level: 'browser', path: 'tests/unit/core-surface-theme-browser.spec.ts' },
     { level: 'unit', path: 'tests/unit/surface-theme-bundled-skin.spec.ts' },
+    { level: 'browser', path: 'tests/unit/surface-theme-contrast-browser.spec.ts' },
   ],
   steps: [
     { id: 'workspace-stylesheet', app: 'cockpit', label: 'Workspace stylesheet', run: workspaceStylesheet },

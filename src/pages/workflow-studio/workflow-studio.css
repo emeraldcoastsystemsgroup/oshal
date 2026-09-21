@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Canvas-first n8n-style redesign: full-viewport workspace, slim top toolbar, the graph fills the screen, talk-to-build is a compact docked bar, definitions/palette + inspector/reports are scrollable side rails. Self-contained (no shared design-system dependency). Node cards have input/output ports, per-type accents; edges are directed (arrowheads).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Rebased core color/material variables onto cockpit theme tokens so dark/light themes and shared surface-glass polish apply consistently.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Runs panel styles: run cards, status tone chips, the step timeline (expandable rows with redacted input/output JSON). Studio-owned; consumes the same theme tokens — no shared CSS touched.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Take the last hardcoded inks off the themed chrome. Every accent-filled control (brand mark, Save/Publish, the active rail icon, the builder marks) wrote `color: #fff` over a fill the theme owns — on midnight's #7c7cff that measures 2.81:1 — so they now use `--text-on-accent`, which each theme defines against its own accent. The danger set painted the fixed rose ink #fecdd3, which is nearly white on a light page; it uses `--danger` and `color-mix` tints of it instead. The empty-canvas instructions are body copy, not a de-emphasised label, so they moved from `--faint` (`--text-muted`, 2.90:1) to `--muted`.
  */
 
 :root {
@@ -24,7 +25,7 @@
   --faint: var(--text-muted, var(--text-secondary));
   --accent: var(--accent-primary, var(--accent-primary));
   --accent-strong: var(--accent-primary-hover, var(--accent-primary));
-  --accent-soft: rgba(129, 140, 248, 0.16);
+  --accent-soft: color-mix(in srgb, var(--accent-primary) 16%, transparent);
   --secondary: var(--status-active, var(--accent-primary));
   --ok: var(--status-success, var(--status-success));
   --warn: var(--status-warning, var(--status-warning));
@@ -75,7 +76,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
   width: 26px; height: 26px;
   border-radius: 7px;
   background: linear-gradient(180deg, var(--accent), var(--accent-strong));
-  color: #fff; font-weight: 800; font-size: 14px;
+  color: var(--text-on-accent); font-weight: 800; font-size: 14px;
 }
 .brand-name { font-weight: 700; font-size: 0.98rem; white-space: nowrap; }
 .active-name { color: var(--muted); font-size: 0.86rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-left: 10px; border-left: 1px solid var(--border); }
@@ -106,10 +107,10 @@ button.button-accent, button.button-danger,
 }
 .topbar-actions button:hover, .canvas-actions button:hover, .version-actions button:hover { background: var(--panel-2); border-color: var(--accent); }
 .topbar-actions button:active { transform: translateY(1px); }
-.button-accent { background: linear-gradient(180deg, var(--accent), var(--accent-strong)) !important; border-color: transparent !important; color: #fff !important; box-shadow: 0 4px 14px rgba(99,102,241,0.28); }
+.button-accent { background: linear-gradient(180deg, var(--accent), var(--accent-strong)) !important; border-color: transparent !important; color: var(--text-on-accent) !important; box-shadow: 0 4px 14px rgba(99,102,241,0.28); }
 .button-accent:hover { filter: brightness(1.07); }
-.button-danger { border-color: rgba(251,113,133,0.5) !important; color: #fecdd3 !important; }
-.button-danger:hover { background: rgba(251,113,133,0.16) !important; }
+.button-danger { border-color: color-mix(in srgb, var(--danger) 50%, transparent) !important; color: var(--danger) !important; }
+.button-danger:hover { background: color-mix(in srgb, var(--danger) 16%, transparent) !important; }
 
 /* ── Status strip ──────────────────────────────────────────────────────── */
 .status-banner {
@@ -124,7 +125,7 @@ button.button-accent, button.button-danger,
 }
 .status-banner[data-tone="success"] { border-left-color: var(--ok); color: var(--status-success); }
 .status-banner[data-tone="warning"] { border-left-color: var(--warn); color: var(--status-warning); }
-.status-banner[data-tone="error"]   { border-left-color: var(--danger); color: #fecdd3; }
+.status-banner[data-tone="error"]   { border-left-color: var(--danger); color: var(--danger); }
 .status-banner[data-tone="info"]    { border-left-color: var(--secondary); }
 
 /* ── More-actions menu (in the top bar) ────────────────────────────────── */
@@ -136,7 +137,7 @@ button.button-accent, button.button-danger,
   transition: background 0.14s, border-color 0.14s;
 }
 .icon-btn:hover { background: var(--panel-2); border-color: var(--accent); }
-.icon-btn.icon-danger:hover { border-color: rgba(251,113,133,0.55); color: #fecdd3; background: rgba(251,113,133,0.14); }
+.icon-btn.icon-danger:hover { border-color: color-mix(in srgb, var(--danger) 55%, transparent); color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
 .menu {
   position: absolute; right: 0; top: calc(100% + 6px); z-index: 30;
   display: flex; flex-direction: column; min-width: 168px;
@@ -166,7 +167,7 @@ button.button-accent, button.button-danger,
   transition: background 0.14s, border-color 0.14s, color 0.14s;
 }
 .rail-icon:hover { background: var(--panel-2); border-color: var(--accent); }
-.rail-icon.is-active { background: linear-gradient(180deg, var(--accent), var(--accent-strong)); border-color: transparent; color: #fff; }
+.rail-icon.is-active { background: linear-gradient(180deg, var(--accent), var(--accent-strong)); border-color: transparent; color: var(--text-on-accent); }
 
 /* The canvas owns all remaining width — this is the hero. */
 .canvas-viewport {
@@ -176,7 +177,7 @@ button.button-accent, button.button-danger,
   min-height: 0;
   overflow: auto;
   background:
-    radial-gradient(circle at center, rgba(148,163,184,0.22) 1px, transparent 1.4px) 0 0 / 22px 22px,
+    radial-gradient(circle at center, color-mix(in srgb, var(--text-muted) 40%, transparent) 1px, transparent 1.4px) 0 0 / 22px 22px,
     var(--bg-soft);
 }
 /* The zoom/pan "world": a fixed 2200×1400 plane scaled by transform; the viewport scroll pans it. */
@@ -186,7 +187,7 @@ button.button-accent, button.button-danger,
   position: absolute; left: 52px; right: 0; top: 0; bottom: 0;
   display: grid; place-items: center;
   text-align: center; padding: 0 18% 0 18%;
-  color: var(--faint); font-size: 0.95rem; line-height: 1.7;
+  color: var(--muted); font-size: 0.95rem; line-height: 1.7;
   pointer-events: none; z-index: 2;
 }
 .canvas-empty b { color: var(--text); }
@@ -329,7 +330,7 @@ button.button-accent, button.button-danger,
 .builder-fab {
   position: fixed; right: 22px; bottom: 22px; z-index: 60;
   width: 54px; height: 54px; border-radius: 50%; border: none; cursor: pointer;
-  background: linear-gradient(180deg, var(--accent), var(--accent-strong)); color: #fff; font-size: 23px;
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong)); color: var(--text-on-accent); font-size: 23px;
   box-shadow: 0 10px 24px rgba(99,102,241,0.5); display: grid; place-items: center;
   transition: transform 0.12s, box-shadow 0.12s;
 }
@@ -349,7 +350,7 @@ button.button-accent, button.button-danger,
   display: flex; align-items: center; gap: 9px; padding: 10px 12px;
   background: linear-gradient(180deg, var(--panel-2), var(--panel)); border-bottom: 1px solid var(--border);
 }
-.builder-float-mark { display: grid; place-items: center; width: 27px; height: 27px; border-radius: 7px; background: linear-gradient(180deg, var(--accent), var(--accent-strong)); color: #fff; font-weight: 800; font-size: 14px; }
+.builder-float-mark { display: grid; place-items: center; width: 27px; height: 27px; border-radius: 7px; background: linear-gradient(180deg, var(--accent), var(--accent-strong)); color: var(--text-on-accent); font-weight: 800; font-size: 14px; }
 .builder-float-titles { display: flex; flex-direction: column; line-height: 1.2; }
 .builder-float-title { font-weight: 700; font-size: 0.86rem; }
 .builder-float-sub { font-size: 0.7rem; color: var(--muted); }
@@ -361,9 +362,9 @@ button.button-accent, button.button-danger,
 .wf-chat-log { display: flex; flex-direction: column; gap: 8px; }
 .wf-chat-log:empty { display: none; }
 .wf-chat-msg { max-width: 84%; padding: 7px 11px; border-radius: 11px; font-size: 0.84rem; line-height: 1.4; white-space: pre-wrap; word-break: break-word; }
-.wf-chat-you { align-self: flex-end; background: var(--accent-soft); border: 1px solid rgba(129,140,248,0.35); }
+.wf-chat-you { align-self: flex-end; background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent-primary) 35%, transparent); }
 .wf-chat-bot { align-self: flex-start; background: var(--bg-soft); border: 1px solid var(--border); }
-.wf-chat-error { align-self: flex-start; background: rgba(251,113,133,0.14); border: 1px solid var(--danger); color: #fecdd3; }
+.wf-chat-error { align-self: flex-start; background: color-mix(in srgb, var(--danger) 14%, transparent); border: 1px solid var(--danger); color: var(--danger); }
 
 .wf-prompt-row { display: flex; flex-wrap: wrap; gap: 7px; }
 .wf-prompt-row button {

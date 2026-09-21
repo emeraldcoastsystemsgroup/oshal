@@ -4,6 +4,7 @@ CHANGE LOG
 SEQ | AUTHOR | DESCRIPTION
 -----------------------------------------------------------------------------
 1 | maintainer@emeraldcoastsystemsgroup.com | Adopt the shared live theme bootstrap and semantic surface colors.
+3 | maintainer@emeraldcoastsystemsgroup.com | The section kicker inherited `--amber` from `--status-warning` during the theme conversion. A status hue is tuned to stand out against its own theme background, not to carry small uppercase label text: the original #a46119 was a dark amber picked for this light-authored page, and daylight's #d97706 measures 3.19:1 behind it. `--amber` now mixes the status hue toward `--text-primary`, which darkens it on a light theme and brightens it on a dark one.
 2 | maintainer@emeraldcoastsystemsgroup.com | Openability comes from the manifest, not from a list of names typed into this page. The WORKING array plus "manifestPath contains deployed-apps" let a store package through on its path while a CORE manifest could only qualify by being typed in, so five shipped apps with real rail surfaces rendered a disabled "Coming soon" — the Security Center said it was unreleased while sitting on the operator's own rail. Rows now read summary.hasSurface (derived by hasCockpitSurface from ui.static / ui.dynamic / a group's toolbar) through js/app-catalog-openability.js, every row shows its real active/inactive status, and an app that declares no surface says THAT instead of claiming to be unfinished.
 -->
 <!--
@@ -42,7 +43,7 @@ SEQ | AUTHOR | DESCRIPTION
       --line-dark: var(--border-color-hover);
       --navy: var(--accent-primary);
       --teal: var(--accent-primary);
-      --amber: var(--status-warning);
+      --amber: color-mix(in srgb, var(--status-warning) 70%, var(--text-primary));
       --green: var(--status-success);
       --red: var(--status-error);
       --radius: 10px;
