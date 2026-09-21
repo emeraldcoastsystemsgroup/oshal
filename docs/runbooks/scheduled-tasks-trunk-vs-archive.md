@@ -101,11 +101,15 @@ tasks have executed the trunk since — measured, not assumed:
 
   The 09-20 instance reads `LastTaskResult 2147946720` (`0x800710E0`, "the operator or administrator
   has refused the request") at `18:23:10` — the same second the Daily Trade Recap's catch-up fired.
-  That code is the scheduler declining to launch under the task's own conditions (the registrar takes
-  the `New-ScheduledTaskSettingsSet` defaults: `DisallowStartIfOnBatteries` and
-  `StopIfGoingOnBatteries` true, `StartWhenAvailable` false). It is not an exit code from the launcher:
-  `oshal-signal-daily.cmd` appends a dated `====` header the moment it starts, and appended none that
-  day. Read it as "did not start", never as "ran the wrong tree".
+  That code comes from the scheduler, not from the launcher: `oshal-signal-daily.cmd` appends a dated
+  `====` header the moment it starts, and appended none that day. Read it as "did not start", never
+  as "ran the wrong tree". WHY the scheduler refused is not recorded anywhere on the box: the Task
+  Scheduler operational log is disabled (`Get-WinEvent -ListLog Microsoft-Windows-TaskScheduler/Operational`
+  reports `IsEnabled False`), so the refused condition was never written down. The task carries the
+  `New-ScheduledTaskSettingsSet` defaults (`DisallowStartIfOnBatteries` and `StopIfGoingOnBatteries`
+  true, `StartWhenAvailable` false), which is one candidate — the Daily Trade Recap task has the same
+  principal and the same settings and fired at that second — so it is a candidate, not the diagnosis.
+  To know, enable that log and read the next refusal.
 
 ### The recap: launcher on the trunk, asset root on the archive
 
