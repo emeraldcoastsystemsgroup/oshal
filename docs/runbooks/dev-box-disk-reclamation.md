@@ -11,7 +11,7 @@ Docker Desktop on Windows does not scatter its files across C:. It keeps everyth
 images, containers, volumes and the build cache — inside **one virtual disk file**:
 
 ```
-C:\Users\roger\AppData\Local\Docker\wsl\disk\docker_data.vhdx
+%LOCALAPPDATA%\Docker\wsl\disk\docker_data.vhdx
 ```
 
 On 2026-09-20 that one file was **402.6 GB** (as Windows reports it), and C: had **59.7 GB free of
@@ -181,7 +181,7 @@ job.
    enter these lines one at a time:
 
    ```
-   select vdisk file="C:\Users\roger\AppData\Local\Docker\wsl\disk\docker_data.vhdx"
+   select vdisk file="%LOCALAPPDATA%\Docker\wsl\disk\docker_data.vhdx"
    attach vdisk readonly
    compact vdisk
    detach vdisk
