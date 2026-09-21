@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | This route carries providerId through its own copy of normalizeDirectUsageByAgent. The compiler found this site, not a grep: making the field required on CockpitAgentUsageStats turned a silently-dropped column into a build error, which is the whole reason it was typed as required rather than optional.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Carries costUnitLabel through the ticket-activity copy alongside providerId, so this surface labels a subscription price-equivalent and a BYO token count apart from metered spend instead of summing all three into one Est. Cost column.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | The direct cost summary's UNKNOWN_PROVIDER sentinel reads as ABSENT. It writes the literal 'unknown' for a NULL provider_id, which is truthy and which classifyCostUnit answers 'billed' for - so the cockpit rendered `unknown` in the Provider column labelled `billed`, asserting real metered money for a bot with no recorded provider. That is the majority case: 2,701 live chat_tasks rows carry a null provider_id.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | Corrected what readRecordedEscalation says about precedence. ADR-163 settled swarm_escalations as a run-scoped attempt record, so the transition detail this route projects is the canonical one and the durable record enriches it; the comment still described the cockpit as preferring the durable store, which is the assumption the ADR retired.
  */
 
 import type { Request, Response } from 'express';
@@ -250,8 +251,9 @@ async function buildInternalTicketActivityPayload(
  * @description Reads back the escalation detail an escalated ticket already recorded.
  * Only escalated tickets are looked up, and only the reason the escalating path wrote
  * is surfaced — nothing is synthesized, so a ticket with no recorded reason still
- * reports none. The durable swarm_escalations store stays the richer record when a
- * swarm run produced one; the cockpit prefers it and falls back to this.
+ * reports none. This is the CANONICAL escalation record (ADR-163): every escalating path
+ * writes it. The durable swarm_escalations record, when a swarm run produced one, adds
+ * what only a run knows — target, retry class, the attempt snapshot — on top of it.
  * @param ctx - Application context.
  * @param ticketId - Internal ticket identifier.
  * @param internalTicket - The loaded ticket row.

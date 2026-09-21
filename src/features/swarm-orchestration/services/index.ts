@@ -26,6 +26,7 @@
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | Exported provider ticket materialization through the feature boundary
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | Exported SEC-05 prompt containment and authority-binding contracts.
+ * 24 | maintainer@emeraldcoastsystemsgroup.com   | Exported assertRunScopedEscalation so the ADR-163 run-scope refusal is reachable through the slice barrel rather than only from the store module
  */
 
 export {
@@ -81,6 +82,7 @@ export {
   type SwarmVerificationPolicyDecision,
 } from './swarm-cycle-policy';
 export {
+  assertRunScopedEscalation,
   InMemorySwarmEscalationStore,
   type SwarmEscalationQuery,
   type SwarmEscalationStore,
