@@ -56,15 +56,19 @@ OOM pairing); the installer refuses to create that shape.
   is side-loaded into the node (`pullPolicy: Never`). The cockpit is a LoadBalancer on
   `localhost:5000`, because Docker Desktop does not publish NodePorts to the host. Bot requests are
   sized for one ~7.6 GiB node. `swarm.extraEnv` carries compose's platform switches, including
-  `APP_PACKAGE_DYNAMIC_ROUTES=1`; without it protected store apps fail activation closed. The
-  file's header has the install commands.
+  `APP_PACKAGE_DYNAMIC_ROUTES=1`; without it protected store apps fail activation closed. A key
+  the chart already sets in that ConfigMap (such as `REDIS_URL`) fails the render instead of
+  producing a duplicate key. The file's header has the install commands.
 - [`deploy/monitoring/install-monitoring.sh`](../../deploy/monitoring/install-monitoring.sh) is the
   cluster form of the compose monitoring stack, run after the chart is installed. It installs
   kube-prometheus-stack with
   [`kube-prometheus-stack.values.yaml`](../../deploy/monitoring/kube-prometheus-stack.values.yaml)
   and loads `ops/monitoring/alert-rules.yml` as a PrometheusRule. It also routes the `Swarm*`
   alerts to the api's fail-closed `/api/alerts/alertmanager` intake with a generated
-  `ALERT_WEBHOOK_TOKEN`.
+  `ALERT_WEBHOOK_TOKEN`. Running it installs for real against the current kubectl context. It
+  takes no arguments and is configured by `OSHAL_NS`, `MON_NS`, `KUBE_CONTEXT` and
+  `KPS_VERSION`. `--help` prints the usage, and any other argument stops it before it reaches the
+  cluster.
 
 What a live run of both measured is recorded in the
 [remote-cluster work package](remote-cluster-work-package.md) status note (2026-09-21).
