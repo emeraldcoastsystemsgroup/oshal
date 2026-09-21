@@ -3,6 +3,7 @@
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — outputs state the tenant's effective auth posture in plain terms so an operator can read `terraform output` and know whether this deployment is multi-user-real-OIDC or a dev/mock instance, plus the exact command to reach the cockpit when no ingress is enabled.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | terraform fmt: the auth_posture object's `=` column was misaligned, so `terraform fmt -check -recursive` failed on this file. Whitespace only; no output changes.
 
 output "namespace" {
   description = "Tenant namespace this release landed in."
@@ -17,11 +18,11 @@ output "kube_context" {
 output "auth_posture" {
   description = "Effective multi-user posture of this tenant."
   value = {
-    multi_user_oidc  = !var.mock_oidc
-    mock_oidc        = var.mock_oidc
-    guest_mode       = var.enable_guest_mode
-    rls_bootstrap    = true # OSHAL_APP_ROLE_BOOTSTRAP is always on (ADR-076)
-    app_url          = var.app_url
+    multi_user_oidc = !var.mock_oidc
+    mock_oidc       = var.mock_oidc
+    guest_mode      = var.enable_guest_mode
+    rls_bootstrap   = true # OSHAL_APP_ROLE_BOOTSTRAP is always on (ADR-076)
+    app_url         = var.app_url
   }
 }
 

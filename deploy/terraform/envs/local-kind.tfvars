@@ -3,6 +3,7 @@
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — local kind validation profile. Everything cost-free and laptop-sized: mock auth, noop LLM provider, image side-loaded via `kind load docker-image` (pullPolicy Never), storage shrunk. This profile exists to prove the Terraform, not to be a usable swarm.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | terraform fmt: image_repository carried a second space before `=` that fmt removes, so `terraform fmt -check -recursive` failed on this file. Whitespace only; no value changes.
 
 kube_context = "kind-oshal-tf"
 namespace    = "oshal"
@@ -11,7 +12,7 @@ namespace    = "oshal"
 # uncomment only to test an out-of-tree chart build.
 # chart_path = "../helm/oshal"
 
-image_repository  = "oshal-bot"
+image_repository = "oshal-bot"
 # coldstart = built from ad0b3517+ (contains the idempotent access_audit enforce
 # fix, which executes FROM INSIDE the image). Do not point back at :latest until
 # latest has been rebuilt from a commit >= ad0b3517, or api boots crash-loop on
