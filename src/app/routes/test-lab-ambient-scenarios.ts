@@ -6,19 +6,24 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 Phases 2-4 Test Lab scenario: seeds one clearly-labelled transcript line through the REAL ambient ingest route, then proves the deterministic person-model reads end to end as the signed-in user — the themed surface, an exact recall count for that line, the asks / people / trends / projection reads, and Jarvis chat answering the open-asks shape without a model turn. Registered in test-lab-scenarios.ts; regression files attached at unit + integration levels.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Attached the Manage Voices → Ambient Recall bridge regressions: the four-point wiring pin (unit) and the Chromium proof that every voice row opens its profile page (browser).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Attached the "possibly related" relevance-floor regression, which runs the real embedding model in a child process — the retrieval leg's fused score is a reciprocal rank and carried no distance, so an off-topic line was published beside real paraphrases.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Added the ATTRIBUTED half. Every step here seeded through POST /segments, which refuses speaker ids by design, so the scenario could only ever prove recall by "anyone" — asks, per-person profiles and consent were unprovable without a microphone. Three new steps drive the service-secret fixture (/test-fixture/attributed-line), then assert the fixture's ask on GET /person/asks and its profile on GET /person/profile/:profileId, each keyed on the run token so a step finds only its own line.
  */
 
 import { randomUUID } from 'node:crypto';
+import { AMBIENT_FIXTURE_TOPIC, AMBIENT_FIXTURE_VOICE_LABEL } from './ambient-test-fixture-routes';
 import type { Scenario, StepResult } from './test-lab-scenarios';
+import { serviceSecretHeaders } from '@/shared/middleware/authz';
 
 const APP = 'person-model';
 const BASE = '/api/jarvis/ambient';
 
 /** @description Real loopback request with the initiating user's session and a bounded deadline. */
-async function call(cookie: string, method: string, path: string, body?: unknown): Promise<{ status: number; json: Record<string, any> }> {
+async function call(
+  cookie: string, method: string, path: string, body?: unknown, extraHeaders: Record<string, string> = {},
+): Promise<{ status: number; json: Record<string, any> }> {
   const response = await fetch(`http://127.0.0.1:${process.env.PORT || '5000'}${path}`, {
     method,
-    headers: { 'content-type': 'application/json', ...(cookie ? { cookie } : {}) },
+    headers: { 'content-type': 'application/json', ...(cookie ? { cookie } : {}), ...extraHeaders },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     signal: AbortSignal.timeout(20000),
   });
@@ -97,6 +102,66 @@ async function reads(cookie: string): Promise<StepResult> {
     : `Unexpected shape from: ${bad.map((b) => b.path).join(', ')}`, outcomes);
 }
 
+/**
+ * @description Seeds ONE attributed line for the owner's stable fixture voice through the real
+ * service-secret fixture. This is the only attributed writer outside the audio pipeline, so it is
+ * what makes the ask / profile / consent half of ADR-100 provable in the Lab at all. A deployment
+ * with no SWARM_SERVICE_SECRET gets a 503 and the step reports degraded rather than passing hollow.
+ */
+async function fixtureSeed(cookie: string): Promise<StepResult> {
+  const label = 'Seed an attributed fixture line (service-secret gated)';
+  const token = `fx${randomUUID().slice(0, 8)}`;
+  // serviceSecretHeaders() returns {} when SWARM_SERVICE_SECRET is unset; read it that way rather
+  // than by header name, so this outbound caller never reads as an auth SURFACE to the machine-write
+  // discovery scan (tests/unit/machine-write-identity.spec.ts).
+  const machineHeaders = serviceSecretHeaders();
+  if (Object.keys(machineHeaders).length === 0) {
+    return { app: APP, label, state: 'degraded', detail: 'SWARM_SERVICE_SECRET is not configured here, so the attributed fixture is closed.' };
+  }
+  const { status, json } = await call(cookie, 'POST', `${BASE}/test-fixture/attributed-line`, { token }, machineHeaders);
+  const seeded = status === 201 && typeof json.profileId === 'string' && typeof json.segmentId === 'string';
+  return classify(label, status, seeded, seeded
+    ? `Attributed line stored for "${json.label}" (duplicate=${json.duplicate}, enriched=${json.enriched}, asks=${json.asks}).`
+    : json?.message || json?.error || `Fixture returned HTTP ${status}.`,
+  { token, profileId: json.profileId, segmentId: json.segmentId, ask: json.ask, quote: json.quote });
+}
+
+/** @description The follow-up ledger carries THIS run's ask, beside the verbatim line it came from. */
+async function fixtureAsk(cookie: string, prior: Record<string, any>): Promise<StepResult> {
+  const label = 'The fixture voice produced an open ask';
+  const seeded = prior?.['fixture-seed'];
+  if (!seeded?.token) return { app: APP, label, state: 'degraded', detail: 'No attributed line to read (the fixture step did not pass).' };
+  const { status, json } = await call(cookie, 'GET', `${BASE}/person/asks`);
+  if (status !== 200) return classify(label, status, false, json?.message || json?.error || `asks returned HTTP ${status}.`, json);
+  const mine = (Array.isArray(json.asks) ? json.asks : []).find((a: any) => String(a.sourceQuote || '').includes(seeded.token));
+  const ok = Boolean(mine) && mine.isInference === true && mine.personLabel === AMBIENT_FIXTURE_VOICE_LABEL;
+  return classify(label, 200, ok, ok
+    ? `"${String(mine.text).slice(0, 80)}" attributed to ${mine.personLabel}, marked an inference, beside its verbatim quote.`
+    : `No open ask carries this run's token (${seeded.token}) against ${AMBIENT_FIXTURE_VOICE_LABEL}.`,
+  { asks: Array.isArray(json.asks) ? json.asks.length : 0, ask: mine ?? null });
+}
+
+/** @description The per-person profile reads back: label, granted consent, the fixture topic and the ask. */
+async function fixtureProfile(cookie: string, prior: Record<string, any>): Promise<StepResult> {
+  const label = 'The fixture voice has a profile with consent, topics and asks';
+  const seeded = prior?.['fixture-seed'];
+  if (!seeded?.profileId) return { app: APP, label, state: 'degraded', detail: 'No fixture profile to read (the fixture step did not pass).' };
+  const { status, json } = await call(cookie, 'GET', `${BASE}/person/profile/${encodeURIComponent(seeded.profileId)}`);
+  if (status !== 200) return classify(label, status, false, json?.message || json?.error || `profile returned HTTP ${status}.`, json);
+  const profile = json.profile ?? {};
+  const checks = {
+    label: profile.label === AMBIENT_FIXTURE_VOICE_LABEL,
+    consent: profile.consent?.status === 'granted' && profile.consent?.eligible === true,
+    topic: (profile.topics ?? []).some((t: any) => t.topic === AMBIENT_FIXTURE_TOPIC),
+    ask: (profile.asks ?? []).some((a: any) => String(a.sourceQuote || '').includes(seeded.token)),
+    presence: (profile.presence ?? []).length > 0,
+  };
+  const missing = Object.entries(checks).filter(([, ok]) => !ok).map(([name]) => name);
+  return classify(label, 200, missing.length === 0, missing.length === 0
+    ? `Profile "${profile.label}": consent granted, topic "${AMBIENT_FIXTURE_TOPIC}", this run's ask, and presence from the seeded line.`
+    : `Profile read, but these were not proven: ${missing.join(', ')}.`, { profile, missing });
+}
+
 /** @description Jarvis answers the open-asks shape deterministically once the owner has ambient data. */
 async function chat(cookie: string): Promise<StepResult> {
   const label = 'Jarvis answers "what has anyone asked me" without a model turn';
@@ -123,7 +188,7 @@ export const AMBIENT_SCENARIOS: Scenario[] = [
     id: 'ambient-recall',
     title: 'Ambient Recall — exact recall, asks, people, trends (ADR-100)',
     group: 'tool',
-    description: 'Seeds one clearly-labelled Test Lab transcript line through the real ambient ingest route, then proves the deterministic person-model reads: an exact count for that line, the asks / people / trends / projection reads, the themed surface, and Jarvis chat answering the open-asks shape without a model turn. The seeded line is unattributed (no speaker), so it is never enriched or turned into an ask.',
+    description: 'Seeds one clearly-labelled Test Lab transcript line through the real ambient ingest route, then proves the deterministic person-model reads: an exact count for that line, the asks / people / trends / projection reads, the themed surface, and Jarvis chat answering the open-asks shape without a model turn. That first line is unattributed (no speaker), so it is never enriched or turned into an ask; the service-secret fixture then seeds an ATTRIBUTED line for a stable per-owner fixture voice and the last two steps prove its open ask and its per-person profile (consent, topics, presence).',
     regressionTests: [
       { level: 'unit', path: 'tests/unit/person-model-intent.spec.ts' },
       { level: 'unit', path: 'tests/unit/person-model-surface.spec.ts' },
@@ -134,12 +199,17 @@ export const AMBIENT_SCENARIOS: Scenario[] = [
       { level: 'unit', path: 'tests/unit/lazy-ddl-guard-convergence.spec.ts' },
       { level: 'unit', path: 'tests/unit/jarvis-speaker-wiring.spec.ts' },
       { level: 'browser', path: 'tests/unit/jarvis-speaker-profile-links-browser.spec.ts' },
+      { level: 'unit', path: 'tests/unit/ambient-test-fixture-routes.spec.ts' },
+      { level: 'integration', path: 'tests/unit/ambient-test-fixture-postgres.spec.ts' },
     ],
     steps: [
       { id: 'surface', app: APP, label: 'Surface follows the cockpit theme', run: (cookie) => surface(cookie) },
       { id: 'seed', app: APP, label: 'Seed a labelled transcript line', run: (cookie) => seed(cookie) },
       { id: 'recall', app: APP, label: 'Exact recall counts the seeded line', run: (cookie, prior) => recall(cookie, prior) },
       { id: 'reads', app: APP, label: 'Asks / people / trends / projection reads', run: (cookie) => reads(cookie) },
+      { id: 'fixture-seed', app: APP, label: 'Seed an attributed fixture line', run: (cookie) => fixtureSeed(cookie) },
+      { id: 'fixture-ask', app: APP, label: 'The fixture voice produced an open ask', run: (cookie, prior) => fixtureAsk(cookie, prior) },
+      { id: 'fixture-profile', app: APP, label: 'The fixture voice has a profile', run: (cookie, prior) => fixtureProfile(cookie, prior) },
       { id: 'chat', app: 'jarvis', label: 'Jarvis open-asks answer is deterministic', run: (cookie) => chat(cookie) },
     ],
   },

@@ -37,6 +37,7 @@
  * 32 | maintainer@emeraldcoastsystemsgroup.com   | Removed the spaces routes export — the Spaces surface carved to the oshal-applications store (ADR-085, "skill with a surface"); the reconstruction ENGINE (src/features/spatial-mapping) stays core as the pinned 'spatial-mapping' kernel skill (ADR-093), and the packaged route mounts /api/spaces from deployed-apps/spaces.
  * 33 | maintainer@emeraldcoastsystemsgroup.com   | Added api-fallback export — the boot-window-aware final /api middleware (503 while swarm-app auto-load is still mounting package routes, JSON 404 after).
  * 34 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P3: added createPoolRcaSpendReader export (alertmanager-rca-spend.ts) — the cost-ledger actuals reader the /api/alerts mount wires into the FR-E2 budget gate.
+ * 35 | maintainer@emeraldcoastsystemsgroup.com   | Added createAmbientTestFixtureRoutes export — the ADR-100 attributed-ingest fixture the AI Test Lab uses to prove an ask and a per-person profile without a microphone.
  */
 
 export { createApiFallbackHandler } from './api-fallback';
@@ -95,4 +96,5 @@ export { createPersonalRoutes } from './personal-routes';
 //  ADR-085 Wave 3 — the package mounts /api/world; the world-data engine stays core.)
 export { createAmbientListeningRoutes } from './ambient-listening-routes';
 export { createAmbientSpeakerRoutes } from './ambient-speaker-routes';
+export { createAmbientTestFixtureRoutes } from './ambient-test-fixture-routes';
 export { createHelpRoutes } from './help-routes';
