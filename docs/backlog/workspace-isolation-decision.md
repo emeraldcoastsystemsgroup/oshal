@@ -1,8 +1,13 @@
 # Workspace isolation: which of the four, and by when
 
-**This entry exists to record a decision that has not been made.** The property below is measured
-and pinned; what to do about it is the operator's call, and CKR-20's done-when (1) is not met until
-one of the four options is named here.
+**DECIDED 2026-09-20: option 4 — accept it deliberately.** Per-ticket runtime assignment is the
+control on this box; the container mount stays whole-volume. The reasoning, the two triggers that
+reverse it, and the demonstration that the exposure is real are at the bottom of this entry, and the
+decision is also recorded in [../BACKLOG.md](../BACKLOG.md) where ADR-060's four items are quoted
+verbatim beside it.
+
+The property below is measured and pinned. It was written while the decision was open, and is kept
+as written.
 
 ## The property, measured 2026-09-19
 
@@ -68,3 +73,50 @@ choosing.
 Do not "fix" the posture spec by loosening it. It asserts today's reality so that a change is
 visible; if it goes red, either the isolation work landed (update it, deliberately, in that change)
 or something moved that nobody intended.
+
+
+---
+
+## The decision, 2026-09-20
+
+**Option 4: accept, deliberately.** In the operator's own words, and the code matches every clause
+of it: a bot is nothing until it is called; when it is called the kernel hands it a workspace bound
+to the ticket; the mount is a set of folders, one per ticket; the workspace is not visible to end
+users; bots reach it only by holding a ticket, and tickets are user-based.
+
+**The one distinction this entry exists to record.** Assignment is per ticket and per run.
+Containment is not: each of the forty bot services declares the same
+`oshal_workspace:/app/workspace-shared:rw`, so the process can see sibling ticket folders even
+though it is pointed at one.
+
+**⛔ The two triggers that reverse it:** a second person with tickets on this box, or an installed
+store package running its own bot. Either turns cross-ticket reach into something the operator has
+not accepted.
+
+## Done-when (2), in its inverted form
+
+The entry itself anticipated this: *"Under option 4 this becomes the opposite proof — a recorded
+demonstration that it CAN, so the accepted risk is documented rather than assumed."*
+
+`tests/unit/workspace-cross-ticket-traversal.spec.ts` is that demonstration. It drives the REAL
+`ToolExecutorService.handleExecuteCommand` — the path that actually runs the shell, and the one the
+note above points at, since the service is constructed in the CONTROLLER rather than on the
+bot-nodes. Five cases:
+
+1. a self-check that the service really rooted itself where the case put it, so nothing below can
+   pass for the wrong reason;
+2. a shell pointed at ticket B reads ticket A's deliverable — the accepted risk, in one line;
+3. the TypeScript `read_file` tool **cannot** do the same thing, which is the distinction the
+   decision rests on: if that case ever goes red the containment guard has regressed and the posture
+   is worse than this entry records, which is a different finding from the one being accepted;
+4. runtime assignment IS the control — the shell starts in the ticket it was given;
+5. the reach crosses a directory belonging to a different owner, which is what makes trigger 1 a
+   measured fact rather than a prediction.
+
+**What it deliberately does not assert:** that the containers share a mount.
+`tests/unit/compose-workspace-mount-posture.spec.ts` proves that against the resolved compose. The
+two halves together are the claim — one shared read-write mount, and a shell that traverses within
+it — and neither is worth much alone.
+
+Done-when (3) does not apply under option 4: the posture spec still asserts 40 `:rw` mounts with no
+subpath, because that is still true. It is options 1-3 that break it on purpose.

@@ -1437,7 +1437,7 @@ and after at least one interactive turn; the spec above is what says the write i
 two are what say it reached production. Done-when (B)'s query is the same shape and the same timing —
 it reads rows created AFTER the deploy timestamp.
 
-### CKR-20 — cross-ticket and cross-owner workspace isolation does not exist (R3.3) — **MEASURED and PINNED 2026-09-19; the decision is open** — **DECIDED 2026-09-20: ACCEPTED, RUNTIME ASSIGNMENT IS THE CONTROL**
+### CKR-20 — cross-ticket and cross-owner workspace isolation does not exist (R3.3) — **CLOSED 2026-09-20: ACCEPTED, RUNTIME ASSIGNMENT IS THE CONTROL, AND THE EXPOSURE IS DEMONSTRATED**
 
 **Done-when (1), second half: done.** `tests/unit/compose-workspace-mount-posture.spec.ts` asserts
 against the RESOLVED compose (the mounts arrive through a `<<:` merge, so a regex cannot see them)
@@ -1531,6 +1531,35 @@ subtree (compose-generation work, needs the owner known at container start), or 
 its ticket folder at execution time (execution-layer work, covers the shell and a spawned harness,
 closer to per-ticket). This decision is not a finding that the layout is safe — it is a judgement that
 the exposure is the operator’s own data until one of those two conditions changes.
+
+**DONE-WHEN (1), FIRST HALF: DONE.** `docs/BACKLOG.md` now carries a workspace-isolation entry that
+quotes ADR-060:198-205 items 1-4 verbatim and records option 4 — accept, deliberately — with the two
+triggers that reverse it. `workspace-isolation-decision.md` records the same choice at its head and
+keeps the measured property as it was written while the decision was open.
+
+**DONE-WHEN (2): DONE, in the inverted form that entry itself anticipated** — *"Under option 4 this
+becomes the opposite proof — a recorded demonstration that it CAN, so the accepted risk is documented
+rather than assumed."* `tests/unit/workspace-cross-ticket-traversal.spec.ts` drives the REAL
+`ToolExecutorService.handleExecuteCommand`, which is the path that actually runs the shell and the one
+the note in this entry points at (the service is constructed in the CONTROLLER, not on the bot-nodes).
+Five cases: a self-check that the service rooted itself where the case put it; a shell pointed at
+ticket B reading ticket A's deliverable; the TypeScript `read_file` tool refusing the same traversal,
+which is the distinction the whole decision rests on; the shell starting in the ticket it was given,
+which is runtime assignment as an executable fact; and the reach crossing a directory belonging to a
+different owner, which is what makes trigger 1 measured rather than predicted.
+
+**What it deliberately does NOT assert:** that the containers share a mount.
+`compose-workspace-mount-posture.spec.ts` proves that against the resolved compose. The two halves
+together are the claim — one shared read-write mount, and a shell that traverses within it — and
+neither is worth much alone. A "two-container" spec would have re-proved the mount and added nothing
+to the traversal, because the traversal is a property of one process's cwd and one filesystem.
+
+**Done-when (3) does not apply under option 4.** The posture spec still asserts 40 `:rw` mounts with
+no subpath, because that is still true. Options 1-3 are what break it on purpose.
+
+**ADR-060 items 1 and 2 remain undone** — one resolver for every workspace path including readers,
+and the ~12 reader modules migrated onto it. CKR-17 converged the ROOT; the per-owner path layout
+those items describe is a different thing and is not part of this decision.
 
 ### R3.2 — "113 files thread tenancy identity by hand" — **REFUTED, no work item**
 
