@@ -5,6 +5,7 @@
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — k8s form of the compose *bot-env anchor (structural vars only; secrets live in api.envSecret / botDefaults.envSecret). DNS parity with compose service names. NO DATABASE_URL here — main role injects it per-workload (trust rule).
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | 0.2.0 — CODEX_REASONING_EFFORT joins the shared env (compose SEQ-13 parity): both codex wrappers pin per-spawn effort so a host config tuned for a model this fleet floor rejects can't 400 every fresh-workspace turn.
 # 3 | maintainer@emeraldcoastsystemsgroup.com   | 0.3.0 — ARANGO_* joins the shared env (compose *bot-env parity: it sits in the anchor, so EVERY bot and the api see it, not just the controller). Each URL is emitted ONLY when its service is inCluster: an unset ARANGO_URL is the documented degradation signal (connector returns null, /api/graph 503s), so advertising a URL for a service that was switched off would convert a clean degrade into a connection-refused every call.
+# 4 | maintainer@emeraldcoastsystemsgroup.com   | swarm.extraEnv: non-secret platform switches every runtime needs (api AND bots — both envFrom this ConfigMap). Found on the first Docker Desktop install: without APP_PACKAGE_DYNAMIC_ROUTES=1 every ADR-149 protected store app fails activation closed, and bots lacking OSHAL_DELEGATION_AUDIENCE/ISSUER cannot verify a protected dispatch. Explicit per-workload env still wins over this map.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -68,4 +69,7 @@ data:
   # Browser-facing (the cockpit's /code bridge redirects here) — NOT in-cluster DNS.
   CODE_SERVER_URL: {{ .Values.infra.codeServer.externalUrl | quote }}
   {{- end }}
+  {{- end }}
+  {{- range $k, $v := .Values.swarm.extraEnv }}
+  {{ $k }}: {{ $v | quote }}
   {{- end }}

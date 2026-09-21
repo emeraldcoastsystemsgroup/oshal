@@ -32,6 +32,27 @@ api:
 
 fleet: full
 
+# Compose-parity platform switches (docker-compose.oshal-local.yml defaults). Without
+# APP_PACKAGE_DYNAMIC_ROUTES every protected store app fails activation closed, so its
+# bots are never registered and ?app=<name> finds nothing.
+swarm:
+  extraEnv:
+    APP_URL: http://localhost:5000
+    APP_PACKAGE_DYNAMIC_ROUTES: "1"
+    APP_PACKAGE_MIGRATIONS: "1"
+    OSHAL_PACKAGE_AUDIT_MODE: compatible
+    OSHAL_ALLOW_LEGACY_UNOWNED: "false"
+    ENABLE_GUEST_MODE: "false"
+    ENABLE_PERSONAL_INTELLIGENCE: "true"
+    ENABLE_WORLD_INTELLIGENCE: "true"
+    OSHAL_DELEGATION_AUDIENCE: urn:oshal:bot-node
+    OSHAL_DELEGATION_ISSUER: urn:oshal:controller
+    OSHAL_DELEGATION_TTL_SECONDS: "4200"
+    OSHAL_DELEGATION_CLOCK_SKEW_SECONDS: "30"
+    OSHAL_WORKLOAD_DELEGATION_MODE: legacy
+    TRADING_LIVE_ENABLED: "false"
+    KALSHI_LIVE_ENABLED: "false"
+
 botDefaults:
   resources:
     requests: { cpu: 50m, memory: 128Mi }

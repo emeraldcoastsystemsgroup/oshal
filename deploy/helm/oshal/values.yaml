@@ -215,6 +215,9 @@ swarm:
   # Cluster-local shared workspace (RWO: single-node clusters — the default
   # target — schedule every pod together; multi-node needs an RWX StorageClass).
   workspaceStorage: 5Gi
+  # Non-secret env for EVERY runtime (api + bots), rendered into the shared ConfigMap.
+  # Secrets never go here — use api.envSecret / botDefaults.envSecret.
+  extraEnv: {}
 
 # ── Bots (both roles) ─────────────────────────────────────────────────────────
 botDefaults:
