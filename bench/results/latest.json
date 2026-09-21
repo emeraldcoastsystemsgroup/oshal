@@ -1,0 +1,219 @@
+{
+  "proofTier": "live",
+  "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+  "n": 3,
+  "aggregate": "headline numbers are the median over the runs that ran; passed counts passing runs out of n",
+  "task": "invoice-extract-arithmetic-gate",
+  "note": "Real token/round counts from live calls. Not-run and off-model legs carry a reason; the oshal leg's numbers are read from chat_tasks.",
+  "results": [
+    {
+      "runner": "vanilla (no framework)",
+      "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "status": "ran",
+      "reason": "",
+      "passed": 3,
+      "rounds": 1,
+      "llm_calls": 1,
+      "input_tokens": 284,
+      "output_tokens": 614,
+      "cost_usd": 0.0,
+      "wall_ms": 9875,
+      "n": 3,
+      "runs": [
+        {
+          "runner": "vanilla (no framework)",
+          "status": "ran",
+          "passed": true,
+          "rounds": 1,
+          "llm_calls": 1,
+          "input_tokens": 284,
+          "output_tokens": 623,
+          "cost_usd": 0.0,
+          "wall_ms": 5946,
+          "reason": "",
+          "model": "nvidia/nemotron-3-ultra-550b-a55b:free"
+        },
+        {
+          "runner": "vanilla (no framework)",
+          "status": "ran",
+          "passed": true,
+          "rounds": 1,
+          "llm_calls": 1,
+          "input_tokens": 284,
+          "output_tokens": 473,
+          "cost_usd": 0.0,
+          "wall_ms": 9875,
+          "reason": "",
+          "model": "nvidia/nemotron-3-ultra-550b-a55b:free"
+        },
+        {
+          "runner": "vanilla (no framework)",
+          "status": "ran",
+          "passed": true,
+          "rounds": 1,
+          "llm_calls": 1,
+          "input_tokens": 284,
+          "output_tokens": 614,
+          "cost_usd": 0.0,
+          "wall_ms": 14386,
+          "reason": "",
+          "model": "nvidia/nemotron-3-ultra-550b-a55b:free"
+        }
+      ]
+    },
+    {
+      "runner": "langgraph (supervisor loop)",
+      "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "status": "ran",
+      "reason": "",
+      "passed": 3,
+      "rounds": 1,
+      "llm_calls": 1,
+      "input_tokens": 284,
+      "output_tokens": 601,
+      "cost_usd": 0.0,
+      "wall_ms": 12066,
+      "n": 3,
+      "runs": [
+        {
+          "runner": "langgraph (supervisor loop)",
+          "status": "ran",
+          "passed": true,
+          "rounds": 1,
+          "llm_calls": 1,
+          "input_tokens": 284,
+          "output_tokens": 497,
+          "cost_usd": 0.0,
+          "wall_ms": 9933,
+          "reason": "",
+          "model": "nvidia/nemotron-3-ultra-550b-a55b:free"
+        },
+        {
+          "runner": "langgraph (supervisor loop)",
+          "status": "ran",
+          "passed": true,
+          "rounds": 1,
+          "llm_calls": 1,
+          "input_tokens": 284,
+          "output_tokens": 623,
+          "cost_usd": 0.0,
+          "wall_ms": 148540,
+          "reason": "",
+          "model": "nvidia/nemotron-3-ultra-550b-a55b:free"
+        },
+        {
+          "runner": "langgraph (supervisor loop)",
+          "status": "ran",
+          "passed": true,
+          "rounds": 1,
+          "llm_calls": 1,
+          "input_tokens": 284,
+          "output_tokens": 601,
+          "cost_usd": 0.0,
+          "wall_ms": 12066,
+          "reason": "",
+          "model": "nvidia/nemotron-3-ultra-550b-a55b:free"
+        }
+      ]
+    },
+    {
+      "runner": "oshal (live cluster)",
+      "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "gate_error": "",
+      "provider": "",
+      "agent_id": "00000000-0000-4000-8000-000000000032",
+      "agentic": true,
+      "chat_task_ids": [
+        "bench-oshal-b4163dbcc7aa47aa"
+      ],
+      "response_usage": {
+        "input_tokens": 0,
+        "output_tokens": 0
+      },
+      "status": "ran",
+      "reason": "",
+      "passed": 3,
+      "rounds": 1,
+      "llm_calls": 1,
+      "input_tokens": 9663,
+      "output_tokens": 492,
+      "cost_usd": 0.0,
+      "wall_ms": 46519,
+      "n": 3,
+      "runs": [
+        {
+          "runner": "oshal (live cluster)",
+          "status": "ran",
+          "passed": true,
+          "rounds": 1,
+          "llm_calls": 1,
+          "input_tokens": 9665,
+          "output_tokens": 417,
+          "cost_usd": 0.0,
+          "wall_ms": 46519,
+          "reason": "",
+          "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+          "gate_error": "",
+          "provider": "",
+          "agent_id": "00000000-0000-4000-8000-000000000032",
+          "agentic": true,
+          "chat_task_ids": [
+            "bench-oshal-b4163dbcc7aa47aa"
+          ],
+          "response_usage": {
+            "input_tokens": 0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "runner": "oshal (live cluster)",
+          "status": "ran",
+          "passed": true,
+          "rounds": 1,
+          "llm_calls": 1,
+          "input_tokens": 9661,
+          "output_tokens": 492,
+          "cost_usd": 0.0,
+          "wall_ms": 5657,
+          "reason": "",
+          "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+          "gate_error": "",
+          "provider": "",
+          "agent_id": "00000000-0000-4000-8000-000000000032",
+          "agentic": true,
+          "chat_task_ids": [
+            "bench-oshal-13ac1caa47d1e397"
+          ],
+          "response_usage": {
+            "input_tokens": 0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "runner": "oshal (live cluster)",
+          "status": "ran",
+          "passed": true,
+          "rounds": 1,
+          "llm_calls": 1,
+          "input_tokens": 9663,
+          "output_tokens": 514,
+          "cost_usd": 0.0,
+          "wall_ms": 79801,
+          "reason": "",
+          "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+          "gate_error": "",
+          "provider": "",
+          "agent_id": "00000000-0000-4000-8000-000000000032",
+          "agentic": true,
+          "chat_task_ids": [
+            "bench-oshal-5935afe851b0d173"
+          ],
+          "response_usage": {
+            "input_tokens": 0,
+            "output_tokens": 0
+          }
+        }
+      ]
+    }
+  ]
+}
