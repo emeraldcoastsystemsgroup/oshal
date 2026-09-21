@@ -59,7 +59,13 @@ The point ADR-078 makes: isolation is **namespace + NetworkPolicy + DB isolation
 ## Validate
 
 These manifests validate offline (no cluster needed) and, when a cluster with the Argo
-CRDs is reachable, against the real Argo schema:
+CRDs is reachable, against the real Argo schema.
+
+The local gate validates all five, cluster-free: `scripts/ci-local.sh` runs
+`scripts/ci/check-argo-manifests.sh` (gate `argo-manifests`; `bash scripts/ci-local.sh
+--k8s-only` runs it alone). It uses kubeconform `-strict`: the core kinds against the
+Kubernetes 1.36.0 schemas, and the WorkflowTemplate against a commit-pinned Argo CRD schema.
+No kind is only parsed. Without kubeconform the gate fails.
 
 ```bash
 # 1. Portable structural parse (no cluster) — python or node:

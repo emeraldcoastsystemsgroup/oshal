@@ -359,6 +359,22 @@ opposite — nothing invokes it. Same grep, no callers.
 kubeconform, not `kubectl --dry-run`, not `terraform validate`, not a spec. All of those would run
 cluster-free.
 
+**Update (2026-09-21, items 7 and 8).** The statements above record the state before those items
+landed.
+- `scripts/validate-dynamic-bot-manifest.mjs --require-server` exits 2 when no API server answers.
+  It exits 1 when any object lacks `(server dry run)` in the output, or when discovery lacks
+  `deployments/scale`. The default mode still exits 0 on its client-side fallback, and labels that
+  fallback NOT A PROOF.
+- Both governance scripts now have one caller, and it is opt-in: `scripts/ci-local.sh
+  --cluster-gates` runs the gates `cluster-bot-manifest` and `cluster-tenant-isolation` through
+  `scripts/ci/check-cluster-gates.sh`. It requires `OSHAL_CLUSTER_CONTEXT` and fails closed when no
+  API server answers. `verify-tenant-isolation.sh` now takes `--context`.
+- Every full ci-local run now has two more cluster-free gates. `argo-manifests` runs kubeconform
+  `-strict` over all five `ops/deployment/argo/*.yaml`, the WorkflowTemplate included. `terraform`
+  runs `fmt -check -recursive` and `validate`. Both fail when their tool is missing.
+- `bash scripts/ci-local.sh --k8s-only [--cluster-gates]` runs only these gates. It takes no lock and
+  does no Docker cleanup.
+
 ### 2g. Monitoring does not reach Kubernetes
 
 `ops/monitoring/prometheus.yml` discovers targets only through `docker_sd_configs` against the
@@ -887,15 +903,18 @@ Five separate observations, from **"k8s shared-service tier"**:
 ### 4.3 The bot-launcher boundary (item 12)
 
 ```bash
-node scripts/validate-dynamic-bot-manifest.mjs --namespace oshal --context <ctx>
+npx tsx scripts/validate-dynamic-bot-manifest.mjs --require-server --namespace oshal --context <ctx>
+# or, as the gate: OSHAL_CLUSTER_CONTEXT=<ctx> bash scripts/ci-local.sh --k8s-only --cluster-gates
 ```
 
 **Pass:** the output says `dry-run mode: server (validated by the real API server; nothing created)`
 **and** `OK: the API server exposes deployments/scale with verbs [...]`.
 
 **Fail, and this is the trap:** `dry-run mode: client` followed by
-`WARNING: client-side only` and `WARNING: no cluster reachable`. The script **exits 0** in that
-state (`:64`, `:97-99`). A zero exit code is not the pass signal here — the two `server` lines are.
+`WARNING: client-side only` and `WARNING: no cluster reachable`. Without `--require-server` the
+script **exits 0** in that state, and those lines now say NOT A PROOF. With `--require-server` it
+exits 2 and never falls back to a client-side dry-run. Run it with the flag. Even then, the two
+`server` lines are the pass signal, not the exit code alone.
 
 ### 4.4 Two-tenant isolation — both halves, and where each runs
 
