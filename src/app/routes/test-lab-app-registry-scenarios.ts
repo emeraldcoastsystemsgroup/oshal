@@ -3,6 +3,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register multi-store discovery and its isolated installation/browser regression suites in the existing AI Test Lab.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Register explicit focused-application entry and host-default regression coverage.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Attach the ADR-147 D10 fetch-fence suite to multi-store discovery: the hostname half of the fence is a registry-read behaviour, so it belongs to the scenario that reads registries rather than to a new live step - a Lab step that proved it would have to make the running swarm resolve a name into private space.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Register the catalog connector-readiness scenario. The applications page joins two token-free feeds - the bundle's declared providers from the app listing and the caller's own state from the connector broker - and a live step is the only place their AGREEMENT can be checked: a listing that predates the projection, or a broker that answers for nobody, both leave the catalog unable to tell connected from credential-needed. Read-only: it lists apps and reads the caller's own connector states, and never starts a consent flow or changes a connection.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Register the dependency-tier scenario: a read-only live step checks one install preview reports required/optional tiers with closed states and never offers an install the installer would refuse; its contract, installer and App Loader browser suites are attached.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
@@ -65,6 +66,35 @@ async function dependencyTierPreview(cookie: string): Promise<StepResult> {
   return result('pass', `${candidate.registry}/${candidate.name}: ${deps.required.apps.length} required and ${deps.optional.apps.length} optional app(s) resolved; nothing was installed. Installer and browser behaviour are covered by the attached local suites.`);
 }
 
+/**
+ * @description Read the two token-free feeds the applications catalog joins — the app listing's
+ * declared providers and the caller's own connector states — and check they can actually answer
+ * the question the catalog asks. Strictly read-only: no consent flow, no install, no trust change.
+ * @param cookie - The initiating operator's session cookie.
+ * @returns The step result, degraded when either feed is unreadable on this box.
+ */
+async function catalogConnectorReadiness(cookie: string): Promise<StepResult> {
+  const read = readerFor(cookie);
+  const result = (state: StepResult['state'], detail: string, status?: number): StepResult => ({ app: 'applications', label: 'Bundle providers and their live state', state, detail, ...(status ? { status } : {}) });
+  const apps = await read('/api/swarm/apps');
+  if (apps.status !== 200) return result([401, 403, 503].includes(apps.status) ? 'degraded' : 'fail', `Application listing returned HTTP ${apps.status}.`, apps.status);
+  const rows = Array.isArray(apps.json.apps) ? apps.json.apps : [];
+  if (!rows.length) return result('degraded', 'No applications are loaded, so no bundle declares providers to check.');
+  const projected = rows.filter((app: any) => Array.isArray(app?.connectors?.required) && Array.isArray(app?.connectors?.optional));
+  if (projected.length !== rows.length) return result('gap', 'The running listing carries no connectors block — it predates the projection (needs a core deploy).');
+  const connect = await read('/api/connect/list');
+  if (connect.status !== 200) return result([401, 403, 503].includes(connect.status) ? 'degraded' : 'fail', `Connector list returned HTTP ${connect.status}.`, connect.status);
+  const providers = Array.isArray(connect.json.providers) ? connect.json.providers : null;
+  if (!providers) return result('fail', 'Connector list response is missing providers[].');
+  const known = new Map(providers.filter((p: any) => typeof p?.id === 'string').map((p: any) => [p.id, p]));
+  const declared = new Set<string>(projected.flatMap((app: any) => [...app.connectors.required, ...app.connectors.optional]));
+  if (providers.some((p: any) => 'access_token' in p || 'refresh_token' in p)) return result('fail', 'The connector list carries a token field; the catalog must only ever read status.');
+  const offered = [...declared].filter((id) => known.has(id));
+  const bundles = projected.filter((app: any) => app.connectors.required.length + app.connectors.optional.length > 0).length;
+  if (!declared.size) return result('degraded', `${rows.length} application(s) are loaded and none declares a connector, so no bundle has a connection state to report.`);
+  return result('pass', `${bundles} bundle(s) declare ${declared.size} provider id(s); ${offered.length} are offered by this deployment's broker and the rest render as unavailable here. Nothing was connected or changed.`);
+}
+
 export const APP_REGISTRY_SCENARIOS: Scenario[] = [{
   id: 'multi-store-discovery', title: 'Application stores and source selection', group: 'tool',
   description: 'Read trusted store discovery. Local regression suites prove source replacement confirmation, legacy install refusal, dependency preservation, browser trust controls and the fetch fence (a registry hostname that resolves into private space is refused, and the approved address is what the connection reaches) using disposable stores and a local DNS server.',
@@ -84,6 +114,14 @@ export const APP_REGISTRY_SCENARIOS: Scenario[] = [{
     { level: 'browser', path: 'tests/unit/app-dependencies-loader-browser.spec.ts' },
   ],
   steps: [{ id: 'preview', app: 'app-loader', label: 'Dependency tiers in the install preview', run: dependencyTierPreview }],
+}, {
+  id: 'app-catalog-connector-readiness', title: 'Bundle providers in the applications catalog', group: 'tool',
+  description: 'Read the two token-free feeds the applications catalog joins and check they agree: every listed application carries its declared provider ids, and the connector broker answers with per-provider state and no token. Local suites prove the verdict itself (connected, credential-needed, unavailable here, and unknown when the broker cannot be read) and that the page renders each one in a real browser.',
+  regressionTests: [
+    { level: 'unit', path: 'tests/unit/app-catalog-connector-readiness.spec.ts' },
+    { level: 'browser', path: 'tests/unit/app-catalog-connectors-browser.spec.ts' },
+  ],
+  steps: [{ id: 'readiness', app: 'applications', label: 'Bundle providers and their live state', run: catalogConnectorReadiness }],
 }, {
   id: 'focused-application-entry', title: 'Focused application entry', group: 'tool',
   description: 'Explicit root application links retain the selected application through redirect. Bare-host defaults remain intact and malformed selectors cannot supply a redirect destination.',

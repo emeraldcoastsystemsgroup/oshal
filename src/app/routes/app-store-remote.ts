@@ -29,6 +29,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | APP-02: retain only canonical audit pointers in the registry, refuse installable rows without one, and pass the fail-closed audit mode into the isolated installer.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Hot-load the required dependencies the installer pulled from the store before the package (shared loadInstalledPackage), so an install-remote is live without the next boot; a required dependency that fails to load keeps the package unloaded.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six, and it is where the remote store catalog finds an installed package. A module-scope const calling the resolver is NOT converged - it freezes the root at import, before any caller can set the environment - so this became a call-time function.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | A catalog entry carries the connector provider ids the package declares (parsed through the shared ADR-085 tier contract, so the flat and tiered forms in marketplace.json read the same). Discover could name a package but not what it plugs into, so a shelf of 40 packages said nothing about which ones this deployment can actually connect - the second half of the "apps page as a swarm catalog" gap, the installed half being the listing summary. Fail-soft with the rest of parseCatalog: a malformed dependencies block costs that entry its provider list, never the whole store shelf.
  */
 import path from 'path';
 import { execFile } from 'child_process';
@@ -38,6 +39,7 @@ import type { Router, Request, Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { getCaller, requiresOperator } from '@/shared/middleware/authz';
 import { resolvePackageAuditMode } from '@/features/swarm-apps';
+import { inspectAppDependencies } from '@/shared/app-dependencies';
 import { installerLogTail, resolveStoreToken } from './update-check-cron';
 import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
@@ -99,6 +101,11 @@ export interface CatalogApp {
   source: { url: string; path: string; ref: string } | null;
   /** APP-02 immutable attestation pointer; null means browse-only and never installable. */
   audit: { record: string; sourceSha: string } | null;
+  /** The connector provider ids this package declares, split into the ADR-085 tiers. A
+   *  DECLARATION only: it says what the package plugs into, never that anything is connected —
+   *  the Discover shelf joins these ids against the broker's own per-provider state. Empty lists
+   *  when the entry declares no connectors or its dependencies block is unreadable. */
+  connectors: { required: string[]; optional: string[] };
 }
 
 /** The catalog fetch result — `available:false` is the HONEST degrade, not an error. */
@@ -122,6 +129,26 @@ export function marketplaceUrl(repo: string = STORE_REPO, ref: string = STORE_RE
   const m = String(repo).trim().match(/^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
   if (!m) return null;
   return `https://raw.githubusercontent.com/${m[1]}/${m[2]}/${encodeURIComponent(ref)}/marketplace.json`;
+}
+
+/**
+ * @description The connector provider ids one catalog entry declares, read through the same shared
+ * ADR-085 tier contract the installer and the runtime loader use — marketplace.json carries the
+ * tiered block and a flat compatibility copy of it, and only the shared reader knows which one
+ * wins. Fail-soft like the rest of {@link parseCatalog}: a malformed block costs this entry its
+ * provider list rather than hiding the package.
+ * @param entry - one raw marketplace.json app entry
+ * @returns the declared provider ids per tier, with an id never listed in both
+ */
+function catalogConnectors(entry: Record<string, unknown>): { required: string[]; optional: string[] } {
+  try {
+    const tiers = inspectAppDependencies(entry as { dependencies?: unknown });
+    const required = [...new Set(tiers.required.connectors)];
+    const requiredSet = new Set(required);
+    return { required, optional: [...new Set(tiers.optional.connectors)].filter((id) => !requiredSet.has(id)) };
+  } catch {
+    return { required: [], optional: [] };
+  }
 }
 
 /**
@@ -162,6 +189,7 @@ export function parseCatalog(text: string): CatalogApp[] {
       status: typeof a.status === 'string' ? a.status : 'unknown',
       source,
       audit,
+      connectors: catalogConnectors(a),
     });
   }
   return out;
