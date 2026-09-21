@@ -1665,6 +1665,36 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### Seeding-repair hygiene tail (2026-08-12)
 - **Remaining:** (1) rotate whatever `config-seed/claude-credentials.json` holds, then delete it — 25 KB of credential material, world-readable perms, zero consumers since the SEC-05 closure ("never revive a static config-seed token copy"); (2) mirror the eight `requiresOwnNode` entries that exist only in `swarm-bot-registry-local.ts` into the canonical registry (finance-analyst, identity-advisor, social-writer, storage-assistant, deck-builder, trading-analyst, communications-bot, weather-bot — "register in BOTH"); (3) point `WORLD_CLASSIFY_PROVIDERS` at a hosted provider so world classify stops degrading to lexicon-only (its 27 controller CLI refusals per 2h are BY DESIGN — never weaken `assertAuditedAutonomousHarness`).
 - **Done when:** the credential file is rotated + gone from the tree and the bind mount, both registries agree on `requiresOwnNode` membership (guarded), and world-classify batch runs complete on a hosted lane with entity/event output in the world store.
+- **Decision (operator, 2026-09-21), in three parts.**
+  **(1) The credential file: the operator revokes, then the file is deleted.** `config-seed/claude-credentials.json`
+  is 25 KB last modified 2026-07-23, untracked (`.gitignore:132`), excluded from the image
+  (`.dockerignore:96`) and consumed by nothing — all seven tracked mentions are exclusion rules or
+  documentation, and the token keepalive refreshes a different file
+  (`scripts/claude-token-keepalive.ps1:13`, `~/.claude/.credentials.json`). What makes it worth
+  closing is exposure, not use: `./config-seed` is bind-mounted read-only into **39 compose
+  services**, so every bot can read it for no reason. The security value is in the REVOCATION, which
+  deletion does not provide: the operator signs that session out at claude.ai or confirms the
+  subscription cancellation killed it, and only then is the file removed from the tree and the mount.
+  **(2) Already met before the entry was written** — `SWARM_BOT_REGISTRY` is a union over the local
+  registry, so all 18 `requiresOwnNode` bots are present, guarded by a spec. No work.
+  **(3) World classify resolves through the SWARM's configuration, not its own provider list — "the
+  principle of one" (operator's framing, and it governs more than this entry).** Any user may point
+  any bot at their own provider or connector; that is BYO and it stays. But the world index is a
+  *system utility* — an application that is core to the swarm, effectively a swarm service — so with
+  nothing configured it must fall back to **the swarm's own LLM**, exactly as any other swarm work
+  does. The generalisation the operator stated: a connector is configured once in connections; a bot
+  that should use it is pointed at it; and anything with nothing set up inherits the swarm default.
+  Concretely that means `news-fetcher.ts:64`'s bespoke list —
+  `(process.env.WORLD_CLASSIFY_PROVIDERS || 'claude,codex')`, naming two CLI providers the controller
+  refuses by design — stops being the mechanism. World classify asks the platform for the configured
+  provider and gets the swarm default when nothing is set; `WORLD_CLASSIFY_PROVIDERS` survives only
+  as an optional per-application override for an operator who deliberately wants a different
+  classifier. The controller's CLI refusal is NOT weakened to achieve this — the point is that the
+  refusal stops mattering, because classification runs on the accounted hosted/BYO rail like
+  everything else. Done-when for this clause: a world-classify batch completes with entity/event
+  output in the world store on a box with no world-specific provider configured at all.
+  (PM proposed adding a hosted provider to world classify's own list; the operator rejected the shape
+  and gave the principle instead.)
 
 ### Bot-endpoint delegated identity
 - **Remaining:** promote migration 119 and the implemented hash-only workload credential, signed HTTP delegation, exact route/body/scope binding, and one-time durable replay denial. Extend that authority through the still-unowned agent-tool grants and dynamic ribbon definitions with exact tool/version binding and durable ASK consume/recheck; in enforce mode a fleet/service secret may authenticate transport but must never assert or upgrade the initiating principal.
