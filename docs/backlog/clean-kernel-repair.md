@@ -869,7 +869,7 @@ only path back for tickets parked before 2026-07-05.
 
 </details>
 
-### CKR-14 — `extends` and `foundation.persona` are dead inheritance (D7) — S — **DECIDED 2026-09-20: DELETE**
+### CKR-14 — `extends` and `foundation.persona` are dead inheritance (D7) — S — **SHIPPED 2026-09-20: DELETED**
 
 Both mechanisms are genuinely inert, confirmed across both parsers, both bot-node providers, and a zero-hit
 search for any read. Counts corrected: **7** core personas declare `extends`, not 8; 10 more in
@@ -945,6 +945,55 @@ more than a delete, and none may be skipped:
 
 **Reads with CV-2.** Deleting dead declarations is the same principle the operator stated there: one
 authority per question. A key nothing reads is a second, silent authority over a bot’s persona.
+
+**SHIPPED, both halves.** Store first (`oshal-applications` #240), then core, because criterion (3)
+says the type field leaves only after the store manifests drop the key and ship.
+
+**The residue moved first, and it was wider than this entry predicted.** The entry named three items;
+checking each foundation rule against its extender line by line found **seven**:
+
+| persona | what moved |
+|---|---|
+| `world-analyst` | never-invent-a-number, and the SEED-placeholder caveat — as the entry says |
+| `shopping-concierge` | the affiliate-economics paragraph and the quantity sanity-check — as the entry says |
+| `eats-concierge` | explain-every-pick — as the entry says |
+| `movies-concierge`, `spotify-concierge`, `travel-concierge` | explain-every-pick, **not predicted here**: the same rule is in four foundations and absent from all four perspectives, surviving only in `personality.style`, which is equally unparsed |
+| `rides-concierge` | **nothing.** It already carries every rides-foundation rule — no payment, estimates flagged as estimates, pickup and destination confirmed, and Uber for Business named in its own "What you never do". Only the dead key goes. |
+
+**One foundation file is NOT dead, and is kept.** `dnd-foundation.yaml` in the store is read **by
+filename** by `dnd/lib/dnd-dm-service.js` `composeDmPersona`, which prepends its `perspective:` to the
+DM's — the package composes the two halves itself rather than through the kernel key. Its residue was
+therefore not moved (that would duplicate the SRD and table-safety rules into the assembled prompt) and
+only the dead `extends:` key was removed. **This was not predicted; the package's own suite caught it.**
+`dnd-dm-fast-path.test.js` asserts the SRD rule is present in the assembled system prompt and went red
+the moment the file was deleted. The lesson is exact: a search for the *key* finds no reader, and a
+search for the *filename* does. The entry's zero-hit search was of `src/`, `any-bot/` and `scripts/` —
+store packages have their own code and were outside it.
+
+**Criterion by criterion.**
+
+1. `git ls-files '*.yaml' | xargs grep -ln '^extends:'` returns **0**, and
+   `ls ai-lab/bot-personas/*foundation*.yaml` returns nothing. Seven core foundation files deleted.
+2. `tests/unit/persona-dead-inheritance-keys.spec.ts` asserts a **closed, named** list — exactly
+   `{extends, foundation}` — across core personas, core manifests, the manifest type, the CLI and the
+   store package suite. Five cases. **Red first:** on the pre-change tree three go red; the store case
+   was already green because the store shipped first, which is the ordering working.
+3. `foundation?: { persona: string }` is gone from `src/features/swarm-apps/types.ts` and the two
+   validator references are gone from `scripts/oshal-app.js`. `GROUP_FORBIDDEN_KEYS` keeps its
+   `foundation` entry deliberately: it checks for the key's ABSENCE, costs nothing, and keeps group
+   manifests clean.
+4. The store half shipped in #240: ten personas, five manifests, four orphan foundation files deleted,
+   five packages patch-bumped, `store-ci-local` 53 passed / 0 failed.
+
+**Two collateral corrections, both caught by gates rather than by reading.** The persona count fell
+103 → 96, and `doc-count-claims.spec.ts` named all three docs that hand-type it. And
+`site/oswarm.ai/platform/index.html` listed the seven deleted personas in its public roster;
+`scripts/site-product-pages.js` regenerated 7 pages — the platform hub plus the five bumped store
+apps and the catalog index.
+
+**One trap hit twice today.** Naming the removed key in a Change Log makes the guard's own grep count
+it. `scripts/oshal-app.js` therefore paraphrases what it removed, exactly as migration 010 does for
+CKR-16.
 
 ### CKR-15 — the chat path assembles a persona prompt with no containment frame (D11) — M
 

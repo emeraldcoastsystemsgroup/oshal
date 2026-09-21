@@ -236,7 +236,7 @@ scripts/
   setup-cline-auth.sh            — Cline CLI credential setup
   migrations/                    — Postgres schema migrations
 
-ai-lab/bot-personas/             — 103 persona YAML files
+ai-lab/bot-personas/             — 96 persona YAML files
 config-seed/                     — shared config (global-config.json, secrets.json)
 ```
 

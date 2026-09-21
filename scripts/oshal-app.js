@@ -18,6 +18,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | APP-02: require structurally valid store audit bindings, warn without claiming verification in compatible mode, and install fully evidenced packages from their exact audited SHA in enforce mode.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Validate package-owned Takeout declarations before install and verify their named handler exports during route compilation.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Validate first-class manifest schedules before install, including service-route ownership/auth, named handler exports, and static bounded bodies.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com   | Dropped the two validator references to the manifest's dead foundation-persona key (CKR-14 / D7). The key is NOT named literally here: the guard for this change asserts the string is absent from this file, and quoting what you removed makes a bare grep count your own Change Log. The key is deleted from the manifest type: nothing in core has ever read it, so validating that its path stays inside the package and that the file exists was checking a declaration with no consumer. Packages that still carry the key are unaffected - the loader tolerates unknown keys, and one fewer validated path cannot make a package less self-contained.
  * 16 | maintainer@emeraldcoastsystemsgroup.com | Validate fixed in-process package tool declarations and required capabilities before installation.
  * 17 | maintainer@emeraldcoastsystemsgroup.com | Dependency tiers through the shared contract (oshal-app-dependencies.js): `validate` checks required/optional (or the legacy flat form); `install` resolves REQUIRED apps fail-closed as before and installs OPTIONAL apps only when asked (`--with a,b` / `--with-optional`), recording both tiers in .oshal-install.json; `uninstall` blocks on required dependents only and reports optional ones; `init` scaffolds the tiered form.
  * 18 | maintainer@emeraldcoastsystemsgroup.com | `build` stages a package's sources in its own src/__oshal_build_<random>/ directory instead of copying them FLAT into the framework's src/app/routes/. The copies were removed in a `finally` that a kill, an OOM or a closed terminal never reaches — on 2026-09-09 seventeen package sources sat untracked in the kernel's src/app/routes/ after such a build, passing every tracked-path gate and one `git add -A` from landing application code in the kernel (Rule 0c). Staging outside src/app/ means an interrupted build leaves kernel source byte-identical, and the surviving staging directory is a path check-repo-separation.js refuses by name.
@@ -121,7 +122,6 @@ function validatePackage(dir) {
   // ── self-containment: no path may escape the package ────────────────────────
   const pathFields = [];
   (m.bots || []).forEach((b, i) => pathFields.push([`bots[${i}].persona`, b.persona]));
-  if (m.foundation) pathFields.push(['foundation.persona', m.foundation.persona]);
   (m.routes || []).forEach((r, i) => pathFields.push([`routes[${i}].module`, r.module]));
   (m.migrations || []).forEach((mig, i) => pathFields.push([`migrations[${i}]`, mig]));
   if (m.sharedCss) pathFields.push(['sharedCss', m.sharedCss]);
@@ -133,7 +133,6 @@ function validatePackage(dir) {
   // ── referenced files must exist in the package ──────────────────────────────
   const mustExist = [];
   (m.bots || []).forEach((b, i) => b.persona && mustExist.push([`bots[${i}].persona`, b.persona]));
-  if (m.foundation && m.foundation.persona) mustExist.push(['foundation.persona', m.foundation.persona]);
   (m.migrations || []).forEach((mig, i) => mustExist.push([`migrations[${i}]`, mig]));
   if (m.sharedCss) mustExist.push(['sharedCss', m.sharedCss]);
   for (const [field, p] of mustExist) {

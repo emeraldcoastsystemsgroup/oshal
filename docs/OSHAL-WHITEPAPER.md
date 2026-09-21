@@ -248,7 +248,7 @@ constant — **more agents, more workflows, more vendors, joining one swarm that
 |---|---|
 | Agent harnesses | 5 (+ echo no‑op) |
 | LLM providers | 40+ (incl. local Ollama / LM Studio / LiteLLM) |
-| Swarm bots / personas | 60 registry bots · 103 persona definitions |
+| Swarm bots / personas | 60 registry bots · 96 persona definitions |
 | Standard tools | 31 across 16 categories |
 | Built‑in pipelines | build (7‑phase) · incident RCA (3‑phase) |
 | Kernel app manifests | 10 in `swarm-apps/` (incident operations, document intake, Jarvis, Workflow Studio, the Bot Forge, …); every other app is a store package |
