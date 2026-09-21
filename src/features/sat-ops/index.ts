@@ -13,6 +13,9 @@
  *                     |                             | plane.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Export NASA 42's pure star-tracker mount and
  *                     |                             | convention mapping boundaries for covariance replay.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Export the forced-convention readout and the
+ *                     |                             | handshake frames, plus the capture/replay boundary the
+ *                     |                             | ADR-102 forced-conjugate referee gate runs on.
  */
 
 export type { MtbClusterConfig, Quat, SatAttitudeState, SatBodyConfig, Vec3, WheelLimits } from './model/sat-types';
@@ -66,10 +69,25 @@ export {
   type LayoutField,
 } from './services/nasa42-codec';
 export {
+  captureLayout,
+  captureVehicle,
+  captureVoterVerdict,
+  conjugateCaptureWire,
+  conjugateWireFix,
+  startNasa42ReplayServer,
+  type Nasa42Capture,
+  type Nasa42CaptureCycle,
+  type Nasa42CaptureStream,
+  type Nasa42CaptureVehicle,
+  type Nasa42ReplayServer,
+} from './services/nasa42-capture-replay';
+export {
   Nasa42SimAdapter,
   mapNasa42BodyAttitude,
   nasa42StarTrackerBodyBase,
   type Nasa42ConnectOptions,
+  type Nasa42ConventionState,
+  type Nasa42HandshakeFrames,
   type Nasa42QuaternionConvention,
   type Nasa42Vehicle,
 } from './services/nasa42-sim-adapter';

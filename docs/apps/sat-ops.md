@@ -95,7 +95,17 @@ truth-scored hold, 30 s star-tracker outage ride-through, momentum fault→auton
 **100% pass** against physics-derived criteria.
 
 Reproduce it here rather than reading the archive: the estimator and its guards are in-repo
-(`src/features/sat-ops/`, `tests/unit/sat-mekf.spec.ts`). The direct-versus-conjugate NASA 42
-wire replay and its 2/2/20-arcsec body-axis covariance proof are in
-`tests/unit/sat-ops-nasa42-convention.spec.ts`. Live NASA-42 missions and the architecture are in
+(`src/features/sat-ops/`, `tests/unit/sat-mekf.spec.ts`), and `npm run test:sat-ops` runs the
+whole slice's suite. The direct-versus-conjugate NASA 42 wire replay and its 2/2/20-arcsec
+body-axis covariance proof are in `tests/unit/sat-ops-nasa42-convention.spec.ts`.
+
+The **forced-conjugate referee gate** runs on a real 42 stream:
+`tests/unit/sat-ops-nasa42-forced-conjugate-referee.spec.ts` replays a captured 4000-cycle live
+run (`tests/fixtures/sat-ops-nasa42-capture-2026-09-21.json`) back through the shipped adapter in
+both wire conventions and requires identical MEKF acceptance, rejection, reinitialization and
+attitude, with a mirrored control that must fall apart. It needs no Docker; taking a fresh
+capture does, and [sim/nasa42/README.md](../../sim/nasa42/README.md) has the command. Measured
+numbers are in [ADR-102](../adr/102-sat-ops-satellites-as-swarm-nodes.md#forced-conjugate-referee-gate-closed-on-live-42-data-2026-09-21).
+
+Live NASA-42 missions and the architecture are in
 [ADR-102](../adr/102-sat-ops-satellites-as-swarm-nodes.md).

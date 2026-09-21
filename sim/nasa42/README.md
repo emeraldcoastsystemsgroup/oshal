@@ -19,6 +19,23 @@ npx ts-node -r tsconfig-paths/register --transpile-only scripts/sat-ops-42-smoke
 accept, not a hang). One FSW cycle = 0.2 s sim time; the sim advances only as fast as the
 controller answers, so wall-clock speed is paced by the socket round-trip.
 
+## Capturing a run for the forced-conjugate referee gate
+
+ADR-102's convention referee needs ONE live 42 run replayed down both quaternion branches.
+The capture script flies the same mission as the smoke with the interpretation force-locked,
+and writes 42's handshake frames plus every cycle's star-tracker and gyro fields to a fixture:
+
+```bash
+docker run --rm -d -p 10001:10001 --name oshal-sat42 oshal-sat42:latest
+SAT42_CAPTURE_OUT=tests/fixtures/sat-ops-nasa42-capture-<date>.json   npx tsx --tsconfig tsconfig.server.json scripts/sat-ops-42-capture.ts
+docker rm -f oshal-sat42
+```
+
+`SAT42_FORCE_CONVENTION` (default `conjugate`), `SAT42_CAPTURE_CYCLES` (default 1500, i.e.
+300 sim-s) and `SAT42_ACQUIRE_MAX_S` tune it. The container is only needed to TAKE the
+capture — `tests/unit/sat-ops-nasa42-forced-conjugate-referee.spec.ts` replays the committed
+fixture through the real adapter over a loopback socket and needs no Docker at all.
+
 ## The case (`case/`)
 
 42's stock `Standalone` demo case (CfsSat: 1,100 kg, 4-wheel pyramid, 3 body-axis gyros, star
