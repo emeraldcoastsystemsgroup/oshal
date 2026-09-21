@@ -1,3 +1,5 @@
 # Cost/determinism benchmark deps. Install: pip install -r bench/requirements.txt
 requests>=2.31
 langgraph>=1.0
+# The oshal leg reads its spend out of chat_tasks (READ ONLY) - see oshal_leg.py
+psycopg2-binary>=2.9

@@ -4,9 +4,11 @@ CHANGE LOG
 SEQ                 | AUTHOR                                        | DESCRIPTION
 -----------------------------------------------------------------------------
 1 | maintainer@emeraldcoastsystemsgroup.com   | Benchmark runners: a vanilla single-shot control, a real LangGraph supervisor loop, and the live OSHAL cluster. Each runs the SAME task on the SAME free model; an unavailable leg reports status=not-run with the reason, NEVER a fabricated number (that would be the exact sin the competitive study just punished).
+2 | maintainer@emeraldcoastsystemsgroup.com   | BACKLOG P5: run_oshal was a stub that set status=not-run unconditionally, so the benchmark measured competitors and never us. It now takes the same (model, rounds) signature as the other legs and delegates to oshal_leg.measure - the REAL dispatch (POST /api/send-message as a service-secret machine caller -> executeBotOrInline -> bot node or inline orchestrator) priced from chat_tasks' own token/cost columns. Every leg also records the model it ran on, so the parity the benchmark rests on is in the row, not assumed.
 """
 import time
 
+import oshal_leg
 from task import check, instruction, user_message
 
 
@@ -28,6 +30,7 @@ def _blank(name):
 def run_vanilla(model, max_rounds=1):
     """Control: one model call, one check, no framework. The floor every framework is measured against."""
     result = _blank("vanilla (no framework)")
+    result["model"] = model.model
     started = time.time()
     out = model.chat(
         [
@@ -48,6 +51,7 @@ def run_vanilla(model, max_rounds=1):
 def run_langgraph(model, max_rounds=4):
     """Real LangGraph supervisor loop: extractor -> deterministic gate -> retry-with-error, bounded."""
     result = _blank("langgraph (supervisor loop)")
+    result["model"] = model.model
     try:
         from typing import TypedDict
 
@@ -126,13 +130,23 @@ def run_langgraph(model, max_rounds=4):
     return result
 
 
-def run_oshal(max_rounds=4):
-    """The live OSHAL review-gated cluster. Not-run until wired to the stack - reported honestly."""
+def run_oshal(model, max_rounds=4):
+    """The live oshal cluster: the REAL dispatch, priced from chat_tasks (see oshal_leg.py).
+
+    @param model - the shared FreeModel; only its NAME is used (the parity target). This leg never
+      calls OpenRouter itself - the cluster runs the model, and the ledger reports what it spent.
+    @param max_rounds - accepted for signature parity; the cluster decides its own rounds.
+    @returns one run record. A leg that is not configured, is refused, or whose spend never
+      reached chat_tasks is not-run with the reason; an answer on another model is off-model.
+    """
     result = _blank("oshal (live cluster)")
-    result["status"] = "not-run"
-    result["reason"] = (
-        "wire to POST /api/swarm-execute (BotNodeClient.execute, ADR-036) with this task, then read "
-        "total_input_tokens/total_output_tokens/total_cost from chat_tasks for the run. Requires the "
-        "live stack + a bot pinned to the OpenRouter free model for model parity."
-    )
+    result["model"] = model.model
+    try:
+        result.update(oshal_leg.measure(model.model))
+    except oshal_leg.LegError as exc:
+        result["status"] = "not-run"
+        result["reason"] = str(exc)
+    except Exception as exc:  # noqa: BLE001 - a transport/driver failure is a reason, never a number
+        result["status"] = "not-run"
+        result["reason"] = f"{type(exc).__name__}: {str(exc)[:160]}"
     return result
