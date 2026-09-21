@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The Redis sibling of disposable-postgres.ts, which did not exist. Two specs needed it and neither could be converted without it: trading-event-leg-cadence resolved a Redis URL and trading-watchdog-books docker-execs into a Redis CONTAINER by name. Both previously defaulted to the operator's live stack - on this box OSHAL_REDIS_PORT names the port the running swarm's Redis listens on, so an unpointed run wrote and deleted keys in its queue and scheduler state. A throwaway server answers it the same way it answered the Postgres half: nothing to point, and nothing to point at. Readiness is `docker exec redis-cli PING` rather than a client handshake, so this helper stays free of any Redis client dependency and works for the exec-based spec as well as the URL-based one.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Dispose the container's anonymous data volume with it. `redis:7-alpine` declares `VOLUME /data` and this fixture mounts nothing there, so every start minted an anonymous volume - and `docker rm --force` without `--volumes` leaves it behind. Measured on the dev box: the machine's volume listing went 168 -> 169 on start and stayed at 169 after the old removal; with `--volumes` it returns to 168. The slot ceiling bounds how many containers run at once, not what they leave, so the Docker virtual disk grew by one Redis data volume per fixture start until a hand cleanup. The `--rm` leg drops it too (a natural exit autoremoves the anonymous volumes), so both removal paths are now clean.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -134,15 +135,17 @@ export class DisposableRedis {
   }
 
   /**
-   * @description Force-remove the container. Safe to call twice and safe to call after a failed
-   * start — the container is removed whenever `docker run` returned at all.
+   * @description Force-remove the container AND the anonymous volume it mounted. Safe to call twice
+   * and safe to call after a failed start — the container is removed whenever `docker run` returned
+   * at all. `--volumes` removes only anonymous volumes, never a named one, so it cannot reach
+   * anything an operator created.
    * @returns Nothing.
    */
   async stop(): Promise<void> {
     this.connectionValue = undefined;
     try {
       if (this.started) {
-        try { docker(['rm', '--force', this.containerName], 60_000); } catch { /* an --rm container may already be gone */ }
+        try { docker(['rm', '--force', '--volumes', this.containerName], 60_000); } catch { /* an --rm container may already be gone */ }
         this.started = false;
       }
     } finally {
