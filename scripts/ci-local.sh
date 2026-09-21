@@ -33,6 +33,7 @@
 # 26 | maintainer@emeraldcoastsystemsgroup.com   | New --publish-image flag. Nothing has ever published this trunk's container image: the only pusher is the workflow_dispatch-only image job in .github/workflows/ci.yml, which has been dispatched by hand once (2026-09-16, failed with the image job skipped) and has never published, so the registry's `latest` is the pre-cutover 2026-07-26 artifact and `--mode 1` - the DEFAULT documented install - still hands it to every new user. That cost a day: a stale image does not look stale, and the box that installed it reported MISSING FEATURES while every symptom pointed at configuration. Publishing from this gate spends nothing of the constrained hosted-runner budget and puts the build, the kernel-skills image probe, the smoke boot and the Trivy scan in front of the push - a better pre-publish bar than the hosted pipeline applies. Fail-closed: no flag, a red run, --skip-image, or an absent credential all publish nothing. The credential is the operator's to mint; this script never creates one and never prints one.
 # 27 | maintainer@emeraldcoastsystemsgroup.com   | The publish block refuses a SCHEDULED run whose source posture is not scheduled-origin-main. A failed fetch already degraded to local HEAD with only a warning and nothing in FAILED_GATES, so an all-green run of whatever branch the trunk checkout had (a feature branch, most nights in this tree) would have been pushed as :latest the moment --publish-image was passed. Interactive runs are the operator's call and are not gated here.
 # 28 | maintainer@emeraldcoastsystemsgroup.com   | gate_unit supplies OSHAL_STORE_DIR as well as OSHAL_STORE_REPO. The product-site guard resolves its catalog from STORE_DIR, whose default is a SIBLING of the tree it runs in - and --head mode runs from a git-archive export with no sibling anywhere near it, so eleven cases in site-product-pages.spec.ts it.runIf-SKIPPED in every nightly. One of them is the guard that catches the committed public site drifting away from the manifests, and it had drifted by seven whole apps before anyone looked. Measured both ways on this box: with STORE_DIR unresolvable the file reports "16 passed | 11 skipped", with it resolved "27 passed". A guard that skips in CI is a guard that does not exist.
+# 29 | maintainer@emeraldcoastsystemsgroup.com   | gate_trivy carries its POSTURE in the file instead of in nobody's head. It had been red for 46 consecutive nightly runs on a finding set nobody had read, which is the same as not scanning; the operator's 2026-09-21 decision is a CVE budget, so the comment above the function records what is settled - the floor stays CRITICAL,HIGH with --ignore-unfixed, the gate still fails the run, what cannot be fixed goes in .trivyignore with a reason and an `exp:` no more than 90 days out, and taking the published fix comes before writing a budget line. The expiry claim is measured, not assumed: against aquasec/trivy 0.72.0 on one image and one CVE id, no exp: suppressed it, a future exp: suppressed it, and a past exp: reported it again - so an unrenewed line reddens this gate by itself.
 # =============================================================================
 #
 # Usage:  bash scripts/ci-local.sh [--scheduled] [--head] [--skip-e2e] [--skip-image] [--install]
@@ -553,6 +554,27 @@ gate_smoke() {
 # Scan a docker-save tarball with --input: trivy never gets the docker socket
 # (root-equivalent control of the daemon running the LIVE stack). It keeps
 # network for CVE-DB updates; that's data-in, not host control.
+#
+# POSTURE - operator decision 2026-09-21, after this gate had been red for 46 consecutive nightly
+# runs (docs/BACKLOG.md "The nightly gate has been red for 46 consecutive runs"). The choice was
+# between a CVE budget, a new base image, and downgrading to advisory-only; the budget won.
+# Concretely, and none of this is negotiable in review:
+#   * The floor stays CRITICAL,HIGH with --ignore-unfixed. --ignore-unfixed is what makes the gate
+#     actionable rather than a wall of noise: every finding it still reports has a published
+#     upstream release, so the FIRST response is always to take that release, not to write a line
+#     in .trivyignore. The 2026-09-21 red was eleven findings and eight of them were this tree's
+#     own dependencies, all fixable by a minor bump.
+#   * The gate still FAILS the run (--exit-code 1 below). It was not downgraded to advisory and the
+#     base image was not rebased - node:20-alpine is already the slim base, and distroless would
+#     take away the shell scripts/bot-entrypoint.sh needs.
+#   * What cannot be fixed goes in the budget: .trivyignore at the repo root, which this function
+#     mounts from GATE_SRC so an uncommitted local copy can never quietly pass a scheduled run.
+#     EVERY entry carries the package, why it cannot move today, and an `exp:` date no more than
+#     90 days out. An entry without both is a gate bypass, not a budget line.
+#   * Trivy enforces the expiry itself - this is measured, not assumed. Against aquasec/trivy
+#     0.72.0, the same image and the same CVE id: no `exp:` suppressed the finding, `exp:` with a
+#     future date suppressed it, and `exp:` with a past date reported it again. So a budget line
+#     nobody renews turns this gate red on its own, which is the whole point of dating them.
 TRIVY_CTR=oshal-ci-trivy
 SCAN_VOL=oshal-ci-scan
 gate_trivy() {
