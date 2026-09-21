@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The standing guard on "a GRANT that did nothing must not record as APPLIED". Migration 099 wrapped all six of its blocks in EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE, the runner writes the app_migrations row regardless, and the file sat in the ledger for seven weeks proving only that it had executed. Everything here runs the REAL scripts/migrations/099-bot-db-role.sql against a REAL disposable PostgreSQL as a REAL under-privileged login - no mocked pool can raise 42501, and none can produce the two shapes that raise nothing at all: a schema GRANT by a non-owner returns "WARNING: no privileges were granted" and succeeds, and a REVOKE by a grant-option holder that does not own the table succeeds silently while the grantee keeps every privilege. Those two are why the fix is a privilege VERIFICATION and not just a deleted handler, and the last two cases go red if the verification is removed even when the handler stays gone. The compose case covers the same swallow one level up: the api boot discarded the exit status of the migration runner, the RLS enforce and the app-role provision, so a loud failure was re-silenced by the thing that ran it.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Two holes in the guard itself. (1) The compose case was VACUOUS for two of the three steps it claimed: one stub failed EVERY `node` invocation in the branch, so the migration runner exited first and apply-rls.mjs / provision-app-role.mjs were never reached - a regression in either could not turn this file red. The stub now dispatches on argv and fails exactly ONE step per run, each case asserting the steps before it ran, the steps after it did not, and that the boot named the step it refused on. (2) The migration's RLS-exempt refusal had no case at all: the role-attribute block only raises when oshal_bot has actually drifted AND the runner cannot correct it, which needs a superuser to create and a NOCREATEROLE login to meet. Both new shapes were mutation-proven red against the restored defect.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -208,7 +209,48 @@ describe('migration 099 refuses to report success on a grant that did nothing', 
     expect(await botHas('public.oshal_workload_identities', 'SELECT'),
       'the guard must be observing a real surviving privilege').toBe(true);
   });
+
+  it('REJECTS a run that leaves oshal_bot RLS-exempt because this runner may not ALTER ROLE it', async () => {
+    await resetPublic();
+    await owner.query('CREATE TABLE public.bot_reachable_table (id integer primary key)');
+
+    // The one attribute drift that defeats the entire point of the role: Postgres exempts such a
+    // role from row-level security unconditionally, so every bot connection becomes a bypass around
+    // the per-user isolation. Only a superuser can set it and only a superuser can clear it - which
+    // is exactly why a NOCREATEROLE runner that meets this shape must refuse rather than certify it.
+    // Spelt out here and not in the migration: that file may not contain a non-NO-prefixed
+    // occurrence of the keyword (tests/unit/bot-db-least-privilege.spec.ts:100 refuses one), so its
+    // message says "RLS-exempt attribute" instead.
+    await owner.query(`ALTER ROLE ${BOT_ROLE} BYPASSRLS`);
+    try {
+      const drifted = await owner.query<{ rolbypassrls: boolean }>(
+        'SELECT rolbypassrls FROM pg_roles WHERE rolname = $1', [BOT_ROLE],
+      );
+      expect(drifted.rows[0]?.rolbypassrls, 'the drift must be real or this case refuses nothing').toBe(true);
+
+      const message = await migrationFailure(runner);
+      expect(message, 'an RLS-exempt oshal_bot the runner cannot correct must fail the migration')
+        .toMatch(/oshal_bot carries a superuser or RLS-exempt attribute/);
+      expect(message, 'the failure must name the role it was attempted as').toContain(`"${RUNNER_ROLE}"`);
+      expect(message, 'this must be the attribute refusal, not the DML-grant refusal further down')
+        .not.toMatch(/DML grants were REFUSED/);
+
+      expect(await botHas('public.bot_reachable_table', 'SELECT'),
+        'the run must stop at the attribute block, before any grant is attempted').toBe(false);
+      const after = await owner.query<{ rolbypassrls: boolean }>(
+        'SELECT rolbypassrls FROM pg_roles WHERE rolname = $1', [BOT_ROLE],
+      );
+      expect(after.rows[0]?.rolbypassrls,
+        'the refusal must be real: the runner genuinely could not clear the attribute').toBe(true);
+    } finally {
+      // Restore the shape every other case in this file depends on, whatever happened above.
+      await owner.query(`ALTER ROLE ${BOT_ROLE} NOBYPASSRLS`);
+    }
+  });
 });
+
+/** The three api-boot steps whose exit status compose used to discard. */
+type BootStep = 'migrations' | 'rls' | 'provision';
 
 /**
  * The same swallow, one level up. Making the migration fail is worth nothing if the boot command that
@@ -216,6 +258,18 @@ describe('migration 099 refuses to report success on a grant that did nothing', 
  * one-shot both treated all three steps as fatal.
  */
 describe('the compose api boot propagates a failed migration, RLS enforce or role provision', () => {
+  /**
+   * The three guarded steps of the bootstrap branch, in the order the boot runs them. `argv` is the
+   * fragment that identifies that step's `node` invocation - the whole branch is `node`, so this is
+   * what lets one step fail while the others succeed - and `refusal` is what the branch must print
+   * when that step is the one that failed.
+   */
+  const BOOT_STEPS: readonly { step: BootStep; argv: string; refusal: string }[] = [
+    { step: 'migrations', argv: 'DatabaseBootstrapService', refusal: 'Migrations FAILED' },
+    { step: 'rls', argv: 'apply-rls.mjs', refusal: 'core RLS enforce FAILED' },
+    { step: 'provision', argv: 'provision-app-role.mjs', refusal: 'app-role provision FAILED' },
+  ];
+
   /**
    * @description Lift the app-role bootstrap branch out of the compose YAML and unescape it into the
    * `sh` the container actually runs: `\"` back to `"`, and compose's `$$` back to a literal `$`.
@@ -230,27 +284,71 @@ describe('the compose api boot propagates a failed migration, RLS enforce or rol
   }
 
   /**
-   * @description Run that branch in a real POSIX shell - the fixture's own container, so nothing on
-   * the machine is touched - with `node` stubbed to a chosen exit status. Every step of the branch is
-   * a `node` invocation, so one stub covers the migration runner, the RLS enforce and the provisioner.
-   * @param nodeExit Exit status the stubbed `node` returns.
-   * @returns The shell's exit status.
+   * @description Stub `node` for one run, failing exactly ONE of the three guarded steps and letting
+   * the others succeed. A single stub that returned the same status for every invocation proved only
+   * the FIRST step: the migration runner exited the branch, so the RLS enforce and the provisioner
+   * were never reached and a regression in either could not turn this file red. Dispatching on argv
+   * is what makes each step independently provable. Each arm also echoes a marker, so a case can
+   * assert which steps actually RAN rather than inferring it from the exit status.
+   * @param failing The step whose `node` invocation returns non-zero, or `'none'` for a healthy boot.
+   * @returns The stub, as a POSIX shell function definition.
    */
-  function runBranch(nodeExit: number): number {
-    const script = `node() { return ${nodeExit}; }; OSHAL_APP_ROLE_BOOTSTRAP=true; ${bootstrapBranch()} exit 0`;
+  function stubNode(failing: BootStep | 'none'): string {
+    const arms = BOOT_STEPS.map(({ step, argv }) =>
+      `    *${argv}*) echo "STEP:${step}"; return ${failing === step ? 1 : 0} ;;`).join('\n');
+    // The `*)` arm is the password read in the provision step's command substitution: a helper, not
+    // a guarded step, so it always succeeds and stays silent (its output is captured into a variable).
+    return `node() {\n  case "$*" in\n${arms}\n    *) return 0 ;;\n  esac\n}`;
+  }
+
+  /**
+   * @description Run the branch in a real POSIX shell - the fixture's own container, so nothing on the
+   * machine is touched - against that selective stub.
+   * @param failing The step to fail, or `'none'`.
+   * @returns The shell's exit status and everything it printed.
+   */
+  function runBranch(failing: BootStep | 'none'): { status: number; output: string } {
+    const script = [stubNode(failing), 'OSHAL_APP_ROLE_BOOTSTRAP=true', bootstrapBranch(), 'exit 0'].join('\n');
     try {
-      execFileSync('docker', ['exec', database.containerName, 'sh', '-c', script],
+      const output = execFileSync('docker', ['exec', database.containerName, 'sh', '-c', script],
         { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000 });
-      return 0;
+      return { status: 0, output };
     } catch (error) {
       const status = (error as { status?: number }).status;
       if (typeof status !== 'number') throw error;
-      return status;
+      const { stdout, stderr } = error as { stdout?: string; stderr?: string };
+      return { status, output: `${stdout ?? ''}${stderr ?? ''}` };
     }
   }
 
-  it('exits non-zero when a boot step fails, and zero when every step succeeds', () => {
-    expect(runBranch(1), 'a failed migration / RLS enforce / role provision must stop the api boot').not.toBe(0);
-    expect(runBranch(0), 'a healthy boot must still reach the server start').toBe(0);
+  it.each(BOOT_STEPS)('stops the api boot when the $step step fails, and names it', ({ step, refusal }) => {
+    const { status, output } = runBranch(step);
+
+    expect(status, `a failed ${step} step must stop the api boot`).not.toBe(0);
+    expect(output, 'the boot must name the step it refused on').toContain(refusal);
+
+    const index = BOOT_STEPS.findIndex((candidate) => candidate.step === step);
+    // Non-vacuity: every EARLIER step must have run and passed, or this case exited on someone else's
+    // guard and proves nothing about this one. That is precisely how the single-stub version was
+    // vacuous for the second and third steps.
+    for (const earlier of BOOT_STEPS.slice(0, index)) {
+      expect(output, `the ${earlier.step} step must have run before ${step}`).toContain(`STEP:${earlier.step}`);
+      expect(output, `${earlier.step} succeeded here, so its refusal must not appear`).not.toContain(earlier.refusal);
+    }
+    expect(output, `the ${step} step itself must have been reached`).toContain(`STEP:${step}`);
+    // And nothing after it may run: the api must not provision a role on a half-applied schema.
+    for (const later of BOOT_STEPS.slice(index + 1)) {
+      expect(output, `${later.step} must not run once ${step} failed`).not.toContain(`STEP:${later.step}`);
+    }
+  });
+
+  it('reaches the server start when all three steps succeed', () => {
+    const { status, output } = runBranch('none');
+
+    expect(status, 'a healthy boot must still reach the server start').toBe(0);
+    for (const { step, refusal } of BOOT_STEPS) {
+      expect(output, `the ${step} step must run on a healthy boot`).toContain(`STEP:${step}`);
+      expect(output, `a healthy boot must not print the ${step} refusal`).not.toContain(refusal);
+    }
   });
 });
