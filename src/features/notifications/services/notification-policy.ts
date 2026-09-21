@@ -14,6 +14,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — NotifySeverity union, DEFAULT_SEVERITY_POLICY, env override (NOTIFY_POLICY_<LEVEL>), transportsForSeverity (policy ∩ configured), and notifyBySeverity (resolve → notifyAll, degrades to a single skipped noop when nothing is configured for the level).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Give the default policy its WhatsApp leg. The twilio-whatsapp transport shipped but no severity ever selected it, so a deployment that wired WhatsApp still got nothing from notifyBySeverity — the transport was reachable only by naming it explicitly. It now carries error and critical, ordered AHEAD of twilio-sms because on this platform WhatsApp is not behind the US A2P 10DLC carrier gate that silently drops unregistered SMS (docs/channels/twilio.md, measured 2026-08-01). The set is still intersected with the configured transports, so a deployment without WhatsApp is unchanged.
  *
  * @module features/notifications/services/notification-policy
  */
@@ -35,15 +36,16 @@ export type SeverityPolicy = Record<NotifySeverity, TransportKind[]>;
 
 /**
  * The default severity → transport policy. Escalates with severity: info/warn whisper on the
- * first-party Telegram channel; error adds an email trail + a phone text; critical also places a
- * call. Each leg is dropped at send time if that transport is not configured, so this default is
- * safe even on a deployment that wired only one channel.
+ * first-party Telegram channel; error adds an email trail plus the two phone-messaging legs
+ * (WhatsApp first — it is not behind the US A2P carrier gate that drops unregistered SMS — then
+ * the SMS text); critical also places a call. Each leg is dropped at send time if that transport
+ * is not configured, so this default is safe even on a deployment that wired only one channel.
  */
 export const DEFAULT_SEVERITY_POLICY: SeverityPolicy = {
   info: ['telegram'],
   warn: ['telegram', 'email'],
-  error: ['telegram', 'email', 'twilio-sms'],
-  critical: ['telegram', 'email', 'twilio-sms', 'twilio-voice'],
+  error: ['telegram', 'email', 'twilio-whatsapp', 'twilio-sms'],
+  critical: ['telegram', 'email', 'twilio-whatsapp', 'twilio-sms', 'twilio-voice'],
 };
 
 /** The set of valid non-noop transport names, for validating env-supplied policy entries. */

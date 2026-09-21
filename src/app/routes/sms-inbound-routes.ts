@@ -15,6 +15,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — POST /inbound: Twilio-signature self-guard (503 unconfigured / 403 bad sig / 400 malformed), parse to InboundSms, dispatch to an injected sink (default structured log), respond with empty TwiML.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The sink may now answer: a returned string is XML-escaped into a TwiML <Message>, so the fast paths that need no credential and no bot turn (the LINK handshake, the unlinked-number refusal) reply inside the webhook instead of needing an outbound send. A void return keeps the previous empty-TwiML behaviour, which is what a real dispatch uses — it answers out of band so a slow swarm turn cannot make Twilio time out and RETRY the same message.
  *
  * @module routes/sms-inbound-routes
  */
@@ -34,10 +35,29 @@ const logger = createChildLogger({ module: 'sms-inbound-routes' });
 /** Empty TwiML: acknowledges receipt to Twilio without sending an auto-reply. */
 const EMPTY_TWIML = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
 
+/** Twilio's per-message body cap; a longer sink reply is truncated rather than rejected. */
+const TWIML_MAX_CHARS = 1_600;
+
+/** Escape the five XML metacharacters so a reply body cannot break out of the <Message> element. */
+function xmlEscapeBody(text: string): string {
+  return text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
+
+/** A TwiML document carrying one reply message back to the sender. */
+function messageTwiml(text: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${xmlEscapeBody(text.slice(0, TWIML_MAX_CHARS))}</Message></Response>`;
+}
+
 /** Dependencies for the inbound SMS route (all optional; every one has a safe default). */
 export interface SmsInboundRouteDeps {
-  /** Handles a verified inbound message. Default: structured log. May be async; a throw is logged, never surfaced. */
-  onInboundSms?: (sms: InboundSms) => void | Promise<void>;
+  /**
+   * Handles a verified inbound message. Default: structured log. May be async; a throw is logged,
+   * never surfaced. A returned non-empty string is sent back to the texter as a TwiML <Message>;
+   * void/empty answers with empty TwiML (the dispatch path, which replies out of band).
+   */
+  onInboundSms?: (sms: InboundSms) => void | string | Promise<void | string>;
   /** Env var holding the Twilio auth token used to verify the signature. Default 'TWILIO_AUTH_TOKEN'. */
   authTokenEnv?: string;
   /** Env var holding the exact public URL Twilio POSTs to (for the signature base). Default 'TWILIO_INBOUND_PUBLIC_URL'. */
@@ -97,13 +117,14 @@ export function createSmsInboundRoutes(deps: SmsInboundRouteDeps = {}): Router {
       return;
     }
 
+    let reply = '';
     try {
-      await onInboundSms(sms);
+      reply = String((await onInboundSms(sms)) ?? '').trim();
     } catch (err) {
       // Ack receipt to Twilio (200) so it does not retry-storm; the handler failure is logged loudly.
       logger.error({ err, stack: (err as Error).stack, messageSid: sms.messageSid }, 'inbound SMS handler failed');
     }
-    res.set('Content-Type', 'text/xml').status(200).send(EMPTY_TWIML);
+    res.set('Content-Type', 'text/xml').status(200).send(reply ? messageTwiml(reply) : EMPTY_TWIML);
   });
 
   return router;

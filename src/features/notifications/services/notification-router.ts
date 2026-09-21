@@ -20,6 +20,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — NotificationRouter (pref resolution with Gmail-else-none default, America/Chicago quiet hours, injected per-user sender registry, never-throw outcomes) + the UserChannelSender/UserNotifyMessage/NotifyOutcome contracts.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | resolveRouting now falls back to the user's DEFAULT_TOPIC ('default') row before the injected default channel: the welcome wizard writes ONE opt-in row that should govern every topic the user hasn't customized — without this, a wizard "text me" answer only ever covered the literal topic 'default' and every real producer topic silently kept the Gmail-else-none default. Topic-specific rows still win, and the fallback row's quiet hours apply when it is the one that resolved.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Document the SEC-05 fixed-operation boundary after retirement of the generic Twilio CLI carrier; routing behavior is unchanged.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Email fallback when the chosen channel cannot be attempted. A user whose topic routes to sms/voice/telegram got a bare `skipped` outcome whenever that channel had no sender registered or no credential/destination for them — the notification was simply lost, which is exactly what a deployment with Twilio absent looks like. The fallback re-dispatches over email when email is available for that user, and records which channel it came from. It fires ONLY when nothing was attempted (no-sender-registered / channel-unavailable): an explicit mute, quiet hours, and a channel that WAS attempted are all left alone, the last one deliberately — a provider that returned a failure may still have queued the message, so re-sending it elsewhere risks a double delivery.
  *
  * @module features/notifications/services/notification-router
  */
@@ -64,6 +65,11 @@ export interface NotifyOutcome {
   id?: string;
   /** Sanitized error text (never a token/secret). */
   error?: string;
+  /**
+   * Set when the email fallback carried this notification: the channel the user's preference
+   * actually selected, which could not be attempted. `channel` is then 'email'.
+   */
+  fallbackFrom?: Exclude<NotifyChannel, 'none'>;
 }
 
 /**
@@ -166,16 +172,46 @@ export class NotificationRouter {
     const sender = this.deps.senders[channel];
     if (!sender) {
       logger.warn({ userSub, topic, channel }, 'notify skipped: no sender registered for channel');
-      return { delivered: false, channel, skipped: true, reason: 'no-sender-registered' };
+      return this.emailFallback(userSub, topic, channel, pref, message, startedAt, 'no-sender-registered');
     }
     if (!(await sender.available(userSub, pref))) {
       logger.info({ userSub, topic, channel }, 'notify skipped: channel unavailable for user (creds/destination missing)');
-      return { delivered: false, channel, skipped: true, reason: 'channel-unavailable' };
+      return this.emailFallback(userSub, topic, channel, pref, message, startedAt, 'channel-unavailable');
     }
+    return this.send(userSub, topic, channel, sender, pref, message, startedAt);
+  }
+
+  /** Send through one resolved, available sender and shape the logged outcome. */
+  private async send(
+    userSub: string, topic: string, channel: Exclude<NotifyChannel, 'none'>, sender: UserChannelSender,
+    pref: UserNotificationPref | null, message: UserNotifyMessage, startedAt: number,
+  ): Promise<NotifyOutcome> {
     const result = await sender.send(userSub, pref, message);
     const durationMs = Date.now() - startedAt;
     logger.info({ userSub, topic, channel, delivered: result.delivered, id: result.id, error: result.error, durationMs }, 'notify dispatched');
     if (result.delivered) return { delivered: true, channel, ...(result.id ? { id: result.id } : {}) };
     return { delivered: false, channel, reason: 'send-failed', ...(result.error ? { error: result.error } : {}) };
+  }
+
+  /**
+   * The last-resort leg for a channel that could not be ATTEMPTED (its sender is absent, or the
+   * user has no credential/destination on it — what a deployment with Twilio absent looks like).
+   * Email carries it instead when the user can receive email; otherwise the original skip stands,
+   * unchanged, so nothing that used to be a clean skip becomes a surprise send.
+   */
+  private async emailFallback(
+    userSub: string, topic: string, channel: Exclude<NotifyChannel, 'none'>,
+    pref: UserNotificationPref | null, message: UserNotifyMessage, startedAt: number, reason: string,
+  ): Promise<NotifyOutcome> {
+    const skipped: NotifyOutcome = { delivered: false, channel, skipped: true, reason };
+    if (channel === 'email') return skipped;
+    const email = this.deps.senders.email;
+    if (!email || !(await email.available(userSub, pref))) {
+      logger.info({ userSub, topic, channel, reason }, 'notify email fallback unavailable — the original skip stands');
+      return skipped;
+    }
+    logger.info({ userSub, topic, channel, reason }, 'notify falling back to email for an unattemptable channel');
+    const outcome = await this.send(userSub, topic, 'email', email, pref, message, startedAt);
+    return { ...outcome, fallbackFrom: channel };
   }
 }

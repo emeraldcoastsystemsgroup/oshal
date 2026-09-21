@@ -53,10 +53,43 @@ cannot resolve the authenticated user's connection, it fails closed as not conne
 - **Trial accounts** can only reach verified numbers (`OutgoingCallerIds`) and prepend a
   "sent from a Twilio trial account" notice to every message.
 
+## Inbound SMS → your swarm (built; not yet live-proven on this box)
+
+A text to the deployment's Twilio number reaches the accountable Jarvis bot of the OSHAL user who
+owns that number, and nobody else. The binding is the same `channel_links` identity store Telegram
+uses, with `provider = 'sms'` and the sender's E.164 number as the identity:
+
+1. In the cockpit, `POST /api/channels/sms/link` mints a one-time code (15 minutes) and returns the
+   number to text it to.
+2. The user texts `LINK <code>` to that number. The signed webhook
+   (`POST /api/sms/inbound`) redeems it and the binding is written as that user.
+3. From then on, a text from that number runs on the user's Jarvis under
+   `runWithRequestIdentity({ sub, isOperator: false })`, and the answer returns over the user's OWN
+   connected Twilio account through the fixed `sendUserTwilioSms` operation.
+
+An **unlinked** number is refused: it gets linking guidance in the TwiML reply and reaches no swarm.
+A number is normalized on both sides of the binding, so a separated form is the same identity. A
+forged or unsigned POST is rejected at the signature before any of this runs.
+
+Posture: **locally tested**, against a real Postgres with the real signed webhook
+(`tests/unit/sms-inbound-dispatch.spec.ts`). It has NOT been exercised against live Twilio on this
+deployment — that is the BACKLOG item "Communications bot live wrap-up", and US SMS is still behind
+the A2P gate described above.
+
+## Severity policy and the email fallback
+
+`notifyBySeverity` routes `error` and `critical` over `twilio-whatsapp` ahead of `twilio-sms`,
+because WhatsApp is not behind the A2P carrier gate. Every leg is intersected with the transports
+that are actually configured, so a deployment without WhatsApp is unaffected.
+
+On the per-user side, `NotificationRouter` falls back to email when the user's chosen channel cannot
+be **attempted** — no sender registered, or no credential/destination for that user, which is exactly
+what "Twilio absent" looks like. It deliberately does NOT fall back for an explicit mute, for quiet
+hours, for email itself, or for a channel that was attempted and failed (a provider that reports a
+failure may still have queued the message).
+
 ## Still not built
 
-Outbound WhatsApp-via-Twilio is built as the `twilio-whatsapp` notification transport. Still open:
-inbound SMS → Jarvis (a true chat *channel* like Telegram — the signed Twilio webhook exists today
-but only dispatches to an injected/default sink), inbound WhatsApp chat routing, and the
-millionaire-alarm policy that chooses/fans out transports. See
+Inbound **WhatsApp** chat routing: the inbound webhook accepts only E.164 senders, so a
+`whatsapp:+1…` sender is refused rather than guessed into an SMS identity. See
 [BACKLOG.md → Twilio as a pluggable notification transport](../BACKLOG.md).

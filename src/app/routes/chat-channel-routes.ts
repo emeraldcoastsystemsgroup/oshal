@@ -21,6 +21,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — Telegram inbound channel: public webhook (secret-verified) → link resolution / one-time-code linking → dispatch to the Jarvis bot → reply in-channel; plus auth-gated link/list/unlink/register-webhook endpoints for the cockpit Channels card.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: stop forwarding connector credentials into the Jarvis/model request; retain exact linked-owner identity and BYO inference selection only.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SMS is a second channel on the same identity store: mint/unlink endpoints for provider 'sms'. The inbound webhook (POST /api/sms/inbound) redeems the minted code when the user texts LINK <code>, which is the SMS equivalent of Telegram's /start deep link — without a way to MINT one, the caller-scoped inbound dispatch had no binding to resolve. The number is normalized on both sides so one phone cannot become two identities.
  *
  * @module chat-channel-routes
  */
@@ -32,6 +33,8 @@ import type { AppContext } from '@/app/composition/app-context';
 import { BotNodeClient, createRegistryEndpointResolver } from '@/features/agent-management';
 import {
   ChannelLinkService,
+  SMS_CHANNEL_PROVIDER,
+  normalizeE164,
   type InboundChannelMessage,
   getTelegramBotToken,
   deriveWebhookSecret,
@@ -171,8 +174,34 @@ export function createChatChannelRoutes(ctx: AppContext, requiresAuth: RequestHa
   router.post('/telegram/link', requiresAuth, (req, res) => void mintTelegramLink(links, req, res));
   router.delete('/telegram/:channelUserId', requiresAuth, (req, res) => void unlinkChannel(links, req, res));
   router.post('/telegram/register-webhook', requiresAuth, (req, res) => void doRegisterWebhook(req, res));
+  router.post('/sms/link', requiresAuth, (req, res) => void mintSmsLink(links, req, res));
+  router.delete('/sms/:channelUserId', requiresAuth, (req, res) => void unlinkSms(links, req, res));
 
   return router;
+}
+
+/** The shared deployment number a texter sends their LINK code to (empty when SMS isn't wired). */
+function inboundSmsNumber(): string {
+  return (process.env.TWILIO_INBOUND_NUMBER || process.env.TWILIO_FROM_NUMBER || '').trim();
+}
+
+/** POST /sms/link — mint a one-time code plus the number to text it to. */
+async function mintSmsLink(links: ChannelLinkService, req: Request, res: Response): Promise<void> {
+  const sub = callerSub(req);
+  if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
+  const textTo = inboundSmsNumber();
+  if (!textTo) { res.status(503).json({ error: 'sms_not_configured' }); return; }
+  const code = await links.mintLinkCode(sub, SMS_CHANNEL_PROVIDER);
+  res.json({ code, textTo, message: `LINK ${code}`, expiresInMinutes: 15 });
+}
+
+/** DELETE /sms/:channelUserId — unlink one of the caller's own numbers (owner-scoped). */
+async function unlinkSms(links: ChannelLinkService, req: Request, res: Response): Promise<void> {
+  const sub = callerSub(req);
+  if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
+  const number = normalizeE164(String(req.params.channelUserId || ''));
+  if (!number) { res.status(400).json({ error: 'invalid_phone_number' }); return; }
+  res.json({ removed: await links.unlink(sub, SMS_CHANNEL_PROVIDER, number) });
 }
 
 /** GET / — the caller's linked channels + Telegram setup status (bot identity, token presence). */
@@ -182,6 +211,7 @@ async function listChannels(links: ChannelLinkService, req: Request, res: Respon
   const identity = await getTelegramBotIdentity();
   res.json({
     telegram: { configured: Boolean(getTelegramBotToken()), bot: identity },
+    sms: { configured: Boolean(inboundSmsNumber()), number: inboundSmsNumber() || null },
     links: await links.listLinks(sub),
   });
 }

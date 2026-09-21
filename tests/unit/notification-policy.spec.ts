@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The WhatsApp leg (BACKLOG "Twilio policy, fallback, and inbound messaging"): the twilio-whatsapp transport existed but no severity ever selected it, so a deployment that wired WhatsApp received nothing from notifyBySeverity. error/critical now carry it AHEAD of twilio-sms, and the new cases pin both halves — it is in the raw policy at those two levels and nowhere below, and with WhatsApp env configured a critical really fans over it and DELIVERS.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the severity → transport policy: the default map routes each level to the intended transports, NOTIFY_POLICY_<LEVEL> overrides + drops unknown kinds, transportsForSeverity intersects the policy with the CONFIGURED transports (an unconfigured leg is dropped, not attempted), and notifyBySeverity fans across the configured set (email included when its rail is injected) and degrades to a single skipped noop when the level maps to nothing configured.
  */
 
@@ -47,8 +48,18 @@ describe('severity policy — mapping (config-independent)', () => {
     const raw = (sev: Parameters<typeof transportsForSeverity>[0]) => transportsForSeverity(sev, { onlyConfigured: false });
     expect(raw('info')).toEqual(['telegram']);
     expect(raw('warn')).toEqual(['telegram', 'email']);
-    expect(raw('error')).toEqual(['telegram', 'email', 'twilio-sms']);
-    expect(raw('critical')).toEqual(['telegram', 'email', 'twilio-sms', 'twilio-voice']);
+    expect(raw('error')).toEqual(['telegram', 'email', 'twilio-whatsapp', 'twilio-sms']);
+    expect(raw('critical')).toEqual(['telegram', 'email', 'twilio-whatsapp', 'twilio-sms', 'twilio-voice']);
+  });
+
+  it('the WhatsApp leg is on error and critical only — never on the whisper levels', () => {
+    const raw = (sev: Parameters<typeof transportsForSeverity>[0]) => transportsForSeverity(sev, { onlyConfigured: false });
+    expect(raw('info')).not.toContain('twilio-whatsapp');
+    expect(raw('warn')).not.toContain('twilio-whatsapp');
+    expect(raw('error')).toContain('twilio-whatsapp');
+    expect(raw('critical')).toContain('twilio-whatsapp');
+    // Ahead of the SMS text: WhatsApp is not behind the US A2P carrier gate that drops unregistered SMS.
+    expect(raw('error').indexOf('twilio-whatsapp')).toBeLessThan(raw('error').indexOf('twilio-sms'));
   });
 
   it('DEFAULT_SEVERITY_POLICY escalates monotonically (each level a superset of the last)', () => {
@@ -98,6 +109,17 @@ describe('notifyBySeverity — resolve → fan-out', () => {
     expect(email).toMatchObject({ delivered: true, id: 'EM-1' });
     expect(rail.sent).toHaveLength(1);
     expect(rail.sent[0]).toMatchObject({ to: 'ops@example.test', subject: 'quota exceeded' });
+  });
+
+  it('fans over WhatsApp when its env is configured, and drops it when it is not', async () => {
+    const whatsAppEnv = { ...MULTI_ENV, TWILIO_WHATSAPP_FROM: '+15550000000', TWILIO_WHATSAPP_TO: '+15551111111' } as NodeJS.ProcessEnv;
+    const withIt = await notifyBySeverity('critical', { text: 'DB down' }, { deps: { env: whatsAppEnv, fetch: okFetch } });
+    const leg = withIt.find((r) => r.transport === 'twilio-whatsapp');
+    expect(leg).toMatchObject({ delivered: true });
+
+    // MULTI_ENV has the Twilio account but no WhatsApp sender/destination: the leg is dropped, not attempted.
+    const without = await notifyBySeverity('critical', { text: 'DB down' }, { deps: { env: MULTI_ENV, fetch: okFetch } });
+    expect(without.map((r) => r.transport)).not.toContain('twilio-whatsapp');
   });
 
   it('degrades to a single skipped noop when the level maps to nothing configured', async () => {
