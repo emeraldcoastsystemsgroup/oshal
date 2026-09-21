@@ -112,6 +112,9 @@
       different machine? Pick it above &mdash; the installer is built for the one you choose, not the
       one you are on.</p>
       <h3>Your computers</h3>
+      <p class="fine" style="margin-top:0">A computer that finished enrolling is <b>bound to</b> you.
+      One that says <b>Unowned</b> installed and connected but never bound to an account, so no work
+      is dispatched to it &mdash; run the installer on it again from this page.</p>
       <div id="computers" class="list"><span class="empty">Loading…</span></div>
     </section>
 
@@ -352,10 +355,20 @@
         box.innerHTML = '<span class="empty">None yet. The first one appears here about a minute after its installer runs.</span>';
         return;
       }
-      box.innerHTML = '<table><thead><tr><th>Computer</th><th>Status</th><th>Last heartbeat</th></tr></thead><tbody>'
+      box.innerHTML = '<table><thead><tr><th>Computer</th><th>Bound to</th><th>Status</th><th>Last heartbeat</th></tr></thead><tbody>'
         + clients.map(function (c) {
           var online = c.status === 'online' && c.healthy !== false;
+          // The server decides this, from the session it verified. The page does not know whose
+          // account it is looking at and must not guess: a record with no ownership block is an
+          // older or machine-shaped response, and reads as unknown rather than as owned.
+          var own = c.ownership && typeof c.ownership === 'object' ? c.ownership : null;
+          var ownedLabel = own && own.label ? own.label : 'Unknown';
+          var ownedHint = own && own.hint ? own.hint
+            : 'This swarm did not say who this computer is bound to.';
           return '<tr><td class="w">' + esc(c.clientName || c.clientId) + '</td>'
+            + '<td><span class="pill ' + (own && own.owned === true ? 'yes' : 'no') + '"'
+            + ' data-owned="' + esc(own ? String(own.owned === true) : 'unknown') + '"'
+            + ' title="' + esc(ownedHint) + '">' + esc(ownedLabel) + '</span></td>'
             + '<td><span class="pill ' + (online ? 'yes' : 'no') + '">' + esc(c.status || 'unknown') + '</span></td>'
             + '<td>' + esc(ago(c.lastHeartbeatAt || c.lastSeenAt)) + '</td></tr>';
         }).join('')
