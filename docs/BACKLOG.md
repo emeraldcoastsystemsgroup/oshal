@@ -15,6 +15,60 @@ carries the evidence that survived an adversarial re-derivation and the correcti
 
 ## Promotion, deployment, and regression proof
 
+### Workspace isolation: ACCEPTED as a shared read-write mount, and what reopens it (operator, 2026-09-20)
+
+Every bot container mounts the same `oshal_workspace` volume at the same path, read-write, with no
+subpath — measured as **40 mounts, 40 of them `:rw`, 0 subpaths, 39 bot-anchor inheritors plus
+code-server** against the RESOLVED compose. A bot is pointed at its own ticket's directory and every
+other ticket's is a sibling. The TypeScript file tools cannot escape; **`execute_command` can**, and
+no persona declaration gates it — `runtimeToolMatchesCapabilities` short-circuits to `true` for
+anything in `CORE_RUNTIME_TOOL_NAMES`, which contains `execute_command`.
+
+**ADR-060:198-205 names four, and the fourth is this backlog's own addition, not ADR-060's:**
+
+> 1. One resolver every workspace path flows through — **readers included** — not a helper the two
+>    writers call.
+> 2. Each of the ~12 reader modules listed above migrated to it, with a compatibility branch for
+>    pre-existing flat directories.
+> 3. A real boundary underneath it, because a layout on a shared read-write mount is not one:
+>    per-owner subpath mounts, per-owner volumes, or a filesystem jail per bot container.
+> 4. A guard proving a bot cannot traverse out of its own namespace — the property this ADR asserted
+>    but never demonstrated.
+
+**CHOSEN: accept it deliberately, for this single-operator box.** Per-ticket runtime assignment is
+the control; the container mount stays whole-volume. No per-owner subtree mounts, no runtime jail.
+ADR-060 supports this — *"Track it as backlog, not as a security gap"* — but "accept" is not one of
+the three item 3 lists, so it is recorded as an explicit act rather than allowed to happen by nobody
+choosing.
+
+**Why it is reasonable here.** On a single-operator box every neighbouring folder is the same
+person's ticket, so the reachable data is already the operator's own. Reaching it requires a bot to
+go somewhere it was not pointed, which needs a prompt injection or a shell.
+
+**⛔ THE TWO TRIGGERS THAT REVERSE THIS — re-read before either becomes true:**
+
+1. **A second person has tickets on the same box.** Cross-ticket reach becomes cross-person reach.
+2. **An installed store package runs its own bot.** That is third-party code inside the same mount,
+   and nobody has audited what it does with a shell.
+
+When either fires, the two answers already sized are: narrow what the container mounts to the
+owner's subtree (compose-generation work; needs the owner known at container start), or confine the
+process to its ticket folder at execution time (execution-layer work; covers the shell and a spawned
+harness, closer to per-ticket).
+
+**This is a judgement, not a finding that the layout is safe.** ADR-060 items 1 and 2 also remain
+undone, and item 4's guard is inverted here rather than satisfied.
+
+**Done when** (what reopens this entry, not what closes it): either trigger above becomes true, at
+which point one of ADR-060 item 3's three real options is chosen and
+`tests/unit/compose-workspace-mount-posture.spec.ts` goes red on purpose, because it asserts today's
+40-`:rw`-no-subpath reality and all three break it. Until then the exposure is
+**demonstrated, not assumed**: `tests/unit/workspace-cross-ticket-traversal.spec.ts` drives the real
+`ToolExecutorService` shell path and shows a bot pointed at ticket B reading ticket A's deliverable,
+including across a directory belonging to a different owner. Full reasoning and the measured numbers:
+[backlog/workspace-isolation-decision.md](backlog/workspace-isolation-decision.md), CKR-20 in
+[backlog/clean-kernel-repair.md](backlog/clean-kernel-repair.md).
+
 ### A bot that cannot reach Postgres in its first 20 seconds is pool-less for life, and says it is healthy (2026-09-17)
 
 - **Status (branch `botnode-pool-recovery`, awaiting merge + image deploy): (1), (3), (4) done and
