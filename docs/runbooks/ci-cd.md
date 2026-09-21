@@ -188,9 +188,17 @@ Almost always an install/environment divergence. Real cases from 2026-07-05/06:
 - **Dockerfile `COPY vite.config.js`** — the file is an untracked local artifact; a clean CI
   checkout lacks it and the build failed. Fix: `COPY vite.config.*`.
 - **dev-console sandbox specs** — `SandboxedAgentRunner.dockerAvailable()` is true on CI, but CI's
-  userns-remapped Docker can't write the `mkdtemp` (mode-0700) `/work` bind mount, so the isolation
-  self-test fails. They now gate on `sandboxUsable()` (a real write-to-`/work` probe) and skip
-  where the sandbox can't run. Making the sandbox writable under userns-remap is a BACKLOG item.
+  userns-remapped Docker could not write the `mkdtemp` (mode-0700) `/work` bind mount, so the
+  isolation self-test failed. Two things changed. The specs gate on `sandboxUsable()` (a real
+  write-to-`/work` probe) and skip where the sandbox cannot run on the engine at hand. And the
+  runner prepares the mount on every run (`SandboxedAgentRunner.prepareScratchMount`, PR #622):
+  the per-run directory is set to 0777, every file inside it is widened by a+rw (a seeded 0755
+  script stays executable), and the scratch root above it stays 0700 — a remapped container uid
+  can write `/work`, and a second host user still cannot traverse to it. The guard is
+  `tests/unit/sandbox-scratch-userns-remap.spec.ts`; its real-kernel case starts one container
+  and is opt-in via `OSHAL_SANDBOX_USERNS_PROOF=1` (when set, an unreachable Docker is a failure,
+  not a skip). Not yet done: a run against an actual userns-remapped daemon — the operator's engine
+  is Docker Desktop, and the Actions daemon sits behind the manual-only CI state.
 
 ### Misplaced test types
 `tests/unit/**` is vitest (globals: `describe`/`it`). `tests/*.spec.ts` is Playwright. A vitest-style
