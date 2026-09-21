@@ -20,6 +20,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — caller-scoped read of connector_action_audit with connector/status/limit filters, a per-connector rollup, and the absent-table degrade (no rows, not a 500, so a pre-migration deployment reports honestly).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The spec-route READ tier now shares this trail, so entries carry tier ('read'|'write') and credentialSource, and a ?tier= filter separates them. Without the tier a read would be displayed as a write on a surface whose whole point is showing what was done on the caller's behalf. Falls back to the pre-151 column list when those columns are absent, so a box that has not applied the migration keeps seeing its write trail instead of degrading to an empty one.
  *
  * @module routes/connector-action-audit
  */
@@ -34,6 +35,9 @@ const logger = createChildLogger({ module: 'connector-action-audit' });
 const AUDIT_STATUSES = new Set([
   'attempt', 'success', 'error', 'not_connected', 'confirmation_required', 'invalid_params', 'unknown_action',
 ]);
+
+/** The two tiers that share this trail: declared write actions, and spec-route resource reads. */
+const AUDIT_TIERS = new Set(['read', 'write']);
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -54,6 +58,10 @@ export interface ConnectorActionAuditEntry {
   httpStatus: number | null;
   error: string | null;
   ts: string;
+  /** 'read' (spec-route resource call) or 'write' (declared action). Null on pre-151 rows. */
+  tier: string | null;
+  /** Which credential went out: 'broker' is the caller's own; 'operator-env' is a shared key. */
+  credentialSource: string | null;
 }
 
 /** Filters a caller may apply to their own trail. `userSub` is never one of them. */
@@ -61,6 +69,46 @@ export interface AuditReadOptions {
   connectorId?: string;
   status?: string;
   limit?: number;
+  tier?: string;
+}
+
+/** The columns every deployment has. tier/credential_source arrived with migration 151. */
+const BASE_COLUMNS = 'connector_id, action, params_hash, risk_level, status, http_status, error, ts';
+
+/**
+ * @description Run the caller-bound trail query, degrading twice rather than once. A box that has
+ * not applied migration 151 has the table but not tier/credential_source: retry on the pre-151
+ * columns rather than report an empty trail to a user whose writes are sitting right there. A box
+ * that has never applied 083 (and never run a write) has no table at all — that is "nothing has
+ * happened yet", not a server fault. A tier filter cannot be honoured without the column, so it
+ * yields nothing rather than silently returning every row.
+ * @param pool - pg pool (or mock)
+ * @param userSub - the caller's OIDC sub, for the log line only (it is already bound in `where`)
+ * @param opts - the caller's filters, consulted here only for the tier case
+ * @param where - the caller-bound predicate, `user_sub = $1` plus any filters
+ * @param params - the bound values, ending with the row limit
+ * @returns the raw rows, or an empty array when the trail is unreadable
+ */
+async function fetchAuditRows(
+  pool: AuditReadPool, userSub: string, opts: AuditReadOptions, where: string, params: unknown[],
+): Promise<Array<Record<string, unknown>>> {
+  const select = (columns: string): string => `SELECT ${columns}
+                 FROM connector_action_audit
+                WHERE ${where}
+                ORDER BY ts DESC
+                LIMIT $${params.length}`;
+  try {
+    return (await pool.query(select(`${BASE_COLUMNS}, tier, credential_source`), params)).rows as Array<Record<string, unknown>>;
+  } catch (err) {
+    logger.warn({ err, userSub }, 'connector action audit read failed — retrying without the read-tier columns');
+    if (opts.tier) return [];
+    try {
+      return (await pool.query(select(BASE_COLUMNS), params)).rows as Array<Record<string, unknown>>;
+    } catch (legacyErr) {
+      logger.warn({ err: legacyErr, userSub }, 'connector action audit read failed — reporting an empty trail');
+      return [];
+    }
+  }
 }
 
 /**
@@ -70,7 +118,7 @@ export interface AuditReadOptions {
  * broker, so it must never be built from request data.
  * @param pool - pg pool (or mock)
  * @param userSub - the authenticated caller's OIDC sub
- * @param opts - optional connector/status/limit filters
+ * @param opts - optional connector/status/tier/limit filters
  * @returns the caller's rows plus a per-connector count rollup
  */
 export async function readConnectorActionAudit(
@@ -81,21 +129,9 @@ export async function readConnectorActionAudit(
   let where = 'user_sub = $1';
   if (opts.connectorId) { params.push(opts.connectorId); where += ` AND connector_id = $${params.length}`; }
   if (opts.status) { params.push(opts.status); where += ` AND status = $${params.length}`; }
+  if (opts.tier) { params.push(opts.tier); where += ` AND tier = $${params.length}`; }
   params.push(limit);
-  const sql = `SELECT connector_id, action, params_hash, risk_level, status, http_status, error, ts
-                 FROM connector_action_audit
-                WHERE ${where}
-                ORDER BY ts DESC
-                LIMIT $${params.length}`;
-  let rows: Array<Record<string, unknown>> = [];
-  try {
-    rows = (await pool.query(sql, params)).rows as Array<Record<string, unknown>>;
-  } catch (err) {
-    // A deployment that has never applied migration 083 (and never run a write) has no table. That is
-    // "nothing has happened yet", not a server fault — degrade to an empty trail and say so in the log.
-    logger.warn({ err, userSub }, 'connector action audit read failed — reporting an empty trail');
-    return { entries: [], byConnector: {}, limit };
-  }
+  const rows = await fetchAuditRows(pool, userSub, opts, where, params);
   const entries = rows.map((r) => ({
     connectorId: String(r.connector_id),
     action: String(r.action),
@@ -105,6 +141,8 @@ export async function readConnectorActionAudit(
     httpStatus: r.http_status == null ? null : Number(r.http_status),
     error: r.error == null ? null : String(r.error),
     ts: r.ts instanceof Date ? r.ts.toISOString() : String(r.ts),
+    tier: r.tier == null ? null : String(r.tier),
+    credentialSource: r.credential_source == null ? null : String(r.credential_source),
   }));
   const byConnector = entries.reduce<Record<string, number>>((acc, e) => {
     acc[e.connectorId] = (acc[e.connectorId] ?? 0) + 1;
@@ -130,6 +168,7 @@ export function registerConnectorActionAuditRoute(router: Router, ctx: { pool: u
     }
     const connectorId = String(req.query.connector || '').trim();
     const status = String(req.query.status || '').trim();
+    const tier = String(req.query.tier || '').trim();
     if (connectorId && !CONNECTOR_SLUG.test(connectorId)) {
       res.status(400).json({ ok: false, error: 'connector must be a lowercase slug' });
       return;
@@ -138,14 +177,19 @@ export function registerConnectorActionAuditRoute(router: Router, ctx: { pool: u
       res.status(400).json({ ok: false, error: `status must be one of: ${[...AUDIT_STATUSES].join(', ')}` });
       return;
     }
+    if (tier && !AUDIT_TIERS.has(tier)) {
+      res.status(400).json({ ok: false, error: `tier must be one of: ${[...AUDIT_TIERS].join(', ')}` });
+      return;
+    }
     const limitRaw = Number(req.query.limit);
     try {
       const result = await readConnectorActionAudit(ctx.pool as AuditReadPool, sub, {
         connectorId: connectorId || undefined,
         status: status || undefined,
+        tier: tier || undefined,
         limit: Number.isFinite(limitRaw) ? limitRaw : undefined,
       });
-      logger.info({ sub, connectorId: connectorId || null, status: status || null, returned: result.entries.length }, 'connector action trail read');
+      logger.info({ sub, connectorId: connectorId || null, status: status || null, tier: tier || null, returned: result.entries.length }, 'connector action trail read');
       res.json({ ok: true, ...result });
     } catch (err) {
       logger.error({ err, stack: err instanceof Error ? err.stack : undefined, sub }, 'connector action trail read failed');

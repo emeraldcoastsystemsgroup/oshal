@@ -50,6 +50,7 @@ export type {
   ConnectorActionAuditPool,
   ConnectorActionAuditRow,
   ConnectorActionAuditStatus,
+  ConnectorActionTier,
   RunConnectorActionDeps,
 } from './action-executor';
 export { ConnectorMarketplaceService } from './marketplace';

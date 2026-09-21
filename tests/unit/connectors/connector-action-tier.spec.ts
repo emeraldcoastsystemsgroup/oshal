@@ -13,6 +13,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — unit coverage for action-params, action-executor, the extended connector.schema.json contract in spec.ts, and the live github/todoist action declarations.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review-fix coverage: broker-only resolveConnectorActionCreds (no CONNECTOR_* env fallback), lazy creds resolution (never before validation/confirm gate, resolver failures audited 401 not unaudited 500), and the fail-closed pre-write 'attempt' audit row (audit trail down => 503 refusal, no provider traffic).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Guarded the spec-resource create-issue duplicate as an explicit confirmation-gated write
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The exact terminal-row assertion now covers the two columns migration 151 appended (tier, credential_source), so a write still records 'write' with no borrowed-credential claim after the READ tier joined this trail.
  *
  * @module tests/unit/connectors/connector-action-tier
  */
@@ -236,7 +237,8 @@ describe('runConnectorAction pipeline', () => {
     expect(JSON.parse(calls[0].init.body)).toEqual({ name: 'w1', count: 2 });
     const inserts = auditInserts(pool);
     expect(inserts.map((row) => row.params[5])).toEqual(['attempt', 'success']); // attempt row BEFORE the write
-    expect(inserts[1].params).toEqual(['user-1', 'demo', 'create-widget', hashConnectorActionParams({ name: 'w1', count: 2 }), 'medium', 'success', 201, null]);
+    // tier 'write' + a NULL credential_source are the two trailing columns migration 151 added.
+    expect(inserts[1].params).toEqual(['user-1', 'demo', 'create-widget', hashConnectorActionParams({ name: 'w1', count: 2 }), 'medium', 'success', 201, null, 'write', null]);
   });
 
   it('runs a low-risk approvalRequired:false action without a confirm signal', async () => {

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial ADR-065 connector-spec route mounting with caller-scoped credential resolution.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Replace boot-time per-provider mounts with two stable lazy routes that consult current deployment and per-user enablement before spec or credential loading, return a non-enumerating 404 while disabled, and evict disabled providers from the route cache.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Every resource call now writes a tier-'read' connector_action_audit row naming the CALLER, the connector, the resource, the credential source and the redacted outcome. Before this the only record a read left was a log line carrying provider/resource/status and no user_sub - and because read-tier resolution may fall back to a shared operator env key, a successful read did not even prove the owning user's credential went out. Best-effort by design (a read is not a provider mutation, so it is not fail-closed like the write tier), and the credential source rides the log line too.
  *
  * Connector spec routes (ADR-065/067).
  *
@@ -27,12 +28,18 @@ import type { Express, Request, RequestHandler, Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import {
   describeConnectorAction,
+  hashConnectorActionParams,
   invokeSpecResource,
   loadConnectorSpec,
-  type BuildSpecOptions,
+  recordConnectorActionAudit,
+  type ConnectorActionAuditPool,
+  type ConnectorActionAuditStatus,
   type ConnectorSpec,
 } from '../connectors/runtime';
-import { resolveConnectorSpecCreds } from '@/app/connectors/runtime/spec-tools';
+import {
+  resolveConnectorSpecCredsWithSource,
+  type ConnectorCredentialSource,
+} from '@/app/connectors/runtime/spec-tools';
 
 const logger = createChildLogger({ module: 'connector-spec-routes' });
 const SPEC_DIR = path.join(process.cwd(), 'swarm-apps/connectors');
@@ -108,9 +115,37 @@ function callerSub(req: Request): string | undefined {
   return (req as { userSub?: string }).userSub;
 }
 
-/** Resolve read-tier credentials for the authenticated caller after every availability gate. */
-async function resolveCreds(spec: ConnectorSpec, pool: unknown, userSub: string): Promise<BuildSpecOptions> {
-  return resolveConnectorSpecCreds(spec, pool, userSub);
+/** One read attempt as the append-only trail records it — never the response body, never a token. */
+interface ReadAuditFacts {
+  userSub: string;
+  provider: string;
+  resource: string;
+  inputs: Record<string, unknown>;
+  credentialSource?: ConnectorCredentialSource;
+  status: ConnectorActionAuditStatus;
+  httpStatus?: number;
+  error?: string;
+}
+
+/**
+ * Record one read in `connector_action_audit` (tier 'read'). Best-effort BY DESIGN: a read is not
+ * a provider mutation, so an audit-infra failure must not deny the caller their own data the way
+ * the write tier's fail-closed 'attempt' row does. A failed insert is logged at ERROR by the
+ * recorder and reported here, so a gap is visible rather than silent.
+ */
+async function recordSpecReadAudit(pool: unknown, facts: ReadAuditFacts): Promise<boolean> {
+  return recordConnectorActionAudit(pool as ConnectorActionAuditPool, {
+    userSub: facts.userSub,
+    connectorId: facts.provider,
+    action: facts.resource,
+    paramsHash: hashConnectorActionParams(facts.inputs),
+    status: facts.status,
+    httpStatus: facts.httpStatus,
+    // Truncated: a provider error string is the connector's, not ours, and the column is a summary.
+    error: facts.error ? facts.error.slice(0, 500) : undefined,
+    tier: 'read',
+    credentialSource: facts.credentialSource,
+  });
 }
 
 function resolveSpecDirs(configured?: string[]): string[] {
@@ -206,22 +241,60 @@ function resourceCallHandler(state: ConnectorSpecRouteState): RequestHandler {
     const started = Date.now();
     const resource = String(req.params.resource);
     logger.info({ provider: String(req.params.provider), resource }, 'connector resource requested');
-    try {
-      const access = await resolveActiveSpec(state, req);
-      if (!access.ok) {
-        logger.info({ provider: access.provider, resource, status: access.status, ms: Date.now() - started }, 'connector resource completed');
-        res.status(access.status).json({ ok: false, error: access.error });
-        return;
-      }
-      const creds = await resolveCreds(access.spec, state.pool, access.userSub);
-      const result = await invokeSpecResource(access.spec, creds, resource, inputsFrom(req));
-      logger.info({ provider: access.provider, resource, status: result.status, ok: result.body.ok, ms: Date.now() - started }, 'connector resource completed');
-      res.status(result.status).json(result.body);
-    } catch (err) {
-      logger.error({ err, stack: err instanceof Error ? err.stack : undefined, resource, ms: Date.now() - started }, 'connector resource route failed');
+    const access = await resolveActiveSpec(state, req).catch((err) => err as Error);
+    if (access instanceof Error) {
+      logger.error({ err: access, stack: access.stack, resource, ms: Date.now() - started }, 'connector resource route failed');
       res.status(503).json({ ok: false, error: 'connector route unavailable' });
+      return;
     }
+    if (!access.ok) {
+      logger.info({ provider: access.provider, resource, status: access.status, ms: Date.now() - started }, 'connector resource completed');
+      res.status(access.status).json({ ok: false, error: access.error });
+      return;
+    }
+    await invokeAuditedRead(state, access, resource, req, res, started);
   };
+}
+
+/**
+ * The audited read: resolve the caller's credential (recording WHICH one), call the provider, then
+ * write one `connector_action_audit` row naming caller, connector, resource, credential source and
+ * the redacted outcome (status + provider HTTP status). Both the success and the failure path leave
+ * a row — a read that blew up is still a read someone made.
+ */
+async function invokeAuditedRead(
+  state: ConnectorSpecRouteState,
+  access: Extract<ConnectorSpecAccess, { ok: true }>,
+  resource: string,
+  req: Request,
+  res: Response,
+  started: number,
+): Promise<void> {
+  const inputs = inputsFrom(req);
+  let credentialSource: ConnectorCredentialSource | undefined;
+  try {
+    const creds = await resolveConnectorSpecCredsWithSource(access.spec, state.pool, access.userSub);
+    credentialSource = creds.credentialSource;
+    const result = await invokeSpecResource(access.spec, creds.options, resource, inputs);
+    const auditRecorded = await recordSpecReadAudit(state.pool, {
+      userSub: access.userSub, provider: access.provider, resource, inputs, credentialSource,
+      status: result.body.ok ? 'success' : 'error',
+      httpStatus: result.status,
+      error: result.body.ok ? undefined : String(result.body.error ?? ''),
+    });
+    logger.info({
+      provider: access.provider, userSub: access.userSub, resource, status: result.status,
+      ok: result.body.ok, credentialSource, auditRecorded, ms: Date.now() - started,
+    }, 'connector resource completed');
+    res.status(result.status).json(result.body);
+  } catch (err) {
+    logger.error({ err, stack: err instanceof Error ? err.stack : undefined, userSub: access.userSub, resource, credentialSource, ms: Date.now() - started }, 'connector resource route failed');
+    await recordSpecReadAudit(state.pool, {
+      userSub: access.userSub, provider: access.provider, resource, inputs, credentialSource,
+      status: 'error', error: err instanceof Error ? err.message : String(err),
+    });
+    res.status(503).json({ ok: false, error: 'connector route unavailable' });
+  }
 }
 
 /**
