@@ -1480,6 +1480,22 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### Two-tier tenant provisioning
 - **Remaining:** implement manifest-selected isolated-database and shared-database provisioning; the shared tier first needs a tenant-scoped service identity rather than the current operator-equivalent system context.
 - **Done when:** `provision-tenant.sh <name> --tenancy=isolated|shared` renders the correct namespace/database policy and a two-tenant proof blocks cross-tenant database and row access. See [ADR-035](adr/035-multi-tenant-saas-foundation.md) and [ADR-076](adr/076-tenant-aware-rls-and-least-privilege-db-role.md).
+- **Decision (operator, 2026-09-21): ISOLATED-ONLY. ADR-035 is amended and ACCEPTED on that basis;
+  the shared tier is recorded as a future option with a trigger, not built.** `provision-tenant.sh`
+  ships one tenancy — `--tenancy=isolated`, a database per tenant — and the flag keeps its name so a
+  second value can be added later without changing the interface. The two-tenant proof must assert
+  what the current governance script does not: `scripts/governance/verify-tenant-isolation.sh` today
+  checks only Kubernetes NetworkPolicy between two example namespaces (90 lines, no SQL), so the new
+  proof has to attempt a cross-tenant **database** connection and a cross-tenant **row** read and
+  show both refused. What this decision explicitly does NOT approve: the tenant-scoped Postgres
+  service identity that would replace the operator-equivalent system context under
+  [ADR-076](adr/076-tenant-aware-rls-and-least-privilege-db-role.md). That is a core DB-role change,
+  it is required only by the shared tier, and the shared tier has no customer — ADR-035's context is
+  the schools/SaaS path, which the operator's 2026-08-01 directive deliberately paused. **Trigger for
+  revisiting the shared tier:** a real customer whose economics require sharing one database; until
+  then an isolated database per tenant is both the cheaper build and the stronger boundary, and it
+  matches the per-person / per-tenant database shape the graph tier already uses. (PM recommended
+  exactly this; the operator chose it.)
 
 ### Production Vault hardening
 - **Remaining:** replace the local dev root-token server with persistent storage, TLS, unseal/recovery operations, AppRole/OIDC, backup, and documented rotation.
