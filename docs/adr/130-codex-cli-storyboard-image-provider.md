@@ -73,6 +73,16 @@ swarm-execute rail — and it is the default when the deployment runs in demo mo
   package's per-episode storyboard route. Guard:
   `tests/unit/series-storyboard-owner-sub.spec.ts`. The live demo-box render through a real bot
   node is still owed and stays in BACKLOG "Video Studio storyboards on the demo codex-cli rail".
+- **The render dispatch names the codex harness (2026-09-21).** The "Model" bullet above assumed
+  the render bot's boot provider was codex. Since ADR-162 the fleet default is a switch row, and
+  the demo box's row is `claude-code` — measured 2026-09-21 on `b1f0f28e`: the storyboard stage
+  selected `codex-cli`, general-bot admitted the spawn under the demo carve, but it ran
+  `claude -p …` and answered `NO_IMAGE_CAPABILITY`, so every series died at frame 1. The executor
+  now stamps `providerId: 'openai-codex'` on the dispatch (the ADR-034 carried record, the same
+  mechanism Jarvis's CLI brain uses); the bot reconciles its active provider to codex before the
+  spawn or refuses fail-closed (a concurrent execution on another harness refuses rather than
+  switching a running task). The model is still not pinned — it rides the render bot's
+  `CODEX_MODEL`. Guard: `tests/unit/storyboard-cli-image-wiring.spec.ts`.
 - The render task's workspace (`sbimg-*`, anchor + output PNG) persists on the shared volume like
   every other task workspace; the surface stores its own copy of the deliverable.
 - Guard: `tests/unit/storyboard-codex-cli-provider.spec.ts` (demo-aware default, gate mirroring,
