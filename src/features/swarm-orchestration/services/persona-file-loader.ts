@@ -10,12 +10,14 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Search deployed-apps package personas/ dirs after the kernel dir — a runtime-injected store bot's persona was invisible here, so it silently executed on the DEFAULT profile persona (same package-dir blind spot the authorization seeder fixed in swarm-app-service seq 16)
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Preserve declared allowed_tools for the final server-owned prompt authorization binding.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read two of the six, and it is how a deployed package persona is found at all.
  */
 
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { isAbsolute, join, resolve } from 'path';
 import yaml from 'js-yaml';
 import { createChildLogger } from '@/shared/logger';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const logger = createChildLogger({ module: 'persona-file-loader' });
 
@@ -110,10 +112,7 @@ function searchDirForPersona(agentIdOrName: string, dir: string): BotPersona | n
  * @returns Existing `<deployedAppsRoot>/<package>/personas` paths (empty when the root is absent).
  */
 function listDeployedPackagePersonaDirs(): string[] {
-  const workspaceRoot = process.env.CLINE_WORKSPACE_ROOT
-    || process.env.WORKSPACE_ROOT
-    || '/app/workspace-shared';
-  const root = join(resolve(workspaceRoot), 'deployed-apps');
+  const root = join(resolveSharedWorkspaceRoot(), 'deployed-apps');
   try {
     return readdirSync(root, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())

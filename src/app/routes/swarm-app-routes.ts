@@ -22,6 +22,7 @@
  * 15 | maintainer@emeraldcoastsystemsgroup.com  | ADR-145 D4/D5: GET /:name/setup and /:name/setup-dashboard address an ACTIVE GROUP **or** an ACTIVE APP, so an app that belongs to no group can finally report. The plan comes from getAppStatusPlan over the manifests THIS caller may see (the /:name visibility rule, so an invisible app 404s like a missing one) and carries each app's summary probe; for a member that declares no `summary:` the response also carries D5's fallbackItems, composed from this user's own recent jarvis_tasks rows through the injected recentAppTasks port (the router owns no pool). Manifest data only — the page still asks every probe itself in the viewer's own session.
  * 17 | maintainer@emeraldcoastsystemsgroup.com  | PUT /:name/access accepts an OPTIONAL userIssuer so an operator-made tier assignment can name the verified identity provider it belongs to (migration 145). Omitting it stores no issuer, which is exactly what this route did before and still resolves only for a canonical local account; it grants nobody anything on its own.
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | Comment correction only. The publish JSDoc said the endpoint has "two emit targets: a single-shot bot (manifest-worker) or an authored multi-bot workflow (staged)". The compiler sets pipeline: 'graph' unconditionally on both emit paths, so neither is an emit target and there are three spec modes, not two. It survived the CV-1 sweep only by phrasing the claim differently from the pattern being grepped.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six, and it is a path ALLOW-LIST: a frozen root here is a containment boundary computed against a directory the rest of the process does not use. A module-scope const calling the resolver is NOT converged - it freezes the root at import, before any caller can set the environment - so this became a call-time function.
  */
 
 /** CHANGE LOG 18 | maintainer@emeraldcoastsystemsgroup.com | Resolve and clear exact principals; require current swarm operator authority for package lifecycle changes. */
@@ -54,6 +55,7 @@ import { getCaller, isOperator, requiresOperator } from '@/shared/middleware/aut
 import { preserveRequestIdentity } from '@/shared/middleware/multipart-identity';
 import { GUEST_TIERS, isGuestTier } from '@/shared/middleware/guest-capability-matrix';
 import { registerAppStoreRemoteRoutes } from './app-store-remote';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const logger = createChildLogger({ module: 'swarm-app-routes' });
 
@@ -61,11 +63,8 @@ const SWARM_APPS_DIR = path.resolve(process.cwd(), process.env.SWARM_APPS_DIR ||
 // Packed bots authored by the Forge (codex-packer) land in the writable deployed-apps/
 // dir under the workspace root; both dirs are valid manifest sources (mirrors
 // listManifestFiles in swarm-app-loader). Anything outside them is rejected.
-const DEPLOYED_APPS_DIR = path.resolve(
-  process.env.CLINE_WORKSPACE_ROOT || '/app/workspace-shared',
-  'deployed-apps',
-);
-const ALLOWED_MANIFEST_DIRS = [SWARM_APPS_DIR, DEPLOYED_APPS_DIR];
+function deployedAppsDir(): string { return path.resolve(resolveSharedWorkspaceRoot(), 'deployed-apps'); }
+function allowedManifestDirs(): string[] { return [SWARM_APPS_DIR, deployedAppsDir()]; }
 
 /**
  * @description Resolve an operator-supplied manifest path and confine it to one of
@@ -80,7 +79,7 @@ const ALLOWED_MANIFEST_DIRS = [SWARM_APPS_DIR, DEPLOYED_APPS_DIR];
 function resolveSafeManifestPath(input: string): string | null {
   const candidate = path.resolve(process.cwd(), input);
   if (!/\.(ya?ml)$/i.test(candidate)) return null;
-  for (const base of ALLOWED_MANIFEST_DIRS) {
+  for (const base of allowedManifestDirs()) {
     const rel = path.relative(base, candidate);
     if (!rel.startsWith('..') && !path.isAbsolute(rel)) return candidate;
   }
@@ -498,8 +497,8 @@ export function createSwarmAppRoutes(service: SwarmAppService, appAccess: AppAcc
         }
       }
 
-      if (!fs.existsSync(DEPLOYED_APPS_DIR)) fs.mkdirSync(DEPLOYED_APPS_DIR, { recursive: true });
-      const destPath = path.join(DEPLOYED_APPS_DIR, `${manifest.name}.yaml`);
+      if (!fs.existsSync(deployedAppsDir())) fs.mkdirSync(deployedAppsDir(), { recursive: true });
+      const destPath = path.join(deployedAppsDir(), `${manifest.name}.yaml`);
       fs.writeFileSync(destPath, serializeManifest(manifest));
       logger.info({ name: manifest.name, scope, ownerSub: sub }, 'Workflow published — manifest written, loading live');
 
@@ -576,8 +575,8 @@ export function createSwarmAppRoutes(service: SwarmAppService, appAccess: AppAcc
         workflow: src.workflow,
       };
 
-      if (!fs.existsSync(DEPLOYED_APPS_DIR)) fs.mkdirSync(DEPLOYED_APPS_DIR, { recursive: true });
-      const destPath = path.join(DEPLOYED_APPS_DIR, `${newName}.yaml`);
+      if (!fs.existsSync(deployedAppsDir())) fs.mkdirSync(deployedAppsDir(), { recursive: true });
+      const destPath = path.join(deployedAppsDir(), `${newName}.yaml`);
       fs.writeFileSync(destPath, serializeManifest(cloned));
       logger.info({ source: source.name, newName, ownerSub: sub }, 'Workflow cloned into personal scope — loading live');
 

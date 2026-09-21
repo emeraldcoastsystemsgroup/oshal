@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: remove connector-credential propagation into the model-visible CLI environment/workspace; preserve exact caller identity scoping only.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Idle-based timeouts (operator directive 2026-07-24, extends ADR-081): the absolute 10-min kill terminated actively-working runs. Default output format is now stream-json (+ --verbose, required by print mode) so silence is measurable, and the adapter opts into BaseCliHarnessAdapter idleReset — timeoutMs bounds SILENCE (default 600000, CLAUDE_CODE_INACTIVITY_TIMEOUT_MS) with a 60-min runaway ceiling (CLAUDE_CODE_MAX_DURATION_MS, falling back to CLAUDE_CODE_TIMEOUT_MS). Explicit json/text output keeps absolute semantics with the ceiling as the default bound. parseJsonOutput already parses line-wise NDJSON, so result extraction is unchanged.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Streaming crash guard (adversarial review): under stream-json, parseJsonOutput finding no final `type:"result"` event means the CLI crashed/was-killed mid-stream — it now throws instead of returning the raw partial stdout as a successful text result (silent garbage). Batch json keeps the raw-text fallback.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the harness-specific override still wins, but the fallback beneath it resolves through resolveSharedWorkspaceRoot() instead of reading one variable and then defaulting to the RELATIVE "./workspace" - a relative default resolves against whatever cwd the process happens to have, which is not the shared mount under any compose file. Note the ORDER changed too: the harness-specific variable was listed SECOND, beneath the shared one, so the harness-specific override could never take effect on a box that sets the shared root - which is every box. It is first now, matching its two siblings.
  */
 
 import fs from 'fs';
@@ -17,6 +18,7 @@ import path from 'path';
 import { assertAuditedAutonomousHarness, buildConversationAwarePrompt, type HarnessTask, type HarnessResult } from './harness-adapter';
 import { BaseCliHarnessAdapter } from './base-cli-harness-adapter';
 import type { TokenUsage } from './llm-service';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const DEFAULT_BINARY = 'claude';
 const DEFAULT_MODEL = 'claude-opus-4-6';
@@ -176,9 +178,8 @@ export class ClaudeCodeCliHarnessAdapter extends BaseCliHarnessAdapter {
       ?? DEFAULT_MODEL;
 
     this.workspaceRoot = config.workspaceRoot
-      ?? process.env.CLINE_WORKSPACE_ROOT
       ?? process.env.CLAUDE_WORKSPACE_ROOT
-      ?? './workspace';
+      ?? resolveSharedWorkspaceRoot();
 
     this.outputFormat = outputFormat;
 

@@ -14,6 +14,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | E2BIG fix: the prompt was passed as a positional argv (`args.push(prompt)`), so a large conversation-aware prompt overflowed the OS ARG_MAX and the spawn died with `spawn E2BIG` — observed LIVE killing every Dungeon Master turn once the session context grew (invokeDungeonMaster → task-orchestrator → this adapter). Now delivered on STDIN (buildArgs drops the positional; execCodexLenient takes an `input` and forwards it to execCapturing) — `codex exec` reads its instructions from stdin when no positional PROMPT is given, mirroring the ClaudeCodeCliHarnessAdapter which piped stdin for the same reason.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: remove output/config-seed OAuth fallbacks; audited Codex runs require the live vendor auth source or an explicit platform API key and refuse stale per-task credentials otherwise.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Codex fleet default: DEFAULT_MODEL gpt-5.3-codex → gpt-5.5 (the ChatGPT-login model floor; 5.3-codex is API-key-only and 400s on this deployment's OAuth), and buildArgs now pins `-c model_reasoning_effort` (CODEX_REASONING_EFFORT, default high). Without the pin the per-task home inherits the HOST ~/.codex/config.toml, and a host-side effort like `ultra` (gpt-5.6-sol-only) 400s every fleet turn on gpt-5.5/gpt-5.4 — verified live.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the harness-specific override still wins, but the fallback beneath it resolves through resolveSharedWorkspaceRoot() instead of reading one variable and then defaulting to the RELATIVE "./workspace" - a relative default resolves against whatever cwd the process happens to have, which is not the shared mount under any compose file. Note the ORDER changed too: the harness-specific variable was listed SECOND, beneath the shared one, so the harness-specific override could never take effect on a box that sets the shared root - which is every box. It is first now, matching its two siblings.
  */
 
 import fs from 'fs';
@@ -22,6 +23,7 @@ import { assertAuditedAutonomousHarness, buildConversationAwarePrompt, type Harn
 import { BaseCliHarnessAdapter } from './base-cli-harness-adapter';
 import { reseedFromAdvancedSource, snapshotCodexAuth, writeBackRotatedCodexAuth } from './codex-auth-write-back';
 import type { TokenUsage } from './llm-service';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const DEFAULT_BINARY = 'codex';
 const DEFAULT_MODEL = process.env.LLM_MODEL || 'gpt-5.5';
@@ -198,9 +200,8 @@ export class CodexCliHarnessAdapter extends BaseCliHarnessAdapter {
       ?? DEFAULT_REASONING_EFFORT;
 
     this.workspaceRoot = config.workspaceRoot
-      ?? process.env.CLINE_WORKSPACE_ROOT
       ?? process.env.CODEX_WORKSPACE_ROOT
-      ?? './workspace';
+      ?? resolveSharedWorkspaceRoot();
 
     this.sandboxMode = config.sandboxMode
       ?? (process.env.CODEX_SANDBOX_MODE as CodexCliHarnessConfig['sandboxMode'] | undefined)

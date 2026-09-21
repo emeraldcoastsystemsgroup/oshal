@@ -20,6 +20,7 @@
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: reject unattended Cline before runtime selection, workspace/session creation, manifest writes, credential access, or process spawn pending an audited broker.
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | Consume the dependency-free unattended-provider policy without importing the harness runtime contract.
  * 17 | maintainer@emeraldcoastsystemsgroup.com  | Operator directive 2026-08-13 — nothing hardcoded: configuration decides and the swarm env file is the fallback. ClineHarnessProvider reported the literal 'claude-code' to LLMService, which is why the api logged provider: claude-code on a fleet where every turn ran codex — the label named a vendor this adapter has no opinion about, while routing already used configuredProvider. Now reports configuredProvider -> FORCE_LLM_PROVIDER/LLM_PROVIDER -> 'cline-cli' (this adapter's own identity, not a vendor default).
+ * 18 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read two of the six. The value it produces is also exported to the child process, so a wrong root here propagates into the harness environment.
  */
 
 import fs from 'fs';
@@ -38,6 +39,7 @@ import type { AgentStartupManifestService } from './agent-startup-manifest-servi
 import { ClineSessionRuntimeService, type ClineSessionRuntime } from './cline-session-runtime-service';
 import type { AgentCapabilityResolver, AgentSelectorResolution, ToolCapabilityScope } from './tool-capability-scope';
 import { assertAuditedAutonomousHarness } from './unattended-provider-policy';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const logger = createChildLogger({ module: 'claude-code-provider' });
 // Configuration decides the model, never a literal (operator directive 2026-08-13). This was
@@ -376,11 +378,7 @@ export class ClineHarnessProvider extends LLMService {
    * @returns Absolute workspace root path
    */
   private resolveWorkspaceRoot(): string {
-    const configuredRoot = process.env.CLINE_WORKSPACE_ROOT || process.env.WORKSPACE_ROOT;
-    if (configuredRoot && configuredRoot.trim().length > 0) {
-      return path.resolve(configuredRoot);
-    }
-    return path.resolve(process.cwd(), 'workspace');
+    return resolveSharedWorkspaceRoot();
   }
 
   /**

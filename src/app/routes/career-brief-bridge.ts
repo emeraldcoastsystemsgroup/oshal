@@ -4,11 +4,13 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 Wave 3 (career-hunter carve): the morning brief's career section used to deep-import findNewHits/listStoreUsers from career-digest/career-hunter-routes — impossible once those modules ship in the store package. This bridge resolves the INSTALLED package's compiled module at runtime (same deployed-apps convention the swarm-app loader uses, with the legacy core path as a transition fallback) and degrades to "no career store" when the app isn't installed, so the brief composes its other sections unchanged. Kernel-side deliberately: the morning brief is a framework concern; which apps feed it is not.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 import { createChildLogger } from '@/shared/logger';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const logger = createChildLogger({ module: 'career-brief-bridge' });
 
@@ -33,7 +35,7 @@ interface CareerBriefModule {
  *  (loader convention: <workspace>/deployed-apps/<app>/), then the legacy core
  *  module (pre-carve transition — resolves until the rip lands, never after). */
 function candidatePaths(): string[] {
-  const workspaceRoot = process.env.CLINE_WORKSPACE_ROOT || '/app/workspace-shared';
+  const workspaceRoot = resolveSharedWorkspaceRoot();
   return [
     path.join(workspaceRoot, 'deployed-apps', 'career-hunter', 'routes', 'career-hunter-routes.js'),
     path.join(__dirname, 'career-hunter-routes.js'), // compiled core sibling (transition only)

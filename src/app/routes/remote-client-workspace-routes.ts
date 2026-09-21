@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extract held-task workspace synchronization from the remote-client route factory while preserving owner-aware journal reads, path confinement, and detailed failure logs.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Use the bot workspace canonical-ID contract for every held remote workspace so separators, traversal, drives, UNC syntax, Unicode, and case variants cannot collide at the filesystem boundary.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Refuse linked workspace parents and multi-link reads, publish uploads through exclusive private temporary files, and verify file identity so worker synchronization cannot read or overwrite data outside its held task folder.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read three of the six - and it is one of only two sites that honoured WORKSPACE_DIR, which is why the resolver now reads all six rather than the four it started with. A module-scope const calling the resolver is NOT converged - it freezes the root at import, before any caller can set the environment - so this became a call-time function.
  */
 
 import { randomBytes } from 'crypto';
@@ -16,16 +17,12 @@ import { createChildLogger } from '@/shared/logger';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
 import type { RemoteClientRegistryService } from '@/features/remote-client';
 import { canonicalBotWorkspaceId } from '../bot-node-request-scope';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const logger = createChildLogger({ module: 'remote-client-workspace-routes' });
 const PRIVATE_FILE_MODE = 0o600;
 
-const WORKSPACE_ROOT = (
-  process.env.SHARED_WORKSPACE_ROOT
-  || process.env.WORKSPACE_DIR
-  || process.env.WORKSPACE_ROOT
-  || '/app/workspace-shared'
-).trim();
+function workspaceRoot(): string { return resolveSharedWorkspaceRoot(); }
 
 interface RemoteClientWorkspaceDependencies {
   registry: RemoteClientRegistryService;
@@ -73,7 +70,7 @@ type WorkspaceOperation = (
 /** @description Resolves a safe task folder under the shared workspace mount. */
 export function taskWorkspaceFolder(folderId: string): string | null {
   const segment = sanitizeFolderId(folderId);
-  return segment ? resolve(WORKSPACE_ROOT, segment) : null;
+  return segment ? resolve(workspaceRoot(), segment) : null;
 }
 
 /** @description Resolves only a workspace attached to a task this client currently holds. */
@@ -85,7 +82,7 @@ async function resolveHeldWorkspace(
   const task = await deps.registry.getInFlightTask(clientId, taskId);
   if (!task) return null;
   const folderId = sanitizeFolderId(task.workspacePath);
-  return folderId ? { dir: resolve(WORKSPACE_ROOT, folderId), folderId } : null;
+  return folderId ? { dir: resolve(workspaceRoot(), folderId), folderId } : null;
 }
 
 /** @description Encodes one logical remote workspace ID as a portable filesystem segment. */

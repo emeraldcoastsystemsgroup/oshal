@@ -66,6 +66,7 @@
  * 59 | maintainer@emeraldcoastsystemsgroup.com   | Pass registryDeclaredProvider into createAgentConfigRuntimeParamsResolver so ADR-034 push-on-dispatch can resolve tier 3 (registry apiType) when agent_config holds no providerId for the target. The registry lives in this layer and the resolver is a feature-layer service, so the reader is injected here rather than imported downward.
  * 60 | maintainer@emeraldcoastsystemsgroup.com   | Dispatch stamping reads the provider switch rows (tier 1) from the same installed snapshot resolveHarnessForAgent reads, so inline execution and bot-node dispatch agree; the operator routes for the rows are mounted under /api/agents beside the ADR-034 runtime routes.
  * 61 | maintainer@emeraldcoastsystemsgroup.com   | The /api/agents runtime + fleet-default switch mounts move to routes/agent-provider-mount.ts (this file crossed 800 code lines): the runtime routes take the switch seams (resolver, catalog, post-write snapshot refresh) and the fleet-default routes run over a ProviderSwitchStore on the GUC-wrapped pool, so the table's operator-only policy applies to the browser session that writes.
+ * 62 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six, and it is the root every TaskFolderService write lands under.
  */
 
 import type { Pool } from 'pg';
@@ -193,6 +194,7 @@ import {
   buildRuntimeAliasChannels,
   startRuntimeAgentHeartbeat,
 } from './swarm-runtime-registry';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const logger = createChildLogger({ module: 'swarm-extension' });
 const SWARM_READINESS_CACHE_MS = 5000;
@@ -753,8 +755,7 @@ export function createSwarmExtensionBindings(
   }
 
   // Create TaskFolderService for workspace directory management
-  const workspaceRoot = process.env.SHARED_WORKSPACE_ROOT
-    || (require('fs').existsSync('/app/workspace') ? '/app/workspace' : require('path').resolve(process.cwd(), 'workspace-shared'));
+  const workspaceRoot = resolveSharedWorkspaceRoot();
   const taskFolderService = new TaskFolderService(workspaceRoot);
 
   // BotNodeClient routing

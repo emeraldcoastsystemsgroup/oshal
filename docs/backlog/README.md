@@ -75,6 +75,10 @@ relevant ADR or feature documentation, release notes, and git history.
   The live-datastore gate flags the variable NAME, so it flagged the one spec whose purpose is proving
   that variable is ignored. Fixed in the spec, not the gate: a control has no reason to resolve what it
   proves is ignored. Kept for the lesson about checking the guarded code before changing the guard.
+- [workspace-root-remaining-vocabularies.md](./workspace-root-remaining-vocabularies.md) — CKR-17
+  converged every workspace-root chain in `src/` onto one resolver and gated it with eslint. These are
+  the two halves that change deliberately left: the `any-bot/` vocabulary, which puts WORKSPACE_DIR
+  FIRST where the canonical resolver puts it LAST, and two compose files that set two of the six.
 - [workspace-isolation-decision.md](./workspace-isolation-decision.md) — all 40 containers
   mount one workspace volume `:rw` with no subpath, and `execute_command` bypasses persona
   capability matching. Measured and pinned; ADR-060's three options plus a deliberate

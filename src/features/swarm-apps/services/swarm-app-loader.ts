@@ -24,6 +24,7 @@
  * 18 | maintainer@emeraldcoastsystemsgroup.com | ADR-157 S1: move the whole schedule contract (prompt + service-route rules, the static-JSON walker, probeBelongsToRoute and containsFixtureInterpolation) into manifest-schedule-validation.ts — this file was 836 code lines, past its 800 budget — and hand that validator the imported authorization catalog so a service schedule's `requires` is checked against the permissions the app actually defines.
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | Refuse `pipeline: staged` at load (CKR-10 / D2). Its executor was retired for the graph engine, so such a manifest fell through to manifest-worker and ran only workerBot with every authored approval gate dropped and nothing logged - a silently wrong run. Refused with the two pipelines that do work named in the message. Publish is unaffected: the studio compiles its own staged authoring into a graph and never emits this value.
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | readManifest refuses two more silently-degrading workflow shapes (CKR-11 / D4). `pipeline: graph` with no processDefinition has no graph to execute, so every ticket of that type escalates on arrival; and a workflow with no workerBot and no executable graph falls through to the 7-phase 'swarm' decompose pipeline, which is both wrong and expensive. Refused at load rather than at dispatch, because by dispatch a ticket exists and a person is waiting on it. Audited before landing: every workflow in the ten core manifests and all 61 store packages declares a workerBot, and print-ingest was the only manifest in either trunk with the graph-without-definition shape - fixed in the store first. Extracted to a helper and corrected after review: the definition check reads processDefinition.nodeGraph rather than the object's truthiness, because the engine walks nodeGraph and an empty object would have loaded here and escalated at dispatch anyway; and a near-miss pipeline spelling ('graph ', 'Graph') is refused, because this function trims while the router compares exactly, so accepting one would bless a value the router sends to manifest-worker - the very degradation being fixed.
+ * 21 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six, and it is where an installed store package is discovered.
  */
 
 import { validateBriefingDeclarations } from '@/shared/briefings';
@@ -64,6 +65,7 @@ import {
   type SwarmAppBotHarnessType,
   type SwarmAppManifest,
 } from '../types';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const logger = createChildLogger({ module: 'swarm-app-loader' });
 
@@ -918,7 +920,7 @@ export function listManifestFiles(): string[] {
   // deployed swarm survives a restart.
   const dirs = [
     path.resolve(process.cwd(), 'swarm-apps'),
-    path.join(process.env.CLINE_WORKSPACE_ROOT || '/app/workspace-shared', 'deployed-apps'),
+    path.join(resolveSharedWorkspaceRoot(), 'deployed-apps'),
     // ADR-085 D5: extra manifest dirs, comma-separated. UNSET in production — this exists so the
     // test server can load a PERMANENT fixture app (tests/fixtures/swarm-apps/) without shipping it
     // as a real product app. Shared specs used to fixture a real one (little-monsters, then

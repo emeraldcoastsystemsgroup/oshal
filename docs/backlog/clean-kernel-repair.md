@@ -1105,7 +1105,7 @@ exactly the seed case red — and, notably, **not** the applied-prompt case, bec
 anyway. That is the two halves being independently guarded, which is what the operator's answer
 ("seed plus a forward migration", not either one) asked for.
 
-### CKR-17 — one workspace root, six variables, forty-eight resolution sites (R0.11) — M — **STEP 1 SHIPPED**; **STEP 2 DECIDED 2026-09-20: CONVERGE ALL**
+### CKR-17 — one workspace root, six variables, forty-eight resolution sites (R0.11) — M — **SHIPPED 2026-09-20 (both steps)**
 
 **Materially worse than claimed, and every number in the claim is wrong.** Not two resolvers but one
 canonical (`src/shared/workspace-root.ts:45`, 9 callers) plus **39 inline resolution sites** across at
@@ -1185,6 +1185,60 @@ import is not converged — it freezes the root before any caller can set it.
 **Out of scope here, name it separately.** The fourth vocabulary on the `any-bot/` side, and the two
 compose files that set only two of the six. Fixing those compose files is hours and removes the only
 live symptom, so it is worth doing first even though the code sweep is what was chosen.
+
+**STEP 2 SHIPPED.** Every inline workspace-root chain in `src/` is gone.
+
+**(1) One resolver.** `grep` for the six variable names in `src/` now returns
+`src/shared/workspace-root.ts` and nothing else. The resolver reads **all six** rather than the four it
+started with, because the collapsed chains between them honoured the union: `remote-client-workspace-routes`
+and `apply-story` were the only readers of `WORKSPACE_DIR`, and `docker-compose.core.yml` /
+`docker-compose.yml` set `CLINE_SHARED_WORKSPACE_ROOT`. A four-variable resolver would have silently
+dropped configurations that work today — the sweep's real hazard, and the one the chain cases below catch.
+
+Two companions were needed and both come from what step 1 learned:
+
+- `resolveSharedWorkspaceRootPosix()` for the sites that MATCH bot-written text rather than joining paths.
+  The resolver normalises to the host separator; a bot in a Linux container always writes `/`.
+- `hasConfiguredWorkspaceRoot()` for the three sites with their own legitimate off-container fallback —
+  a scan directory, a model cache, a codex run dir. Those must not switch to a `<cwd>/workspace-shared`
+  path the resolver INVENTS, so they ask whether a real root exists instead of what it would return.
+
+**(2) The lint rule, and it is an ERROR.** `no-restricted-syntax` in `eslint.config.mjs` rejects
+`process.env.<any of the six>` anywhere under `src/`, with one file-scoped exemption for the resolver
+itself. Proven to bite: restoring one inline chain fails `npx eslint` on that file. `gate_lint` runs with
+`--max-warnings 0`, so this fails CI. Without it the class regrows — every one of the thirty-nine chains
+was written by someone who reasonably thought reading an env var was fine.
+
+**(3) A case per collapsed chain, and per real consumer.** `workspace-root-resolution.spec.ts` grew from
+4 cases to 36 (EXTENDED, not replaced). The fourteen distinct precedence orders are written out as data —
+site, and the variables it read in its order — and every configuration each one honoured is asserted to
+resolve the same way now. Six further cases drive REAL consumers with only a variable their old chain
+could not see.
+
+**Proven red per site and per chain, not in aggregate:**
+
+| reverted | result |
+|---|---|
+| `scan-paths` to its `CLINE_WORKSPACE_ROOT` presence check | exactly its own case red |
+| the codex adapter to its old four-term chain | exactly its own case red |
+| the resolver back to four variables | exactly 3 chain rows red — the two that read `WORKSPACE_DIR` and the compose row that reads `CLINE_SHARED_WORKSPACE_ROOT` |
+| nothing | 36 of 36 green |
+
+**Two orderings were wrong, and the sweep fixed them as a side effect of reading each chain.** The codex
+and claude-code harness adapters listed their harness-specific variable **beneath** the shared one, so
+`CODEX_WORKSPACE_ROOT` and `CLAUDE_WORKSPACE_ROOT` could never take effect on a box that sets a shared
+root — which is every box. Their two siblings had it the right way round. And `code-server-bridge-routes`
+fell through to the literal `/workspace`, which is **not** where the compose file mounts the volume: it
+mounts `oshal_workspace` at `/app/workspace-shared` and roots code-server there, so a deployment
+configured through `OSHAL_WORKSPACE_ROOT` alone resolved the bridge to a path that does not exist.
+
+**Named separately, as this entry instructs:**
+[workspace-root-remaining-vocabularies.md](./workspace-root-remaining-vocabularies.md) — the `any-bot/`
+vocabulary (14 files, and it puts `WORKSPACE_DIR` FIRST where the canonical resolver puts it LAST, plus a
+seventh name `CODEX_WORKSPACE` read nowhere else) and the two compose files. **The compose divergence is
+no longer a live symptom for `src/`**, and the convergence is why: every site reads the resolver, the
+resolver reads `SHARED_WORKSPACE_ROOT` at priority 2, and both files set it. It is still live one layer
+down, for `any-bot/`, whose first-priority variable neither file sets.
 
 ### CKR-18 — the handover gate does not gate, and says the opposite (R0.12) — **DONE 2026-09-19**
 

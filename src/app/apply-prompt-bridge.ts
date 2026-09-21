@@ -24,6 +24,7 @@
  *   override), degrade to null when absent so dispatchApply defers rather than dispatching a
  *   fabricated prompt. Mirrors the career-brief-bridge runtime-resolution pattern (ADR-085 Wave 3).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Document the hardened bridge contract: raw
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six.
  *   task/applicant data and trusted callback metadata never enter model-visible instructions.
  *
  * @module app/apply-prompt-bridge
@@ -32,6 +33,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { createChildLogger } from '@/shared/logger';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const logger = createChildLogger({ module: 'apply-prompt-bridge' });
 
@@ -44,7 +46,7 @@ function candidatePaths(): string[] {
   const paths: string[] = [];
   const explicit = (process.env.APPLY_PROMPT_MODULE || '').trim();
   if (explicit) paths.push(explicit);
-  const workspaceRoot = process.env.CLINE_WORKSPACE_ROOT || '/app/workspace-shared';
+  const workspaceRoot = resolveSharedWorkspaceRoot();
   paths.push(path.join(workspaceRoot, 'deployed-apps', 'career-hunter', 'lib', 'apply-prompt.js'));
   const storeDir = (process.env.OSHAL_STORE_DIR || '').trim(); // running from source (dev/local gate)
   if (storeDir) paths.push(path.join(storeDir, 'career-hunter', 'lib', 'apply-prompt.js'));

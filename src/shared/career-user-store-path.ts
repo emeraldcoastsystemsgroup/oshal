@@ -4,12 +4,14 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Bridge kernel read/export surfaces to the installed Career package's side-effect-free, collision-resistant user-store mapper.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read CLINE_WORKSPACE_ROOT alone.
  *
  * @module shared/career-user-store-path
  */
 import * as fs from 'fs';
 import * as path from 'path';
 import { requireExactUserSubject } from '@/shared/security/exact-user-subject';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 /** Structural layout returned by the installed Career package. */
 export interface CareerUserStoreLayout {
@@ -34,7 +36,7 @@ function candidateMapperPaths(): string[] {
   if (process.env.JOBHUNTER_APP_DIR) {
     candidates.push(path.resolve(process.env.JOBHUNTER_APP_DIR, 'lib', 'user-store-path.js'));
   }
-  const workspace = process.env.CLINE_WORKSPACE_ROOT || '/app/workspace-shared';
+  const workspace = resolveSharedWorkspaceRoot();
   candidates.push(path.resolve(workspace, 'deployed-apps', 'career-hunter', 'lib', 'user-store-path.js'));
   if (process.env.OSHAL_STORE_DIR) {
     candidates.push(path.resolve(process.env.OSHAL_STORE_DIR, 'career-hunter', 'lib', 'user-store-path.js'));

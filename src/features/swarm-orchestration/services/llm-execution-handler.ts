@@ -38,6 +38,7 @@
  * 33 | maintainer@emeraldcoastsystemsgroup.com   | Docs-only: completed JSDoc on exported members that were missing tags — assemblePromptForAnyBot gained @param/@returns and buildHandoverLayers gained the @param scopeId that had drifted from its signature. No logic change (additive comments only).
  * 34 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: separate trusted policy/configuration from escaped untrusted ticket, handover, tool, and memory data; append the server-owned user/ticket/tool/scope binding after prompt construction.
  * 35 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 audit: preserve exact envelope subjects and bind memory retrieval to non-operator owner/tenant/workspace context.
+ * 36 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. This is the SECOND chain in this file - step 1 converged the one that tells the bot where its workspace is (line ~1007) and left this one, which reads the handovers back out of it. The two disagreeing means a bot writes a handover the next round cannot find.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -1120,8 +1121,7 @@ YOUR OUTPUT = THE NEXT AGENT'S INPUT. Write accordingly.
 function buildPreviousWorkSection(workspaceTaskId: string | undefined): string | null {
   if (!workspaceTaskId) return null;
 
-  const wsRoot = process.env.SHARED_WORKSPACE_ROOT
-    || (require('fs').existsSync('/app/workspace') ? '/app/workspace' : require('path').resolve(process.cwd(), 'workspace-shared'));
+  const wsRoot = resolveSharedWorkspaceRoot();
   const handoverDir = require('path').join(wsRoot, workspaceTaskId, 'developer-handovers');
 
   try {

@@ -4,11 +4,13 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | WS1: Created runtime trace analyzer — parses Cline runtime task folders to reconstruct per-ticket phase/round execution history and detect persona misbinding and missing review output
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read three of the six.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { createChildLogger } from '@/shared/logger';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const logger = createChildLogger({ module: 'runtime-trace-analyzer-service' });
 
@@ -176,9 +178,7 @@ export class RuntimeTraceAnalyzerService {
 // ── Pure parsing helpers ──────────────────────────────────────────────────────
 
 function resolveWorkspaceRoot(): string {
-  const configured = process.env.SHARED_WORKSPACE_ROOT || process.env.CLINE_WORKSPACE_ROOT || process.env.WORKSPACE_ROOT;
-  if (configured?.trim()) return path.resolve(configured.trim());
-  return fs.existsSync('/app/workspace') ? '/app/workspace' : path.resolve(process.cwd(), 'workspace-shared');
+  return resolveSharedWorkspaceRoot();
 }
 
 function readJsonSafe<T>(filePath: string): T | null {

@@ -4,11 +4,13 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-111 Phase 1 — on-disk layout for scan media. Source video + produced .splat are large local binaries (galleries/media = LOCAL workspace files, not the 250MB oshal-local artifact quota and not a BYTEA column). Paths are keyed by sha256(userSub)[:32] so the raw sub never appears on disk; the route and the service share these helpers so they agree on where bytes land.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six. The tmpdir fallback is deliberate and KEPT - outside a container there is no shared mount and a scan must still land somewhere writable - so the presence test asks whether a root is CONFIGURED rather than what the resolver would invent.
  */
 
 import path from 'path';
 import os from 'os';
 import { createHash } from 'crypto';
+import { hasConfiguredWorkspaceRoot, resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 /**
  * @description Resolve the root directory that holds every user's scan media.
@@ -18,7 +20,7 @@ import { createHash } from 'crypto';
  */
 export function resolveScansRoot(): string {
   if (process.env.OSHAL_SPACES_ROOT) return process.env.OSHAL_SPACES_ROOT;
-  if (process.env.CLINE_WORKSPACE_ROOT) return path.join(process.env.CLINE_WORKSPACE_ROOT, 'spaces-scans');
+  if (hasConfiguredWorkspaceRoot()) return path.join(resolveSharedWorkspaceRoot(), 'spaces-scans');
   return path.join(os.tmpdir(), 'oshal-spaces-scans');
 }
 

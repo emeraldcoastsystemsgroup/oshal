@@ -24,6 +24,7 @@
  * @module swarm-pack-routes
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | A pack slug belongs to whoever deployed it. The pack tree is per-user but the emitted manifest path is not, so a second authenticated user deploying the same slug inherited the incumbent agent ids and ticket queue and overwrote their manifest - loadApp then registered the newcomer persona under the row the incumbent tickets point at. The emission now records packOwnerKey and a deploy that would take over another owner slug is refused 409. A manifest written before owners were stamped carries none and is adopted, because breaking the packs already deployed here would cost more than it saves.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The pack deploy names its caller when loading the manifest. It called loadApp with no scope, so withInstallOwner stamped OSHAL_INSTALL_OWNER_SUB - which every new install now sets - and any authenticated user's own deployed pack became the install owner's, with that owner made its administrator. The tier half was already defanged for a non-operator caller by RLS, but the ownership stamp landed. Adoption is meant for rows staged before anyone could sign in; a request that HAS an identity must supply it.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. Both chains read ONE of the six. A module-scope const calling the resolver is NOT converged - it freezes the root at import, before any caller can set the environment - so this became a call-time function.
  */
 import { Router, type Request, type Response } from 'express';
 import * as fs from 'fs';
@@ -32,6 +33,7 @@ import * as zlib from 'zlib';
 import * as crypto from 'crypto';
 import yaml from 'js-yaml';
 import { createChildLogger } from '@/shared/logger';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const logger = createChildLogger({ module: 'swarm-pack-routes' });
 
@@ -48,7 +50,7 @@ function titleCase(s: string): string {
 }
 
 /** Root holding the per-user pack subtrees (packs/<userKey>/<name>/). */
-const PACKS_ROOT = path.join(process.env.CLINE_WORKSPACE_ROOT || '/app/workspace-shared', 'packs');
+function packsRoot(): string { return path.join(resolveSharedWorkspaceRoot(), 'packs'); }
 
 /** Reject anything that isn't a safe single path segment (no traversal). */
 function safeName(name: string): string | null {
@@ -78,7 +80,7 @@ function userKey(sub: string): string {
 function userPacksRoot(req: Request): string | null {
   const sub = (req as unknown as { oidc?: { user?: { sub?: string } } }).oidc?.user?.sub;
   if (!sub) return null;
-  return path.join(PACKS_ROOT, userKey(String(sub)));
+  return path.join(packsRoot(), userKey(String(sub)));
 }
 
 /** Recursively collect files under a dir as { name (relative, posix), abs }. */
@@ -141,7 +143,7 @@ function readDescriptor(dir: string, name: string): Record<string, unknown> {
 
 /** The writable deploy dir a pack's manifest is (re-)emitted into (swarm-apps/ is read-only). */
 function deployedAppsDir(): string {
-  return path.join(process.env.CLINE_WORKSPACE_ROOT || '/app/workspace-shared', 'deployed-apps');
+  return path.join(resolveSharedWorkspaceRoot(), 'deployed-apps');
 }
 
 /** The identity a previous deploy of the SAME pack already put into the running swarm. */

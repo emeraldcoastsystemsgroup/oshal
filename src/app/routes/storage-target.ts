@@ -27,6 +27,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | deleteStoredFile() takes an optional target override (mirrors saveContent) — live QA showed a row recorded on one provider orphans its store copy when the caller switched Files targets after generating; callers that know where the file lives can now say so.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 storage carve decouple: oshal-local downloadUrls now point at the KERNEL /api/files/download (provider=oshal-local) instead of the packaged app's /api/storage/local/download — a kernel skill must not emit URLs into a store package's mount. ensureStoragePrefsSchema appends buildOwnerRlsPolicyStatements (A1.2 chokepoint — fresh-DB parity with migration 060; live DBs already enforce).
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | pushTree() — the large-tree multi-file git push leg (ADR-041 remaining / BACKLOG storage): batch many files into ONE commit against a github Code target via the Git Data API (blobs -> a tree on the current base_tree -> a commit -> a fast-forward ref update), NOT the one-file Contents API. Honest surfacing: an oversize file or an over-cap total REJECTS the whole push before anything is sent (atomic); a blob that fails mid-flight is reported in `failed[]` while the files that did land still commit; a push where every blob failed throws (no empty commit).
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six. A module-scope const calling the resolver is NOT converged - it freezes the root at import, before any caller can set the environment - so this became a call-time function.
  *
  * @module storage-target
  */
@@ -38,6 +39,7 @@ import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap } from '@/shar
 import type { AppContext } from '@/app/composition/app-context';
 import { getValidAccessToken } from './connectors-routes';
 import { resolveGithubOwner } from './storage-browse';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const logger = createChildLogger({ module: 'storage-target' });
 
@@ -47,7 +49,7 @@ export interface StorageTarget { provider: 'dropbox' | 'oshal-local' | 'github' 
 export interface StoragePrefs { code: StorageTarget; files: StorageTarget }
 
 /** Local scratch root + quota (the "OSHAL (limited)" option). */
-const LOCAL_ROOT = path.join(process.env.CLINE_WORKSPACE_ROOT || '/app/workspace-shared', 'userfiles');
+function localRoot(): string { return path.join(resolveSharedWorkspaceRoot(), 'userfiles'); }
 const LOCAL_QUOTA_BYTES = 250 * 1024 * 1024; // ~250 MB/user
 
 /** FS-safe per-user key (matches userKey() elsewhere). */
@@ -164,7 +166,7 @@ export async function saveContent(
   const sub2 = sanitizeSubfolder(subfolder);
 
   if (target.provider === 'oshal-local') {
-    const userRoot = path.join(LOCAL_ROOT, userKey(sub));
+    const userRoot = path.join(localRoot(), userKey(sub));
     const dir = sub2 ? path.join(userRoot, sub2) : userRoot;
     fs.mkdirSync(dir, { recursive: true });
     if (dirSize(userRoot) + buf.length > LOCAL_QUOTA_BYTES) {
@@ -231,7 +233,7 @@ export async function listFolder(
   const sub2 = sanitizeSubfolder(subfolder);
 
   if (target.provider === 'oshal-local') {
-    const dir = sub2 ? path.join(LOCAL_ROOT, userKey(sub), sub2) : path.join(LOCAL_ROOT, userKey(sub));
+    const dir = sub2 ? path.join(localRoot(), userKey(sub), sub2) : path.join(localRoot(), userKey(sub));
     if (!fs.existsSync(dir)) return { provider: 'oshal-local', files: [] };
     const files = fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isFile()).map((e) => ({
       name: e.name, size: fs.statSync(path.join(dir, e.name)).size,
@@ -417,7 +419,7 @@ export async function deleteStoredFile(
   if (!safeName || safeName === '.' || safeName === '..') throw new Error('a file name is required');
 
   if (target.provider === 'oshal-local') {
-    const dir = sub2 ? path.join(LOCAL_ROOT, userKey(sub), sub2) : path.join(LOCAL_ROOT, userKey(sub));
+    const dir = sub2 ? path.join(localRoot(), userKey(sub), sub2) : path.join(localRoot(), userKey(sub));
     const p = path.join(dir, safeName);
     if (!fs.existsSync(p)) return { provider: 'oshal-local', removed: true, reason: 'already-gone' };
     fs.unlinkSync(p);

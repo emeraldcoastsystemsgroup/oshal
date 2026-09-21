@@ -5,12 +5,14 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Token Chase step 1: read-only service over captured per-call frames (ADR-046)
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Tail-replay inputs (ADR-046 §1/§8): surface the additive capture fields the forward-replay consumer needs — a frame's `pins` (per-tool-read pinned/unpinned classification) and `workspaceTree` (content-addressed manifest) now ride on TokenChaseFrameDetail, and readTreeObject() serves one content-addressed blob from <capture>/objects/<sha256> so the tail replay can restage the tree a frame saw. Both additive: pre-tail frames simply lack the fields and behave exactly as before.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read three of the six.
  */
 
 import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createChildLogger } from '@/shared/logger';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const logger = createChildLogger({ module: 'token-chase-read-service' });
 const CAPTURE_DIR = '.tokenchase';
@@ -235,8 +237,6 @@ export class TokenChaseReadService {
 
   /** @description Resolves the shared workspace root from env, matching the task-explorer convention. */
   private resolveWorkspaceRoot(): string {
-    const configured = process.env.SHARED_WORKSPACE_ROOT || process.env.CLINE_WORKSPACE_ROOT || process.env.WORKSPACE_ROOT;
-    if (configured && configured.trim().length > 0) return path.resolve(configured);
-    return fsSync.existsSync('/app/workspace') ? '/app/workspace' : path.resolve(process.cwd(), 'workspace-shared');
+    return resolveSharedWorkspaceRoot();
   }
 }
