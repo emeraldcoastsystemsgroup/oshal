@@ -1790,9 +1790,17 @@ function createApp(): express.Application {
   // WITHOUT requiresAuth; self-guards with the Twilio request signature (X-Twilio-Signature vs
   // TWILIO_AUTH_TOKEN) and 503s when that token is unset, so it is disabled-by-default and safe to
   // mount unconditionally, mirroring the Alertmanager + connector-webhook ingresses.
+  // With a pool the sink is CALLER-SCOPED: the sender's number resolves to its linked owner
+  // through channel_links and the message runs on THAT user's accountable bot (an unlinked number
+  // reaches nobody). Without a pool there is no identity store, so it keeps the log-only default.
   {
-    const { createSmsInboundRoutes } = require('./routes/sms-inbound-routes');
-    app.use('/api/sms', createSmsInboundRoutes());
+    if (ctx.pool) {
+      const { createWiredSmsInboundRoutes } = require('./routes/sms-inbound-wiring');
+      app.use('/api/sms', createWiredSmsInboundRoutes(ctx));
+    } else {
+      const { createSmsInboundRoutes } = require('./routes/sms-inbound-routes');
+      app.use('/api/sms', createSmsInboundRoutes());
+    }
   }
 
   // Personal-Intelligence surface (ADR-058) — the per-user vault. Start-param gated inside the

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Notification preference center: proves pref resolution (saved row wins; no row = injected default of email-if-Gmail-else-none), America/Chicago quiet-hours math incl. wrap-midnight, and every transport skip path (disabled, channel none, unavailable channel, unregistered sender, sender failure, sender throw, broken prefs table) resolves to a logged outcome — notify() never throws into a producer.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Email fallback for an UNATTEMPTABLE channel (BACKLOG "Twilio policy, fallback, and inbound messaging" - "email works with Twilio absent"). A user routed to sms/voice/telegram used to get a bare skip whenever that channel had no sender or no credential/destination, and the notification was simply lost. The 'unregistered sender' case below now asserts the fallback because that IS the new contract; its clean-skip half is kept as a separate case with no email sender registered, so neither branch lost coverage. The rest of the block pins the fallback's boundaries: it never fires for an explicit mute, for quiet hours, for email itself, or for a channel that WAS attempted and failed - a provider that reports a failure may still have queued the message, so re-sending it elsewhere would risk a double delivery.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | DEFAULT_TOPIC fallback + voice channel: a saved 'default' row governs topics with no row of their own (incl. its quiet hours), a topic-specific row still wins, topic==='default' never double-reads, and NOTIFY_CHANNELS carries 'voice' (migration 099) so a stored voice row routes instead of degrading to none.
  */
 
@@ -260,7 +261,7 @@ describe('NotificationRouter quiet hours (America/Chicago)', () => {
 });
 
 describe('NotificationRouter transport skip/failure paths (never throws)', () => {
-  it('an unavailable channel is a clean skip', async () => {
+  it('an unavailable channel with no email to fall back to is a clean skip', async () => {
     const { pool } = fakePool([prefRow({ channel: 'sms' })]);
     const sms = fakeSender('sms', { available: false });
     const r = await router(pool, { sms: sms.sender }).notify('user-1', 'career-digest', MSG);
@@ -268,9 +269,17 @@ describe('NotificationRouter transport skip/failure paths (never throws)', () =>
     expect(sms.sent).toHaveLength(0);
   });
 
-  it('an unregistered sender is a clean skip (telegram before its sender exists)', async () => {
+  it('an unregistered sender falls back to email (telegram before its sender exists)', async () => {
     const { pool } = fakePool([prefRow({ channel: 'telegram' })]);
-    const r = await router(pool, { email: fakeSender('email').sender }).notify('user-1', 'career-digest', MSG);
+    const email = fakeSender('email');
+    const r = await router(pool, { email: email.sender }).notify('user-1', 'career-digest', MSG);
+    expect(r).toMatchObject({ delivered: true, channel: 'email', fallbackFrom: 'telegram' });
+    expect(email.sent).toHaveLength(1);
+  });
+
+  it('an unregistered sender with no email registered is still a clean skip', async () => {
+    const { pool } = fakePool([prefRow({ channel: 'telegram' })]);
+    const r = await router(pool, { sms: fakeSender('sms').sender }).notify('user-1', 'career-digest', MSG);
     expect(r).toMatchObject({ delivered: false, skipped: true, reason: 'no-sender-registered' });
   });
 
@@ -305,5 +314,74 @@ describe('NotificationRouter transport skip/failure paths (never throws)', () =>
     });
     const r = await boom.notify('user-1', 'career-digest', MSG);
     expect(r).toMatchObject({ delivered: false, reason: 'error' });
+  });
+});
+
+describe('NotificationRouter email fallback (Twilio absent must not lose the notification)', () => {
+  /** The shape a deployment with Twilio absent has: the user chose sms, nothing can send it. */
+  const smsUser = () => prefRow({ channel: 'sms', phone: '+15551230000' });
+
+  it('an sms channel with no credential/destination is carried by email instead', async () => {
+    const { pool } = fakePool([smsUser()]);
+    const sms = fakeSender('sms', { available: false });
+    const email = fakeSender('email');
+    const r = await router(pool, { sms: sms.sender, email: email.sender }).notify('user-1', 'career-digest', MSG);
+    expect(r).toMatchObject({ delivered: true, channel: 'email', fallbackFrom: 'sms', id: 'email-1' });
+    expect(sms.sent).toHaveLength(0);
+    expect(email.sent).toEqual([{ userSub: 'user-1', subject: MSG.subject }]);
+  });
+
+  it('does not fall back when email is unavailable for this user either', async () => {
+    const { pool } = fakePool([smsUser()]);
+    const email = fakeSender('email', { available: false });
+    const r = await router(pool, { sms: fakeSender('sms', { available: false }).sender, email: email.sender })
+      .notify('user-1', 'career-digest', MSG);
+    expect(r).toMatchObject({ delivered: false, skipped: true, reason: 'channel-unavailable', channel: 'sms' });
+    expect(email.sent).toHaveLength(0);
+  });
+
+  it('never falls back from email to email (no double send, the skip stands)', async () => {
+    const { pool } = fakePool([prefRow({ channel: 'email' })]);
+    const email = fakeSender('email', { available: false });
+    const r = await router(pool, { email: email.sender }).notify('user-1', 'career-digest', MSG);
+    expect(r).toMatchObject({ delivered: false, skipped: true, reason: 'channel-unavailable', channel: 'email' });
+    expect(r.fallbackFrom).toBeUndefined();
+    expect(email.sent).toHaveLength(0);
+  });
+
+  it('an explicit mute is honoured - a disabled topic never reaches email', async () => {
+    const { pool } = fakePool([prefRow({ channel: 'sms', enabled: false })]);
+    const email = fakeSender('email');
+    const r = await router(pool, { sms: fakeSender('sms', { available: false }).sender, email: email.sender })
+      .notify('user-1', 'career-digest', MSG);
+    expect(r).toMatchObject({ delivered: false, skipped: true, reason: 'disabled' });
+    expect(email.sent).toHaveLength(0);
+  });
+
+  it('channel "none" never reaches email', async () => {
+    const { pool } = fakePool([prefRow({ channel: 'none' })]);
+    const email = fakeSender('email');
+    const r = await router(pool, { email: email.sender }).notify('user-1', 'career-digest', MSG);
+    expect(r).toMatchObject({ delivered: false, skipped: true, reason: 'channel-none' });
+    expect(email.sent).toHaveLength(0);
+  });
+
+  it('quiet hours hold the notification instead of routing it to email', async () => {
+    const { pool } = fakePool([prefRow({ channel: 'sms', quiet_hours_start: 22, quiet_hours_end: 6 })]);
+    const email = fakeSender('email');
+    // 05:30 UTC = 00:30 America/Chicago, inside the 22-to-6 window.
+    const r = await router(pool, { sms: fakeSender('sms', { available: false }).sender, email: email.sender },
+      { now: () => new Date(Date.UTC(2026, 6, 15, 5, 30)) }).notify('user-1', 'career-digest', MSG);
+    expect(r).toMatchObject({ delivered: false, skipped: true, reason: 'quiet-hours' });
+    expect(email.sent).toHaveLength(0);
+  });
+
+  it('a channel that WAS attempted and failed does not re-send over email', async () => {
+    const { pool } = fakePool([smsUser()]);
+    const sms = fakeSender('sms', { delivered: false });
+    const email = fakeSender('email');
+    const r = await router(pool, { sms: sms.sender, email: email.sender }).notify('user-1', 'career-digest', MSG);
+    expect(r).toMatchObject({ delivered: false, channel: 'sms', reason: 'send-failed', error: 'send-blew-up' });
+    expect(email.sent).toHaveLength(0);
   });
 });
