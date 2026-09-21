@@ -870,6 +870,20 @@ including across a directory belonging to a different owner. Full reasoning and 
 - **Done when:** the remaining 20 specs run green against a database the run provisions and
   destroys, the local-CI `unit` gate executes them there rather than skipping or refusing, and the
   survey above returns zero rows.
+### Disposable PostgreSQL fixture leaks its data volume on every dispose
+- **Remaining:** `tests/helpers/disposable-postgres.ts:311` removes the fixture container with
+  `docker rm --force <name>` and no `--volumes`, so the anonymous volume the postgres image declares
+  for its data directory outlives every dispose. Measured on the dev box 2026-09-20: 305 anonymous
+  dangling volumes, created on test-run days (35 on 09-15, 67 on 09-20, 26 on 09-21 UTC), a sample
+  mounted read-only holding a postgres data layout; removed by hand that night (runbook:
+  [runbooks/dev-box-disk-reclamation.md](runbooks/dev-box-disk-reclamation.md)). The slot ceiling in
+  `tests/helpers/fixture-slots.ts` bounds running containers, not what they leave behind, so the
+  Docker VM disk grows by one data volume per fixture start until the next hand cleanup.
+- **Done when:** the fixture removes its container with `--volumes` (and the `--rm` path is shown to
+  drop the volume too), and `tests/unit/fixture-slot-ceiling.spec.ts` (or a sibling) asserts with
+  `docker volume ls -q` that the volume count after dispose equals the count before it started —
+  a real-docker guard, since the boundary that leaked is the daemon's, not the helper's bookkeeping.
+
 ### Codeless k8s install — first live-cluster proof (ADR-129)
 - **Remaining:** run `oshal-install.sh --mode 4` (or `-Kubernetes`) end-to-end on a real second machine — the dev laptop is excluded on purpose (Docker Desktop k8s beside the 44-container swarm is the documented OOM pairing). Then publish the OCI chart (`bash scripts/publish-chart.sh` + the one-time GHCR visibility flip) so the installer's OCI-first path goes live.
 - **Decision (operator, 2026-09-20): PARKED, low priority -- end of the list.** No Kubernetes target exists yet and nothing on the box depends on this; the live proof waits until a real second machine or a customer cluster exists. The two one-time GHCR steps (publish the chart with the operator's write:packages token; flip the package public in the GitHub UI) may be done whenever convenient -- they only ever need doing once and make the eventual proof a single afternoon. (PM recommended exactly this; the operator agreed.)
@@ -957,6 +971,7 @@ including across a directory belonging to a different owner. Full reasoning and 
 
 ### CI secret-scanner remote mutation proof
 - **Remaining:** use a disposable branch to plant the scanner's sanctioned test secret, observe the remote failure, remove it, and rerun.
+- **Decision (operator, 2026-09-20): RE-SCOPED to the local gate, low priority -- "only if there is space".** No hosted Actions run and no push of a secret-shaped fixture to the public repo: the pre-push publish gate is never bypassed, and a planted commit would stay fetchable by SHA after the branch was deleted. The proof becomes: plant the scanner's sanctioned test secret in a throwaway git-archive export, run ci-local.sh's secret-scan gate and observe RED, remove it, observe GREEN -- never pushed. Actionable, but only when the box has headroom and never ahead of product work; "linked CI evidence" in the Done-when now means the local gate's own log. (PM recommended (b); the operator agreed, with that priority.)
 - **Done when:** linked CI evidence shows fail-then-pass caused by that fixture and no real credential enters Git history.
 
 ### Build-phase escalation golden run
@@ -985,6 +1000,7 @@ including across a directory belonging to a different owner. Full reasoning and 
 
 ### Dev-box disk reclamation
 - **Remaining:** inspect then drop the confirmed orphan restore database and extend the scoped cleanup path for reclaimable OSHAL images/volumes; never use a bare global Docker prune.
+- **Decision (operator, 2026-09-20): APPROVED, with documentation required.** The orphans are now NAMED: `oshal_restore_smoke_1786005613325` (12 GB), `oshal_restore_smoke_1784984720806` (10 GB), `oshal_restore_smoke_1786984892975` (9 GB) -- 31 GB of scratch copies left by scripts/evidence/prove-local-selfhost-live.ts when killed runs skipped its `finally`; the live `oshal` and `oshal_sandbox` are not touched. Stage one (approved): drop exactly those three after a zero-connection, zero-reference check, plus a SCOPED cleanup (dangling images, builder cache, unmounted OSHAL volumes only), with `docker system df` before and after. What the entry undersold: the host has 60 GB free of 952 and the Docker VM disk (`docker_data.vhdx`) is 402 GB -- freeing space INSIDE the VM returns nothing to the host until the VHDX is compacted, which needs Docker fully stopped (`Optimize-VHD` is absent here; `diskpart compact vdisk` is the tool). Stage two (scheduled, not improvised): compact on a night the stack is already down. The operator asked that this be DOCUMENTED plainly -- runbook: docs/runbooks/dev-box-disk-reclamation.md. (PM recommended exactly this split; the operator approved it.)
 - **Done when:** exact pre/post disk figures are recorded, the intended orphan only is removed, and all active swarm volumes and databases pass health checks afterward.
 
 ### Real-boundary regression doctrine
@@ -1026,6 +1042,12 @@ including across a directory belonging to a different owner. Full reasoning and 
   `tests/unit/installer-scripts-parse.spec.ts` are extended so a standalone "Open Swarm" in an
   installer script or a chat-channel reply fails the unit suite; and the register above is updated
   to move these rows out of "Out of scope here".
+- **Decision (operator, 2026-09-20): (a) RENAME IN PLACE ON UPGRADE.** On a box installed under the
+  old names the installer looks the firewall rule and the Desktop shortcut up by the old display name
+  OR the new one; when it finds the old ones it removes them and creates the oshal-named ones, so an
+  upgraded box ends with exactly one rule and one shortcut, and no dual-name lookup survives past that
+  one-time migration. With the upgrade path decided, the rest of the entry (the strings, the two unit
+  guards, the register rows) is an ordinary M queue item. (PM recommended (a); the operator agreed.)
 
 ### Nightly gate has a twelve-night failure streak
 - **Remaining:** the scheduled task `OSHAL Local CI` (daily 23:30, `ci-local-hidden.vbs` → `ci-local.sh --scheduled`) runs unattended, propagates its exit code, and emails the operator — all of that works. It has simply reported FAILED every night from 2026-08-02 to 2026-08-13 with `unit`, `e2e-green` and `trivy` red each time (BUG-22), so a newly-red guard inside it is invisible. Drive each of the three to green or quarantine it with a dated entry naming what is deferred and why: `unit` (BUG-15/16/17 plus the DB-backed specs — read BUG-16 before running the suite against a live stack), `e2e-green`, `trivy` (a CVE-budget decision, not a code fix). **Do not "fix" this by adding a `push:`/`pull_request:` trigger** — manual-only hosted CI is deliberate and `scripts/check-workflow-triggers.js` enforces it.
@@ -1075,6 +1097,18 @@ including across a directory belonging to a different owner. Full reasoning and 
   2026-08-07 (`scripts/oshal-stack-watchdog.ps1`, pause file under `%LOCALAPPDATA%\oshal\`) because
   Docker must not start by itself, so anything that closes this has to observe without starting the
   engine.
+- **Decision (operator, 2026-09-20): YES to both.** (1) Observe-only lives INSIDE the paused stack
+  watchdog (`scripts/oshal-stack-watchdog.ps1`): the pause file keeps its meaning -- never
+  `docker start`, never launch Docker Desktop -- but a paused run still executes
+  `scripts/monitoring-liveness-check.sh --strict` and, when it is red, raises through the alert path
+  the watchdog already has (best-effort email via the api container plus a Windows event-log entry);
+  engine down means log and exit quietly. No new scheduled task. A guard proves the pause file
+  blocks every start action. (2) ONE deliberate ungraceful engine stop is authorized
+  (`wsl --shutdown` with the stack up), scheduled by the PM on a quiet slot -- outside market hours,
+  queue idle, a Saturday or right after a nightly -- with the recovery sequence at hand; pass is
+  Prometheus and Alertmanager back within one scrape interval with no `oshal-up.sh`. Diagnosing why
+  exit 255 defeats `unless-stopped` stays the first work item. Then an ordinary M queue item.
+  (PM recommended exactly this; the operator agreed.)
 
 ### DB-backed alert specs borrow the operator's database
 - **The borrowing is already gone (2026-09-11, e9179047).** Both specs own a private PostgreSQL:
