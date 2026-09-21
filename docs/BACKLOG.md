@@ -1159,6 +1159,12 @@ including across a directory belonging to a different owner. Full reasoning and 
   'zz-incident-reopen-%' ORDER BY first_seen;`
 - **Done when:** that query returns no rows against the deployment database, and a `ci-local.sh` run
   records `GATE alert-residue: PASS`.
+- **Verified 2026-09-20 during the operator decision round: nothing left to approve.** The three
+  fixture shapes are no longer present in the deployment database and the standing gate has said so
+  twice: `%LOCALAPPDATA%\oshal\ci-local.log` records `GATE alert-residue: PASS` at
+  2026-09-19T02:19:41, and `bash scripts/ci/check-alert-residue.sh` run read-only on 2026-09-20
+  23:27 (box-local) reports `alert-residue: clean`. The done-when is met on that evidence; the
+  operator was not re-asked.
 
 ### Surface-bridge ops have no success-path log line
 - **Remaining:** `src/app/routes/jarvis-routes.ts` logs when surface ops are **dropped** for lack of
