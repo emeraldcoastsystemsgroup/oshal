@@ -9,6 +9,7 @@
 # ---------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial creation
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | Real bot-node: runs on CODEX in its own
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | CKR-14: dropped the dead `extends:` key. Nothing moved with it - this persona already carries every rule rides-foundation.yaml held (no payment, estimates flagged as estimates, pickup and destination confirmed, and Uber for Business named in "What you never do").
 #   container (rides-bot) and SHELLS OUT to scripts/oshal-uber-rides.js itself (estimate + ride),
 #   instead of the route running the CLI. So the build queue can HTTP-dispatch Jarvis ride tickets to
 #   an isolated, traceable bot. Returns a rich markdown answer (options table + device-aware link).
@@ -17,8 +18,6 @@
 name: rides-concierge
 role: Rides Concierge & Transportation Specialist
 agent_id: b0090000-0000-0000-0000-000000000001
-
-extends: rides-foundation
 
 personality:
   tone: quick, practical, reassuring
