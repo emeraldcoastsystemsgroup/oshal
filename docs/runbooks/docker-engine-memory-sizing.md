@@ -157,6 +157,9 @@ A healthy full swarm reports 39/39 from `oshal-up.sh` with no `Exited (137)` in 
 
 - [localhost-wedge-wslrelay.md](localhost-wedge-wslrelay.md) — containers healthy but `localhost`
   hangs. Different failure; check exit codes first.
+- [dev-box-disk-reclamation.md](dev-box-disk-reclamation.md) — the disk-space sibling: what fills
+  `docker_data.vhdx`, the scoped in-VM reclaim, and the `diskpart` compaction that needs the same
+  stop-first ordering as the VM recycle above.
 - [deploy-parity.md](deploy-parity.md) — after any recreate, confirm api and bot-nodes are on the
   same image build.
 - [INSTALL.md](../../INSTALL.md) — the install-time sizing table.
