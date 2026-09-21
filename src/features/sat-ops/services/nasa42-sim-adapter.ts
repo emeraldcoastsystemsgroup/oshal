@@ -47,6 +47,14 @@
  *                     |                             | mapping as pure, documented boundaries so direct and
  *                     |                             | conjugate wire streams can be replayed against the
  *                     |                             | anisotropic MEKF measurement covariance in unit tests.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | forceConvention: lock the quaternion
+ *                     |                             | interpretation at connect instead of electing it by
+ *                     |                             | vote. The voter always elects 42's NATIVE encoding, so
+ *                     |                             | without this switch the opposite branch is unreachable
+ *                     |                             | on real 42 data and the ADR-102 forced-conjugate
+ *                     |                             | referee gate cannot be run. Also retains the handshake
+ *                     |                             | frames and the last sensor record so a live run can be
+ *                     |                             | captured and replayed through this same adapter.
  */
 
 import net from 'net';
@@ -88,10 +96,44 @@ export interface Nasa42ConnectOptions {
   connectTimeoutMs?: number;
   /** Max ms to wait for each In message during stepping (default 30000). */
   cycleTimeoutMs?: number;
+  /**
+   * Lock the quaternion interpretation to this convention at connect instead of electing it
+   * from live star fixes. The vote always elects the encoding 42 is actually sending, so the
+   * opposite branch is unreachable on real data without this switch — it exists for the
+   * ADR-102 referee gate, which replays one captured 42 run down BOTH branches. A forced
+   * lock also engages the MEKF from the first cycle, because there is no vote to wait for.
+   * Leave it unset for flight-like bring-up: calibrating from the data is the safe default.
+   */
+  forceConvention?: Nasa42QuaternionConvention;
 }
 
 /** Quaternion interpretation selected by 42's live convention calibration. */
 export type Nasa42QuaternionConvention = 'conjugate' | 'direct';
+
+/**
+ * The exact handshake frames 42 sent, retained verbatim so a live run can be captured and
+ * replayed byte-faithfully through this same adapter (ADR-102 referee gate).
+ */
+export interface Nasa42HandshakeFrames {
+  /** The 96-byte array-sizes message. */
+  sizesBytes: Buffer;
+  /** The 24-byte buffer-lengths message. */
+  lensBytes: Buffer;
+  /** The one-time table message (mass properties, mounts, limits). */
+  tblBytes: Buffer;
+}
+
+/** How the adapter arrived at the quaternion interpretation it is using. */
+export interface Nasa42ConventionState {
+  /** The interpretation in force right now. */
+  convention: Nasa42QuaternionConvention;
+  /** Whether the interpretation is settled (forced, or elected by enough votes). */
+  locked: boolean;
+  /** True when the lock came from {@link Nasa42ConnectOptions.forceConvention}, not the vote. */
+  forced: boolean;
+  /** Ballots cast so far by the residual voter (both zero on a forced lock). */
+  votes: { conjugate: number; direct: number };
+}
 
 /**
  * @description Compose the table-provided star-tracker mount out of one valid NASA 42
@@ -239,6 +281,12 @@ export class Nasa42SimAdapter implements SatSimAdapter {
 
   private convention: Nasa42QuaternionConvention = 'conjugate';
 
+  /** True when the lock was imposed by the caller rather than won by the voter. */
+  private readonly conventionForced: boolean;
+
+  /** 42's handshake frames, verbatim — the seed of a replayable capture. */
+  readonly handshakeFrames: Nasa42HandshakeFrames;
+
   private prevQbn: Quat | null = null;
 
   private static readonly CONVENTION_VOTES_NEEDED = 25;
@@ -251,7 +299,8 @@ export class Nasa42SimAdapter implements SatSimAdapter {
 
   private constructor(args: {
     id: string; socket: net.Socket; reader: SocketReader; sizes: AcArraySizes; vehicle: Nasa42Vehicle;
-    cycleTimeoutMs: number; firstIn: Record<string, number[]>;
+    cycleTimeoutMs: number; firstIn: Record<string, number[]>; handshakeFrames: Nasa42HandshakeFrames;
+    forceConvention?: Nasa42QuaternionConvention;
   }) {
     this.id = args.id;
     this.socket = args.socket;
@@ -259,12 +308,21 @@ export class Nasa42SimAdapter implements SatSimAdapter {
     this.sizes = args.sizes;
     this.vehicle = args.vehicle;
     this.cycleTimeoutMs = args.cycleTimeoutMs;
+    this.handshakeFrames = args.handshakeFrames;
     this.distribution = wheelDistribution(args.vehicle.wheelAxes);
     this.mtbDistribution = args.vehicle.mtbAxes.length >= 3 ? wheelDistribution(args.vehicle.mtbAxes) : [];
     this.lastIn = args.firstIn;
     this.mekf = new MekfAttitudeEstimator({ ...NASA42_MEKF_CONFIG, stMount: args.vehicle.stMount });
+    this.conventionForced = args.forceConvention !== undefined;
+    if (args.forceConvention !== undefined) {
+      // A forced lock replaces the vote entirely: the MEKF is live from cycle 0 and
+      // calibrateConvention is never reached, so no ballot can move the interpretation.
+      this.convention = args.forceConvention;
+      this.conventionLocked = true;
+      logger.info({ id: this.id, convention: this.convention }, '42 quaternion convention FORCED by the caller — the live voter is bypassed');
+    }
     const qbn = this.stQbnBase(args.firstIn);
-    this.q = qbn ? quatConjugate(qbn) : quatIdentity();
+    this.q = qbn ? mapNasa42BodyAttitude(qbn, this.convention) : quatIdentity();
     if (!qbn) logger.warn({ id: this.id }, 'ST invalid at connect — starting attitude from identity until first star fix');
     this.state = this.buildState(args.firstIn, 0);
   }
@@ -289,13 +347,16 @@ export class Nasa42SimAdapter implements SatSimAdapter {
     });
     const reader = new SocketReader(socket);
 
-    const sizes = parseAcArraySizes(await reader.readExact(96, connectTimeoutMs));
+    const sizesBytes = await reader.readExact(96, connectTimeoutMs);
+    const sizes = parseAcArraySizes(sizesBytes);
     socket.write(ACK);
-    const lens = parseAcBufLens(await reader.readExact(24, connectTimeoutMs));
+    const lensBytes = await reader.readExact(24, connectTimeoutMs);
+    const lens = parseAcBufLens(lensBytes);
     socket.write(ACK);
     Nasa42SimAdapter.verifyLayouts(sizes, lens);
 
-    const tbl = readLayout(await reader.readExact(lens.tblLen, connectTimeoutMs), TBL_LAYOUT, sizes);
+    const tblBytes = await reader.readExact(lens.tblLen, connectTimeoutMs);
+    const tbl = readLayout(tblBytes, TBL_LAYOUT, sizes);
     socket.write(ACK);
     const vehicle = Nasa42SimAdapter.vehicleFromTable(tbl, sizes);
     logger.info({ host, port, sizes, lens, vehicle }, '42 handshake complete — layouts byte-verified');
@@ -306,6 +367,8 @@ export class Nasa42SimAdapter implements SatSimAdapter {
     return new Nasa42SimAdapter({
       id: opts.id ?? `sat42-${port - 10001}`,
       socket, reader, sizes, vehicle, cycleTimeoutMs, firstIn,
+      handshakeFrames: { sizesBytes, lensBytes, tblBytes },
+      ...(opts.forceConvention !== undefined ? { forceConvention: opts.forceConvention } : {}),
     });
   }
 
@@ -447,6 +510,32 @@ export class Nasa42SimAdapter implements SatSimAdapter {
     }
     this.q = this.mekf.attitude();
     return { t, q: this.mekf.attitude(), omega: this.mekf.rateEstimate(omegaRaw), wheelMomentum, ...(bFieldBody ? { bFieldBody } : {}) };
+  }
+
+  /**
+   * @description How the quaternion interpretation was settled — the referee evidence needs
+   * to state whether a branch ran on 42's elected encoding or on a caller-imposed lock, and
+   * a forced run must be able to prove the voter never moved it.
+   * @returns The convention in force, whether it is locked, whether the lock was forced, and
+   * the ballots the residual voter has cast (both zero under a forced lock).
+   */
+  conventionState(): Nasa42ConventionState {
+    return {
+      convention: this.convention,
+      locked: this.conventionLocked,
+      forced: this.conventionForced,
+      votes: { ...this.conventionVotes },
+    };
+  }
+
+  /**
+   * @description The last In record 42 sent, field-major exactly as decoded. Capturing a live
+   * run means recording this every cycle; the replay then drives this same adapter, so the
+   * referee comparison exercises the real decode path rather than a twin of it.
+   * @returns A shallow copy of the record (the arrays themselves are 42's).
+   */
+  lastSensorRecord(): Record<string, number[]> {
+    return { ...this.lastIn };
   }
 
   /**

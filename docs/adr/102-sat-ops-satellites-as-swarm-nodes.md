@@ -84,5 +84,53 @@ noisy `stQn` sample, then interpret that complete sample. Conjugation is never a
 the nominal attitude. A deterministic 240-fix replay in
 `tests/unit/sat-ops-nasa42-convention.spec.ts` proves that both encodings place the tracker
 2/2/20-arcsec covariance on the same body axes (including off-diagonal terms) and produce the
-same MEKF accept/reject/reinitialize decisions. This is local synthetic evidence; a captured or
-live NASA 42 run forced onto the conjugate branch remains an external referee gate.
+same MEKF accept/reject/reinitialize decisions. This was local synthetic evidence; the external
+referee gate — a captured or live NASA 42 run forced onto the conjugate branch — is closed below.
+
+## Forced-conjugate referee gate closed on live 42 data (2026-09-21)
+
+`Nasa42SimAdapter.connect({ forceConvention })` locks the quaternion interpretation instead of
+electing it from live star fixes. It exists because the residual voter always elects the encoding
+42 is actually sending, so the opposite branch is unreachable on real data and the gate above
+could not be run at all. A forced lock engages the MEKF from the first cycle; unset remains the
+default, because calibrating from the data is the safe posture for a real bring-up.
+
+**Live, in the container** (`sim/nasa42`, 42 at `18106c54`, stock CfsSat case, 1500 FSW cycles
+= 300 sim-s, identical mission both times, handshake layouts byte-verified against 42's own
+BufLens at `inLen 601 / outLen 449 / tblLen 2433`):
+
+| forced lock | MEKF applied | rejected | reinits | final attitude error | final &#124;ω&#124; |
+|---|---|---|---|---|---|
+| `direct` (42's native encoding here) | 156 | 0 | 1 | 0.4317° | 0.00644 °/s |
+| `conjugate` (mirrored) | 233 | 578 | 74 | 81.1030° | 0.90152 °/s |
+
+The mirrored row is the night-1 failure signature the convention voter was written to prevent,
+reproduced on demand — 0.9 °/s chasing a mirrored reference.
+
+**Replayed, both branches on one stream.** A 4000-cycle (800 sim-s) run on the native lock was
+captured with 42's own handshake frames
+(`tests/fixtures/sat-ops-nasa42-capture-2026-09-21.json`; 2469 of 4000 cycles carry a valid star
+fix, and the live mission settled its 30° slew to 0.0018° at 0.00043 °/s).
+`tests/unit/sat-ops-nasa42-forced-conjugate-referee.spec.ts` replays it back through the SAME
+adapter over a loopback socket — once as 42 sent it, once as the opposite-convention twin with
+the lock forced onto that branch:
+
+| branch | applied | rejected | reinits | attitude σ | worst attitude error vs the as-flown branch |
+|---|---|---|---|---|---|
+| as-flown, native `direct` | 1964 | 9 | 2 | 0.6311″ | — |
+| forced `conjugate` twin | 1964 | 9 | 2 | 0.6311″ | 0.0106″ (2.96e-6°) |
+| mirrored control (`conjugate` on the native stream) | 600 | 1313 | 62 | 2.0000″ | 171.67° |
+
+Every per-cycle accept/reject/reinitialize disposition is identical between the first two rows,
+and their worst attitude disagreement is 1–2 ulp of the dot product inside
+`attitudeSeparationDeg` — `2·acos` cannot resolve finer — against a tracker whose own noise is
+2/2/20 arcsec. The third row is the control: it is the same bytes under the wrong lock, and it
+falls apart, so the agreement above is not an artifact of comparing a stream with itself.
+
+Two things this run measured that the synthetic replay could not. 42's native encoding on this
+case is `direct`, not `conjugate`. And on the settled tail of that capture the residual voter's
+ballots are nearly tied (1245 conjugate / 1222 direct over 2467 consecutive-fix pairs), because
+a near-zero gyro delta gives both candidate mappings almost the same prediction residual; on the
+slewing 1500-cycle capture the same voter is decisive (171 direct / 25 conjugate). The fixture
+therefore records the lock its mission flew rather than deriving it from a vote, and the
+mirrored-control case is what proves that lock was the right one.
