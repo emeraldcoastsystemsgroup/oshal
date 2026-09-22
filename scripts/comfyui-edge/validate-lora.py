@@ -2,14 +2,17 @@
 # (LoraLoader) and generates ONE image per cell of a FIXED, held-out matrix (poses/cameras/
 # expressions the trainer never used, with PINNED seeds), then scores each cell:
 #   identity = CLIP-image cosine to the locked hero (does it still look like THE character)
-#   quality  = CLIP good-vs-bad proxy + a single-eye guard (a cyclops must keep ONE eye)
+#   quality  = CLIP good-vs-bad proxy + the character's OWN structural guard (declared per
+#              character as an identity/violation prompt pair; absent when it declares none)
 #   score    = 0.6*identity + 0.4*quality      (mirrors src/features/lora-studio/scorecard.ts)
 # Because the matrix + seeds + hero + CLIP model are fixed, score(vN) is directly comparable to
 # score(v1) - the objective "is it better" number. Writes a scorecard JSON + an index.html gallery
 # and POSTs the scorecard back to the controller's /api/lora/ingest (x-service-secret).
 #
-# Usage (on the GPU box, ComfyUI running on :8188):
-#   python validate-lora.py --character oshbrainrot --version 1 --lora-name oshbrainrot_v1.safetensors \
+# Usage (on the GPU box, ComfyUI running on :8188) - the identity arguments come from the
+# controller's `oshal_lora_characters` row, never from a constant in this file:
+#   python validate-lora.py --character <subject> --version 1 --lora-name <subject>_v1.safetensors \
+#       --trigger <word> --hero <hero.png> --ident "<look sentence>" \
 #       --controller http://100.64.0.1:35457 --owner-sub-b64 <subject>
 # 2026-08-06 | maintainer@emeraldcoastsystemsgroup.com | Bind callbacks to the initiating owner's
 # canonical base64url identity header; a fleet secret without owner attribution is insufficient.
@@ -21,9 +24,25 @@
 # goes to /api/lora/ingest/cell-image, which stores it owner-scoped with an expiry; the full-size
 # render stays here.
 #
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                                    | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Take the trigger word, hero image, identity
+#     sentence, negative prompt, structural guard prompts, base checkpoint and output directory
+#     from the character's own configuration instead of the first character this script ever
+#     validated. The single-eye guard is now that character's declared structural pair and is
+#     simply absent for a character that declares none - validating a two-eyed character against a
+#     cyclops guard halved its quality score on every cell.
+#
 # Free-first: CLIP scoring is local ($0). The optional LLM-vision judge is a separate, metered,
 # opt-in step on the controller - never the primary score here.
-import urllib.request, urllib.parse, json, time, os, glob, argparse, io
+import urllib.request, urllib.parse, json, time, os, glob, argparse, io, sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+from character_config import add_character_arguments, character_config  # noqa: E402
 
 # Bounds for the per-cell thumbnails the controller hosts. The route refuses anything above
 # MAX_CELL_IMAGE_BYTES (lora/src-routes/lora-cell-images.ts), so the encoder aims well under it and
@@ -37,13 +56,6 @@ BASE = "http://127.0.0.1:8188"
 COMFY = os.path.join(HOME, "oshal-comfyui", "ComfyUI_windows_portable", "ComfyUI")
 OUT = os.path.join(COMFY, "output")
 INP = os.path.join(COMFY, "input")
-DEST = os.path.join(HOME, "lora-validate")
-HERO = "hero_brainrot_00002_.png"
-TRIG = "oshbrainrot"
-IDENT_TAGS = ", glossy 3d render, italian brainrot meme style"
-QUAL = ", highly detailed, sharp focus, intricate, clean render, best quality"
-NEG = "blurry, low quality, deformed, extra eyes, two eyes, text, watermark, multiple characters, jpeg artifacts, lowres"
-CKPT = "v1-5-pruned-emaonly-fp16.safetensors"
 
 # FIXED held-out validation matrix - same vocab as the generator, but reserved combos + seeds
 # (500000+ band) the trainer never emitted. Each tuple: (action, camera, expression, lighting).
@@ -87,14 +99,14 @@ def run(wf):
     return None
 
 
-def gen_cell(lora_name, prompt, seed, pfx):
+def gen_cell(cfg, lora_name, prompt, seed, pfx):
     """txt2img through the trained LoRA - tests the identity the LoRA learned from the trigger word."""
     return run({
-        "ck": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": CKPT}},
+        "ck": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": cfg.base_model}},
         "lora": {"class_type": "LoraLoader", "inputs": {"model": ["ck", 0], "clip": ["ck", 1],
                  "lora_name": lora_name, "strength_model": 0.8, "strength_clip": 0.8}},
         "pos": {"class_type": "CLIPTextEncode", "inputs": {"text": prompt, "clip": ["lora", 1]}},
-        "neg": {"class_type": "CLIPTextEncode", "inputs": {"text": NEG, "clip": ["lora", 1]}},
+        "neg": {"class_type": "CLIPTextEncode", "inputs": {"text": cfg.negative, "clip": ["lora", 1]}},
         "lat": {"class_type": "EmptyLatentImage", "inputs": {"width": 512, "height": 512, "batch_size": 1}},
         "ks": {"class_type": "KSampler", "inputs": {"seed": seed, "steps": 30, "cfg": 7.0,
                "sampler_name": "dpmpp_2m", "scheduler": "karras", "denoise": 1.0,
@@ -159,85 +171,147 @@ def clamp01(x):
     return max(0.0, min(1.0, x))
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--character", required=True)
+def build_parser():
+    """
+    @description The CLI. Every identity option is supplied by the controller's lora dispatch from
+      this character's `oshal_lora_characters` row; this file holds no character constant.
+    @returns The argparse parser.
+    """
+    ap = argparse.ArgumentParser(description="Validate one trained character LoRA on the held-out matrix")
+    add_character_arguments(ap)
     ap.add_argument("--version", type=int, required=True)
     ap.add_argument("--lora-name", required=True, help="LoRA filename as ComfyUI sees it (in models/loras)")
     ap.add_argument("--controller", default=os.environ.get("OSHAL_CONTROLLER", ""))
     ap.add_argument("--owner-sub-b64", default=os.environ.get("OSHAL_USER_SUB_B64", ""))
-    a = ap.parse_args()
-    secret = os.environ.get("SWARM_SERVICE_SECRET", "")
-    os.makedirs(DEST, exist_ok=True)
+    return ap
 
-    clip = Clip()
-    hero_path = os.path.join(INP, HERO)
-    if not os.path.exists(hero_path):
-        alt = os.path.join(OUT, HERO)
-        hero_path = alt if os.path.exists(alt) else None
+
+def hero_path_for(cfg):
+    """
+    @description Locate this character's locked hero image: ComfyUI's input directory first, then
+      its output directory. Returns None when the character has no hero on the box yet, which
+      degrades identity scoring rather than scoring against somebody else's hero.
+    @param cfg - The resolved CharacterConfig.
+    @returns An absolute path or None.
+    """
+    return cfg.hero_image_path(INP, OUT)
+
+
+def structural_probe(cfg, clip):
+    """
+    @description Embed this character's declared structural pair (for a cyclops: 'a single big eye'
+      against 'two eyes'). A character that declares no pair gets no structural penalty - applying
+      another character's anatomy guard is a scoring defect, not a safety net.
+    @param cfg - The resolved CharacterConfig.
+    @param clip - The CLIP scorer.
+    @returns {'ok', 'violation'} text vectors, or None.
+    """
+    prompts = cfg.structural_prompts()
+    if not prompts or not clip.ok:
+        return None
+    return {"ok": clip.txt_vec(prompts["identity_structure"]),
+            "violation": clip.txt_vec(prompts["identity_violation"])}
+
+
+def score_image(clip, img_path, hero_vec, good, bad, probe):
+    """
+    @description Score one rendered cell: CLIP-image cosine to this character's own hero for
+      identity, the good-versus-bad proxy for quality, then this character's structural penalty.
+    @param clip - The CLIP scorer.
+    @param img_path - The rendered image.
+    @param hero_vec - This character's hero embedding (None degrades identity to 0.5).
+    @param good - "good render" text embedding.
+    @param bad - "bad render" text embedding.
+    @param probe - structural_probe() result or None.
+    @returns (identity, quality), each 0..1.
+    """
+    if not clip.ok or hero_vec is None:
+        return 0.5, 0.5
+    v = clip.img_vec(img_path)
+    identity = clamp01((clip.cos(v, hero_vec) + 1) / 2)  # cosine -> 0..1
+    q = clamp01(0.5 + 6.0 * (clip.cos(v, good) - clip.cos(v, bad)))
+    if probe and clip.cos(v, probe["violation"]) > clip.cos(v, probe["ok"]):
+        q *= 0.55
+    return identity, clamp01(q)
+
+
+def rollup(cells):
+    """
+    @description Summarize the scored cells (mirrors scorecard.ts summarizeScore/computeWeakCells).
+    @param cells - Scored cell dictionaries.
+    @returns (overall, identity_mean, quality_mean, min_cell, weak_cells).
+    """
+    if not cells:
+        return 0.0, 0.0, 0.0, 0.0, []
+    scs = [c["score"] for c in cells]
+    overall = round(sum(scs) / len(scs), 4)
+    weak = []
+    for axis in ("action", "camera", "expression"):
+        buckets = {}
+        for c in cells:
+            buckets.setdefault(c[axis], []).append(c["score"])
+        for val, xs in buckets.items():
+            mean = sum(xs) / len(xs)
+            if mean <= overall - 0.08:
+                weak.append({"axis": axis, "value": val, "mean": round(mean, 4)})
+    weak.sort(key=lambda w: w["mean"])
+    return (overall,
+            round(sum(c["identity"] for c in cells) / len(cells), 4),
+            round(sum(c["quality"] for c in cells) / len(cells), 4),
+            round(min(scs), 4), weak)
+
+
+def score_matrix(cfg, a, clip):
+    """
+    @description Render and score every held-out cell for this character.
+    @param cfg - The resolved CharacterConfig.
+    @param a - Parsed arguments (version, lora_name).
+    @param clip - The CLIP scorer.
+    @returns (cells, gallery_meta).
+    """
+    hero_path = hero_path_for(cfg)
     hero_vec = clip.img_vec(hero_path) if (clip.ok and hero_path) else None
     good = clip.txt_vec("a sharp, clean, highly detailed 3d render of a single character") if clip.ok else None
     bad = clip.txt_vec("a blurry, deformed, low quality, messy image") if clip.ok else None
-    one_eye = clip.txt_vec("a one-eyed cyclops creature with a single big eye") if clip.ok else None
-    two_eye = clip.txt_vec("a creature with two eyes") if clip.ok else None
-
+    probe = structural_probe(cfg, clip)
     cells, meta = [], []
     for i, (act, cam, exp, lit) in enumerate(VAL_CELLS):
         desc = "%s, %s, %s, %s" % (act, cam, exp, lit)
-        prompt = "%s, a one-eyed orange-red cyclops creature%s, %s%s" % (TRIG, IDENT_TAGS, desc, QUAL)
-        seed = 500000 + i
-        pfx = "val_%s_v%d_%02d" % (a.character, a.version, i)
-        o = gen_cell(a.lora_name, prompt, seed, pfx)
+        pfx = "val_%s_v%d_%02d" % (cfg.subject, a.version, i)
+        o = gen_cell(cfg, a.lora_name, cfg.prompt(desc), 500000 + i, pfx)
         if not o:
             log("cell %d FAILED | %s" % (i, desc)); continue
         fn = o["save"]["images"][0]["filename"]
-        img_path = os.path.join(OUT, fn)
-
         identity, quality = 0.5, 0.5
-        if clip.ok and hero_vec is not None:
-            try:
-                v = clip.img_vec(img_path)
-                identity = clamp01((clip.cos(v, hero_vec) + 1) / 2)  # cosine -> 0..1
-                q = clamp01(0.5 + 6.0 * (clip.cos(v, good) - clip.cos(v, bad)))
-                if clip.cos(v, two_eye) > clip.cos(v, one_eye):       # single-eye guard
-                    q *= 0.55
-                quality = clamp01(q)
-            except Exception as e:
-                log("score err cell %d: %r" % (i, e))
+        try:
+            identity, quality = score_image(clip, os.path.join(OUT, fn), hero_vec, good, bad, probe)
+        except Exception as e:
+            log("score err cell %d: %r" % (i, e))
         score = round(0.6 * identity + 0.4 * quality, 4)
-        cell = {"cell": "%s|%s|%s" % (act, cam, exp), "action": act, "camera": cam, "expression": exp,
-                "identity": round(identity, 4), "quality": round(quality, 4), "score": score, "image": fn}
-        cells.append(cell)
+        cells.append({"cell": "%s|%s|%s" % (act, cam, exp), "action": act, "camera": cam, "expression": exp,
+                      "identity": round(identity, 4), "quality": round(quality, 4), "score": score, "image": fn})
         meta.append({"f": fn, "desc": desc, "id": identity, "q": quality, "s": score})
         log("cell %d ok | id %.2f q %.2f score %.2f | %s" % (i, identity, quality, score, desc))
+    return cells, meta
 
-    # Rollup (mirrors scorecard.ts summarizeScore / computeWeakCells).
-    if cells:
-        scs = [c["score"] for c in cells]
-        overall = round(sum(scs) / len(scs), 4)
-        identity_mean = round(sum(c["identity"] for c in cells) / len(cells), 4)
-        quality_mean = round(sum(c["quality"] for c in cells) / len(cells), 4)
-        min_cell = round(min(scs), 4)
-        weak = []
-        for axis in ("action", "camera", "expression"):
-            buckets = {}
-            for c in cells:
-                buckets.setdefault(c[axis], []).append(c["score"])
-            for val, xs in buckets.items():
-                mean = sum(xs) / len(xs)
-                if mean <= overall - 0.08:
-                    weak.append({"axis": axis, "value": val, "mean": round(mean, 4)})
-        weak.sort(key=lambda w: w["mean"])
-    else:
-        overall = identity_mean = quality_mean = min_cell = 0.0
-        weak = []
 
-    scorecard = {"kind": "score", "character": a.character, "version": a.version,
+def main():
+    """Validate one version of one character and report its scorecard to the controller."""
+    a = build_parser().parse_args()
+    cfg = character_config(a)
+    secret = os.environ.get("SWARM_SERVICE_SECRET", "")
+    os.makedirs(cfg.validate_dir, exist_ok=True)
+
+    clip = Clip()
+    cells, meta = score_matrix(cfg, a, clip)
+    overall, identity_mean, quality_mean, min_cell, weak = rollup(cells)
+
+    scorecard = {"kind": "score", "character": cfg.subject, "version": a.version,
                  "overall": overall, "identity_mean": identity_mean, "quality_mean": quality_mean,
                  "min_cell": min_cell, "cells": cells, "weak_cells": weak,
                  "scorer": ("clip-" + clip.kind) if clip.ok else "degraded"}
-    json.dump(scorecard, open(os.path.join(DEST, "scorecard_v%d.json" % a.version), "w"), indent=2)
-    write_gallery(a, scorecard, meta)
+    json.dump(scorecard, open(os.path.join(cfg.validate_dir, "scorecard_v%d.json" % a.version), "w"), indent=2)
+    write_gallery(cfg, a, scorecard, meta)
     log("==== VALIDATION v%d: overall %.3f (id %.3f / q %.3f), %d cells, %d weak ===="
         % (a.version, overall, identity_mean, quality_mean, len(cells), len(weak)))
 
@@ -250,7 +324,8 @@ def main():
         log("no complete controller/secret/owner binding given; scorecard saved locally only")
 
 
-def write_gallery(a, sc, meta):
+def write_gallery(cfg, a, sc, meta):
+    """Write this character's own scorecard gallery into its own validate directory."""
     cards = []
     for m in meta:
         cards.append("<div class=c><img src='file:///%s' width=220><div class=m>%s</div>"
@@ -264,9 +339,9 @@ def write_gallery(a, sc, meta):
             "<h1>%s &mdash; v%d validation</h1><div class=lg>Overall <b>%.3f</b> &middot; identity <b>%.3f</b> &middot; "
             "quality <b>%.3f</b> &middot; worst cell <b>%.3f</b>. Scored on the FIXED held-out matrix, so this is "
             "directly comparable across versions.</div>%s</body></html>"
-            % (a.character, a.version, a.character, a.version, sc["overall"], sc["identity_mean"],
+            % (cfg.subject, a.version, cfg.subject, a.version, sc["overall"], sc["identity_mean"],
                sc["quality_mean"], sc["min_cell"], "".join(cards)))
-    open(os.path.join(DEST, "scorecard_v%d.html" % a.version), "w", encoding="utf-8").write(html)
+    open(os.path.join(cfg.validate_dir, "scorecard_v%d.html" % a.version), "w", encoding="utf-8").write(html)
 
 
 def thumbnail_bytes(path):

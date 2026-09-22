@@ -35,6 +35,10 @@
 #     quality, single-eye, multiple-character and caption-agreement checks decide keep/reject before
 #     training; rejected pairs never reach the curated folder or curated.zip; per-candidate human
 #     override always wins; a labelled fixture measures false accept/reject rates.
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | Drop the structural probe pair from the neutral
+#     defaults. It describes one character anatomy, so defaulting it meant every OTHER character
+#     was measured against that anatomy and lost the margin on every candidate. A character that
+#     declares no pair now reports a 0.0 margin (no violation) instead.
 import argparse
 import glob
 import json
@@ -56,13 +60,14 @@ DEFAULT_THRESHOLDS = {
     "max_multi_character_margin": 0.0,
 }
 
-# Contrastive probes. Cyclops defaults; a different character overrides them in the thresholds file
-# under "structural_prompts".
+# Contrastive probes. These are CHARACTER-NEUTRAL: quality and crowding mean the same thing for
+# every character. The structural pair does not - it describes one character's anatomy - so it has
+# no default here. A character declares its own pair (identity_structure / identity_violation) and
+# a character that declares none is simply not structurally probed; scoring one character against
+# another's anatomy is a defect, not a safety net.
 DEFAULT_STRUCTURAL_PROMPTS = {
     "good": "a sharp, clean, highly detailed 3d render of a single character",
     "bad": "a blurry, deformed, low quality, messy image",
-    "identity_structure": "a one-eyed cyclops creature with a single big eye",
-    "identity_violation": "a creature with two eyes",
     "single_character": "a single character alone in the frame",
     "multiple_characters": "several different characters in the frame",
 }
@@ -358,7 +363,9 @@ def measure_candidates(candidates, hero_path, prompts=None):
       the same CLIP scoring validate-lora.py applies to a trained model.
     @param candidates - discover_candidates() output.
     @param hero_path - The locked hero image the character's identity is defined by.
-    @param prompts - Optional structural-prompt overrides for a non-cyclops character.
+    @param prompts - This character's structural pair (identity_structure / identity_violation),
+      plus any override of the neutral quality/crowding probes. Without the pair the structural
+      margin is reported as 0.0 - no violation - rather than measured against another character.
     @returns id -> measurement dict (caption_agreement is None when the pair has no caption).
     """
     p = dict(DEFAULT_STRUCTURAL_PROMPTS)
@@ -366,7 +373,9 @@ def measure_candidates(candidates, hero_path, prompts=None):
     clip = ClipScorer()
     hero = clip.image(hero_path)
     good, bad = clip.text(p["good"]), clip.text(p["bad"])
-    one, two = clip.text(p["identity_structure"]), clip.text(p["identity_violation"])
+    structural = None
+    if p.get("identity_structure") and p.get("identity_violation"):
+        structural = (clip.text(p["identity_structure"]), clip.text(p["identity_violation"]))
     single, many = clip.text(p["single_character"]), clip.text(p["multiple_characters"])
     out = {}
     for c in candidates:
@@ -376,7 +385,7 @@ def measure_candidates(candidates, hero_path, prompts=None):
             "identity": round(_unit(clip.cos(v, hero)), 6),
             "quality": round(_clamp01(0.5 + 6.0 * (clip.cos(v, good) - clip.cos(v, bad))), 6),
             "caption_agreement": round(_unit(clip.cos(v, clip.text(caption))), 6) if caption else None,
-            "two_eye_margin": round(clip.cos(v, two) - clip.cos(v, one), 6),
+            "two_eye_margin": round(clip.cos(v, structural[1]) - clip.cos(v, structural[0]), 6) if structural else 0.0,
             "multi_character_margin": round(clip.cos(v, many) - clip.cos(v, single), 6),
             "scorer": "clip-" + clip.kind,
         }
