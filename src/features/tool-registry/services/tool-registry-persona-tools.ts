@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted persona tool seed catalog from ToolRegistryService for file-size compliance
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Restored compile compatibility by de-contextualizing extracted persona seed literals before CreateToolInput cast
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Seed `conversation-query`, the read-only tool that lets a bot answer from what the caller has already said to this swarm instead of asking them to repeat it. Seeded HERE rather than beside rag-query/graph-query in tool-registry-baseline-tools.ts because that file stands at 829 code lines - past the 800-line mark where the house rule says stop and propose a decomposition before adding. Both arrays are seeded by the same seedBaselineAgentTools pass, so placement changes nothing a caller can observe.
  */
 
 import type { CreateToolInput } from '@/entities/tool';
@@ -172,6 +173,47 @@ export const TOOL_REGISTRY_PERSONA_TOOLS = [
     requiresApproval: false,
     timeoutMs: 60000,
     tags: ['plane', 'mcp', 'project'],
+    enabled: true,
+    registeredBy: 'system',
+  },
+  {
+    name: 'conversation-query',
+    displayName: 'Conversation History Query',
+    type: 'api',
+    category: 'knowledge',
+    version: '1.0.0',
+    installSpec: { method: 'none' },
+    skills: ['conversation-query', 'recall', 'history', 'answer-synthesis'],
+    selectorFragment:
+      "The caller's own past conversations with this swarm are searchable, so a question about what was already said, asked or decided is answered from the record.",
+    routingTags: ['conversation', 'history', 'recall', 'chat'],
+    authGroup: 'agent-tools',
+    // Read-only and owner-scoped, and the thing a front-door assistant is asked for most often is
+    // something it was already told. Default ON for the same reason rag-query is: the alternative
+    // to grounding an answer in the record is inventing one.
+    defaultAuthMode: 'auto',
+    description:
+      "Search the caller's OWN past conversations with this swarm and return the matching conversations with a snippet and a link. Scoped to the caller by row-level security on chat_tasks - another person's conversations are refused by the database, not filtered in application code. Read-only: it never writes, renames or deletes a conversation.",
+    inputSchema: {
+      type: 'object',
+      required: ['query'],
+      properties: {
+        query: { type: 'string', description: 'Words to look for in past conversations.' },
+        limit: { type: 'integer', description: 'Maximum conversations to return (1-25).' },
+      },
+    },
+    outputSchema: {
+      type: 'object',
+      properties: {
+        conversations: { type: 'array', items: { type: 'object' } },
+      },
+    },
+    usageInstructions:
+      "Call conversation_query with the words the caller used when asking 'what did we decide about X', 'did I already ask you about Y', or 'what was that thing I mentioned'. Each hit carries taskId, title, snippet, updatedAt and a cockpit link - cite the title and the link rather than paraphrasing a snippet as if it were new. An empty result means the record holds nothing matching, not that the caller never said it: say so plainly instead of inventing a recollection.",
+    examples: [],
+    requiresApproval: false,
+    timeoutMs: 30000,
+    tags: ['conversation', 'history', 'recall', 'read-only'],
     enabled: true,
     registeredBy: 'system',
   },
