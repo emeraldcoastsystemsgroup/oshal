@@ -6,8 +6,10 @@
  * 1   | maintainer@emeraldcoastsystemsgroup.com     | Added two-user, status-read, and revoked-broadcast proofs for tenant/platform Codex credential isolation
  * 2   | maintainer@emeraldcoastsystemsgroup.com     | SEC-05 closure: prove operator promotion never copies raw OAuth material into the Cline runtime and legacy Cline secrets remain absent or empty across import, status, and sign-out.
  * 3   | maintainer@emeraldcoastsystemsgroup.com     | SEC-05 closure: prove exact-operator promotion targets only the explicit native live auth source and active code contains no shared-seed or config-output OAuth fallback.
+ * 4   | maintainer@emeraldcoastsystemsgroup.com     | Wire-contract guards measured from the Codex CLI 0.153.4: the authorize URL carries the CLI's client_id, originator codex_cli_rs, scope and flow flags; the exchange is one form POST across a real loopback token endpoint with the CLI's five fields and no Codex headers; a closed socket or a 400 is logged with status, headers, cause and elapsed ms, never the code, verifier or a token, and is never retried.
  */
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -15,10 +17,86 @@ import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import express, { type RequestHandler } from 'express';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+// The logger is a collaborator outside the boundary under test (the token endpoint HTTP seam); a
+// recording double is what lets the failure record be asserted field by field.
+const logSpies = vi.hoisted(() => {
+  const spies = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), child: vi.fn() };
+  spies.child.mockImplementation(() => spies);
+  return spies;
+});
+vi.mock('@/shared/logger', () => ({
+  createChildLogger: () => logSpies,
+  logger: logSpies,
+  LOG_REDACT_OPTIONS: { paths: [], censor: '[redacted]' },
+}));
+
 import { createOpenAiCodexOAuthRoutes } from '@/app/routes/openai-codex-oauth-routes';
+import { OpenAiCodexOAuthService } from '@/features/openai-codex-oauth';
 
 interface Harness { url: string; close: () => Promise<void> }
 const RETIRED_RUNTIME_KEY = 'openai-codex-oauth-credentials';
+
+// Measured from the CLI this swarm borrows its client_id from: @openai/codex 0.153.4,
+// codex-rs/login/src/server.rs `build_authorize_url` / `exchange_code_for_tokens` and
+// codex-rs/login/src/auth/default_client.rs `DEFAULT_ORIGINATOR`. Literals on purpose: a test that
+// imported the service's constants would stay green when a constant regressed.
+const CODEX_CLI_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
+const CODEX_CLI_ORIGINATOR = 'codex_cli_rs';
+const CODEX_CLI_SCOPE = 'openid profile email offline_access api.connectors.read api.connectors.invoke';
+const CODEX_CLI_AUTHORIZE_KEYS = [
+  'response_type', 'client_id', 'redirect_uri', 'scope', 'code_challenge', 'code_challenge_method',
+  'id_token_add_organizations', 'codex_cli_simplified_flow', 'state', 'originator',
+];
+const CODEX_CLI_EXCHANGE_FIELDS = ['client_id', 'code', 'code_verifier', 'grant_type', 'redirect_uri'];
+const EXCHANGE_FAILURE_MESSAGE = 'OpenAI Codex token exchange failed';
+const RETRY_GRACE_MS = 300;
+
+interface TokenEndpointCapture { method: string; url: string; headers: http.IncomingHttpHeaders; body: string }
+interface FakeTokenEndpoint { issuer: string; requests: TokenEndpointCapture[]; close: () => Promise<void> }
+
+/** A loopback token endpoint that records every request it receives before answering as told. */
+async function serveTokenEndpoint(
+  respond: (capture: TokenEndpointCapture, res: http.ServerResponse) => void,
+): Promise<FakeTokenEndpoint> {
+  const requests: TokenEndpointCapture[] = [];
+  const server = http.createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => chunks.push(chunk));
+    req.on('end', () => {
+      const capture = { method: req.method || '', url: req.url || '', headers: req.headers, body: Buffer.concat(chunks).toString('utf8') };
+      requests.push(capture);
+      respond(capture, res);
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = (server.address() as AddressInfo).port;
+  return {
+    issuer: `http://127.0.0.1:${port}`,
+    requests,
+    close: () => new Promise((resolve) => { server.closeAllConnections(); server.close(() => resolve()); }),
+  };
+}
+
+/** A service over disposable encrypted storage whose issuer is the loopback endpoint. */
+function createWireContractService(tempRoot: string, issuer?: string): OpenAiCodexOAuthService {
+  vi.stubEnv('APP_URL', '');
+  vi.stubEnv('OPENAI_CODEX_REDIRECT_URI', '');
+  vi.stubEnv('OPENAI_CODEX_CLIENT_ID', '');
+  vi.stubEnv('CODEX_AUTH_SOURCE_PATH', '');
+  return new OpenAiCodexOAuthService(path.join(tempRoot, 'output'), 'codex-wire-contract-test-key', { issuer });
+}
+
+/** The single ERROR record the exchange wrote, with everything Pino would serialize flattened to text. */
+function readExchangeFailureRecord(): { record: Record<string, unknown>; text: string } {
+  const calls = logSpies.error.mock.calls.filter(([, message]) => message === EXCHANGE_FAILURE_MESSAGE);
+  expect(calls).toHaveLength(1);
+  const record = calls[0][0] as Record<string, unknown>;
+  const err = record.err as Error | undefined;
+  const cause = (err as (Error & { cause?: Error }) | undefined)?.cause;
+  const text = [JSON.stringify(record), err?.message, err?.stack, cause?.message, cause?.stack].join('\n');
+  return { record, text };
+}
 
 /** Start the real per-user OAuth router with an exact header-backed test identity. */
 async function serveOAuthRoutes(): Promise<Harness> {
@@ -226,6 +304,143 @@ describe('OpenAI Codex per-user/platform credential isolation', () => {
     expect(harnessAdapterSource).not.toContain('OPENAI_CODEX_SHARED_SEED_PATH');
     expect(harnessAdapterSource).not.toContain('CONFIG_OUTPUT_DIR');
     expect(harnessAdapterSource).not.toContain('loadCredentialPayload');
+  });
+});
+
+describe('OpenAI Codex authorize/exchange wire contract — measured from the Codex CLI 0.153.4', () => {
+  let tempRoot = '';
+
+  afterEach(() => {
+    if (tempRoot) fs.rmSync(tempRoot, { recursive: true, force: true });
+    tempRoot = '';
+    logSpies.error.mockClear();
+  });
+
+  it('mints the authorize request the CLI mints: its client_id next to its originator, scope and flow flags', () => {
+    tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-codex-authorize-'));
+    const service = createWireContractService(tempRoot);
+    const url = new URL(service.startAuthorization('operator-a'));
+    const params = url.searchParams;
+
+    expect(url.origin + url.pathname).toBe('https://auth.openai.com/oauth/authorize');
+    expect(params.get('client_id')).toBe(CODEX_CLI_CLIENT_ID);
+    expect(params.get('originator')).toBe(CODEX_CLI_ORIGINATOR);
+    expect(params.get('codex_cli_simplified_flow')).toBe('true');
+    expect(params.get('id_token_add_organizations')).toBe('true');
+    expect(params.get('scope')).toBe(CODEX_CLI_SCOPE);
+    expect(params.get('response_type')).toBe('code');
+    expect(params.get('code_challenge_method')).toBe('S256');
+    expect(params.get('redirect_uri')).toBe('http://localhost:1455/auth/callback');
+    expect(params.get('state')).toMatch(/^[0-9a-f]{32}$/);
+    expect(params.get('code_challenge')).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect([...params.keys()].sort()).toEqual([...CODEX_CLI_AUTHORIZE_KEYS].sort());
+  });
+
+  it('exchanges the code with the CLI request: one form POST to /oauth/token, its five fields, no Codex headers', async () => {
+    tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-codex-exchange-'));
+    const idToken = fakeJwt({ sub: 'account-wire', email: 'wire@example.test', chatgpt_account_id: 'account-wire', exp: Math.floor(Date.now() / 1000) + 3600 });
+    const endpoint = await serveTokenEndpoint((_capture, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ access_token: `${idToken}-access`, refresh_token: 'wire-refresh-token', id_token: idToken, expires_in: 3600 }));
+    });
+    try {
+      const service = createWireContractService(tempRoot, endpoint.issuer);
+      const authorize = new URL(service.startAuthorization('operator-a'));
+      const result = await service.completeAuthorization(authorize.searchParams.get('state') as string, 'ac_test-authorization-code');
+
+      expect(endpoint.requests).toHaveLength(1);
+      const [request] = endpoint.requests;
+      expect(request.method).toBe('POST');
+      expect(request.url).toBe('/oauth/token');
+      expect(request.headers['content-type']).toBe('application/x-www-form-urlencoded');
+      expect(request.headers.originator).toBeUndefined();
+      const body = new URLSearchParams(request.body);
+      expect([...body.keys()].sort()).toEqual(CODEX_CLI_EXCHANGE_FIELDS);
+      expect(body.get('grant_type')).toBe('authorization_code');
+      expect(body.get('code')).toBe('ac_test-authorization-code');
+      expect(body.get('client_id')).toBe(CODEX_CLI_CLIENT_ID);
+      expect(body.get('redirect_uri')).toBe('http://localhost:1455/auth/callback');
+      const digest = crypto.createHash('sha256').update(body.get('code_verifier') as string).digest('base64url');
+      expect(digest).toBe(authorize.searchParams.get('code_challenge'));
+
+      expect(result.userId).toBe('operator-a');
+      expect(result.platformPromoted).toBe(false);
+      expect(result.credentials.refreshToken).toBe('wire-refresh-token');
+      expect(result.credentials.accountId).toBe('account-wire');
+      expect((await service.getStatus('operator-a')).authenticated).toBe(true);
+    } finally {
+      await endpoint.close();
+    }
+  });
+
+  it('records cause and elapsed ms when the endpoint closes the connection, without the code or verifier, and never retries', async () => {
+    tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-codex-closed-socket-'));
+    const endpoint = await serveTokenEndpoint((_capture, res) => { res.socket?.destroy(); });
+    try {
+      const service = createWireContractService(tempRoot, endpoint.issuer);
+      const authorize = new URL(service.startAuthorization('operator-a'));
+      const startedAt = Date.now();
+      await expect(service.completeAuthorization(authorize.searchParams.get('state') as string, 'ac_closed-socket-code'))
+        .rejects.toThrow('fetch failed');
+      await new Promise((resolve) => setTimeout(resolve, RETRY_GRACE_MS));
+
+      expect(endpoint.requests).toHaveLength(1);
+      const verifier = new URLSearchParams(endpoint.requests[0].body).get('code_verifier') as string;
+      expect(verifier.length).toBeGreaterThan(20);
+      const { record, text } = readExchangeFailureRecord();
+      expect(record.tokenEndpoint).toBe(`${endpoint.issuer}/oauth/token`);
+      expect(record.status).toBeUndefined();
+      expect(record.headers).toBeUndefined();
+      expect(record.causeCode).toBe('UND_ERR_SOCKET');
+      expect(record.causeMessage).toBe('other side closed');
+      expect(record.timedOut).toBe(false);
+      expect(typeof record.elapsedMs).toBe('number');
+      expect(record.elapsedMs as number).toBeLessThanOrEqual(Date.now() - startedAt);
+      expect(text).not.toContain('ac_closed-socket-code');
+      expect(text).not.toContain(verifier);
+      expect(text).not.toContain('code_verifier=');
+      expect((await service.getStatus('operator-a')).authenticated).toBe(false);
+    } finally {
+      await endpoint.close();
+    }
+  });
+
+  it('records status, headers and the OAuth error on a 400, redacts cookies, omits the token material, and never retries', async () => {
+    tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-codex-rejected-'));
+    const endpoint = await serveTokenEndpoint((_capture, res) => {
+      res.writeHead(400, {
+        'Content-Type': 'application/json',
+        'Set-Cookie': '__cf_bm=cookie-material-that-must-not-be-logged; Path=/',
+        'X-Probe-Diagnostic': 'edge-verdict',
+      });
+      res.end(JSON.stringify({ error: 'invalid_grant', error_description: 'authorization code is not valid', access_token: 'rejected-exchange-token-sentinel' }));
+    });
+    try {
+      const service = createWireContractService(tempRoot, endpoint.issuer);
+      const authorize = new URL(service.startAuthorization('operator-a'));
+      await expect(service.completeAuthorization(authorize.searchParams.get('state') as string, 'ac_rejected-code'))
+        .rejects.toThrow(EXCHANGE_FAILURE_MESSAGE);
+      await new Promise((resolve) => setTimeout(resolve, RETRY_GRACE_MS));
+
+      expect(endpoint.requests).toHaveLength(1);
+      const verifier = new URLSearchParams(endpoint.requests[0].body).get('code_verifier') as string;
+      const { record, text } = readExchangeFailureRecord();
+      const headers = record.headers as Record<string, string>;
+      expect(record.status).toBe(400);
+      expect(headers['x-probe-diagnostic']).toBe('edge-verdict');
+      expect(headers['content-type']).toBe('application/json');
+      expect(headers['set-cookie']).toBe('[redacted]');
+      expect(record.errorCode).toBe('invalid_grant');
+      expect(record.errorDescription).toBe('authorization code is not valid');
+      expect(record.causeCode).toBeUndefined();
+      expect(typeof record.elapsedMs).toBe('number');
+      expect(text).not.toContain('cookie-material-that-must-not-be-logged');
+      expect(text).not.toContain('rejected-exchange-token-sentinel');
+      expect(text).not.toContain('ac_rejected-code');
+      expect(text).not.toContain(verifier);
+    } finally {
+      await endpoint.close();
+    }
   });
 });
 
