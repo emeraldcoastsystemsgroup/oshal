@@ -15,6 +15,50 @@ carries the evidence that survived an adversarial re-derivation and the correcti
 
 ## Promotion, deployment, and regression proof
 
+### A loader stamp pointing at an INACTIVE app fails ownership closed on the ticket list (2026-09-22)
+
+- **Measured on the box, on the `db02747f` boot:** `GET /api/tickets` raised
+  **8** `Ambiguous package ownership: no stamped owner` refusals, from exactly two agent ids. The
+  trace is `ticket-routes.js:152` → `Promise.all` (index 2011, so a per-ticket fan-out over the whole
+  list) → `canReadProtectedResult` → `isProtectedAgent` → `readApplicationExecutionOwnership` →
+  `readStampedOwner`, which throws; callers swallow it to `false`, so the protected result is treated
+  as unreadable.
+- **The mechanism, and it is NOT the multi-claim bug that `36dde7d6` fixed.** That commit made the
+  ADR-149 reader arbitrate a many-to-many `agent_ids` association using `agents.metadata.manifestApp`,
+  and it works: every multi-claimed agent on this box carries a stamp. What is unhandled is a stamp
+  that names an app which is **inactive**, so it is not among the *active* claimants and the reader
+  falls through to the fail-closed arm:
+  - `a0000000-…-0003` `code-reviewer`, active, stamped **`oshal-engineering`** — inactive. Its only
+    active claimant is `test-gate-flow`. 2 refusals.
+  - `a0000000-…-0016` `rca-specialist`, active, stamped **`intelligent-operations`** — inactive, as
+    are its other claimants `intelligent-processing` and `issue-rca`. 6 refusals.
+- **Why it appeared now.** Zero refusals were measured on 2026-09-21. Between then and now the set of
+  inactive apps grew (an accidental cold restart, then this deploy, with `create` additionally failing
+  auto-load on `authorization_catalog_migration_required`). The reader did not change; the population
+  it reads did. So this is latent on any box where an app is deactivated while its bot stays
+  registered and active — which is the normal state of a deactivated app.
+- **Fail-closed is the right default for an authorization path and must not be softened.** The
+  question is whether "the stamped owner is inactive" is genuinely unresolvable, or whether an
+  inactive owner should resolve and simply not grant, which is a different answer from refusing to
+  decide. That is an ADR-149 question, not a code tweak.
+- **A second, separate oddity found in the same query, recorded so it is not lost:** the assistant's
+  own agent row `a0000000-…-0050` `oshal-assistant` is **`status=inactive`** and stamped `jarvis`
+  (also inactive), while `swarm-routability-check.sh` reports its heartbeat live and the bot serves.
+  A row that says inactive while the bot runs is a contradiction worth explaining before anything is
+  built on `agents.status`. `general-bot` `a0000000-…-0099`, the fallback routing owner, carries **no
+  stamp at all**.
+- **Related but not the same:** PR `#778` and store `#249` correct two manifests that pin the wrong
+  bot's id and widen the integrity check to scan whole `agent_ids` arrays on active *and* inactive
+  apps. Neither touches the stamp-to-inactive-app path. Both were open and unverified when this was
+  found.
+- **Done when:** ADR-149 states what an inactive stamped owner means and the reader implements it
+  without softening the refusal for a genuinely unresolvable claim; a spec drives the real reader
+  against a real PostgreSQL carrying an active agent stamped to an INACTIVE app and proves the chosen
+  behaviour, extending `tests/unit/application-execution-ownership-postgres.spec.ts`; `GET /api/tickets`
+  as the operator returns every ticket he owns with no `Ambiguous package ownership` line across a full
+  boot; and the `oshal-assistant` row's `inactive`-while-heartbeating state is either explained in that
+  ADR or corrected.
+
 ### PICK UP HERE — what was in flight when the 2026-09-21/22 overnight ended
 
 **Read this first if you are resuming that session.** Nothing below is a defect; it is a map of
