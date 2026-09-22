@@ -4536,10 +4536,58 @@ are satisfied. Met, with the evidence recorded in the plan: every store manifest
 validating, and the launchers requiring only what they cannot run without. Still open:
 `marketplace.json` mirroring the new shape, and the Test Lab step `app-dependency-tiers` reporting
 pass instead of gap against the deployed API.
-### Twelve agent ids are claimed by more than one application (2026-09-14)
-- **Remaining:** `swarm_applications.agent_ids` is an *association* column (the loader fills it so Jarvis's catalog, mesh fan-out, selector composition and competency ranking can find an app's bot), but the ADR-149 reader `readApplicationExecutionOwnership` reads it as an *ownership* column and raises `Ambiguous package ownership` when an id resolves to more than one app. Twelve ids do; the full census, the evidence for each, and the measured blast radius are in [operations/agent-id-ownership-collisions.md](operations/agent-id-ownership-collisions.md). The refusal is **not new** — before `086832cf` (2026-09-14) the reader failed a type comparison and refused *every* id silently; that commit made unique ids work and these twelve loud. Since the 06:46:14Z boot, 682 refusals, all from `GET /api/tickets`, across 6 of the 12 ids; `career-hunter`/`job-apply` is the largest (204 refusals, 4 operator-owned tickets silently dropped from the operator's own list). Three different problems, and only one of them is "delete the squatter": (1) seven ids are claimed by loose Workflow Studio publish artifacts (`cluster-probe`, `durable-probe`, `smoke-parallel-2`, `smoke-parallel-flow`, `smoke-published-flow`, `test-gate-flow`, `capability-ideation`) or by stale rows whose manifest file no longer exists (`issue-rca`, `incident-remediation`) — none of them declares the bot it borrows; (2) two are carve mistakes where a manifest pinned a uuid it does not own — `trading` pinned `a0000000-…-0045` (`identity-advisor`, owned by `identity`) while the real `trading-analyst` is `…-0046`, and `brand-graphics` pinned `b00f0000-…-0001` (`drone-operator`); (3) the rest are **deliberate aliases** that are correct as designed (`communications-bot` across switchboard/social/email-summarizer, `vids-operator` across vids/creative-studio/video/daily-trade-recap, `career-hunter` across career-hunter/job-apply, `rca-specialist` across intelligent-operations/intelligent-processing) and must NOT be resolved by editing manifests. `scripts/swarm-app-bot-integrity-check.sh` passes and flags 13 of these advisorily, but cannot see the inactive squatters because it inspects only `agent_ids[1]` of active apps.
-- **Who decides:** the operator. (1) and (2) uninstall or edit applications installed on the operator's own box; (3) changes the ADR-149 authorization core, which is load-bearing and should not be touched without approval. Nothing in this entry has been performed.
-- **Done when:** the census query in the ops doc returns zero rows for classes (a), (b) and (d) — the seven borrowed ids released and the two mispinned uuids corrected in `oshal-applications` and reinstalled — AND the deliberate aliases of class (c) are readable rather than removed, because an association shared on purpose stopped being read as exclusive ownership: either the reader resolves a multi-claim to a single accountable owner from `agents.metadata.manifestApp` (which already carries exactly one stamp per agent), or a manifest declares ownership separately from association, recorded in an ADR amending ADR-149. A regression guard crosses the real boundary that failed — the real reader against a real PostgreSQL carrying a real multi-claimed `UUID[]` row, extending `tests/unit/application-execution-ownership-postgres.spec.ts`, never a doubled query — and proves a deliberately shared bot is readable while an unowned claim is not. The integrity check is widened to scan the whole `agent_ids` array of active *and* inactive apps so a reappearing squatter fails it. `GET /api/tickets` as the operator returns the four `career-hunter` tickets that are dropped today, and the api log shows zero `Ambiguous package ownership` lines across a full boot.
+### Two manifests pin a bot id that belongs to another app (2026-09-14, corrected 2026-09-21)
+
+- **Shipped:** the refusal this entry was opened for is fixed. `readApplicationExecutionOwnership`
+  arbitrates an ambiguous association with the loader-stamped `agents.metadata.manifestApp` instead
+  of refusing it (`36dde7d6`), guarded by `tests/unit/application-execution-ownership-postgres.spec.ts`
+  against real PostgreSQL carrying the real `UUID[]` column. Measured 2026-09-21 on the deployed api:
+  **zero** `Ambiguous package ownership` lines across a full 7,776-line boot log, against the 682 this
+  entry recorded. The symptom — operator-owned tickets silently dropped from `GET /api/tickets` — is
+  resolved.
+- **Operator correction (2026-09-21):** the original framing was wrong and is retracted.
+  `swarm_applications.agent_ids` is an **association** column and is many-to-many **by design** — it
+  exists so the catalog, mesh fan-out, selector composition and competency ranking can find an app's
+  bot. Several apps sharing one bot is CORRECT, not debris. The loader fills the column by resolving
+  `workflow.workerBot`, which is a bot **name** (`swarm-app-repository.ts`), and
+  `workflow-publish-compiler.ts` takes the same name — so a **published Workflow Studio workflow
+  reusing an existing bot is the feature working**, not a squatter. Publish is a shipped feature and
+  its published apps are real applications; "loose publish artifacts" and "squatters" were the wrong
+  words for them. Of the seven publish artifacts this entry named, six no longer exist;
+  `test-gate-flow` remains, is active, and is correctly associated with `code-reviewer`. Thirteen live
+  associations point at a bot another app owns and every one of them is deliberate —
+  `communications-bot` across switchboard/social/email-summarizer, `vids-operator` across
+  vids/creative-studio/video/daily-trade-recap, `career-hunter` across career-hunter/job-apply, and
+  `rca-specialist` with its siblings across the incident apps. None of them is to be "fixed", and the
+  census in [operations/agent-id-ownership-collisions.md](operations/agent-id-ownership-collisions.md)
+  is a historical record of the refusal, not a work list.
+- **Remaining — two wrong pins, and only two.** A wrong pin is not a shared association; it is a
+  manifest that DECLARES a bot (`bots: [{name, agentId}]`) under a uuid belonging to an agent with a
+  different name. Verified against the live registry — 68 declarations, exactly 2 mismatches:
+  - `brand-graphics` declared a bot named `brand-graphics` under `b00f0000-…-0001`, which is the drone
+    package's `drone-operator`. **Corrected** in `oshal-applications` at 1.1.1 to `b0110000-…-0001`,
+    unused in both repositories and in the live `agents` table. Not yet reinstalled on the box.
+  - `trading` declares `trading-analyst` under `a0000000-…-0045`, which is `identity-advisor`, owned
+    by `identity`. **There is no manifest to fix.** The row's `manifest_path` is
+    `/app/swarm-apps/trading.yaml`, a core manifest that exists in neither public repository and never
+    appears in this repo's history; the row is inactive, was loaded 2026-06-19 01:49Z and superseded
+    24 minutes later by the store package `intelligent-trades` (whose `trading-analyst` is the real
+    `a0000000-…-0046`, stamped `manifestApp = intelligent-trades`). It is a stale row from a retired
+    manifest, and deactivating or removing an installed application is the operator's call.
+- **Who decides:** the operator, for the `trading` row (it uninstalls an application installed on
+  their own box) and for reinstalling `brand-graphics` 1.1.1. Nothing has been performed against the
+  live database.
+- **Done when:** `bash scripts/swarm-app-bot-integrity-check.sh` reports no MISPINNED findings — which
+  requires `brand-graphics` 1.1.1 reinstalled and the stale `trading` row resolved — while the
+  thirteen deliberate shares stay a counted line rather than findings. The guard for the shape is
+  `tests/unit/swarm-app-bot-integrity-check-postgres.spec.ts`: it runs the REAL script against a
+  PostgreSQL it starts itself, carrying migrations 022 and 001, and proves the check goes **red on a
+  wrong pin** (declared name ≠ the live agent's name, on an *inactive* app) and **stays quiet on a
+  deliberate share** — in both shapes, a `workerBot` resolved by name with no `bots:` block, and an
+  explicit declaration whose name matches. Mutation-proved against the pre-change script, which
+  reported both deliberate shares as findings, missed the wrong pin entirely, and exited 0 on an
+  active app whose bot at `agent_ids[2]` was inactive. The exit contract is unchanged: 1 only for
+  BROKEN.
 
 ### Dependency tiers: four gaps the design surfaced (2026-09-14)
 
