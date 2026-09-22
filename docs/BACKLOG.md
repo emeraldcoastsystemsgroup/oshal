@@ -2235,6 +2235,29 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### ADR-045 graph-tier residuals
 - **Remaining:** decide/build RCA-persona graph use, add `subgraph()` if still needed, and make store-package graph dependencies explicit through `uses:` or an ADR-backed alternative.
 - **Done when:** each residual is implemented or explicitly rejected in [ADR-045](adr/045-two-tier-graph-database-and-connector.md), and package validation makes the graph dependency visible before activation.
+- **Decision (operator, 2026-09-21): OPTION A — promote `world-data` to a kernel skill.** A registry
+  entry in `src/shared/kernel-skills/registry.ts`, an export from the ADR-090 build anchor
+  `src/app/composition/kernel-skills.ts`, and `uses: world-data` added to the `world` package manifest
+  (which today declares only `[test-catalog, app-dependencies]`). That makes the dependency visible to
+  the Phase-3 `uses:` gate and pins the slice into `dist`, so the failure this residual describes — a
+  store package failing to mount on a customer box because an incidentally-imported slice was pruned,
+  the same silent-prune class that took `google-calendar` — cannot happen here. The kernel skill set
+  goes from 19 to 20; that is an architectural addition and is made deliberately.
+  **Option B was rejected on a measurement the decision document understates.** It records six
+  app-layer files importing `@/features/world-data`; on `origin/main` today it is **eleven** —
+  `src/app/routes/jarvis-brief-sections.ts` plus ten trading modules
+  (`trading-assess-dispatch`, `trading-dispatch-exits-entries`, `trading-dispatch-world-gate`,
+  `trading-earnings-rules`, `trading-research-dispatch`, `trading-schedule-dispatch`,
+  `trading-strategy-lab-sim`, `trading-world-masses`, `trading-world-signals`,
+  `world-schedule-dispatch`). Core may not import from a store package (CLAUDE.md Rule 0c), so moving
+  the slice into the `world` package means moving or breaking all eleven consumers — a far larger
+  change than the S this entry is sized at, and in the wrong direction: the world index is a system
+  utility used by core, not application code that happens to live in core.
+  This is consistent with the "principle of one" recorded under the seeding-repair entry the same
+  day: the world index is a swarm service, so it belongs to the platform and is declared as such,
+  rather than being reached by accident. ADR-045's other two residuals are already settled
+  (RCA-persona rewiring DONE, `subgraph()` WON'T BUILD), so this closes the entry once landed.
+  (PM recommended A and reported the eleven-consumer measurement; the operator chose A.)
 
 ### Workflow Studio draft execution and branching
 - **Remaining:** execute an unpublished draft through the production runtime and add a repeatable live graph-mode branching/parallelism spec.
