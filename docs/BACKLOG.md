@@ -2763,6 +2763,27 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### Combined home workspace
 - **Remaining:** compose communication, social, career, storage, media, and home package surfaces into one switchboard without copying their business logic; resolve the manifest bot requirement cleanly.
 - **Done when:** `/cockpit/?app=workspace` loads every enabled home app in one ribbon, preserves owner isolation, and routes each action/chat to the owning package. See [ADR-113](adr/113-switchboard-aggregation-surface-and-workspaces.md).
+- **Decision (operator, 2026-09-22): a FIXED-MEMBER ADR-141 group, store-only. No core change, and
+  ADR-141's "members are required" rule is not amended.** Members, six, named by the operator:
+  **home, social, career-hunter, storage, switchboard (communication), video (media)**. All six are
+  installed and active on the box today, so the group activates as soon as it is written. The
+  mechanism is already proven twice in the store — `intelligent-career/oshal-app.yaml:25` and
+  `marketing-suite/oshal-app.yaml:31` both ship `kind: group` with required members.
+- **The contradiction this resolves, recorded so it is not re-litigated.** The entry's done-when asked
+  that `?app=workspace` load every *enabled* home app, and a group cannot express that: members are
+  REQUIRED apps, `swarm-app-group.ts` fails activation when any member is not installed and active
+  (:372, :411), and its own change log says "optional apps are install-time offers, never members".
+  Optional membership would have meant a core change softening that rule and letting a group's
+  composition vary per box — which is precisely what ADR-141 chose against. The done-when is therefore
+  **amended** to the achievable and intended behaviour: the workspace activates when its six members
+  are present, and does not activate otherwise. A box missing a member getting no workspace is the
+  ADR working, not a defect.
+- **Trigger for revisiting optional membership:** a real install where the group fails to activate
+  because a member is absent. Evidence first; no core change before it.
+- **Done when:** a `workspace` group manifest exists in the store with exactly those six members;
+  `/cockpit/?app=workspace` borrows each member's surfaces by reference with no business logic copied
+  and no bot of its own; activation fails cleanly and says which member is missing when one is; and
+  the group is registered in the store catalog like its two siblings.
 
 ### OSHAL engineering-screen normalization
 - **Remaining:** apply the cockpit design system and verify live data contracts for task explorer, queue/admin, mesh, ops, health, config, Redis, and RAG screens.
