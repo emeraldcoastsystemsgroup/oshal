@@ -9,6 +9,7 @@
 # 5 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — infra.postgres.appPassword / botPassword (dev defaults oshal-app-dev / oshal-bot-dev): the oshal_app and oshal_bot passwords get a values path. api.yaml hardcoded oshal_app:oshal-app-dev, so the only escape was taking Postgres out of the cluster. jwtSecret, arangodb.rootUser/rootPassword and botDatabaseUrl are now rendered into chart-managed Secrets instead of the ConfigMap or literal env (templates/secrets.yaml), and the swarm.extraEnv comment records that the render refuses a chart-owned or credential-shaped key there. Guard: tests/unit/chart-credentials.spec.ts.
 # 6 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — infra.vault leaves dev mode: devRootToken is gone, and storage / ui / tls (enabled, secretName) configure a server-mode Vault on its own claim. tls defaults off (plain in-cluster listener) and the backup destination is unset, both because the operator has not named them yet; the comments say so. Guard: tests/unit/chart-vault-server.spec.ts.
 # 7 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — production-readiness baseline: resources (requests cpu+memory, a memory limit) for the nine infra workloads (infra.<name>.resources) and the relay's two containers; storageClassName chart-wide plus a per-claim override (infra.<name>.storageClassName, api.outputStorageClassName, swarm.workspaceStorageClassName, relay.stateStorageClassName), empty = the cluster default; pinned tags for every floating infra image (timescaledb 2.30.1-pg16, code-server 4.138.0, speaker-diarization 2.1.0-beta.1, ollama 0.34.2, tailscale v1.102.4, socat 1.8.1.3 - each the tag whose digest the floating tag resolved to on 2026-09-21, checked read-only against the registry); infra.diarization.pullPolicy so the registry sidecar no longer inherits a side-loaded platform image's Never. Guard: tests/unit/chart-production-baseline.spec.ts.
+# 8 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — the rbac comment records that a runtime-launched bot does not read oshal-shared-secret (the core launcher's envFrom is oshal-shared-env + oshal-bot-env), so it needs JWT_SECRET copied into oshal-bot-env, and where the copy command is printed. Guard: tests/unit/chart-dynamic-bot-env.spec.ts.
 #
 # Defaults model the compose stack (docker-compose.oshal-local.yml) with DNS parity:
 # Services are named oshal-redis / oshal-db / oshal-chromadb / oshal-api / oshal-local-api
@@ -471,6 +472,11 @@ fleets:
 # and apps whose bots run inline on the api still work. The api keeps its
 # BOT_DATABASE_URL either way: its app-role bootstrap provisions oshal_bot for the
 # chart-declared bots and refuses to start without it.
+#
+# A bot launched this way reads oshal-shared-env and the optional oshal-bot-env
+# Secret only, not oshal-shared-secret, so without JWT_SECRET it fails to boot.
+# Copy the chart Secret's keys into oshal-bot-env; NOTES.txt and the README
+# "Credentials" section print the command (docs/BACKLOG.md tracks the launcher fix).
 rbac:
   create: true
   serviceAccountName: oshal-api

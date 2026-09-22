@@ -893,6 +893,28 @@ including across a directory belonging to a different owner. Full reasoning and 
 - **Remaining:** chart 0.3.0 templates the whole tier (tsdb, arangodb, vault, code-server, diarization; ollama opt-in) and stages store packages via an api initContainer, but only template-level proof exists (lint, render matrix, `kubectl apply --dry-run`, a mutation-tested guard). Nothing has run against a live cluster.
 - **Done when:** on a real cluster — a staged store package serves its surface and survives an api pod restart; a trading query returns series from the in-cluster tsdb; `/api/graph` answers instead of 503; a transcription round-trips through the diarization Service; and `helm upgrade --set infra.arangodb.inCluster=false` degrades the graph cleanly (null connector, no connection-refused) rather than erroring.
 
+### k8s runtime-launched bots do not read the chart's `oshal-shared-secret` (chart 0.5.0)
+- **Remaining:** chart 0.5.0 moved `JWT_SECRET`, `ARANGO_ROOT_USER` and `ARANGO_ROOT_PASSWORD`
+  out of the `oshal-shared-env` ConfigMap into the `oshal-shared-secret` Secret. Chart-declared bots
+  `envFrom` that Secret. A bot the controller launches at runtime does not:
+  `buildBotDeployment` in `src/features/agent-management/services/kubernetes-bot-launcher.ts`
+  hardcodes `envFrom` to `oshal-shared-env` plus the optional `oshal-bot-env`. The ConfigMap sets
+  `NODE_ENV=production`, so such a bot throws `JWT_SECRET must be set in production`
+  (`any-bot/server/utils/config.js`) at boot unless the operator's `oshal-bot-env` carries the key.
+  Until this is fixed, the operator closes the gap by hand. With `rbac.botLauncher` on, NOTES.txt
+  prints the command that copies the chart Secret's keys into `oshal-bot-env`, and the chart
+  README "Credentials" section documents it. `tests/unit/chart-dynamic-bot-env.spec.ts` measures
+  the gap from the real launcher and render, proves it is boot-fatal against the real config
+  module, and holds the chart to the warning while the gap exists. The fix is a core change and
+  needs operator approval first (CLAUDE.md Rule 0d). Proposed: add
+  `{ secretRef: { name: 'oshal-shared-secret' } }` to the launcher's `envFrom`, after the ConfigMap
+  and before `oshal-bot-env`, and update `tests/unit/dynamic-bot-runtime-launcher.spec.ts`.
+- **Done when:** the launcher's `envFrom` names `oshal-shared-secret`;
+  `tests/unit/chart-dynamic-bot-env.spec.ts` finds no key that a chart-declared bot gets from the
+  chart and a runtime-launched bot does not, and the NOTES.txt and README copy steps are removed
+  (that spec is red until they are); and on a cluster, a bot launched at runtime by an installed app
+  reaches Ready with no `JWT_SECRET` in `oshal-bot-env`.
+
 ### Rides map and fare follow-ups
 - **Remaining:** install the merged [`rides`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/rides) package; decide optional OSRM/Valhalla and Google Maps billing paths; make geocode/tile configuration operator-owned and the normalized-address cache durable.
 - **Decision (operator, 2026-09-20):** (1) keyless routing = straight-line x 1.3, ACCEPTED, to be labelled as an estimate in the surface; `OSHAL_ROUTING_URL` is to be built as an optional override so a routing engine can be plugged in later without a code change; (2) maps = OSM only -- no Google browser key and no Google billing; (3) install `rides` 1.3.0 on the box -- APPROVED, after the 2026-09-20 deploy lands. The remaining code (durable geocode cache, configurable geocoder endpoint) follows from these and is actionable. (PM recommended exactly this; the operator agreed.)

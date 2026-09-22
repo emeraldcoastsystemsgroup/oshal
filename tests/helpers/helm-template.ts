@@ -5,9 +5,12 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Shared real-`helm template` renderer for the chart guards written after the first Docker Desktop Kubernetes install (chart-readiness-probes, chart-shared-env-extra, chart-monitoring-parity). One copy, so a flag or parse change reaches every guard that uses it. A missing helm binary is a loud failure, never a skip: these guards render the REAL chart.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | resolvedEnv: the environment a container actually starts with, resolved the way the kubelet does it - envFrom sources in order (later wins), then explicit env entries over all of them - against the ConfigMaps and Secrets the SAME render creates. A reference to an object the chart does not render (the optional api.envSecret an operator creates) resolves to nothing, because a guard asking "does the chart supply this" must not count a Secret nobody has made. Used by the bootstrap-env guard (rbac.botLauncher=false) and every guard that reads a value moved out of a literal env entry.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | helmNotes: the text `helm install` would print from templates/NOTES.txt, rendered offline. `helm template` never prints NOTES.txt and `helm install --dry-run` is an install command, so this copies the chart to a temp dir, wraps NOTES.txt unchanged in a named template, and has a probe ConfigMap include it: the same engine, values and helpers render the same file, with no cluster and no install. The helm call is shared with helmTemplate (runHelm), so both fail the same loud way. Used by the runtime-launched-bot guard (chart-dynamic-bot-env), whose fix is an install-time warning.
  */
 
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import yaml from 'js-yaml';
 
@@ -31,6 +34,36 @@ export interface RenderOptions {
 }
 
 const renders = new Map<string, K8sObject[]>();
+const notesRenders = new Map<string, string>();
+let notesChartDir: string | undefined;
+
+/**
+ * @description Run `helm template` on a chart directory and return its stdout. A missing binary
+ * or a render error is thrown, never skipped: these guards render the REAL chart.
+ * @param chartDir chart to render
+ * @param opts --set expressions and values files
+ * @param extra further helm arguments (for example --show-only)
+ * @returns {string} the rendered manifests
+ */
+function runHelm(chartDir: string, opts: RenderOptions, extra: string[] = []): string {
+  const sets = opts.sets ?? [];
+  const files = opts.valuesFiles ?? [];
+  const args = [
+    'template', 'oshal', chartDir, '--namespace', 'oshal',
+    ...files.flatMap((f) => ['-f', f]),
+    ...sets.flatMap((s) => ['--set', s]),
+    ...extra,
+  ];
+  try {
+    return execFileSync('helm', args, {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: RENDER_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024,
+    });
+  } catch (err) {
+    const e = err as { code?: string; stderr?: string; message: string };
+    const why = e.code === 'ENOENT' ? 'the helm binary is not on PATH' : (e.stderr || e.message);
+    throw new Error(`helm template failed (${JSON.stringify([files, sets])}): ${why} - this guard renders the REAL chart and does not skip`);
+  }
+}
 
 /**
  * @description Render deploy/helm/oshal with the real helm binary (namespace `oshal`, release
@@ -39,31 +72,54 @@ const renders = new Map<string, K8sObject[]>();
  * @returns {K8sObject[]} every rendered object that carries a kind
  */
 export function helmTemplate(opts: RenderOptions = {}): K8sObject[] {
-  const sets = opts.sets ?? [];
-  const files = opts.valuesFiles ?? [];
-  const key = JSON.stringify([files, sets]);
+  const key = JSON.stringify([opts.valuesFiles ?? [], opts.sets ?? []]);
   const cached = renders.get(key);
   if (cached) return cached;
-  const args = [
-    'template', 'oshal', CHART_DIR, '--namespace', 'oshal',
-    ...files.flatMap((f) => ['-f', f]),
-    ...sets.flatMap((s) => ['--set', s]),
-  ];
-  let out: string;
-  try {
-    out = execFileSync('helm', args, {
-      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: RENDER_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024,
-    });
-  } catch (err) {
-    const e = err as { code?: string; stderr?: string; message: string };
-    const why = e.code === 'ENOENT' ? 'the helm binary is not on PATH' : (e.stderr || e.message);
-    throw new Error(`helm template failed (${key}): ${why} - this guard renders the REAL chart and does not skip`);
-  }
-  const docs = (yaml.loadAll(out) as unknown[]).filter(
+  const docs = (yaml.loadAll(runHelm(CHART_DIR, opts)) as unknown[]).filter(
     (d): d is K8sObject => Boolean(d && typeof d === 'object' && (d as K8sObject).kind),
   );
   renders.set(key, docs);
   return docs;
+}
+
+/**
+ * @description A throwaway copy of the chart whose only addition is a probe ConfigMap carrying the
+ * rendered NOTES.txt. NOTES.txt itself is copied byte for byte inside a named template, so the
+ * probe renders exactly the file helm install would print. Created once per run, removed at exit.
+ * @returns {string} the probe chart directory
+ */
+function notesProbeChart(): string {
+  if (notesChartDir) return notesChartDir;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-notes-'));
+  process.on('exit', () => fs.rmSync(root, { recursive: true, force: true }));
+  const chart = path.join(root, 'oshal');
+  fs.cpSync(CHART_DIR, chart, { recursive: true });
+  const notes = fs.readFileSync(path.join(chart, 'templates', 'NOTES.txt'), 'utf8');
+  fs.writeFileSync(path.join(chart, 'templates', '_zz-notes-probe.tpl'), `{{- define "oshal.zzNotesProbe" -}}\n${notes}\n{{- end -}}\n`);
+  fs.writeFileSync(path.join(chart, 'templates', 'zz-notes-probe.yaml'), [
+    'apiVersion: v1', 'kind: ConfigMap', 'metadata:', '  name: oshal-zz-notes-probe', 'data:',
+    '  NOTES.txt: {{ include "oshal.zzNotesProbe" . | toJson }}', '',
+  ].join('\n'));
+  notesChartDir = chart;
+  return chart;
+}
+
+/**
+ * @description The post-install notes `helm install` would print for these values, rendered
+ * offline from templates/NOTES.txt (see notesProbeChart). Memoised per option set.
+ * @param opts --set expressions and values files; empty renders the chart defaults
+ * @returns {string} the rendered NOTES.txt text
+ */
+export function helmNotes(opts: RenderOptions = {}): string {
+  const key = JSON.stringify([opts.valuesFiles ?? [], opts.sets ?? []]);
+  const cached = notesRenders.get(key);
+  if (cached !== undefined) return cached;
+  const out = runHelm(notesProbeChart(), opts, ['--show-only', 'templates/zz-notes-probe.yaml']);
+  const probe = yaml.load(out) as { data?: Record<string, string> } | undefined;
+  const text = probe?.data?.['NOTES.txt'];
+  if (typeof text !== 'string') throw new Error('the NOTES.txt probe rendered no text - the probe chart is broken, not the notes');
+  notesRenders.set(key, text);
+  return text;
 }
 
 /**

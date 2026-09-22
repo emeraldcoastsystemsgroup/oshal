@@ -110,8 +110,24 @@ the chart keeps in either the ConfigMap or `oshal-shared-secret`, and any creden
 
 A bot the controller launches at runtime (see [Dynamic bots](#dynamic-bots--apps-bring-their-own))
 is built by `src/features/agent-management/services/kubernetes-bot-launcher.ts`, not by this
-chart. Its `envFrom` names `oshal-shared-env` and `oshal-bot-env` only. It gets `JWT_SECRET` and
-`ARANGO_ROOT_*` only if your `oshal-bot-env` Secret carries them.
+chart. Its `envFrom` names `oshal-shared-env` and `oshal-bot-env` only, so it does not get
+`oshal-shared-secret`: no `JWT_SECRET`, `ARANGO_ROOT_USER` or `ARANGO_ROOT_PASSWORD`. Without
+`JWT_SECRET` such a bot fails to boot, because the ConfigMap sets `NODE_ENV=production` and the
+bot's config (`any-bot/server/utils/config.js`) then throws `JWT_SECRET must be set in production`.
+Chart-declared bots are not affected. Until the launcher reads `oshal-shared-secret` itself, which
+is a core change tracked in [the backlog](../../../docs/BACKLOG.md), copy the chart Secret's keys
+into `oshal-bot-env`. With `rbac.botLauncher` on, `helm install` prints the same commands:
+
+```bash
+kubectl -n oshal create secret generic oshal-bot-env   # only if it does not exist yet
+kubectl -n oshal patch secret oshal-bot-env --type merge \
+  -p "{\"data\":$(kubectl -n oshal get secret oshal-shared-secret -o jsonpath='{.data}')}"
+```
+
+The copy is a snapshot. Run the patch again after you change `swarm.jwtSecret`,
+`infra.arangodb.rootUser` or `infra.arangodb.rootPassword`. With the default
+`botDefaults.envSecret: oshal-bot-env`, chart-declared bots list `oshal-bot-env` after
+`oshal-shared-secret`, so a stale copy would override the new value for them too.
 
 ## Shared services
 
@@ -304,8 +320,10 @@ controller writes a compose overlay and starts the container; on a cluster it
 creates a **Deployment + Service in this namespace**, using the same shape as a
 chart-declared bot (bot entrypoint, `oshal-shared-env` + `oshal-bot-env`, the
 workspace PVC, and a Service named for the bot because that name *is* the DNS the
-controller dials). Those runtimes are labelled `oshal.io/dynamic: "true"`, so
-`helm upgrade` never adopts or deletes them.
+controller dials). One difference: it does not read `oshal-shared-secret`, so it
+needs `JWT_SECRET` copied into `oshal-bot-env` (see [Credentials](#credentials)).
+Those runtimes are labelled `oshal.io/dynamic: "true"`, so `helm upgrade` never
+adopts or deletes them.
 
 That needs the `rbac:` block — a ServiceAccount plus a **namespace-scoped Role**
 (never a ClusterRole) over Deployments/Services. Set `rbac.botLauncher: false` to

@@ -5,6 +5,7 @@ SEQ                 | AUTHOR                      | DESCRIPTION
 -----------------------------------------------------------------------------
 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — post-install notes per role: how to reach the cockpit, fleet summary, relay/tailnet steps (ADR-129).
 2 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — with in-cluster Vault, say it comes up SEALED and uninitialized (server mode, Shamir keys held by the operator), what answers 503 until it is unsealed, and the two kubectl exec commands; the README "Vault runbook" has the rest.
+3 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — with rbac.botLauncher on, warn that a bot the controller launches at runtime does not get oshal-shared-secret (the launcher's envFrom is oshal-shared-env + oshal-bot-env only), so without JWT_SECRET it fails to boot, and print the command that copies the chart Secret's keys into oshal-bot-env. Closing the gap in the launcher is a core change awaiting approval (docs/BACKLOG.md). Guard: tests/unit/chart-dynamic-bot-env.spec.ts.
 */ -}}
 oshal {{ .Values.role }} cluster deployed (chart {{ .Chart.Version }}).
 
@@ -39,6 +40,16 @@ with you). Until then the DevOps Vault console answers 503; nothing else waits o
   kubectl -n {{ .Release.Namespace }} exec -ti oshal-vault-0 -- vault operator init
   kubectl -n {{ .Release.Namespace }} exec -ti oshal-vault-0 -- vault operator unseal
 Runbook: deploy/helm/oshal/README.md ("Vault runbook").
+{{- end }}
+{{- if .Values.rbac.botLauncher }}
+Runtime-launched bots: a bot the controller launches at runtime (an app that brings
+its own bot-node) reads oshal-shared-env and the optional oshal-bot-env Secret, not
+oshal-shared-secret. Without JWT_SECRET it fails to boot with
+"JWT_SECRET must be set in production". Copy the chart Secret's keys into
+oshal-bot-env now, and again after you change swarm.jwtSecret or infra.arangodb.root*:
+  kubectl -n {{ .Release.Namespace }} create secret generic oshal-bot-env   # only if it does not exist yet
+  kubectl -n {{ .Release.Namespace }} patch secret oshal-bot-env --type merge -p "{\"data\":$(kubectl -n {{ .Release.Namespace }} get secret oshal-shared-secret -o jsonpath='{.data}')}"
+Details: deploy/helm/oshal/README.md ("Credentials").
 {{- end }}
 {{- else }}
 
