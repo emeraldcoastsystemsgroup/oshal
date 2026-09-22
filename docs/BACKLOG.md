@@ -2657,10 +2657,6 @@ including across a directory belonging to a different owner. Full reasoning and 
   shape recorded under decision 19 (a written threat model plus an adversarial pass, not a checkbox),
   and it is wasted effort to run it against a design whose runtime dependency is still being built.
 
-### Alexa-exclusive control path
-- **Remaining:** defer until an Alexa-only device requires it; then register Login with Amazon and a certified Smart Home Skill under the business account.
-- **Done when:** the certified skill controls that device through scoped user consent and revocation; devices reachable through the edge-agent path do not create duplicate integrations.
-
 ### Operator credential/configuration follow-ups
 - **Remaining:** register Outlook under `maintainer@emeraldcoastsystemsgroup.com`, set real daily cost caps, and configure `SWARM_SERVICE_SECRET` so bot-node auth is fail-closed.
 - **Done when:** Outlook reconnects and sends, at least one budget denial is proven, and unauthenticated `/api/swarm-execute` is rejected on the deployed stack.
