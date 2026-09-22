@@ -5,11 +5,33 @@
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial (ADR-129 amendment) — in-cluster Vault in DEV MODE (compose oshal-vault parity: `server -dev`, in-memory, auto-unsealed, fixed root token), main role only. No compose profile, so a default `up` starts it. Deliberately NOT a production secrets posture: dev mode loses everything on restart. A real deployment sets inCluster: false and points VAULT_ADDR/VAULT_TOKEN at a real Vault through api.envSecret — which is why there is no PVC here to imply durability it does not have.
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — the Helm half of "Production Vault hardening": no more `server -dev`, no devRootToken, no root token anywhere in the chart. Vault runs in server mode as a one-replica StatefulSet with file storage on its own claim (data-oshal-vault-0) and a config rendered from values (listener, storage, ui) into the oshal-vault-config ConfigMap. TLS is a values switch (infra.vault.tls) that defaults to the plain in-cluster listener, because the certificate source is not decided yet. Unseal custody is Shamir with the operator (no cloud-KMS auto-unseal), so a fresh install comes up SEALED and UNINITIALIZED until the operator runs `vault operator init` / `unseal` (README "Vault runbook"). The probes ask /v1/sys/health with sealedcode/uninitcode 200: a sealed Vault is a healthy process doing what it should, so it is Ready (`helm --wait` completes, and the api's status call reads "sealed" instead of "unreachable") and never restart-looped by liveness. Runs as the image's vault user (uid 100, gid 1000) with every capability dropped: SKIP_CHOWN/SKIP_SETCAP keep the entrypoint from needing root, and disable_mlock replaces the IPC_LOCK capability the dev pod added (no swap is the Kubernetes node default). Guard: tests/unit/chart-vault-server.spec.ts.
 # 3 | maintainer@emeraldcoastsystemsgroup.com   | Production-readiness baseline (chart 0.5.0): resources from infra.vault.resources, storageClassName on the claim template, and the shared seccomp/minimal-capability helpers in place of the inline copies. Guard: tests/unit/chart-production-baseline.spec.ts.
+# 4 | maintainer@emeraldcoastsystemsgroup.com   | Vault gets its own ServiceAccount (infra.vault.serviceAccount, created by default as oshal-vault) and the StatefulSet pod runs as it. On the first Docker Desktop install the pod ran as the namespace's `default` ServiceAccount, which every infra pod without one of its own shares, so any RBAC the Vault Kubernetes secrets engine needs (work-package item 14) would have been granted to postgres, redis and the rest as well. The chart binds NO Role, RoleBinding or ClusterRole to it: the engine's per-tenant least-privilege Role is operator config, and README "Vault runbook" carries the example. An empty name (the pod would fall back to `default`), the api's ServiceAccount (Vault would hold the bot-launcher Role) and create=true with the name `default` (every namespace already has it) fail the render. The token mount is left at its default because the engine authenticates to the API server with the pod's own token. Nothing else in the pod changes. Guard: tests/unit/chart-vault-service-account.spec.ts.
 {{- if and (eq .Values.role "main") .Values.infra.vault.inCluster }}
 {{- $v := .Values.infra.vault }}
+{{- $sa := $v.serviceAccount }}
 {{- $scheme := ternary "https" "http" $v.tls.enabled }}
 {{- if and $v.tls.enabled (not $v.tls.secretName) }}
 {{- fail "infra.vault.tls.enabled=true needs infra.vault.tls.secretName (default oshal-vault-tls): a kubernetes.io/tls Secret you create, carrying tls.crt, tls.key and ca.crt, for a certificate that names oshal-vault" }}
+{{- end }}
+{{- if not $sa.name }}
+{{- fail "infra.vault.serviceAccount.name is empty: the Vault pod would run as the namespace's default ServiceAccount, which other pods share, so RBAC granted to Vault would reach them too. Name one (the default is oshal-vault)" }}
+{{- end }}
+{{- if eq $sa.name .Values.rbac.serviceAccountName }}
+{{- fail (printf "infra.vault.serviceAccount.name %q is the api's ServiceAccount (rbac.serviceAccountName): Vault would hold the bot-launcher Role, and the api whatever RBAC Vault is given. Give Vault its own" $sa.name) }}
+{{- end }}
+{{- if and $sa.create (eq $sa.name "default") }}
+{{- fail "infra.vault.serviceAccount.create=true cannot create a ServiceAccount named default: every namespace already has one, and it is the shared identity this setting exists to avoid" }}
+{{- end }}
+{{- if $sa.create }}
+# Vault's own identity. The chart binds no Role, RoleBinding or ClusterRole to it: what the
+# Kubernetes secrets engine needs is operator config, per tenant (README "Vault runbook").
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $sa.name }}
+  labels:
+    {{- include "oshal.labels" . | nindent 4 }}
+---
 {{- end }}
 apiVersion: v1
 kind: ConfigMap
@@ -61,6 +83,8 @@ spec:
         # A config change restarts the pod (and so re-seals Vault: plan the unseal).
         checksum/config: {{ toJson (dict "ui" $v.ui "tls" $v.tls) | sha256sum | trunc 16 }}
     spec:
+      # Vault's own ServiceAccount, never the namespace default the other pods share.
+      serviceAccountName: {{ $sa.name }}
       # The image's vault user (uid 100, gid 1000); fsGroup makes the claim writable to it.
       securityContext:
         runAsNonRoot: true

@@ -13,6 +13,7 @@
 # 9 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — the swarm.extraEnv comment records the credential-name rule's known false positive: a non-secret switch such as compose's REMOTE_CLIENT_REQUIRE_NODE_TOKEN is refused too, and goes on the workload that reads it (api.extraEnv). Guard: tests/unit/chart-shared-env-extra.spec.ts.
 # 10 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — limitRange.enabled (default true, main role): the oshal-container-defaults LimitRange gives botDefaults.resources to any container that sets none, because the runtime bot launcher sets no resources and a ResourceQuota that requires requests would refuse its pods. The rbac comment now says plainly that the missing JWT_SECRET is a 0.5.0 regression for runtime bots on the default posture, names the one-line core fix, and records that such a bot also lacks a securityContext and liveness/startup probes, which no LimitRange can default. Guard: tests/unit/chart-runtime-bot-defaults.spec.ts.
 # 11 | maintainer@emeraldcoastsystemsgroup.com   | api.uiProfilesConfigMap: the cockpit's UI profiles (config-seed/profiles/*.json) now reach the api — seeded from the image by default, or from this ConfigMap.
+# 12 | maintainer@emeraldcoastsystemsgroup.com   | infra.vault.serviceAccount (create: true, name: oshal-vault): Vault's own ServiceAccount. The pod ran as the namespace's `default` ServiceAccount, shared by every infra pod, so RBAC for the Vault Kubernetes secrets engine would have reached all of them. The chart grants it no RBAC; the engine's per-tenant Role is operator config (README "Vault runbook"). Guard: tests/unit/chart-vault-service-account.spec.ts.
 #
 # Defaults model the compose stack (docker-compose.oshal-local.yml) with DNS parity:
 # Services are named oshal-redis / oshal-db / oshal-chromadb / oshal-api / oshal-local-api
@@ -193,6 +194,17 @@ infra:
       secretName: oshal-vault-tls
     # Backups: NOT DECIDED YET either. The chart ships no backup job for
     # data-oshal-vault-0 (README "Durability boundary").
+    # Vault's own ServiceAccount, so what the Kubernetes secrets engine needs can
+    # be granted to Vault alone. Without one the pod runs as the namespace's
+    # `default` ServiceAccount, which every other infra pod shares. The chart
+    # grants it NO RBAC: the engine's least-privilege Role/RoleBinding is operator
+    # config, applied per tenant (README "Vault runbook" has the example).
+    # create: false uses a ServiceAccount you created, by this name. An empty name
+    # or the api's (rbac.serviceAccountName) fails the render. Changing this
+    # restarts oshal-vault-0, which comes back sealed.
+    serviceAccount:
+      create: true
+      name: oshal-vault
   codeServer:
     # Workspace IDE the cockpit's /code bridge redirects to. Serves the shared
     # workspace PVC read-write.

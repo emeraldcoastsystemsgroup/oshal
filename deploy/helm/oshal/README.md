@@ -248,6 +248,76 @@ Not decided yet, so the chart ships defaults and says so:
 - **Backup destination.** None. `data-oshal-vault-0` is an ordinary claim, like every
   other one in the durability boundary below.
 
+### Vault's ServiceAccount and the Kubernetes secrets engine
+
+`oshal-vault-0` runs as its own ServiceAccount, `oshal-vault`
+(`infra.vault.serviceAccount`, created by the chart by default). It does not run as the
+namespace's `default` ServiceAccount. Every infra pod without an account of its own
+shares that one, so RBAC granted to `default` for Vault would reach Postgres, Redis and
+the rest as well. `create: false` uses a ServiceAccount you created, under `name`. An
+empty name, or the api's ServiceAccount (`rbac.serviceAccountName`), fails the render.
+Upgrading from a chart that did not set it changes the Vault pod, so `oshal-vault-0`
+restarts and comes back sealed: plan the unseal.
+
+**The chart binds no Role, RoleBinding or ClusterRole to `oshal-vault`.** The Kubernetes
+secrets engine needs RBAC in each tenant namespace it issues credentials for. That RBAC
+is operator config, applied per tenant. It is not rendered by the chart.
+
+Below is an **example**, for the mode where Vault generates a ServiceAccount for each
+credential and binds it to a Role you have already written (`kubernetes_role_name`).
+These are the minimal rules for that mode. The tenant namespace is `tenant-a`, and
+`tenant-a-reader` is the Role its credentials carry. Apply one copy per tenant, with
+both names changed:
+
+```yaml
+# EXAMPLE: operator config, one per tenant namespace. Not rendered by the chart.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vault-secrets-engine
+  namespace: tenant-a
+rules:
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["get", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["serviceaccounts/token"]
+    verbs: ["create"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings"]
+    verbs: ["get", "create", "delete"]
+  # bind lets Vault create a RoleBinding to the Role it hands out without holding that
+  # Role's permissions itself; resourceNames keeps it to that one Role.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles"]
+    verbs: ["bind"]
+    resourceNames: ["tenant-a-reader"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vault-secrets-engine
+  namespace: tenant-a
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: vault-secrets-engine
+subjects:
+  - kind: ServiceAccount
+    name: oshal-vault
+    namespace: oshal
+```
+
+It grants nothing cluster-wide, nothing in the `oshal` namespace, no access to Secrets,
+and `bind` on no Role but `tenant-a-reader`. Writing `tenant-a-reader` itself, scoped to
+what a tenant credential may do, is also yours. The Vault role that hands it out names
+the same Role and namespace:
+
+```bash
+vault write kubernetes/roles/tenant-a-reader \
+  allowed_kubernetes_namespaces=tenant-a kubernetes_role_name=tenant-a-reader token_default_ttl=10m
+```
+
 ## Durability boundary
 
 This chart is the **single-box product**, the same posture as a default
