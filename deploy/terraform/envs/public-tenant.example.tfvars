@@ -5,6 +5,7 @@
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the multi-user SINGLE PUBLIC TENANT posture, as a copy-and-fill template. One namespace = one tenant; many users share it via real OIDC; per-user isolation comes from the app (ADR-076 RLS + oshal_app role, per-user AES-GCM connector tokens), not from Kubernetes. Copy to terraform.tfvars (gitignored) and fill the CHANGE-ME values — never commit real secrets.
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | Full production bot fleet (35 bots) extracted from docker-compose.oshal-local.yml for the weekend prod-on-k8s migration: name = compose service name (= registry container = the DNS the controller dials), botName/personaFile where they differ, per-bot codex overrides + UI/store env as extraEnv. self-healing-bot deliberately absent (its remediation tools are docker-socket-bound — invalid on k8s).
 # 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-129 refresh: chart_path defaults to the in-repo chart; image_repository points at the live public GHCR package; LLM default follows the codex fleet floor (operator directive 2026-08-12 — per-bot registry overrides, not a flipped global). NOTE: chart 0.2.0 ships GENERATED fleet presets — `fleet = "full"` replaces hand-maintaining this bots[] list (kept for per-bot extraEnv control; entries may lag compose).
+# 4 | maintainer@emeraldcoastsystemsgroup.com   | List the shared-service switches the module now forwards (tsdb_/arangodb_/vault_/code_server_/diarization_in_cluster, code_server_external_url) beside postgres_in_cluster, commented at their defaults, so a tenant filling this template sees that each service can leave the namespace and where its URL then goes.
 
 # Target cluster (gaming-PC kind, any k8s ≥1.27).
 kube_context = "CHANGE-ME" # e.g. kind-oshal-tf
@@ -57,6 +58,16 @@ ingress_tls_secret = "oshal-cockpit-tls"
 # api_extra_secret_env instead.
 postgres_in_cluster = true
 postgres_password   = "CHANGE-ME"
+
+# The rest of the shared-service tier. Each defaults to in-cluster, like the
+# chart. Set one false to run that service outside this namespace and put its
+# URL/credentials in api_extra_secret_env (table in deploy/terraform/README.md).
+# tsdb_in_cluster          = true
+# arangodb_in_cluster      = true
+# vault_in_cluster         = true
+# code_server_in_cluster   = true
+# code_server_external_url = "https://ide.example.com" # the cockpit /code link
+# diarization_in_cluster   = true
 
 # Optional extras:
 # api_extra_env        = { REJECT_LOOP_TICKETS = "true" }

@@ -1,13 +1,37 @@
 #!/bin/bash
 # =============================================================================
+# LEGACY — DO NOT DEPLOY
+# Part of the quarantined pre-chart Kubernetes generation. It builds a Docker image
+# that runs the legacy any-bot installer (scripts/setup-any-bot-k8s-cli.js), which
+# renders ops/any-bot-k8s with oshal-api-server:latest (an image nothing in this repo
+# builds). The current Kubernetes path is the Helm chart at deploy/helm/oshal: read
+# docs/k8/README.md and docs/adr/129-codeless-k8s-install-path.md. The script
+# refuses to run unless OSHAL_ALLOW_LEGACY_K8S=1 is set, so nothing is lost while
+# delete-vs-quarantine is still open (docs/k8/remote-cluster-work-package.md, item 9).
+# =============================================================================
 # CHANGE LOG
 # -----------------------------------------------------------------------------
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Added Docker image build/export helper for the any-bot Kubernetes installer so it can be distributed without a Docker registry
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Quarantined as legacy (remote-cluster work package item 9): a LEGACY banner, and a refusal that runs before any node or docker call unless OSHAL_ALLOW_LEGACY_K8S=1. The printed docker run hint now passes the override, because the image's entrypoint is the installer CLI, which refuses without it. Guard: tests/unit/k8s-legacy-quarantine.spec.ts.
 # =============================================================================
 
 set -euo pipefail
+
+# Quarantine gate. It runs first, so no node or docker call happens before it.
+if [ "${OSHAL_ALLOW_LEGACY_K8S:-}" != "1" ]; then
+  printf '%s\n' \
+    "REFUSED: scripts/build-any-bot-k8s-installer-image.sh is part of the quarantined legacy Kubernetes generation." \
+    "It builds an image that runs the legacy any-bot installer (ops/any-bot-k8s, image oshal-api-server:latest, which nothing in this repo builds)." \
+    "" \
+    "The current Kubernetes path is the Helm chart at deploy/helm/oshal:" \
+    "  bash scripts/oshal-install.sh --mode 4 --admin-email you@example.com" \
+    "Read docs/k8/README.md and docs/adr/129-codeless-k8s-install-path.md." \
+    "" \
+    "To run this legacy script anyway, set OSHAL_ALLOW_LEGACY_K8S=1." >&2
+  exit 2
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -81,6 +105,7 @@ fi
 
 echo "[any-bot-k8s] Run installer container with something like:"
 echo "  docker run --rm -it \\
+    -e OSHAL_ALLOW_LEGACY_K8S=1 \\
     -v \"\$PWD/ops/any-bot-k8s/setup.env:/workspace/setup.env:ro\" \\
     -v \"\$PWD/output:/workspace/output\" \\
     -v \"\$HOME/.kube:/root/.kube:ro\" \\

@@ -665,6 +665,17 @@ Two documentation inconsistencies to resolve as part of this:
 **Done-when:** no backlog entry. Proposed: `node scripts/docs-link-check.js` stays clean, and no doc
 in `docs/` routes a reader to `oshal-api-server:latest` as a current path.
 
+**Status (2026-09-21): done, with the legacy generation QUARANTINED, not deleted.** Deleting it is
+still an operator decision. Every file above is kept. The legacy manifests and entry points carry a
+`LEGACY — DO NOT DEPLOY` banner. The entry points (`setup-oshal-k8s.sh`, `install-k8s.sh`,
+`setup-any-bot-k8s.sh`, `setup-any-bot-k8s-cli.js`, the `build-any-bot-k8s-*` scripts, and so every
+`k8:*` script and the `package.json` bin) refuse unless `OSHAL_ALLOW_LEGACY_K8S=1` is set. The docs
+listed above point at [README.md](./README.md) and ADR-129. The rest of this item's list is
+reconciled as well: the prompt, ADR-035, ADR-129, the BACKLOG chart version, the whitepaper copy,
+the Argo `bot-image` default and the competitive scorer's k8s check.
+`tests/unit/k8s-legacy-quarantine.spec.ts` and `tests/unit/incident-prompt-kubectl-claims.spec.ts`
+are the guards. The sections above still describe the state this package measured, before the fix.
+
 ---
 
 ### 10. Stand up the cluster and run the codeless install end to end
@@ -1006,7 +1017,7 @@ Each with its reason. Do not build these; do not propose them as improvements.
 
 - [ADR-129 — The codeless Kubernetes install path](../adr/129-codeless-k8s-install-path.md) — Accepted (2026-08-13). The live decision.
 - [ADR-078 — Kubernetes migration, Argo batch-job orchestration, and multi-tenant proof-out](../adr/078-kubernetes-argo-batch-and-multi-tenant-proofout.md) — still **Proposed**.
-- [ADR-035 — Multi-Tenant SaaS Foundation](../adr/035-multi-tenant-saas-foundation.md) — file still reads Proposed; see item 9.
+- [ADR-035 — Multi-Tenant SaaS Foundation](../adr/035-multi-tenant-saas-foundation.md) — accepted as amended (isolated-only, 2026-09-21); item 9 updated the file.
 - [ADR-076 — Tenant-aware RLS and least-privilege DB role](../adr/076-tenant-aware-rls-and-least-privilege-db-role.md)
 - [ADR-040 — DevOps Vault swarm](../adr/040-devops-vault-swarm.md)
 - [ADR-013 — Headscale self-hosted overlay network](../adr/013-headscale-self-hosted-overlay-network.md) — native Kubernetes networking stays the default inside the cluster; the overlay is for external nodes only.
