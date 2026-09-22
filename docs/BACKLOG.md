@@ -2504,6 +2504,33 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### Warn before an unrenewable connection lapses
 - **Remaining:** [BUG-13](operations/bug-log.md) closed the *has already lapsed* signal — Identity Hub now flags a connection whose authorization has expired with no refresh token to revive it. The case with no signal at all is the one BEFORE that: a connection that holds **no refresh token** and an expiry still in the future is on a countdown to silent failure, and nothing warns. Five connections across three providers are in that state today (facebook ×2, linkedin ×2, meta-business — all short-lived unrenewable grants). The data is already in the projection's reach; what is missing is a decision about the threshold and where the warning belongs (a third pill state, or the Access review only).
 - **Done when:** a connection that will lapse within the chosen window and cannot renew itself is visible to the user before it breaks, the threshold is stated on the surface rather than implied, and a guard covers the boundary in [connector-list-expiry.spec.ts](../tests/unit/connector-list-expiry.spec.ts). See [`isConnectionExpired`](../src/app/routes/connector-tenancy.ts).
+- **Decision (operator, 2026-09-22): a 14-day window, surfaced in THREE places — the Identity Hub
+  pill, the Access review, and Jarvis's briefing.** The window is 14 days before an unrenewable grant
+  lapses. Rationale from the box rather than a guess: of 26 connections, 15 carry an expiry and only
+  **4 are unrenewable** (an expiry with no refresh token) — LinkedIn and Facebook, twice each. One
+  pair **lapsed 12 days ago with nothing saying so**, and the other pair lapses in 44 days. These are
+  ~60-day partner grants that must be re-consented through a browser flow on the partner site, so 7
+  days is too tight for a flow that needs the operator at a computer signed in under the business
+  account, and 30 days would leave the pill lit for half the grant's life — the "red gate nobody acts
+  on" failure this repo already has a rule about. 14 days surfaces it with roughly a quarter of the
+  life left.
+- **Surfaces, and why all three.** (1) A third **Expiring** pill state on the Identity Hub cards
+  beside off / Reconnect / ok (`identity/tools/identity.html:605-607`) — the failure here was nobody
+  looking, which is what a pill fixes. (2) The **Access review**, which is where a deliberate audit
+  would list it. (3) **Jarvis's briefing**, because the operator asked for it and because a briefing
+  is the one surface that reaches him without opening anything. That third one is a new **briefing
+  source**, not new machinery: `jarvis_briefing_sources` already carries `daily-trade-recap:recorded-reports`
+  and `kalshi:playable-hands`, both active, each a `(source_id, app, definition)` row.
+- **The code shape.** `isConnectionExpired` (`src/app/routes/connector-tenancy.ts:203-210`) returns
+  true only when `at <= now` and there is no refresh token — there is no "expiring soon" predicate,
+  and `connector-response-helpers.ts:90` projects only the `expired` boolean. So this is one new
+  predicate, one new projection field carried through to the store pill, and one briefing source.
+- **Done when:** an unrenewable connection within 14 days of lapsing reports as expiring — distinct
+  from both connected and expired — through the projection; the Identity Hub shows it as its own pill
+  state; the Access review lists it; a Jarvis briefing names the connection and how long is left; and
+  `tests/unit/connector-list-expiry.spec.ts` covers the three boundaries (outside the window, inside
+  it, already lapsed) plus the case that must NOT warn — an expiry with a refresh token, which renews
+  itself and is not the user's problem.
 
 ### Reading a user's own Drive content — the `drive.file` scope wall
 - **Remaining:** the Google connector ships `drive.file` (per-file access to files the app created), so the `google-drive` provider in [storage-browse.ts](../src/app/routes/storage-browse.ts) browses successfully and returns an empty listing for a user's own photos. Every other provider on that rail (oshal-local, career, dropbox, github) is unaffected — [portrait-studio](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/portrait-studio) 1.4.0 ships a connected-asset picker over it and degrades Drive honestly, naming the scope as the cause. What is open is the core decision: the Google Picker (minimal scope; needs an API key/app ID and an explicit `script-src` allowance for `apis.google.com`, which [strict-csp.ts](../src/features/security/hardening/strict-csp.ts) has no knob for today) versus the restricted `drive.readonly` scope (Google app verification + CASA assessment, forced reconnect for every existing connection, widened read for every user).
