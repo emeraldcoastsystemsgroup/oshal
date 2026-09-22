@@ -13,6 +13,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from jarvis-routes.ts: directive/visual fence parsing + the HandoffDirective / ProviderBoundHandoffIntent / JarvisDirectives shared types (route decomposition, no behaviour change).
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Extend the server-owned data-handoff vocabulary to career and trading reads so those owner-scoped requests can be filed deterministically before the conversational provider runs.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | HandoffDirective carries an optional changeClass (ADR-077 dev mode): Jarvis's only development vocabulary was the boolean `platform`, so a cockpit CSS tweak and a compiled-route change were indistinguishable and both took the slowest lane. Parsed fail-closed against the closed set; the server-side path classifier remains the authority.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added extractSurfaceDirectives + stripSurfaceDirective — the surface-bridge sibling of the handoff/visual fence parser. A reply may declare bot→surface ops in an `oshal:surface` fence; each is validated fail-closed against the CLOSED outbound vocabulary (@/shared/surface-bridge-ops) and the real zod contract (@/features/surface-bridge) before it can drive a surface, and the fence is stripped from the user-visible answer. Why: the chat rail's producer + cockpit relay were shipped but no parse layer turned an LLM reply into validated ops (Wave-2 bridge gap).
  *
@@ -60,7 +61,7 @@ export interface HandoffDirective {
 
 /** A narrow server-owned handoff for information that must come from a live provider. */
 export interface ProviderBoundHandoffIntent {
-  kind: 'weather' | 'priority-email' | 'walmart-catalog';
+  kind: 'weather' | 'priority-email' | 'walmart-catalog' | 'career-data' | 'trading-data';
   acknowledgement: string;
   handoff: HandoffDirective;
 }

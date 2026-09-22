@@ -1,6 +1,7 @@
 /**
  * Jarvis provider-bound intent detection — the deterministic guard that recognizes only bounded,
- * live-provider requests (weather, priority inbox, read-only Walmart catalog) and the weather
+ * live-provider and owner-data requests (weather, priority inbox, read-only Walmart catalog,
+ * career matches and trading performance) and the weather
  * location follow-up, so a plausible-looking answer can never be produced from model memory.
  *
  * Extracted from jarvis-routes.ts (2026-07-18, ADR-050 route decomposition). Behaviour unchanged;
@@ -11,6 +12,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from jarvis-routes.ts: provider-bound handoff detection (weather/priority-email/walmart-catalog) + the weather-location follow-up classifier (route decomposition, no behaviour change).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Deterministically file owner-scoped career-match and trading-performance reads. These requests previously depended on the conversational model emitting a handoff; a provider timeout returned "Nothing was filed," while a successful model could incorrectly claim the installed Career app was unavailable.
  *
  * @module jarvis-provider-intent-detect
  */
@@ -27,6 +29,17 @@ const WALMART_MIXED_PROVIDER = /\b(?:amazon|costco|doordash|ebay|instacart|targe
 const COMMERCE_WRITE_ACTION = /\b(?:add(?:ing)?\b[\s\S]{0,24}\bcart|buy(?:ing)?|check\s*out|checkout|order(?:ing)?|pay(?:ment)?|purchas(?:e|ing)|subscribe)\b/i;
 const EXPLICIT_READ_ONLY_COMMERCE = /\bread[ -]?only\b|\b(?:do not|don't|never)\b[\s\S]{0,100}\b(?:write action|add\b[\s\S]{0,20}\bcart|buy|check\s*out|checkout|order|purchase)\b/i;
 const SAFE_WALMART_QUERY = /^[\p{L}\p{N}][\p{L}\p{N}\p{Zs}.,&'()/%+\-:]{0,199}$/u;
+const CAREER_DATA_READ = [
+  /\b(?:list|show|give|find|pull|get|rank)\b[\s\S]{0,80}\b(?:job matches|matched jobs|jobs? for me|best[- ]fit jobs?|career matches)\b/i,
+  /\b(?:most recent|latest|top)\s+\d{0,2}\s*(?:job matches|matched jobs|jobs?|roles?|opportunities)\b/i,
+  /\b(?:what|which)\b[\s\S]{0,55}\b(?:jobs?|roles?|opportunities)\b[\s\S]{0,35}\b(?:match|fit)\b/i,
+  /\b(?:status|progress)\b[\s\S]{0,45}\b(?:my\s+)?(?:job applications?|applications?)\b/i,
+];
+const TRADING_DATA_READ = [
+  /\bhow\s+did\s+i\s+do\b[\s\S]{0,45}\b(?:stock market|market|trading|portfolio)\b/i,
+  /\b(?:show|give|pull|get|summarize|review|check)\b[\s\S]{0,55}\b(?:my\s+)?(?:portfolio|positions?|trades?|trading performance|market performance|p\s*&?\s*l)\b/i,
+  /\b(?:my\s+)?(?:portfolio|trading|stock market)\b[\s\S]{0,45}\b(?:performance|return|gain|loss|p\s*&?\s*l|today)\b/i,
+];
 
 function extractWalmartCatalogRequest(message: string): { query: string; limit: number } | undefined {
   if (!/\bwalmart\b/i.test(message) || !WALMART_READ_ACTION.test(message)) return undefined;
@@ -76,6 +89,45 @@ export function detectProviderBoundHandoff(message: string): ProviderBoundHandof
   if ((DEVELOPMENT_ACTION.test(normalized) && DEVELOPMENT_OBJECT.test(normalized))
     || EXPLICIT_CODE_REQUEST.test(normalized)
     || DOMAIN_TECHNICAL_OBJECT.test(normalized)) return undefined;
+
+  // These two reads are owner-scoped swarm data, not facts a language model can answer from
+  // memory. Route them before the model turn so a provider outage or an ignored handoff directive
+  // cannot turn a healthy Career/Trading worker into "not loaded" or "nothing was filed".
+  if (CAREER_DATA_READ.some((pattern) => pattern.test(normalized))) {
+    return {
+      kind: 'career-data',
+      acknowledgement: "I'll pull your latest career data and report back here.",
+      handoff: {
+        action: 'create',
+        title: `Career data: ${normalized}`.slice(0, 120),
+        description: [
+          "Read the signed-in user's authoritative Career Hunter data to answer this request.",
+          `User request: ${normalized}`,
+          'Use current scored matches/application state, preserve requested sorting and fields, and return the result through the normal worker completion channel. Do not answer from model memory or claim the career app is unavailable.',
+        ].join('\n'),
+        complexity: 'simple',
+        platform: false,
+      },
+    };
+  }
+
+  if (TRADING_DATA_READ.some((pattern) => pattern.test(normalized))) {
+    return {
+      kind: 'trading-data',
+      acknowledgement: "I'll pull your current trading performance and report back here.",
+      handoff: {
+        action: 'create',
+        title: `Trading performance: ${normalized}`.slice(0, 120),
+        description: [
+          "Read the signed-in user's authoritative trading ledger, positions, and performance data to answer this request.",
+          `User request: ${normalized}`,
+          'Use current account data and clearly state the measurement period and available figures. Return the result through the normal worker completion channel. Do not answer from model memory and do not place or modify any trade.',
+        ].join('\n'),
+        complexity: 'simple',
+        platform: false,
+      },
+    };
+  }
 
   const walmartRequest = extractWalmartCatalogRequest(normalized);
   if (walmartRequest) {
