@@ -2283,10 +2283,6 @@ including across a directory belonging to a different owner. Full reasoning and 
 - **Remaining:** register the ECSG Google OAuth client and implement start/callback/status/signout for Gemini Code Assist credentials; AI Studio key paste remains a separate existing path.
 - **Done when:** a signed-in user completes Google consent and a Gemini-harness bot answers with the resulting credentials without pasting a key.
 
-### A2A gateway productionization and interoperability
-- **Remaining:** apply migration 089, enable the bounded public gateway, complete an inbound third-party task, and run the same contract against a second vendor; do not replace per-agent credentials with a global secret.
-- **Done when:** an external agent card leads to a completed caller-attributed ticket with authorization/cost evidence and the cross-vendor round trip passes. See [ADR-109](adr/109-a2a-gateway-external-agents-join-the-swarm.md).
-
 ### OSHAL Node bot-initiated control
 - **Remaining:** expose node MCP tools to eligible bots, route bot tool calls to the selected node, add per-action confirmation, and introduce a live scoped mount only before parallel same-folder writers are enabled.
 - **Done when:** a user asks the orb to open Word and return a screenshot, an accountable swarm bot drives the node, the result renders inline, and shared-task artifacts remain available to the next round. See [ADR-114](adr/114-user-owned-remote-nodes.md).
