@@ -1677,6 +1677,16 @@ including across a directory belonging to a different owner. Full reasoning and 
   project's footprint, and the operator's custody preference is self-hosted. (PM offered a
   park-or-provide-AWS choice; the operator replied with a better split — a remote cluster box plus
   tagged, separated instructions.)
+- **Kubernetes engine: DONE 2026-09-22** (operator-run, on the Docker Desktop cluster the operator
+  directed this work onto). Every done-when clause is measured in
+  [k8/docker-desktop-live-proofs-2026-09-21.md](k8/docker-desktop-live-proofs-2026-09-21.md) item 14:
+  role `tenant-a-pod-reader` issues a 600s credential, `get pods -n tenant-a` succeeds, revocation
+  deletes the generated ServiceAccount and reuse is refused, and no bot Deployment carries kubeconfig
+  or token material. The engine authenticates as its own least-privilege ServiceAccount; the chart's
+  Vault no longer runs as the namespace `default` account (`1338d6ad`). The initial root token is
+  revoked; the api holds a policy-scoped token instead. **Still open here:** the same lifecycle
+  against the **PostgreSQL** engine on the development box, sequenced after "Production Vault
+  hardening" as decision 17 says.
 
 ### Multi-user ephemeral privileged runtime
 - **Remaining:** security-review and build a per-task, short-lived privileged runtime with tmpfs credentials, caller scoping, revocation, and residue inspection.

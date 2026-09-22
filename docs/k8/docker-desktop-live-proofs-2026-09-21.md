@@ -34,7 +34,7 @@ a proof that ran and showed the platform doing the wrong thing.
 | 11 — shared-service tier | **PARTIAL** | graph, transcription, package survival and the ArangoDB degrade PASS; the trading series clause is BLOCKED |
 | 12 — bot-launcher live boundary | **PARTIAL** | the validator PASS; the cockpit toggle against a real Deployment found a DEFECT |
 | 13 — tenant NetworkPolicy | **PASS** | 13 passed, 0 failed, with an enforcement control, on kindnet |
-| 14 — Vault Kubernetes secrets engine | **PARTIAL** | Vault initialized and unsealed; the engine was not configured |
+| 14 — Vault Kubernetes secrets engine | **PASS** | initialized, unsealed, engine configured; issue / use / revoke / reuse-fails all measured |
 | 16 — ADR-119 kill drill | **PASS** | the alert fired, reached the api and cleared |
 | 17 — structural questions | **PARTIAL** | one node, so the multi-node workspace question cannot be answered here; the CNI is recorded |
 
@@ -104,14 +104,35 @@ Details and the decision it needs are [below](#the-cockpit-toggle-scales-the-wro
 This is the NetworkPolicy half of the item. The database and row half runs off the cluster
 (work package section 4.4) and is not in this record.
 
-## Item 14 — Vault Kubernetes secrets engine: PARTIAL
+## Item 14 — Vault Kubernetes secrets engine: PASS
 
 **Proven.** `oshal-vault-0` was initialized (`vault operator init -key-shares=5 -key-threshold=3`;
 the output is kept by the operator, outside the repository and the cluster) and unsealed with 3 of 5
 shares: `initialized=true sealed=false storage=file version=1.18.5`.
 
-**Not proven.** The engine was NOT configured. Creating the least-privilege RBAC for it needs operator
-approval on this box, so issue, use and revoke did not run.
+The engine was configured and its credential lifecycle run by the operator on 2026-09-22T03:40:43Z,
+against Vault v1.18.5. The engine authenticates as its own `vault-k8s-engine` ServiceAccount, whose
+only grants are a namespaced Role in `tenant-a`: `serviceaccounts` get/create/delete,
+`serviceaccounts/token` create, `rolebindings` get/create/delete, and `roles` **bind** restricted by
+`resourceNames` to `tenant-pod-reader` (itself `pods` get/list). Vault role `tenant-a-pod-reader`:
+`kubernetes_role_type=Role`, `kubernetes_role_name=tenant-pod-reader`, TTL 10m, max 20m.
+
+| Clause | Result |
+|---|---|
+| **Issue** — short TTL | lease `lease_duration` 600s; generated ServiceAccount `v-root-tenant-a-1790048433-…` with its RoleBinding, created by Vault in `tenant-a` |
+| **Use** — a real read succeeds | `get pods -n tenant-a` returned `pod/web` |
+| Least privilege | refused in `tenant-b`; separately measured the same credential refused for the `oshal` namespace and for `secrets` inside `tenant-a` |
+| **Revoke** — reuse fails | after `vault lease revoke`, the same credential is refused in `tenant-a` (`Forbidden`, its identity no longer carries any grant) and the generated ServiceAccount is gone (`NotFound`) |
+| No standing cloud key stored by a bot | no kubeconfig/token env or mount in any `oshal.io/bot` Deployment |
+
+The evidence file is operator-local and gitignored (`.vault-local/item14-proof.txt`); the summary
+above is its content, with no secret in it.
+
+**Posture after the run.** The initial root token is revoked. The operator's `userpass` login carries
+the `oshal-operator` policy; a root token is regenerable with 3 shares (`vault operator generate-root`).
+The api holds its own periodic token under the `oshal-api` policy — exactly the paths
+`src/features/devops-vault/services/vault-console-service.ts` calls — in the `oshal-api-env` Secret,
+which is the runbook's "a policy-scoped token you supply" option rather than a root token.
 
 **Finding.** The chart's Vault pod ran as the namespace's `default` ServiceAccount, which every infra
 pod shares. Any RBAC the engine needs would have been granted to all of them. Vault needs its own
@@ -119,8 +140,9 @@ ServiceAccount. **Fixed in the chart** by `1338d6ad`: `infra.vault.serviceAccoun
 Vault runbook (with the engine's per-tenant RBAC as an operator example), and the guard
 `tests/unit/chart-vault-service-account.spec.ts`. No live run of that change is in this record.
 
-**Owed.** The root token has not been revoked; it is needed to finish the engine setup. The runbook's
-revoke step is owed.
+**Owed.** A live run of `1338d6ad` itself: the cluster was configured while Vault still ran as the
+namespace `default` ServiceAccount, and upgrading to the chart's own ServiceAccount restarts
+`oshal-vault-0`, which comes back sealed.
 
 ## Item 16 — ADR-119 kill drill: PASS
 
@@ -216,13 +238,15 @@ its audit record re-bound.
 - Alpaca paper keys, so no trading series (item 11).
 - An `oshal-bot` image that is current and proven public, and a published OCI chart, so no codeless
   install (item 10).
-- A configured Vault Kubernetes secrets engine, so no issue/use/revoke (item 14).
+- A live run of the chart's own Vault ServiceAccount (`1338d6ad`); the engine was configured while
+  Vault still ran as the namespace `default` account (item 14).
 - Headroom for a second full install, so no quota or real restricted install (item 5).
 
 ## Honest one-line status
 
 > On one single-node Docker Desktop cluster (kindnet), the tenant NetworkPolicy proof and the ADR-119
-> kill drill PASS. The shared-service tier, the bot-launcher boundary, Pod Security, Vault and the
-> structural questions are PARTIAL. The codeless install was NOT RUN, and the trading clause is
+> kill drill PASS, and so does the Vault Kubernetes secrets engine's issue / use / revoke lifecycle.
+> The shared-service tier, the bot-launcher boundary, Pod Security and the structural questions are
+> PARTIAL. The codeless install was NOT RUN, and the trading clause is
 > BLOCKED. Three defects were fixed live with guards. Three more are open and need core work or a
 > republish, and a fourth is open in the little-monsters store package.
