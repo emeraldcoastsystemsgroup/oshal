@@ -48,8 +48,8 @@ Not done: installer mode 4 was not run (the install was a manual `helm upgrade -
 `/welcome` wizard and a jarvis turn were not proven; the OCI chart was not published; delegation
 signing keys were absent, so protected dispatch refuses.
 
-**Update (2026-09-21/22) — item-by-item results.** The live runs on the same cluster for items 5,
-10, 11, 12, 13, 14, 16 and 17, with the defects fixed live and the ones left open, are recorded in
+**Update (2026-09-21/22) — item-by-item results.** The results on the same cluster for items 5,
+10, 11, 12, 13, 14, 16 and 17 (item 10 not run), with the defects fixed live and the ones left open, are recorded in
 [docker-desktop-live-proofs-2026-09-21.md](docker-desktop-live-proofs-2026-09-21.md). The sections
 below still describe the state this package measured before those runs.
 

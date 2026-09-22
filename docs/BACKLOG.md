@@ -1005,15 +1005,18 @@ including across a directory belonging to a different owner. Full reasoning and 
   with 200 through the diarization Service on a cluster, with no side-loaded image and no
   `infra.diarization.image` override.
 
-### Check the report that core logs a missing education migration (2026-09-21)
-- **Remaining:** a defect was reported from the Docker Desktop run: that the core still logs a
-  missing education migration file, which now ships inside the little-monsters store package. **The
-  run's measured record does not contain that log line.** It shows only that the package's own
-  migrations 019, 020, 021 and 024 were applied from the package ([k8/docker-desktop-live-proofs-2026-09-21.md](k8/docker-desktop-live-proofs-2026-09-21.md), item 11). Nothing is to be
-  changed until the line is captured: on an api boot with little-monsters staged, record the exact
-  log message and file name, and find the code that emits it.
-- **Decision needed (operator):** if the line is real and its source is core, approve removing the
-  core's reference to a migration that now belongs to the package (CLAUDE.md Rule 0c).
+### little-monsters looks for its education migration at a core path (2026-09-21)
+- **Remaining:** captured on the Docker Desktop api boot of 2026-09-22T02:54:51Z (level 50,
+  module `education-schema`): "Education migration file not found; schema bootstrap skipped" for
+  `/app/scripts/migrations/019-education-platform.sql`. The emitter is the **store package**, not
+  core: oshal-applications `little-monsters/src-routes/education-schema.ts:219` resolves
+  `path.resolve(process.cwd(), 'scripts/migrations/019-education-platform.sql')`, a pre-carve-out
+  kernel path. Harmless where the platform applies package migrations (the same boot applied the
+  package's 019/020/021/024; [k8/docker-desktop-live-proofs-2026-09-21.md](k8/docker-desktop-live-proofs-2026-09-21.md)), but it logs an error on every boot.
+- **Done when:** the package resolves its own `migrations/` directory (or drops the redundant
+  bootstrap), ships as a new little-monsters version with its audit record re-bound, and an api boot
+  with little-monsters staged logs no `education-schema` error. Store-repo work; nothing in this
+  repo changes.
 - **Done when:** either an api boot with little-monsters staged logs no missing-migration line, and
   this entry closes with that log excerpt as its evidence; or the captured line is traced to core,
   the reference is removed, and a guard fails if core names a migration file the tree does not hold.

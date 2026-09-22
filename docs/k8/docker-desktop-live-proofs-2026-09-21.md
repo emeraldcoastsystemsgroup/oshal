@@ -12,8 +12,9 @@ repository facts. This note follows the honesty model of
 needs another run or a decision, and what is absent.
 
 **Labels.** PASS means the record shows the done-when clause met on this cluster. PARTIAL means some
-clauses are met and some are not. NOT RUN means the proof was not attempted. BLOCKED means it was
-attempted, or could not be attempted, because something outside this cluster is missing. A DEFECT is
+clauses are met and some are not. NOT RUN means the proof was not attempted (item 10: not attempted because
+item 1's publish is missing). BLOCKED means a proof that ran up to a missing external prerequisite
+(the trading clause: the route answered 503 `broker_not_configured`). A DEFECT is
 a proof that ran and showed the platform doing the wrong thing.
 
 ## The cluster
@@ -194,13 +195,18 @@ answers `/v1/transcribe` with 404. A source-built image answers it with 200 (ite
 republish, which rides on item 1. `values-docker-desktop.yaml` (SEQ 4) records the side-load
 override a box with compose's source-built image can use until then.
 
-### Reported, but not in the measured record: the education migration
+### Open, store side: little-monsters looks for its migration at a core path
 
-A defect was reported from this run: that the core still logs a missing education migration file,
-which now ships inside the little-monsters package. **The measured record does not contain that log
-line.** It shows only that the package's own migrations 019, 020, 021 and 024 were applied from the
-package (item 11). This note makes no claim about the log line. The BACKLOG entry asks for it to be
-captured before anything is changed.
+Captured on the api boot of 2026-09-22T02:54:51Z, at level 50:
+`{"module":"education-schema","migrationPath":"/app/scripts/migrations/019-education-platform.sql","msg":"Education migration file not found; schema bootstrap skipped"}`.
+The emitter is **not core**. It is the store package itself:
+`little-monsters/src-routes/education-schema.ts:219` (compiled to `routes/education-schema.js`)
+resolves `path.resolve(process.cwd(), 'scripts/migrations/019-education-platform.sql')`, a path
+from before the app was carved out of the kernel. It is harmless on this cluster: the platform
+applied the package's own `migrations/019`, `020`, `021` and `024` from the package in the same boot
+(item 11), so the schema exists. The fix belongs in oshal-applications (resolve the package's own
+`migrations/` directory, or drop the redundant bootstrap), which needs a package version bump and
+its audit record re-bound.
 
 ---
 
@@ -219,4 +225,4 @@ captured before anything is changed.
 > kill drill PASS. The shared-service tier, the bot-launcher boundary, Pod Security, Vault and the
 > structural questions are PARTIAL. The codeless install was NOT RUN, and the trading clause is
 > BLOCKED. Three defects were fixed live with guards. Three more are open and need core work or a
-> republish, and a fourth report is unmeasured.
+> republish, and a fourth is open in the little-monsters store package.

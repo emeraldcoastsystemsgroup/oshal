@@ -280,3 +280,6 @@ scripts/publish-gate.local.patterns
 *.opus
 Recording*.m4a
 .env.alertmanager-token
+
+# Operator-local Vault material for a dev cluster (unseal shares, root/operator logins). Never staged.
+.vault-local/
