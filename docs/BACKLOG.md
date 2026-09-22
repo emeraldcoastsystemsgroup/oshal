@@ -1544,6 +1544,46 @@ including across a directory belonging to a different owner. Full reasoning and 
   undefined on purpose; the entry's own rule against inventing definitions is what keeps them that
   way. (PM measured the mechanism and recommended the freeze; the operator chose it.)
 
+### Three CLI tools reach a shell with model-supplied arguments and require no approval (2026-09-21)
+- **Proved live, with side effects, against stubs on PATH** while verifying the `cli_yq` fix. Each
+  builds a command STRING and hands it to `child_process.exec`, which is a shell, while registered
+  `requiresApproval: false`:
+  - `cli_cline` — `cliTools.js:422`, `` executeCLI(`cline ${args}`) ``, `args` raw; registered at
+    `:804`. An injected marker came back in the tool's own output.
+  - `cli_jq` — `cliTools.js:446`, `` jq '${filter}' ``; `input` **is** POSIX-escaped, so the hole is
+    the FILTER, unescaped inside the single quotes; registered at `:828`. The injected command wrote
+    a file.
+  - `cli_fzf` — `cliTools.js:508`, `` echo '<escaped>' | fzf ${args} ``, `args` raw; registered at
+    `:880`. The injected command wrote a file.
+  A missing binary does not close any of these: the shell runs the whole string, so the injected half
+  executes whether or not `cline`/`jq`/`fzf` is installed.
+- **LATENT, not live — and this is why it is an entry rather than an incident.** The authorized
+  channel derives `allowedTools` solely from `anyBotRuntimeToolFor`
+  (`src/app/prompt-authorization-resolver.ts:39-45` → `bot-node-execution-handler.ts:440`), and
+  `PERSISTED_TO_RUNTIME_TOOL` has **no entry for `jq`, `fzf` or `cline`**; an unmapped name is dropped
+  with "Unmapped runtime tool denied". `yq → cli_yq` **is** mapped, which is exactly why `cli_yq` was
+  the one reachable end to end. These three become live the moment someone adds a map entry, which is
+  a one-line change nobody would think of as a security decision.
+- **The registry census, measured rather than assumed:** 16 tools registered; **12** carry
+  `requiresApproval: true` (git, kubectl, helm, terraform, ansible, aws, azure, gcloud, argocd, node,
+  npm, vault) and **4** carry `false` — `cli_cline`, `cli_jq`, `cli_yq`, `cli_fzf`. The four are
+  exactly the shell-reaching, unapproved set.
+- **The fix already exists and is not a new design.** `any-bot/server/services/tools/cli-argv.js`
+  (`cliArgsToArgv` + `executeCLIArgv`, `execFile` with `shell: false`, options built field by field so
+  a caller cannot smuggle `shell: true`) was built for `cli_yq`. These three convert onto it.
+- **Do NOT fix this by escaping or by a metacharacter denylist.** A denylist was wrong from the start
+  for `cli_jq`: a legitimate jq filter contains `|`, `$` and quotes. The argument vector is the fix.
+- **Done when:** all three call the binary through `executeCLIArgv` with an argument vector and no
+  shell; each is `requiresApproval: true` **and** in `NEVER_AUTO_APPROVE` (both, because the policy
+  set alone is inert — every consumer gates on `requiresApproval` first, `AgenticController.js:599`,
+  `dispatch-tool-executor.js:84`, `ToolRegistry.js:346`); a spec drives the REAL dispatch executor
+  with the unattended auto-approve payload and asserts `ok:false` for each, with a control proving the
+  harness can see a refusal at all; an injection case per tool proves the payload is passed as
+  arguments and never executed, spawning a real child against a stub on PATH rather than a doubled
+  `child_process`; and a guard fails if any tool in `cliTools.js` reaches `executeCLI`/`exec` with a
+  model-supplied argument while registered `requiresApproval: false`, so a fifth one cannot be added
+  silently.
+
 ### Web-control enforcement rollout
 - **Remaining:** promote the exact-byte Alertmanager parser/HMAC guard and corrected posture API; collect and classify the default report-only CSP stream, externalize or nonce remaining inline scripts, canary `OSHAL_STRICT_CSP=on`, tune/enable `OSHAL_RATE_LIMIT_INTERNAL` and `OSHAL_RATE_LIMIT_EXPENSIVE`, and provision a distinct `ALERT_WEBHOOK_HMAC_SECRET` on both receiver and sender.
 - **Done when:** a seven-day browser canary has no unexplained CSP violations, enforcement blocks a sanctioned inline-injection fixture without breaking supported surfaces, direct-origin and Jarvis/intake burst probes receive the intended 429s without throttling normal swarm traffic, and exact-body Alertmanager delivery passes while missing/tampered signatures fail before landing a row.
@@ -3103,6 +3143,27 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### Flow UI-automation video provider
 - **Remaining:** if the accepted personal-use/ToS tradeoff remains, run Flow on a dedicated fixed-geometry host using recorded deterministic interactions and explicit UI-drift detection.
 - **Done when:** the provider generates and downloads one clip into the pipeline and a changed UI fails clearly or escalates to the paid provider without hanging or accepting the wrong artifact. See [ADR-070](adr/070-multi-provider-video-generation.md).
+- **Decision (operator, 2026-09-21): CLOSED — will not build. Do not re-propose.** Nothing was ever
+  built, so nothing is removed: the video-generation feature ships three providers on disk
+  (`comfyui-provider.ts`, `deck-to-video-provider.ts`, `veo-provider.ts`) and there is no Flow
+  provider or partial one.
+  **The gap it existed to fill is now filled.** Flow's purpose was a FREE video path. The ComfyUI
+  provider is that path — the operator's own GPU box over a plain HTTP API (`/prompt` → poll
+  `/history` → `/view`), no per-image or per-clip charge, and on the same day this entry closed he
+  commissioned the storyboard sibling on the same box. Veo remains the paid path. Free and paid are
+  both covered by providers that already work.
+  **Its cost was structurally higher than any sibling's.** Flow drives a consumer web UI by
+  automation, so its own done-when is mostly about surviving a UI it does not control: a dedicated
+  fixed-geometry host, recorded deterministic interactions, and explicit drift detection. It could
+  not share this box either — the standing operator rule is that nothing opens a visible window on
+  the operator's desktop. A third generation path would have been the most fragile one in the set by
+  construction, and the only one whose failure mode is silently accepting the wrong artifact.
+  **The personal-use tradeoff this entry opened with is therefore moot** and is not the reason for
+  closing; it is recorded only because the entry itself made it a precondition.
+- **What closing costs, stated plainly:** whatever Flow's model can generate that neither Veo nor the
+  operator's local models can. That was judged not worth a dedicated machine and a drift-detection
+  rail. If a specific clip is ever wanted that only Flow can make, this reopens as a new entry with
+  that clip named as the evidence — not as a general capability gap.
 
 ### Vids Operator named-tool live proof
 - **Remaining:** live-tune each Vids tool, cache located controls, expose scenario/tool mode in both UIs, convert scenarios to explicit tool sequences, and add LoRA/Studio bridges.
