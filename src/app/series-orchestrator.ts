@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The conductor: one function that walks a video series through write -> approve -> storyboard -> render -> done, one safe step per call. Idempotent, resumable, and it stops dead at the approval gate so nothing an image or a clip costs is spent without the operator's go.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Ran the render reconciler sweep under runWithSystemIdentity — a cross-owner background sweep over the RLS video_episodes table; SYSTEM keeps it visible once OSHAL_DB_GUC_STRICT denies the identity-less case.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Await PostgreSQL-authoritative remote task result reads during the system-identity render reconciliation sweep.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The conductor no longer stops at the last rendered episode. A MULTI-episode series now parks in 'assembling' while the render node stitches its episodes into one season cut, and reaches 'done' only when that artifact actually came back — so a season that failed to stitch can no longer look like a finished series. A one-episode series still goes straight to done: a season of one is that episode, and paying a stitch to copy it would be a claim about work nobody did.
  */
 /**
  * @description Video Series — the orchestrator.
@@ -40,7 +41,7 @@ import { BotNodeClient, createRegistryEndpointResolver } from '@/features/agent-
 import { getValidAccessToken } from '@/app/routes/connectors-routes';
 import { getVertexAccessToken } from '@/features/video-generation';
 import { writeSeries, storyboardEpisode } from '@/app/series-pipeline';
-import { isRenderInFlight, dispatchStoryboardedEpisode } from '@/app/series-dispatch';
+import { isRenderInFlight, dispatchStoryboardedEpisode, dispatchSeasonAssembly } from '@/app/series-dispatch';
 import { uploadFrameToDrive } from '@/app/series-drive';
 import { remoteClientRegistry } from '@/app/routes/remote-client-routes';
 
@@ -51,7 +52,7 @@ export interface AdvanceResult {
   /** The series' status after this step. */
   status: string;
   /** The stage this step touched. */
-  stage: 'write' | 'approval' | 'storyboard' | 'render' | 'complete' | 'terminal';
+  stage: 'write' | 'approval' | 'storyboard' | 'render' | 'assemble' | 'complete' | 'terminal';
   /** True when a step actually happened (so a driver knows to call again immediately). */
   advanced: boolean;
   /** True when the conductor is deliberately parked (approval gate, or a render in flight). */
@@ -76,6 +77,7 @@ export interface OrchestratorDeps {
   write: (ctx: AppContext, seriesId: string) => Promise<{ ok: boolean; episodes?: number; violations?: unknown[]; error?: string }>;
   storyboard: (pool: Pool, episodeId: string, driveToken: string, vertexToken?: string) => Promise<{ ok: boolean; frameIds?: string[]; duplicates?: string[]; error?: string }>;
   dispatchRender: (pool: Pool, episodeId: string, driveToken: string, ticketId?: string) => Promise<{ ok: boolean; error?: string }>;
+  dispatchSeason: (pool: Pool, seriesId: string, driveToken: string, ticketId?: string) => Promise<{ ok: boolean; error?: string }>;
 }
 
 const botClient = new BotNodeClient(createRegistryEndpointResolver());
@@ -100,23 +102,25 @@ function defaultDeps(ctx: AppContext): OrchestratorDeps {
       storyboardEpisode(pool, episodeId, (png, name) => uploadFrameToDrive(png, name, driveToken), { vertexToken }),
     dispatchRender: (pool, episodeId, driveToken, ticketId) =>
       dispatchStoryboardedEpisode(pool, episodeId, { driveToken, ticketId }),
+    dispatchSeason: (pool, seriesId, driveToken, ticketId) =>
+      dispatchSeasonAssembly(pool, seriesId, { driveToken, ticketId }),
   };
 }
 
 /** Load a series' status, owner, ticket, and its episodes' statuses in one shot. */
 async function loadSeries(pool: Pool, seriesId: string): Promise<{
-  status: string; userSub: string; ticketId: string | null;
+  status: string; userSub: string; ticketId: string | null; seasonJobId: string | null;
   episodes: Array<{ id: string; ordinal: number; status: string }>;
 } | null> {
   const s = (await pool.query(
-    `SELECT status, user_sub, ticket_id FROM video_series WHERE series_id = $1`, [seriesId],
-  )).rows[0] as { status: string; user_sub: string; ticket_id: string | null } | undefined;
+    `SELECT status, user_sub, ticket_id, season_job_id FROM video_series WHERE series_id = $1`, [seriesId],
+  )).rows[0] as { status: string; user_sub: string; ticket_id: string | null; season_job_id: string | null } | undefined;
   if (!s) return null;
   const eps = (await pool.query(
     `SELECT episode_id, ordinal, status FROM video_episodes WHERE series_id = $1 ORDER BY ordinal`, [seriesId],
   )).rows as Array<{ episode_id: string; ordinal: number; status: string }>;
   return {
-    status: s.status, userSub: s.user_sub, ticketId: s.ticket_id,
+    status: s.status, userSub: s.user_sub, ticketId: s.ticket_id, seasonJobId: s.season_job_id ?? null,
     episodes: eps.map((e) => ({ id: String(e.episode_id), ordinal: Number(e.ordinal), status: String(e.status) })),
   };
 }
@@ -209,13 +213,31 @@ export async function advanceVideoSeries(
       // Nothing left to dispatch. Done only when every episode actually landed.
       const allDone = series.episodes.length > 0 && series.episodes.every((e) => e.status === 'rendered' || e.status === 'assembled');
       if (allDone) {
+        // A MULTI-episode series has one artifact left to make: the season cut. A one-episode series
+        // does not — a season of one IS that episode, and dispatching a stitch to copy it would
+        // charge the node for work and record an artifact nobody produced.
+        if (series.episodes.length >= 2) {
+          await pool.query(`UPDATE video_series SET status='assembling', updated_at=now() WHERE series_id=$1`, [seriesId]);
+          return { status: 'assembling', stage: 'render', advanced: true, waiting: false, blocked: false, detail: `every episode rendered — assembling the season (${series.episodes.length} episodes)` };
+        }
         await pool.query(`UPDATE video_series SET status='done', updated_at=now() WHERE series_id=$1`, [seriesId]);
-        return { status: 'done', stage: 'complete', advanced: true, waiting: false, blocked: false, detail: 'every episode rendered — series done' };
+        return { status: 'done', stage: 'complete', advanced: true, waiting: false, blocked: false, detail: 'the single episode rendered — series done' };
       }
       // Some episode failed (not rendered, not renderable) — surface it rather than spin.
       const stuck = series.episodes.filter((e) => e.status === 'failed').map((e) => e.ordinal);
       if (stuck.length) return park('render', `episode(s) ${stuck.join(', ')} failed — series cannot complete`, true);
       return park('render', 'episodes still finishing');
+    }
+
+    case 'assembling': {
+      // The stitch is a single remote task, so the job id IS the in-flight flag. Without it the 20s
+      // reconciler would dispatch a second stitch of the same season on its very next sweep.
+      if (series.seasonJobId) return park('assemble', 'the season is stitching on the node');
+      const creds = await deps.resolveCredentials(series.userSub);
+      if (!creds.driveToken) return park('assemble', 'no Google token for this user — reconnect Google', true);
+      const r = await deps.dispatchSeason(pool, seriesId, creds.driveToken, series.ticketId ?? undefined);
+      if (r.ok) return { status: 'assembling', stage: 'assemble', advanced: true, waiting: false, blocked: false, detail: `season assembly dispatched (${series.episodes.length} episodes)` };
+      return park('assemble', `season assembly dispatch failed: ${r.error}`, true);
     }
 
     case 'done':
@@ -288,6 +310,75 @@ export async function reconcileRenderResult(
 }
 
 /**
+ * @description The stdout of a remote task that has SETTLED, or null while it is still running.
+ * Shared by the render and season passes so both agree on what "finished" means.
+ * @param clients - Every connected remote client; the task may have landed on any of them.
+ * @param taskId - The dispatched task's id.
+ * @returns The task's stdout (possibly empty) once settled, or null while it runs.
+ */
+async function settledStdout(clients: Array<{ clientId: string }>, taskId: string): Promise<string | null> {
+  for (const c of clients) {
+    // eslint-disable-next-line no-await-in-loop
+    const r = await remoteClientRegistry.getCompletedResult(c.clientId, taskId);
+    if (r) return String((r as { output?: { stdout?: string } }).output?.stdout ?? '');
+  }
+  return null;
+}
+
+/**
+ * @description Reconcile one finished season stitch into series state. The node prints
+ * `SEASON_OK {json}` or `SEASON_ERR message`; this turns that into a `done` series carrying the
+ * season cut, or a `failed` one carrying why.
+ *
+ * A `SEASON_OK` with no artifact path is treated as a FAILURE, not a success with a missing field.
+ * The whole point of this stage is that an unplayable or absent season cannot be reported as a
+ * finished series, and "it said OK" is not an artifact. The Drive link is stored only when the node
+ * actually returned one — a season that exists only on the render node says exactly that.
+ *
+ * `season_job_id` is kept on success (it is the provenance of the artifact) and cleared on failure,
+ * so an operator who puts the series back into `assembling` gets a fresh dispatch rather than the
+ * "already in flight" refusal for a task that will never come back.
+ *
+ * @param {Pool} pool database pool
+ * @param {string} seriesId the series that was assembling
+ * @param {string} stdout the node task's stdout
+ * @returns {Promise<{ok: boolean, seasonPath?: string, driveUrl?: string | null, error?: string}>} result
+ */
+export async function reconcileSeasonResult(
+  pool: Pool,
+  seriesId: string,
+  stdout: string,
+): Promise<{ ok: boolean; seasonPath?: string; driveUrl?: string | null; error?: string }> {
+  const lines = stdout.split('\n').map((l) => l.trim());
+  const okLine = lines.find((l) => l.startsWith('SEASON_OK'));
+  const errLine = lines.find((l) => l.startsWith('SEASON_ERR'));
+
+  let parsed: { localPath?: string; driveUrl?: string | null } = {};
+  if (okLine) { try { parsed = JSON.parse(okLine.slice('SEASON_OK'.length).trim()); } catch { parsed = {}; } }
+
+  if (okLine && parsed.localPath) {
+    await pool.query(
+      `UPDATE video_series
+          SET status='done', season_path=$2, season_drive_url=$3, error=NULL, updated_at=now()
+        WHERE series_id=$1`,
+      [seriesId, parsed.localPath, parsed.driveUrl ?? null],
+    );
+    logger.info({ seriesId, driveUrl: parsed.driveUrl ?? null }, 'season reconciled: series done');
+    return { ok: true, seasonPath: parsed.localPath, driveUrl: parsed.driveUrl ?? null };
+  }
+
+  const message = okLine
+    ? 'season assembly reported success with no artifact path'
+    : (errLine ? errLine.slice('SEASON_ERR'.length).trim() : 'season assembly produced no terminal line');
+  await pool.query(
+    `UPDATE video_series SET status='failed', error=$2, season_job_id=NULL, updated_at=now() WHERE series_id=$1`,
+    [seriesId, message],
+  );
+  logger.warn({ seriesId, message }, 'season reconciled: series failed');
+  return { ok: false, error: message };
+}
+
+/**
  * @description Sweep once for renders that finished on the node: for every episode still marked
  * `rendering`, look up its dispatched task in the remote-client registry; if it settled, reconcile
  * it into episode state and advance its series. This is the glue that turns "dispatch one episode,
@@ -303,25 +394,39 @@ export async function reconcilePendingRenders(ctx: AppContext): Promise<number> 
   const pending = (await ctx.pool.query(
     `SELECT episode_id, series_id, vids_job_id FROM video_episodes WHERE status='rendering' AND vids_job_id IS NOT NULL`,
   )).rows as Array<{ episode_id: string; series_id: string; vids_job_id: string }>;
-  if (!pending.length) return 0;
+  const seasons = (await ctx.pool.query(
+    `SELECT series_id, season_job_id FROM video_series WHERE status='assembling' AND season_job_id IS NOT NULL`,
+  )).rows as Array<{ series_id: string; season_job_id: string }>;
+  if (!pending.length && !seasons.length) return 0;
 
   let clients: Array<{ clientId: string }> = [];
   try { clients = remoteClientRegistry.listClients() as typeof clients; } catch { clients = []; }
 
   let reconciled = 0;
   for (const p of pending) {
-    let result: { status?: string; output?: unknown } | null = null;
-    for (const c of clients) {
-      const r = await remoteClientRegistry.getCompletedResult(c.clientId, p.vids_job_id);
-      if (r) { result = r as { status?: string; output?: unknown }; break; }
-    }
-    if (!result) continue; // still running
-    const stdout = String((result.output as { stdout?: string } | undefined)?.stdout ?? '');
+    // eslint-disable-next-line no-await-in-loop
+    const stdout = await settledStdout(clients, p.vids_job_id);
+    if (stdout === null) continue; // still running
     // eslint-disable-next-line no-await-in-loop
     await reconcileRenderResult(ctx.pool, p.episode_id, stdout);
     reconciled += 1;
+    // RUN, not a single advance. The last episode landing moves the series to 'assembling', and one
+    // step stops there — the season would then sit undispatched until something else poked it. This
+    // loop still cannot cross the approval gate: it breaks the moment a step parks.
     // eslint-disable-next-line no-await-in-loop
-    await advanceVideoSeries(ctx, p.series_id).catch((err) => logger.warn({ err: (err as Error).message, seriesId: p.series_id }, 'advance after reconcile failed'));
+    await runVideoSeries(ctx, p.series_id).catch((err) => logger.warn({ err: (err as Error).message, seriesId: p.series_id }, 'advance after reconcile failed'));
+  }
+
+  // The season stitch is the same shape of work as a render — one remote task whose result nobody
+  // is watching — so it is swept by the same timer. Without this pass a series that finished
+  // stitching would sit in 'assembling' until someone poked it by hand.
+  for (const s of seasons) {
+    // eslint-disable-next-line no-await-in-loop
+    const stdout = await settledStdout(clients, s.season_job_id);
+    if (stdout === null) continue;
+    // eslint-disable-next-line no-await-in-loop
+    await reconcileSeasonResult(ctx.pool, s.series_id, stdout);
+    reconciled += 1;
   }
   return reconciled;
 }

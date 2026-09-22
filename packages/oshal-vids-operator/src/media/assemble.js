@@ -5,6 +5,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ffmpeg concat helper: normalize + stitch N scene clips into one story MP4 (same imageio_ffmpeg mechanism as the proven daily-recap assemble).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | probeStreams: read back what a stitch ACTUALLY produced — the video stream, the audio stream and the duration — so a season cut cannot be reported as finished when it is silent, pictureless or short. concatClips already fails loud on a missing INPUT; nothing until now looked at the OUTPUT.
  */
 /**
  * @description Stitch N generated scene clips into one continuous story MP4.
@@ -226,4 +227,32 @@ function extractFrame(file, outPng, atSec = 4) {
   return { ok: true, file: outPng };
 }
 
-module.exports = { resolveFfmpeg, concatClips, hasAudio, extractFrame };
+/**
+ * @description Read back what a finished file actually contains: whether it carries a video stream,
+ * whether it carries an audio stream, and how long it is.
+ *
+ * This is the OUTPUT-side check `concatClips` never had. concatClips fails loud on a missing or
+ * truncated INPUT, but nothing looked at the result, so a stitch that dropped a stream or stopped
+ * early was still reported as a success and uploaded as one. Uses the same ffmpeg this module
+ * already resolves rather than a separate ffprobe binary: ffmpeg-static ships only ffmpeg.exe, and a
+ * validator that is missing on the node validates nothing.
+ *
+ * @param {string} file absolute path of the media file to inspect
+ * @returns {{ok:boolean,video:boolean,audio:boolean,seconds:number,error?:string}} what the file has
+ */
+function probeStreams(file) {
+  const empty = { ok: false, video: false, audio: false, seconds: 0 };
+  if (!file || !fs.existsSync(file)) return { ...empty, error: `file not found: ${file}` };
+  const r = cp.spawnSync(resolveFfmpeg(), ['-hide_banner', '-i', file], { encoding: 'utf8', maxBuffer: 1 << 26 });
+  // `ffmpeg -i <file>` with no output always exits non-zero ("At least one output file must be
+  // specified") and prints the stream table on stderr; the exit code says nothing about the file.
+  const text = `${r.stderr || ''}${r.stdout || ''}`;
+  if (!/Input #0/.test(text)) return { ...empty, error: `unreadable media: ${text.trim().slice(-200)}` };
+  const d = text.match(/Duration:\s*(\d+):(\d\d):(\d\d(?:\.\d+)?)/);
+  const seconds = d ? Number(d[1]) * 3600 + Number(d[2]) * 60 + Number(d[3]) : 0;
+  const video = /Stream #\d+:\d+.*: Video:/.test(text);
+  const audio = /Stream #\d+:\d+.*: Audio:/.test(text);
+  return { ok: video && audio && seconds > 0, video, audio, seconds };
+}
+
+module.exports = { resolveFfmpeg, concatClips, hasAudio, extractFrame, probeStreams };
