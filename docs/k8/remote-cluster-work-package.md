@@ -368,7 +368,9 @@ landed.
 - Both governance scripts now have one caller, and it is opt-in: `scripts/ci-local.sh
   --cluster-gates` runs the gates `cluster-bot-manifest` and `cluster-tenant-isolation` through
   `scripts/ci/check-cluster-gates.sh`. It requires `OSHAL_CLUSTER_CONTEXT` and fails closed when no
-  API server answers. `verify-tenant-isolation.sh` now takes `--context`.
+  API server answers. `cluster-bot-manifest` passes only when the validator exits 0 and prints both
+  server-side lines (4.3), with nothing labelled NOT A PROOF. `verify-tenant-isolation.sh` now
+  takes `--context`.
 - Every full ci-local run now has two more cluster-free gates. `argo-manifests` runs kubeconform
   `-strict` over all five `ops/deployment/argo/*.yaml`, the WorkflowTemplate included. `terraform`
   runs `fmt -check -recursive` and `validate`. Both fail when their tool is missing.
@@ -931,7 +933,9 @@ OSHAL_CLUSTER_CONTEXT=<ctx> bash scripts/ci/check-cluster-gates.sh bot-manifest
 `WARNING: client-side only` and `WARNING: no cluster reachable`. Without `--require-server` the
 script **exits 0** in that state, and those lines now say NOT A PROOF. With `--require-server` it
 exits 2 and never falls back to a client-side dry-run. Run it with the flag. Even then, the two
-`server` lines are the pass signal, not the exit code alone.
+`server` lines are the pass signal, not the exit code alone. The gate wrapper checks for both. An
+exit 0 that lacks either line, or that carries anything labelled NOT A PROOF, is
+`cluster-bot-manifest: FAIL`.
 
 ### 4.4 Two-tenant isolation — both halves, and where each runs
 
