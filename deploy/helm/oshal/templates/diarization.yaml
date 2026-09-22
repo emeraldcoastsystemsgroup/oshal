@@ -3,6 +3,8 @@
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial (ADR-129 amendment) — speaker-diarization sidecar (compose speaker-diarization parity), main role only, no compose profile. Compose BUILDS it from services/speaker-diarization; the chart PULLS the published image so the k8s path stays build-free. Keeps the compose hardening: read-only root filesystem with a writable tmp, no privilege escalation. Audio never leaves the cluster — that is the point of the local ASR rail.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Readiness probe sends X-Speaker-Service-Key and Host: localhost. /health is key-authenticated behind TrustedHostMiddleware, so the bare probe got 401 forever, the pod never went Ready and helm --wait timed out. Found on the first Docker Desktop k8s install.
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | Production-readiness baseline (chart 0.5.0): runAsNonRoot as its image's USER (10001:10001) and RuntimeDefault seccomp at pod level; startup and liveness probes send the same key header and Host as readiness; resources from infra.diarization.resources; pull policy from infra.diarization.pullPolicy instead of the platform image's (a side-loaded platform image may be pullPolicy Never, and this is a registry image pinned to 2.1.0-beta.1). Guard: tests/unit/chart-production-baseline.spec.ts.
 {{- if and (eq .Values.role "main") .Values.infra.diarization.inCluster }}
 apiVersion: apps/v1
 kind: Deployment
@@ -21,6 +23,12 @@ spec:
         app.kubernetes.io/name: speaker-diarization
         {{- include "oshal.labels" . | nindent 8 }}
     spec:
+      # The image's own user (USER 10001:10001 in its image config).
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        {{- include "oshal.podSeccomp" . | nindent 8 }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -28,7 +36,8 @@ spec:
       containers:
         - name: diarization
           image: {{ .Values.infra.diarization.image }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Its own policy: a registry image, not the (possibly side-loaded) platform image.
+          imagePullPolicy: {{ .Values.infra.diarization.pullPolicy }}
           env:
             - name: SPEAKER_SERVICE_KEY
               value: {{ .Values.infra.diarization.serviceKey | quote }}
@@ -47,9 +56,42 @@ spec:
             httpGet:
               path: /health
               port: 8080
+              # /health is authenticated and behind a trusted-host allowlist: without
+              # these the probe got 401 forever and the pod never went Ready.
+              httpHeaders:
+                - name: Host
+                  value: localhost
+                - name: X-Speaker-Service-Key
+                  value: {{ .Values.infra.diarization.serviceKey | quote }}
             initialDelaySeconds: 10
             periodSeconds: 10
             failureThreshold: 30
+          # The same authenticated request as readiness: key header and an admitted Host.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8080
+              httpHeaders:
+                - name: Host
+                  value: localhost
+                - name: X-Speaker-Service-Key
+                  value: {{ .Values.infra.diarization.serviceKey | quote }}
+            periodSeconds: 10
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+              httpHeaders:
+                - name: Host
+                  value: localhost
+                - name: X-Speaker-Service-Key
+                  value: {{ .Values.infra.diarization.serviceKey | quote }}
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.infra.diarization.resources | nindent 12 }}
           volumeMounts:
             - name: tmp
               mountPath: /tmp

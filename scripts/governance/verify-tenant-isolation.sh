@@ -5,9 +5,11 @@
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — live cross-tenant network-isolation assertion for ADR-078 Phase 3. Proves BOTH directions are denied and that same-namespace traffic still flows (the control that distinguishes "isolated" from "nothing is listening"). Sibling to verify-rls-isolation.mjs, which asserts the DATA boundary; this asserts the NETWORK boundary.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | --context <ctx>: every kubectl call in the script carries it. The script had no caller and no way to name a cluster, so the only thing it could judge was whatever context kubectl last pointed at - on a box running Docker Desktop Kubernetes beside another cluster that is the wrong-cluster hazard deploy/terraform/providers.tf refuses at plan time. scripts/ci/check-cluster-gates.sh (the opt-in `ci-local.sh --cluster-gates` gate) now calls it with an explicit context. An unknown argument is refused (exit 2) instead of silently ignored. Without --context the behaviour is unchanged.
 #
-# Usage: bash scripts/governance/verify-tenant-isolation.sh
-# Exit 0 = isolation proven. Non-zero = a real failure (the assertion that failed is printed).
+# Usage: bash scripts/governance/verify-tenant-isolation.sh [--context <kube-context>]
+# Exit 0 = isolation proven. 1 = a real failure (the assertion that failed is printed).
+# 2 = refused: kubectl missing, no reachable cluster, the app=web pods absent, or a bad argument.
 #
 # Requires: a reachable cluster with tenant-a/tenant-b namespaces each running a pod
 # labelled app=web that serves HTTP on :80, and a NetworkPolicy-enforcing CNI.
@@ -15,13 +17,26 @@
 
 set -uo pipefail
 
+KUBE_CONTEXT_ARGS=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --context)
+      [ -n "${2:-}" ] || { echo "--context needs a kube context name"; exit 2; }
+      KUBE_CONTEXT_ARGS=(--context "$2"); shift 2 ;;
+    *) echo "unknown argument: $1 (usage: verify-tenant-isolation.sh [--context <kube-context>])"; exit 2 ;;
+  esac
+done
+
 pass=0; fail=0
 note() { echo "[tenant-isolation] $*"; }
 ok()   { echo "  PASS  $*"; pass=$((pass + 1)); }
 bad()  { echo "  FAIL  $*"; fail=$((fail + 1)); }
 
 command -v kubectl >/dev/null || { echo "kubectl not found"; exit 2; }
-kubectl cluster-info >/dev/null 2>&1 || { echo "no reachable cluster"; exit 2; }
+# Defined AFTER the presence check (a function named kubectl would satisfy `command -v`), so that
+# every kubectl call below - including any added later - carries the chosen context.
+kubectl() { command kubectl "${KUBE_CONTEXT_ARGS[@]+"${KUBE_CONTEXT_ARGS[@]}"}" "$@"; }
+kubectl cluster-info >/dev/null 2>&1 || { echo "no reachable cluster${KUBE_CONTEXT_ARGS[1]:+ at context ${KUBE_CONTEXT_ARGS[1]}}"; exit 2; }
 
 pod_in()  { kubectl get pod -n "$1" -l app=web -o jsonpath='{.items[0].metadata.name}' 2>/dev/null; }
 ip_of()   { kubectl get pod -n "$1" -l app=web -o jsonpath='{.items[0].status.podIP}' 2>/dev/null; }

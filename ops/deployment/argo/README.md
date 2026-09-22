@@ -59,7 +59,13 @@ The point ADR-078 makes: isolation is **namespace + NetworkPolicy + DB isolation
 ## Validate
 
 These manifests validate offline (no cluster needed) and, when a cluster with the Argo
-CRDs is reachable, against the real Argo schema:
+CRDs is reachable, against the real Argo schema.
+
+The local gate validates all five, cluster-free: `scripts/ci-local.sh` runs
+`scripts/ci/check-argo-manifests.sh` (gate `argo-manifests`; `bash scripts/ci-local.sh
+--k8s-only` runs it alone). It uses kubeconform `-strict`: the core kinds against the
+Kubernetes 1.36.0 schemas, and the WorkflowTemplate against a commit-pinned Argo CRD schema.
+No kind is only parsed. Without kubeconform the gate fails.
 
 ```bash
 # 1. Portable structural parse (no cluster) — python or node:
@@ -76,15 +82,24 @@ argo lint incident-rca-workflowtemplate.yaml
 
 ## What this is NOT (read before running)
 
-- **Not a live deploy.** Nothing here has been *submitted* as a running Workflow. The
-  templates reference **target-state** container entrypoints — `bot-node-batch.sh`
-  (a one-shot single-phase bot-node runner), `finalize-incident.sh`, `record-cost.sh` —
-  that are **not built yet**. Today's OSHAL runs these phases in-process via the
-  long-lived `QueueManagerService`, not as one-shot Jobs. Turning the queue manager into
-  a "thin submitter" that translates an approved batch ticket into a Workflow is the
-  ADR-078 §1 work, still to do.
-- **Not multi-tenant runtime-proven.** The NetworkPolicy expresses the deny; proving
-  tenant A's Job truly cannot reach tenant B needs a running cluster with a
-  NetworkPolicy-enforcing CNI and the two-tenant assertion from ADR-078 §Phase 3.
-- **No Terraform.** These are the raw YAML the terraform `tenant/` / `argo/` modules will
-  render. The modules do not exist (`**/*.tf` → none).
+- **Not a live deploy.** The incident-rca template has not run end to end inside Argo. Its
+  container entrypoints are built: `scripts/bot-node-batch.sh` (the one-shot single-phase
+  bot-node runner, `src/app/bot-node-batch.ts`, which also records batch Job telemetry through
+  `src/app/bot-node-batch-telemetry.ts`), `scripts/finalize-incident.sh`
+  (`src/app/finalize-incident.ts`) and `scripts/record-cost.sh` (`src/app/record-cost.ts`). What
+  is still missing: `QueueManagerService` does not submit Workflows (today's OSHAL runs these
+  phases in-process through the long-lived queue manager; the "thin submitter" is the ADR-078 §1
+  work, still to do), and no manifest in this repo creates the `oshal-model` namespace or Service
+  that the `model-endpoint` default points at. The as-built ledger is
+  [078-argo-batch-proveout-status.md](../../../docs/architecture/078-argo-batch-proveout-status.md).
+- **Tenant network isolation is proven on Docker Desktop; other CNIs are open.** A
+  NetworkPolicy-enforcing CNI was the assumed blocker, and the 2026-07-08 addendum in the status
+  ledger disproved it: Docker Desktop's CNI enforces NetworkPolicy, and
+  `scripts/governance/verify-tenant-isolation.sh` asserted the applied
+  [`tenant-network-policies.yaml`](tenant-network-policies.yaml) at 13/13. Still open: the same
+  result on another cluster's CNI, and the `oshal` → tenant ingress direction, which that script
+  does not test.
+- **Terraform is not these modules.** The raw YAML here is what ADR-078 §4's terraform `tenant/`
+  and `argo/` modules would render, and those two modules do not exist. The Terraform that does
+  exist is [`deploy/terraform`](../../../deploy/terraform/README.md), which deploys one oshal
+  tenant through the Helm chart. It does not render these Argo manifests.

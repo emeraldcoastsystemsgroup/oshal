@@ -1,5 +1,13 @@
 # any-bot-k8s
 
+> **LEGACY — DO NOT DEPLOY.** This workspace is the quarantined pre-chart Kubernetes generation.
+> Its stack runs `oshal-api-server:latest`, an image nothing in this repo builds. The current
+> Kubernetes path is the Helm chart at [`deploy/helm/oshal`](../../deploy/helm/oshal/README.md):
+> start with [docs/k8/README.md](../../docs/k8/README.md) and
+> [ADR-129](../../docs/adr/129-codeless-k8s-install-path.md). Every script this README runs
+> refuses unless `OSHAL_ALLOW_LEGACY_K8S=1` is set. The files are kept while the operator decides
+> between deleting the legacy generation and keeping it quarantined.
+
 This directory contains a **root-level Kubernetes deployment workspace** for deploying `any-bot` with:
 
 - **Postgres**
@@ -131,7 +139,7 @@ Instead, the secure default is:
 
 1. run **Headscale** somewhere reachable
 2. create a **pre-auth key**
-3. put that key in `any-bot-k8s/secrets.example.yaml`
+3. put that key in `ops/any-bot-k8s/secrets.example.yaml`
 4. deploy `any-bot-gateway`
 5. join your outside machine to the same Headscale network
 6. access any-bot through the gateway's **tailnet IP** or your Headscale DNS setup
@@ -145,25 +153,25 @@ That means the service works **over the internet**, but through an encrypted pri
 If you want a repeatable setup flow, use the helper script:
 
 ```bash
-cp any-bot-k8s/setup.env.example any-bot-k8s/setup.env
+cp ops/any-bot-k8s/setup.env.example ops/any-bot-k8s/setup.env
 # edit setup.env with real values
 
 npm run k8:install:any-bot -- \
-  --env-file any-bot-k8s/setup.env
+  --env-file ops/any-bot-k8s/setup.env
 ```
 
 If your cluster is ready and reachable, you can also let the script apply the manifests:
 
 ```bash
 npm run k8:install:any-bot -- \
-  --env-file any-bot-k8s/setup.env \
+  --env-file ops/any-bot-k8s/setup.env \
   --apply
 ```
 
 If you prefer the package binary entrypoint, you can also use:
 
 ```bash
-npm exec oshal-any-bot-k8s-setup -- --env-file any-bot-k8s/setup.env
+npm exec oshal-any-bot-k8s-setup -- --env-file ops/any-bot-k8s/setup.env
 ```
 
 If you want to distribute the installer to another computer **without publishing to npm**, build a local tarball:
@@ -214,7 +222,7 @@ If your cluster cannot use the local Docker image cache, retag and push it to yo
 
 Edit:
 
-- `any-bot-k8s/secrets.example.yaml`
+- `ops/any-bot-k8s/secrets.example.yaml`
 
 At minimum, set:
 
@@ -236,7 +244,7 @@ Optionally set:
 
 And replace placeholder Headscale values in:
 
-- `any-bot-k8s/any-bot-stack.yaml`
+- `ops/any-bot-k8s/any-bot-stack.yaml`
 
 Specifically update the gateway login server value inside `TS_EXTRA_ARGS` so it points at your real Headscale control plane.
 
@@ -246,7 +254,7 @@ It can also override the default `APP_URL`, `MOCK_OIDC`, and image tag values du
 ### 3. Apply secrets
 
 ```bash
-kubectl apply -f any-bot-k8s/secrets.example.yaml
+kubectl apply -f ops/any-bot-k8s/secrets.example.yaml
 ```
 
 ### 4. Deploy the stack

@@ -4,6 +4,7 @@
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — per-cluster tailnet relay: tailscaled (kernel mode, NET_ADMIN confined to THIS pod) + socat static forwards. main: exposes oshal-redis/oshal-api to the tailnet + dials remote bots. bot-pod: DNS-parity Services (oshal-redis/oshal-api/oshal-local-api) that dial the main relay + exposes local bots (5100-5199). Static forwards over subnet routes on purpose: enumerable in one values file + one ACL.
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | 0.2.0 — relay.enabled now defaults false (values.yaml): single-cluster tenants need none of this, and generic clusters may not permit NET_ADMIN + /dev/net/tun. Template unchanged; federation is a values flip away.
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | Production-readiness baseline (chart 0.5.0): pinned images (tailscale v1.102.4, socat 1.8.1.3, in values); RuntimeDefault seccomp; the forwarder runs as nobody (65534) with every capability dropped - it listens on unprivileged ports only; tailscale gets no privilege escalation but keeps NET_ADMIN on the runtime's default set (what kernel-mode tailscaled can lose from that set is unmeasured, and the pod's hostPath /dev/net/tun is outside every Pod Security level anyway); resources for both from values; the state claim honours storageClassName. No probes: neither process exposes a health endpoint. Guard: tests/unit/chart-production-baseline.spec.ts.
 {{- if .Values.relay.enabled }}
 {{- $ns := .Release.Namespace }}
 apiVersion: v1
@@ -14,6 +15,9 @@ metadata:
     {{- include "oshal.labels" . | nindent 4 }}
 spec:
   accessModes: [ReadWriteOnce]
+  {{- with include "oshal.storageClassName" (dict "root" $ "override" .Values.relay.stateStorageClassName) }}
+  {{ . }}
+  {{- end }}
   resources:
     requests:
       storage: 100Mi
@@ -39,6 +43,8 @@ spec:
       annotations:
         sidecar.istio.io/inject: "false"
     spec:
+      securityContext:
+        {{- include "oshal.podSeccomp" . | nindent 8 }}
       containers:
         - name: tailscale
           image: {{ .Values.relay.tailscaleImage }}
@@ -58,9 +64,16 @@ spec:
               value: {{ include "oshal.tailnetHostname" . | quote }}
             - name: TS_EXTRA_ARGS
               value: "--login-server={{ .Values.tailnet.loginServer }} --advertise-tags={{ include "oshal.tailnetTag" . }}"
+          # Kernel-mode tailscaled programs routes and netfilter as root with NET_ADMIN on top of
+          # the runtime's default set; which of that default set it can lose has not been measured
+          # on a cluster, so none is dropped here. The pod mounts /dev/net/tun from the host, which
+          # no Pod Security Standard admits anyway (README "Pod Security").
           securityContext:
+            allowPrivilegeEscalation: false
             capabilities:
               add: ["NET_ADMIN"]
+          resources:
+            {{- toYaml .Values.relay.tailscaleResources | nindent 12 }}
           volumeMounts:
             - name: state
               mountPath: /var/lib/tailscale
@@ -68,6 +81,14 @@ spec:
               mountPath: /dev/net/tun
         - name: forwarder
           image: {{ .Values.relay.socatImage }}
+          # socat listens on unprivileged ports only (6379, 5000, 5100-5199): alpine's nobody.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            {{- include "oshal.minimalContainerSecurity" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.relay.forwarderResources | nindent 12 }}
           command: ["/bin/sh", "-c"]
           args:
             - |

@@ -3,6 +3,7 @@
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — in-cluster Redis (compose oshal-redis parity: AOF on), main role only. On bot-pod clusters the oshal-redis Service is created by relay.yaml and forwards over the tailnet instead.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Production-readiness baseline (chart 0.5.0): runs as the image's redis user (uid 999, gid 1000; the entrypoint "allow[s] the container to be started with --user"), fsGroup 1000 with OnRootMismatch, RuntimeDefault seccomp, no privilege escalation, every capability dropped; startup and liveness probes reuse redis-cli ping; resources from infra.redis.resources; storageClassName on the claim template. Guard: tests/unit/chart-production-baseline.spec.ts.
 {{- if and (eq .Values.role "main") .Values.infra.redis.inCluster }}
 apiVersion: apps/v1
 kind: StatefulSet
@@ -24,6 +25,16 @@ spec:
       annotations:
         sidecar.istio.io/inject: "false"
     spec:
+      # The image's redis user (uid 999, gid 1000 in the alpine image's /etc/passwd). Its entrypoint
+      # says "allow the container to be started with --user": it then skips the root chown and
+      # the setpriv drop. Data a root-started entrypoint wrote is already chowned to redis.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        {{- include "oshal.podSeccomp" . | nindent 8 }}
       containers:
         - name: redis
           image: {{ .Values.infra.redis.image }}
@@ -35,6 +46,22 @@ spec:
               command: ["redis-cli", "ping"]
             periodSeconds: 5
             failureThreshold: 20
+          # Same check. Startup covers an append-only-file replay (5 min) before liveness counts.
+          startupProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            periodSeconds: 5
+            failureThreshold: 60
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          securityContext:
+            {{- include "oshal.minimalContainerSecurity" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.infra.redis.resources | nindent 12 }}
           volumeMounts:
             - name: data
               mountPath: /data
@@ -43,6 +70,9 @@ spec:
         name: data
       spec:
         accessModes: [ReadWriteOnce]
+        {{- with include "oshal.storageClassName" (dict "root" $ "override" .Values.infra.redis.storageClassName) }}
+        {{ . }}
+        {{- end }}
         resources:
           requests:
             storage: {{ .Values.infra.redis.storage }}

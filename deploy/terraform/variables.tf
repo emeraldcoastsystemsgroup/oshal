@@ -5,6 +5,7 @@
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — input surface for deploying ONE OSHAL tenant onto ONE k8s cluster/namespace (per-tenant isolation model: multi-tenant = run this module once per tenant, never a shared-DB SaaS). The multi-user single-public-tenant posture is expressed here: mock_oidc=false forces real OIDC vars, guest mode is an explicit opt-in, and every secret is a sensitive var minted into the oshal-api-env Secret — never a values-file literal.
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | bots[] gains botName + personaFile optionals (chart 0.1.5): the production fleet has ~17 bots whose BOT_NAME/persona differ from the Service/DNS name, and the object type would otherwise reject those keys.
 # 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-129: chart_path now DEFAULTS to the in-repo chart (../helm/oshal) — the chart lives in this trunk since 0.2.0, so a fresh clone deploys without a CHANGE-ME hunt. Override still supported for a pulled OCI chart directory or an out-of-tree checkout.
+# 4 | maintainer@emeraldcoastsystemsgroup.com   | tsdb_/arangodb_/vault_/code_server_/diarization_in_cluster and code_server_external_url: the chart switches main.tf now forwards. Each switch defaults to the chart's own default (on) and is nullable = false, because a null would reach the chart as a deleted key and read as false there: the service would vanish without anyone having asked. Guard: tests/unit/chart-terraform-infra-switches.spec.ts.
 
 # ── Cluster targeting ─────────────────────────────────────────────────────────
 
@@ -169,6 +170,52 @@ variable "postgres_password" {
   type        = string
   default     = "oshal"
   sensitive   = true
+}
+
+# The rest of the shared-service tier (chart infra.<name>.inCluster). Each
+# defaults to the chart's own default. false removes the in-cluster workload and
+# the chart withholds that service's URL env, so a managed service's URL and
+# credentials go in api_extra_secret_env; left unset, the feature degrades.
+
+variable "tsdb_in_cluster" {
+  description = "true = run TimescaleDB (oshal-tsdb, the trading + world series store) in-cluster. false = the chart renders no Timescale and no TSDB_URL: supply TSDB_URL for a managed Timescale through api_extra_secret_env, or leave it unset and the series features degrade."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
+variable "arangodb_in_cluster" {
+  description = "true = run ArangoDB (oshal-arangodb, the graph tier) in-cluster. false = the chart renders no ArangoDB and no ARANGO_* env: supply ARANGO_URL, ARANGO_ROOT_USER and ARANGO_ROOT_PASSWORD for an external instance through api_extra_secret_env, or leave them unset and /api/graph answers 503."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
+variable "vault_in_cluster" {
+  description = "true = run the chart's in-cluster Vault (oshal-vault; its posture is stated in the chart README). false = the chart renders no Vault and no VAULT_ADDR/VAULT_TOKEN: supply a real Vault's VAULT_ADDR and VAULT_TOKEN through api_extra_secret_env."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
+variable "code_server_in_cluster" {
+  description = "true = run code-server in-cluster (ClusterIP; it runs --auth none over the read-write shared workspace). false = the chart renders no code-server; point the cockpit's /code link at an IDE you run elsewhere with code_server_external_url."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
+variable "code_server_external_url" {
+  description = "Browser-facing URL the cockpit's /code bridge redirects to (chart infra.codeServer.externalUrl, rendered as CODE_SERVER_URL). Empty = not forwarded, so the chart's default stands (the port-forward address http://localhost:8444)."
+  type        = string
+  default     = ""
+}
+
+variable "diarization_in_cluster" {
+  description = "true = run speaker-diarization in-cluster (local transcription; audio stays in the cluster). false = the chart renders no diarization service and no SPEAKER_DIARIZATION_URL/SPEAKER_SERVICE_KEY: supply both through api_extra_secret_env for an external service, or leave them unset."
+  type        = bool
+  default     = true
+  nullable    = false
 }
 
 variable "storage" {

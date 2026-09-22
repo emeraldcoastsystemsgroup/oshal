@@ -1,6 +1,15 @@
 # any-bot Kubernetes Setup Guide
 
-This guide explains how to prepare, render, and optionally apply the new `any-bot-k8s` deployment workspace.
+> **LEGACY — DO NOT DEPLOY.** This guide covers the quarantined pre-chart Kubernetes generation.
+> The `ops/any-bot-k8s` stack runs `oshal-api-server:latest`, an image nothing in this repo builds.
+> The current Kubernetes path is the Helm chart at
+> [`deploy/helm/oshal`](../../deploy/helm/oshal/README.md): start with
+> [docs/k8/README.md](README.md) and [ADR-129](../adr/129-codeless-k8s-install-path.md). Every
+> script this guide runs refuses unless `OSHAL_ALLOW_LEGACY_K8S=1` is set (for the installer
+> container, pass `-e OSHAL_ALLOW_LEGACY_K8S=1`). The guide is kept while the operator decides
+> between deleting the legacy generation and keeping it quarantined.
+
+This guide explains how to prepare, render, and optionally apply the legacy `ops/any-bot-k8s` deployment workspace.
 
 ## What this setup gives you
 
@@ -27,13 +36,13 @@ bash scripts/setup-any-bot-k8s.sh
 There is also an npm-wrapped entrypoint:
 
 ```bash
-npm run k8:install:any-bot -- --env-file any-bot-k8s/setup.env
+npm run k8:install:any-bot -- --env-file ops/any-bot-k8s/setup.env
 ```
 
 And a package binary entrypoint:
 
 ```bash
-npm exec oshal-any-bot-k8s-setup -- --env-file any-bot-k8s/setup.env
+npm exec oshal-any-bot-k8s-setup -- --env-file ops/any-bot-k8s/setup.env
 ```
 
 ## Local distribution without publishing to npm
@@ -94,7 +103,8 @@ Then run it like this:
 
 ```bash
 docker run --rm -it \
-  -v "$PWD/any-bot-k8s/setup.env:/workspace/setup.env:ro" \
+  -e OSHAL_ALLOW_LEGACY_K8S=1 \
+  -v "$PWD/ops/any-bot-k8s/setup.env:/workspace/setup.env:ro" \
   -v "$PWD/output:/workspace/output" \
   -v "$HOME/.kube:/root/.kube:ro" \
   -v /var/run/docker.sock:/var/run/docker.sock \
@@ -113,7 +123,7 @@ It performs the following steps:
 
 1. Loads required values from your env file
 2. Optionally builds the converted OSHAL API image from the repository root
-3. Renders `any-bot-k8s` with `kubectl kustomize`
+3. Renders `ops/any-bot-k8s` with `kubectl kustomize`
 4. Replaces the placeholder Headscale login server, API image tag, and runtime defaults in the rendered stack
 5. Generates Kubernetes Secret manifests from your env values
 6. Writes output artifacts to `output/k8/any-bot/`
@@ -135,10 +145,10 @@ Before running the script, make sure you have:
 Copy the example file:
 
 ```bash
-cp any-bot-k8s/setup.env.example any-bot-k8s/setup.env
+cp ops/any-bot-k8s/setup.env.example ops/any-bot-k8s/setup.env
 ```
 
-Then edit `any-bot-k8s/setup.env` and set real values for:
+Then edit `ops/any-bot-k8s/setup.env` and set real values for:
 
 - `POSTGRES_DB`
 - `POSTGRES_USER`
@@ -166,14 +176,14 @@ If you want the script to prepare everything but **not** apply to the cluster ye
 
 ```bash
 npm run k8:install:any-bot -- \
-  --env-file any-bot-k8s/setup.env
+  --env-file ops/any-bot-k8s/setup.env
 ```
 
 If you already built or pushed the image separately:
 
 ```bash
 npm run k8:install:any-bot -- \
-  --env-file any-bot-k8s/setup.env \
+  --env-file ops/any-bot-k8s/setup.env \
   --skip-build
 ```
 
@@ -197,13 +207,13 @@ If your current `kubectl` context points at a working cluster, you can let the s
 
 ```bash
 npm run k8:install:any-bot -- \
-  --env-file any-bot-k8s/setup.env \
+  --env-file ops/any-bot-k8s/setup.env \
   --apply
 ```
 
 The script applies in this order:
 
-1. `any-bot-k8s/namespace.yaml`
+1. `ops/any-bot-k8s/namespace.yaml`
 2. `output/k8/any-bot/generated-secrets.yaml`
 3. `output/k8/any-bot/rendered-stack.yaml`
 
@@ -212,7 +222,7 @@ The script applies in this order:
 If you rendered first and want to apply later:
 
 ```bash
-kubectl apply -f any-bot-k8s/namespace.yaml
+kubectl apply -f ops/any-bot-k8s/namespace.yaml
 kubectl apply -f output/k8/any-bot/generated-secrets.yaml
 kubectl apply -f output/k8/any-bot/rendered-stack.yaml
 ```
@@ -298,7 +308,7 @@ If your cluster is not using the same Docker image cache as your workstation:
 
 ```bash
 npm run k8:install:any-bot -- \
-  --env-file any-bot-k8s/setup.env \
+  --env-file ops/any-bot-k8s/setup.env \
   --image-tag your-registry.example.com/oshal-api-server:latest \
   --skip-build
 ```

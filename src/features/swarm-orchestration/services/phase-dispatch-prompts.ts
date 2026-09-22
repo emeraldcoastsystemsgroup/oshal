@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Ported phase-specific dispatch prompts from the legacy TicketPhaseManager.js:168-350. Each phase gets explicit instructions telling the agent what its role is, what input to read, what to produce, and what NOT to do.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Session 101: Added NO MOCK BUILDS constraint to execution, child execution, testing, and review prompts. Bots must produce real implementations unless ticket explicitly requests prototyping.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Incident investigator prompt: removed "kubectl WORKS in this container" and its three hardcoded node hostnames, which were false on any box without a mounted kubeconfig and contradicted the hedged Kubernetes heading. Kubernetes access is now stated as conditional on a mounted kubeconfig, and a real connection failure is evidence to paste into the RCA rather than something the bot is told is hallucination. Remote-cluster work package item 9. Guard: tests/unit/incident-prompt-kubectl-claims.spec.ts.
  */
 
 /**
@@ -114,7 +115,7 @@ function getIncidentChildExecutionPrompt(ticketDepth: number): string {
   return `== YOUR ROLE: INCIDENT INVESTIGATOR ==
 
 You are the sole investigator for this infrastructure incident. You own the entire investigation.
-You have LIVE access to OpenSearch, Kubernetes (kubectl), Graph API, and the PostgreSQL ticket DB.
+You have LIVE access to OpenSearch, Graph API, and the PostgreSQL ticket DB, and to Kubernetes (kubectl) when a kubeconfig is mounted.
 TASK-BRIEF.md has the alert context — use it as your starting point, then QUERY LIVE DATA to build evidence.
 
 ## YOUR INVESTIGATION PROCESS
@@ -136,8 +137,8 @@ execute_command kubectl get pods --all-namespaces --field-selector=status.phase=
 execute_command kubectl top nodes
 execute_command kubectl top pods --all-namespaces --sort-by=memory | head -20
 \`\`\`
-kubectl WORKS in this container. Real nodes: ip-10-194-224-124, ip-10-194-225-189, ip-10-194-227-35.
-If you write "localhost:8080 refused" without calling execute_command first, that is hallucination — STOP and run the command.
+Run the command before you describe the cluster, and paste what it actually printed. Take node names only from that output.
+If no kubeconfig is mounted, kubectl fails (for example "connection to the server localhost:8080 was refused"). That failure is evidence: paste it into the RCA and state that the cluster could not be reached. Do not invent cluster state to fill the gap.
 
 **Step 2: Build the RCA from real data**
 After running queries, write deliverables/RCA-REPORT.md. PASTE the actual query output in the

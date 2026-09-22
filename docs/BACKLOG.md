@@ -1067,8 +1067,136 @@ including across a directory belonging to a different owner. Full reasoning and 
 - **Done when:** a fresh box reaches `/welcome` in a browser via the NodePort with only kubectl+helm+the installer present, a model connects through the wizard and a jarvis turn answers, and `helm show chart oci://ghcr.io/emeraldcoastsystemsgroup/charts/oshal` succeeds anonymously.
 
 ### k8s shared-service tier — live proof of the features it restores (ADR-129 amendment)
-- **Remaining:** chart 0.3.0 templates the whole tier (tsdb, arangodb, vault, code-server, diarization; ollama opt-in) and stages store packages via an api initContainer, but only template-level proof exists (lint, render matrix, `kubectl apply --dry-run`, a mutation-tested guard). Nothing has run against a live cluster.
+- **Remaining:** the chart at `deploy/helm/oshal` (the tier arrived in chart 0.3.0; `Chart.yaml` carries the current version) templates the whole tier (tsdb, arangodb, vault, code-server, diarization; ollama opt-in) and stages store packages via an api initContainer, but only template-level proof exists (lint, render matrix, `kubectl apply --dry-run`, a mutation-tested guard). Nothing has run against a live cluster.
 - **Done when:** on a real cluster — a staged store package serves its surface and survives an api pod restart; a trading query returns series from the in-cluster tsdb; `/api/graph` answers instead of 503; a transcription round-trips through the diarization Service; and `helm upgrade --set infra.arangodb.inCluster=false` degrades the graph cleanly (null connector, no connection-refused) rather than erroring.
+
+### k8s runtime-launched bots do not read the chart's `oshal-shared-secret` (chart 0.5.0)
+- **Remaining:** chart 0.5.0 moved `JWT_SECRET`, `ARANGO_ROOT_USER` and `ARANGO_ROOT_PASSWORD`
+  out of the `oshal-shared-env` ConfigMap into the `oshal-shared-secret` Secret. Chart-declared bots
+  `envFrom` that Secret. A bot the controller launches at runtime does not:
+  `buildBotDeployment` in `src/features/agent-management/services/kubernetes-bot-launcher.ts`
+  hardcodes `envFrom` to `oshal-shared-env` plus the optional `oshal-bot-env`. The ConfigMap sets
+  `NODE_ENV=production`, so such a bot throws `JWT_SECRET must be set in production`
+  (`any-bot/server/utils/config.js`) at boot unless the operator's `oshal-bot-env` carries the key.
+  **This is a regression.** Chart 0.4.0 rendered `JWT_SECRET` into `oshal-shared-env`, which the
+  launcher reads, so runtime-launched bots booted. On chart 0.5.0's default posture
+  (`rbac.botLauncher: true`) every runtime-launched bot fails to boot until the fix below lands or
+  the operator copies the keys. With `rbac.botLauncher` on, NOTES.txt prints the command that
+  copies the chart Secret's keys into `oshal-bot-env` and calls it a regression, and the chart
+  README "Credentials" section documents it. `tests/unit/chart-dynamic-bot-env.spec.ts` measures
+  the gap from the real launcher and render, proves it is boot-fatal against the real config
+  module, and holds the chart to the warning while the gap exists. The fix is a core change and
+  needs operator approval first (CLAUDE.md Rule 0d).
+- **Decision needed (operator):** approve one line in `buildBotDeployment`
+  (`src/features/agent-management/services/kubernetes-bot-launcher.ts`): add
+  `{ secretRef: { name: 'oshal-shared-secret' } }` to the container's `envFrom`, after the
+  `oshal-shared-env` ConfigMap and before `oshal-bot-env` (the order `bots.yaml` uses, so an
+  operator Secret still wins a duplicate key), and update
+  `tests/unit/dynamic-bot-runtime-launcher.spec.ts`. Nothing else in core changes. The Role grants
+  no access to Secrets and needs none, because the kubelet resolves `envFrom`, not the launcher.
+- **Done when:** the launcher's `envFrom` names `oshal-shared-secret`;
+  `tests/unit/chart-dynamic-bot-env.spec.ts` finds no key that a chart-declared bot gets from the
+  chart and a runtime-launched bot does not, and the NOTES.txt and README copy steps are removed
+  (that spec is red until they are); and on a cluster, a bot launched at runtime by an installed app
+  reaches Ready with no `JWT_SECRET` in `oshal-bot-env`.
+
+### k8s runtime-launched bots set no securityContext, liveness or startup probe, or resources (chart 0.5.0)
+- **Remaining:** chart 0.5.0 gave every workload the chart renders a production-readiness
+  baseline. A bot the controller launches at runtime is not rendered by the chart:
+  `buildBotDeployment` in `src/features/agent-management/services/kubernetes-bot-launcher.ts`
+  builds its Deployment with no pod `securityContext`, and a container with no `securityContext`,
+  no `resources` and a TCP readiness probe only. A chart-declared bot (`templates/bots.yaml`) has
+  RuntimeDefault seccomp, `allowPrivilegeEscalation: false`, every capability dropped but
+  `DAC_OVERRIDE`, a startup and a liveness probe on the readiness handler, and
+  `botDefaults.resources`. The chart closes the resources half without core: on a main cluster the
+  `oshal-container-defaults` LimitRange (`limitRange.enabled`, default on) gives
+  `botDefaults.resources` to any container that sets none, so a ResourceQuota that requires
+  requests no longer refuses such a bot for lack of them. A LimitRange cannot default a
+  `securityContext` or a probe, so those stay missing. The chart README "Probes, resources and Pod
+  Security" states the gap, and `tests/unit/chart-runtime-bot-defaults.spec.ts` measures it from
+  the real launcher against a real chart bot and holds the README to it. The fix is a core change
+  and needs operator approval first (CLAUDE.md Rule 0d).
+- **Decision needed (operator):** approve changing `buildBotDeployment` to set what
+  `templates/bots.yaml` sets: pod `securityContext: { seccompProfile: { type: 'RuntimeDefault' } }`;
+  container `securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ['ALL'],
+  add: ['DAC_OVERRIDE'] } }`; `startupProbe` (tcp 5000, period 10, failureThreshold 30) and
+  `livenessProbe` (tcp 5000, period 20, timeout 5, failureThreshold 6) beside the existing
+  readiness probe; and `resources` equal to the chart's `botDefaults.resources`. The launcher has
+  no way to read values today, so the resources half needs the chart to hand `botDefaults.resources`
+  to the api (for example as a JSON env value next to `OSHAL_BOT_IMAGE`) for the launcher to apply.
+  Without that half the LimitRange keeps supplying the same figures.
+- **Done when:** the Deployment `buildBotDeployment` returns carries those fields, and
+  `tests/unit/dynamic-bot-runtime-launcher.spec.ts` asserts them;
+  `tests/unit/chart-runtime-bot-defaults.spec.ts` finds nothing a chart-declared bot has that a
+  runtime-launched bot lacks, and the README gap paragraph (the one naming `buildBotDeployment`) is
+  removed (that spec is red until it is); and on a cluster, a bot launched at runtime by an
+  installed app reaches Ready in a namespace with a ResourceQuota on `requests.cpu` and
+  `requests.memory`, admitted under the `baseline` Pod Security Standard.
+
+### k8s cockpit toggle scales a Deployment named after the agent, not the chart's (2026-09-21)
+- **Remaining:** measured on the live Docker Desktop cluster ([k8/docker-desktop-live-proofs-2026-09-21.md](k8/docker-desktop-live-proofs-2026-09-21.md), item 12):
+  `PATCH /api/agents/<id>/status` on `weather-analyst` (`a0000000-...-004a`) made the launcher scale
+  `deployments.apps "weather-analyst"`, which answered 404 NotFound. The chart's Deployment is
+  `weather-bot`, the compose service name. The agent row flipped inactive and back to active, and the
+  pod never scaled: replicas stayed 1. Every chart bot whose agent name differs from its service
+  name is affected. In the tree, `setRunning` in
+  `src/features/agent-management/services/kubernetes-bot-launcher.ts` takes the agent name as "also
+  the Deployment name", while `templates/bots.yaml` names each Deployment after its fleet entry
+  (`{{ .name }}`) and labels it `app.kubernetes.io/name: <that name>` and `oshal.io/bot: "true"`.
+  Neither label names the agent. The fix is a core change and needs operator approval first
+  (CLAUDE.md Rule 0d).
+- **Decision needed (operator):** approve the launcher resolving a bot's Deployment by a label the
+  chart stamps on it, rather than by the agent name. That needs a chart label that carries the agent
+  (for example its `agentId`) on every bot Deployment, and a label-selector lookup in `setRunning`.
+- **Done when:** on a cluster, the cockpit toggle on `weather-analyst` scales the `weather-bot`
+  Deployment to 0 and back to 1; and a guard that renders the chart fleet fails when any chart bot's
+  agent does not resolve to its own Deployment through the launcher's lookup.
+
+### Opt-in apps revert on every api boot, which fails the groups that need them (2026-09-21)
+- **Remaining:** measured on the live Docker Desktop cluster ([k8/docker-desktop-live-proofs-2026-09-21.md](k8/docker-desktop-live-proofs-2026-09-21.md)): apps whose manifest says
+  `status: inactive` revert on every api boot, which then fails their groups (intelligent-career
+  needs print-ingest; marketing-suite needs brand-graphics). The upsert is in
+  `src/features/swarm-apps/services/swarm-app-repository.ts`: on a plain reload its `status = CASE`
+  keeps a row's status only when that status is already `inactive`, and otherwise writes the
+  manifest's status, so a row the operator activated is set back to the manifest's `inactive`. The
+  fix is a core change and needs operator approval first (CLAUDE.md Rule 0d).
+- **Decision needed (operator):** approve changing that upsert so a boot reload does not overwrite
+  an activation the operator made. The row does not record who set its status today, so the change
+  needs either that record or a narrower rule (for example: a manifest's `inactive` never
+  overwrites an existing row's status on a plain reload).
+- **Done when:** an opt-in app the operator activates stays active across an api restart and its
+  group resolves (intelligent-career with print-ingest active); and a guard runs the real upsert
+  against a real PostgreSQL twice (activate, then reload the same manifest) and reads `active`.
+
+### The published speaker-diarization image predates its source and has no `/v1/transcribe` (2026-09-21)
+- **Remaining:** measured on the live Docker Desktop cluster ([k8/docker-desktop-live-proofs-2026-09-21.md](k8/docker-desktop-live-proofs-2026-09-21.md), item 11):
+  `ghcr.io/emeraldcoastsystemsgroup/oshal-speaker-diarization:latest` answers `POST /v1/diarize` with
+  200 but `/v1/transcribe` with 404, because the published image predates the source. The
+  source-built image, side-loaded, answered `/v1/transcribe` with 200 in 13.8s. The chart pins
+  `2.1.0-beta.1`, which `deploy/helm/oshal/values.yaml` records as the digest `:latest` resolved to
+  on 2026-09-21. `values-docker-desktop.yaml` (SEQ 4) records the side-load override a box with
+  compose's source-built image can use meanwhile. The fix is a
+  republish from `origin/main`, an operator action that rides on work-package item 1
+  (`scripts/publish-images.sh`), then a new pin.
+- **Done when:** the image `infra.diarization.image` pins by default answers `POST /v1/transcribe`
+  with 200 through the diarization Service on a cluster, with no side-loaded image and no
+  `infra.diarization.image` override.
+
+### little-monsters looks for its education migration at a core path (2026-09-21)
+- **Remaining:** captured on the Docker Desktop api boot of 2026-09-22T02:54:51Z (level 50,
+  module `education-schema`): "Education migration file not found; schema bootstrap skipped" for
+  `/app/scripts/migrations/019-education-platform.sql`. The emitter is the **store package**, not
+  core: oshal-applications `little-monsters/src-routes/education-schema.ts:219` resolves
+  `path.resolve(process.cwd(), 'scripts/migrations/019-education-platform.sql')`, a pre-carve-out
+  kernel path. Harmless where the platform applies package migrations (the same boot applied the
+  package's 019/020/021/024; [k8/docker-desktop-live-proofs-2026-09-21.md](k8/docker-desktop-live-proofs-2026-09-21.md)), but it logs an error on every boot.
+- **Done when:** the package resolves its own `migrations/` directory (or drops the redundant
+  bootstrap), ships as a new little-monsters version with its audit record re-bound, and an api boot
+  with little-monsters staged logs no `education-schema` error. Store-repo work; nothing in this
+  repo changes.
+- **Done when:** either an api boot with little-monsters staged logs no missing-migration line, and
+  this entry closes with that log excerpt as its evidence; or the captured line is traced to core,
+  the reference is removed, and a guard fails if core names a migration file the tree does not hold.
 
 ### Rides map and fare follow-ups
 - **Remaining:** install the merged [`rides`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/rides) package; decide optional OSRM/Valhalla and Google Maps billing paths; make geocode/tile configuration operator-owned and the normalized-address cache durable.
@@ -1766,6 +1894,16 @@ including across a directory belonging to a different owner. Full reasoning and 
   project's footprint, and the operator's custody preference is self-hosted. (PM offered a
   park-or-provide-AWS choice; the operator replied with a better split — a remote cluster box plus
   tagged, separated instructions.)
+- **Kubernetes engine: DONE 2026-09-22** (operator-run, on the Docker Desktop cluster the operator
+  directed this work onto). Every done-when clause is measured in
+  [k8/docker-desktop-live-proofs-2026-09-21.md](k8/docker-desktop-live-proofs-2026-09-21.md) item 14:
+  role `tenant-a-pod-reader` issues a 600s credential, `get pods -n tenant-a` succeeds, revocation
+  deletes the generated ServiceAccount and reuse is refused, and no bot Deployment carries kubeconfig
+  or token material. The engine authenticates as its own least-privilege ServiceAccount; the chart's
+  Vault no longer runs as the namespace `default` account (`1338d6ad`). The initial root token is
+  revoked; the api holds a policy-scoped token instead. **Still open here:** the same lifecycle
+  against the **PostgreSQL** engine on the development box, sequenced after "Production Vault
+  hardening" as decision 17 says.
 
 ### Multi-user ephemeral privileged runtime
 - **Remaining:** security-review and build a per-task, short-lived privileged runtime with tmpfs credentials, caller scoping, revocation, and residue inspection.

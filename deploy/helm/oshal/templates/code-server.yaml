@@ -3,6 +3,7 @@
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial (ADR-129 amendment) — workspace IDE (compose code-server parity), main role only, no compose profile. SECURITY: it runs `--auth none` and mounts the shared workspace READ-WRITE, so reaching it means owning the workspace. Compose contains that by binding 127.0.0.1; the cluster equivalent is ClusterIP + `kubectl port-forward`, which is the shipped default. The serviceType value exists for deployments that add their own authenticating proxy — never expose this as-is.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Production-readiness baseline (chart 0.5.0): runs as its image's USER (uid/gid 1000) with runAsNonRoot, RuntimeDefault seccomp, no privilege escalation and every capability dropped - its entrypoint's setuid fixuid step then declines, and it carries on as the uid it would have fixed up to. No fsGroup: the workspace claim is shared with the api and bots. Startup and liveness probes reuse /healthz; resources from infra.codeServer.resources; image pinned to 4.138.0 in values. Guard: tests/unit/chart-production-baseline.spec.ts.
 {{- if and (eq .Values.role "main") .Values.infra.codeServer.inCluster }}
 apiVersion: apps/v1
 kind: Deployment
@@ -23,6 +24,14 @@ spec:
         app.kubernetes.io/name: code-server
         {{- include "oshal.labels" . | nindent 8 }}
     spec:
+      # The image's own user (USER 1000 in its image config; coder:1000 in /etc/passwd). No
+      # fsGroup: the workspace claim is shared with the api and the bots, and a group rewrite of
+      # it would change what they can write.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        {{- include "oshal.podSeccomp" . | nindent 8 }}
       containers:
         - name: code-server
           image: {{ .Values.infra.codeServer.image }}
@@ -41,6 +50,25 @@ spec:
             initialDelaySeconds: 10
             periodSeconds: 10
             failureThreshold: 20
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 10
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          # Its entrypoint's fixuid step is setuid-root; with no privilege escalation it declines
+          # and the entrypoint carries on as the same uid 1000 it would have fixed up to.
+          securityContext:
+            {{- include "oshal.minimalContainerSecurity" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.infra.codeServer.resources | nindent 12 }}
           volumeMounts:
             - name: workspace
               mountPath: /app/workspace-shared
