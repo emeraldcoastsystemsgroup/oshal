@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Partial-mock the database barrel instead of listing its exports. createPersistenceActivation arrived in the barrel and both in-memory stores call it, so this file's mock threw on construction and the suite was red on main with nobody acting on it.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Correct a stale assumption this file carried about the session-ownership gate, which is why it answered 404 session_not_found. Its task-store double resolved create() to undefined and get() to null forever; that satisfied ensureSessionTask while the check read `return !created || created.ownerSub === sub` (a store that returned nothing was treated as agreement), and stopped satisfying it when the 2026-09-11 ownership hardening made a store that cannot hand back an owner-bound task a refusal instead. Both halves of the gate now run against the REAL InMemoryTaskStore with Postgres configuration withheld, so the contract cannot drift out from under this file again. Nothing is loosened: the cross-owner case, which used to assert that another owner reaching the same session id got an ordinary model answer, now asserts the stricter truth - the ask is refused 404 before the model is reached - and the direct-model call count follows that refusal down from four to three.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Follow the commissioned change to where a BUILD goes. 'Build a weather app for our cockpit.' was this file's control for "the weather guard does not grab every message that says weather", and it proved that by reaching the model. Since the deterministic build hand-off (BACKLOG "Jarvis hand-off experience") a build directive is filed with the swarm without a model turn, so the control is re-pointed rather than dropped: the same message now has to be dispatched as a COMPLEX build ticket carrying no providerIntent - still proof the weather path did not take it - and a new direct ask that also says "weather" ('How does our weather app pick a default city?') carries the reaches-the-model half. Nothing is loosened: the direct-turn count stays three, the six provider intents keep every assertion they had, and the build ask now has MORE pinned about it than before.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Pin career-match and trading-performance reads through the real /ask route: each creates an approved task without spending a conversational model turn, while generic stock/job questions remain model-owned.
  */
 
 import type { AddressInfo } from 'node:net';
@@ -86,12 +87,14 @@ describe('deterministic Jarvis provider-bound intent guard', () => {
     ['Find fish food at Walmart.', 'walmart-catalog'],
     ['Search Walmart for fish food.', 'walmart-catalog'],
     ['Show me 3 fish food options from Walmart.', 'walmart-catalog'],
+    ['List the most recent job matches for me, top 10 sorted by fit.', 'career-data'],
+    ['How did I do in the stock market today?', 'trading-data'],
   ] as const)('routes %s to the %s provider worker', (message, kind) => {
     const intent = detectProviderBoundHandoff(message);
 
     expect(intent).toMatchObject({ kind, handoff: { action: 'create', complexity: 'simple', platform: false } });
     expect(intent?.handoff.description).toContain(message);
-    expect(intent?.handoff.description).toContain('Do not answer from model memory');
+    expect(intent?.handoff.description).toMatch(/Do not answer from model memory/i);
   });
 
   it('extracts only the bounded provider operation into a server-authored intent', () => {
@@ -200,6 +203,8 @@ describe('deterministic Jarvis provider-bound intent guard', () => {
     "Compare fish food at Walmart and Target.",
     'Build a Walmart shopping integration.',
     "Order Ben & Jerry's ice cream + fish food.",
+    'What is a stock market index?',
+    'Help me write a job description for a software engineer.',
   ])('leaves non-provider or implementation request model-owned: %s', (message) => {
     expect(detectProviderBoundHandoff(message)).toBeUndefined();
   });
@@ -294,6 +299,8 @@ describe('Jarvis /ask provider-bound routing', () => {
       const weather = await ask('What is the weather today in Destin, Florida?', 'provider-weather-session');
       const email = await ask('Show me my important emails.', 'provider-email-session');
       const walmart = await ask('Show me exactly 2 fish food options from Walmart.', 'provider-walmart-session');
+      const career = await ask('List the most recent job matches for me, top 10 sorted by fit.', 'provider-career-session');
+      const trading = await ask('How did I do in the stock market today?', 'provider-trading-session');
       await ask('the weather today where I live.', 'provider-unrelated-session');
       const unrelatedEmail = await ask('Show me my important emails.', 'provider-unrelated-session');
       const clearedLocation = await ask('Destin, Florida', 'provider-unrelated-session');
@@ -329,6 +336,14 @@ describe('Jarvis /ask provider-bound routing', () => {
       expect(walmart).toMatchObject({
         status: 'done', answer: "I'll check the live Walmart catalog and report back here.",
         dispatched: [expect.objectContaining({ title: 'Live Walmart: fish food' })],
+      });
+      expect(career).toMatchObject({
+        status: 'done', answer: "I'll pull your latest career data and report back here.",
+        dispatched: [expect.objectContaining({ title: expect.stringContaining('Career data:') })],
+      });
+      expect(trading).toMatchObject({
+        status: 'done', answer: "I'll pull your current trading performance and report back here.",
+        dispatched: [expect.objectContaining({ title: expect.stringContaining('Trading performance:') })],
       });
       expect(unrelatedEmail).toMatchObject({
         status: 'done', answer: "I'll check your priority inbox and report back here.",
@@ -368,8 +383,10 @@ describe('Jarvis /ask provider-bound routing', () => {
       expect(modelInputs.some((text) => text.includes('weather today in Destin'))).toBe(false);
       expect(modelInputs.some((text) => text.includes('important emails'))).toBe(false);
       expect(modelInputs.some((text) => text.includes('fish food options from Walmart'))).toBe(false);
+      expect(modelInputs.some((text) => text.includes('job matches for me'))).toBe(false);
+      expect(modelInputs.some((text) => text.includes('stock market today'))).toBe(false);
 
-      expect(createTicket).toHaveBeenCalledTimes(7);
+      expect(createTicket).toHaveBeenCalledTimes(9);
       expect(createTicket).toHaveBeenNthCalledWith(1, expect.objectContaining({
         ticketType: 'task', ownerSub: OWNER,
         title: expect.stringContaining('Live weather:'),
@@ -396,10 +413,22 @@ describe('Jarvis /ask provider-bound routing', () => {
       }));
       expect(createTicket).toHaveBeenNthCalledWith(5, expect.objectContaining({
         ticketType: 'task', ownerSub: OWNER,
+        title: expect.stringContaining('Career data:'),
+        description: expect.stringContaining("authoritative Career Hunter data"),
+        metadata: expect.objectContaining({ source: 'jarvis', complexity: 'simple' }),
+      }));
+      expect(createTicket).toHaveBeenNthCalledWith(6, expect.objectContaining({
+        ticketType: 'task', ownerSub: OWNER,
+        title: expect.stringContaining('Trading performance:'),
+        description: expect.stringContaining("authoritative trading ledger"),
+        metadata: expect.objectContaining({ source: 'jarvis', complexity: 'simple' }),
+      }));
+      expect(createTicket).toHaveBeenNthCalledWith(7, expect.objectContaining({
+        ticketType: 'task', ownerSub: OWNER,
         title: expect.stringContaining('Priority inbox:'),
         metadata: expect.objectContaining({ providerIntent: expect.objectContaining({ kind: 'priority-email' }) }),
       }));
-      expect(createTicket).toHaveBeenNthCalledWith(6, expect.objectContaining({
+      expect(createTicket).toHaveBeenNthCalledWith(8, expect.objectContaining({
         ticketType: 'task', ownerSub: OWNER,
         title: expect.stringContaining('Live weather:'),
         metadata: expect.objectContaining({ providerIntent: expect.objectContaining({ location: 'Destin, Florida' }) }),
@@ -416,24 +445,26 @@ describe('Jarvis /ask provider-bound routing', () => {
       expect(createTicket.mock.calls[3]?.[0]).toMatchObject({ metadata: { providerIntent: {
         schemaVersion: 1, kind: 'walmart-catalog', operation: 'product-search', query: 'fish food', limit: 2,
       } } });
-      // The seventh is the build hand-off: filed as complex work for the swarm, carrying no provider
+      // The ninth is the build hand-off: filed as complex work for the swarm, carrying no provider
       // intent, because a build is not a bounded provider read.
-      expect(createTicket).toHaveBeenNthCalledWith(7, expect.objectContaining({
+      expect(createTicket).toHaveBeenNthCalledWith(9, expect.objectContaining({
         ticketType: 'task', ownerSub: OWNER, status: 'approved',
         title: 'Build a weather app for our cockpit.',
         metadata: expect.objectContaining({ source: 'jarvis', complexity: 'complex', autoFiled: true }),
       }));
-      expect(createTicket.mock.calls[6]?.[0]).not.toHaveProperty('metadata.providerIntent');
-      await vi.waitFor(() => expect(jarvisTaskInserts).toHaveLength(7));
+      expect(createTicket.mock.calls[8]?.[0]).not.toHaveProperty('metadata.providerIntent');
+      await vi.waitFor(() => expect(jarvisTaskInserts).toHaveLength(9));
       expect(visualArtifactInserts).toHaveLength(0);
 
       const providerAcknowledgements = messages.filter((message) => (
         message.role === 'assistant'
         && (String(message.text).includes('live weather data')
           || String(message.text).includes('priority inbox')
-          || String(message.text).includes('live Walmart catalog'))
+          || String(message.text).includes('live Walmart catalog')
+          || String(message.text).includes('career data')
+          || String(message.text).includes('trading performance'))
       ));
-      expect(providerAcknowledgements).toHaveLength(6);
+      expect(providerAcknowledgements).toHaveLength(8);
       expect(providerAcknowledgements.every((message) => (
         JSON.stringify(message.metadata || {}) === '{}'
       ))).toBe(true);
