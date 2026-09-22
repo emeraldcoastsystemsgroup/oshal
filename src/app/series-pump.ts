@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The joke-shorts pump: the driver the video-series conductor never had. Rotates enrolled shows, refuses to touch a busy render node, opens a real ticket per episode, and honours the approval gate through per-show standing authorization with a daily cap instead of deleting it.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Story-delivery notification hook (BACKLOG "Telegram notification bot" done-when): a run reaching `delivered` in syncPumpRuns now notifies the operator over the pluggable notify harness (notifyOperator — a no-op until a transport is configured), video-as-link when Drive returned one, honest node-only text when it did not. Injectable via opts.notify for the guard spec; best-effort so a notify failure never blocks the ledger sync.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Bind every pump run to the same durable token lease as recap, renew it across stages/restarts, release only the exact capability at terminal settlement, and keep restart-time approval/failure paths from stranding the scarce node.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Read the delivery notification's RESULT, not only a thrown error: transports resolve rather than throw, so a `.catch` alone saw nothing when a send failed. classifyDeliveryNotice reads the shared NotificationResult contract (sent / skipped-because-unconfigured / failed) for every transport, and a real failure is logged AND appended to the run's outcome_reason so it stays readable in the ledger.
  */
 /**
  * @description The joke-shorts pump — what keeps the engine producing.
@@ -700,11 +701,61 @@ export function deliveredNotification(run: { showSlug: string; title: string; li
   return { text, media: { kind: 'video', url: run.link, caption: run.title } };
 }
 
+/** What one delivery-notification attempt actually did, read from the transport's own result. */
+export interface DeliveryNotice {
+  /** `sent` = a transport accepted it; `skipped` = none is configured (the opt-in no-op); `failed` = a real send that did not arrive. */
+  outcome: 'sent' | 'skipped' | 'failed';
+  /** The transport that answered, or `unknown` when the call threw before one could. */
+  transport: string;
+  /** The transport's sanitized reason (never a token); null when it was sent. */
+  error: string | null;
+}
+
+/** The ledger prefix a delivery-notice failure is written under, so the note is greppable in `outcome_reason`. */
+export const DELIVERY_NOTICE_FAILED = 'operator delivery notification failed';
+
+/**
+ * @description Classify a delivery-notification attempt from what it RETURNED, not only from what it
+ * threw. Every `NotificationTransport` is contractually required to resolve rather than throw ("a
+ * transport error is a result, not an exception" — features/notifications/types.ts), so a bare
+ * `.catch` never fires on the ordinary failure path: telegram, twilio-sms, twilio-voice,
+ * twilio-whatsapp and email all answer a failed send with `{ delivered: false, error }`. This reads
+ * the shared result contract, so a new sibling transport is covered the day it is registered.
+ *
+ * `skipped` is that contract's own flag for "this transport is not configured" — the opt-in no-op the
+ * pump is built around, and NOT a failure. Anything else that did not deliver is one.
+ * @param {NotificationResult | Error} settled the resolved result, or the error a throwing caller produced
+ * @returns {DeliveryNotice} the classified outcome
+ */
+export function classifyDeliveryNotice(settled: NotificationResult | Error): DeliveryNotice {
+  if (settled instanceof Error) {
+    return { outcome: 'failed', transport: 'unknown', error: settled.message || 'notify_threw' };
+  }
+  if (settled.skipped) return { outcome: 'skipped', transport: settled.transport, error: settled.error ?? null };
+  if (settled.delivered) return { outcome: 'sent', transport: settled.transport, error: null };
+  return { outcome: 'failed', transport: settled.transport, error: settled.error ?? `${settled.transport}_send_failed` };
+}
+
+/**
+ * @description The run's `outcome_reason` with a delivery-notice failure appended. The episode itself
+ * was delivered — the row stays `delivered` — but "the operator was never told" has to survive in the
+ * ledger, which is the one place this pump's outcomes are read back from. Any reason already on the
+ * row (the node-only note) is kept in front of it.
+ * @param {string | null} existing the reason the delivered row already carries
+ * @param {DeliveryNotice} notice the classified failure
+ * @returns {string} the merged reason, capped like the other outcome_reason writes
+ */
+export function reasonWithNoticeFailure(existing: string | null, notice: DeliveryNotice): string {
+  const note = `${DELIVERY_NOTICE_FAILED} (${notice.transport}): ${notice.error ?? 'unknown'}`;
+  return (existing ? `${existing}; ${note}` : note).slice(0, 500);
+}
+
 /**
  * @description Bring the ledger and the tuning counters up to date with what the conductor did:
  * a run whose episode reached `rendered`/`assembled` becomes `delivered` (with the link the node
- * actually returned) and the operator is notified over the pluggable notify harness, a `failed`
- * episode becomes a failure against its show, and the node lease is released once nothing is
+ * actually returned) and the operator is notified over the pluggable notify harness — a notification
+ * that did not arrive is appended to that run's `outcome_reason` rather than being swallowed — a
+ * `failed` episode becomes a failure against its show, and the node lease is released once nothing is
  * rendering.
  * @param {AppContext} ctx app context
  * @param {{ notify?: (message: NotificationMessage) => Promise<NotificationResult> }} [opts] test seam — the guard spec injects a stub; production uses notifyOperator
@@ -737,11 +788,11 @@ export async function syncPumpRuns(
       // 2026-07-30: Cardboard Cosmo's episode rendered fine and the ledger showed "delivered" with an
       // empty link, which reads exactly like the fabricated-link mistake this project already paid for.)
       const link = (raw.drive_url as string | null) ?? null;
+      const deliveredReason = link ? null : 'delivered to the node content folder; the Drive upload returned no link';
       await pool.query(
         `UPDATE video_pump_runs SET outcome='delivered', outcome_stage=$2, drive_url=$3, duration_ms=$4,
                 outcome_reason=$5, updated_at=now() WHERE run_id=$1`,
-        [runId, status, link, ms,
-          link ? null : 'delivered to the node content folder; the Drive upload returned no link'],
+        [runId, status, link, ms, deliveredReason],
       );
       if (raw.show_id) {
         // eslint-disable-next-line no-await-in-loop
@@ -754,12 +805,31 @@ export async function syncPumpRuns(
       // the operator's chat the moment the ledger learns of it. Best-effort — a notify failure never
       // blocks the sync — and a no-op until a transport (TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID or a
       // NOTIFY_TRANSPORT sibling) is configured, which is what keeps the hook opt-in.
+      //
+      // BOTH endings have to be handled, and they are not the same thing. A transport RESOLVES a
+      // failed send (`{ delivered: false, error }`) rather than throwing, so the `.catch` below only
+      // ever sees a broken seam — for weeks a Telegram send that came back 400 was indistinguishable
+      // from one that arrived. classifyDeliveryNotice reads the result, and a genuine failure is
+      // logged AND written onto the run row; `skipped` (no transport configured) stays the quiet
+      // no-op it is meant to be.
+      const showSlug = String(raw.show_slug ?? 'unknown');
       // eslint-disable-next-line no-await-in-loop
-      await notify(deliveredNotification({
-        showSlug: String(raw.show_slug ?? 'unknown'),
-        title: String(raw.episode_title ?? 'untitled'),
-        link,
-      })).catch((err: unknown) => logger.warn({ err: (err as Error).message }, 'delivery notification failed'));
+      const notice = await notify(deliveredNotification({
+        showSlug, title: String(raw.episode_title ?? 'untitled'), link,
+      })).then(
+        (result) => classifyDeliveryNotice(result),
+        (err: unknown) => classifyDeliveryNotice(err instanceof Error ? err : new Error(String(err))),
+      );
+      if (notice.outcome === 'failed') {
+        logger.warn({ runId, showSlug, transport: notice.transport, error: notice.error }, 'delivery notification failed');
+        // eslint-disable-next-line no-await-in-loop
+        await pool.query(
+          `UPDATE video_pump_runs SET outcome_reason=$2, updated_at=now() WHERE run_id=$1`,
+          [runId, reasonWithNoticeFailure(deliveredReason, notice)],
+        ).catch((error) => logger.error({ err: error, runId }, 'could not record the delivery-notice failure on the run'));
+      } else if (notice.outcome === 'skipped') {
+        logger.debug({ runId, transport: notice.transport, reason: notice.error }, 'delivery notification skipped — no transport configured');
+      }
       changed += 1;
     } else if (status === 'failed') {
       const why = String((raw.error as string | null) ?? 'the episode failed on the node');
