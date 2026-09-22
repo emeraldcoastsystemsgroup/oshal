@@ -4,16 +4,25 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — extracted the autonomous-path tool-approval decision out of AgenticController (which is at 961 lines) so the one rule that stands between an injected prompt and a shell is directly testable, and so its history is written down. Behaviour is byte-for-byte what AgenticController implemented inline; the only addition is NEVER_AUTO_APPROVE, which is a no-op today and becomes load-bearing the moment someone flips a registry flag.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added cli_yq to NEVER_AUTO_APPROVE, as belt-and-braces ONLY. What refuses an unattended cli_yq call is `requiresApproval: true` on its registration (cliTools.js), set in the same change: all three consumers gate on `requiresApproval === true` before they consult this policy, so for a tool declared false this set is never reached. An earlier draft of this entry claimed the set itself stopped an unattended caller; that was wrong, was proved wrong by driving the real dispatch executor, and is corrected here.
  */
 
 /**
  * Tools the unattended path must NEVER auto-approve, whatever the caller passes.
  *
- * Today this is belt-and-braces: `execute_command` is declared `requiresApproval: true` in the
- * baseline registry, so the check below already refuses it. It exists because that registry flag
- * is one edit away from `false`, and on the autonomous path there is no human to catch it.
+ * READ THIS BEFORE ADDING A NAME HERE, because the set is weaker than it looks. Every consumer
+ * of this policy — AgenticController, dispatch-tool-executor, ToolRegistry.execute — refuses with
+ * `requiresApproval && !approved`. The registry flag is the gate; this set only decides whether
+ * an ALREADY-gated tool can be auto-approved. Listing a `requiresApproval: false` tool here
+ * therefore refuses nothing: the refusal branch is never entered and the auto-approve answer is
+ * never read. A name added here without the registration flag is a guard that cannot fire.
+ *
+ * Both entries are declared `requiresApproval: true` in their registrations, so both are already
+ * refused unattended. They are listed because that flag is one edit away from `false`, and on the
+ * autonomous path there is no human to catch it — belt-and-braces against a registry edit, not a
+ * substitute for one.
  */
-const NEVER_AUTO_APPROVE = new Set(['execute_command']);
+const NEVER_AUTO_APPROVE = new Set(['execute_command', 'cli_yq']);
 
 /**
  * @description Decides whether a tool call may execute without human approval on the autonomous
