@@ -225,6 +225,9 @@ export function applyPulledBotConfigToEnv(
     } else if (normalized === 'claude-code') {
       env.CLAUDE_CODE_MODEL = pulled.modelId;
       applied.push('CLAUDE_CODE_MODEL');
+    } else if (normalized === 'antigravity-cli') {
+      env.ANTIGRAVITY_MODEL = pulled.modelId;
+      applied.push('ANTIGRAVITY_MODEL');
     }
   }
   return applied;

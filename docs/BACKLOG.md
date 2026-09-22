@@ -132,8 +132,8 @@ carries the evidence that survived an adversarial re-derivation and the correcti
   `assertUnattendedProviderPreflight`'s refused set) shipped and stands on its own — it is a
   tightening, unrelated to whether any credential exists.
 - **The defect that refused the first cut: an option was offered that nothing could execute.**
-  `HARNESS_BY_ID` gives both `gemini-cli` and `antigravity-cli` `botNodeRuntime: null`, and
-  neither is a `ProviderRegistry` id, so `resolveBotNodeSwitch` answers null and
+  At PR #787's mergeable boundary, `HARNESS_BY_ID` gave both Google CLI ids
+  `botNodeRuntime: null`, so `resolveBotNodeSwitch` answered null and
   `reconcileDispatchProviderConfig` refuses the dispatch **by name**. The settings surface offered
   the Gemini brain the moment a login was pushed, `PUT` admitted it because `PUT` admits anything
   whose availability is true, and every turn afterwards failed. Fixed structurally: `cliBrainOffer`
@@ -143,7 +143,7 @@ carries the evidence that survived an adversarial re-derivation and the correcti
   retryable-to-hosted, so a future mis-selection degrades instead of dead-ending.
   Guards: `tests/unit/cli-brain-executability.spec.ts` (mutation-proven: re-offering the option,
   accepting it on PUT, or dropping the retryable classification each turns it red).
-- **Antigravity is the one Google path measured ANSWERING — and it cannot run on this stack.**
+- **Antigravity is the one Google path measured ANSWERING; its musl wall is closed in the runtime branch.**
   Measured on the operator's machine 2026-09-22: `agy` v1.2.8 under the vendor installer's
   TARGET_DIR in the local app-data tree, which the installer does not add to PATH — which is why
   an earlier `which agy` concluded it was absent. It is already authenticated as him, `agy models`
@@ -156,8 +156,11 @@ carries the evidence that survived an adversarial re-derivation and the correcti
   `Dockerfile.oshal` is `FROM node:20-alpine`, and the CLI ships no musl build
   (`manifests/linux_amd64_musl.json` is 404) while its glibc PIE fails to relocate under `gcompat`
   (`__open`, `__lseek`, `__read`, `pvalloc`: symbol not found — measured in a throwaway container
-  and carried in `AntigravityCliHarnessAdapter` since). So a bot-node runtime for it would refuse
-  on every container in the shipped stack: the same defect as the one above, one layer down.
+  and carried in `AntigravityCliHarnessAdapter` since). The `antigravity-bot-runtime` branch closes
+  that without rebasing the fleet: it checksum-pins the vendor amd64/arm64 artifacts, stages a
+  private Debian glibc loader/library tree under `/opt/agy-runtime`, and exposes a launcher that
+  opts only `agy` into it. Node and native addons remain musl. The production Dockerfile build
+  assertion and a throwaway run both report `agy 1.2.8`.
   Note the model ids are Antigravity's own and are effort-suffixed (`gemini-3.8-flash-low`, not
   `gemini-3.8-flash`); they must be discovered from `agy models`, never mapped from a hosted id.
 - **Three ways to close it, none of them free, and the choice is the operator's.**
@@ -172,11 +175,16 @@ carries the evidence that survived an adversarial re-derivation and the correcti
      it needs no image change at all; what it needs is an execution rail from the swarm to that
      node, which does not exist yet.
 
-  *Done when:* one of the three is chosen, the bot-node runtime for `antigravity-cli` exists
-  (`botNodeRuntime`, `BotNodeRuntimeName`, an any-bot provider + wrapper, the `AgenticController`
-  branch), and a recorded live turn answers on an Antigravity model the API key cannot reach.
-  `botNodeCanRunProvider` then flips on its own and the brain option becomes selectable with no
-  further change to the surface.
+  The private-loader path is now implemented: the fourth bot-node runtime, provider/wrapper,
+  AgenticController dispatch, model propagation, stream-json stdin framing, strict terminal-status
+  parsing, timeouts and ADR-127 denial are wired. The Windows account session is OS-keyring-bound
+  and is not portable to Linux. Google's Linux path uses Secret Service over D-Bus; the current bot
+  image has neither `dbus-launch` nor a keyring daemon, so the account-auth path is deliberately not
+  claimed complete. Readiness remains false until a persistent Linux keyring service exists, `agy`
+  is authenticated through it, and one headless turn succeeds. Only then set
+  `ANTIGRAVITY_ACCOUNT_LOGIN_READY=true`.
+
+  *Done when:* a recorded Linux-node turn answers on an Antigravity model the API key cannot reach.
 - **Vertex is the viable FALLBACK, and it was proven on the operator's identity — not built.**
   Measured 2026-09-22: a direct `generateContent` POST to the `us-central1` Vertex endpoint for
   `gemini-2.5-flash`, in the operator's own gcloud project, under his gcloud identity, returned

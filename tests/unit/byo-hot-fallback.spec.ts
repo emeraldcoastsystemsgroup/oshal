@@ -70,7 +70,7 @@ const TASK_ID = 'f2b7a9d0-0000-4000-8000-00000000c0de';
 
 /** Every id the platform can run, hand-built as the api validates against (same shape as provider-fallback-chain.spec). */
 const CATALOG: ProviderSwitchCatalog = {
-  harnessTypes: ['cline', 'codex-cli', 'claude-code', 'gemini-cli', 'a2a', 'noop'],
+  harnessTypes: ['cline', 'codex-cli', 'claude-code', 'gemini-cli', 'antigravity-cli', 'a2a', 'noop'],
   clineApiProviders: ['gemini', 'openrouter', 'anthropic'],
 };
 
@@ -595,6 +595,26 @@ describe('the cockpit chat path — POST /api/send-message over the REAL router'
 });
 
 describe('the readiness probe — stored status without a token, expiry honoured', () => {
+  it('admits Antigravity only on a node after the Linux-login proof flag is set', async () => {
+    const prior = process.env.ANTIGRAVITY_ACCOUNT_LOGIN_READY;
+    try {
+      delete process.env.ANTIGRAVITY_ACCOUNT_LOGIN_READY;
+      const unproved = await probeRungReadiness({ providerId: 'antigravity-cli', transport: 'node', catalog: CATALOG });
+      expect(unproved).toMatchObject({ kind: 'cli-login', ready: false });
+      expect(unproved.reason).toContain('Windows Credential Manager session is not portable');
+
+      process.env.ANTIGRAVITY_ACCOUNT_LOGIN_READY = 'true';
+      const proved = await probeRungReadiness({ providerId: 'antigravity-cli', transport: 'node', catalog: CATALOG });
+      const inline = await probeRungReadiness({ providerId: 'antigravity-cli', transport: 'inline', catalog: CATALOG });
+      expect(proved).toMatchObject({ kind: 'cli-login', ready: true });
+      expect(inline).toMatchObject({ kind: 'cli-login', ready: false });
+      expect(inline.reason).toContain('only on a bot node');
+    } finally {
+      if (prior === undefined) delete process.env.ANTIGRAVITY_ACCOUNT_LOGIN_READY;
+      else process.env.ANTIGRAVITY_ACCOUNT_LOGIN_READY = prior;
+    }
+  });
+
   it('reads each rung\'s login or key, marks an expired login not-ready, and the stored status carries no token', async () => {
     writeCodexLogin(Date.now() - 1_000);
     const claudeExpiry = Date.now() + 7_200_000;

@@ -37,6 +37,7 @@ scripts/
 !scripts/bot-entrypoint.sh
 !scripts/setup-cline-auth.sh
 !scripts/swarm-bot-lifecycle.sh
+!scripts/agy-glibc-launcher.sh
 # Argo DAG hooks (ADR-078 §1) — the WorkflowTemplate execs these directly; without these
 # allowlist entries the Dockerfile COPY fails at build (context excludes scripts/ by default).
 !scripts/bot-node-batch.sh

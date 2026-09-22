@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   ANTIGRAVITY_BINARY_NAME,
   antigravityMuslBlockingReason,
+  antigravityNodeCredentialReady,
   antigravityNodeReadiness,
   resolveAntigravityCliBinary,
 } from '../../src/features/llm-provider';
@@ -61,6 +62,12 @@ describe('finding the Antigravity binary', () => {
 });
 
 describe('whether this node could run it at all', () => {
+  it('never infers a Linux login from installation; only the post-proof assertion enables it', () => {
+    expect(antigravityNodeCredentialReady({})).toBe(false);
+    expect(antigravityNodeCredentialReady({ ANTIGRAVITY_ACCOUNT_LOGIN_READY: 'false' })).toBe(false);
+    expect(antigravityNodeCredentialReady({ ANTIGRAVITY_ACCOUNT_LOGIN_READY: 'true' })).toBe(true);
+  });
+
   it('reports the binary as the missing piece when the libc is not the problem', () => {
     const readiness = antigravityNodeReadiness({ HOME: root, LOCALAPPDATA: root });
     if (antigravityMuslBlockingReason()) {
@@ -93,5 +100,14 @@ describe('whether this node could run it at all', () => {
   it('never reports a libc block off linux, where the question does not apply', () => {
     if (process.platform !== 'linux') expect(antigravityMuslBlockingReason()).toBeNull();
     else expect(typeof antigravityMuslBlockingReason()).toMatch(/string|object/);
+  });
+
+  it('accepts a complete private glibc runtime on musl without weakening the host libc', () => {
+    const runtimeDir = path.join(root, 'agy-runtime');
+    placeBinary('agy-runtime', 'ld-linux.so');
+    placeBinary('agy-runtime', 'agy');
+    if (process.platform === 'linux') {
+      expect(antigravityMuslBlockingReason({ ANTIGRAVITY_GLIBC_RUNTIME_DIR: runtimeDir })).toBeNull();
+    }
   });
 });

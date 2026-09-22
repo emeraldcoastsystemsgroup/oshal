@@ -110,14 +110,21 @@ with the flag on.
 > - An unresolvable dispatch (`AuthoritativeDispatchConfigError`) is classified retryable-to-hosted,
 >   so a mis-selected CLI brain degrades instead of reaching the user as a raw provider error.
 >
-> **Did NOT ship: a bot node that can execute either Google CLI.** `HARNESS_BY_ID` gives
-> `gemini-cli` and `antigravity-cli` `botNodeRuntime: null`, and neither is a `ProviderRegistry`
+> **PR #787 did not ship a bot node that could execute either Google CLI.** At that boundary,
+> `HARNESS_BY_ID` gave both ids `botNodeRuntime: null`, and neither was a `ProviderRegistry`
 > id, so `resolveBotNodeSwitch` answers null and `reconcileDispatchProviderConfig` refuses the
 > dispatch **by name**. The first version of this rail offered the Gemini brain the moment a login
 > was pushed; the option was selectable, `PUT` accepted it, and every turn afterwards failed. The
-> option is now unavailable and `PUT` refuses it, each naming the missing piece, until a runtime
-> exists. Adding one means a fourth any-bot provider — a new spawn path, which is an ADR-level
-> decision and was deliberately not taken here.
+> option became unavailable and `PUT` refused it, each naming the missing piece.
+>
+> The follow-on `antigravity-bot-runtime` branch adds that fourth runtime without changing the
+> fleet's musl base. A checksum-pinned vendor binary runs through a private Debian glibc loader;
+> the any-bot wrapper uses stream-json stdin and remains behind the ADR-127 boundary. Installation
+> does not imply readiness: the operator's Windows Credential Manager session cannot be copied to
+> Linux, and Google's account-auth path requires a persistent Linux Secret Service/D-Bus keyring
+> that the image does not yet provide. The option stays closed until that service exists, a login
+> is live-proved, and
+> `ANTIGRAVITY_ACCOUNT_LOGIN_READY=true` records that proof.
 >
 > **Did NOT ship, and cannot: the Gemini CLI sign-in the push rail was built around.** On
 > 2026-09-22 the operator ran `gemini` and chose *Sign in with Google*. Google answered, verbatim:
@@ -135,17 +142,16 @@ with the flag on.
 > `generativelanguage.googleapis.com` — but it is now moot, because the credential is unobtainable
 > and the harness is unrunnable.
 >
-> **What Google points individuals at instead is Antigravity, and it works — off the swarm.**
+> **What Google points individuals at instead is Antigravity, and it works on Windows.**
 > Measured on the operator's own machine: `agy` v1.2.8 at `%LOCALAPPDATA%\agy\bin\agy.exe`,
 > already authenticated as him, `agy models` listing ids the shared API key cannot reach, and
 > `agy --model gemini-3.8-flash-low -p "…"` answering — on the exact model that returns 503 "high
 > demand" through the API key on every other transport. It is headless by design (`-p`,
-> `--output-format`, `--model`, `--effort`). It still cannot run **here**: every bot node is the
+> `--output-format`, `--model`, `--effort`). It originally could not run **here**: every bot node is the
 > one `oshal-bot:latest` image, `Dockerfile.oshal` is `FROM node:20-alpine`, and the CLI ships no
 > musl build while its glibc PIE fails to relocate under `gcompat` (measured in a throwaway
-> container; `AntigravityCliHarnessAdapter` has carried the sentence since). So the harness is
-> registered, selectable as configuration, and correctly NOT offered as a brain. The backlog entry
-> holds the three ways that could change and what each costs.
+> container; `AntigravityCliHarnessAdapter` has carried the sentence since). The private-loader
+> runtime closes the executable gap; node authentication and the recorded live turn remain.
 
 ### 2. A per-user default provider, stored and honoured
 

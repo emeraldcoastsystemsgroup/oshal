@@ -238,11 +238,13 @@ async function buildLlmStack(): Promise<{
   let clineProvider = initCline(config);
   let claudeCodeProvider = await initClaudeCode();
   let codexProvider = await initCodex();
+  let antigravityProvider = await initAntigravity();
 
   const baseProviderMap = {
     'claude-code': claudeCodeProvider,
     'openai-codex': codexProvider,
     'cline-cli': clineProvider,
+    'antigravity-cli': antigravityProvider,
   };
   // Every initialized runtime is wrappable and every one can be a rung of someone else's chain.
   // The names below are the RUNTIME keys this node constructed, not a policy about who falls back
@@ -266,6 +268,7 @@ async function buildLlmStack(): Promise<{
   claudeCodeProvider = baseProviderMap['claude-code'];
   codexProvider = baseProviderMap['openai-codex'];
   clineProvider = baseProviderMap['cline-cli'];
+  antigravityProvider = baseProviderMap['antigravity-cli'];
 
   // ADR-034 mutable seam: the AgenticController's getCurrentProvider closes over these
   // `let`s, so setActiveProvider changes take effect on the NEXT provider resolution.
@@ -278,8 +281,9 @@ async function buildLlmStack(): Promise<{
     'claude-code': claudeCodeProvider,
     'openai-codex': codexProvider,
     'cline-cli': clineProvider,
+    'antigravity-cli': antigravityProvider,
   };
-  const boot = resolveCurrentProvider({ clineProvider, claudeCodeProvider, codexProvider }, builtProviders, clineApiProviders);
+  const boot = resolveCurrentProvider({ clineProvider, claudeCodeProvider, codexProvider, antigravityProvider }, builtProviders, clineApiProviders);
   let activeProviderName: string = boot.provider;
   let activeApiProvider: string | null = boot.apiProvider;
   if (activeApiProvider) {
@@ -289,7 +293,7 @@ async function buildLlmStack(): Promise<{
   let activeModelName = resolveModelName(activeProviderName);
 
   const agenticController = new AgenticController(
-    { bedrockProvider: null, clineProvider, claudeCodeProvider, codexProvider, getCurrentProvider: () => activeProviderName },
+    { bedrockProvider: null, clineProvider, claudeCodeProvider, codexProvider, antigravityProvider, getCurrentProvider: () => activeProviderName },
     toolRegistry, streamController,
   );
   const taskController = new TaskController(
@@ -412,18 +416,42 @@ async function initCodex(): Promise<any> {
   }
 }
 
+/** @description Constructs the Antigravity provider when the checksum-pinned CLI is present. */
+async function initAntigravity(): Promise<any> {
+  try {
+    const fs = await import('fs');
+    const command = process.env.ANTIGRAVITY_CLI_PATH || '/usr/local/bin/agy';
+    // Production uses the absolute launcher path. A bare override intentionally delegates lookup
+    // to PATH, matching child_process.spawn and allowing local development without a fake cwd file.
+    if ((command.includes('/') || command.includes('\\')) && !fs.existsSync(command)) return null;
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const AntigravityProvider = require('../../any-bot/server/services/llm/AntigravityProvider');
+    logger.info('AntigravityProvider initialized');
+    return new AntigravityProvider({
+      model: process.env.ANTIGRAVITY_MODEL || 'gemini-3.8-flash-low',
+      effort: process.env.ANTIGRAVITY_EFFORT || undefined,
+      agyCommand: command,
+      timeoutMs: parseInt(process.env.ANTIGRAVITY_INACTIVITY_TIMEOUT_MS || process.env.ANTIGRAVITY_TIMEOUT_MS || '600000', 10),
+    });
+  } catch (err: unknown) {
+    logger.warn({ err: (err as Error).message }, 'AntigravityProvider not available');
+    return null;
+  }
+}
+
 /**
  * @description Picks the active provider: FORCE_LLM_PROVIDER when it resolved (a runtime name, or a
  * Cline-backed API provider id the boot pull applied from a switch row), else first available.
  */
 function resolveCurrentProvider(
-  p: { clineProvider: any; claudeCodeProvider: any; codexProvider: any },
+  p: { clineProvider: any; claudeCodeProvider: any; codexProvider: any; antigravityProvider: any },
   built: Record<string, unknown>,
   clineApiProviders: readonly string[],
 ): { provider: string; apiProvider: string | null } {
   const forced = process.env.FORCE_LLM_PROVIDER || '';
   if ((forced === 'openai-codex' || forced === 'codex-cli') && p.codexProvider) return { provider: 'openai-codex', apiProvider: null };
   if (forced === 'claude-code' && p.claudeCodeProvider) return { provider: 'claude-code', apiProvider: null };
+  if (forced === 'antigravity-cli' && p.antigravityProvider) return { provider: 'antigravity-cli', apiProvider: null };
   // A switch row's Cline-backed id (gemini, anthropic, ...) reaches boot through the pulled record.
   const switched = forced ? resolveBotNodeSwitch(forced, built, clineApiProviders) : null;
   if (switched?.apiProvider) return { provider: switched.runtime, apiProvider: switched.apiProvider };
@@ -440,6 +468,7 @@ function resolveCurrentProvider(
 function resolveModelName(currentProvider: string): string {
   if (currentProvider === 'claude-code') return process.env.CLAUDE_CODE_MODEL || 'claude-sonnet-4-6';
   if (currentProvider === 'openai-codex') return process.env.CODEX_MODEL || 'gpt-5.5';
+  if (currentProvider === 'antigravity-cli') return process.env.ANTIGRAVITY_MODEL || 'gemini-3.8-flash-low';
   return process.env.FORCE_LLM_MODEL || process.env.LLM_MODEL || 'default';
 }
 

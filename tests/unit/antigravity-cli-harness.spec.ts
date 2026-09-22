@@ -125,7 +125,7 @@ describe('the Antigravity CLI is a registered harness beside gemini-cli', () => 
       const musl = adapter.blockingReason();
       expect(musl, 'a musl node must refuse').toBeTruthy();
       expect(musl, 'name the 404 manifest so the cause is findable').toContain('linux_amd64_musl.json');
-      expect(musl, 'and name the alternative that runs on this image').toContain('gemini-cli');
+      expect(musl, 'and name the confined runtime that makes it runnable on Alpine').toContain('private glibc runtime');
 
       existsSync.mockImplementation(() => false);
       expect(adapter.blockingReason(), 'a glibc linux node must NOT refuse').toBeNull();

@@ -232,6 +232,12 @@ x-bot-env: &bot-env
   OSHAL_PROVIDER_AUTO_FAILOVER: ${OSHAL_PROVIDER_AUTO_FAILOVER:-true}
   OSHAL_PROVIDER_STALL_FALLBACK: ${OSHAL_PROVIDER_STALL_FALLBACK:-}
   OSHAL_PROVIDER_STALL_FALLBACK_MODEL: ${OSHAL_PROVIDER_STALL_FALLBACK_MODEL:-}
+  # Antigravity is bundled with a private glibc loader, but account credentials remain native
+  # keyring state and a Windows Credential Manager login cannot be mounted into Linux. Set this
+  # only after provisioning a persistent Linux Secret Service/D-Bus keyring, authenticating agy
+  # there, and recording a successful headless turn.
+  ANTIGRAVITY_ACCOUNT_LOGIN_READY: ${ANTIGRAVITY_ACCOUNT_LOGIN_READY:-false}
+  ANTIGRAVITY_MODEL: ${ANTIGRAVITY_MODEL:-gemini-3.8-flash-low}
   # ANTHROPIC_API_KEY is set at runtime via the cockpit Claude Code login module.
   # The login flow writes to ~/.claude/credentials.json and propagates via Redis.
   # Do NOT hardcode a key here — it will poison the cline CLI auth.

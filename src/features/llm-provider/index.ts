@@ -143,6 +143,7 @@ export {
 export {
   ANTIGRAVITY_BINARY_NAME,
   antigravityMuslBlockingReason,
+  antigravityNodeCredentialReady,
   antigravityNodeReadiness,
   resolveAntigravityCliBinary,
   type AntigravityBlockReason,

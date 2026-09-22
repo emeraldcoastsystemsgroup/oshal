@@ -29,13 +29,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — per-rung readiness (CLI login present + unexpired + node reachable; hosted key present + not cooling), a token-free stored status refreshed on an interval and on demand, and the transport rule that a CLI rung can never serve a controller-inline turn (SEC-05 is not weakened here).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Treat antigravity-cli as a node-only CLI-login rung, gated by an explicit post-proof Linux login assertion; never infer readiness from the operator's non-portable Windows session.
  *
  * @module fallback-rail-readiness
  */
 
 import { createChildLogger } from '@/shared/logger';
 import { classifyProviderId, type ClassifiedProviderId, type ProviderSwitchCatalog } from '@/shared/llm-runtime';
-import { liveCodexAuthExpiry } from '@/features/llm-provider';
+import { antigravityNodeCredentialReady, liveCodexAuthExpiry } from '@/features/llm-provider';
 import { ClaudeCodeAuthService } from '@/features/claude-code-auth';
 import { installedProviderSwitchCatalog } from '@/app/composition/provider-switch-runtime';
 import { OPENAI_COMPAT_LANES, laneKeyFromEnv } from './openai-compat-lanes';
@@ -139,6 +140,20 @@ function probeAuth(classified: ClassifiedProviderId, transport: FallbackTranspor
     }
     const login = classified.botNodeRuntime === 'openai-codex' ? probeCodexLogin(now) : probeClaudeLogin(now);
     return { kind: 'cli-login', ...login };
+  }
+  if (classified.botNodeRuntime === 'antigravity-cli') {
+    if (transport === 'inline') {
+      return { kind: 'cli-login', ready: false, reason: 'antigravity-cli is a CLI login; it can serve a turn only on a bot node, and this bot runs inline on the controller', expiresAt: null };
+    }
+    const ready = antigravityNodeCredentialReady();
+    return {
+      kind: 'cli-login',
+      ready,
+      reason: ready
+        ? 'Antigravity Linux account login was live-proved by the deployment operator'
+        : 'no proven Antigravity Linux account login (the Windows Credential Manager session is not portable)',
+      expiresAt: null,
+    };
   }
   if (classified.botNodeRuntime === 'cline-cli' && classified.clineApiProvider) {
     const hosted = probeHostedKey(classified.clineApiProvider);
