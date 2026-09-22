@@ -372,6 +372,10 @@ landed.
 - Every full ci-local run now has two more cluster-free gates. `argo-manifests` runs kubeconform
   `-strict` over all five `ops/deployment/argo/*.yaml`, the WorkflowTemplate included. `terraform`
   runs `fmt -check -recursive` and `validate`. Both fail when their tool is missing.
+- The unit guard for those two gates (`tests/unit/ci-local-k8s-gates.spec.ts`) drives them with
+  recording stand-ins for kubeconform and terraform, so it needs neither tool and runs in hosted CI.
+  The real-tool cases are in `tests/unit/ci-local-k8s-gates-real-tools.spec.ts`. Each one skips
+  where its tool is absent and prints why.
 - `bash scripts/ci-local.sh --k8s-only [--cluster-gates]` runs only these gates. It takes no lock and
   does no Docker cleanup.
 

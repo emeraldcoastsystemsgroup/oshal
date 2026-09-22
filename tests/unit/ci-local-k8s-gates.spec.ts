@@ -5,561 +5,290 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the Kubernetes gates ci-local.sh gained (docs/k8/remote-cluster-work-package.md items 7 and 8). Every case RUNS the shipped scripts in Git Bash. argo-manifests: the REAL kubeconform judges the real ops/deployment/argo tree green, and a temporary copy with one malformed edit - one per manifest, all five, the Argo WorkflowTemplate included - red, naming the file and the field; a YAML syntax break is red too. terraform: the REAL terraform judges throwaway modules - clean green, and an unformatted, a syntax-broken and an undeclared-reference module red - and writes nothing into the module. Both refuse (UNCHECKED, exit 2) without their tool and without anything to judge. cluster gates: a kubectl stand-in proves they refuse with no context, no kubectl and no reachable API server, carry the named context into every kubectl call, and pass only when the emulated cluster isolates. ci-local.sh --k8s-only: without --cluster-gates the cluster gates never run and say NOT RUN; with it and no reachable cluster they are FAIL. Neither kubeconform nor terraform on PATH is a loud failure here, never a skip - the same posture as chart-durability-boundary.spec.ts with helm.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The wrapper's own verdicts had no guard (review of wp/validators): no case took `check-cluster-gates.sh bot-manifest` past its cluster-info probe, and only exits 0 and 1 of tenant-isolation were driven, so dropping `--require-server` from the validator call, or reporting the check's exit 2 as PASS, left every case green. New cases run the REAL validator through the wrapper (npx tsx, --require-server) against emulated clusters: it passes only on server-side admission with the context and namespace on every call; a dry-run that exits 0 without "(server dry run)" is FAIL; an API server that stops answering after the wrapper's probe is UNCHECKED with no client-side fallback. The remaining branches are driven too: tenant-isolation refusing (no app=web pods) is UNCHECKED, a check outliving OSHAL_CLUSTER_TIMEOUT is UNCHECKED, and any other exit (the check missing from the tree it runs from, 127) is FAIL - never PASS in any of them. On Windows a kubectl.exe forwarder, compiled from C# in the case, carries the validator's calls to the same bash stand-in.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | This file runs under `npm run test:unit`, and the hosted CI Test job (.github/workflows/ci.yml) installs neither kubeconform nor terraform, so entry 1's throw-when-absent posture would have turned hosted CI red on merge (review of wp/validators, item 8). The gate LOGIC is now judged here with recording stand-ins on a controlled PATH, needing no real tool: which flags and schema locations reach kubeconform (-strict, the pinned Kubernetes version, the commit-pinned Argo CRD schema, the cache, no -ignore-missing-schemas), that every manifest in the directory reaches it (one malformed edit per manifest, all five, is red only because that file was judged), that an invalid manifest, an unfetchable schema, a skipped resource or an empty summary is never PASS, and the exact terraform fmt -check / init -backend=false -lockfile=readonly / validate calls with a throwaway TF_DATA_DIR that is removed and never lands in the module. An absent tool is UNCHECKED with its install hint both through the OSHAL_* override and through a PATH without it, and `ci-local.sh --k8s-only` with neither tool installed is FAIL for both gates - the ci-local step that runs the REAL tools over the real tree fails closed. The real-tool cases moved to tests/unit/ci-local-k8s-gates-real-tools.spec.ts (skipped, with the reason printed, where the tools are absent); the cluster-gate cases moved to tests/unit/check-cluster-gates.spec.ts. The ci-local wiring cases now point the schema and provider caches into the scratch tree, so they never depend on ci-local's cygpath-derived state directory.
  *
- * SCOPED DOUBLES (real-boundary audit): kubectl and the cluster behind it, in the cluster-gate and
- * ci-local cases - a unit run must never reach the live cluster on this box. The claim there is the
- * gates' REFUSAL, VERDICT and WIRING decisions, which run for real, as do npx, tsx and the validator
- * in the bot-manifest cases; on Windows the stand-in is reached from Node through a kubectl.exe that
- * only forwards to it. The real companion is `ci-local.sh --cluster-gates` on a reachable cluster
- * (work-package items 12 and 13). kubeconform and terraform are doubled ONLY in the two ci-local
- * wiring cases, whose claim is which gates run; their own cases above use the real binaries.
+ * SCOPED DOUBLES (real-boundary audit): kubeconform and terraform in every case here, and kubectl in
+ * the ci-local wiring cases. The claim here is the gates' own decisions - what they pass to the tool,
+ * how they read its answer, when they refuse - and which gates ci-local.sh runs; the shipped scripts
+ * make those decisions for real. What the REAL tools say about the real tree and about malformed
+ * input is tests/unit/ci-local-k8s-gates-real-tools.spec.ts, and `bash scripts/ci-local.sh` (gates
+ * argo-manifests and terraform), which is red without the tools.
  */
 
-import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import {
+  ARGO_DIR, ARGO_MANIFESTS, KUBECONFORM_STAND_IN, KUBECTL_STAND_IN, MUTATIONS, REPO_ROOT, RUN_TIMEOUT_MS, SCRIPTS,
+  TERRAFORM_STAND_IN, argoTree, cleanEnv, hostTools, kubectlEnv, makeScratch, onlyPath, posix, readCalls, runBash,
+  writeStandIn, writeTree, type RecordedCall, type Run,
+} from '../helpers/k8s-gate-harness';
 
-const REPO_ROOT = path.resolve(__dirname, '../..');
-const ARGO_DIR = path.join(REPO_ROOT, 'ops', 'deployment', 'argo');
-const ARGO_GATE = path.join(REPO_ROOT, 'scripts', 'ci', 'check-argo-manifests.sh').replaceAll('\\', '/');
-const TF_GATE = path.join(REPO_ROOT, 'scripts', 'ci', 'check-terraform.sh').replaceAll('\\', '/');
-const CLUSTER_GATE = path.join(REPO_ROOT, 'scripts', 'ci', 'check-cluster-gates.sh').replaceAll('\\', '/');
-const TENANT_SCRIPT = path.join(REPO_ROOT, 'scripts', 'governance', 'verify-tenant-isolation.sh').replaceAll('\\', '/');
-const CI_LOCAL = path.join(REPO_ROOT, 'scripts', 'ci-local.sh').replaceAll('\\', '/');
-const RUN_TIMEOUT_MS = 300_000;
 const CONTEXT = 'ctx-under-test';
-
-/** The five manifests the work package names; the directory glob must cover every one. */
-const ARGO_MANIFESTS = [
-  'tenant-namespace.example.yaml',
-  'tenant-network-policies.yaml',
-  'argo-executor-rbac.yaml',
-  'tenant-workspace-pvc.example.yaml',
-  'incident-rca-workflowtemplate.yaml',
-];
-
-/**
- * One malformed edit per manifest. Each is a single-field typo an author could plausibly make; the
- * anchor must exist in the real file (asserted), so a manifest rewrite cannot quietly retire a case.
- */
-const MUTATIONS: Array<{ file: string; from: string; to: string; expect: RegExp }> = [
-  { file: 'tenant-namespace.example.yaml', from: '\n  hard:\n', to: '\n  hardd:\n', expect: /ResourceQuota oshal-tenant-quota is invalid.*'hardd'/ },
-  { file: 'tenant-network-policies.yaml', from: '  podSelector: {}\n', to: '  podSelectr: {}\n', expect: /NetworkPolicy default-deny-all is invalid.*'podSelectr'/ },
-  { file: 'argo-executor-rbac.yaml', from: '    verbs: [create, patch, get, list, watch]\n', to: '    verb: [create, patch, get, list, watch]\n', expect: /Role argo-executor is invalid/ },
-  { file: 'tenant-workspace-pvc.example.yaml', from: '  accessModes: [ReadWriteOnce]\n', to: '  accessMode: [ReadWriteOnce]\n', expect: /PersistentVolumeClaim oshal-workspace-shared is invalid.*'accessMode'/ },
-  { file: 'incident-rca-workflowtemplate.yaml', from: '\n  entrypoint: incident-rca\n', to: '\n  entrypointt: incident-rca\n', expect: /WorkflowTemplate oshal-incident-rca is invalid.*'entrypointt'/ },
-];
-
-/** @description Locate Git Bash without falling into Windows' WSL launcher. */
-function resolveBash(): { bash: string; toolPath: string } {
-  if (process.platform !== 'win32') return { bash: 'bash', toolPath: '/usr/bin:/bin' };
-  let dir = execFileSync('git', ['--exec-path'], { encoding: 'utf8' }).trim();
-  for (let up = 0; up < 6; up += 1) {
-    const candidate = path.join(dir, 'bin', 'bash.exe');
-    if (fs.existsSync(candidate)) {
-      return { bash: candidate, toolPath: [path.join(dir, 'bin'), path.join(dir, 'usr', 'bin')].join(path.delimiter) };
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  throw new Error('Git Bash not found; refusing the WSL bash on PATH');
-}
-
-const { bash: BASH, toolPath: TOOL_PATH } = resolveBash();
-const SCRATCH = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-k8s-gates-'));
+const SCRATCH = makeScratch('oshal-k8s-gates-');
+/** The host's shell tools, with no kubeconform, terraform or kubectl among them. */
+const TOOL_PATH = hostTools(SCRATCH);
 const STAND_INS = path.join(SCRATCH, 'stand-ins');
+const KUBECONFORM_CACHE = posix(path.join(SCRATCH, 'kubeconform-cache'));
+const TF_PLUGIN_CACHE = posix(path.join(SCRATCH, 'terraform-plugin-cache'));
+const PINNED_CRD_SCHEMA = /^https:\/\/raw\.githubusercontent\.com\/datreeio\/CRDs-catalog\/[0-9a-f]{40}\/\{\{\.Group\}\}\/\{\{\.ResourceKind\}\}_\{\{\.ResourceAPIVersion\}\}\.json$/;
+const TF_VARS = 'TF_DATA_DIR TF_PLUGIN_CACHE_DIR TF_IN_AUTOMATION CHECKPOINT_DISABLE';
 afterAll(() => fs.rmSync(SCRATCH, { recursive: true, force: true }));
 
-interface Run {
-  status: number | null;
-  out: string;
-}
+beforeAll(() => {
+  writeStandIn(STAND_INS, 'kubeconform', KUBECONFORM_STAND_IN);
+  writeStandIn(STAND_INS, 'terraform', TERRAFORM_STAND_IN);
+  writeStandIn(STAND_INS, 'kubectl', KUBECTL_STAND_IN);
+});
 
-/** @description Environment without anything that could steer a gate from outside the case. */
-function cleanEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (!key.toUpperCase().startsWith('OSHAL_')) env[key] = value;
-  }
-  return { ...env, ...extra };
-}
-
-/** @description Run a script in Git Bash and capture its exit status and combined output. */
-function runBash(args: string[], env: NodeJS.ProcessEnv): Run {
-  const res = spawnSync(BASH, args, { encoding: 'utf8', env, timeout: RUN_TIMEOUT_MS });
-  if (res.error) throw res.error;
-  return { status: res.status, out: `${res.stdout ?? ''}${res.stderr ?? ''}` };
-}
+let runs = 0;
 
 /**
- * @description Find the REAL binary a gate would use (its OSHAL_ override, else PATH). Absent is a
- * loud failure: this guard exists to prove the real tool turns the gate red, so it does not skip.
+ * @description Run a gate script against `root` with the recording stand-ins first on PATH (or,
+ * with `dirs`, only the directories given) and a fresh call log.
+ * @param script the gate script
+ * @param root the tree it judges
+ * @param extra variables steering the stand-ins or the gate
+ * @param dirs the PATH entries (default: stand-ins, then the host tools)
+ * @returns the run and every call the stand-ins recorded
  */
-function requireTool(tool: 'kubeconform' | 'terraform'): string {
-  const key = tool === 'kubeconform' ? 'OSHAL_KUBECONFORM' : 'OSHAL_TERRAFORM';
-  const probe = spawnSync(BASH, ['-c', `command -v "\${${key}:-${tool}}"`], { encoding: 'utf8', env: process.env });
-  const found = (probe.stdout ?? '').trim();
-  if (probe.status !== 0 || !found) {
-    throw new Error(`${tool} is not installed (PATH or ${key}); this guard runs the REAL ${tool} and does not skip. `
-      + `Install it (see the header of scripts/ci/check-${tool === 'kubeconform' ? 'argo-manifests' : 'terraform'}.sh).`);
-  }
-  return found;
+function gate(script: string, root: string, extra: Record<string, string> = {}, dirs = [STAND_INS, TOOL_PATH]): { run: Run; calls: RecordedCall[] } {
+  const log = path.join(SCRATCH, `tool-calls-${runs += 1}.log`);
+  const env = onlyPath(cleanEnv({ OSHAL_TEST_TOOL_LOG: posix(log), OSHAL_TEST_RECORD_VARS: TF_VARS, ...extra }), dirs);
+  const run = runBash([script, root], env);
+  return { run, calls: readCalls(log) };
 }
 
-/** @description A throwaway tree holding the given files, for a gate to judge as its root. */
-function tree(name: string, files: Record<string, string>): string {
-  const root = path.join(SCRATCH, name);
-  fs.rmSync(root, { recursive: true, force: true });
-  for (const [rel, content] of Object.entries(files)) {
-    fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
-    fs.writeFileSync(path.join(root, rel), content, 'utf8');
-  }
-  return root.replaceAll('\\', '/');
+/** @description The argo-manifests gate with the kubeconform stand-in, schema cache in the scratch tree. */
+function argoGate(root: string, extra: Record<string, string> = {}, dirs?: string[]): { run: Run; calls: RecordedCall[] } {
+  return gate(SCRIPTS.argo, root, { OSHAL_KUBECONFORM_CACHE: KUBECONFORM_CACHE, ...extra }, dirs);
 }
 
-/** @description All five real Argo manifests, with `override` replacing some by name. */
-function argoTree(name: string, override: Record<string, string> = {}): string {
-  const files: Record<string, string> = {};
-  for (const file of ARGO_MANIFESTS) {
-    files[`ops/deployment/argo/${file}`] = override[file] ?? fs.readFileSync(path.join(ARGO_DIR, file), 'utf8');
-  }
-  return tree(name, files);
+/** @description The yaml paths one kubeconform call judged, in the order it got them. */
+function judged(call: RecordedCall): string[] {
+  return call.args.filter((a) => a.endsWith('.yaml'));
 }
 
-/** @description Run the argo-manifests gate with the real kubeconform against a root. */
-function argoGate(root: string, kubeconform: string): Run {
-  return runBash([ARGO_GATE, root], cleanEnv({
-    OSHAL_KUBECONFORM: kubeconform,
-    OSHAL_KUBECONFORM_CACHE: path.join(os.tmpdir(), 'oshal-kubeconform-cache').replaceAll('\\', '/'),
-  }));
-}
+let trees = 0;
+/** @description A fresh throwaway copy of the five committed Argo manifests. */
+const REAL_TREE = (): string => argoTree(path.join(SCRATCH, `argo-${trees += 1}`));
 
-describe('argo-manifests gate: the real kubeconform over all five ops/deployment/argo manifests', () => {
-  it('judges the committed manifests green, every one of the five schema-validated, nothing skipped', () => {
-    const kubeconform = requireTool('kubeconform');
-    const on = fs.readdirSync(ARGO_DIR).filter((f) => f.endsWith('.yaml')).sort();
-    expect(on, 'the directory holds exactly the five manifests this guard mutates').toEqual([...ARGO_MANIFESTS].sort());
-    const run = argoGate(REPO_ROOT.replaceAll('\\', '/'), kubeconform);
+describe('argo-manifests gate logic, judged with a recording kubeconform stand-in', () => {
+  it('passes when every resource is valid, calling kubeconform once with the pinned -strict flags over all five manifests', () => {
+    const root = REAL_TREE();
+    const { run, calls } = argoGate(root);
     expect(run.status, run.out).toBe(0);
-    for (const file of ARGO_MANIFESTS) {
-      expect(run.out, `${file} must be validated, not merely listed`).toMatch(new RegExp(`ops/deployment/argo/${file.replaceAll('.', '\\.')} - \\S+ \\S+ is valid`));
+    expect(run.out).toContain('argo-manifests: PASS - every resource in 5 files is schema-valid (-strict).');
+    expect(calls.map((c) => c.args[0]), 'a version probe, then exactly one validation call').toEqual(['-v', '-strict']);
+    const validate = calls[1];
+    const files = judged(validate);
+    expect(validate.args.slice(0, validate.args.length - files.length)).toEqual([
+      '-strict', '-summary', '-verbose',
+      '-kubernetes-version', '1.36.0',
+      '-schema-location', 'default',
+      '-schema-location', validate.args[8],
+      '-cache', KUBECONFORM_CACHE,
+    ]);
+    expect(validate.args[8], 'the Argo CRD schema is pinned to a commit, never a branch').toMatch(PINNED_CRD_SCHEMA);
+    expect(validate.args, 'nothing may be skipped for want of a schema').not.toContain('-ignore-missing-schemas');
+    expect([...files].sort()).toEqual(ARGO_MANIFESTS.map((f) => `ops/deployment/argo/${f}`).sort());
+    expect(validate.env.PWD, 'kubeconform runs from the root the gate judges').toBe(root);
+  }, RUN_TIMEOUT_MS);
+
+  it('honours OSHAL_KUBECONFORM_K8S_VERSION and OSHAL_KUBECONFORM (the binary override)', () => {
+    const { run, calls } = argoGate(REAL_TREE(), {
+      OSHAL_KUBECONFORM_K8S_VERSION: '1.35.2', OSHAL_KUBECONFORM: posix(path.join(STAND_INS, 'kubeconform')),
+    }, [TOOL_PATH]);
+    expect(run.status, run.out).toBe(0);
+    expect(calls[1].args.slice(3, 5)).toEqual(['-kubernetes-version', '1.35.2']);
+  }, RUN_TIMEOUT_MS);
+
+  it('the malformed edits exist in the real manifests, and the stand-in rejects nothing in the unedited tree', () => {
+    for (const mutation of MUTATIONS) {
+      expect(fs.readFileSync(path.join(ARGO_DIR, mutation.file), 'utf8').includes(mutation.from), `mutation anchor missing from ${mutation.file}`).toBe(true);
     }
-    expect(run.out).toMatch(/WorkflowTemplate oshal-incident-rca is valid/);
-    expect(run.out).toMatch(/Skipped: 0$/m);
-    expect(run.out).toContain('argo-manifests: PASS');
+    const { run } = argoGate(REAL_TREE(), { OSHAL_TEST_KUBECONFORM_REJECT: MUTATIONS.map((m) => m.field).join('|') });
+    expect(run.status, run.out).toBe(0);
   }, RUN_TIMEOUT_MS);
 
   for (const mutation of MUTATIONS) {
-    it(`turns red on a malformed edit to ${mutation.file}, naming the file and the field`, () => {
-      const kubeconform = requireTool('kubeconform');
+    it(`is red when kubeconform rejects a malformed edit to ${mutation.file} - every manifest reaches the validator`, () => {
       const real = fs.readFileSync(path.join(ARGO_DIR, mutation.file), 'utf8');
-      expect(real.includes(mutation.from), `mutation anchor missing from ${mutation.file}`).toBe(true);
-      const root = argoTree(`mutated-${mutation.file}`, { [mutation.file]: real.replace(mutation.from, mutation.to) });
-      const run = argoGate(root, kubeconform);
+      const root = argoTree(path.join(SCRATCH, `mutated-${mutation.file}`), { [mutation.file]: real.replace(mutation.from, mutation.to) });
+      const { run } = argoGate(root, { OSHAL_TEST_KUBECONFORM_REJECT: mutation.field });
       expect(run.status, run.out).toBe(1);
-      expect(run.out).toMatch(new RegExp(`ops/deployment/argo/${mutation.file.replaceAll('.', '\\.')} - `));
-      expect(run.out).toMatch(mutation.expect);
-      expect(run.out).toContain('argo-manifests: FAIL');
+      expect(run.out).toContain(`ops/deployment/argo/${mutation.file} - stand-in is invalid`);
+      expect(run.out).toContain('argo-manifests: FAIL - a manifest above is invalid');
+      expect(run.out).not.toContain('argo-manifests: PASS');
     }, RUN_TIMEOUT_MS);
   }
 
-  it('turns red on a YAML syntax break', () => {
-    const kubeconform = requireTool('kubeconform');
-    const file = 'tenant-workspace-pvc.example.yaml';
-    const real = fs.readFileSync(path.join(ARGO_DIR, file), 'utf8');
-    const root = argoTree('yaml-break', { [file]: real.replace('[ReadWriteOnce]', '[ReadWriteOnce') });
-    const run = argoGate(root, kubeconform);
+  it('judges every *.yaml in the directory, including one added after this guard was written', () => {
+    const root = REAL_TREE();
+    fs.writeFileSync(path.join(root, 'ops', 'deployment', 'argo', 'zz-new.yaml'), 'kind: Namespace\nhardd: x\n');
+    const { run, calls } = argoGate(root, { OSHAL_TEST_KUBECONFORM_REJECT: 'hardd' });
     expect(run.status, run.out).toBe(1);
-    expect(run.out).toMatch(/error converting YAML to JSON/);
+    expect(judged(calls[1])).toHaveLength(6);
+    expect(run.out).toContain('ops/deployment/argo/zz-new.yaml - stand-in is invalid');
   }, RUN_TIMEOUT_MS);
 
-  it('is UNCHECKED, not PASS, without kubeconform - and says how to install it', () => {
-    const run = runBash([ARGO_GATE, REPO_ROOT.replaceAll('\\', '/')], cleanEnv({ OSHAL_KUBECONFORM: 'kubeconform-absent-for-this-case' }));
+  it('is red when a schema could not be fetched', () => {
+    const { run } = argoGate(REAL_TREE(), { OSHAL_TEST_KUBECONFORM_MODE: 'schema-error' });
+    expect(run.status, run.out).toBe(1);
+    expect(run.out).toContain('could not find schema for WorkflowTemplate');
+    expect(run.out).toContain('argo-manifests: FAIL');
+  }, RUN_TIMEOUT_MS);
+
+  it('is red when kubeconform exits 0 but skipped a resource', () => {
+    const { run } = argoGate(REAL_TREE(), { OSHAL_TEST_KUBECONFORM_MODE: 'skipped' });
+    expect(run.status, run.out).toBe(1);
+    expect(run.out).toContain('argo-manifests: FAIL - kubeconform skipped a resource, so it was not validated.');
+  }, RUN_TIMEOUT_MS);
+
+  it('is UNCHECKED, not PASS, when kubeconform exits 0 having found no resource', () => {
+    const { run } = argoGate(REAL_TREE(), { OSHAL_TEST_KUBECONFORM_MODE: 'nothing' });
     expect(run.status, run.out).toBe(2);
-    expect(run.out).toContain('argo-manifests: UNCHECKED - kubeconform not found');
-    expect(run.out).toContain('https://github.com/yannh/kubeconform/releases');
+    expect(run.out).toContain('argo-manifests: UNCHECKED - kubeconform reported no resources; nothing was judged.');
   }, RUN_TIMEOUT_MS);
 
-  it('is UNCHECKED, not PASS, when there is no manifest to judge', () => {
-    const kubeconform = requireTool('kubeconform');
-    const run = argoGate(tree('no-argo', { 'README.md': 'nothing here\n' }), kubeconform);
+  it('is UNCHECKED, not PASS, without kubeconform - named by the override or absent from PATH - and says how to install it', () => {
+    for (const [extra, dirs] of [[{ OSHAL_KUBECONFORM: 'kubeconform-absent-for-this-case' }, [STAND_INS, TOOL_PATH]], [{}, [TOOL_PATH]]] as const) {
+      const { run, calls } = argoGate(REAL_TREE(), extra, [...dirs]);
+      expect(run.status, run.out).toBe(2);
+      expect(run.out).toContain('argo-manifests: UNCHECKED - kubeconform not found');
+      expect(run.out).toContain('https://github.com/yannh/kubeconform/releases');
+      expect(run.out).toContain('This gate does not skip without it.');
+      expect(calls).toEqual([]);
+    }
+  }, RUN_TIMEOUT_MS);
+
+  it('is UNCHECKED, not PASS, when there is no manifest to judge, and never calls kubeconform', () => {
+    const { run, calls } = argoGate(writeTree(path.join(SCRATCH, 'no-argo'), { 'README.md': 'nothing here\n' }));
     expect(run.status, run.out).toBe(2);
     expect(run.out).toContain('nothing was judged');
+    expect(calls).toEqual([]);
   }, RUN_TIMEOUT_MS);
 });
 
-const TF_CLEAN = 'variable "x" {\n  type = string\n}\n\noutput "y" {\n  value = var.x\n}\n';
+describe('terraform gate logic, judged with a recording terraform stand-in', () => {
+  const MODULE_FILES = { 'deploy/terraform/main.tf': 'variable "x" {\n  type = string\n}\n' };
 
-describe('terraform gate: the real terraform, fmt -check and validate', () => {
-  /** @description Run the terraform gate with the real binary over a one-file module. */
-  function tfGate(name: string, mainTf: string): { run: Run; module: string } {
-    const terraform = requireTool('terraform');
-    const root = tree(name, { 'deploy/terraform/main.tf': mainTf });
-    const run = runBash([TF_GATE, root], cleanEnv({ OSHAL_TERRAFORM: terraform }));
-    return { run, module: path.join(root, 'deploy', 'terraform') };
+  /** @description Run the terraform gate over a one-file module with the stand-in failing `fail`. */
+  function tfGate(name: string, fail = '', extra: Record<string, string> = {}, dirs?: string[]): { run: Run; calls: RecordedCall[]; root: string } {
+    const root = writeTree(path.join(SCRATCH, name), MODULE_FILES);
+    const res = gate(SCRIPTS.terraform, root, { OSHAL_TF_PLUGIN_CACHE: TF_PLUGIN_CACHE, OSHAL_TEST_TERRAFORM_FAIL: fail, ...extra }, dirs);
+    return { ...res, root };
   }
 
-  it('passes a formatted, valid module and writes nothing into it', () => {
-    const { run, module } = tfGate('tf-clean', TF_CLEAN);
+  const FMT = ['-chdir=deploy/terraform', 'fmt', '-check', '-recursive', '-diff', '-no-color'];
+  const INIT = ['-chdir=deploy/terraform', 'init', '-backend=false', '-input=false', '-lockfile=readonly', '-no-color'];
+  const VALIDATE = ['-chdir=deploy/terraform', 'validate', '-no-color'];
+
+  it('passes when fmt and validate pass, with the exact calls, a throwaway data dir, and nothing written into the module', () => {
+    const { run, calls, root } = tfGate('tf-clean');
     expect(run.status, run.out).toBe(0);
     expect(run.out).toContain('terraform: fmt PASS');
     expect(run.out).toContain('terraform: validate PASS');
-    expect(fs.readdirSync(module), 'init must not leave .terraform or a lock file in the tree it judges').toEqual(['main.tf']);
+    expect(calls.map((c) => c.args)).toEqual([['version'], FMT, INIT, VALIDATE]);
+    for (const call of calls) expect(call.env.PWD, 'terraform runs from the root the gate judges').toBe(root);
+    const [, , init, validate] = calls;
+    const dataDir = init.env.TF_DATA_DIR;
+    expect(dataDir, 'init and validate share one data dir').toBe(validate.env.TF_DATA_DIR);
+    expect(dataDir.startsWith(root), 'the data dir is never inside the tree being judged').toBe(false);
+    expect(fs.existsSync(dataDir), 'the data dir (which init wrote into) is removed with the run').toBe(false);
+    expect(init.env.TF_PLUGIN_CACHE_DIR).toBe(TF_PLUGIN_CACHE);
+    for (const call of [init, validate]) {
+      expect([call.env.TF_IN_AUTOMATION, call.env.CHECKPOINT_DISABLE]).toEqual(['1', '1']);
+    }
+    expect(fs.readdirSync(path.join(root, 'deploy', 'terraform'))).toEqual(['main.tf']);
   }, RUN_TIMEOUT_MS);
 
-  it('fails an unformatted module even when it is valid', () => {
-    const { run } = tfGate('tf-unformatted', TF_CLEAN.replace('type = string', 'type    = string'));
+  it('fails an unformatted module, and still validates it so one run names every problem', () => {
+    const { run, calls } = tfGate('tf-unformatted', 'fmt');
     expect(run.status, run.out).toBe(1);
     expect(run.out).toContain('terraform: fmt FAIL');
     expect(run.out).toContain('terraform: validate PASS');
+    expect(calls.map((c) => c.args)).toContainEqual(VALIDATE);
   }, RUN_TIMEOUT_MS);
 
-  it('fails a module with a syntax error', () => {
-    const { run } = tfGate('tf-syntax', TF_CLEAN.replace('  type = string\n}\n', '  type = string\n'));
-    expect(run.status, run.out).toBe(1);
-    expect(run.out).toContain('terraform: validate FAIL');
-  }, RUN_TIMEOUT_MS);
-
-  it('fails a well-formed module that references an undeclared variable', () => {
-    const { run } = tfGate('tf-undeclared', TF_CLEAN.replace('value = var.x', 'value = var.nope'));
+  it('fails a module that does not validate', () => {
+    const { run } = tfGate('tf-invalid', 'validate');
     expect(run.status, run.out).toBe(1);
     expect(run.out).toContain('terraform: fmt PASS');
+    expect(run.out).toContain('Reference to undeclared input variable (stand-in)');
     expect(run.out).toContain('terraform: validate FAIL');
-    expect(run.out).toMatch(/"nope" has not been declared/);
   }, RUN_TIMEOUT_MS);
 
-  it('is UNCHECKED, not PASS, without terraform or without a module', () => {
-    const absent = runBash([TF_GATE, REPO_ROOT.replaceAll('\\', '/')], cleanEnv({ OSHAL_TERRAFORM: 'terraform-absent-for-this-case' }));
-    expect(absent.status, absent.out).toBe(2);
-    expect(absent.out).toContain('terraform: UNCHECKED - terraform not found');
-    expect(absent.out).toContain('https://releases.hashicorp.com/terraform/');
-    const terraform = requireTool('terraform');
-    const empty = runBash([TF_GATE, tree('tf-none', { 'README.md': 'x\n' })], cleanEnv({ OSHAL_TERRAFORM: terraform }));
-    expect(empty.status, empty.out).toBe(2);
-    expect(empty.out).toContain('nothing was judged');
+  it('fails when init does not complete, shows why, and never reports validate PASS', () => {
+    const { run, calls } = tfGate('tf-no-init', 'init');
+    expect(run.status, run.out).toBe(1);
+    expect(run.out).toContain('Failed to query available provider packages (stand-in)');
+    expect(run.out).toContain('terraform: validate FAIL - init did not complete');
+    expect(calls.map((c) => c.args[1])).not.toContain('validate');
   }, RUN_TIMEOUT_MS);
-});
 
-/**
- * kubectl stand-in. Logs every call, honours a leading --context, and emulates these clusters:
- * `unreachable`; `isolating` (tenant-a/tenant-b web pods that reach only themselves, both policies
- * present, the dependency grants in place); `open` (the same, but cross-tenant traffic flows);
- * `admitting` (answers the launcher manifest's server-side dry-run, marked "(server dry run)" as
- * kubectl marks it, and exposes deployments/scale with patch); `client-marks` (the dry-run exits 0
- * but no object carries the server mark); `drops-after-probe` (answers the first cluster-info and
- * refuses everything after it); `no-pods` (reachable, no app=web pods); `hangs` (answers
- * cluster-info, never returns from anything else).
- */
-const KUBECTL_STAND_IN = `#!/usr/bin/env bash
-printf '%s\\n' "$*" >> "$OSHAL_TEST_KUBECTL_LOG"
-[ "\${1:-}" = "--context" ] && shift 2
-mode="\${OSHAL_TEST_KUBECTL_CLUSTER:-unreachable}"
-if [ "$mode" = drops-after-probe ] && [ "$(grep -c cluster-info "$OSHAL_TEST_KUBECTL_LOG")" -gt 1 ]; then mode=unreachable; fi
-if [ "$mode" = unreachable ]; then
-  echo "The connection to the server 127.0.0.1:6443 was refused - did you specify the right host or port?" >&2
-  exit 1
-fi
-if [ "$mode" = hangs ] && [ "$1" != cluster-info ]; then sleep 30; exit 1; fi
-ip_for() { case "$1" in tenant-a) echo 10.1.0.10 ;; tenant-b) echo 10.2.0.10 ;; esac; }
-field() { printf '%s' "$1" | grep -o '"'"$2"'":"[^"]*"' | head -n 1 | cut -d '"' -f 4; }
-case "$1" in
-  cluster-info) echo "Kubernetes control plane is running at https://127.0.0.1:6443"; exit 0 ;;
-  exec)
-    ns="$3"; target="\${@: -1}"
-    [ "$mode" = open ] && exit 0
-    [ "$target" = "http://$(ip_for "$ns")/" ] && exit 0
-    exit 1 ;;
-  apply)
-    dry=; for arg in "$@"; do case "$arg" in --dry-run=*) dry="\${arg#--dry-run=}" ;; esac; done
-    mark="(dry run)"
-    [ "$dry" = server ] && [ "$mode" != client-marks ] && mark="(server dry run)"
-    while IFS= read -r doc || [ -n "$doc" ]; do
-      case "$doc" in ""|---) continue ;; esac
-      av="$(field "$doc" apiVersion)"; group=
-      case "$av" in */*) group=".\${av%%/*}" ;; esac
-      kind="$(field "$doc" kind | tr '[:upper:]' '[:lower:]')"
-      printf '%s%s/%s created %s\\n' "$kind" "$group" "$(field "$doc" name)" "$mark"
-    done
-    exit 0 ;;
-  get)
-    if [ "$2" = namespace ]; then printf 'NAME STATUS AGE\\n%s Active 1d\\n' "$3"; exit 0; fi
-    if [ "$2" = --raw ] && [ "$3" = /apis/apps/v1 ]; then
-      printf '%s' '{"kind":"APIResourceList","groupVersion":"apps/v1","resources":[{"name":"deployments","verbs":["create","delete","get","list","patch","update","watch"]},{"name":"deployments/scale","verbs":["get","patch","update"]}]}'
-      exit 0
-    fi
-    if [ "$2" = pod ]; then
-      [ "$mode" = no-pods ] && exit 0
-      case "$*" in *metadata.name*) printf 'web-%s' "$4" ;; *podIP*) printf '%s' "$(ip_for "$4")" ;; esac
-      exit 0
-    fi
-    if [ "$2" = networkpolicy ]; then
-      case "$*" in
-        *"-o json"*) printf '{\\n  "spec": {\\n    "egress": [\\n      {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "oshal"}}}]},\\n      {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "oshal-model"}}}]},\\n      {"to": [{"ipBlock": {"cidr": "192.168.65.3/32"}}]}\\n    ]\\n  }\\n}\\n' ;;
-      esac
-      exit 0
-    fi ;;
-esac
-echo "kubectl stand-in: unhandled call: $*" >&2
-exit 1
-`;
-
-/** Stand-ins used ONLY by the ci-local wiring cases: they pass, so only the cluster gates decide. */
-const KUBECONFORM_STAND_IN = '#!/usr/bin/env bash\n[ "${1:-}" = -v ] && { echo v0.0.0-stand-in; exit 0; }\n'
-  + 'echo "Summary: 1 resource found in 1 file - Valid: 1, Invalid: 0, Errors: 0, Skipped: 0"\nexit 0\n';
-const TERRAFORM_STAND_IN = '#!/usr/bin/env bash\n[ "${1:-}" = version ] && echo "Terraform v0.0.0-stand-in"\nexit 0\n';
-
-let callCount = 0;
-
-beforeAll(() => {
-  fs.mkdirSync(STAND_INS, { recursive: true });
-  for (const [name, body] of [['kubectl', KUBECTL_STAND_IN], ['kubeconform', KUBECONFORM_STAND_IN], ['terraform', TERRAFORM_STAND_IN]]) {
-    fs.writeFileSync(path.join(STAND_INS, name), body, { encoding: 'utf8', mode: 0o755 });
-  }
-});
-
-/**
- * @description Environment for a cluster-gate case: the stand-ins first on a PATH that holds only
- * them and Git Bash's own tools (plus, when a case names them, the directories it passes), so the
- * real kubectl on this box is unreachable from the case.
- */
-function clusterEnv(
-  cluster: string,
-  extra: Record<string, string> = {},
-  dirs: string[] = [STAND_INS, TOOL_PATH],
-): { env: NodeJS.ProcessEnv; calls: () => string[] } {
-  const log = path.join(SCRATCH, `kubectl-calls-${callCount += 1}.log`);
-  fs.writeFileSync(log, '');
-  const env = cleanEnv({
-    PATH: dirs.join(path.delimiter),
-    OSHAL_TEST_KUBECTL_CLUSTER: cluster,
-    OSHAL_TEST_KUBECTL_LOG: log.replaceAll('\\', '/'),
-    ...extra,
-  });
-  for (const key of Object.keys(env)) if (key !== 'PATH' && key.toUpperCase() === 'PATH') delete env[key];
-  return { env, calls: () => fs.readFileSync(log, 'utf8').split('\n').filter(Boolean) };
-}
-
-describe('cluster gates refuse without a named, reachable cluster and never report a pass they did not earn', () => {
-  it('refuses with no OSHAL_CLUSTER_CONTEXT, before asking kubectl anything', () => {
-    for (const which of ['bot-manifest', 'tenant-isolation']) {
-      const { env, calls } = clusterEnv('isolating');
-      const run = runBash([CLUSTER_GATE, which], env);
+  it('is UNCHECKED, not PASS, without terraform - named by the override or absent from PATH - and says how to install it', () => {
+    for (const [extra, dirs] of [[{ OSHAL_TERRAFORM: 'terraform-absent-for-this-case' }, [STAND_INS, TOOL_PATH]], [{}, [TOOL_PATH]]] as const) {
+      const { run, calls } = tfGate('tf-absent', '', extra, [...dirs]);
       expect(run.status, run.out).toBe(2);
-      expect(run.out).toContain(`cluster-${which}: UNCHECKED - OSHAL_CLUSTER_CONTEXT is not set`);
-      expect(calls(), 'no context means no kubectl call at all').toEqual([]);
+      expect(run.out).toContain('terraform: UNCHECKED - terraform not found');
+      expect(run.out).toContain('https://releases.hashicorp.com/terraform/');
+      expect(run.out).toContain('This gate does not skip without it.');
+      expect(calls).toEqual([]);
     }
   }, RUN_TIMEOUT_MS);
 
-  it('refuses when no API server answers at the named context, and asks only that context', () => {
-    for (const which of ['bot-manifest', 'tenant-isolation']) {
-      const { env, calls } = clusterEnv('unreachable', { OSHAL_CLUSTER_CONTEXT: CONTEXT });
-      const run = runBash([CLUSTER_GATE, which], env);
-      expect(run.status, run.out).toBe(2);
-      expect(run.out).toContain(`no API server answered at context '${CONTEXT}'`);
-      expect(run.out).not.toMatch(/PASS/);
-      expect(calls()).toEqual([`--context ${CONTEXT} cluster-info`]);
-    }
-  }, RUN_TIMEOUT_MS);
-
-  it('refuses when kubectl is not installed', () => {
-    const env = cleanEnv({ PATH: TOOL_PATH, OSHAL_CLUSTER_CONTEXT: CONTEXT });
-    for (const key of Object.keys(env)) if (key !== 'PATH' && key.toUpperCase() === 'PATH') delete env[key];
-    const run = runBash([CLUSTER_GATE, 'tenant-isolation'], env);
+  it('is UNCHECKED, not PASS, when there is no module, and never calls terraform', () => {
+    const { run, calls } = gate(SCRIPTS.terraform, writeTree(path.join(SCRATCH, 'tf-none'), { 'README.md': 'x\n' }));
     expect(run.status, run.out).toBe(2);
-    expect(run.out).toContain('kubectl is not on PATH');
-  }, RUN_TIMEOUT_MS);
-
-  it('passes the tenant-isolation gate only on an isolating cluster, with the context on every kubectl call', () => {
-    const { env, calls } = clusterEnv('isolating', { OSHAL_CLUSTER_CONTEXT: CONTEXT });
-    const run = runBash([CLUSTER_GATE, 'tenant-isolation'], env);
-    expect(run.status, run.out).toBe(0);
-    expect(run.out).toContain('CROSS-TENANT ISOLATION PROVEN');
-    expect(run.out).toContain(`cluster-tenant-isolation: PASS (context '${CONTEXT}')`);
-    const made = calls();
-    expect(made.length).toBeGreaterThan(10);
-    for (const call of made) expect(call, 'every kubectl call must carry the named context').toMatch(new RegExp(`^--context ${CONTEXT} `));
-  }, RUN_TIMEOUT_MS);
-
-  it('fails the tenant-isolation gate when cross-tenant traffic flows', () => {
-    const { env } = clusterEnv('open', { OSHAL_CLUSTER_CONTEXT: CONTEXT });
-    const run = runBash([CLUSTER_GATE, 'tenant-isolation'], env);
-    expect(run.status, run.out).toBe(1);
-    expect(run.out).toContain('tenant-a REACHED tenant-b');
-    expect(run.out).toContain(`cluster-tenant-isolation: FAIL (context '${CONTEXT}')`);
-  }, RUN_TIMEOUT_MS);
-
-  it('verify-tenant-isolation.sh refuses an argument it does not know instead of ignoring it', () => {
-    const { env, calls } = clusterEnv('isolating');
-    const run = runBash([TENANT_SCRIPT, '--contxt', CONTEXT], env);
-    expect(run.status, run.out).toBe(2);
-    expect(run.out).toContain('unknown argument: --contxt');
-    expect(calls()).toEqual([]);
+    expect(run.out).toContain('nothing was judged');
+    expect(calls).toEqual([]);
   }, RUN_TIMEOUT_MS);
 });
 
-/** Where node, npm and npx live: the bot-manifest gate runs `npx tsx`, so its cases need them on PATH. */
-const NODE_DIR = path.dirname(process.execPath);
-const NAMESPACE = 'ns-under-test';
-const TRAMPOLINE_DIR = path.join(SCRATCH, 'stand-ins-exe');
-
-/**
- * Windows only. Node resolves `kubectl` from PATH as kubectl.exe or kubectl.com, so it cannot run
- * the bash stand-in; and the copy of the node binary the validator's own spec uses cannot take the
- * `--context <ctx>` the wrapper makes the validator pass first, because node rejects it as a node
- * option. This executable forwards argv, stdin, stdout, stderr and the exit code unchanged to the
- * SAME bash stand-in, so the wrapper's own probe and every call the validator makes land on one
- * emulated cluster and one call log. Built with the C# compiler that ships with .NET Framework 4.
- */
-const TRAMPOLINE_CS = String.raw`using System;
-using System.Diagnostics;
-using System.Text;
-
-static class KubectlStandIn {
-  static string Quote(string arg) {
-    var sb = new StringBuilder("\"");
-    int slashes = 0;
-    foreach (char c in arg) {
-      if (c == '\\') { slashes++; continue; }
-      if (c == '"') { sb.Append('\\', slashes * 2 + 1); } else { sb.Append('\\', slashes); }
-      sb.Append(c);
-      slashes = 0;
-    }
-    sb.Append('\\', slashes * 2);
-    return sb.Append('"').ToString();
-  }
-
-  static int Main(string[] args) {
-    var line = new StringBuilder(Quote(Environment.GetEnvironmentVariable("OSHAL_TEST_KUBECTL_SCRIPT")));
-    foreach (var arg in args) line.Append(' ').Append(Quote(arg));
-    var start = new ProcessStartInfo(Environment.GetEnvironmentVariable("OSHAL_TEST_BASH"), line.ToString());
-    start.UseShellExecute = false;
-    using (var child = Process.Start(start)) { child.WaitForExit(); return child.ExitCode; }
-  }
-}
-`;
-
-/** @description Build kubectl.exe from TRAMPOLINE_CS; a missing compiler is a loud failure, never a skip. */
-function buildTrampoline(): void {
-  const windir = process.env.WINDIR ?? process.env.windir ?? 'C:\\Windows';
-  const csc = ['Framework64', 'Framework']
-    .map((fw) => path.join(windir, 'Microsoft.NET', fw, 'v4.0.30319', 'csc.exe'))
-    .find((candidate) => fs.existsSync(candidate));
-  if (!csc) throw new Error('csc.exe (.NET Framework 4) not found; it builds the kubectl.exe stand-in this guard needs on Windows');
-  const source = path.join(SCRATCH, 'kubectl-stand-in.cs');
-  fs.writeFileSync(source, TRAMPOLINE_CS, 'utf8');
-  const built = spawnSync(csc, ['-nologo', `-out:${path.join(TRAMPOLINE_DIR, 'kubectl.exe')}`, source], { encoding: 'utf8' });
-  if (built.status !== 0) throw new Error(`could not build the kubectl.exe stand-in: ${built.stdout ?? ''}${built.stderr ?? ''}`);
-}
-
-/**
- * @description Environment for a case that runs the real validator through the wrapper: the
- * kubectl stand-in (and on Windows its .exe forwarder) FIRST on PATH, ahead of node's directory,
- * so both the wrapper and the validator resolve the stand-in before anything else. The cases pin
- * the call log, so a call that reached any other kubectl would be missing from it and turn them red.
- */
-function wrapperEnv(cluster: string): ReturnType<typeof clusterEnv> {
-  return clusterEnv(cluster, {
-    OSHAL_CLUSTER_CONTEXT: CONTEXT,
-    OSHAL_CLUSTER_NAMESPACE: NAMESPACE,
-    OSHAL_TEST_BASH: BASH.replaceAll('\\', '/'),
-    OSHAL_TEST_KUBECTL_SCRIPT: path.join(STAND_INS, 'kubectl').replaceAll('\\', '/'),
-  }, [TRAMPOLINE_DIR, STAND_INS, NODE_DIR, TOOL_PATH]);
-}
-
-describe('the cluster-gate wrapper: every verdict of the check it runs, and bot-manifest demanding server-side proof', () => {
-  beforeAll(() => {
-    fs.mkdirSync(TRAMPOLINE_DIR, { recursive: true });
-    if (process.platform === 'win32') buildTrampoline();
-  });
-
-  it('bot-manifest passes on server-side admission, running the real validator with --require-server, the context and the namespace', () => {
-    const { env, calls } = wrapperEnv('admitting');
-    const run = runBash([CLUSTER_GATE, 'bot-manifest'], env);
-    expect(run.status, run.out).toBe(0);
-    expect(run.out).toContain('dry-run mode: server (validated by the real API server; nothing created)');
-    expect(run.out).toContain('OK: the API server exposes deployments/scale with verbs [get, patch, update]');
-    expect(run.out).not.toContain('NOT A PROOF');
-    expect(run.out).toContain(`cluster-bot-manifest: PASS (context '${CONTEXT}')`);
-    expect(calls(), 'the wrapper probe, then the validator: probe, namespace, server dry-run, scale discovery').toEqual([
-      `--context ${CONTEXT} cluster-info`,
-      `--context ${CONTEXT} cluster-info`,
-      `--context ${CONTEXT} get namespace ${NAMESPACE}`,
-      `--context ${CONTEXT} apply -f - -n ${NAMESPACE} --dry-run=server`,
-      `--context ${CONTEXT} get --raw /apis/apps/v1`,
-    ]);
-  }, RUN_TIMEOUT_MS);
-
-  it('bot-manifest is FAIL when the dry-run exits 0 without server-side admission - only --require-server looks for it', () => {
-    const { env, calls } = wrapperEnv('client-marks');
-    const run = runBash([CLUSTER_GATE, 'bot-manifest'], env);
-    expect(run.status, run.out).toBe(1);
-    expect(run.out).toContain('FAILED (--require-server): only 0 of 2 objects report "(server dry run)"');
-    expect(run.out).toContain(`cluster-bot-manifest: FAIL (context '${CONTEXT}')`);
-    expect(run.out).not.toMatch(/PASS/);
-    expect(calls()).toContain(`--context ${CONTEXT} apply -f - -n ${NAMESPACE} --dry-run=server`);
-  }, RUN_TIMEOUT_MS);
-
-  it('bot-manifest is UNCHECKED, never PASS, when the API server stops answering after the wrapper\'s own probe', () => {
-    const { env, calls } = wrapperEnv('drops-after-probe');
-    const run = runBash([CLUSTER_GATE, 'bot-manifest'], env);
-    expect(run.status, run.out).toBe(2);
-    expect(run.out).toContain(`FAILED (--require-server): no API server reachable at context "${CONTEXT}"`);
-    expect(run.out).toContain('cluster-bot-manifest: UNCHECKED - the check refused to run (exit 2)');
-    expect(run.out).not.toMatch(/PASS/);
-    expect(calls(), 'no client-side fallback: nothing after the failed probe').toEqual([
-      `--context ${CONTEXT} cluster-info`,
-      `--context ${CONTEXT} cluster-info`,
-    ]);
-  }, RUN_TIMEOUT_MS);
-
-  it('tenant-isolation is UNCHECKED, never PASS, when the check itself refuses - the app=web pods are absent', () => {
-    const { env } = clusterEnv('no-pods', { OSHAL_CLUSTER_CONTEXT: CONTEXT });
-    const run = runBash([CLUSTER_GATE, 'tenant-isolation'], env);
-    expect(run.status, run.out).toBe(2);
-    expect(run.out).toContain('missing app=web pods in tenant-a/tenant-b');
-    expect(run.out).toContain('cluster-tenant-isolation: UNCHECKED - the check refused to run (exit 2)');
-    expect(run.out).not.toMatch(/PASS/);
-  }, RUN_TIMEOUT_MS);
-
-  it('a check that does not finish within OSHAL_CLUSTER_TIMEOUT is UNCHECKED, never PASS', () => {
-    const { env } = clusterEnv('hangs', { OSHAL_CLUSTER_CONTEXT: CONTEXT, OSHAL_CLUSTER_TIMEOUT: '3' });
-    const run = runBash([CLUSTER_GATE, 'tenant-isolation'], env);
-    expect(run.status, run.out).toBe(2);
-    expect(run.out).toContain('cluster-tenant-isolation: UNCHECKED - the check did not finish within 3s.');
-    expect(run.out).not.toMatch(/PASS/);
-  }, RUN_TIMEOUT_MS);
-
-  it('any other exit from the check is FAIL, never PASS - here the tree it runs from lacks the check (127)', () => {
-    const { env, calls } = clusterEnv('isolating', { OSHAL_CLUSTER_CONTEXT: CONTEXT });
-    const run = runBash([CLUSTER_GATE, 'tenant-isolation', tree('no-check', { 'README.md': 'x\n' })], env);
-    expect(run.status, run.out).toBe(1);
-    expect(run.out).toContain(`cluster-tenant-isolation: FAIL - the check exited 127 (context '${CONTEXT}')`);
-    expect(run.out).not.toMatch(/PASS/);
-    expect(calls(), 'only the wrapper\'s own probe ran').toEqual([`--context ${CONTEXT} cluster-info`]);
-  }, RUN_TIMEOUT_MS);
-});
-
-describe('ci-local.sh wiring: the cluster gates are opt-in, and fail closed when opted in', () => {
-  /** @description Run ci-local.sh with its state directory inside the scratch tree. */
-  function ciLocal(args: string[], cluster: string, extra: Record<string, string> = {}): { run: Run; calls: string[] } {
-    const state = path.join(SCRATCH, `localappdata-${callCount + 1}`);
+describe('ci-local.sh wiring: the cluster-free gates always run and fail closed, the cluster gates are opt-in', () => {
+  /**
+   * @description Run ci-local.sh with its state directory, schema cache and provider cache inside
+   * the scratch tree (ci-local derives its state directory with cygpath, which a Linux runner lacks).
+   */
+  function ciLocal(args: string[], cluster: string, extra: Record<string, string> = {}, dirs = [STAND_INS, TOOL_PATH]) {
+    const state = path.join(SCRATCH, `localappdata-${runs += 1}`);
     fs.mkdirSync(state, { recursive: true });
-    const { env, calls } = clusterEnv(cluster, { LOCALAPPDATA: state, ...extra });
-    const run = runBash([CI_LOCAL, ...args], env);
-    return { run, calls: calls() };
+    const tools = path.join(SCRATCH, `ci-local-tool-calls-${runs}.log`);
+    const { env, calls } = kubectlEnv(SCRATCH, cluster, dirs, {
+      LOCALAPPDATA: state,
+      OSHAL_KUBECONFORM_CACHE: KUBECONFORM_CACHE,
+      OSHAL_TF_PLUGIN_CACHE: TF_PLUGIN_CACHE,
+      OSHAL_TEST_TOOL_LOG: posix(tools),
+      ...extra,
+    });
+    const run = runBash([SCRIPTS.ciLocal, ...args], env);
+    return { run, calls: calls(), toolCalls: readCalls(tools) };
   }
 
-  it('--k8s-only runs argo-manifests and terraform, never touches kubectl, and says the cluster gates did NOT RUN', () => {
-    const { run, calls } = ciLocal(['--k8s-only'], 'isolating', { OSHAL_CLUSTER_CONTEXT: CONTEXT });
+  it('--k8s-only runs argo-manifests and terraform over the working tree, never touches kubectl, and says the cluster gates did NOT RUN', () => {
+    const { run, calls, toolCalls } = ciLocal(['--k8s-only'], 'isolating', { OSHAL_CLUSTER_CONTEXT: CONTEXT });
     expect(run.status, run.out).toBe(0);
     expect(run.out).toContain('GATE argo-manifests: PASS');
     expect(run.out).toContain('GATE terraform: PASS');
     expect(run.out).toContain('GATES cluster-bot-manifest + cluster-tenant-isolation: NOT RUN (opt-in: --cluster-gates');
     expect(run.out).not.toContain('GATE cluster-');
     expect(calls, 'without --cluster-gates no kubectl call is made, even with a context set').toEqual([]);
+    const validate = toolCalls.find((c) => c.args[0] === '-strict');
+    expect(validate && [...judged(validate)].sort()).toEqual(ARGO_MANIFESTS.map((f) => `ops/deployment/argo/${f}`).sort());
+    expect(toolCalls.map((c) => c.args[1]).filter((sub) => sub === 'fmt' || sub === 'validate')).toEqual(['fmt', 'validate']);
+    for (const call of toolCalls) expect(call.env.PWD, 'the gates judge the working tree').toBe(posix(REPO_ROOT));
+  }, RUN_TIMEOUT_MS);
+
+  it('--k8s-only with neither kubeconform nor terraform installed is FAIL for both, with their install hints', () => {
+    const { run, toolCalls } = ciLocal(['--k8s-only'], 'isolating', {}, [TOOL_PATH]);
+    expect(run.status, run.out).toBe(1);
+    expect(run.out).toContain('GATE argo-manifests: FAIL');
+    expect(run.out).toContain('GATE terraform: FAIL');
+    expect(run.out).toContain('https://github.com/yannh/kubeconform/releases');
+    expect(run.out).toContain('https://releases.hashicorp.com/terraform/');
+    expect(run.out).toContain('=== K8S GATES: FAILED: argo-manifests terraform ===');
+    expect(toolCalls).toEqual([]);
   }, RUN_TIMEOUT_MS);
 
   it('--k8s-only --cluster-gates with no reachable cluster is FAIL for both cluster gates, not a pass', () => {
@@ -568,6 +297,7 @@ describe('ci-local.sh wiring: the cluster gates are opt-in, and fail closed when
     expect(run.out).toContain('GATE cluster-bot-manifest: FAIL');
     expect(run.out).toContain('GATE cluster-tenant-isolation: FAIL');
     expect(run.out).toContain('=== K8S GATES: FAILED: cluster-bot-manifest cluster-tenant-isolation ===');
+    expect(calls.length).toBeGreaterThan(0);
     expect(calls.every((c) => c.startsWith(`--context ${CONTEXT} `))).toBe(true);
   }, RUN_TIMEOUT_MS);
 
@@ -578,7 +308,7 @@ describe('ci-local.sh wiring: the cluster gates are opt-in, and fail closed when
   }, RUN_TIMEOUT_MS);
 
   it('the full run always calls the two cluster-free gates and the cluster gates only behind --cluster-gates', () => {
-    const source = fs.readFileSync(CI_LOCAL, 'utf8');
+    const source = fs.readFileSync(SCRIPTS.ciLocal, 'utf8');
     const block = source.slice(source.indexOf('if [ "$NODE_GATES_OK" = "1" ]; then'), source.indexOf('run_gate secret-scan gate_secrets'));
     expect(block).toContain('run_gate argo-manifests gate_argo_manifests');
     expect(block).toContain('run_gate terraform gate_terraform');
