@@ -2895,6 +2895,33 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### Finance post-v1 rails and governance
 - **Remaining:** separately decide real A2A payouts, live-money compliance, broker trade execution, Plaid production access, household labels/sharing, and scheduled forecast/alert scope.
 - **Done when:** each commissioned capability has its own approved regulatory/security contract and live or sandbox proof; selecting an unimplemented rail continues to fail loudly.
+- **Decision (operator, 2026-09-22): SOFTWARE-ONLY is commissioned; every money-movement rail is
+  declined for now; execution stays with the trading app.** Capability by capability, so none of this
+  is re-asked as an open question:
+  **COMMISSIONED — scheduled forecasts and alerts.** No money moves, no second party's data, no
+  regulator. Becomes its own backlog entry with a sandbox proof.
+  **COMMISSIONED — household labels, WITHOUT sharing.** Labels are a personal data model on the
+  operator's own aggregation. **Sharing to another person is explicitly NOT commissioned**: it puts a
+  second person's financial data in this instance, which is a privacy and ownership design question
+  rather than a feature, and it is not being answered by shipping it.
+  **NOT COMMISSIONED — A2A payouts, live-money transfers, Plaid production access.** The first two
+  move real money; moving one's own money is not money transmission, but the analysis changes the
+  moment a second user holds a balance, and that is not a code decision. Plaid production is a
+  read-only upgrade rather than a money rail, and is declined for now only because nothing needs real
+  bank data while the rest stays software-only. Each is revisited on its own, deliberately, not as
+  part of a bundle.
+  **NOT COMMISSIONED — broker trade execution in the finance app.** Execution belongs to the **trading**
+  app, which already owns the arming gates, the books, the stop logic and the live Schwab and Kalshi
+  connections. The finance app's declared v1 scope
+  (`oshal-applications/finance/oshal-app.yaml:20`) already says "READ-ONLY aggregation + gated
+  transfers. NO trade execution", and that stands. Two independent code paths able to place real
+  orders is a class of defect worth never having. Reading balances and positions for aggregation is
+  not what was declined — only placing orders.
+- **What stays true regardless:** selecting an unimplemented rail must keep failing loudly, which the
+  entry records as already in place.
+- **Done when:** forecasts/alerts and personal household labels each exist as their own backlog entry
+  with a done-when and a proof; and this entry carries the declined list above so no rail is
+  commissioned by drift.
 
 ## Trading and market systems
 
