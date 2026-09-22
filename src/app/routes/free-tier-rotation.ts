@@ -33,6 +33,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Make the background operator exemption case-sensitive and exact for OIDC subjects. Configuration delimiters remain trim-tolerant, but case/whitespace variants no longer inherit the operator's paid-provider privilege.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Added the DEMO-gated OPERATOR-KEY lane (DEMO_MODE, default OFF — a non-demo deployment never lends its own vendor keys to a turn). The operator's exemption from the free legs used to return undefined, which handed the turn to the bot's configured CLI harness — and SEC-05 refuses every unattended CLI at a bot node, so an operator turn with no explicit BYO row had no admissible brain at all ("Sorry, that didn't work"). The operator now falls back to this deployment's OWN hosted keys (GEMINI/GROQ/CEREBRAS/MISTRAL/OPENAI env, ordered, probed once and cached) as a normal hosted byoLlmConnection. Non-operator callers are unaffected: they never see these keys. Also raised the require-content probe budget from 16 to 512 max_tokens — a reasoning model spends the whole 16 on hidden thinking and answers 200-but-empty, which scored live lanes (gemini-2.5-flash, gpt-oss-120b) as dead.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Operator-lane failure COOLDOWN (live 2026-08-11): a ~16-token probe passes on a quota trickle while full turns 429, so "invalidate the verdict and re-probe" handed the SAME walled Gemini lane back to the turn-time failover, whose same-lane check then (correctly) refused to replay — the 429 surfaced despite two layers of failover. reportResolvedLlmFailure now puts the failed lane on a 15-min exclusion (coolOperatorKeyLane, keyed by baseUrl→laneId) and operatorKeyConnection skips cooled lanes before probing, so re-resolution rotates to the next configured vendor by construction. Guard: operator-key-lane.spec cooldown cases.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | The operator lane now SAYS so when it is about to run a model this build's catalog does not carry (warnIfModelUncatalogued -> checkModelAgainstCatalog). OSHAL_OPERATOR_LLM_MODEL is read here and was measured against nothing at all: a pinned id absent from provider-definitions produced no error, no warning and no log line, while usage-cost-resolver — pricing from that same catalog — booked the real call at $0, which was the pin's only trace anywhere. It warns and proceeds rather than refusing, because this catalog lags the vendor's and gemini-3.8-flash was a real, current model absent from ours. The helper sits ABOVE operatorKeyConnection's docstring rather than between the two: inserted into that gap it orphaned a 20-line JSDoc onto the wrong member and left the exported function undocumented.
  *
  * @module free-tier-rotation
  */
@@ -697,27 +698,6 @@ export function invalidateOperatorKeyLane(): void {
   operatorVerdict = null;
 }
 
-/**
- * @description This DEPLOYMENT's own hosted LLM key, shaped as a byoLlmConnection — the operator's
- * brain of last resort.
- *
- * Why it exists: the operator is exempt from the `:free` legs (their own directive — free tokens are
- * for OTHER users), so with no explicit BYO row the resolver returned undefined and the turn fell
- * through to the bot's configured provider. Every such provider is a local CLI harness, and SEC-05
- * refuses those unattended at a bot node, so the turn had no admissible brain at all. The keys are
- * already in the controller and node env (x-bot-env); this just makes the resolver USE them instead
- * of failing. Only ever handed to an operator caller — see resolveUserLlmConnection.
- *
- * GATED ON THE DEMO SWITCH (demoKeysEnabled): with DEMO_MODE off this returns null and no host key
- * is ever lent to a turn — the demo box answers out of the tin, a non-demo deployment does not.
- *
- * Order comes from OSHAL_OPERATOR_LLM_LANES (or a single OSHAL_OPERATOR_LLM_PROVIDER pin), model
- * from OSHAL_OPERATOR_LLM_MODEL or the lane's catalog default. Each candidate is probed for real
- * content once and the verdict cached, so a dead key costs one probe per 5 minutes, not per turn.
- * OpenRouter is not in the default order: that key is the shared free-fallback, hard-guarded to
- * `:free` ids.
- * @returns { baseUrl, apiKey, model } for the first live lane, or null when none is usable
- */
 /** Lane ids that ARE provider-definition ids, with their catalogued models. Built once. */
 let laneModelCatalog: { harnessTypes: readonly string[]; clineApiProviders: readonly string[]; modelsByProvider: Record<string, readonly string[]> } | null = null;
 
@@ -747,6 +727,27 @@ function warnIfModelUncatalogued(laneId: string, model: string): void {
   }, `operator-key: ${unknown.message}`);
 }
 
+/**
+ * @description This DEPLOYMENT's own hosted LLM key, shaped as a byoLlmConnection — the operator's
+ * brain of last resort.
+ *
+ * Why it exists: the operator is exempt from the `:free` legs (their own directive — free tokens are
+ * for OTHER users), so with no explicit BYO row the resolver returned undefined and the turn fell
+ * through to the bot's configured provider. Every such provider is a local CLI harness, and SEC-05
+ * refuses those unattended at a bot node, so the turn had no admissible brain at all. The keys are
+ * already in the controller and node env (x-bot-env); this just makes the resolver USE them instead
+ * of failing. Only ever handed to an operator caller — see resolveUserLlmConnection.
+ *
+ * GATED ON THE DEMO SWITCH (demoKeysEnabled): with DEMO_MODE off this returns null and no host key
+ * is ever lent to a turn — the demo box answers out of the tin, a non-demo deployment does not.
+ *
+ * Order comes from OSHAL_OPERATOR_LLM_LANES (or a single OSHAL_OPERATOR_LLM_PROVIDER pin), model
+ * from OSHAL_OPERATOR_LLM_MODEL or the lane's catalog default. Each candidate is probed for real
+ * content once and the verdict cached, so a dead key costs one probe per 5 minutes, not per turn.
+ * OpenRouter is not in the default order: that key is the shared free-fallback, hard-guarded to
+ * `:free` ids.
+ * @returns { baseUrl, apiKey, model } for the first live lane, or null when none is usable
+ */
 export async function operatorKeyConnection(): Promise<ByoLlmConnection | null> {
   if (!demoKeysEnabled()) return null;
   if (operatorVerdict && Date.now() < operatorVerdict.until) return operatorVerdict.conn;
