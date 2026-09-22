@@ -4,21 +4,23 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — extracted the autonomous-path tool-approval decision out of AgenticController (which is at 961 lines) so the one rule that stands between an injected prompt and a shell is directly testable, and so its history is written down. Behaviour is byte-for-byte what AgenticController implemented inline; the only addition is NEVER_AUTO_APPROVE, which is a no-op today and becomes load-bearing the moment someone flips a registry flag.
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added cli_yq to NEVER_AUTO_APPROVE. It is declared requiresApproval:false and, until this change, built its command line by string concatenation for child_process.exec — an unapproved arbitrary-command primitive for any agent granted yq. The handler now spawns an argv with no shell; this entry is the belt-and-braces half, so a future caller that does set the auto-approval flag still cannot run it unattended.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added cli_yq to NEVER_AUTO_APPROVE, as belt-and-braces ONLY. What refuses an unattended cli_yq call is `requiresApproval: true` on its registration (cliTools.js), set in the same change: all three consumers gate on `requiresApproval === true` before they consult this policy, so for a tool declared false this set is never reached. An earlier draft of this entry claimed the set itself stopped an unattended caller; that was wrong, was proved wrong by driving the real dispatch executor, and is corrected here.
  */
 
 /**
  * Tools the unattended path must NEVER auto-approve, whatever the caller passes.
  *
- * For `execute_command` this is belt-and-braces: it is declared `requiresApproval: true` in the
- * baseline registry, so the check below already refuses it. It is listed because that registry
- * flag is one edit away from `false`, and on the autonomous path there is no human to catch it.
+ * READ THIS BEFORE ADDING A NAME HERE, because the set is weaker than it looks. Every consumer
+ * of this policy — AgenticController, dispatch-tool-executor, ToolRegistry.execute — refuses with
+ * `requiresApproval && !approved`. The registry flag is the gate; this set only decides whether
+ * an ALREADY-gated tool can be auto-approved. Listing a `requiresApproval: false` tool here
+ * therefore refuses nothing: the refusal branch is never entered and the auto-approve answer is
+ * never read. A name added here without the registration flag is a guard that cannot fire.
  *
- * `cli_yq` is listed for the opposite reason — it is declared `requiresApproval: false`, so this
- * set is the only thing in the policy that refuses it. Its handler no longer builds a shell
- * command line (cliTools.js spawns an argv with shell:false), but a YAML processor pointed at
- * arbitrary paths is still not something an unattended, prompt-injectable agent should get for
- * free. Both halves have to hold; neither alone is the fix.
+ * Both entries are declared `requiresApproval: true` in their registrations, so both are already
+ * refused unattended. They are listed because that flag is one edit away from `false`, and on the
+ * autonomous path there is no human to catch it — belt-and-braces against a registry edit, not a
+ * substitute for one.
  */
 const NEVER_AUTO_APPROVE = new Set(['execute_command', 'cli_yq']);
 

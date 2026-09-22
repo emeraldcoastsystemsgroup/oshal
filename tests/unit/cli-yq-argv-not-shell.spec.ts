@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — pins that cli_yq never reaches a shell. On 2026-09-22 `cli_yq` was measured as an unapproved arbitrary-command primitive: yqCommand built `yq ${args}` by concatenation and handed it to child_process.exec, and the tool is registered requiresApproval:false and was absent from NEVER_AUTO_APPROVE, so `--version & echo MARKER` returned the marker with no approval requested. These cases run a REAL child process against a real executable on PATH rather than doubling child_process, because the boundary that failed is the spawn itself: a doubled exec would pass against the very code that was broken. The demonstrated payload shape is used verbatim.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The approval cases now drive the real unattended dispatch channel (createDispatchToolExecutor over a real ToolRegistry) and assert ok:false plus an unwritten proof file, with a control tool proving the channel can execute and cli_git proving it can refuse. The first draft asserted shouldAutoApproveTool(...) === false and never called an executor: it went red under mutation while proving nothing about the boundary it named, and adversarial verification showed cli_yq still ran unattended because every consumer gates on `requiresApproval === true` before reading the policy at all. Added the approved-caller case (the gate is not a removal) and the sparse-array hole case.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as fs from 'fs';
@@ -23,6 +24,8 @@ process.env.PATH = `${stubDir}${path.delimiter}${process.env.PATH}`;
 const { cliArgsToArgv } = require('../../any-bot/server/services/tools/cli-argv');
 const { yqCommand, registerCLITools } = require('../../any-bot/server/services/tools/cliTools');
 const { shouldAutoApproveTool, NEVER_AUTO_APPROVE } = require('../../any-bot/server/controllers/tool-approval-policy');
+const { createDispatchToolExecutor } = require('../../any-bot/server/controllers/dispatch-tool-executor');
+const { captureDispatchCapabilities } = require('../../any-bot/server/utils/dispatch-capabilities');
 const ToolRegistry = require('../../any-bot/server/services/ToolRegistry');
 
 /** The exact payload that returned the marker through the authorized channel on 2026-09-22. */
@@ -134,6 +137,12 @@ describe('cliArgsToArgv — model-supplied text is data, never syntax', () => {
   it('refuses a non-string argv entry', () => {
     expect(() => cliArgsToArgv(['eval', 7 as unknown as string], 'yq')).toThrow(/must be a string/);
   });
+
+  it('refuses a HOLE in a sparse array instead of spawning the string "undefined"', () => {
+    // Array.prototype.map skips holes, which would have let this through unchecked.
+    const sparse = ['eval', , '-'] as unknown as string[];
+    expect(() => cliArgsToArgv(sparse, 'yq')).toThrow(/must be a string/);
+  });
 });
 
 describe('yqCommand — real child process, no shell', () => {
@@ -183,19 +192,97 @@ describe('yqCommand — real child process, no shell', () => {
   });
 });
 
-describe('cli_yq approval posture', () => {
-  it('is refused on the unattended path even with the auto-approval flag set', () => {
-    // cli_yq is registered requiresApproval:false, so NEVER_AUTO_APPROVE is the only refusal.
-    expect(NEVER_AUTO_APPROVE.has('cli_yq')).toBe(true);
-    expect(shouldAutoApproveTool({ commandExecution: true }, 'cli_yq', false)).toBe(false);
-    expect(shouldAutoApproveTool({ commandExecution: true }, 'cli_yq', true)).toBe(false);
+/**
+ * @description Builds the REAL unattended dispatch channel over the REAL registry. Asking the
+ * policy function whether it would auto-approve proves nothing: every consumer refuses with
+ * `requiresApproval && !approved`, so a tool declared `requiresApproval: false` is executed
+ * without the policy answer ever being read. The refusal has to be observed at the channel.
+ * @returns {{executeTool: Function, registry: any}} The dispatch executor and its registry.
+ */
+function buildUnattendedDispatch(): { executeTool: Function; registry: any } {
+  const registry = new ToolRegistry();
+  registerCLITools(registry);
+  // A tool the channel is allowed to run, so a refusal below is about the tool and not a
+  // harness that cannot execute anything.
+  registry.register({
+    name: 'probe_open',
+    description: 'Control: a registered tool that genuinely needs no approval.',
+    category: 'test',
+    inputSchema: { type: 'object', properties: {} },
+    handler: async () => ({ ran: true }),
+    requiresApproval: false,
   });
 
-  it('lists the name the registry actually registers, so a rename cannot orphan the guard', () => {
+  const names = ['cli_yq', 'cli_git', 'probe_open'];
+  const capabilities = captureDispatchCapabilities(
+    registry,
+    new Set(names),
+    new Set(names.map((n) => `tool:${n}`)),
+  );
+  const executeTool = createDispatchToolExecutor({
+    toolRegistry: registry,
+    dispatchCapabilities: capabilities,
+    task: {},
+    taskId: 'cli-yq-guard',
+    // The literal flags AgentDispatchEngine sends on the unattended ticket path, plus the legacy
+    // key the policy actually reads — the most permissive payload a caller can present.
+    options: {
+      autoApprove: {
+        commandExecution: true,
+        use_mcp_tool: true,
+        execute_command: true,
+        write_to_file: true,
+        read_file: true,
+      },
+    },
+  });
+  return { executeTool, registry };
+}
+
+describe('cli_yq approval posture — observed at the real dispatch channel', () => {
+  it('refuses cli_yq unattended, and the child never runs', async () => {
+    const read = record('unattended');
+    const { executeTool } = buildUnattendedDispatch();
+
+    // Control: the channel does execute tools, so ok:false below is a refusal, not a broken harness.
+    const open = await executeTool('probe_open', {});
+    expect(open.ok).toBe(true);
+
+    // Control: the channel's refusal shape, from a tool that has always required approval.
+    const git = await executeTool('cli_git', { args: '--version' });
+    expect(git.ok).toBe(false);
+    expect(git.error).toMatch(/requires approval/);
+
+    const yq = await executeTool('cli_yq', { args: `${recorder} --version` });
+    // Asserted together so a regression reads as what it is: refused, and nothing spawned.
+    expect({ refused: yq.ok === false, spawned: read() !== null })
+      .toEqual({ refused: true, spawned: false });
+    expect(yq.error).toMatch(/requires approval/);
+  });
+
+  it('still runs for an approved caller, so the gate is not a removal', async () => {
+    const read = record('approved');
+    const registry = new ToolRegistry();
+    registerCLITools(registry);
+
+    const result = await registry.execute(
+      'cli_yq',
+      { args: `${recorder} eval '.name' -` },
+      { approved: true },
+    );
+    expect(result.success).toBe(true);
+    expect(read()!.argv).toEqual(['eval', '.name', '-']);
+  });
+
+  it('carries the belt-and-braces policy entry under the name the registry registers', () => {
     const registry = new ToolRegistry();
     registerCLITools(registry);
     const tool = registry.get('cli_yq');
-    expect(tool).toBeTruthy();
+
+    // The registration flag is the gate; the policy set only stops a future edit flipping it back
+    // from also auto-approving the tool. Both are asserted, neither is described as the other.
+    expect(tool.requiresApproval).toBe(true);
     expect(NEVER_AUTO_APPROVE.has(tool.name)).toBe(true);
+    expect(shouldAutoApproveTool({ commandExecution: true }, tool.name, false)).toBe(false);
   });
 });

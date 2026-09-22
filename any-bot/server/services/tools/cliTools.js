@@ -853,7 +853,12 @@ function registerCLITools(registry) {
       },
     },
     handler: yqCommand,
-    requiresApproval: false,
+    // The flag that actually refuses an unattended call. All three consumers of the approval
+    // policy gate on `requiresApproval === true` BEFORE they consult shouldAutoApproveTool
+    // (AgenticController.js, dispatch-tool-executor.js, ToolRegistry.execute), so for a tool
+    // declared false the NEVER_AUTO_APPROVE entry is never reached and refuses nothing. An
+    // approved caller (options.approved === true) still runs it; this is a gate, not a removal.
+    requiresApproval: true,
     timeout: 30000,
   });
 

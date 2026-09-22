@@ -31,7 +31,9 @@ const { execFile } = require('child_process');
  */
 function cliArgsToArgv(args, toolName) {
   if (Array.isArray(args)) {
-    return args.map((entry, index) => {
+    // Array.from, not .map: .map SKIPS holes in a sparse array, so `['a', , 'b']` would pass the
+    // per-entry check and the hole would reach execFile as the literal string "undefined".
+    return Array.from(args, (entry, index) => {
       if (typeof entry !== 'string') {
         throw new Error(`${toolName} argv entry ${index} must be a string, received ${typeof entry}`);
       }
