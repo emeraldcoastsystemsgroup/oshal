@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards for the operator's HOT FALLBACK (operator decision 2026-09-22). The boundary crossed is real on both transports: the NODE path drives the real BotNodeClient against a loopback fake bot node (POST /api/swarm-execute + GET /api/health) through executeBotOrInline; the INLINE path drives the REAL TaskOrchestrator and the REAL hosted provider against a loopback BYO endpoint, with the vendor rung's transport faked at the fetch seam. The chain is the REAL ProviderSwitchSnapshot over an in-memory store and is re-ordered by the REAL PUT route. Readiness reads REAL login files in a temp dir. Cases: operator + explicit + 503 → fallback taken with the marker, one dispatch per rung, WARN logged, never the key; not ready → the clear error naming every rung and NO fallback call; a non-operator → the endpoint failure, the chain never walked; a 401 → no fallback; a threaded operator-key lane → one attempt; the CONFIGURED chain beats the default and a PUT re-orders it with no restart; a not-ready rung is skipped with its reason; a failed rung is followed by the next once; an unreachable node makes every rung not-ready; the inline path answers INSIDE one turn (one saved user message, one cost row on the rung); the cockpit router carries the marker and answers 503 BYO_FALLBACK_NOT_READY when nothing was ready; the probe stores no token and marks an expired login not-ready.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Closed a readiness hole the mutation run found: on the INLINE path the only not-ready rung under test was a CLI login, which a second guard (no in-process lane) would have skipped anyway — so removing the planner's readiness check stayed green. A HOSTED rung whose key IS present but whose lane is COOLING after a mid-turn failure is the case where only the probe's verdict stands between the rung and a billed call; it is now asserted to be skipped with its reason and never called.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The Settings read had no guard at all: GET /api/settings/llm-default — the route this change extends rather than adding a second status endpoint — was covered by nothing in tests/, so the whole hotFallback block could be deleted and every spec stayed green. The real router now answers a real request: the configured chain and its source, each rung's readiness (a lapsed Claude login reads not-ready with its reason), the gate verdict, the PUT that re-orders it, and no key or token anywhere in the payload.
  */
 
 import * as fs from 'node:fs';
@@ -598,5 +599,37 @@ describe('the readiness probe — stored status without a token, expiry honoured
     expect(anthropic.ready).toBe(false);
     expect(anthropic.reason).toContain('no in-process hosted lane');
     expect(gemini.ready).toBe(true);
+  });
+
+  it('the EXISTING Settings brain route reports the chain and each rung\'s readiness — same route, no token in the payload', async () => {
+    // Readiness is shown on the route the AI-Providers card already reads, not a second status
+    // endpoint. The fallback block is also fail-soft: the card must still render the preference.
+    await installChain({ providerId: 'claude-code', fallbackOrder: ['gemini', 'claude-code'] });
+    writeClaudeLogin(Date.now() - 1_000);
+    const { createLlmPreferenceRoutes } = await import('../../src/app/routes/llm-preference-routes');
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => { (req as typeof req & { oidc?: unknown }).oidc = { isAuthenticated: () => true, user: { sub: OPERATOR } }; next(); });
+    app.use('/api/settings/llm-default', createLlmPreferenceRoutes({ pool: { query: async () => ({ rows: [] }) } } as unknown as AppContext));
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    servers.push(server);
+
+    const res = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/api/settings/llm-default?refresh=1`);
+    expect(res.status).toBe(200);
+    const raw = await res.text();
+    const body = JSON.parse(raw) as { preference: unknown; hotFallback: { chain: { order: string[]; source: string }; rungs: Array<{ providerId: string; ready: boolean; reason: string }>; gate: { demoMode: boolean; operator: boolean; available: boolean }; setWith: { method: string; path: string } } };
+
+    expect(body.preference).toBeTruthy();
+    expect(body.hotFallback.chain).toMatchObject({ order: ['gemini', 'claude-code'], source: 'fleet-default' });
+    expect(body.hotFallback.gate).toEqual({ demoMode: true, operator: true, available: true });
+    expect(body.hotFallback.rungs.find((r) => r.providerId === 'gemini')?.ready).toBe(true);
+    const claude = body.hotFallback.rungs.find((r) => r.providerId === 'claude-code');
+    expect(claude?.ready).toBe(false);
+    expect(claude?.reason).toContain('Claude Code login expired');
+    expect(body.hotFallback.setWith).toMatchObject({ method: 'PUT', path: '/api/agents/provider-switch/fleet-default' });
+    // The whole payload, not just the rungs: no key, no token, ever.
+    expect(raw).not.toContain(GEMINI_KEY);
+    expect(raw).not.toContain('fixture-access-token');
   });
 });
