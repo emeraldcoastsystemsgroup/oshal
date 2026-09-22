@@ -117,7 +117,10 @@ boundary below).
 `swarm.extraEnv` renders into the `oshal-shared-env` ConfigMap, so it refuses credentials. A key
 the chart keeps in either the ConfigMap or `oshal-shared-secret`, and any credential-shaped name
 (`SECRET`, `PASSWORD`, `PASSWD`, `TOKEN`, `CREDENTIAL`, a name ending in `KEY`,
-`DATABASE_URL`, `*_DSN`), fails the render.
+`DATABASE_URL`, `*_DSN`), fails the render. The name rule is broad on purpose, so it also
+refuses a switch that is not a secret but whose name matches, such as compose's
+`REMOTE_CLIENT_REQUIRE_NODE_TOKEN`. Set a switch like that on the workload that reads it
+(`api.extraEnv` for that one).
 
 A bot the controller launches at runtime (see [Dynamic bots](#dynamic-bots--apps-bring-their-own))
 is built by `src/features/agent-management/services/kubernetes-bot-launcher.ts`, not by this
@@ -323,6 +326,16 @@ on a cluster, not here:
 | `oshal-arangodb` | root | no (Baseline) | the image has no `USER`, its entrypoint never drops privileges, and the data volumes it has written are root-owned |
 | `oshal-ollama` | root | no (Baseline) | the image has no `USER` and keeps models under `/root/.ollama` |
 | `oshal-relay` | root | no (Privileged only) | it mounts `/dev/net/tun` from the host and adds `NET_ADMIN`; off by default |
+
+**Capabilities on the api and the bots.** Before chart 0.5.0 these containers set no
+`securityContext`, so they ran with the container runtime's default capability set. They
+now keep only `DAC_OVERRIDE`. That is enough to read and write the files code-server
+(uid 1000) creates in the shared workspace. It is not enough to change those files' mode,
+owner or timestamps. Linux allows `chmod`, and setting a file's timestamps to anything
+other than the current time, only to the file's owner or to a process with `CAP_FOWNER`.
+It allows `chown` only with `CAP_CHOWN` (see chmod(2), utimensat(2) and chown(2)). On a
+file code-server owns, those calls now fail with `EPERM`. A render cannot show whether any
+bot task makes them; that is checked on a cluster.
 
 ## Dynamic bots — apps bring their own
 

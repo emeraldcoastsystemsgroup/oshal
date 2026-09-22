@@ -10,6 +10,7 @@
 # 6 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — infra.vault leaves dev mode: devRootToken is gone, and storage / ui / tls (enabled, secretName) configure a server-mode Vault on its own claim. tls defaults off (plain in-cluster listener) and the backup destination is unset, both because the operator has not named them yet; the comments say so. Guard: tests/unit/chart-vault-server.spec.ts.
 # 7 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — production-readiness baseline: resources (requests cpu+memory, a memory limit) for the nine infra workloads (infra.<name>.resources) and the relay's two containers; storageClassName chart-wide plus a per-claim override (infra.<name>.storageClassName, api.outputStorageClassName, swarm.workspaceStorageClassName, relay.stateStorageClassName), empty = the cluster default; pinned tags for every floating infra image (timescaledb 2.30.1-pg16, code-server 4.138.0, speaker-diarization 2.1.0-beta.1, ollama 0.34.2, tailscale v1.102.4, socat 1.8.1.3 - each the tag whose digest the floating tag resolved to on 2026-09-21, checked read-only against the registry); infra.diarization.pullPolicy so the registry sidecar no longer inherits a side-loaded platform image's Never. Guard: tests/unit/chart-production-baseline.spec.ts.
 # 8 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — the rbac comment records that a runtime-launched bot does not read oshal-shared-secret (the core launcher's envFrom is oshal-shared-env + oshal-bot-env), so it needs JWT_SECRET copied into oshal-bot-env, and where the copy command is printed. Guard: tests/unit/chart-dynamic-bot-env.spec.ts.
+# 9 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — the swarm.extraEnv comment records the credential-name rule's known false positive: a non-secret switch such as compose's REMOTE_CLIENT_REQUIRE_NODE_TOKEN is refused too, and goes on the workload that reads it (api.extraEnv). Guard: tests/unit/chart-shared-env-extra.spec.ts.
 #
 # Defaults model the compose stack (docker-compose.oshal-local.yml) with DNS parity:
 # Services are named oshal-redis / oshal-db / oshal-chromadb / oshal-api / oshal-local-api
@@ -322,6 +323,9 @@ swarm:
   # and so does any credential-shaped name (SECRET, PASSWORD, PASSWD, TOKEN, CREDENTIAL,
   # a name ending in KEY, DATABASE_URL, *_DSN), so extraEnv cannot put a credential
   # back into a ConfigMap. Set a chart-owned key through the chart's own value instead.
+  # The name rule is broad on purpose, so it also refuses a switch that is not a
+  # secret but whose name matches, such as compose's REMOTE_CLIENT_REQUIRE_NODE_TOKEN.
+  # Set a switch like that on the workload that reads it (api.extraEnv for that one).
   extraEnv: {}
 
 # ── Bots (both roles) ─────────────────────────────────────────────────────────

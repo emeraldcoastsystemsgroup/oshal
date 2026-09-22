@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for swarm.extraEnv and the Docker Desktop overlay's use of it. On the first Docker Desktop Kubernetes install (2026-09-21) every ADR-149 protected store app failed activation closed with "Protected application routes require APP_PACKAGE_DYNAMIC_ROUTES=1": compose sets that switch by default and the chart had no way to set it, so the apps' bots were never registered. The fix renders swarm.extraEnv into the oshal-shared-env ConfigMap, which the api and every bot envFrom. This renders the REAL chart for both roles (main and bot-pod) and requires a --set key to arrive in that ConfigMap as a string and to reach every oshal runtime; and it reads the flag's NAME and its accepted values out of the platform source that raises that refusal, rather than copying either, so renaming the flag in src/ without the overlay following goes red here.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | swarm.extraEnv shares a data map with the keys the chart sets itself, and a clash used to render a duplicate data key (last-wins for one client, an apply error for another). For both roles this now reads every key the default render emits, sets ALL of them through extraEnv in one render, and requires the chart to refuse it and name each clashing key. A key the chart emits only while its service is in-cluster (ARANGO_URL) must stay settable through extraEnv once that service is off.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Chart 0.5.0 moved JWT_SECRET and ARANGO_ROOT_* out of the ConfigMap into the oshal-shared-secret Secret, so extraEnv must not become the way a credential gets back into a ConfigMap. For both roles every key the chart keeps in that Secret, set through extraEnv, must fail the render as chart-owned and be named; and every credential name the chart knows (each key of each Secret it renders, plus the *_API_KEY / *_SECRET / *_TOKEN / *AUTHKEY names values.yaml tells an operator to keep in a Secret) must fail as credential-shaped and be named.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The credential-name rule's known false positive is documented, and held true. values.yaml and the README say the rule also refuses a non-secret switch whose name matches it, naming compose's REMOTE_CLIENT_REQUIRE_NODE_TOKEN, and that such a switch goes on the workload that reads it (api.extraEnv). This reads the example out of values.yaml, confirms from the parsed docker-compose.oshal-local.yml that it is a boolean switch set on the oshal-api service alone, and requires that swarm.extraEnv refuses it while api.extraEnv renders it on the api container.
  */
 
 import fs from 'node:fs';
@@ -13,7 +14,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import yaml from 'js-yaml';
 import {
-  DOCKER_DESKTOP_VALUES, REPO_ROOT, RENDER_TIMEOUT_MS, containerOf, helmTemplate, type K8sObject,
+  DOCKER_DESKTOP_VALUES, REPO_ROOT, RENDER_TIMEOUT_MS, containerOf, envValue, helmTemplate, type K8sObject,
 } from '../helpers/helm-template';
 
 const SHARED_ENV = 'oshal-shared-env';
@@ -175,5 +176,27 @@ describe('swarm.extraEnv cannot put a credential back into the ConfigMap', () =>
     expect(message, 'a credential-shaped extraEnv key rendered into the ConfigMap').toMatch(/credential-shaped/);
     const unnamed = outsideChartOwnership.filter((k) => !new RegExp(`swarm\.extraEnv\.${k}(?![A-Za-z0-9_])`).test(message));
     expect(unnamed, 'the refusal does not name every credential key').toEqual([]);
+  }, RENDER_TIMEOUT_MS);
+
+  it('the documented false positive is a real non-secret switch: refused here, and settable on the api', () => {
+    const valuesText = fs.readFileSync(path.join(REPO_ROOT, 'deploy', 'helm', 'oshal', 'values.yaml'), 'utf8');
+    const example = /such as compose's ([A-Z][A-Z0-9_]*)/.exec(valuesText)?.[1];
+    expect(example, 'values.yaml no longer names the example the README and this guard rely on').toBeTruthy();
+    const compose = yaml.load(fs.readFileSync(path.join(REPO_ROOT, 'docker-compose.oshal-local.yml'), 'utf8')) as {
+      services: Record<string, { environment?: Record<string, unknown> | string[] }>;
+    };
+    const setters = Object.entries(compose.services).flatMap(([name, svc]) => {
+      const env = svc.environment;
+      const value = Array.isArray(env) ? env.find((e) => e.startsWith(`${example}=`))?.slice(example!.length + 1) : env?.[example!];
+      return value === undefined ? [] : [[name, String(value)] as const];
+    });
+    expect(setters.map(([name]) => name), `compose does not set ${example} on oshal-api alone - the example is wrong`).toEqual(['oshal-api']);
+    expect(setters[0][1], `${example} is not a boolean switch in compose - the example is wrong`)
+      .toMatch(new RegExp(`^\\$\\{${example}:-(true|false)\\}$`));
+    let message = '';
+    try { helmTemplate({ sets: [`swarm.extraEnv.${example}=true`] }); } catch (err) { message = (err as Error).message; }
+    expect(message, 'the name rule no longer refuses the documented example - update values.yaml and the README').toMatch(/credential-shaped/);
+    const api = containerOf(helmTemplate({ sets: [`api.extraEnv.${example}=true`] }), 'Deployment', 'oshal-api', 'api');
+    expect(envValue(api, example!), 'api.extraEnv does not carry the switch the docs point at').toBe('true');
   }, RENDER_TIMEOUT_MS);
 });
