@@ -544,6 +544,41 @@ including across a directory belonging to a different owner. Full reasoning and 
   load; the gate is green with no allowlist; a spec proves it goes red per violation shape; and the
   backfill landed in the store repo rather than being waived.
 
+### A BYO connection makes Jarvis tool-less, which is why it defers instead of answering
+
+- **Commissioned (operator, 2026-09-22): a BYO connection may carry tools, with the boundary
+  enforced.** This is the reason Jarvis tells the operator to go to the application. Measured in
+  `any-bot/server/controllers/TaskController.js`: `resolveToolLessMarker` ends `return Boolean(byoLlm)`
+  (:85), so **any** BYO connection marks the turn tool-less; `:325` then skips agentic mode
+  (`useAgenticMode = !toolLess && …`) and `:395` zeroes the set outright
+  (`normalizeAllowedTools(toolLess ? [] : options.allowedTools)`). The operator's default LLM is a BYO
+  `any-llm` row, so his Jarvis has had **no tools at all**, and wiring the direct path to declare
+  tools does not change that on its own — the blanket rule empties the set first.
+- **Why the rule existed, so it is not simply deleted.** The Change Log records the intent as "BYO /
+  free-tier connections bypass the agentic loop", and the defensible fear behind it is real: a BYO
+  endpoint is a **user-supplied URL**, and giving it tools means an arbitrary host can ask oshal to
+  execute them as the operator.
+- **What replaces it.** That fear is answered by a constraint that did not exist when the rule was
+  written and does now: a model-requested call executes only when the caller asserted
+  `enforceToolBoundary`, the name is in the exact declared set, the `tool:<name>` scope is held, and
+  the call goes through the one authorized channel — with an absent boundary denying everything.
+  Refusals are reported back to the model with their reason rather than silently dropped. So the
+  blanket "BYO means no tools" is replaced by "any caller means no tools it was not granted", which is
+  the stronger rule and the one the platform states about itself.
+- **Not in scope:** this does not relax the fail-closed local CLI harness guard
+  (`assertAuditedAutonomousHarness`), and it does not change what the agentic path does — that path
+  cannot receive an `OpenAIProvider` at all.
+- **Done when:** a Jarvis turn on a BYO connection is offered the tool set
+  `captureDispatchCapabilities` computed for that caller rather than an empty one; a live ask on the
+  box whose answer requires a tool is **answered rather than deflected**; a spec proves a BYO turn
+  cannot call a tool outside its declared set or outside its authorized scopes; and the agentic-mode
+  routing decision is made deliberately rather than as a side effect of the tool-less marker — state
+  what a BYO connection should do there and why.
+- **Also found and worth fixing while here (measured, not inferred):** the operator's
+  `oshal_connections` carries **two** `any-llm` rows both with `is_default = true` —
+  `gemini-3.8-flash` and `deepseek-chat` — so which one answers is decided by resolution order rather
+  than by intent.
+
 ### Jarvis cannot see the user's other conversations, so it defers instead of answering
 
 - **Commissioned (operator, 2026-09-22).** Asked something it does not hold in the current thread,
@@ -2535,6 +2570,27 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### Reading a user's own Drive content — the `drive.file` scope wall
 - **Remaining:** the Google connector ships `drive.file` (per-file access to files the app created), so the `google-drive` provider in [storage-browse.ts](../src/app/routes/storage-browse.ts) browses successfully and returns an empty listing for a user's own photos. Every other provider on that rail (oshal-local, career, dropbox, github) is unaffected — [portrait-studio](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/portrait-studio) 1.4.0 ships a connected-asset picker over it and degrades Drive honestly, naming the scope as the cause. What is open is the core decision: the Google Picker (minimal scope; needs an API key/app ID and an explicit `script-src` allowance for `apis.google.com`, which [strict-csp.ts](../src/features/security/hardening/strict-csp.ts) has no knob for today) versus the restricted `drive.readonly` scope (Google app verification + CASA assessment, forced reconnect for every existing connection, widened read for every user).
 - **Done when:** one option is chosen and recorded, a caller can read a file they did not create through the chosen path, no surface depends on report-only CSP to load its scripts, and the scope set in [connector-provider-registry.ts](../src/app/routes/connector-provider-registry.ts) matches what the verification posture actually permits. See [ADR-080](adr/080-creative-studio-extend-story-pipeline.md).
+- **Decision (operator, 2026-09-22): GOOGLE PICKER, keeping `drive.file`.** The operator picks a
+  file and Google grants access to that file alone, so oshal never holds standing read access to a
+  Drive. Rejected: `drive.readonly`, which is a RESTRICTED scope — it needs Google app verification
+  plus a paid third-party CASA assessment on the business account, an ongoing compliance obligation
+  rather than a one-time cost, and it would force **every existing Google connection to reconnect**
+  (measured on the box: five connected Google/GCP grants carrying Gmail send/readonly, Calendar
+  readonly and `cloud-platform.read-only`). Also rejected: leaving Drive write-only, because reading a
+  document the operator already has is the actual requirement.
+- **The cost this decision accepts, named rather than glossed:** Picker needs an API key and app
+  /project number, and a **`script-src` allowance for `apis.google.com`** — and
+  `src/features/security/hardening/strict-csp.ts:120-135` builds `script-src` as `'self'` plus a nonce
+  plus `strict-dynamic`, with **no host knob at all**. So this requires a narrow, reviewed addition to
+  the CSP builder, not a general loosening: the allowance must be scoped to the surfaces that host the
+  Picker rather than applied to every page, and `strict-dynamic` semantics must be understood before
+  it is added, since a host allowance interacts with it.
+- **Done when:** a Picker flow on the cockpit lets the operator choose an existing Drive file and
+  oshal reads exactly that file through `drive.file`; the default Google scopes at
+  `connector-provider-registry.ts:96-100` are unchanged, so no existing connection is forced to
+  reconnect; the `script-src` allowance is added as an explicit, narrowly-scoped option with a spec
+  that fails if it is applied to a surface that does not host the Picker; and a spec asserts oshal
+  cannot read a Drive file the operator did not pick.
 
 ### Social provider expansion
 - **Remaining:** live-verify LinkedIn and X publish/read flows, then add Instagram/Threads and Mastodon only through reviewed connector/CLI adapters.
