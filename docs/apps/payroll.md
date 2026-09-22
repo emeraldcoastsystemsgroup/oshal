@@ -175,7 +175,12 @@ Overpayment repayment spanning tax years is deliberately out of scope because it
 different tax treatment — approximating it would be worse than refusing. State returns cover Florida
 only.
 
-All of these are tracked in [BACKLOG.md](../BACKLOG.md) with done-when criteria.
+All of these are tracked with done-when criteria in the package's own queue,
+[`payroll/BACKLOG.md`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/blob/main/payroll/BACKLOG.md),
+in the app store repository — sixteen numbered items, and the numbers are the ones
+[ADR-123](../adr/123-payroll-app.md) cites. They are not in this repository's `docs/BACKLOG.md`: core
+keeps only the shared framework dependencies this app installs against, and the package owns its own
+deferred work.
 
 ## Tests
 
