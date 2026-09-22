@@ -49,6 +49,7 @@
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 round 2 — the two SCAN-sleeve sell legs were left reading the book through the plain quantity map (`held`), which carries no mark: the 2a short-timeframe breakdown exit could still sell a holding the engine cannot account for, and unlike 2b/2c/2d it runs on EVERY fire rather than only when rotation does not own the sleeve — so the one leg that was always live was the one still trading hand-bought shares. Both 2a and 2b now read `unmanagedSymbols(positions)` beside `held`. `held` itself is deliberately unchanged: it is also placeEntries' dedup guard, so removing a withheld name from it would let the engine BUY what it just refused to manage. A withheld name is likewise NOT added to `exiting`, so it keeps consuming its maxPositions slot and its exposure exactly as today — withholding can only remove an order, never free capital for another target. Guard: tests/unit/trading-dispatch-unmanaged-fire.spec.ts drives a full dispatchTradingSchedule fire over a book with one uncovered position and asserts no order of any kind for it.
  *
  * @module trading-schedule-dispatch
+ * 22 | maintainer@emeraldcoastsystemsgroup.com   | ADR-134 book resolution gains a FOURTH hard rule: a resolved NON-LEGACY book with no arming acknowledgement on its row hard-skips the fire. Enabling a second book was already inert for trading - this function resolves exactly ONE book from its own schedule's taskData and never enumerates enabled books - but that safety was a property of the code with nothing pinning it and nothing standing between a hand-written schedule row and roughly $224k of hand-picked positions in the rollover account. The gate is suppressive by construction (it can only withhold a fire) and the two legacy books are excluded, so the running first leg is byte-identical. The four rules move into resolveScheduleBook() - a pure code move, branch for branch - because dispatchTradingSchedule was already 121 lines and adding the gate inline would have grown it further past the 50-line rule; its early returns become a null the caller turns back into the same logged no-op result.
  */
 
 import type { AppContext } from './composition-root';
@@ -70,7 +71,7 @@ import { pinnedQtyBySymbol, subtractPinnedLots, isLotOrderClientId } from './tra
 // legacy books), capAccount takes LEAST(env, book cap), a disabled book keeps protective exits
 // while rotation/pop/entries are skipped, and BOTH breaker call sites fail CLOSED on an
 // evaluation error (halted, never null→not-halted).
-import { legacyBook, legacyBookId, loadBook, ensureLegacyBooks, multiAccountEnabled, loadLegacyBook } from './trading-books-store';
+import { legacyBook, legacyBookId, loadBook, ensureLegacyBooks, multiAccountEnabled, loadLegacyBook, armAcknowledged } from './trading-books-store';
 import { reconcileOpenOrders } from './trading-reconcile';
 import { ensureRotationStateTable, loadLastRotated, saveLastRotated } from './trading-rotation-store';
 import { recordDailyEquity } from './trading-daily-equity-store';
@@ -437,6 +438,71 @@ async function logRunTicket(ctx: AppContext, sub: string, mode: TradingMode, s: 
 }
 
 /**
+ * @description Resolve the ONE book a due trading schedule fires for, applying the four hard rules
+ * of the ADR-134 live-safety review. Every branch keys on THIS schedule's own `taskData` — nothing
+ * here enumerates the user's books, so a second book being `enabled` can never widen the set a
+ * schedule dispatches.
+ *
+ *  1. bookId ABSENT → the legacy book for taskData.mode (existing out-of-band schedules keep
+ *     working unmodified).
+ *  2. bookId present but UNRESOLVABLE (deleted book, foreign id) → SKIP the fire with an ERROR —
+ *     never fall back to the legacy book: a stale per-book LIVE schedule falling through would
+ *     silently trade the WRONG Schwab account. loadBook is keyed (user_sub, book_id) — dispatch
+ *     runs under system identity where RLS does not scope reads, so that WHERE is the only wall.
+ *  3. bookId present while TRADING_MULTI_ACCOUNT is OFF → hard-skip as a logged no-op unless it IS
+ *     a legacy book: flag-off (the PR4 rollback path) must never turn N per-book schedules into N
+ *     duplicate dispatchers of the one real account (cross-minute duplicate orders Schwab cannot
+ *     dedupe).
+ *  4. a resolved NON-LEGACY book with no arming acknowledgement recorded against its row →
+ *     hard-skip as a logged no-op. Enabling a book is inert for trading on its own (rules 1-3
+ *     resolve exactly one book), so the deliberate act that puts a second account under the engine
+ *     is that acknowledgement, not the enabled flag. Until it is recorded the leg fires nothing:
+ *     no rotation buy against the account's idle cash and no pinned-lot exit. The legacy
+ *     paper/live books never carry the gate.
+ * @param ctx - App context (pool).
+ * @param schedule - The due schedule record (only its id is used, for the log lines).
+ * @param sub - Owner sub from taskData.
+ * @param rawBookId - taskData.bookId as text, or null when the schedule pins no book.
+ * @param mode - The legacy mode from taskData, used only when no bookId is pinned.
+ * @returns The resolved book and the mode to run it in, or null when the fire must be skipped.
+ * @throws Whatever loadLegacyBook throws (notably book_binding_undecryptable) — never degraded.
+ */
+async function resolveScheduleBook(
+  ctx: AppContext, schedule: ScheduleRecord, sub: string, rawBookId: string | null, mode: TradingMode,
+): Promise<{ book: TradingBook; mode: TradingMode } | null> {
+  let book: TradingBook;
+  if (!rawBookId) {
+    await ensureLegacyBooks(ctx.pool, sub).catch(() => { /* mint is lazy-best-effort; the row is what carries the binding */ });
+    // The legacy book must come from its DB ROW: the row carries the account binding, and an unbound
+    // Schwab reader now REFUSES rather than guessing which enumerated account to use. A decrypt
+    // failure propagates deliberately — degrading to an unbound book is the one shape that refusal
+    // cannot interpret, and this fire drives protective exits.
+    book = await loadLegacyBook(ctx.pool, sub, mode);
+  } else if (!multiAccountEnabled()) {
+    if (rawBookId !== legacyBookId(sub, 'paper') && rawBookId !== legacyBookId(sub, 'live')) {
+      logger.warn({ scheduleId: schedule.id, bookId: rawBookId }, 'TRADING_MULTI_ACCOUNT is off - per-book schedule hard-skipped (no fallback to the legacy book)');
+      return null;
+    }
+    mode = rawBookId === legacyBookId(sub, 'live') ? 'live' : 'paper';
+    book = await loadLegacyBook(ctx.pool, sub, mode);
+  } else {
+    const loaded = await loadBook(ctx.pool, sub, rawBookId).catch((err) => { logger.error({ err, scheduleId: schedule.id, bookId: rawBookId }, 'book load failed'); return null; });
+    if (!loaded) {
+      logger.error({ scheduleId: schedule.id, bookId: rawBookId, sub }, 'schedule carries an UNRESOLVABLE bookId - fire skipped, never falling back to the legacy book');
+      return null;
+    }
+    book = loaded;
+    mode = book.kind;
+  }
+  if (!armAcknowledged(book)) {
+    logger.error({ scheduleId: schedule.id, bookId: book.bookId, ref: book.ref, sub },
+      'autopilot leg NOT armed for this book - no arming acknowledgement is recorded against it; fire skipped');
+    return null;
+  }
+  return { book, mode };
+}
+
+/**
  * @description Dispatch a trading-autopilot schedule that just came due.
  * @param ctx - App context (pool, ticketService).
  * @param schedule - The due schedule record (taskData carries userSub, mode, universe).
@@ -449,41 +515,12 @@ export async function dispatchTradingSchedule(ctx: AppContext, schedule: Schedul
 
   if (!sub) return { success: false, scheduleId: schedule.id, error: 'autopilot schedule missing userSub' };
 
-  // ── ADR-134 book resolution — three hard rules (adversarial live-safety review) ────────────────
-  //  1. bookId ABSENT → the legacy book for taskData.mode (the existing out-of-band schedules keep
-  //     working unmodified).
-  //  2. bookId present but UNRESOLVABLE (deleted book, foreign id) → SKIP the fire with an ERROR —
-  //     never fall back to the legacy book: a stale per-book LIVE schedule falling through would
-  //     silently trade the WRONG Schwab account. loadBook is keyed (user_sub, book_id) — dispatch
-  //     runs under system identity where RLS does not scope reads, so that WHERE is the only wall.
-  //  3. bookId present while the flag is OFF → hard-skip as a logged no-op unless it IS the legacy
-  //     book: flag-off (the PR4 rollback path) must never turn N per-book schedules into N duplicate
-  //     dispatchers of the one real account (cross-minute duplicate orders Schwab cannot dedupe).
-  const rawBookId = td.bookId ? String(td.bookId) : null;
-  let book: TradingBook;
-  if (!rawBookId) {
-    await ensureLegacyBooks(ctx.pool, sub).catch(() => { /* mint is lazy-best-effort; the row is what carries the binding */ });
-    // The legacy book must come from its DB ROW: the row carries the account binding, and an unbound
-    // Schwab reader now REFUSES rather than guessing which enumerated account to use. A decrypt
-    // failure propagates deliberately — degrading to an unbound book is the one shape that refusal
-    // cannot interpret, and this fire drives protective exits.
-    book = await loadLegacyBook(ctx.pool, sub, mode);
-  } else if (!multiAccountEnabled()) {
-    if (rawBookId !== legacyBookId(sub, 'paper') && rawBookId !== legacyBookId(sub, 'live')) {
-      logger.warn({ scheduleId: schedule.id, bookId: rawBookId }, 'TRADING_MULTI_ACCOUNT is off - per-book schedule hard-skipped (no fallback to the legacy book)');
-      return { success: true, scheduleId: schedule.id };
-    }
-    mode = rawBookId === legacyBookId(sub, 'live') ? 'live' : 'paper';
-    book = await loadLegacyBook(ctx.pool, sub, mode);
-  } else {
-    const loaded = await loadBook(ctx.pool, sub, rawBookId).catch((err) => { logger.error({ err, scheduleId: schedule.id, bookId: rawBookId }, 'book load failed'); return null; });
-    if (!loaded) {
-      logger.error({ scheduleId: schedule.id, bookId: rawBookId, sub }, 'schedule carries an UNRESOLVABLE bookId - fire skipped, never falling back to the legacy book');
-      return { success: true, scheduleId: schedule.id };
-    }
-    book = loaded;
-    mode = book.kind;
-  }
+  // ── ADR-134 book resolution — the four hard rules live in resolveScheduleBook, which keys every
+  //    branch on THIS schedule's own taskData and enumerates nothing.
+  const resolved = await resolveScheduleBook(ctx, schedule, sub, td.bookId ? String(td.bookId) : null, mode);
+  if (!resolved) return { success: true, scheduleId: schedule.id };
+  const { book } = resolved;
+  mode = resolved.mode;
   // ADR-095: one DB read per fire — THIS BOOK's applied Strategy Library override (null = env
   // defaults; ADR-134 PR2 re-keyed actives per (user, book), so each book runs its own strategy).
   // A read failure must NEVER stop the fire; it just means env behavior this round.

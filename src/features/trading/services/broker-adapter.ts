@@ -31,6 +31,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | TradingBook (ADR-134 multi-account books): the account-scoped book contract every ledger write, guard, and adapter binding keys on. Legacy books carry refs 'paper'/'live' so derived id text stays byte-identical; NULL binding fields mean today's legacy resolution exactly.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Cash-account settlement (ADR-134 D8): BrokerAccount gains optional accountType ('cash'|'margin'), settledCash and unsettledCash — the venue's own settlement facts, surfaced by the adapters that expose them (Schwab); TradingBook gains optional accountType (from the bound account's discovered type) and settlementPolicy (the per-book refuse|warn override). All optional so every existing literal keeps compiling and paper/margin behavior is byte-identical.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Add Position.engineAvgCost: the engine's own replayed average cost, present only when its ledger accounts for the whole venue quantity. avgEntryPrice stays exactly what the venue reports; Schwab's is the wash-sale-adjusted basis.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | TradingBook gains armAckAt/armAckBy - the arming acknowledgement recorded against a NON-LEGACY book before an autopilot leg pinned to it may dispatch. Enabling a book was already inert for trading (a schedule resolves one book from its own taskData and never enumerates enabled books); this is the explicit act that says the operator has read what an armed leg does to an account whose positions the engine did not open. Optional, so every existing TradingBook literal keeps compiling and the legacy paper/live books are untouched.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Add Position.unmanaged (ADR-159): the engine manages only what it can account for from its own filled orders. withEngineCostBasis sets it on every long its ledger does not fully cover - a share bought outside the engine, or a holding whose history the ledger no longer explains. The flag is what the order-decision paths read; its absence is never inferred from a missing engineAvgCost, so a position that never passed through the attachment (the strategy-lab replay) keeps today's behaviour.
  *
  * @module broker-adapter
@@ -72,6 +73,14 @@ export interface TradingBook {
   accountType?: BrokerAccountType | null;
   /** Per-book cash-settlement override (ADR-134 D8): 'refuse' | 'warn'; null/absent = the fleet env default. */
   settlementPolicy?: 'refuse' | 'warn' | null;
+  /**
+   * When the arming acknowledgement was recorded against this book (ISO), or null/absent when it
+   * never was. A NON-LEGACY book (ref 'b-xxxxxxxx') with no acknowledgement dispatches NO autopilot
+   * leg — the fire is a logged hard-skip. The legacy 'paper'/'live' books do not carry the gate.
+   */
+  armAckAt?: string | null;
+  /** Who recorded it (the acknowledging sub), or null/absent when it was never recorded. */
+  armAckBy?: string | null;
 }
 
 /** Brokerage account type as the venue reports it. Cash accounts settle T+n; margin accounts may buy against unsettled funds. */

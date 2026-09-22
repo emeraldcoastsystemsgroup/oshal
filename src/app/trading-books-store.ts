@@ -17,6 +17,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Cash-account settlement (ADR-134 D8): the runtime rail adds oshal_trading_books.settlement_policy TEXT CHECK (refuse|warn) — the per-book override of TRADING_CASH_SETTLEMENT_POLICY; 'off' is deliberately NOT a column value (only the env can disarm the guard) and the CHECK is the DB-side pin. loadBook/listBooks join the bound account's account_type so TradingBook.accountType ('cash'|'margin'|null) rides every loaded book; updateBook accepts settlementPolicy (null clears it). No numbered migration: this rail IS the live path (dual-rail convergence, ADR-134 D1) and 126 is claimed by another item.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-134 pin retirement: loadLegacyBook(pool, sub, kind) - the legacy 'paper'/'live' books resolved through their DB ROW, which is what carries the account binding (and the enabled flag / capital cap / settlement policy). It falls back to the pure legacyBook() constructor ONLY when the row is genuinely ABSENT; a loadBook THROW (book_binding_undecryptable) propagates, because degrading an undecryptable binding into an UNBOUND book is exactly how a caller ends up addressing whichever account the venue happens to enumerate first. Callers that used `loadBook(...).catch(() => null) ?? legacyBook(...)` must use this instead.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Bootstrap under the SCHEMA_LOCK_KEYS.trading advisory lock. These statements were running unserialised, so two processes sharing one database interleaved `DROP TRIGGER IF EXISTS` / `CREATE TRIGGER`, `CREATE TABLE IF NOT EXISTS` and the check-then-`CREATE POLICY` pair; Postgres answers that with 42710 "already exists" or 23505 on a catalog index, and it failed three trading specs in beforeAll on every unit run without --no-file-parallelism. The lock also moves the module onto the savepoint path, so owner-only DDL under a non-owner runtime role is reported and the requirements asserted instead of aborting the whole bootstrap.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | The arming acknowledgement (BACKLOG "Arming a second autopilot leg is a deliberate, gated act"). oshal_trading_books gains arm_ack_at/arm_ack_by/arm_ack_note, recordArmAck() writes or withdraws them, and loadBook/listBooks carry them onto TradingBook. It is deliberately NOT part of updateBook's patch: `enabled` says the book may take risk, the acknowledgement says the operator has read what an autopilot leg does to an account whose positions the engine did not open, and collapsing the two into one PATCH is exactly the conflation this gate exists to prevent. Recording is idempotent per book and the withdrawal path clears all three columns, so a book can be handed back to the operator without deleting it.
  */
 
 import crypto from 'crypto';
@@ -66,6 +67,9 @@ export function legacyBook(sub: string, kind: TradingMode): TradingBook {
     accountNumber: null, connectionKey: null, capitalCapUsd: null,
     learn: kind === 'paper', enabled: true,
     accountType: null, settlementPolicy: null,
+    // Legacy books carry no arming gate (see requiresArmAcknowledgement) — the field stays null so a
+    // row-less legacy book and its DB row read identically.
+    armAckAt: null, armAckBy: null,
   };
 }
 
@@ -110,6 +114,12 @@ async function bootstrapBooks(pool: AppContext['pool']): Promise<void> {
       // ADR-134 D8: the per-book settlement override. The CHECK is the DB-side half of "only the env
       // can turn the guard off" — a raw UPDATE to 'off' is refused here, not just at the route.
       `ALTER TABLE oshal_trading_books ADD COLUMN IF NOT EXISTS settlement_policy TEXT CHECK (settlement_policy IN ('refuse','warn'))`,
+      // The arming acknowledgement. Three columns rather than a boolean: WHEN it was recorded is
+      // what an audit reads, and a NULL arm_ack_at is the only "not acknowledged" state there is —
+      // a boolean default false would have been silently back-filled onto every existing book.
+      'ALTER TABLE oshal_trading_books ADD COLUMN IF NOT EXISTS arm_ack_at TIMESTAMPTZ',
+      'ALTER TABLE oshal_trading_books ADD COLUMN IF NOT EXISTS arm_ack_by TEXT',
+      'ALTER TABLE oshal_trading_books ADD COLUMN IF NOT EXISTS arm_ack_note TEXT',
       'CREATE UNIQUE INDEX IF NOT EXISTS idx_trd_books_ref  ON oshal_trading_books (user_sub, ref)',
       'CREATE UNIQUE INDEX IF NOT EXISTS idx_trd_books_acct ON oshal_trading_books (user_sub, account_id) WHERE account_id IS NOT NULL',
       // The single-learning-book rule is a DB invariant, not a code-path promise.
@@ -152,7 +162,7 @@ async function bootstrapBooks(pool: AppContext['pool']): Promise<void> {
     ],
     requirements: [{
       table: 'oshal_trading_books',
-      columns: ['book_id', 'user_sub', 'ref', 'label', 'kind', 'broker', 'account_id', 'connection_key', 'enabled', 'learn', 'capital_cap_usd', 'settlement_policy', 'created_at'],
+      columns: ['book_id', 'user_sub', 'ref', 'label', 'kind', 'broker', 'account_id', 'connection_key', 'enabled', 'learn', 'capital_cap_usd', 'settlement_policy', 'arm_ack_at', 'arm_ack_by', 'arm_ack_note', 'created_at'],
     }],
   });
 }
@@ -181,6 +191,8 @@ interface BookRow {
   account_id: string | null; connection_key: string | null; enabled: boolean; learn: boolean;
   capital_cap_usd: string | null;
   settlement_policy?: string | null;
+  arm_ack_at?: Date | string | null;
+  arm_ack_by?: string | null;
   /** Joined from oshal_trading_accounts (discovery stores Schwab's CASH/MARGIN verbatim). */
   account_type?: string | null;
 }
@@ -197,6 +209,8 @@ function toBook(r: BookRow, accountNumber: string | null): TradingBook {
     capitalCapUsd: r.capital_cap_usd != null ? Number(r.capital_cap_usd) : null,
     learn: !!r.learn, enabled: !!r.enabled,
     accountType: accountTypeOf(r.account_type), settlementPolicy: sp,
+    armAckAt: r.arm_ack_at ? new Date(r.arm_ack_at).toISOString() : null,
+    armAckBy: r.arm_ack_by ?? null,
   };
 }
 
@@ -214,7 +228,7 @@ export async function loadBook(pool: AppContext['pool'], sub: string, bookId: st
   await ensureBooksSchema(pool);
   const r = (await pool.query(
     `SELECT b.book_id, b.ref, b.kind, b.broker, b.account_id, b.connection_key, b.enabled, b.learn,
-            b.capital_cap_usd, b.settlement_policy, a.account_number_enc, a.account_type
+            b.capital_cap_usd, b.settlement_policy, b.arm_ack_at, b.arm_ack_by, a.account_number_enc, a.account_type
        FROM oshal_trading_books b
        LEFT JOIN oshal_trading_accounts a ON a.account_id = b.account_id AND a.user_sub = b.user_sub
       WHERE b.user_sub = $1 AND b.book_id = $2`,
@@ -282,7 +296,7 @@ export async function listBooks(pool: AppContext['pool'], sub: string): Promise<
   // list surfaces must not decrypt (readers are built from loadBook, never from a list row).
   const rows = (await pool.query(
     `SELECT b.book_id, b.ref, b.kind, b.broker, b.account_id, b.connection_key, b.enabled, b.learn,
-            b.capital_cap_usd, b.settlement_policy, a.account_type
+            b.capital_cap_usd, b.settlement_policy, b.arm_ack_at, b.arm_ack_by, a.account_type
        FROM oshal_trading_books b
        LEFT JOIN oshal_trading_accounts a ON a.account_id = b.account_id AND a.user_sub = b.user_sub
       WHERE b.user_sub=$1
@@ -353,6 +367,67 @@ export async function updateBook(
     [sub, bookId, patch.label?.slice(0, 120) ?? null, patch.enabled ?? null,
       patch.capitalCapUsd !== undefined, patch.capitalCapUsd ?? null,
       patch.settlementPolicy !== undefined, patch.settlementPolicy ?? null]);
+  return loadBook(pool, sub, bookId);
+}
+
+/**
+ * @description True when this book is one an autopilot leg may only be armed for after an explicit
+ * acknowledgement has been recorded against it — every book that is NOT one of the two legacy
+ * 'paper'/'live' books, i.e. exactly the "second leg" case.
+ *
+ * The rule is deliberately BROADER than "a book whose positions the engine did not open": at
+ * dispatch time the engine cannot know which of the venue's holdings it opened without a broker
+ * read, and a second book is minted by binding an account the operator already owns and has already
+ * traded by hand. Being broader is safe in the one direction that matters — the gate can only
+ * WITHHOLD a fire, never cause one. The legacy books are excluded because they are the first leg,
+ * already armed and running; widening the gate onto them would stop a live engine on deploy.
+ * @param book - The resolved book.
+ * @returns Whether an arming acknowledgement is required before a leg for it may dispatch.
+ */
+export function requiresArmAcknowledgement(book: TradingBook): boolean {
+  return book.ref !== 'paper' && book.ref !== 'live';
+}
+
+/**
+ * @description True when a leg pinned to this book may dispatch as far as the ordinary trading
+ * gates — either the book carries no arming gate at all, or its acknowledgement is on the row.
+ * @param book - The resolved book.
+ * @returns Whether the arming gate is satisfied.
+ */
+export function armAcknowledged(book: TradingBook): boolean {
+  return !requiresArmAcknowledgement(book) || !!book.armAckAt;
+}
+
+/**
+ * @description Record (or withdraw) the arming acknowledgement for a book. Separate from
+ * updateBook by design: `enabled` says the book may take risk, this says the operator has read
+ * what an armed autopilot leg does to an account whose positions the engine did not open. Writing
+ * it is idempotent — re-acknowledging refreshes the timestamp, and withdrawing clears all three
+ * columns so the next fire for that book hard-skips again.
+ * @param pool - Postgres pool.
+ * @param sub - Owner sub; the WHERE is the wall under system identity, as it is in loadBook.
+ * @param bookId - The book being acknowledged.
+ * @param acknowledged - true records the acknowledgement, false withdraws it.
+ * @param by - The acknowledging sub (recorded for the audit trail).
+ * @param note - Free-text operator note, or null.
+ * @returns The book as it now stands, or null when no such book exists for this user.
+ */
+export async function recordArmAck(
+  pool: AppContext['pool'], sub: string, bookId: string,
+  acknowledged: boolean, by: string, note: string | null = null,
+): Promise<TradingBook | null> {
+  await ensureBooksSchema(pool);
+  const res = await pool.query(
+    `UPDATE oshal_trading_books
+        SET arm_ack_at   = CASE WHEN $3::boolean THEN now() ELSE NULL END,
+            arm_ack_by   = CASE WHEN $3::boolean THEN $4::text ELSE NULL END,
+            arm_ack_note = CASE WHEN $3::boolean THEN $5::text ELSE NULL END
+      WHERE user_sub = $1 AND book_id = $2`,
+    [sub, bookId, acknowledged, by, note ? note.slice(0, 500) : null]);
+  if (!res.rowCount) return null;
+  logger.warn({ sub, bookId, acknowledged, by }, acknowledged
+    ? 'autopilot arming ACKNOWLEDGED for this book - a leg pinned to it may now dispatch'
+    : 'autopilot arming acknowledgement WITHDRAWN - legs pinned to this book hard-skip again');
   return loadBook(pool, sub, bookId);
 }
 
