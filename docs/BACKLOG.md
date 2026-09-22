@@ -2635,6 +2635,27 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### Smart-home edge-agent Phase 1
 - **Remaining:** run a laptop edge node embedding Home Assistant Core, aggregate existing ecosystems, expose only scoped capabilities, and keep Matter migration later.
 - **Done when:** the operator controls at least one real LAN device through an accountable bot while another user/device cannot access it, and the node survives reconnect. See [ADR-047](adr/047-smart-home-edge-agent.md).
+- **Decision (operator, 2026-09-22): SEQUENCED behind the owner-bound task broker, not parked, and
+  not started.** Phase 1 is not available work today and should stop being offered as such. Three
+  things stand in front of it, and only one is a matter of anyone's willingness:
+  (1) **ADR-047 is itself the gate** — its status line reads "Proposed (design only — nothing built;
+  this ADR is the gate before code)", dated 2026-06-17, and accepting it carries the privileged-ingress
+  security review the ADR requires. (2) **The runtime dependency is already sequenced elsewhere**: the
+  edge agent deliberately refuses to advertise or execute MCP tools until an **owner-bound task
+  broker** exists, and that broker is the audited brokered sandbox of ADR-040 step 1 — greenlit as
+  operator decision 19 the previous day and itself sequenced after "Production Vault hardening". So
+  Phase 1 cannot close ahead of that chain however much code is written. (3) **The test rig does not
+  exist**: closing it needs a LAN host running Home Assistant Core with at least one real device
+  linked, ideally from two ecosystems, and the node registry currently holds no enrolled remote node
+  at all (the shared secret having been retired).
+- **The trigger to start, stated so it is unambiguous:** the ADR-040 privileged runtime lands and is
+  proven, AND the operator accepts ADR-047 with its security review, AND a Home Assistant Core host
+  with real devices is reachable. Until all three, this entry is not queued to an agent and is not
+  re-raised as an operator decision.
+- **Deliberately NOT decided here:** whether ADR-047 is accepted. That is a live choice the operator
+  makes when the prerequisites are close, not a rejection — the security review it demands is the same
+  shape recorded under decision 19 (a written threat model plus an adversarial pass, not a checkbox),
+  and it is wasted effort to run it against a design whose runtime dependency is still being built.
 
 ### Alexa-exclusive control path
 - **Remaining:** defer until an Alexa-only device requires it; then register Login with Amazon and a certified Smart Home Skill under the business account.
