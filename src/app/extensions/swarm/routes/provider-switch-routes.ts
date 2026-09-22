@@ -8,12 +8,13 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | A Cline-backed id (gemini, anthropic, ...) written to the fleet default without a modelId is refused 400 model_required with the reason and nothing is written — the Cline runtime would otherwise fall back to the container's FORCE_LLM_MODEL seed (gpt-5.5), the exact 'models/gpt-5.5 is not found' failure by another door. Native ids (codex-cli, claude-code) may still omit the model.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | PUT accepts fallbackOrder: the administrator names as many providers as they want, in the order they want, in the same write that sets the provider. Every rung is validated against the same runnable catalog as the provider id, and a rung equal to the selected provider is refused, so a chain cannot silently do nothing when it is finally needed. Omitting the field leaves an existing chain untouched; [] is an explicit "no failover".
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The "a provider cannot fail over to itself" refusal compared SPELLINGS and therefore missed every alias. classifyProviderId deliberately answers with the id as written, so codex-cli and openai-codex - one harness, two spellings - compared unequal, and a chain naming its own primary through an alias was accepted 200, stored, and reported by the cockpit as a failover that can never fire. Both the refusal and the dedupe now compare harnessType plus the Cline backing id.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | PUT now measures the written MODEL against the provider's catalog too (checkModelAgainstCatalog). The provider id had been validated since entry 1 and the model against nothing at all, so a fleet-default write naming a model provider-definitions does not carry was accepted in total silence - no error, no warning, no log line - and the only trace was usage-cost-resolver finding no pricing and booking the real call at $0. It WARNS rather than refuses and returns `modelWarning` on the 200: our catalog lags the vendor, and gemini-3.8-flash was a real current stable Google model absent from it, so refusing would have rejected the operator's correct configuration out of our own staleness.
  */
 
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { getCaller, hasAuthenticatedUserIdentity, hasValidServiceSecret, requiresOperator } from '@/shared/middleware/authz';
-import { FLEET_DEFAULT_SWITCH_ID, classifyProviderId, requireModelForClineBackedId, type ProviderSwitchCatalog } from '@/shared/llm-runtime';
+import { FLEET_DEFAULT_SWITCH_ID, checkModelAgainstCatalog, classifyProviderId, requireModelForClineBackedId, type ProviderSwitchCatalog } from '@/shared/llm-runtime';
 import type { ProviderSwitchSnapshot, ProviderSwitchStore } from '@/features/agent-management';
 
 const logger = createChildLogger({ module: 'provider-switch-routes' });
@@ -96,6 +97,18 @@ async function handleWrite(req: Request, res: Response, deps: ProviderSwitchRout
       res.status(400).json({ success: false, applied: false, code: 'model_required', error: modelLess.reason });
       return;
     }
+    // The provider id was validated against the runnable catalog above; the MODEL was validated
+    // against nothing, and travelled to the vendor unexamined. It still proceeds — our catalog
+    // lags Google's and refusing would reject a valid current id (gemini-3.8-flash was exactly
+    // that) — but it is no longer silent: the write is logged and the caller is told, with the
+    // ids the catalog does carry, because an unpriced model books a real call at $0.
+    const unknownModel = checkModelAgainstCatalog(classified.clineApiProvider ?? classified.providerId, modelId, catalog);
+    if (unknownModel) {
+      logger.warn({
+        providerId: unknownModel.providerId, modelId: unknownModel.modelId,
+        available: unknownModel.available,
+      }, `Fleet-default switch write names an uncatalogued model — ${unknownModel.message}`);
+    }
     if (fallbackRaw === null) {
       res.status(400).json({
         success: false, applied: false, code: 'fallback_order_invalid',
@@ -147,6 +160,9 @@ async function handleWrite(req: Request, res: Response, deps: ProviderSwitchRout
       success: true, applied: true, fleetDefault: row,
       harnessType: classified.harnessType, apiType: classified.apiType, botNodeRuntime: classified.botNodeRuntime,
       snapshot: deps.snapshot()?.status() ?? null,
+      // Applied, and the surface is told why it might not price. Absent when the model is
+      // catalogued, so a clean write stays a clean write.
+      ...(unknownModel ? { modelWarning: unknownModel } : {}),
     });
   } catch (err) {
     logger.error({ err, providerId }, 'Failed to write the fleet-default provider switch');

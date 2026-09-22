@@ -76,6 +76,7 @@
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | Registered the messaging-channels card (CHANNEL_SCENARIOS): a read-only step over GET /api/channels that checks the surface reports which inbound channels this deployment has wired and which identities are bound to the caller. Guard: tests/unit/test-lab-channel-registration.spec.ts.
  * 25 | maintainer@emeraldcoastsystemsgroup.com   | Registered the remote-node binding card (DEVICE_SCENARIOS): a read-only step over GET /api/remote-clients that checks the surface can say, per computer, whether it finished enrolling and who it is bound to. A node bound to nobody heartbeats like a working one and receives no owner-scoped work, and nothing in the cockpit used to say so. Guard: tests/unit/device-ownership-visible.spec.ts.
  * 26 | maintainer@emeraldcoastsystemsgroup.com   | Attached the hand-off guards to 'jarvis-routing' regressionTests: jarvis-build-handoff (a build directive is filed with the swarm without a model turn, exactly once) and jarvis-task-complete-notify (a finished task reaches its owner). Both ship with the hand-off work and a test file on disk is not Test Lab registration. No live step was added for the build path on purpose - firing a real build directive at the deployment would open a real ticket on every lab run.
+ * 27 | maintainer@emeraldcoastsystemsgroup.com   | Attached tests/unit/provider-model-catalog.spec.ts to the 'provider-switch' regressionTests. The scenario already covers which PROVIDER serves a bot; the MODEL on the same row was validated against nothing at all, so a configured id absent from provider-definitions was accepted silently and its real call recorded at $0. A test file on disk is not Test Lab registration.
  * @module test-lab-scenarios
  */
 
@@ -347,6 +348,10 @@ export const SCENARIOS: Scenario[] = [
       { level: 'unit', path: 'tests/unit/bot-node-provider-switch.spec.ts' },
       { level: 'unit', path: 'tests/unit/dispatch-switch-row-stamping.spec.ts' },
       { level: 'unit', path: 'tests/unit/compose-bot-provider-literal.spec.ts' },
+      // The MODEL half of the same row: the provider id was validated against the runnable
+      // catalog and the model against nothing, so a configured id absent from the catalog
+      // was accepted in silence and its real call booked at $0.
+      { level: 'unit', path: 'tests/unit/provider-model-catalog.spec.ts' },
       // The fallback ORDER half of the same row (migration 148): the chain an administrator
       // writes, and the harnesses that cannot serve as a rung of it.
       { level: 'unit', path: 'tests/unit/provider-fallback-chain.spec.ts' },

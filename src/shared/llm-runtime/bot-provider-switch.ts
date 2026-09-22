@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | requireModelForClineBackedId: a Cline-backed id written without a model is refused with the reason (the Cline wrapper would otherwise pick the container's FORCE_LLM_MODEL seed — gpt-5.5 — through ClineCLIWrapper._resolveBackingProvider's fallback chain, the same 'models/gpt-5.5 is not found' failure by another door). Native harness ids keep their own runtime default; no default model is ever picked for a Cline-backed id.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The FALLBACK ORDER resolves by the same rule as the provider id: resolveProviderFallbackChain reads the bot row, then the fleet row, then an environment override, then nothing. It names no provider, because the hardcoded chain it replaces (a three-name union and a literal Record in bot-node-runtime.ts) made an exhausted vendor unrecoverable by configuration - the only other name in the literal had been exhausted too, and no setting anywhere could add a third. A row's EMPTY array is a real answer (no failover, fail visibly) and does not inherit; only null/absent does. An id the platform cannot run is dropped and reported, never silently kept, and never allowed to disable failover for the rest of the chain.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | antigravity-cli added to HARNESS_BY_ID. It had been added to the HarnessType union and HARNESS_FACTORIES but not here, so classifyProviderId REFUSED it - it could be neither a fleet default nor a fallback rung - while the ROADMAP row and three comments said it was selectable and usable as a rung. botNodeRuntime is null for the same reason gemini-cli's is: the bot-node builds three runtimes and this is not one of them, so it is selectable on the api side only. The original wording of this entry claimed such an id is "refused with a reason at a node rather than silently dropped" - that was the opposite of the truth. A rung the node cannot resolve is collected into `unavailable` and reported as one logger.warn, which no api read and no cockpit surface shows; correcting the claim rather than the behaviour, because surfacing it is a separate change (F7/F8 in docs/backlog/provider-fallback-review-followups.md).
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | checkModelAgainstCatalog + ProviderSwitchCatalog.modelsByProvider: the provider ID was validated against the runnable catalog and the model id was not validated against anything at all. classifyProviderId refuses an unrunnable provider with the reason and the accepted list; the model beside it was only trimmed (`meaningful(row.modelId)`) and handed to the vendor unexamined, so a configured id absent from provider-definitions produced NO error, NO warning and NO log line — the only visible consequence was usage-cost-resolver finding no pricing and booking a real call at $0. It REPORTS rather than refuses, and the docstring says why: a provider id is a fact about this build (fail closed), a model id is a fact about the vendor's catalog that this file only lags (fail loud). The build-time gate in tests/unit/provider-model-catalog.spec.ts is where an absent id is fatal.
  *
  * @module shared/llm-runtime/bot-provider-switch
  */
@@ -50,6 +51,14 @@ export interface ProviderSwitchCatalog {
   harnessTypes: readonly string[];
   /** Every provider id the generic `cline` harness can be pointed at (provider-definitions). */
   clineApiProviders: readonly string[];
+  /**
+   * The model ids `provider-definitions.ts` records for each provider id, so a configured model
+   * can be measured against the catalog instead of travelling to the vendor unexamined. OPTIONAL
+   * and deliberately so: a caller that does not supply it gets no model opinion at all, which is
+   * honest — an absent map means "this build has no catalog knowledge here", not "the model is
+   * fine". A provider whose entry is absent or empty is treated the same way.
+   */
+  modelsByProvider?: Readonly<Record<string, readonly string[]>>;
 }
 
 /** A provider id the platform knows how to run, translated to the harness that runs it. */
@@ -203,6 +212,68 @@ export function requireModelForClineBackedId(
     ok: false, providerId: classified.providerId,
     reason: `'${classified.providerId}' is a Cline-backed API provider and needs a modelId on the row: `
       + "without one the Cline runtime falls back to the container's FORCE_LLM_MODEL seed, a model of another provider",
+  };
+}
+
+/** A configured model id the provider's catalog does not carry, with the details to say so. */
+export interface UnknownModelId {
+  /** The provider the model was configured for, in the catalog's own spelling. */
+  providerId: string;
+  /** The model id as configured. */
+  modelId: string;
+  /** The ids the catalog DOES carry for that provider — what a reader needs to act. */
+  available: readonly string[];
+  /** One sentence naming the id, the provider and the available ids. */
+  message: string;
+}
+
+/**
+ * @description Measure a configured model id against the provider's catalog in
+ * `provider-definitions.ts`. Answers `null` when the id is in the catalog — and also when this
+ * build has no catalog for that provider, because absence of knowledge is not evidence of a bad id.
+ *
+ * WHY THIS REPORTS RATHER THAN REFUSES, unlike {@link classifyProviderId} beside it. That function
+ * fails CLOSED because a provider id names something THIS BUILD must be able to run: an id with no
+ * harness is a fact about our own code, and running is impossible. A model id is a fact about the
+ * VENDOR's catalog, which this file is only ever a lagging copy of — the defect that produced this
+ * function was `gemini-3.8-flash`, a real, current, stable Google model absent from our list. Had
+ * an unknown id refused, the operator's correct configuration would have been rejected by our own
+ * staleness, which is the same failure wearing the other mask. Thirteen providers here carry a
+ * single placeholder id (`zai-default`, `hf-default`, …), so refusal on absence would also break
+ * every real model id for those. The honest answer is to proceed and SAY SO, loudly, with enough
+ * detail to act on: the catalog is what is stale, and the caller should know its cost will not
+ * resolve (`usage-cost-resolver.ts` prices from this same catalog and books $0 for an id it cannot
+ * find). The build-time gate is where absence is fatal — see tests/unit/provider-model-catalog.spec.ts.
+ *
+ * Matching is case-insensitive for the same reason {@link classifyProviderId}'s is: a row written
+ * `Gemini-2.5-Flash` names the catalog's `gemini-2.5-flash` and must not be reported as unknown.
+ *
+ * @param providerId - The provider the model is configured for (any spelling the catalog accepts).
+ * @param modelId - The configured model id, if any. An absent/blank model is not this check's business.
+ * @param catalog - What this build can run, including `modelsByProvider` when the caller supplies it.
+ * @returns The unknown-id report, or null when the id is known or unknowable here.
+ */
+export function checkModelAgainstCatalog(
+  providerId: string | null | undefined,
+  modelId: string | null | undefined,
+  catalog: ProviderSwitchCatalog,
+): UnknownModelId | null {
+  const model = meaningful(modelId);
+  const provider = meaningful(providerId);
+  if (!model || !provider || !catalog.modelsByProvider) return null;
+  const key = provider.toLowerCase();
+  const entry = Object.entries(catalog.modelsByProvider)
+    .find(([id]) => id.toLowerCase() === key);
+  const available = entry?.[1] ?? [];
+  if (available.length === 0) return null;
+  if (available.some((id) => id.toLowerCase() === model.toLowerCase())) return null;
+  return {
+    providerId: entry?.[0] ?? provider,
+    modelId: model,
+    available,
+    message: `model id '${model}' is not in this build's catalog for provider '${entry?.[0] ?? provider}' `
+      + `— proceeding, because the catalog lags the vendor and the id may be valid, but its cost will `
+      + `not resolve and the catalog needs refreshing. Catalogued ids: ${available.join(', ')}`,
   };
 }
 

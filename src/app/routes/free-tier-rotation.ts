@@ -33,11 +33,14 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Make the background operator exemption case-sensitive and exact for OIDC subjects. Configuration delimiters remain trim-tolerant, but case/whitespace variants no longer inherit the operator's paid-provider privilege.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Added the DEMO-gated OPERATOR-KEY lane (DEMO_MODE, default OFF — a non-demo deployment never lends its own vendor keys to a turn). The operator's exemption from the free legs used to return undefined, which handed the turn to the bot's configured CLI harness — and SEC-05 refuses every unattended CLI at a bot node, so an operator turn with no explicit BYO row had no admissible brain at all ("Sorry, that didn't work"). The operator now falls back to this deployment's OWN hosted keys (GEMINI/GROQ/CEREBRAS/MISTRAL/OPENAI env, ordered, probed once and cached) as a normal hosted byoLlmConnection. Non-operator callers are unaffected: they never see these keys. Also raised the require-content probe budget from 16 to 512 max_tokens — a reasoning model spends the whole 16 on hidden thinking and answers 200-but-empty, which scored live lanes (gemini-2.5-flash, gpt-oss-120b) as dead.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Operator-lane failure COOLDOWN (live 2026-08-11): a ~16-token probe passes on a quota trickle while full turns 429, so "invalidate the verdict and re-probe" handed the SAME walled Gemini lane back to the turn-time failover, whose same-lane check then (correctly) refused to replay — the 429 surfaced despite two layers of failover. reportResolvedLlmFailure now puts the failed lane on a 15-min exclusion (coolOperatorKeyLane, keyed by baseUrl→laneId) and operatorKeyConnection skips cooled lanes before probing, so re-resolution rotates to the next configured vendor by construction. Guard: operator-key-lane.spec cooldown cases.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | The operator lane now SAYS so when it is about to run a model this build's catalog does not carry (warnIfModelUncatalogued -> checkModelAgainstCatalog). OSHAL_OPERATOR_LLM_MODEL is read here and was measured against nothing at all: a pinned id absent from provider-definitions produced no error, no warning and no log line, while usage-cost-resolver — pricing from that same catalog — booked the real call at $0, which was the pin's only trace anywhere. It warns and proceeds rather than refusing, because this catalog lags the vendor's and gemini-3.8-flash was a real, current model absent from ours. The helper sits ABOVE operatorKeyConnection's docstring rather than between the two: inserted into that gap it orphaned a 20-line JSDoc onto the wrong member and left the exported function undocumented.
  *
  * @module free-tier-rotation
  */
 
 import { createChildLogger } from '@/shared/logger';
+import { ProviderRegistry } from '@/features/llm-provider';
+import { checkModelAgainstCatalog } from '@/shared/llm-runtime';
 import { demoModeEnabled } from '@/shared/deployment-mode';
 import { getRequestIdentity } from '@/shared/services/database/request-identity';
 import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
@@ -695,6 +698,35 @@ export function invalidateOperatorKeyLane(): void {
   operatorVerdict = null;
 }
 
+/** Lane ids that ARE provider-definition ids, with their catalogued models. Built once. */
+let laneModelCatalog: { harnessTypes: readonly string[]; clineApiProviders: readonly string[]; modelsByProvider: Record<string, readonly string[]> } | null = null;
+
+/**
+ * @description Say so — once per resolution, at WARN — when a lane is about to run a model this
+ * build's provider catalog does not carry. It does not stop the run: our list is a lagging copy of
+ * the vendor's, so an absent id is evidence about the list, not about the model. It exists because
+ * the alternative is what the operator hit — a pinned model that produced no error, no warning and
+ * no log line anywhere, and whose only trace was a real call recorded at $0 cost.
+ * @param laneId - The lane about to run (its id is also its provider-definitions id).
+ * @param model - The model id resolved for this lane (the operator's pin, or the lane default).
+ * @returns nothing; the report is the log line.
+ */
+function warnIfModelUncatalogued(laneId: string, model: string): void {
+  if (!laneModelCatalog) {
+    const providers = new ProviderRegistry().getAll();
+    laneModelCatalog = {
+      harnessTypes: [], clineApiProviders: providers.map((p) => p.id),
+      modelsByProvider: Object.fromEntries(providers.map((p) => [p.id, p.models.map((entry) => entry.id)])),
+    };
+  }
+  const unknown = checkModelAgainstCatalog(laneId, model, laneModelCatalog);
+  if (!unknown) return;
+  logger.warn({
+    laneId, model: unknown.modelId, available: unknown.available,
+    source: (process.env.OSHAL_OPERATOR_LLM_MODEL || '').trim() === model ? 'OSHAL_OPERATOR_LLM_MODEL' : 'lane-default',
+  }, `operator-key: ${unknown.message}`);
+}
+
 /**
  * @description This DEPLOYMENT's own hosted LLM key, shaped as a byoLlmConnection — the operator's
  * brain of last resort.
@@ -733,6 +765,12 @@ export async function operatorKeyConnection(): Promise<ByoLlmConnection | null> 
     const apiKey = laneKeyFromEnv(lane);
     const model = modelOverride || lane.defaultModel;
     if (!apiKey || !model) continue;
+    // The model an operator pins here is handed to the vendor unexamined — it always was, and it
+    // still is, because this catalog lags the vendor's and gemini-3.8-flash was a real current
+    // model absent from ours. What changes is that the pin is no longer silent when we cannot
+    // account for it: an uncatalogued id will not price (usage-cost-resolver reads the same
+    // catalog), so a live lane can bill and report $0 with nothing in the log to explain it.
+    warnIfModelUncatalogued(laneId, model);
     const status = await probe({
       connectionId: `operator-${laneId}`, providerId: laneId, clineProvider: laneId,
       model, baseUrl: lane.baseUrl, apiKey, label: 'operator-key',

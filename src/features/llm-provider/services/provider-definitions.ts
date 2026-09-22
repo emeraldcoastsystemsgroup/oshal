@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added GPT-5.3/5.2/5.1 Codex models and GPT-5/4.1 to openai-native so cockpit model dropdown matches any-bot parity
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Removed fictional gpt-5.x-codex model IDs from openai-codex; aligned with real OpenAI API model IDs matching Cline VS Code plugin
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Rewrote the PROVIDER_DEFINITIONS docstring: it quoted the two SOURCE files' provider counts (22 / 41), which readers kept mistaking for the total (actually 42). The public site's provider claim is now counted from this array by a deploy gate (scripts/site-apps-catalog.js), so the comment must not offer a competing number.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Refreshed the Gemini catalog against ai.google.dev/gemini-api/docs/models + /pricing (2026-09-21). It carried four ids, one of which (gemini-2.0-flash-001) Google has SHUT DOWN, while six stable 3.x models it did not list were current — including gemini-3.8-flash, which the operator configured and which this file could neither price nor recognise. Added the stable 3.x line and gemini-2.5-flash-lite, removed the shut-down 2.0 entry, moved defaultModelId off a PREVIEW model onto stable gemini-3.8-flash, and corrected prices that were wrong by up to 8x (2.5 Flash was 0.075/0.3 against an actual 0.30/2.50; 2.5 Pro output 5 against 10). Context windows are UNCHANGED at 1000000: neither page states a token limit for any of these models, so the existing number is inherited rather than invented. Guard: tests/unit/provider-model-catalog.spec.ts.
  */
 
 import type { ProviderInfo, ModelInfo, ModelPricing, ModelCapabilities } from './provider-registry';
@@ -198,14 +199,40 @@ export const PROVIDER_DEFINITIONS: ProviderInfo[] = [
     id: 'gemini',
     displayName: 'Google Gemini',
     description: 'Google Gemini API',
-    defaultModelId: 'gemini-3.1-pro-preview',
+    // Default is a STABLE model, not a preview one. It had been gemini-3.1-pro-preview while six
+    // stable 3.x models existed, so the id the cockpit preselects was the one Google reserves the
+    // right to change under us. Nothing executes on defaultModelId — requireModelForClineBackedId
+    // refuses a Cline-backed row with no model rather than defaulting it — so this is what a human
+    // is offered first, and a human should be offered something stable.
+    defaultModelId: 'gemini-3.8-flash',
     requiresApiKey: true,
     configKeys: ['geminiApiKey'],
+    // Ids and prices verified against ai.google.dev/gemini-api/docs/models and .../pricing on
+    // 2026-09-21. Prices are paid-tier USD per million tokens. Two caveats, recorded rather than
+    // papered over:
+    //   - CONTEXT WINDOWS ARE NOT STATED on either page for any of these models, so every entry
+    //     keeps the 1000000 this provider already carried. That number is inherited, not verified;
+    //     it is not invented either. Correct it from the per-model reference pages, not from here.
+    //   - The 3.8/3.7/3.6 Flash prices are Google's introductory rate, published as $0.75/$3.75
+    //     THROUGH 2026-12-31 and $1.50/$7.50 from 2027-01-01. The introductory rate is recorded
+    //     because it is what a call costs today; this doubles on 2027-01-01 and must be revisited.
+    //   - Pro pricing is tiered by prompt size (2.5 Pro $1.25/$10 at <=200k, $2.50/$15 above;
+    //     3.1 Pro Preview $2/$12 at <=200k, $4/$18 above). ModelPricing has one rate, so the
+    //     <=200k tier is recorded — the cheaper one, so an estimate never overstates spend.
     models: [
-      m('gemini-3.1-pro-preview', 'Gemini 3.1 Pro Preview', 1000000, 1.25, 5),
-      m('gemini-2.5-pro', 'Gemini 2.5 Pro', 1000000, 1.25, 5),
-      m('gemini-2.5-flash', 'Gemini 2.5 Flash', 1000000, 0.075, 0.3),
-      m('gemini-2.0-flash-001', 'Gemini 2.0 Flash', 1000000, 0.075, 0.3),
+      m('gemini-3.8-flash', 'Gemini 3.8 Flash', 1000000, 0.75, 3.75),
+      m('gemini-3.7-flash', 'Gemini 3.7 Flash', 1000000, 0.75, 3.75),
+      m('gemini-3.6-flash', 'Gemini 3.6 Flash', 1000000, 0.75, 3.75),
+      m('gemini-3.5-flash', 'Gemini 3.5 Flash', 1000000, 1.5, 9),
+      m('gemini-3.5-flash-lite', 'Gemini 3.5 Flash-Lite', 1000000, 0.3, 2.5),
+      m('gemini-3.1-flash-lite', 'Gemini 3.1 Flash-Lite', 1000000, 0.25, 1.5),
+      m('gemini-3.1-pro-preview', 'Gemini 3.1 Pro Preview', 1000000, 2, 12),
+      m('gemini-2.5-pro', 'Gemini 2.5 Pro', 1000000, 1.25, 10),
+      m('gemini-2.5-flash', 'Gemini 2.5 Flash', 1000000, 0.3, 2.5),
+      m('gemini-2.5-flash-lite', 'Gemini 2.5 Flash-Lite', 1000000, 0.1, 0.4),
+      // gemini-2.0-flash-001 was here and is GONE: Google has SHUT DOWN the 2.0 line
+      // (gemini-2.0-flash, gemini-2.0-flash-lite). A catalog that offers a dead model is worse
+      // than one that is merely short — it is an id a human can pick that cannot answer.
     ],
   },
 
