@@ -544,6 +544,41 @@ including across a directory belonging to a different owner. Full reasoning and 
   load; the gate is green with no allowlist; a spec proves it goes red per violation shape; and the
   backfill landed in the store repo rather than being waived.
 
+### Jarvis starts cold on every conversation — prime the invariant context once
+
+- **Commissioned (operator, 2026-09-22).** Every Jarvis conversation re-sends the same invariant
+  preamble — the persona/system prompt and the tool definitions — before the model sees a single word
+  the user typed. The operator's framing: Jarvis should keep a **hot** thread and a **primed** thread;
+  at initialisation both are primed; when a primed thread is needed — **New** is clicked, or a thread
+  from history is opened — the primed one becomes active and a fresh primed thread is readied behind
+  it. A primed thread starts **clean**: a new conversation is a different task, and thread identity is
+  **taskId-defined**, so history is displayed by the surface and is never replayed into the model.
+- **What the measurement changes about the shape.** Because a primed thread carries no history, the
+  primed content is *identical for every conversation*. So the standby-thread machinery is not what
+  buys the speed: one **shared provider-side cache handle** over the invariant preamble does, and it
+  is warm for every new conversation at once rather than for the single thread waiting in reserve.
+  Building the tool set locally is already cheap — `captureDispatchCapabilities`
+  (`any-bot/server/utils/dispatch-capabilities.js:67`) is an in-memory loop over the registry with two
+  filters — so the cost being removed is the token push to the provider, not local work.
+- **The mechanism exists on the rail Jarvis already uses.** Gemini's OpenAI-compatible surface accepts
+  explicit caching through `cached_content` on `extra_body`, and implicit caching is on by default for
+  2.5 and newer (so the box gets some saving already, now that the connection runs `gemini-3.8-flash`).
+  Nothing in this repository does either on this path: the only prompt-caching code is in
+  `any-bot/server/services/llm/BedrockProvider.js` and the fail-closed Gemini CLI harness adapter.
+- **Sequencing.** This lands AFTER the conversational path actually declares its tools. Until then the
+  expensive half of the preamble is computed and discarded, so a cache would hold a system prompt and
+  little else.
+- **Done when:** a new Jarvis conversation reaches its first token without re-sending the invariant
+  preamble; the cached handle is keyed to that preamble's content so a persona or tool-set change
+  produces a new handle rather than a stale one; a conversation whose cache handle has expired or been
+  invalidated still answers correctly by falling back to a full send; each conversation remains
+  taskId-scoped with no history from another task reaching the model; and the saving is measured
+  rather than asserted — input tokens and time-to-first-token for a new conversation, before and
+  after, recorded from `chat_tasks` and the bot's own call log.
+- **Explicitly not in scope:** replaying thread history into a primed thread (the operator ruled it
+  out — a reopened thread is a different task), and any change to the fail-closed local CLI harness
+  guard.
+
 ### Jarvis fast-lane: the deterministic shortcut is hardcoded to three intents
 
 - ✅ **CLOSED 2026-09-17.** Both halves landed. The **harness** half landed 2026-09-15/16
