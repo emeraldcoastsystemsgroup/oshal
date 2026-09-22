@@ -83,7 +83,8 @@ per-bot registry overrides still win.
 
 ## Credentials
 
-No credential is rendered into a ConfigMap. The chart keeps its own in two Secrets:
+No credential is rendered into a ConfigMap. The chart keeps most of its own in two Secrets
+(the rest are listed below the next paragraph):
 
 | Secret | Keys | Read by |
 |---|---|---|
@@ -96,6 +97,16 @@ Their values come from `swarm.jwtSecret`, `infra.arangodb.rootUser` / `rootPassw
 committed dev values. `appPassword` and `botPassword` must otherwise be 48-128 hex characters
 (`openssl rand -hex 24`) and differ from each other. The render refuses anything else, because
 the api's app-role bootstrap would refuse it at boot.
+
+These credentials are not in either Secret yet. They are literal `env` entries in their
+workload's spec, so anyone who can read that Deployment or StatefulSet can read them:
+
+| Workload | Literal credential env |
+|---|---|
+| `oshal-api` | `TSDB_URL` (its URL carries `infra.tsdb.password`), `SPEAKER_SERVICE_KEY` |
+| `speaker-diarization` | `SPEAKER_SERVICE_KEY` |
+| `oshal-db` | `POSTGRES_PASSWORD` |
+| `oshal-tsdb` | `POSTGRES_PASSWORD` |
 
 Precedence is unchanged. `envFrom` lists the ConfigMap, then `oshal-shared-secret`, then your
 `api.envSecret` / `botDefaults.envSecret`, so a key in your Secret wins. The database URLs are

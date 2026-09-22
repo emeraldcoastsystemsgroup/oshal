@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the chart's credentials (chart 0.5.0). Before it, templates/shared-env-configmap.yaml rendered JWT_SECRET and ARANGO_ROOT_USER/ARANGO_ROOT_PASSWORD into the oshal-shared-env ConfigMap, and templates/api.yaml hardcoded the oshal_app DSN (oshal_app:oshal-app-dev) with no values path. This renders the REAL chart in four postures (defaults, the Docker Desktop overlay, the bot-pod example, every optional switch on) and holds every kind: ConfigMap to carrying no credential, found two independent ways: a credential-shaped KEY name, and a credential VALUE - every values leaf the chart treats as a credential (a password/secret/token/key-named leaf that is not the name of a Secret the render references), the dev passwords provision-app-role.mjs whitelists, and any URL with a password in it. It also requires that nothing was dropped on the way: every consumer still resolves the same credentials through the chart's Secrets, and a bot's environment resolves to the oshal_bot DSN and never to the superuser or oshal_app one. Finally the values path: an oshal_app / oshal_bot password supplied through values reaches the api and the bots, no dev password survives anywhere in that render, and the render refuses a role password the api's bootstrap would refuse at boot.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Two holes closed. (a) The by-value check skips values under 8 characters, and the default ArangoDB root, Postgres superuser and TSDB passwords are all "oshal", so a ConfigMap key carrying one of them under a harmless name stayed green. A sentinel posture now sets every credential values leaf (derived from values.yaml, Secret names excluded) to a distinctive 48-hex value, proves each one reaches the render, and runs the by-value check on it. (b) The README "Credentials" section said the chart keeps its credentials in two Secrets, but TSDB_URL and SPEAKER_SERVICE_KEY on the api, SPEAKER_SERVICE_KEY on speaker-diarization and POSTGRES_PASSWORD on oshal-db and oshal-tsdb are still literal container env. The README now lists them in a table, and this spec holds that table to the literal credential env the render actually carries: every one the render has must be listed, and on the defaults the list must match exactly.
  */
 
 import fs from 'node:fs';
@@ -110,6 +111,81 @@ function configMapCredentials(objects: K8sObject[], credentials: string[]): stri
 }
 
 /**
+ * @description Every credential-named values leaf (values.yaml) whose value is not the name of a
+ * Secret the render references, as the dotted path --set takes. Empty leaves are skipped.
+ * @param secretNames Secret names the render references
+ * @returns {string[]} dotted values paths
+ */
+function credentialLeafPaths(secretNames: Set<string>): string[] {
+  const out: string[] = [];
+  const walk = (node: unknown, at: string): void => {
+    if (node && typeof node === 'object' && !Array.isArray(node)) {
+      Object.entries(node).forEach(([k, v]) => walk(v, at ? `${at}.${k}` : k));
+      return;
+    }
+    const key = at.split('.').pop() ?? '';
+    if (typeof node === 'string' && node && CREDENTIAL_LEAF.test(key) && !secretNames.has(node)) out.push(at);
+  };
+  walk(values, '');
+  return out;
+}
+
+/**
+ * @description All the text a render carries, including Secret data base64-decoded, so a value
+ * that only lands in a Secret is still found.
+ * @param objects rendered objects
+ * @returns {string} searchable text
+ */
+function renderedText(objects: K8sObject[]): string {
+  const secrets = objects.filter((o) => o.kind === 'Secret').map((o) => JSON.stringify(renderedData(objects, 'Secret', o.metadata.name)));
+  return [yaml.dump(objects), ...secrets].join('\n');
+}
+
+/**
+ * @description Every literal (not secretKeyRef / configMapKeyRef) non-empty env entry on a workload
+ * container or init container whose name is credential-shaped or whose value is a URL carrying a
+ * password, as `<workload> <ENV>`.
+ * @param objects rendered objects
+ * @returns {string[]} sorted, de-duplicated findings
+ */
+function literalCredentialEnv(objects: K8sObject[]): string[] {
+  const found = new Set<string>();
+  for (const o of objects) {
+    const pod = o.spec?.template?.spec;
+    if (!pod) continue;
+    for (const c of [...(pod.initContainers ?? []), ...(pod.containers ?? [])]) {
+      for (const e of c.env ?? []) {
+        if (typeof e.value !== 'string' || e.value === '') continue;
+        if (CREDENTIAL_NAME.test(e.name) || URL_WITH_PASSWORD.test(e.value)) found.add(`${o.metadata.name} ${e.name}`);
+      }
+    }
+  }
+  return [...found].sort();
+}
+
+/**
+ * @description The README "Credentials" table of credentials still carried as literal env, as
+ * `<workload> <ENV>` pairs (backticked workload names in the first cell, backticked UPPER_CASE
+ * env names in the second; anything else in a cell, such as a values path, is prose).
+ * @returns {string[]} sorted pairs; empty when the table is missing
+ */
+function readmeLiteralEnv(): string[] {
+  const readme = fs.readFileSync(path.join(CHART_DIR, 'README.md'), 'utf8');
+  const section = readme.split(/^## /m).find((s) => s.startsWith('Credentials')) ?? '';
+  const lines = section.split('\n');
+  const header = lines.findIndex((l) => l.startsWith('| Workload | Literal credential env |'));
+  if (header < 0) return [];
+  const rows: string[] = [];
+  for (const l of lines.slice(header + 2)) { if (!l.startsWith('|')) break; rows.push(l); }
+  const out: string[] = [];
+  for (const row of rows) {
+    const [workloads, envs] = row.split('|').slice(1, 3).map((cell) => [...cell.matchAll(/`([^`]+)`/g)].map((m) => m[1]));
+    for (const w of workloads) for (const e of envs.filter((n) => /^[A-Z][A-Z0-9_]*$/.test(n))) out.push(`${w} ${e}`);
+  }
+  return out.sort();
+}
+
+/**
  * @description The api container and each bot container of a render, with what each resolves to.
  * @param objects rendered objects
  * @returns {{ api?: Record<string, string>, bots: Array<{ name: string, env: Record<string, string>, container: Record<string, any> }> }}
@@ -139,6 +215,35 @@ describe('no credential is rendered into a ConfigMap', () => {
     expect(objects.filter((o) => o.kind === 'ConfigMap').length, 'the render has no ConfigMap - nothing was checked').toBeGreaterThan(0);
     const creds = knownCredentialValues(opts.valuesFiles ?? [], referencedSecretNames(objects));
     expect(configMapCredentials(objects, creds), 'credentials belong in a Secret, not a ConfigMap').toEqual([]);
+  }, RENDER_TIMEOUT_MS);
+
+  it('every credential values leaf set to a distinctive sentinel reaches the render, and no ConfigMap carries one', () => {
+    const leaves = credentialLeafPaths(referencedSecretNames(helmTemplate({ sets: everythingOn() })));
+    expect(leaves, 'the leaf walk stopped seeing the short default passwords').toEqual(expect.arrayContaining([
+      'swarm.jwtSecret', 'infra.postgres.password', 'infra.tsdb.password', 'infra.arangodb.rootPassword',
+    ]));
+    // 48 hex characters: long enough for the value check, and valid for the app/bot role passwords.
+    const sentinels = leaves.map((leaf, i) => [leaf, `${'ab'.repeat(20)}${i.toString(16).padStart(8, '0')}`] as const);
+    const objects = helmTemplate({ sets: [...everythingOn(), ...sentinels.map(([leaf, v]) => `${leaf}=${v}`)] });
+    const text = renderedText(objects);
+    for (const [leaf, v] of sentinels) expect(text.includes(v), `${leaf} never reaches the render - its value check is vacuous`).toBe(true);
+    expect(configMapCredentials(objects, sentinels.map(([, v]) => v)), 'credentials belong in a Secret, not a ConfigMap').toEqual([]);
+  }, RENDER_TIMEOUT_MS);
+});
+
+describe('the README names every credential still carried as literal container env', () => {
+  it('the table parse reads the README', () => {
+    expect(readmeLiteralEnv().length, 'README "Credentials" has no "Workload | Literal credential env" table').toBeGreaterThan(0);
+  });
+
+  it.each(POSTURES)('%s: every literal credential env entry in the render is listed', (_label, opts) => {
+    const listed = readmeLiteralEnv();
+    const unlisted = literalCredentialEnv(helmTemplate(opts)).filter((pair) => !listed.includes(pair));
+    expect(unlisted, 'a credential is literal container env and the README does not say so').toEqual([]);
+  }, RENDER_TIMEOUT_MS);
+
+  it('defaults: the README lists nothing the render no longer carries as a literal', () => {
+    expect(readmeLiteralEnv(), 'the README table is stale - a listed credential moved into a Secret').toEqual(literalCredentialEnv(helmTemplate({})));
   }, RENDER_TIMEOUT_MS);
 });
 
