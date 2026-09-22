@@ -38,6 +38,8 @@
  */
 
 import { createChildLogger } from '@/shared/logger';
+import { ProviderRegistry } from '@/features/llm-provider';
+import { checkModelAgainstCatalog } from '@/shared/llm-runtime';
 import { demoModeEnabled } from '@/shared/deployment-mode';
 import { getRequestIdentity } from '@/shared/services/database/request-identity';
 import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
@@ -716,6 +718,35 @@ export function invalidateOperatorKeyLane(): void {
  * `:free` ids.
  * @returns { baseUrl, apiKey, model } for the first live lane, or null when none is usable
  */
+/** Lane ids that ARE provider-definition ids, with their catalogued models. Built once. */
+let laneModelCatalog: { harnessTypes: readonly string[]; clineApiProviders: readonly string[]; modelsByProvider: Record<string, readonly string[]> } | null = null;
+
+/**
+ * @description Say so — once per resolution, at WARN — when a lane is about to run a model this
+ * build's provider catalog does not carry. It does not stop the run: our list is a lagging copy of
+ * the vendor's, so an absent id is evidence about the list, not about the model. It exists because
+ * the alternative is what the operator hit — a pinned model that produced no error, no warning and
+ * no log line anywhere, and whose only trace was a real call recorded at $0 cost.
+ * @param laneId - The lane about to run (its id is also its provider-definitions id).
+ * @param model - The model id resolved for this lane (the operator's pin, or the lane default).
+ * @returns nothing; the report is the log line.
+ */
+function warnIfModelUncatalogued(laneId: string, model: string): void {
+  if (!laneModelCatalog) {
+    const providers = new ProviderRegistry().getAll();
+    laneModelCatalog = {
+      harnessTypes: [], clineApiProviders: providers.map((p) => p.id),
+      modelsByProvider: Object.fromEntries(providers.map((p) => [p.id, p.models.map((entry) => entry.id)])),
+    };
+  }
+  const unknown = checkModelAgainstCatalog(laneId, model, laneModelCatalog);
+  if (!unknown) return;
+  logger.warn({
+    laneId, model: unknown.modelId, available: unknown.available,
+    source: (process.env.OSHAL_OPERATOR_LLM_MODEL || '').trim() === model ? 'OSHAL_OPERATOR_LLM_MODEL' : 'lane-default',
+  }, `operator-key: ${unknown.message}`);
+}
+
 export async function operatorKeyConnection(): Promise<ByoLlmConnection | null> {
   if (!demoKeysEnabled()) return null;
   if (operatorVerdict && Date.now() < operatorVerdict.until) return operatorVerdict.conn;
@@ -733,6 +764,12 @@ export async function operatorKeyConnection(): Promise<ByoLlmConnection | null> 
     const apiKey = laneKeyFromEnv(lane);
     const model = modelOverride || lane.defaultModel;
     if (!apiKey || !model) continue;
+    // The model an operator pins here is handed to the vendor unexamined — it always was, and it
+    // still is, because this catalog lags the vendor's and gemini-3.8-flash was a real current
+    // model absent from ours. What changes is that the pin is no longer silent when we cannot
+    // account for it: an uncatalogued id will not price (usage-cost-resolver reads the same
+    // catalog), so a live lane can bill and report $0 with nothing in the log to explain it.
+    warnIfModelUncatalogued(laneId, model);
     const status = await probe({
       connectionId: `operator-${laneId}`, providerId: laneId, clineProvider: laneId,
       model, baseUrl: lane.baseUrl, apiKey, label: 'operator-key',

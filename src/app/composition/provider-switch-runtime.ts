@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | buildProviderSwitchCatalog now carries modelsByProvider from the same ProviderRegistry records it already reads for clineApiProviders, so checkModelAgainstCatalog has something to measure a written model against. Nothing is refused by it; the catalog simply stops being unable to answer the question.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Expose the installed catalog (installedProviderSwitchCatalog) so the fleet-default routes validate a written id against the same runnable set the resolver refuses on.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The api-side seam for "a bot's LLM provider is a row in a table": builds the runnable catalog from the REAL HARNESS_FACTORIES keys + provider definitions, holds the one installed ProviderSwitchSnapshot so resolveHarnessForAgent (sync, inside getProvider) and dispatch stamping (async) answer from the same rows, and turns a REFUSED resolution into a provider that refuses every request with the reason — fail closed at the point of use, never a silent fall-through to the registry literal or FORCE_LLM_PROVIDER. With nothing installed every reader answers "registry", which is today's behaviour byte-identically.
  */
@@ -37,9 +38,14 @@ let installedCatalog: ProviderSwitchCatalog | null = null;
  * @returns The catalog the shared rule validates provider ids against.
  */
 export function buildProviderSwitchCatalog(harnessTypes: readonly string[]): ProviderSwitchCatalog {
+  const providers = new ProviderRegistry().getAll();
   return {
     harnessTypes: [...harnessTypes],
-    clineApiProviders: new ProviderRegistry().getAll().map((p) => p.id),
+    clineApiProviders: providers.map((p) => p.id),
+    // The model ids too, from the SAME records, so a written model can be measured against the
+    // catalog rather than handed to the vendor unexamined. Built here and not in the shared rule
+    // because shared/ is the bottom layer and may not reach into features/.
+    modelsByProvider: Object.fromEntries(providers.map((p) => [p.id, p.models.map((model) => model.id)])),
   };
 }
 
