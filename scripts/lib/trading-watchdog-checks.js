@@ -4,8 +4,8 @@
  * The PowerShell watchdog fetches (docker exec / HTTP) and delivers (Raise / email); every
  * DECISION about whether a book is silently wrong lives here, as pure functions over plain
  * objects. No I/O, no docker, no database, no clock of its own (callers pass nowMs) - which is
- * what makes each check mutation-provable in tests/unit/trading-watchdog-checks.spec.ts rather
- * than only source-pinned inside a .ps1.
+ * what makes each check mutation-provable in tests/unit/trading-watchdog-checks.spec.ts and
+ * tests/unit/trading-watchdog-corroboration.spec.ts rather than only source-pinned inside a .ps1.
  *
  * THE RULE THIS FILE ENFORCES, IN CODE: a check must NEVER pass because data was missing. Every
  * broker number goes through toNumber() (a finite number or a plain numeric string - Postgres
@@ -23,8 +23,8 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the watchdog's decidable checks: strict broker-number parsing, one shared working-order-status list, per-book bleed / stranded-sell / deep-loss / buying-power / position-count / concentration assessment, per-symbol alert hysteresis with one-shot recovery, and the pre-market gap print's size/recency/quote-mid corroboration.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Round-2 review fixes: the hysteresis band now measures from the severity at the LAST ALERT instead of a ratcheted high-water mark (a name drifting -6 -> -8 -> -10 -> -12 in 10-minute steps was suppressed for the whole window); the position-count and concentration floors count MATERIAL positions only, so dust cannot page about a runaway entry loop; and defaultSettings reports an unparseable setting through onInvalid rather than silently defaulting. Adds httpTimeoutSec (the per-read deadline the container-side fetcher applies).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Round-3 review fixes. The two ACCOUNT findings carry a worsening band derived from their own scale (negative funds re-pages when the hole doubles, the position count a quarter of the floor further out); with band null a book could go from -$100 to -$100,000 of buying power and stay silent for the rest of the window. The no-cost-basis warning now respects the materiality floor, so a book of delisted zero-basis dust no longer emits a wall of warnings. And the working-sell JSDoc says what the data actually is: the ORDER LEDGER's opinion (a capped page of oshal_trading_orders), not a venue query - a stale 'accepted' row silences that symbol's bleed finding, which is why the deep-loss check reports a held position regardless of any working sell.
- * 5 | maintainer@emeraldcoastsystemsgroup.com   | An UNCONFIRMED sell no longer counts as protective cover. The ledger's status vocabulary splits three ways, not two: 'accepted'/'partially_filled' are the venue's own acknowledgement that an exit is resting (broker-adapter.ts OrderStatus, Alpaca WORKING/NEW/REPLACED and Schwab WORKING/ACCEPTED/NEW/REPLACED/PENDING_REPLACE/AWAITING_RELEASE_TIME map here), while 'pending' is only "the broker took it" - and it is also the DEFAULT arm of BOTH adapters' normalizeStatus, so an unrecognized venue status lands there too - and 'submitting' is the pre-venue reservation row placeDecisionOrder writes before it ever calls the broker. Coverage now requires a CONFIRMED-WORKING status (isConfirmedWorkingSell), and a bleeding position whose only apparent cover is an unconfirmed row gets its own finding - unconfirmed-cover - instead of being silenced by it. WORKING_ORDER_STATUSES is unchanged: it stays the kernel mirror and the stranded-sell input, because a 'pending' sell that has sat for an hour is exactly the wedged submission that check exists to name. The new finding is bleed-family, so it is scoped by the SAME bleedBooks allow-list findBleeders respects (on a hand-traded book an unconfirmed row is the normal resting state, not a defect), honours minPositionUsd, and reuses alertPct/hysteresisPct rather than minting a knob for the same question.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | bleedBookSet + the bleed scope. The BLEED finding asserts "nothing is exiting this position", which is a defect only on a book something MANAGES; on a hand-traded book every position legitimately has no working sell, so the check reported the operator's own strategy back as a failure. evaluateBook now gates the bleed loop on settings.bleedBooks (empty = every book, so an unset or unreadable value fails OPEN rather than muting the one book that needed watching). Deep-loss is deliberately NOT scoped and moved into its own rth block: a position past every shipped stop is worth saying out loud on a hand-traded book too, and scoping both would trade alert noise for a real blind spot on real money.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | An UNCONFIRMED sell no longer counts as protective cover. The ledger's status vocabulary splits three ways, not two: 'accepted'/'partially_filled' are the statuses the adapters normalize a working order to (broker-adapter.ts labels 'accepted' "working at the venue") and are TREATED as confirmed cover - what the tree does and does not prove about that is on CONFIRMED_WORKING_ORDER_STATUSES, and the vendor states 'accepted' absorbs are an open question filed with the venue-query backlog entry, not closed here - while 'pending' is only "the broker took it" - and it is also the DEFAULT arm of BOTH adapters' normalizeStatus, so an unrecognized venue status lands there too - and 'submitting' is the pre-venue reservation row placeDecisionOrder writes before it ever calls the broker. Coverage now requires a CONFIRMED-WORKING status (isConfirmedWorkingSell), and a bleeding position whose only apparent cover is an unconfirmed row gets its own finding - unconfirmed-cover - instead of being silenced by it. WORKING_ORDER_STATUSES is unchanged: it stays the kernel mirror and the stranded-sell input, because a 'pending' sell that has sat for an hour is exactly the wedged submission that check exists to name. The new finding is bleed-family, so it is scoped by the SAME bleedBooks allow-list findBleeders respects (on a hand-traded book an unconfirmed row is the normal resting state, not a defect), honours minPositionUsd, and reuses alertPct/hysteresisPct rather than minting a knob for the same question.
  */
 'use strict';
 
@@ -40,11 +40,14 @@
 const WORKING_ORDER_STATUSES = ['pending', 'accepted', 'partially_filled'];
 
 /**
- * The statuses that mean the VENUE has acknowledged an exit is resting. This is the set a coverage
- * conclusion may rest on. Both broker adapters map their venue's working states here
- * (alpaca-broker-adapter normalizeStatus: new/accepted/replaced/done_for_day; schwab-broker-adapter:
- * WORKING/ACCEPTED/NEW/REPLACED/PENDING_REPLACE/AWAITING_RELEASE_TIME), plus partially_filled, whose
- * remainder is by definition still at the venue.
+ * The statuses the adapters normalize a working order to, TREATED as venue-confirmed cover - the
+ * only set a coverage conclusion may rest on. What the tree proves about it: broker-adapter.ts
+ * labels 'accepted' "working at the venue", both adapters' normalizeStatus map their vendor's
+ * working states to it, and a partially_filled remainder is by definition still at the venue. What
+ * the tree does NOT establish: 'accepted' also absorbs vendor states (Alpaca done_for_day and
+ * replaced, Schwab REPLACED and AWAITING_RELEASE_TIME) whose resting semantics are documented
+ * nowhere in this repo. Whether those should count as cover is open, and belongs with the
+ * venue-query entry in docs/BACKLOG.md rather than with this list.
  */
 const CONFIRMED_WORKING_ORDER_STATUSES = ['accepted', 'partially_filled'];
 
@@ -164,12 +167,13 @@ function isWorkingSell(order) {
 }
 
 /**
- * @description True when an order row is a SELL the VENUE has acknowledged is resting. This is the
- * only predicate a COVERAGE conclusion may rest on: 'pending' and 'submitting' mean we asked (or did
- * not even finish asking) and nobody has confirmed anything, so treating them as protection is how a
- * genuinely uncovered position goes quiet. Unknown/absent status is not confirmed.
+ * @description True when an order row is a SELL in a status the adapters normalize a working order
+ * to - the only predicate a COVERAGE conclusion may rest on. 'pending' and 'submitting' mean we
+ * asked (or did not even finish asking) and nobody has confirmed anything, so treating them as
+ * protection is how a genuinely uncovered position goes quiet. Unknown/absent status is not
+ * confirmed. CONFIRMED_WORKING_ORDER_STATUSES says what "confirmed" does and does not prove.
  * @param {{side?:unknown, status?:unknown}} order - Ledger/broker order row.
- * @returns {boolean} Whether the venue is known to be holding a protective sell.
+ * @returns {boolean} Whether the row is treated as confirmed cover.
  */
 function isConfirmedWorkingSell(order) {
   return sellStatusIn(order, CONFIRMED_WORKING_ORDER_STATUSES);
@@ -213,8 +217,9 @@ function workingSellSymbols(orders) {
 }
 
 /**
- * @description The symbols the ledger shows a VENUE-CONFIRMED working sell for - the only set a
- * position may be called covered by. Same ledger-page caveat as workingSellSymbols.
+ * @description The symbols the ledger shows a CONFIRMED-WORKING sell for (see
+ * CONFIRMED_WORKING_ORDER_STATUSES) - the only set a position may be called covered by. Same
+ * ledger-page caveat as workingSellSymbols.
  * @param {Array<any>} orders - Order rows.
  * @returns {Set<string>} Upper-cased symbols.
  */
@@ -314,7 +319,7 @@ function findBleeders(positions, sells, core, alertPct, minValueUsd) {
  * position bleeding?") is identical, only the answer about cover differs, so a second threshold
  * would be two knobs for one decision and would drift.
  * @param {Array<any>} positions - Normalized positions.
- * @param {Set<string>} confirmed - Symbols with a venue-confirmed working sell.
+ * @param {Set<string>} confirmed - Symbols with a confirmed-working sell.
  * @param {Map<string, Array<string>>} unconfirmed - Symbol -> its unconfirmed ledger statuses.
  * @param {Set<string>} core - Core/hold symbols to exclude.
  * @param {number} alertPct - Positive percent threshold.
@@ -452,7 +457,7 @@ function finding(kind, ref, symbol, severity, band, message) {
 function evaluateBook(book, data, settings) {
   const ref = String(book.ref);
   const positions = normalizePositions(data.positions);
-  // Coverage rests ONLY on a venue-confirmed sell; an unconfirmed row gets its own finding below.
+  // Coverage rests ONLY on a confirmed-working sell; an unconfirmed row gets its own finding below.
   // `sells` is the union, so findBleeders keeps meaning "the ledger shows no sell row at all" and the
   // two bleed-family findings stay disjoint per symbol.
   const confirmed = confirmedSellSymbols(data.orders);
