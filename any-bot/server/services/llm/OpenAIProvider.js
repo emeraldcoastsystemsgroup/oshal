@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Bound OpenRouter reasoning to a low, non-disclosed budget for interactive completions, normalized multipart text, and fail explicitly when a gateway returns reasoning tokens without a final answer.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | A turn spent attempting a tool call is no longer thrown away. generateResponse now reads tool_calls AND the legacy function_call field and surfaces both as tool_use blocks. Because it declares no tools, any call is one the model invented from the system prompt's "you have access to N tools", so a call carrying its own id completes the exchange once with a truthful no-tools-available result to obtain a direct answer; a gateway-filtered malformed attempt, which leaves no call id to answer, restates the constraint as a user turn instead. A call read out of the legacy function_call field was surfaced but did NOT complete that way - that field carries no id, and the continuation built for it was not a valid tool exchange, so it fell through to the empty-answer error; entry 5 is what makes that shape complete. Measured live on generativelanguage.googleapis.com 2026-09-22: gemini-2.5-flash and gemini-3.8-flash both return { role, tool_calls } with no content key, and 3.8-flash also returns finish_reason "function_call_filter: MALFORMED_FUNCTION_CALL" with message keys [extra_content, role]. The empty-answer error and warning now name provider, model, finish_reason and output tokens, report an ABSENT finish_reason as absent instead of defaulting the diagnostic to "stop" (that default is what made the genuinely empty turn read as a normal completion), and carry a content-free fingerprint of the response SHAPE in the message string, because the console transport prints only the message and drops metadata. Usage accumulates across both legs and honours an endpoint-reported total_tokens rather than assuming input + output.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The tool-call continuation now builds its replayed assistant turn FROM the normalized calls instead of passing the raw tool_calls array through, because the two do not line up: normalizeToolCalls synthesizes call_${index} for a call that arrived without an id and for the legacy function_call field (which has no tool_calls array at all), and drops a call with no function name. Replaying the raw array while answering the normalized ids produced an assistant turn and a tool turn that disagreed in three shapes - a legacy function_call, a tool_calls entry with no id, and several calls of which one was unnamed - and a chat-completions gateway rejects that pairing with a 400, which landed in the continuation's catch. The recovery entry 4 claims therefore never happened for those shapes, and the caller was billed for two legs to receive the same empty-answer error. A call with no function name is not replayed at all: there is no name to attribute a result to, so it cannot be answered, and a declared-but-unanswered call is the same 400. rawArguments, which is the text replayed verbatim, now also carries arguments a gateway sent already parsed - the wire format is a JSON string, and dropping a non-string to '' told the model it had called with no arguments when it had not.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | The direct conversational path now DECLARES the tools it was given and runs the exchange to a real answer. generateResponse read only model and max_tokens, so options.tools, options.enforceToolBoundary and options.authorizedScopes - all three passed by TaskController:418-422 and AgenticController:410-413 - arrived and were discarded: the system prompt promised N tools while the request declared none, which is the upstream cause entry 4 recovers from. Tools are now formatted through the same formatFunctions sendRequest already used, and a tool_calls response is executed through a caller-supplied executeTool channel and fed back until the model answers (MAX_DECLARED_TOOL_ROUNDS legs, then one final leg after a truthful budget-exhausted result). enforceToolBoundary and authorizedScopes became the enforcement ADR-122 and the SEC-05 dispatch-capability pair describe: nothing executes unless the caller asserted enforceToolBoundary, the name is in the exact declared set, the exact tool:<name> / control:attempt_completion scope is held, and an execution channel exists - every other call is refused and the refusal is told to the model rather than executed. Absence is never authority, matching normalizeAllowedTools/normalizeAuthorizedScopes. A request with no declared tools behaves exactly as before, including entry 4's unsolicited-call recovery.
  */
 
 /**
@@ -18,6 +19,14 @@
 const OpenAI = require('openai');
 const LLMService = require('./LLMService');
 const logger = require('../../utils/logger');
+// The SAME scope primitives the controllers capture capabilities with. Re-deriving the rule here
+// would let the two drift; importing it means the provider refuses exactly what
+// `authorizeCapability` would refuse, one layer earlier.
+const {
+  hasOperationScope,
+  normalizeAuthorizedScopes,
+  requiredScope,
+} = require('../../utils/dispatch-capabilities');
 
 /**
  * @description Concrete LLMService implementation that adapts OpenAI's
@@ -66,7 +75,8 @@ class OpenAIProvider extends LLMService {
    * the same { content, contentBlocks, stopReason, usage, cost, latency, model,
    * provider } shape the other providers return.
    * @param {Array<{role:string,content:string}>} messages - conversation turns
-   * @param {Object} [options] - { systemPrompt, maxTokens, temperature }
+   * @param {Object} [options] - { systemPrompt, maxTokens, temperature, tools,
+   *   enforceToolBoundary, authorizedScopes, executeTool }
    * @returns {Promise<Object>} the standard generateResponse result object
    */
   async generateResponse(messages, options = {}) {
@@ -77,23 +87,17 @@ class OpenAIProvider extends LLMService {
     if (options.systemPrompt) formatted.unshift({ role: 'system', content: String(options.systemPrompt) });
     if (formatted.length === 0) throw new Error('No valid messages with content to send to the LLM endpoint');
 
-    const request = {
-      model: this.model,
-      max_tokens: options.maxTokens || this.maxTokens,
-      temperature: options.temperature !== undefined ? options.temperature : this.temperature,
-      messages: formatted,
-      // OpenRouter reasoning models can otherwise spend the provider's entire free-tier output
-      // allowance on hidden reasoning and return an empty final message. Keep a bounded reasoning
-      // budget while excluding chain-of-thought from the application response. OpenRouter documents
-      // this unified request field for its OpenAI-compatible chat endpoint.
-      ...(isOpenRouterBaseUrl(this.baseUrl) ? {
-        reasoning: { effort: options.reasoningEffort || 'low', exclude: true },
-      } : {}),
-    };
-    const completion = await this.client.chat.completions.create(request);
+    // The boundary is resolved ONCE, from the options this request arrived with, and is the only
+    // thing consulted for the rest of the exchange. That is what keeps a multi-leg tool loop bound
+    // to the capability set the caller captured at request start rather than to anything a later
+    // leg could influence.
+    const boundary = resolveDispatchToolBoundary(options);
+    const request = this.buildChatRequest(formatted, options, boundary);
+    const exchange = await this.runDeclaredToolExchange(request, boundary);
+    const completion = exchange.completion;
 
     const choice = completion.choices?.[0];
-    let content = normalizeTextContent(choice?.message?.content);
+    let content = exchange.content;
     let stopReason = choice?.finish_reason || 'stop';
     // `stopReason` defaults to 'stop' to keep the result contract stable, but the DIAGNOSTIC must
     // never launder an absent field into a normal completion. Measured 2026-09-22: the intermittent
@@ -101,32 +105,28 @@ class OpenAIProvider extends LLMService {
     // `role`; the default made the log read `finish_reason "stop"`, which is why the first reading
     // of this failure went looking for a model that had answered normally.
     const reportedFinishReason = choice?.finish_reason || '(absent)';
-    const usage = addUsage(emptyUsage(), completion.usage);
+    const usage = exchange.usage;
     // A turn can come back carrying ONLY function/tool-call parts and no text at all. That is not
     // an empty turn — the answer is in `tool_calls` (or the legacy `function_call`), fields the
     // text extractor cannot see. Reading them is what stops a paid completion being dropped.
-    const toolCalls = normalizeToolCalls(choice?.message);
+    const toolCalls = exchange.toolCalls;
 
-    // The same root cause has two shapes, and BOTH were measured live on 2026-09-22. The model is
-    // told in prose that it has tools (the OSHAL system prompt says so) while this request declares
-    // none, so it tries to call one anyway: either the call comes back in `tool_calls`, or the
-    // gateway filters a malformed attempt and returns a message with neither text nor tool calls
-    // (`finish_reason: "function_call_filter: MALFORMED_FUNCTION_CALL"`, message keys
-    // `["extra_content","role"]`). Either way the turn is billed and unreadable, so both recover
-    // the same way: say plainly that no tool is available and ask for a direct answer.
+    // A turn can still end on an unanswerable tool call: on a tool-less request the model invents
+    // one from the prompt's prose, and on a declared-tool request the round budget can run out
+    // mid-plan. BOTH shapes of the tool-less case were measured live on 2026-09-22 — either the
+    // call comes back in `tool_calls`, or the gateway filters a malformed attempt and returns a
+    // message with neither text nor tool calls (`finish_reason:
+    // "function_call_filter: MALFORMED_FUNCTION_CALL"`, message keys `["extra_content","role"]`).
+    // Either way the turn is billed and unreadable, so all of them recover the same way: state
+    // plainly why no tool ran and ask for a direct answer.
     if (!content && attemptedToolCall(choice, toolCalls)) {
-      logger.warn(
-        'OpenAI-compatible endpoint attempted a tool call and returned no text '
-        + `(${this.model} @ ${this.endpointLabel}, finish_reason "${reportedFinishReason}", `
-        + `${toolCalls.length} readable call(s)) — asking once for a direct answer`,
-        {
-          model: this.model,
-          endpoint: this.endpointLabel,
-          stopReason: reportedFinishReason,
-          toolCalls: toolCalls.map((call) => call.name),
-        },
+      // Replay from the conversation the LAST leg actually sent, not the original messages: when
+      // a declared-tool exchange ran, the tool results are in there and dropping them would ask
+      // the model to answer without the work it just did.
+      const resolved = await this.recoverUnsolicitedToolTurn(
+        { ...request, messages: exchange.messages },
+        { choice, toolCalls, boundary, reportedFinishReason },
       );
-      const resolved = await this.resolveUnsolicitedToolCalls(request, choice?.message, toolCalls);
       if (resolved) {
         content = resolved.content;
         stopReason = resolved.stopReason;
@@ -141,53 +141,12 @@ class OpenAIProvider extends LLMService {
     logger.info(`OpenAI-compatible call (${this.model} @ ${this.endpointLabel}): ${latency}ms, ${usage.totalTokens} tokens`);
 
     if (!content) {
-      const reasoning = choice?.message?.reasoning || choice?.message?.reasoning_content;
-      const hadReasoning = Boolean(reasoning || choice?.message?.reasoning_details?.length);
-      const detail = describeEmptyAnswer({
-        model: this.model,
-        endpoint: this.endpointLabel,
-        stopReason: reportedFinishReason,
-        outputTokens: usage.outputTokens,
-        toolCallCount: toolCalls.length,
-        attemptedToolCall: attemptedToolCall(choice, toolCalls),
-        hadReasoning,
-      });
-      // The structure goes in the MESSAGE, not only the metadata: the console transport
-      // (utils/logger.js) prints `${timestamp} [${level}]: ${message}` and drops the meta object
-      // entirely, so a fingerprint left in metadata would never reach `docker logs` — which is
-      // exactly where someone looks when this recurs.
-      const structure = describeResponseStructure(completion, choice);
-      logger.warn(
-        `OpenAI-compatible endpoint returned no final answer — ${detail}; response shape: ${JSON.stringify(structure)}`,
-        {
-          model: this.model,
-          endpoint: this.endpointLabel,
-          stopReason: reportedFinishReason,
-          outputTokens: usage.outputTokens,
-          toolCalls: toolCalls.map((call) => call.name),
-          hadReasoning,
-          responseStructure: structure,
-        },
-      );
-      // The message names the provider, the model and WHY the turn produced nothing, because it is
-      // the string that reaches the caller and the swarm log; a bare "no final answer" told the
-      // next reader only that something went wrong somewhere. The phrase itself is load-bearing and
-      // must not be reworded away: reportResolvedLlmFailure matches it (with EMPTY_FINAL_ANSWER)
-      // to decide whether a free/platform lane may rotate.
-      const error = new Error(`OpenAI-compatible endpoint returned no final answer — ${detail}`);
-      error.code = 'EMPTY_FINAL_ANSWER';
-      throw error;
+      this.throwEmptyAnswerFailure({ completion, choice, reportedFinishReason, usage, toolCalls });
     }
 
     return {
       content,
-      contentBlocks: [
-        // Surfaced, never hidden: a caller that can run a tool loop sees exactly what was requested.
-        ...toolCalls.map((call) => ({
-          type: 'tool_use', id: call.id, name: call.name, input: call.input,
-        })),
-        { type: 'text', text: content },
-      ],
+      contentBlocks: toResultBlocks(toolCalls, content),
       stopReason,
       usage,
       cost: 0,
@@ -198,30 +157,180 @@ class OpenAIProvider extends LLMService {
   }
 
   /**
-   * @description Answers a turn that came back as tool calls when this request offered NO tools.
+   * @description Builds the chat-completions request for one conversational turn.
+   * @param {Array<Object>} formatted - the conversation, system prompt already prepended
+   * @param {Object} options - the generateResponse options
+   * @param {Object} boundary - the resolved dispatch tool boundary for this request
+   * @returns {Object} the request body
+   */
+  buildChatRequest(formatted, options, boundary) {
+    return {
+      model: this.model,
+      max_tokens: options.maxTokens || this.maxTokens,
+      temperature: options.temperature !== undefined ? options.temperature : this.temperature,
+      messages: formatted,
+      // Declaring the tools the caller was given is the whole point: the OSHAL system prompt tells
+      // the model it has N tools, and until this landed the request declared none — so the model
+      // either invented a call (entry 4's recovery) or, far more often, told the operator it could
+      // not reach live data and to go use the application instead. Same formatter sendRequest uses.
+      ...(boundary.definitions.length > 0
+        ? { tools: this.formatFunctions(boundary.definitions), tool_choice: 'auto' }
+        : {}),
+      // OpenRouter reasoning models can otherwise spend the provider's entire free-tier output
+      // allowance on hidden reasoning and return an empty final message. Keep a bounded reasoning
+      // budget while excluding chain-of-thought from the application response. OpenRouter documents
+      // this unified request field for its OpenAI-compatible chat endpoint.
+      ...(isOpenRouterBaseUrl(this.baseUrl) ? {
+        reasoning: { effort: options.reasoningEffort || 'low', exclude: true },
+      } : {}),
+    };
+  }
+
+  /**
+   * @description Logs the attempted-tool-call turn and asks once for a direct answer.
    *
-   * generateResponse never sends a `tools` array (see the request built above), so any function
-   * call in the response is one the model invented from prose in the prompt — the OSHAL system
-   * prompt tells it that tools exist, and some models act on that even with nothing declared.
-   * Measured on generativelanguage.googleapis.com 2026-09-22: gemini-3.8-flash returns
-   * `{ role: 'assistant', tool_calls: [...] }` with no `content` key at all.
+   * The wrapper around {@link resolveUnsolicitedToolCalls} so generateResponse stays orchestration.
+   * @param {Object} request - the chat-completions request as the last leg sent it
+   * @param {{choice:Object,toolCalls:Array,boundary:Object,reportedFinishReason:string}} facts
+   * @returns {Promise<{content:string,stopReason:string,usage:Object}|null>} the follow-up, or null
+   */
+  async recoverUnsolicitedToolTurn(request, facts) {
+    const { choice, toolCalls, boundary, reportedFinishReason } = facts;
+    logger.warn(
+      'OpenAI-compatible endpoint attempted a tool call and returned no text '
+      + `(${this.model} @ ${this.endpointLabel}, finish_reason "${reportedFinishReason}", `
+      + `${toolCalls.length} readable call(s)) — asking once for a direct answer`,
+      {
+        model: this.model, endpoint: this.endpointLabel,
+        stopReason: reportedFinishReason, toolCalls: toolCalls.map((call) => call.name),
+      },
+    );
+    return this.resolveUnsolicitedToolCalls(request, choice?.message, toolCalls, boundary);
+  }
+
+  /**
+   * @description Reports, and then throws, a completion that produced no usable answer.
    *
-   * There is nothing to execute, so this completes the exchange the protocol's own way — the
-   * assistant turn, then one `tool` result per call stating truthfully that no tool was available —
-   * and asks for a direct answer. It is ONE bounded continuation, not a blind retry: it runs only
-   * when the first response carried tool calls and no text, and a failure falls through to the
-   * honest empty-answer error rather than looping.
+   * Extracted verbatim from generateResponse to keep that method within the repo's function-length
+   * rule once the tool exchange moved into it; every string, field and log target is unchanged, and
+   * openai-compat-tool-call-extraction.spec.ts pins all of them.
+   * @param {{completion:Object,choice:Object,reportedFinishReason:string,usage:Object,toolCalls:Array}} facts
+   * @returns {never} always throws EMPTY_FINAL_ANSWER
+   */
+  throwEmptyAnswerFailure({ completion, choice, reportedFinishReason, usage, toolCalls }) {
+    const reasoning = choice?.message?.reasoning || choice?.message?.reasoning_content;
+    const hadReasoning = Boolean(reasoning || choice?.message?.reasoning_details?.length);
+    const detail = describeEmptyAnswer({
+      model: this.model,
+      endpoint: this.endpointLabel,
+      stopReason: reportedFinishReason,
+      outputTokens: usage.outputTokens,
+      toolCallCount: toolCalls.length,
+      attemptedToolCall: attemptedToolCall(choice, toolCalls),
+      hadReasoning,
+    });
+    // The structure goes in the MESSAGE, not only the metadata: the console transport
+    // (utils/logger.js) prints `${timestamp} [${level}]: ${message}` and drops the meta object
+    // entirely, so a fingerprint left in metadata would never reach `docker logs` — which is
+    // exactly where someone looks when this recurs.
+    const structure = describeResponseStructure(completion, choice);
+    logger.warn(
+      `OpenAI-compatible endpoint returned no final answer — ${detail}; response shape: ${JSON.stringify(structure)}`,
+      {
+        model: this.model,
+        endpoint: this.endpointLabel,
+        stopReason: reportedFinishReason,
+        outputTokens: usage.outputTokens,
+        toolCalls: toolCalls.map((call) => call.name),
+        hadReasoning,
+        responseStructure: structure,
+      },
+    );
+    // The message names the provider, the model and WHY the turn produced nothing, because it is
+    // the string that reaches the caller and the swarm log; a bare "no final answer" told the
+    // next reader only that something went wrong somewhere. The phrase itself is load-bearing and
+    // must not be reworded away: reportResolvedLlmFailure matches it (with EMPTY_FINAL_ANSWER)
+    // to decide whether a free/platform lane may rotate.
+    const error = new Error(`OpenAI-compatible endpoint returned no final answer — ${detail}`);
+    error.code = 'EMPTY_FINAL_ANSWER';
+    throw error;
+  }
+
+  /**
+   * @description Runs the chat exchange, executing declared tool calls until the model answers.
+   *
+   * With no tools declared this is exactly one API call and the old single-shot behaviour is
+   * unchanged — which is why a tool-less caller sees byte-identical behaviour to before, including
+   * entry 4's recovery for a call the model invented.
+   *
+   * With one, a `tool_calls` response is settled (executed, or refused with a stated reason) and
+   * fed back as `tool` messages so the model can produce a final answer. The budget is bounded:
+   * after {@link MAX_DECLARED_TOOL_ROUNDS} executed rounds the calls are refused with a truthful
+   * budget-exhausted result and one last leg is taken for an answer, so a model that loops on
+   * tools cannot spend the caller's tokens without limit.
+   * @param {Object} request - the fully built chat-completions request, tools already declared
+   * @param {Object} boundary - the resolved dispatch tool boundary for this request
+   * @returns {Promise<{completion:Object,content:string,toolCalls:Array,usage:Object,messages:Array}>}
+   */
+  async runDeclaredToolExchange(request, boundary) {
+    const messages = [...request.messages];
+    const usage = emptyUsage();
+    let executing = boundary.engaged;
+    let roundsLeft = MAX_DECLARED_TOOL_ROUNDS;
+    for (;;) {
+      const completion = await this.client.chat.completions.create({ ...request, messages });
+      addUsage(usage, completion.usage);
+      const choice = completion.choices?.[0];
+      const content = normalizeTextContent(choice?.message?.content);
+      const toolCalls = normalizeToolCalls(choice?.message);
+      if (toolCalls.length === 0 || !executing) {
+        return { completion, content, toolCalls, usage, messages };
+      }
+      const exhausted = roundsLeft <= 0;
+      const settled = await settleDeclaredCalls(boundary, toolCalls, exhausted, this.endpointLabel);
+      if (settled.final !== null) {
+        return { completion, content: settled.final, toolCalls: [], usage, messages };
+      }
+      messages.push(assistantToolTurn(choice?.message, toolCalls), ...settled.messages);
+      // One further leg is taken so the refusal can be answered; then the exchange stops.
+      if (exhausted) executing = false;
+      roundsLeft -= 1;
+    }
+  }
+
+  /**
+   * @description Answers a turn that came back as tool calls this request cannot execute.
+   *
+   * Two shapes reach here. When the caller declared NO tools, any function call in the response is
+   * one the model invented from prose in the prompt — the OSHAL system prompt tells it that tools
+   * exist, and some models act on that even with nothing declared. Measured on
+   * generativelanguage.googleapis.com 2026-09-22: gemini-3.8-flash returns
+   * `{ role: 'assistant', tool_calls: [...] }` with no `content` key at all. When tools WERE
+   * declared, this is the tail of an exchange whose round budget ran out.
+   *
+   * Either way there is nothing left to execute, so this completes the exchange the protocol's own
+   * way — the assistant turn, then one `tool` result per call stating truthfully which of the two
+   * situations it is — and asks for a direct answer. It is ONE bounded continuation, not a blind
+   * retry: it runs only when the response carried tool calls and no text, and a failure falls
+   * through to the honest empty-answer error rather than looping.
    *
    * Both halves of that pair are built from `toolCalls`, so the ids answered are by construction
    * the ids declared. `assistantMessage` contributes only its text content — never its raw
    * `tool_calls`, whose ids are not the ids this answers.
-   * @param {Object} request - the original chat-completions request (tool-less by construction)
+   * @param {Object} request - the chat-completions request as the last leg sent it
    * @param {Object} assistantMessage - the raw assistant message that carried the tool calls; only
    *   its `content` is used, because its call ids are not the normalized ones being answered
    * @param {Array<{id:string,name:string,rawArguments:string}>} toolCalls - the normalized calls
+   * @param {Object} [boundary] - the resolved tool boundary, so the stated reason is the true one
    * @returns {Promise<{content:string,stopReason:string,usage:Object}|null>} the follow-up, or null
    */
-  async resolveUnsolicitedToolCalls(request, assistantMessage, toolCalls) {
+  async resolveUnsolicitedToolCalls(request, assistantMessage, toolCalls, boundary) {
+    // Say which it actually is. Telling a model "this request offered no tools" when it was handed
+    // seventeen is the same class of lie that caused this bug in the first place.
+    const result = boundary && boundary.definitions.length > 0
+      ? NO_FURTHER_TOOL_RESULT : NO_TOOL_AVAILABLE_RESULT;
+    const instruction = boundary && boundary.definitions.length > 0
+      ? NO_FURTHER_TOOL_INSTRUCTION : NO_TOOL_AVAILABLE_INSTRUCTION;
     // With readable calls there is a tool_call_id to answer, so the exchange is completed the
     // protocol's own way. A filtered/malformed attempt leaves no id to answer — there the only
     // available move is to restate the constraint as a user turn.
@@ -244,20 +353,12 @@ class OpenAIProvider extends LLMService {
     // of what made attemptedToolCall true and brought us here.
     const continuation = toolCalls.length > 0
       ? [
-        {
-          role: 'assistant',
-          content: assistantMessage?.content ?? null,
-          tool_calls: toolCalls.map((call) => ({
-            id: call.id,
-            type: 'function',
-            function: { name: call.name, arguments: call.rawArguments },
-          })),
-        },
+        assistantToolTurn(assistantMessage, toolCalls),
         ...toolCalls.map((call) => ({
-          role: 'tool', tool_call_id: call.id, content: NO_TOOL_AVAILABLE_RESULT,
+          role: 'tool', tool_call_id: call.id, content: result,
         })),
       ]
-      : [{ role: 'user', content: NO_TOOL_AVAILABLE_INSTRUCTION }];
+      : [{ role: 'user', content: instruction }];
     try {
       const completion = await this.client.chat.completions.create({
         ...request,
@@ -597,6 +698,195 @@ const NO_TOOL_AVAILABLE_RESULT = JSON.stringify({
 const NO_TOOL_AVAILABLE_INSTRUCTION = 'No tools are available in this request, so no tool call can '
   + 'be executed and any you attempted did not run. Answer the previous message directly, in plain '
   + 'text, using only what is already in this conversation.';
+
+/**
+ * The tool result sent back when tools WERE declared but this request's tool budget is spent. The
+ * distinction matters: the model must not be told it had no tools when it did.
+ */
+const NO_FURTHER_TOOL_RESULT = JSON.stringify({
+  error: 'tool_budget_exhausted',
+  detail: 'This request has used its tool budget, so nothing further was executed. Answer the user '
+    + 'directly, in text, using the tool results already in this conversation.',
+});
+
+/** The same statement as a user turn, for a call that left no tool_call_id to answer. */
+const NO_FURTHER_TOOL_INSTRUCTION = 'This request has used its tool budget, so no further tool call '
+  + 'can be executed and any you attempted did not run. Answer the previous message directly, in '
+  + 'plain text, using the tool results already in this conversation.';
+
+/**
+ * How many rounds of declared tool calls one completion may execute before the budget is stated to
+ * the model and the exchange is closed out with a final leg. Bounded on purpose: an unbounded loop
+ * over a caller's endpoint is their money, and a model that re-requests the same tool forever is a
+ * shape that has to terminate without a human.
+ */
+const MAX_DECLARED_TOOL_ROUNDS = 4;
+
+/**
+ * @description The provider-agnostic content blocks for one answered turn.
+ *
+ * Tool calls are surfaced, never hidden: a caller that runs its own tool loop sees exactly what was
+ * requested, even on a turn this adapter already settled.
+ * @param {Array<{id:string,name:string,input:Object}>} toolCalls - the last leg's normalized calls
+ * @param {string} content - the final text
+ * @returns {Array<Object>} tool_use blocks followed by the text block
+ */
+function toResultBlocks(toolCalls, content) {
+  return [
+    ...toolCalls.map((call) => ({
+      type: 'tool_use', id: call.id, name: call.name, input: call.input,
+    })),
+    { type: 'text', text: content },
+  ];
+}
+
+/**
+ * @description Resolves, once per request, what this exchange is permitted to execute.
+ *
+ * This is the provider half of the SEC-05 pair the controllers already implement: the controller
+ * captures the capability set at request start ({@link captureDispatchCapabilities}) and
+ * re-authorizes each operation ({@link authorizeCapability}); this rebinds the SAME statement at
+ * the provider boundary, which is what ADR-122 means by rebinding the exact tools and scopes
+ * around untrusted model output.
+ *
+ * Absence is never authority, exactly as `normalizeAllowedTools` / `normalizeAuthorizedScopes`
+ * decided for the primitives beneath: a caller that does not assert `enforceToolBoundary`, declares
+ * no tools, or supplies no execution channel gets an exchange that executes nothing at all.
+ *
+ * `engaged` only says whether a tool exchange is possible at all (something was declared). Whether
+ * any individual call may RUN is decided per call by {@link authorizeDeclaredCall}, so there is one
+ * place to read, and to break, for each rule.
+ * @param {Object} options - the generateResponse options as the caller passed them
+ * @returns {{definitions:Array,declared:Set<string>,scopes:Set<string>,enforced:boolean,
+ *   execute:Function|null,engaged:boolean}} the resolved boundary
+ */
+function resolveDispatchToolBoundary(options) {
+  const definitions = (Array.isArray(options.tools) ? options.tools : [])
+    .filter((tool) => tool && typeof tool.name === 'string' && tool.name.length > 0);
+  const declared = new Set(definitions.map((tool) => tool.name));
+  // The controller hands over the very Set its capabilities were captured with; an array from any
+  // other caller is normalized by the same primitive, and anything else denies every scope.
+  const scopes = options.authorizedScopes instanceof Set
+    ? options.authorizedScopes
+    : normalizeAuthorizedScopes(options.authorizedScopes);
+  const enforced = options.enforceToolBoundary === true;
+  const execute = typeof options.executeTool === 'function' ? options.executeTool : null;
+  return { definitions, declared, scopes, enforced, execute, engaged: declared.size > 0 };
+}
+
+/**
+ * @description Decides whether one model-requested call may reach the execution channel.
+ *
+ * The four refusals are the four ways a call can be outside what this request can honour - the
+ * caller never asserted the boundary, the name was never declared, its exact operation scope is not
+ * held, or there is no channel to run it through - and each is stated back to the model rather than
+ * silently dropped — a model that is told why it was refused
+ * answers the user, and one that is ignored retries.
+ * @param {Object} boundary - the resolved boundary for this request
+ * @param {string} name - the tool name the model asked for
+ * @returns {{allowed:boolean,error?:string}} the decision
+ */
+function authorizeDeclaredCall(boundary, name) {
+  if (!boundary.enforced) {
+    return { allowed: false, error: 'This request did not assert a tool boundary, so no tool was executed.' };
+  }
+  if (!boundary.declared.has(name)) {
+    return { allowed: false, error: `Tool '${name}' was not offered on this request and was not executed.` };
+  }
+  if (!hasOperationScope(boundary.scopes, name)) {
+    return { allowed: false, error: `Missing exact operation scope: ${requiredScope(name)}` };
+  }
+  if (!boundary.execute) {
+    return { allowed: false, error: 'No tool execution channel was provided for this request, so nothing was executed.' };
+  }
+  return { allowed: true };
+}
+
+/**
+ * @description Settles every tool call in one round into `tool` messages to feed back.
+ *
+ * A refusal and a failure are both results, not exceptions: the model gets a stated reason and can
+ * answer, which is the difference between the operator seeing an answer and seeing "that didn't
+ * work". An executor that signals `final` ends the exchange with its content — that is the
+ * `attempt_completion` control, which is an answer rather than a side effect.
+ * @param {Object} boundary - the resolved boundary for this request
+ * @param {Array<{id:string,name:string,input:Object}>} toolCalls - the round's normalized calls
+ * @param {boolean} exhausted - true when the round budget is spent and nothing may execute
+ * @param {string} endpointLabel - endpoint name for the log line only
+ * @returns {Promise<{messages:Array,final:string|null}>} the tool messages, or a final answer
+ */
+async function settleDeclaredCalls(boundary, toolCalls, exhausted, endpointLabel) {
+  const messages = [];
+  for (const call of toolCalls) {
+    const outcome = exhausted
+      ? { ok: false, error: 'This request has used its tool budget; nothing further was executed.' }
+      : await settleOneDeclaredCall(boundary, call, endpointLabel);
+    if (outcome.final === true && typeof outcome.content === 'string') {
+      return { messages, final: outcome.content };
+    }
+    messages.push({
+      role: 'tool',
+      tool_call_id: call.id,
+      content: outcome.ok
+        ? String(outcome.result ?? '')
+        : JSON.stringify({ error: 'tool_call_refused', detail: String(outcome.error || 'refused') }),
+    });
+  }
+  return { messages, final: null };
+}
+
+/**
+ * @description Authorizes one call and, only then, hands it to the caller's execution channel.
+ *
+ * Throws whatever the channel throws: a request-invalidating condition (a capability replaced or
+ * revoked since request start, a caller authorization that lapsed) must end the request, not
+ * become a refusal the model answers around.
+ * @param {Object} boundary - the resolved boundary for this request
+ * @param {{id:string,name:string,input:Object}} call - one normalized tool call
+ * @param {string} endpointLabel - endpoint name for the log line only
+ * @returns {Promise<{ok:boolean,result?:unknown,error?:string,final?:boolean,content?:string}>}
+ */
+async function settleOneDeclaredCall(boundary, call, endpointLabel) {
+  const decision = authorizeDeclaredCall(boundary, call.name);
+  if (!decision.allowed) {
+    logger.warn(`Refused a model tool call outside this request's boundary (${call.name} @ ${endpointLabel}): ${decision.error}`);
+    return { ok: false, error: decision.error };
+  }
+  // The channel's contract is: a REFUSAL or a tool failure comes back as `{ ok: false }` and is
+  // told to the model, while a THROW means the request itself is no longer authorized — a
+  // capability replaced or revoked since request start, or a caller authorization that lapsed
+  // mid-exchange. Those must not be caught here. Swallowing them into a per-call refusal is
+  // exactly how a tool loop defeats assertDispatchCapabilitiesCurrent: the request would carry on
+  // and answer, having been told its own authority was invalidated.
+  const outcome = await boundary.execute(call.name, call.input, { callId: call.id });
+  if (!outcome || typeof outcome !== 'object') {
+    logger.warn(`Tool execution channel returned no outcome for ${call.name} @ ${endpointLabel}`);
+    return { ok: false, error: `Tool '${call.name}' returned no result.` };
+  }
+  return outcome;
+}
+
+/**
+ * @description Rebuilds the assistant turn that requested tools, from the NORMALIZED calls.
+ *
+ * Built from the normalized calls rather than copied from the raw message so the ids on the
+ * assistant turn always match the ids on the `tool` replies — including for the legacy
+ * `function_call` shape, which carries no ids of its own and would otherwise be unanswerable.
+ * @param {Object} [assistantMessage] - the raw assistant message
+ * @param {Array<{id:string,name:string,rawArguments:string}>} toolCalls - the normalized calls
+ * @returns {Object} an assistant message the endpoint will accept as the call turn
+ */
+function assistantToolTurn(assistantMessage, toolCalls) {
+  return {
+    role: 'assistant',
+    content: assistantMessage?.content ?? null,
+    tool_calls: toolCalls.map((call) => ({
+      id: call.id,
+      type: 'function',
+      function: { name: call.name, arguments: call.rawArguments || '{}' },
+    })),
+  };
+}
 
 /**
  * Finish reasons a gateway uses when the model tried to call a function and the attempt, rather

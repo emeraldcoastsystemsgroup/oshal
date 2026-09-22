@@ -19,6 +19,7 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com  | SEC-05 closure: expose owner-filtered task pagination for authenticated object routes.
  * 15 | maintainer@emeraldcoastsystemsgroup.com  | Bind the explicit tool-less path to an empty tool allowlist so bypassing the agentic loop cannot advertise or invoke registry tools.
  * 16 | maintainer@emeraldcoastsystemsgroup.com  | Revalidate protected remote reasoning before hosted inference and before releasing its response through a trusted function port.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com  | The direct path told the model it had N tools and then handed the provider nothing it could act on: tools, enforceToolBoundary and authorizedScopes were passed from here and discarded by generateResponse, so an ask for live information came back as "I cannot report on live data, go to the application". The call now also threads executeTool - the one authorized channel to a registry tool, built by dispatch-tool-executor.js from THIS request's captured capabilities - and passes the normalized scope Set the capture used rather than re-reading the caller's raw field, so a multi-leg tool exchange stays bound to the authority the request started with. No widening: the tool set is still exactly captureDispatchCapabilities' definitions, the approval policy is unchanged, and a tool-less or unauthorized request still executes nothing.
  */
 
 /**
@@ -45,6 +46,7 @@ const {
   captureDispatchCapabilities,
   normalizeAuthorizedScopes,
 } = require('../utils/dispatch-capabilities');
+const { createDispatchToolExecutor } = require('./dispatch-tool-executor');
 const {
   UnsafeWorkspacePathError,
   ensureTaskWorkspace,
@@ -419,7 +421,14 @@ class TaskController {
         tools: availableTools,
         extraEnv: options.extraEnv,
         enforceToolBoundary: true,
-        authorizedScopes: options.authorizedScopes,
+        // The exact Set the capabilities above were captured with, not a re-read of caller input:
+        // a multi-leg tool exchange must be bound to the authority this request started with.
+        authorizedScopes,
+        // The ONE channel a model turn may reach a tool through. Bound to this request's captured
+        // capabilities, so the provider cannot execute anything the capture did not authorize.
+        executeTool: createDispatchToolExecutor({
+          toolRegistry: this.toolRegistry, dispatchCapabilities, task, taskId, options,
+        }),
       });
       if (typeof options.assertCurrentAuthorization === 'function') await options.assertCurrentAuthorization();
       const finalText = typeof (response.content || response.text) === 'string'
@@ -485,8 +494,9 @@ class TaskController {
         // These labels come from the provider response object, never generated text.
         provider: normalizeRuntimeIdentity(response.provider, 128),
         model: normalizeRuntimeIdentity(response.model, 256),
-        // This turn ran the direct (no agentic loop, no tools) path — surfaced so
-        // callers can tell a degraded reasoning-only answer from a full agentic one.
+        // This turn ran the direct (no agentic loop) path — surfaced so callers can tell it from a
+        // full agentic one. The name predates declared tools on this path: it marks the ROUTE, not
+        // whether a tool ran, and callers key off it, so the value is deliberately left alone.
         toolLess: true,
       };
 
