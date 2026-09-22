@@ -16,6 +16,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Register the harness:core-test-fixtures guard: the staged core fixture closure, its Dockerfile COPY and allowlist, and the probe-only advertisement.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | Register the post-deploy live verification guard alongside the other deploy-contract regressions: a deploy that reports DEPLOYED while Jarvis answers nothing and no ticket can be dispatched is reporting the wrong thing, and this is the suite that keeps that gate from decaying back into an advisory.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Attach the two guards this PR adds - pool-connection-errors and api-storm-probe - to the scenario that already carries their deploy/pool siblings. A test file on disk is not Test Lab registration (CLAUDE.md), and the review found both unattached.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | Attach installer-offlan-refusal to the scenario that already carries the deploy/install-contract guards. It is the same family as deploy-preview-source and deploy-rollback-outcome - a guard that RUNS the shipped script rather than reading it - and it covers the one decision that turns an operator's explicit -OffLan into a join code: with Headscale stopped the installer used to answer an explicit request with a LAN-only OSJOIN1 and say nothing. There is no runnable Lab step for it on purpose: the step would have to install a swarm on the box the Lab is running on. A test file on disk is not Test Lab registration (CLAUDE.md).
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -86,6 +87,7 @@ export const INSTALLATION_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/managed-postgres-pool-budget.spec.ts' },
     { level: 'integration', path: 'tests/unit/pool-connection-errors.spec.ts' },
     { level: 'integration', path: 'tests/unit/api-storm-probe.spec.ts' },
+    { level: 'integration', path: 'tests/unit/installer-offlan-refusal.spec.ts' },
   ],
   steps: [{ id: 'catalog', app: 'test-lab', label: 'Installed package cases', run: installedCatalog }],
 }];
