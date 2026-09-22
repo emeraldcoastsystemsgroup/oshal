@@ -6,6 +6,8 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | OpenAI-COMPATIBLE: constructor honors config.baseUrl (drives any chat-completions gateway — a user's BYO endpoint, LiteLLM, LM Studio, Ollama, Groq, …); added generateResponse() matching the BedrockProvider/Cline contract so TaskController can drive a BYO-LLM connection with no special-casing.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Bound OpenRouter reasoning to a low, non-disclosed budget for interactive completions, normalized multipart text, and fail explicitly when a gateway returns reasoning tokens without a final answer.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | A turn spent attempting a tool call is no longer thrown away. generateResponse now reads tool_calls AND the legacy function_call field and surfaces both as tool_use blocks. Because it declares no tools, any call is one the model invented from the system prompt's "you have access to N tools", so a call carrying its own id completes the exchange once with a truthful no-tools-available result to obtain a direct answer; a gateway-filtered malformed attempt, which leaves no call id to answer, restates the constraint as a user turn instead. A call read out of the legacy function_call field was surfaced but did NOT complete that way - that field carries no id, and the continuation built for it was not a valid tool exchange, so it fell through to the empty-answer error; entry 5 is what makes that shape complete. Measured live on generativelanguage.googleapis.com 2026-09-22: gemini-2.5-flash and gemini-3.8-flash both return { role, tool_calls } with no content key, and 3.8-flash also returns finish_reason "function_call_filter: MALFORMED_FUNCTION_CALL" with message keys [extra_content, role]. The empty-answer error and warning now name provider, model, finish_reason and output tokens, report an ABSENT finish_reason as absent instead of defaulting the diagnostic to "stop" (that default is what made the genuinely empty turn read as a normal completion), and carry a content-free fingerprint of the response SHAPE in the message string, because the console transport prints only the message and drops metadata. Usage accumulates across both legs and honours an endpoint-reported total_tokens rather than assuming input + output.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | The tool-call continuation now builds its replayed assistant turn FROM the normalized calls instead of passing the raw tool_calls array through, because the two do not line up: normalizeToolCalls synthesizes call_${index} for a call that arrived without an id and for the legacy function_call field (which has no tool_calls array at all), and drops a call with no function name. Replaying the raw array while answering the normalized ids produced an assistant turn and a tool turn that disagreed in three shapes - a legacy function_call, a tool_calls entry with no id, and several calls of which one was unnamed - and a chat-completions gateway rejects that pairing with a 400, which landed in the continuation's catch. The recovery entry 4 claims therefore never happened for those shapes, and the caller was billed for two legs to receive the same empty-answer error. A call with no function name is not replayed at all: there is no name to attribute a result to, so it cannot be answered, and a declared-but-unanswered call is the same 400. rawArguments, which is the text replayed verbatim, now also carries arguments a gateway sent already parsed - the wire format is a JSON string, and dropping a non-string to '' told the model it had called with no arguments when it had not.
  */
 
 /**
@@ -91,38 +93,101 @@ class OpenAIProvider extends LLMService {
     const completion = await this.client.chat.completions.create(request);
 
     const choice = completion.choices?.[0];
-    const content = normalizeTextContent(choice?.message?.content);
-    const stopReason = choice?.finish_reason || 'stop';
-    const usage = {
-      inputTokens: completion.usage?.prompt_tokens || 0,
-      outputTokens: completion.usage?.completion_tokens || 0,
-      totalTokens: completion.usage?.total_tokens
-        || ((completion.usage?.prompt_tokens || 0) + (completion.usage?.completion_tokens || 0)),
-      cacheCreationTokens: 0,
-      cacheReads: 0,
-    };
+    let content = normalizeTextContent(choice?.message?.content);
+    let stopReason = choice?.finish_reason || 'stop';
+    // `stopReason` defaults to 'stop' to keep the result contract stable, but the DIAGNOSTIC must
+    // never launder an absent field into a normal completion. Measured 2026-09-22: the intermittent
+    // empty turn comes back as a choice with NO finish_reason and a message whose only key is
+    // `role`; the default made the log read `finish_reason "stop"`, which is why the first reading
+    // of this failure went looking for a model that had answered normally.
+    const reportedFinishReason = choice?.finish_reason || '(absent)';
+    const usage = addUsage(emptyUsage(), completion.usage);
+    // A turn can come back carrying ONLY function/tool-call parts and no text at all. That is not
+    // an empty turn — the answer is in `tool_calls` (or the legacy `function_call`), fields the
+    // text extractor cannot see. Reading them is what stops a paid completion being dropped.
+    const toolCalls = normalizeToolCalls(choice?.message);
+
+    // The same root cause has two shapes, and BOTH were measured live on 2026-09-22. The model is
+    // told in prose that it has tools (the OSHAL system prompt says so) while this request declares
+    // none, so it tries to call one anyway: either the call comes back in `tool_calls`, or the
+    // gateway filters a malformed attempt and returns a message with neither text nor tool calls
+    // (`finish_reason: "function_call_filter: MALFORMED_FUNCTION_CALL"`, message keys
+    // `["extra_content","role"]`). Either way the turn is billed and unreadable, so both recover
+    // the same way: say plainly that no tool is available and ask for a direct answer.
+    if (!content && attemptedToolCall(choice, toolCalls)) {
+      logger.warn(
+        'OpenAI-compatible endpoint attempted a tool call and returned no text '
+        + `(${this.model} @ ${this.endpointLabel}, finish_reason "${reportedFinishReason}", `
+        + `${toolCalls.length} readable call(s)) — asking once for a direct answer`,
+        {
+          model: this.model,
+          endpoint: this.endpointLabel,
+          stopReason: reportedFinishReason,
+          toolCalls: toolCalls.map((call) => call.name),
+        },
+      );
+      const resolved = await this.resolveUnsolicitedToolCalls(request, choice?.message, toolCalls);
+      if (resolved) {
+        content = resolved.content;
+        stopReason = resolved.stopReason;
+        addUsage(usage, resolved.usage);
+      }
+    }
+
     // The BYO endpoint owns the user's billing; we report tokens but not a $cost we
     // cannot know (their per-token price is theirs, not ours). cost stays 0 here.
+    // Logged AFTER any continuation so the figure is everything this call actually spent.
     const latency = Date.now() - startTime;
     logger.info(`OpenAI-compatible call (${this.model} @ ${this.endpointLabel}): ${latency}ms, ${usage.totalTokens} tokens`);
 
     if (!content) {
       const reasoning = choice?.message?.reasoning || choice?.message?.reasoning_content;
-      logger.warn('OpenAI-compatible endpoint returned no final answer', {
+      const hadReasoning = Boolean(reasoning || choice?.message?.reasoning_details?.length);
+      const detail = describeEmptyAnswer({
         model: this.model,
         endpoint: this.endpointLabel,
-        stopReason,
+        stopReason: reportedFinishReason,
         outputTokens: usage.outputTokens,
-        hadReasoning: Boolean(reasoning || choice?.message?.reasoning_details?.length),
+        toolCallCount: toolCalls.length,
+        attemptedToolCall: attemptedToolCall(choice, toolCalls),
+        hadReasoning,
       });
-      const error = new Error('OpenAI-compatible endpoint returned no final answer');
+      // The structure goes in the MESSAGE, not only the metadata: the console transport
+      // (utils/logger.js) prints `${timestamp} [${level}]: ${message}` and drops the meta object
+      // entirely, so a fingerprint left in metadata would never reach `docker logs` — which is
+      // exactly where someone looks when this recurs.
+      const structure = describeResponseStructure(completion, choice);
+      logger.warn(
+        `OpenAI-compatible endpoint returned no final answer — ${detail}; response shape: ${JSON.stringify(structure)}`,
+        {
+          model: this.model,
+          endpoint: this.endpointLabel,
+          stopReason: reportedFinishReason,
+          outputTokens: usage.outputTokens,
+          toolCalls: toolCalls.map((call) => call.name),
+          hadReasoning,
+          responseStructure: structure,
+        },
+      );
+      // The message names the provider, the model and WHY the turn produced nothing, because it is
+      // the string that reaches the caller and the swarm log; a bare "no final answer" told the
+      // next reader only that something went wrong somewhere. The phrase itself is load-bearing and
+      // must not be reworded away: reportResolvedLlmFailure matches it (with EMPTY_FINAL_ANSWER)
+      // to decide whether a free/platform lane may rotate.
+      const error = new Error(`OpenAI-compatible endpoint returned no final answer — ${detail}`);
       error.code = 'EMPTY_FINAL_ANSWER';
       throw error;
     }
 
     return {
       content,
-      contentBlocks: content ? [{ type: 'text', text: content }] : [],
+      contentBlocks: [
+        // Surfaced, never hidden: a caller that can run a tool loop sees exactly what was requested.
+        ...toolCalls.map((call) => ({
+          type: 'tool_use', id: call.id, name: call.name, input: call.input,
+        })),
+        { type: 'text', text: content },
+      ],
       stopReason,
       usage,
       cost: 0,
@@ -130,6 +195,88 @@ class OpenAIProvider extends LLMService {
       model: this.model,
       provider: this.baseUrl ? 'byo-llm' : 'openai',
     };
+  }
+
+  /**
+   * @description Answers a turn that came back as tool calls when this request offered NO tools.
+   *
+   * generateResponse never sends a `tools` array (see the request built above), so any function
+   * call in the response is one the model invented from prose in the prompt — the OSHAL system
+   * prompt tells it that tools exist, and some models act on that even with nothing declared.
+   * Measured on generativelanguage.googleapis.com 2026-09-22: gemini-3.8-flash returns
+   * `{ role: 'assistant', tool_calls: [...] }` with no `content` key at all.
+   *
+   * There is nothing to execute, so this completes the exchange the protocol's own way — the
+   * assistant turn, then one `tool` result per call stating truthfully that no tool was available —
+   * and asks for a direct answer. It is ONE bounded continuation, not a blind retry: it runs only
+   * when the first response carried tool calls and no text, and a failure falls through to the
+   * honest empty-answer error rather than looping.
+   *
+   * Both halves of that pair are built from `toolCalls`, so the ids answered are by construction
+   * the ids declared. `assistantMessage` contributes only its text content — never its raw
+   * `tool_calls`, whose ids are not the ids this answers.
+   * @param {Object} request - the original chat-completions request (tool-less by construction)
+   * @param {Object} assistantMessage - the raw assistant message that carried the tool calls; only
+   *   its `content` is used, because its call ids are not the normalized ones being answered
+   * @param {Array<{id:string,name:string,rawArguments:string}>} toolCalls - the normalized calls
+   * @returns {Promise<{content:string,stopReason:string,usage:Object}|null>} the follow-up, or null
+   */
+  async resolveUnsolicitedToolCalls(request, assistantMessage, toolCalls) {
+    // With readable calls there is a tool_call_id to answer, so the exchange is completed the
+    // protocol's own way. A filtered/malformed attempt leaves no id to answer — there the only
+    // available move is to restate the constraint as a user turn.
+    //
+    // The replayed assistant turn is built FROM the normalized calls, never from the raw
+    // `assistantMessage.tool_calls`. The two are not interchangeable: normalizeToolCalls
+    // synthesizes an id (`call_${index}`) for a call that arrived without one, and reads the
+    // legacy `function_call` field that has no `tool_calls` array behind it at all. Passing the
+    // raw array through while answering the normalized ids produced an assistant turn and a tool
+    // turn that did not line up — an id answered that the assistant turn never declared, or a
+    // declared id left unanswered — which every chat-completions gateway rejects with a 400. That
+    // landed in the catch below, so the recovery never happened and the caller was billed twice
+    // for the empty answer it got anyway. Building both halves from one list is what makes the
+    // pairing an invariant rather than a coincidence.
+    //
+    // A call the endpoint sent with no function name is absent here by construction
+    // (normalizeToolCalls filters it) and is therefore NOT replayed. That is deliberate: there is
+    // no name to attribute a result to, so it cannot be answered, and an unanswered call in the
+    // replay is the same 400. It is not lost — its tokens are in the usage total, and it is part
+    // of what made attemptedToolCall true and brought us here.
+    const continuation = toolCalls.length > 0
+      ? [
+        {
+          role: 'assistant',
+          content: assistantMessage?.content ?? null,
+          tool_calls: toolCalls.map((call) => ({
+            id: call.id,
+            type: 'function',
+            function: { name: call.name, arguments: call.rawArguments },
+          })),
+        },
+        ...toolCalls.map((call) => ({
+          role: 'tool', tool_call_id: call.id, content: NO_TOOL_AVAILABLE_RESULT,
+        })),
+      ]
+      : [{ role: 'user', content: NO_TOOL_AVAILABLE_INSTRUCTION }];
+    try {
+      const completion = await this.client.chat.completions.create({
+        ...request,
+        messages: [...request.messages, ...continuation],
+      });
+      const choice = completion.choices?.[0];
+      return {
+        content: normalizeTextContent(choice?.message?.content),
+        stopReason: choice?.finish_reason || 'stop',
+        usage: completion.usage,
+      };
+    } catch (err) {
+      logger.warn('OpenAI-compatible tool-call continuation failed', {
+        model: this.model,
+        endpoint: this.endpointLabel,
+        error: err && err.message,
+      });
+      return null;
+    }
   }
 
   /**
@@ -430,6 +577,173 @@ class OpenAIProvider extends LLMService {
 
     return inputCost + outputCost;
   }
+}
+
+/**
+ * The tool result sent back when a model calls a tool this request never offered. It is the literal
+ * truth of the situation, not a stand-in answer, so the model re-plans instead of waiting on a
+ * result that can never arrive.
+ */
+const NO_TOOL_AVAILABLE_RESULT = JSON.stringify({
+  error: 'no_tools_available',
+  detail: 'This request offered no tools, so nothing was executed. Answer the user directly, in text, '
+    + 'using only what is already in this conversation.',
+});
+
+/**
+ * The same statement as a user turn, for a filtered or malformed call that left no tool_call_id to
+ * answer. Still a statement of fact about the request, not a hint about what to say.
+ */
+const NO_TOOL_AVAILABLE_INSTRUCTION = 'No tools are available in this request, so no tool call can '
+  + 'be executed and any you attempted did not run. Answer the previous message directly, in plain '
+  + 'text, using only what is already in this conversation.';
+
+/**
+ * Finish reasons a gateway uses when the model tried to call a function and the attempt, rather
+ * than the answer, ended the turn — including Google's `MALFORMED_FUNCTION_CALL` /
+ * `function_call_filter`, and OpenAI's legacy `function_call`.
+ */
+const TOOL_CALL_FINISH_REASON = /function[_\s-]?call|tool[_\s-]?calls?/i;
+
+/**
+ * @description Did this turn end because the model tried to use a tool rather than answer?
+ *
+ * True when there are readable calls, and ALSO when the gateway filtered a malformed attempt and
+ * returned a message with neither text nor calls — the second shape is invisible in the message
+ * body and only the finish reason names it.
+ * @param {Object} [choice] - the first choice of the completion
+ * @param {Array} toolCalls - the normalized calls read out of that choice
+ * @returns {boolean} true when the turn was spent attempting a tool call
+ */
+function attemptedToolCall(choice, toolCalls) {
+  if (toolCalls.length > 0) return true;
+  return TOOL_CALL_FINISH_REASON.test(String(choice?.finish_reason || ''));
+}
+
+/** @description A zeroed usage record in the shared provider shape. */
+function emptyUsage() {
+  return { inputTokens: 0, outputTokens: 0, totalTokens: 0, cacheCreationTokens: 0, cacheReads: 0 };
+}
+
+/**
+ * @description Folds one OpenAI-compatible `usage` block into a running total, so a turn that took
+ * a continuation reports every token it spent rather than only the last leg's.
+ * @param {Object} totals - the accumulator, mutated and returned
+ * @param {Object} [usage] - a raw `completion.usage` block, if the endpoint returned one
+ * @returns {Object} the accumulator
+ */
+function addUsage(totals, usage) {
+  const input = usage?.prompt_tokens || 0;
+  const output = usage?.completion_tokens || 0;
+  totals.inputTokens += input;
+  totals.outputTokens += output;
+  // Vendors differ: Google's compatibility surface counts thinking tokens in `total_tokens` but not
+  // in `completion_tokens`, so the reported total is NOT always input + output. Prefer what the
+  // endpoint reported and only compute a total when it reported none.
+  totals.totalTokens += usage?.total_tokens || (input + output);
+  return totals;
+}
+
+/**
+ * @description The argument payload EXACTLY as the endpoint sent it, as a wire-format string.
+ *
+ * `rawArguments` is not a convenience copy: it is the text replayed verbatim into the assistant
+ * turn of the tool-call continuation, so it must be what arrived, never a re-serialization of the
+ * parsed `input` (which would silently rewrite key order, number formatting and any argument that
+ * failed to parse). The chat-completions wire format is a JSON string and that path is a straight
+ * pass-through. Some OpenAI-compatible gateways emit `arguments` already parsed; serializing that
+ * object once here is the only way it survives into the replay, and the alternative — dropping it
+ * to an empty string — would tell the model it called with no arguments when it did not.
+ * @param {*} value - `call.function.arguments` as the endpoint returned it
+ * @returns {string} the wire-format argument string, or '' when there is nothing to carry
+ */
+function toRawArguments(value) {
+  if (typeof value === 'string') return value;
+  if (value === undefined || value === null) return '';
+  try { return JSON.stringify(value); } catch { return ''; }
+}
+
+/**
+ * @description Normalizes an assistant message's function/tool calls into the tool_use shape the
+ * rest of the harness speaks.
+ *
+ * Reads BOTH the current `tool_calls` array and OpenAI's deprecated single `function_call` field,
+ * because "OpenAI-compatible" gateways are not uniform about which one they emit and a call sitting
+ * in the field this did not check is indistinguishable from an empty turn. Arguments that are not
+ * valid JSON are kept verbatim under `raw` rather than dropped — a malformed argument is still
+ * evidence of what the model tried to do.
+ *
+ * Two properties of the returned list are relied on by resolveUnsolicitedToolCalls and must not be
+ * relaxed: `id` is ALWAYS a usable string (synthesized as `call_${index}` when the endpoint sent
+ * none, which is also the only id the legacy `function_call` shape can have), and `name` is always
+ * a non-empty string, because a call without one is filtered out here. Those two together are what
+ * let the continuation build a protocol-valid assistant turn out of this list alone.
+ * @param {Object} [message] - `choice.message` as the endpoint returned it
+ * @returns {Array<{id:string,name:string,input:Object,rawArguments:string}>} normalized calls
+ */
+function normalizeToolCalls(message) {
+  const raw = Array.isArray(message?.tool_calls)
+    ? message.tool_calls
+    : message?.function_call ? [{ id: null, function: message.function_call }] : [];
+  return raw
+    .filter((call) => call && call.function && call.function.name)
+    .map((call, index) => {
+      const rawArguments = toRawArguments(call.function.arguments);
+      let input;
+      try { input = rawArguments ? JSON.parse(rawArguments) : {}; } catch { input = { raw: rawArguments }; }
+      return { id: String(call.id || `call_${index}`), name: String(call.function.name), input, rawArguments };
+    });
+}
+
+/**
+ * @description One sentence naming the provider, the model and the reason a completion carried no
+ * usable answer. This is what a human reads in the log and in the surfaced error, so it states the
+ * cause rather than the symptom.
+ * @param {{model:string,endpoint:string,stopReason:string,outputTokens:number,toolCallCount:number,attemptedToolCall:boolean,hadReasoning:boolean}} facts
+ * @returns {string} the human-readable cause
+ */
+function describeEmptyAnswer(facts) {
+  const why = facts.toolCallCount > 0
+    ? `it answered with ${facts.toolCallCount} tool call(s) and no text, and the follow-up for a direct answer produced none either`
+    : facts.attemptedToolCall
+      ? 'it spent the turn on a tool call that this request never offered and the gateway returned no readable call, '
+        + 'and the follow-up for a direct answer produced none either'
+      : facts.hadReasoning
+        ? 'it returned reasoning tokens but no final message'
+        : 'the response carried no text, no tool calls and no reasoning';
+  return `${facts.model} @ ${facts.endpoint} finished with "${facts.stopReason}" after `
+    + `${facts.outputTokens} output token(s): ${why}`;
+}
+
+/**
+ * @description A content-free fingerprint of a completion's SHAPE, for the log.
+ *
+ * The empty-answer failure is intermittent (measured 2026-09-22: four calls to the same model on
+ * the same config, two empty and two fine), so the only way the next occurrence becomes evidence
+ * instead of a shrug is if the adapter records what came back at the moment it could not read it.
+ * Keys, types, flags and counts ONLY — never prompt or completion text, and nothing key-shaped.
+ * @param {Object} [completion] - the raw chat-completions response
+ * @param {Object} [choice] - the first choice within it
+ * @returns {Object} a loggable structural fingerprint
+ */
+function describeResponseStructure(completion, choice) {
+  const message = choice?.message;
+  const content = message?.content;
+  return {
+    topLevelKeys: completion && typeof completion === 'object' ? Object.keys(completion).sort() : null,
+    choiceCount: Array.isArray(completion?.choices) ? completion.choices.length : null,
+    choiceKeys: choice && typeof choice === 'object' ? Object.keys(choice).sort() : null,
+    messageKeys: message && typeof message === 'object' ? Object.keys(message).sort() : null,
+    contentType: content === null ? 'null' : Array.isArray(content) ? 'array' : typeof content,
+    contentLength: typeof content === 'string' ? content.length : Array.isArray(content) ? content.length : null,
+    contentPartTypes: Array.isArray(content)
+      ? content.map((part) => (part && typeof part === 'object' ? String(part.type) : typeof part))
+      : null,
+    toolCallCount: Array.isArray(message?.tool_calls) ? message.tool_calls.length : null,
+    usageKeys: completion?.usage && typeof completion.usage === 'object'
+      ? Object.keys(completion.usage).sort() : null,
+    refusal: typeof message?.refusal === 'string' ? 'present' : null,
+  };
 }
 
 /** @description True only for OpenRouter's hosted OpenAI-compatible API. */
