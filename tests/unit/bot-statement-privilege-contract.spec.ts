@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The bot grant contract, proved by RUNNING the statements. Three gaps were open on the box at once and every one of them was caught and swallowed: the ticket_task_links upsert answered permission denied inside a warn-level catch, the ticket_agent_assignments upsert would have done the same the moment a bot reached it, and durable swarm-memory recall failed closed to "no memory" behind one warning. No existing guard could see any of them, because every guard over this contract reads the allowlist and compares it to itself - and a column allowlist that is missing a column is perfectly self-consistent. This one provisions a real oshal_bot on a private server from the SHIPPED grant text, then issues each statement the bot runtime actually issues and requires it to succeed; a statement needing a privilege the allowlist does not carry raises 42501 and the case is red. The allowlist's two halves (the SQL that grants and the map that verifies) are compared to each other here as well, so updating one and not the other is also red.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The reader helper had to be able to say WITHHELD. Returning only the permitted rows made a row the database refused this reader look exactly like a work item with no ledger row - and the recall path lets a missing row through, so the memory came back judged only by the metadata copied into the vector index at index time. Two cases cover it: the helper answers for every id that exists and marks each answer readable or withheld while disclosing nothing but the identifier of a withheld one, and the real recall path over the real oshal_bot pool DENIES a withheld row, still returns an absent-row memory untrusted, and reaches the same verdict as the controller's untouched table reach on the same three work items.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | The contract gained its first OPTIONAL table: rag_chunks exists only where the vector extension does, and this fixture is postgres:16-alpine, which has none. A grant on an absent table would fail the whole suite at setup, so grants are now applied only where their table exists on the fixture, and the set skipped must be EXACTLY the exported OPTIONAL_BOT_CONTRACT_TABLES - a typo'd table name cannot be skipped silently. Also drives the bot-node conversation read (chat-search-source.ts) as oshal_bot, so the contract change that admits it is measured here the way every other bot statement is.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -17,6 +18,7 @@ import type { RagSearchResult, RagService } from '../../src/features/rag';
 import {
   BOT_COLUMN_PRIVILEGES,
   BOT_TABLE_PRIVILEGES,
+  OPTIONAL_BOT_CONTRACT_TABLES,
 } from '../../scripts/governance/provision-app-role.mjs';
 
 const root = process.cwd();
@@ -54,6 +56,13 @@ function parseTableGrants(): ParsedGrant[] {
 
 const tableGrants = parseTableGrants();
 const otherGrants = [...finalPhase.matchAll(OTHER_BOT_GRANTS)].map((m) => m[0]);
+/**
+ * Helpers the SQL grants to oshal_bot whose defining migration (094-derived-owner-rls.sql) also
+ * walls tables this fixture does not carry, so it is not in the migration list above. The grant
+ * is skipped here and exercised over the real helper by
+ * tests/unit/bot-node-read-only-tools-owner-scope-postgres.spec.ts.
+ */
+const HELPERS_OUTSIDE_THIS_FIXTURE = new Set(['public.oshal_owns_task(text)']);
 
 const fixture = new DisposablePostgres({
   purpose: 'bot-statement-privileges',
@@ -138,7 +147,27 @@ beforeAll(async () => {
   await owner.query('REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM oshal_bot');
   await owner.query('REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM oshal_bot');
   await owner.query('REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC, oshal_bot');
-  for (const grant of [...tableGrants.map((g) => g.statement), ...otherGrants]) {
+  // A contract table this image cannot host (rag_chunks needs the vector extension) is skipped,
+  // and only that: the skipped set must be exactly the exported optional set, so a misspelled
+  // table in the SQL fails here rather than vanishing from the fixture unnoticed.
+  const skipped = new Set<string>();
+  for (const grant of tableGrants) {
+    const exists = (await owner.query('SELECT to_regclass($1) AS oid', [`public.${grant.table}`])).rows[0].oid;
+    if (exists) await owner.query(grant.statement);
+    else skipped.add(grant.table);
+  }
+  expect([...skipped].sort()).toEqual([...OPTIONAL_BOT_CONTRACT_TABLES.keys()].sort());
+  // Same discipline for helpers: a function grant whose helper this fixture does not carry is
+  // skipped only if it is named in HELPERS_OUTSIDE_THIS_FIXTURE, never silently.
+  for (const grant of otherGrants) {
+    const helper = /ON FUNCTION (public\.\w+\([^)]*\))/.exec(grant)?.[1];
+    if (helper) {
+      const exists = (await owner.query('SELECT to_regprocedure($1) AS oid', [helper])).rows[0].oid;
+      if (!exists) {
+        expect(HELPERS_OUTSIDE_THIS_FIXTURE.has(helper), `${helper} is granted in the SQL but absent on this fixture`).toBe(true);
+        continue;
+      }
+    }
     await owner.query(grant);
   }
   bot = fixture.rolePool('oshal_bot');
@@ -341,6 +370,21 @@ const BOT_STATEMENTS: Array<{ name: string; site: string; sql: string; params: (
     sql: `SELECT layer_type, scope, priority, prompt_fragment, metadata
           FROM persona_layers WHERE scope = 'global' AND enabled = true ORDER BY priority ASC`,
     params: () => [],
+  },
+  {
+    name: 'chat_tasks + chat_messages — the bot-node conversation read',
+    site: 'src/features/global-search/services/chat-search-source.ts',
+    sql: `SELECT t.task_id, t.title, t.title AS body, TRUE AS matched_title, t.updated_at AS ts
+            FROM chat_tasks t
+           WHERE t.owner_sub = $1 AND t.title ILIKE $2 ESCAPE '\'
+           UNION ALL
+          SELECT t.task_id, t.title, m.text AS body, FALSE AS matched_title, m.created_at AS ts
+            FROM chat_messages m
+            JOIN chat_tasks t ON t.task_id = m.task_id AND t.owner_sub = $1
+           WHERE m.text ILIKE $2 ESCAPE '\'
+           ORDER BY ts DESC
+           LIMIT $3`,
+    params: () => [OWNER, '%contract%', 10],
   },
   {
     name: 'chat_tasks — read the cost rollup',

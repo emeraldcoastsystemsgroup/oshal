@@ -6,6 +6,7 @@
 -- 2 | maintainer@emeraldcoastsystemsgroup.com | Reset legacy app table and sequence default grants before establishing the exact runtime privilege allowlist.
 -- 3 | maintainer@emeraldcoastsystemsgroup.com | Add the derived application-execution-ownership helper (migration 142) to the bot contract: EXECUTE for oshal_app and oshal_bot, never PUBLIC. A bot node's ADR-149 posture guard needs that one decision; the tables behind it stay outside the contract, which is why migration 140's direct grants were stripped here on every boot.
 -- 4 | maintainer@emeraldcoastsystemsgroup.com | Close three measured bot gaps without widening the contract. (a) Both ticket upserts read the columns their conflict target and update expression name, so PostgreSQL requires SELECT on exactly those columns: ticket_task_links gains SELECT(role) and ticket_agent_assignments gains SELECT(ticket_id, agent_id, role). Measured by running the two statements as oshal_bot against a private server with the shipped migrations - with the previous grants both raise 42501 permission denied, with these they succeed, and created_at/assigned_at stay ungranted because neither statement needs them. (b) The durable swarm-memory recall reaches the new derived helper (migration 152) instead of the table: oshal_swarm_memory stays entirely outside the contract, and the owner rule lives in SQL rather than in an application filter. (c) the agent-tool resolver's join selects install_verified, tool_config, created_at and updated_at, none of which the allowlist carried, so agent_tools answered 42501 too - measured the same way. (d) oshal_bot's connection limit follows the declared bot fleet - 38 bot-node services at DB_MAX_CONNECTIONS=3 is 114 - instead of 8, which every fleet boot exhausted; the ceiling still fits inside max_connections=200 beside oshal_app's 24.
+-- 5 | maintainer@emeraldcoastsystemsgroup.com | Operator decision 2026-09-22 ("column-level SELECT via the governed allowlist; RLS scopes rows"; SECURITY DEFINER helpers declined): the bot-node read-only question tools read through oshal_bot and the contract carried none of it - measured live as no SELECT on chat_tasks, chat_messages or rag_chunks and no EXECUTE on oshal_owns_task. chat_tasks SELECT gains title and updated_at; chat_messages enters with SELECT(task_id, text, created_at); rag_chunks enters with SELECT(chunk_id, collection, document, embedding, fts, metadata), granted inside a DO block because migration 070 creates that table only where the vector extension exists; oshal_owns_task(text) becomes executable by oshal_bot because the chat_messages policy calls it. Each list is exactly the columns the reading SQL names (chat-search-source.ts, pgvector-rag-engine.ts) and no more; the verifier in provision-app-role.mjs carries the same lists.
 -- ===========================================================================
 -- app-role-provisioning.sql  (ADR-076)
 --
@@ -365,10 +366,14 @@ GRANT SELECT ON TABLE public.work_items TO oshal_bot;
 GRANT UPDATE (status, assigned_agent_id, execution_output, updated_at)
   ON TABLE public.work_items TO oshal_bot;
 
+-- title and updated_at are what the bot-node conversation read (chat-search-source.ts) selects
+-- beyond the cost-rollup columns already here; message_count, turn_count, processing_mode and
+-- created_at are named by no bot read and stay out.
 GRANT SELECT (
   task_id, status, agent_id, provider_id, total_input_tokens,
   total_output_tokens, total_input_cost, total_output_cost, total_cost,
-  total_requests, cost_currency, usage_by_model, owner_sub, metadata
+  total_requests, cost_currency, usage_by_model, owner_sub, metadata,
+  title, updated_at
 ) ON TABLE public.chat_tasks TO oshal_bot;
 GRANT INSERT (
   task_id, title, status, processing_mode, agent_id, provider_id, message_count,
@@ -381,6 +386,28 @@ GRANT UPDATE (
   total_input_cost, total_output_cost, total_cost, total_requests,
   cost_currency, usage_by_model, owner_sub, metadata, updated_at
 ) ON TABLE public.chat_tasks TO oshal_bot;
+
+-- The conversation read joins chat_messages on task_id and selects text and created_at; role,
+-- type, content_blocks and metadata are named by no bot read. Rows are walled by the
+-- oshal_owns_task policy (migration 094), which is why that helper is granted below.
+GRANT SELECT (task_id, text, created_at)
+  ON TABLE public.chat_messages TO oshal_bot;
+
+-- Exactly what the pgvector engine's reads name (pgvector-rag-engine.ts): chunk_id, document and
+-- metadata in the select list; collection in every WHERE and in listCollections; embedding for
+-- the vector leg's distance and NULL check; fts for the lexical leg's match and rank. owner_sub,
+-- tenant_id and created_at are named by no read - the row policy compares owner_sub on its own.
+-- Conditional because migration 070 creates rag_chunks only where the vector extension exists
+-- and skips with a NOTICE otherwise; provision-app-role.mjs tolerates the table's absence on
+-- exactly that condition (OPTIONAL_BOT_CONTRACT_TABLES).
+DO $$
+BEGIN
+  IF to_regclass('public.rag_chunks') IS NOT NULL THEN
+    GRANT SELECT (chunk_id, collection, document, embedding, fts, metadata)
+      ON TABLE public.rag_chunks TO oshal_bot;
+  END IF;
+END
+$$;
 
 GRANT INSERT (
   task_id, owner_sub, agent_id, provider_id, model_id, cost_usd,
@@ -423,17 +450,18 @@ RESET ROLE;
 -- application execution ownership (which application claims a bot or tool,
 -- and whether it is protected - the ADR-149 posture guard a bot node runs
 -- before accepting any execution), and durable swarm-memory recall scoped to
--- the reader (shared memories plus the reader's own). The bot gets those
--- decisions, never the tables behind them - oshal_swarm_memory in particular
--- stays entirely outside the contract. Every SECURITY DEFINER helper is
--- private by default; the app gets all five.
+-- the reader (shared memories plus the reader's own), and task ownership,
+-- which the chat_messages row policy calls for every message a bot reads.
+-- The bot gets those decisions, never the tables behind them -
+-- oshal_swarm_memory in particular stays entirely outside the contract.
+-- Every SECURITY DEFINER helper is private by default; the app gets all five.
 REVOKE EXECUTE ON FUNCTION public.oshal_is_tenant_member(text) FROM PUBLIC, oshal_bot;
 REVOKE EXECUTE ON FUNCTION public.oshal_owns_task(text) FROM PUBLIC, oshal_bot;
 REVOKE EXECUTE ON FUNCTION public.oshal_owns_ticket(uuid) FROM PUBLIC, oshal_bot;
 REVOKE EXECUTE ON FUNCTION public.oshal_application_execution_claims(text, text, text, boolean) FROM PUBLIC, oshal_bot;
 REVOKE EXECUTE ON FUNCTION public.oshal_swarm_memory_readable(text[], text) FROM PUBLIC, oshal_bot;
 GRANT EXECUTE ON FUNCTION public.oshal_is_tenant_member(text) TO oshal_app;
-GRANT EXECUTE ON FUNCTION public.oshal_owns_task(text) TO oshal_app;
+GRANT EXECUTE ON FUNCTION public.oshal_owns_task(text) TO oshal_app, oshal_bot;
 GRANT EXECUTE ON FUNCTION public.oshal_owns_ticket(uuid) TO oshal_app, oshal_bot;
 GRANT EXECUTE ON FUNCTION public.oshal_application_execution_claims(text, text, text, boolean) TO oshal_app, oshal_bot;
 GRANT EXECUTE ON FUNCTION public.oshal_swarm_memory_readable(text[], text) TO oshal_app, oshal_bot;
