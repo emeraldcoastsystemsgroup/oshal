@@ -8,10 +8,11 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ESPN loginUrl now opens ESPN's own sign-in entry (`/login`, returnURL back to the Fantasy home) instead of the Fantasy home page. On the home page the first control a user reaches for — the person icon's Log In — does nothing in the node's Electron window, and the one that works sat in a side card; `/login` puts the MyDisney email + password form up with no click, and signing in or dismissing it returns the window to the Fantasy home the old entry opened on. Pinned by tests/unit/node-espn-cookie-login.spec.ts; `npm run test:espn-login` holds live ESPN to it.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Google joins the pushable logins as a THIRD row, not a third code path: the table already carried the file/import/status triple, so widening PushableLogin plus one LOGIN_TARGETS entry and one parseLoginFile arm is the whole client half, and the popup-login + push flow picks it up with no special-casing. The file is `.gemini/oauth_creds.json` — read from the installed @google/gemini-cli bundle, where packages/core/src/config/storage.ts declares `OAUTH_FILE = "oauth_creds.json"` under `getGlobalGeminiDir()` = `<home>/.gemini`. Its shape is the google-auth-library Credentials object (snake_case access_token/refresh_token), which is why it gets its own arm rather than reusing codex's `tokens` block or claude's `claudeAiOauth` block.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The Google target is marked DORMANT rather than pushable, and isPushableLogin now reads that flag off the table instead of listing ids. Measured on the operator's box 2026-09-22: choosing "Sign in with Google" in the `gemini` CLI answers "Failed to sign in. Message: This client is no longer supported for Gemini Code Assist for individuals. To continue using Gemini, please migrate to the Antigravity suite of products: https://antigravity.google". oauth_creds.json therefore cannot be produced by a sign-in any more, so a Push to swarm button on that row is a button with nothing to send - the same class of defect as offering a brain option nothing can run. The row, the file shape, the parse arm and the swarm-side import route are all KEPT: they are correct, they are proven by their own guards, and they cost nothing while dormant. Reviving the row is deleting one `dormant` block.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Antigravity joins the same push rail: its Windows Credential Manager blob is the vendor JSON consumed by agy's headless token file, so the node validates and posts that shape to the dedicated import/status endpoints.
  */
 
-/** The vendor logins the swarm can adopt (codex via platform promotion, claude + gemini via ADR-137 A). */
-export type PushableLogin = 'codex' | 'claude' | 'gemini';
+/** The vendor logins the swarm can adopt through the authenticated operator rail. */
+export type PushableLogin = 'codex' | 'claude' | 'gemini' | 'antigravity';
 
 /** Where a vendor login lives on this machine and where the swarm accepts it. */
 export interface LoginTarget {
@@ -65,6 +66,15 @@ export const LOGIN_TARGETS: Readonly<Record<PushableLogin, LoginTarget>> = {
         + 'please migrate to the Antigravity suite of products: https://antigravity.google", so '
         + 'oauth_creds.json can no longer be produced by a sign-in and there is nothing to push.',
     },
+  },
+  antigravity: {
+    id: 'antigravity',
+    label: 'Google Antigravity',
+    // Windows keeps this JSON in Credential Manager under `gemini:antigravity`; headless Linux
+    // reads the same JSON from this path when GEMINI_FORCE_FILE_STORAGE=true.
+    file: '.gemini/antigravity-cli/antigravity-oauth-token',
+    importPath: '/api/antigravity/auth/import',
+    statusPath: '/api/antigravity/auth/status',
   },
 };
 
@@ -148,6 +158,8 @@ export interface LoginFileSnapshot {
   present: boolean;
   mtimeMs: number;
   size: number;
+  /** Content identity for credential stores that do not expose a file mtime. */
+  fingerprint?: string;
 }
 
 /** Outcome of one push, shaped for the renderer: every refusal carries a reason it can show. */
@@ -173,7 +185,7 @@ export interface PushOutcome {
  * import route are all still correct and still compile, they simply have no credential to carry
  * while Google's individual sign-in is retired.
  * @param id - Account id from the local account list (codex / claude / gemini / antigravity / gcloud / aws)
- * @returns true for codex and claude; false for gemini while its target is dormant
+ * @returns true for codex, claude, and antigravity; false for gemini while its target is dormant
  */
 export function isPushableLogin(id: unknown): id is PushableLogin {
   if (typeof id !== 'string') return false;
@@ -202,6 +214,9 @@ export function loginFilePath(home: string, id: PushableLogin): string {
 export function loginFileChanged(before: LoginFileSnapshot, after: LoginFileSnapshot): boolean {
   if (!after.present) return false;
   if (!before.present) return true;
+  if (after.fingerprint !== undefined || before.fingerprint !== undefined) {
+    return after.fingerprint !== before.fingerprint;
+  }
   return after.mtimeMs !== before.mtimeMs || after.size !== before.size;
 }
 
@@ -279,6 +294,17 @@ export function parseLoginFile(
     }
     return { ok: true, body };
   }
+  if (id === 'antigravity') {
+    const token = body.token as Record<string, unknown> | undefined;
+    if (!token || typeof token !== 'object'
+      || typeof token.access_token !== 'string' || !token.access_token.trim()
+      || typeof token.refresh_token !== 'string' || !token.refresh_token.trim()
+      || typeof body.id_token !== 'string' || !body.id_token.trim()
+      || typeof body.auth_method !== 'string' || !body.auth_method.trim()) {
+      return { ok: false, error: 'The Antigravity credential is incomplete — finish the `agy` Google sign-in first.' };
+    }
+    return { ok: true, body };
+  }
   const oauth = body.claudeAiOauth as Record<string, unknown> | undefined;
   if (!oauth || typeof oauth !== 'object' || typeof oauth.accessToken !== 'string' || !oauth.accessToken) {
     return { ok: false, error: '.credentials.json has no claudeAiOauth token yet — finish `claude auth login` first.' };
@@ -293,7 +319,7 @@ export function parseLoginFile(
  * @returns JSON-serialisable body
  */
 export function importRequestBody(id: PushableLogin, parsed: Record<string, unknown>): Record<string, unknown> {
-  // claude and gemini both read `credentials`; codex's route reads `authJson`.
+  // Claude, Gemini, and Antigravity read `credentials`; Codex's route reads `authJson`.
   return id === 'codex' ? { authJson: parsed } : { credentials: parsed };
 }
 
@@ -334,6 +360,12 @@ function describeRefusal(error: string | undefined): string {
   }
   if (error === 'gemini_credentials_path_unset') {
     return 'The swarm has no Gemini login path configured; set GEMINI_OAUTH_CREDS_PATH there and recreate the api.';
+  }
+  if (error === 'antigravity_credentials_path_read_only') {
+    return 'The swarm mounts its Antigravity login read-only; set GEMINI_AUTH_MOUNT_MODE=rw there and recreate the api.';
+  }
+  if (error === 'antigravity_credentials_path_unset') {
+    return 'The swarm has no Antigravity login path configured; set ANTIGRAVITY_OAUTH_TOKEN_PATH there and recreate the api.';
   }
   return 'The swarm declined the push.';
 }

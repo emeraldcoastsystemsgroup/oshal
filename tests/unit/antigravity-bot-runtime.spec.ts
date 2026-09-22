@@ -171,3 +171,15 @@ describe('Antigravity bot-node provider', () => {
     });
   });
 });
+
+describe('Antigravity container credential wiring', () => {
+  it('puts the API and every bot on agy file storage backed by the shared Gemini mount', () => {
+    const compose = fs.readFileSync(path.join(process.cwd(), 'docker-compose.oshal-local.yml'), 'utf8');
+    expect(compose).toContain('GEMINI_FORCE_FILE_STORAGE: "true"');
+    expect(compose).toContain('ANTIGRAVITY_OAUTH_TOKEN_PATH: ${ANTIGRAVITY_OAUTH_TOKEN_PATH:-/root/.gemini/antigravity-cli/antigravity-oauth-token}');
+    expect(compose).toContain('x-gemini-auth-volume: &gemini-auth-volume');
+    expect(compose).toContain('<<: *bot-env');
+    expect(compose).toContain('- *gemini-auth-volume');
+    expect(compose).not.toContain('ANTIGRAVITY_ACCOUNT_LOGIN_READY');
+  });
+});

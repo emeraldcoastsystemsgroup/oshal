@@ -58,6 +58,8 @@ describe('@oshal/chat login launcher — the argv that reaches cmd.exe', () => {
     // The title must contain a space: that is what makes libuv quote it, and an UNQUOTED first
     // token is read by `start` as the command to run, not as a title.
     expect(WINDOWS_LOGIN_TITLE).toMatch(/\S\s\S/);
+    expect(windowsLoginArgv(['C:\\Program Files\\agy\\agy.exe']))
+      .toEqual(['/c', 'start', WINDOWS_LOGIN_TITLE, 'cmd', '/k', 'C:\\Program Files\\agy\\agy.exe']);
   });
 
   it('launches each vendor CLI with the login verb that CLI actually has', () => {
@@ -67,6 +69,8 @@ describe('@oshal/chat login launcher — the argv that reaches cmd.exe', () => {
     expect(cmds.get('codex')).toBe('codex login');
     expect(cmds.get('gcloud')).toBe('gcloud auth login');
     expect(cmds.get('aws')).toBe('aws sso login');
+    if (isWindows) expect(cmds.get('antigravity')).toMatch(/[\\/]agy[\\/]bin[\\/]agy\.exe$/i);
+    else expect(cmds.get('antigravity')).toBe('agy');
     for (const cmd of cmds.values()) expect(cmd).not.toContain('"');
   });
 });

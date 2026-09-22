@@ -28,7 +28,7 @@ const OPERATOR = 'operator-sub-1';
 const GUEST = 'guest-sub-9';
 const OWNED_ENV = [
   'DEMO_MODE', 'MOCK_OIDC', 'OSHAL_OPERATOR_SUBS',
-  'GEMINI_OAUTH_CREDS_PATH', 'ANTIGRAVITY_CLI_PATH', 'LOCALAPPDATA', 'HOME', 'USERPROFILE',
+  'GEMINI_OAUTH_CREDS_PATH', 'ANTIGRAVITY_OAUTH_TOKEN_PATH', 'ANTIGRAVITY_CLI_PATH', 'LOCALAPPDATA', 'HOME', 'USERPROFILE',
 ];
 
 /** The CLI ids a user can name, and whether a bot node holds a runtime for each one TODAY. */
@@ -42,6 +42,7 @@ beforeEach(() => {
   process.env.OSHAL_OPERATOR_SUBS = OPERATOR;
   // No credential path and no binary path: the probes must read absence, never a real home.
   process.env.GEMINI_OAUTH_CREDS_PATH = '/nonexistent-oshal-test/oauth_creds.json';
+  process.env.ANTIGRAVITY_OAUTH_TOKEN_PATH = '/nonexistent-oshal-test/antigravity-oauth-token';
   process.env.ANTIGRAVITY_CLI_PATH = '/nonexistent-oshal-test/agy';
 });
 

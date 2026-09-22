@@ -78,6 +78,7 @@ const CATALOG: ProviderSwitchCatalog = {
 let tempDir = '';
 const codexPath = () => path.join(tempDir, 'codex-auth.json');
 const claudePath = () => path.join(tempDir, 'claude-credentials.json');
+const antigravityPath = () => path.join(tempDir, 'antigravity-oauth-token');
 
 /** A JWT-shaped token with an `exp` claim; not a real token, built here so no literal exists. */
 function jwtWithExp(expiresAtMs: number): string {
@@ -595,23 +596,26 @@ describe('the cockpit chat path — POST /api/send-message over the REAL router'
 });
 
 describe('the readiness probe — stored status without a token, expiry honoured', () => {
-  it('admits Antigravity only on a node after the Linux-login proof flag is set', async () => {
-    const prior = process.env.ANTIGRAVITY_ACCOUNT_LOGIN_READY;
+  it('admits Antigravity only on a node after a vendor login is pushed', async () => {
+    const prior = process.env.ANTIGRAVITY_OAUTH_TOKEN_PATH;
     try {
-      delete process.env.ANTIGRAVITY_ACCOUNT_LOGIN_READY;
+      process.env.ANTIGRAVITY_OAUTH_TOKEN_PATH = antigravityPath();
       const unproved = await probeRungReadiness({ providerId: 'antigravity-cli', transport: 'node', catalog: CATALOG });
       expect(unproved).toMatchObject({ kind: 'cli-login', ready: false });
-      expect(unproved.reason).toContain('Windows Credential Manager session is not portable');
+      expect(unproved.reason).toContain('no pushed Antigravity login');
 
-      process.env.ANTIGRAVITY_ACCOUNT_LOGIN_READY = 'true';
+      fs.writeFileSync(antigravityPath(), JSON.stringify({
+        token: { access_token: 'fixture-access', refresh_token: 'fixture-refresh' },
+        auth_method: 'oauth-personal', id_token: 'fixture-id',
+      }));
       const proved = await probeRungReadiness({ providerId: 'antigravity-cli', transport: 'node', catalog: CATALOG });
       const inline = await probeRungReadiness({ providerId: 'antigravity-cli', transport: 'inline', catalog: CATALOG });
       expect(proved).toMatchObject({ kind: 'cli-login', ready: true });
       expect(inline).toMatchObject({ kind: 'cli-login', ready: false });
       expect(inline.reason).toContain('only on a bot node');
     } finally {
-      if (prior === undefined) delete process.env.ANTIGRAVITY_ACCOUNT_LOGIN_READY;
-      else process.env.ANTIGRAVITY_ACCOUNT_LOGIN_READY = prior;
+      if (prior === undefined) delete process.env.ANTIGRAVITY_OAUTH_TOKEN_PATH;
+      else process.env.ANTIGRAVITY_OAUTH_TOKEN_PATH = prior;
     }
   });
 

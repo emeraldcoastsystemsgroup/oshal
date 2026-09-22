@@ -21,9 +21,10 @@ import {
 } from '../../packages/oshal-chat/src/main/login-push-core';
 
 describe('@oshal/chat login push — what may leave the machine, and where', () => {
-  it('pushes the two live vendor logins, from the files their CLIs write, to their import routes', () => {
+  it('pushes the three live vendor logins to their import routes', () => {
     expect(isPushableLogin('codex')).toBe(true);
     expect(isPushableLogin('claude')).toBe(true);
+    expect(isPushableLogin('antigravity')).toBe(true);
     // Google is a KNOWN target that is not pushable: the vendor retired the sign-in that writes
     // its file, so the row keeps everything except the button. See the dormant block below.
     expect(isPushableLogin('gemini')).toBe(false);
@@ -33,10 +34,13 @@ describe('@oshal/chat login push — what may leave the machine, and where', () 
     expect(loginFilePath('C:\\Users\\user\\', 'codex')).toBe('C:\\Users\\user/.codex/auth.json');
     expect(loginFilePath('/home/user', 'claude')).toBe('/home/user/.claude/.credentials.json');
     expect(loginFilePath('/home/user', 'gemini')).toBe('/home/user/.gemini/oauth_creds.json');
+    expect(loginFilePath('/home/user', 'antigravity')).toBe('/home/user/.gemini/antigravity-cli/antigravity-oauth-token');
     expect(LOGIN_TARGETS.codex.importPath).toBe('/api/openai-codex/oauth/import');
     expect(LOGIN_TARGETS.claude.importPath).toBe('/api/claude-code/auth/import');
     expect(LOGIN_TARGETS.gemini.importPath).toBe('/api/gemini/auth/import');
     expect(LOGIN_TARGETS.gemini.statusPath).toBe('/api/gemini/auth/status');
+    expect(LOGIN_TARGETS.antigravity.importPath).toBe('/api/antigravity/auth/import');
+    expect(LOGIN_TARGETS.antigravity.statusPath).toBe('/api/antigravity/auth/status');
     // The file name is the vendor's, read from the installed @google/gemini-cli bundle
     // (packages/core/src/config/storage.ts: OAUTH_FILE = "oauth_creds.json" under ~/.gemini).
     expect(LOGIN_TARGETS.gemini.file).toBe('.gemini/oauth_creds.json');
@@ -49,6 +53,7 @@ describe('@oshal/chat login push — what may leave the machine, and where', () 
     expect(LOGIN_TARGETS.gemini.dormant?.reason).toContain('no longer supported for Gemini Code Assist for individuals');
     expect(LOGIN_TARGETS.codex.dormant).toBeUndefined();
     expect(LOGIN_TARGETS.claude.dormant).toBeUndefined();
+    expect(LOGIN_TARGETS.antigravity.dormant).toBeUndefined();
 
     // The predicate DERIVES its answer from the table, so deleting the dormant block is the whole
     // revival. Proven by doing exactly that to the live record and watching the answer flip —
@@ -91,11 +96,24 @@ describe('@oshal/chat login push — what may leave the machine, and where', () 
     expect(parseLoginFile('gemini', JSON.stringify(gemini))).toEqual({ ok: true, body: gemini });
     expect(importRequestBody('gemini', gemini)).toEqual({ credentials: gemini });
 
+    const antigravity = {
+      token: { access_token: 'agy-access', refresh_token: 'agy-refresh', token_type: 'Bearer', expiry: '2026-09-23T00:00:00Z' },
+      auth_method: 'oauth-personal',
+      id_token: 'agy-id',
+    };
+    expect(parseLoginFile('antigravity', JSON.stringify(antigravity))).toEqual({ ok: true, body: antigravity });
+    expect(importRequestBody('antigravity', antigravity)).toEqual({ credentials: antigravity });
+
     expect(parseLoginFile('codex', JSON.stringify(claude))).toMatchObject({ ok: false });
     expect(parseLoginFile('claude', JSON.stringify(codex))).toMatchObject({ ok: false });
     expect(parseLoginFile('gemini', JSON.stringify(codex))).toMatchObject({ ok: false });
     expect(parseLoginFile('gemini', JSON.stringify(claude))).toMatchObject({ ok: false });
     expect(parseLoginFile('claude', JSON.stringify(gemini))).toMatchObject({ ok: false });
+    expect(parseLoginFile('antigravity', JSON.stringify(codex))).toMatchObject({ ok: false });
+    expect(parseLoginFile('antigravity', JSON.stringify(claude))).toMatchObject({ ok: false });
+    expect(parseLoginFile('antigravity', JSON.stringify(gemini))).toMatchObject({ ok: false });
+    expect(parseLoginFile('claude', JSON.stringify(antigravity))).toMatchObject({ ok: false });
+    expect(parseLoginFile('antigravity', JSON.stringify({ ...antigravity, id_token: '' }))).toMatchObject({ ok: false });
     // NOT asserted, and deliberately: parseLoginFile('codex', <a gemini file>) returns ok. The
     // codex arm reads `body.tokens ?? body`, so it accepts a bare {access_token, refresh_token}
     // object, and a google-auth-library credential is exactly that shape. It is a shape check,
@@ -122,6 +140,14 @@ describe('@oshal/chat login push — what may leave the machine, and where', () 
     expect(loginFileChanged(first, { ...first, mtimeMs: 200 })).toBe(true);
     expect(loginFileChanged(first, { ...first, size: 901 })).toBe(true);
     expect(loginFileChanged(first, absent)).toBe(false);
+    expect(loginFileChanged(
+      { present: true, mtimeMs: 0, size: 100, fingerprint: 'before' },
+      { present: true, mtimeMs: 0, size: 100, fingerprint: 'after' },
+    )).toBe(true);
+    expect(loginFileChanged(
+      { present: true, mtimeMs: 0, size: 100, fingerprint: 'same' },
+      { present: true, mtimeMs: 0, size: 100, fingerprint: 'same' },
+    )).toBe(false);
   });
 
   it('classifies every swarm answer to the reason the Config screen shows', () => {
@@ -136,6 +162,10 @@ describe('@oshal/chat login push — what may leave the machine, and where', () 
     expect(geminiReadOnly.detail).toContain('GEMINI_AUTH_MOUNT_MODE=rw');
     const geminiUnset = classifyPushResponse(409, { error: 'gemini_credentials_path_unset' });
     expect(geminiUnset.detail).toContain('GEMINI_OAUTH_CREDS_PATH');
+    const antigravityReadOnly = classifyPushResponse(409, { error: 'antigravity_credentials_path_read_only' });
+    expect(antigravityReadOnly.detail).toContain('GEMINI_AUTH_MOUNT_MODE=rw');
+    const antigravityUnset = classifyPushResponse(409, { error: 'antigravity_credentials_path_unset' });
+    expect(antigravityUnset.detail).toContain('ANTIGRAVITY_OAUTH_TOKEN_PATH');
     expect(classifyPushResponse(400, { error: 'gemini_login_file_invalid', detail: 'no refresh token' }))
       .toMatchObject({ ok: false, refused: false, reason: 'gemini_login_file_invalid', detail: 'no refresh token' });
     const readOnly = classifyPushResponse(409, { error: 'claude_credentials_path_read_only', hint: 'Set CLAUDE_AUTH_MOUNT_MODE=rw' });

@@ -62,10 +62,16 @@ describe('finding the Antigravity binary', () => {
 });
 
 describe('whether this node could run it at all', () => {
-  it('never infers a Linux login from installation; only the post-proof assertion enables it', () => {
+  it('measures the imported vendor token file instead of a manual readiness flag', () => {
+    const tokenPath = path.join(root, '.gemini', 'antigravity-cli', 'antigravity-oauth-token');
     expect(antigravityNodeCredentialReady({})).toBe(false);
-    expect(antigravityNodeCredentialReady({ ANTIGRAVITY_ACCOUNT_LOGIN_READY: 'false' })).toBe(false);
-    expect(antigravityNodeCredentialReady({ ANTIGRAVITY_ACCOUNT_LOGIN_READY: 'true' })).toBe(true);
+    expect(antigravityNodeCredentialReady({ ANTIGRAVITY_OAUTH_TOKEN_PATH: tokenPath })).toBe(false);
+    fs.mkdirSync(path.dirname(tokenPath), { recursive: true });
+    fs.writeFileSync(tokenPath, JSON.stringify({
+      token: { access_token: 'fixture-access', refresh_token: 'fixture-refresh' },
+      auth_method: 'oauth-personal', id_token: 'fixture-id',
+    }));
+    expect(antigravityNodeCredentialReady({ ANTIGRAVITY_OAUTH_TOKEN_PATH: tokenPath })).toBe(true);
   });
 
   it('reports the binary as the missing piece when the libc is not the problem', () => {

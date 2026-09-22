@@ -150,8 +150,8 @@ function probeAuth(classified: ClassifiedProviderId, transport: FallbackTranspor
       kind: 'cli-login',
       ready,
       reason: ready
-        ? 'Antigravity Linux account login was live-proved by the deployment operator'
-        : 'no proven Antigravity Linux account login (the Windows Credential Manager session is not portable)',
+        ? 'Antigravity account login is present at the mounted headless token path'
+        : 'no pushed Antigravity login; use Log in + push from an OSHAL Node',
       expiresAt: null,
     };
   }

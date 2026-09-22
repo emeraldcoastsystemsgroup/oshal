@@ -170,9 +170,8 @@ function antigravityOffer(options: CliBrainOfferOptions): CliBrainOffer {
   return {
     available: false,
     refusal: 'no-credential',
-    detail: 'The bot-node Antigravity runtime has no proven Linux account login. The existing Windows '
-      + 'Credential Manager session is not portable; provision a persistent Linux Secret Service/D-Bus '
-      + 'keyring, authenticate agy there, prove one headless turn, then set ANTIGRAVITY_ACCOUNT_LOGIN_READY=true.',
+    detail: 'No Antigravity login has been pushed to the swarm. Open OSHAL Node on the signed-in '
+      + 'computer and use Push to swarm.',
   };
 }
 

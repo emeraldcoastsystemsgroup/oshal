@@ -119,12 +119,13 @@ with the flag on.
 >
 > The follow-on `antigravity-bot-runtime` branch adds that fourth runtime without changing the
 > fleet's musl base. A checksum-pinned vendor binary runs through a private Debian glibc loader;
-> the any-bot wrapper uses stream-json stdin and remains behind the ADR-127 boundary. Installation
-> does not imply readiness: the operator's Windows Credential Manager session cannot be copied to
-> Linux, and Google's account-auth path requires a persistent Linux Secret Service/D-Bus keyring
-> that the image does not yet provide. The option stays closed until that service exists, a login
-> is live-proved, and
-> `ANTIGRAVITY_ACCOUNT_LOGIN_READY=true` records that proof.
+> the any-bot wrapper uses stream-json stdin and remains behind the ADR-127 boundary. Antigravity's
+> Windows Credential Manager entry contains the same vendor JSON consumed by agy's headless Linux
+> token file. OSHAL Node reads that entry in memory and sends it through the existing authenticated
+> exact-operator login-push rail; the API validates and atomically installs it at mode 0600 in the
+> shared `.gemini` volume. Readiness measures that mounted credential, never a manual proof flag.
+> A disposable Alpine run loaded the pushed shape, listed models, and returned the exact live marker
+> `OSHAL_ANTIGRAVITY_CONTAINER_OK` on `gemini-3.8-flash-low`.
 >
 > **Did NOT ship, and cannot: the Gemini CLI sign-in the push rail was built around.** On
 > 2026-09-22 the operator ran `gemini` and chose *Sign in with Google*. Google answered, verbatim:
@@ -151,7 +152,7 @@ with the flag on.
 > one `oshal-bot:latest` image, `Dockerfile.oshal` is `FROM node:20-alpine`, and the CLI ships no
 > musl build while its glibc PIE fails to relocate under `gcompat` (measured in a throwaway
 > container; `AntigravityCliHarnessAdapter` has carried the sentence since). The private-loader
-> runtime closes the executable gap; node authentication and the recorded live turn remain.
+> runtime and login-push rail close both gaps; a recorded disposable Alpine turn succeeded.
 
 ### 2. A per-user default provider, stored and honoured
 

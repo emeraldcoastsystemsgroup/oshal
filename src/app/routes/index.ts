@@ -57,6 +57,7 @@ export { createAgentToolRoutes } from './agent-tool-routes';
 export { createOpenAiCodexOAuthRoutes } from './openai-codex-oauth-routes';
 export { createClaudeCodeAuthRoutes, handleClaudeCodeOAuthCallback } from './claude-code-auth-routes';
 export { createGeminiAuthRoutes } from './gemini-auth-routes';
+export { createAntigravityAuthRoutes } from './antigravity-auth-routes';
 export { createScheduleRoutes } from './schedule-routes';
 export { createCheckpointRoutes } from './checkpoint-routes';
 export { createTokenChaseRoutes } from './token-chase-routes';

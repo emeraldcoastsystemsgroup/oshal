@@ -4,13 +4,15 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Can this node run `agy` AT ALL - asked without spawning anything, so a settings surface can decide whether to OFFER the Antigravity brain before a turn is dispatched rather than after one dies. Two facts answer it and both are measured, not assumed: the binary has to be present (the vendor installer's TARGET_DIR is %LOCALAPPDATA%\agy\bin and it does NOT add that directory to PATH, so a `which agy` miss proves nothing), and the node has to be able to relocate it (the CLI ships no musl build and its glibc PIE fails under gcompat - AntigravityCliHarnessAdapter measured that in a throwaway container and has carried the sentence ever since). The musl probe moved here from that adapter so the harness and the surface answer from ONE place; the adapter delegates to it.
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | A private real-glibc runtime can now satisfy the libc probe on Alpine without weakening musl globally. Account readiness stays separate: a Windows Credential Manager session is not inferred to exist on Linux.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | A private real-glibc runtime can now satisfy the libc probe on Alpine without weakening musl globally.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Account readiness now measures the imported headless token file used by agy itself. The operator node exports the vendor JSON from its native credential store through the authenticated login-push rail; no manual proof flag or Linux keyring is involved.
  *
  * @module llm-provider/services/antigravity-cli-availability
  */
 
 import fs from 'fs';
 import path from 'path';
+import { antigravityPushedLoginPresent } from './antigravity-auth-adoption-service';
 
 /** Environment slice this module reads. Passed explicitly so nothing reaches for a real process. */
 export type AntigravityEnv = Record<string, string | undefined>;
@@ -19,12 +21,11 @@ export type AntigravityEnv = Record<string, string | undefined>;
 export const ANTIGRAVITY_BINARY_NAME = 'agy';
 
 /**
- * @description Whether the deployment operator has completed and live-proved a login inside the
- * Linux node credential store. A Windows Credential Manager session is deliberately not inferred:
- * Antigravity credentials are OS-keyring-bound and cannot be copied into the container as a file.
+ * @description Whether the headless token file imported from an authenticated operator node is
+ * present and has the durable vendor credential shape consumed by agy file-storage mode.
  */
 export function antigravityNodeCredentialReady(env: AntigravityEnv = process.env): boolean {
-  return /^(1|true|yes|on)$/i.test((env.ANTIGRAVITY_ACCOUNT_LOGIN_READY || '').trim());
+  return antigravityPushedLoginPresent({ env });
 }
 
 /** Why this node cannot serve an Antigravity turn, or null when nothing is blocking it. */
