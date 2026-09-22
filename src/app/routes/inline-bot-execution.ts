@@ -16,6 +16,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com  | One harness resolution for guard AND executor (live 2026-08-13, career.oshal.ai swarmbot popup): agentRequiresHostedBrain matched the registry by agentId ONLY, but provider-runtime's resolveHarnessForAgent ALSO falls back to the entry named by process BOT_NAME. The controller runs BOT_NAME=project-manager (harness codex-cli), so every agent absent from the registry — 84 of 116 active rows on the operator box — was EXECUTED through a CLI harness while this guard answered "not a CLI bot", skipped the ladder, and let assertAuditedAutonomousHarness hand the user its raw SEC-05 text (reproduced on email-bot a695dd5f-…). resolveGoverningEntry now mirrors the executor's two-step lookup, so both entry points resolve a brain for exactly the agents that will need one. The refusal itself, demoOperatorCliUnlock, and the node path are untouched — this closes a guard gap, it does not widen what may execute.
  * 12 | maintainer@emeraldcoastsystemsgroup.com  | Refuse inline specialist dispatch until that transport can carry the required bounded package context.
  * 13 | maintainer@emeraldcoastsystemsgroup.com  | ONE bot-invocation chokepoint, the INLINE half (BACKLOG "One bot-invocation chokepoint - the INLINE half of /api/send-message"): the admission gates executeBotOrInline applied inline in its own body - specialist-context, the two credential-carrier refusals and the cost-governance HARD cap - are extracted into the exported assertBotInvocationAdmissible so a caller that CANNOT take this function's bot-node request shape (message-routes' inline branch carries a ticketContext and an interactionMode BotNodeRequest has no room for) clears the same decision instead of no decision at all. Behaviour here is byte-identical except the budget refusal is now the typed BudgetBlockedError (same message, code budget_cap_exceeded, statusCode 402) so a route can say WHY rather than 500. Entitlement stays asserted by each caller - one assert, one audit line. Guard: tests/unit/send-message-budget-gate.spec.ts.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com  | Bounded SAME-endpoint retry for an explicitly chosen BYO turn (operator decision 2026-09-22). The inline branch previously had exactly two outcomes for a provider wall: rotate to another lane, or surface the error - and rotation is permanently refused for an explicit BYO endpoint, so those turns got NO retry at all and an intermittently tripping provider spend cap cost the whole turn. isExplicitByoTurn names the two shapes of explicit choice (caller-threaded connection, or a ladder resolution whose top rung was the user own BYO row) and the first attempt is wrapped in runWithSameEndpointRetry, which replays the SAME URL/key/account under an attempt, backoff and wall-clock bound. The rotation legs below are untouched, resolver-owned lanes are not wrapped (rotating beats waiting out a backoff on a known-walled lane), and the wrapper reads swallowedTurnFailure so it sees the resolved-failure shape the agentic loop produces.
  */
 
 import type { AppContext } from '@/app/composition/app-context';
@@ -28,6 +29,7 @@ import { isUnbrokeredAutonomousProvider } from '@/features/llm-provider';
 import { composeSkillProfilePrompt, resolveSkillProfileByApp } from '@/shared/skill-profiles';
 import { assertExecuteEntitlement } from '@/app/bot-node-execute-entitlement';
 import { reportResolvedLlmFailure, resolveUserLlmConnection, type ResolvedUserLlmConnection } from './free-tier-rotation';
+import { runWithSameEndpointRetry } from './same-endpoint-retry';
 import { resolveUserBrain, type ResolvedBrain } from './user-brain-resolution';
 import type { ByoLlmConnection } from './byo-llm-routes';
 import { getSpecialistContextRegistry, SpecialistContextError } from '@/shared/specialist-context';
@@ -363,6 +365,29 @@ export function swallowedTurnFailure(
 }
 
 /**
+ * @description True when the endpoint this turn runs on was EXPLICITLY chosen by the caller or
+ * the user, rather than picked by the resolver's ladder. Two shapes count, and they are the same
+ * fact: a connection threaded onto the request by the caller (already documented on both call
+ * sites as an explicit billing boundary used verbatim), and a ladder resolution whose top rung was
+ * the user's own BYO row (`resolutionSource: 'explicit'`).
+ *
+ * It is the condition for the bounded SAME-endpoint retry, and only that. Rotation for these turns
+ * stays refused by `reportResolvedLlmFailure`, which is the boundary; a resolver-owned lane is
+ * deliberately NOT wrapped, because for those a rotation to the next free lane is immediate and
+ * strictly better than waiting out a backoff on a lane that is already known to be walled.
+ * @param callerThreaded - A connection the caller put on the request, if any.
+ * @param resolved - The ladder-resolved connection, if any.
+ * @returns Whether this turn is running on an explicitly chosen endpoint.
+ */
+export function isExplicitByoTurn(
+  callerThreaded: ByoLlmConnection | undefined,
+  resolved: ByoLlmConnection | undefined,
+): boolean {
+  if (callerThreaded) return true;
+  return (resolved as ResolvedUserLlmConnection | undefined)?.resolutionSource === 'explicit';
+}
+
+/**
  * @description Thrown when cost governance definitively refuses an invocation — a HARD
  * daily cap exceeded, or the runaway kill switch. Typed (rather than the bare Error this
  * used to be) so a route can answer `402 budget_cap_exceeded` instead of an anonymous 500:
@@ -538,9 +563,26 @@ export async function executeBotOrInline(
       interactionMode: request.direct ? 'task' : 'chat',
       byoLlmConnection,
     } as any);
+  // The endpoint this turn actually runs on: the caller's explicit choice when there is one,
+  // otherwise the ladder's pick stripped to the wire trio.
+  const firstEndpoint = request.byoLlmConnection ?? hostedBrainWire(resolvedBrain);
+  // Operator decision 2026-09-22: an explicitly chosen BYO endpoint may never be rotated away
+  // from, but a retryable wall on it IS replayed against that same endpoint — same URL, same key,
+  // same billing account, so no boundary is crossed. Without this an intermittently tripping
+  // provider spend cap cost the whole turn. Resolver-owned lanes are untouched: they keep rotating
+  // through retryHostedBrainTurn below, which is faster than any backoff.
+  const runFirstAttempt = isExplicitByoTurn(request.byoLlmConnection, resolvedBrain)
+    ? () => runWithSameEndpointRetry(
+      { agentId, baseUrl: firstEndpoint?.baseUrl, model: firstEndpoint?.model },
+      () => runTurn(firstEndpoint),
+      // The agentic loop resolves its provider failures instead of throwing them, so the retry
+      // has to read the result shape too or it would only ever see the minority that propagate.
+      { failureOf: swallowedTurnFailure },
+    )
+    : () => runTurn(firstEndpoint);
   let result: Awaited<ReturnType<typeof runTurn>>;
   try {
-    result = await runTurn(request.byoLlmConnection ?? hostedBrainWire(resolvedBrain));
+    result = await runFirstAttempt();
   } catch (turnError) {
     // Turn-time failover: a lane that passed its resolution probe can hit its quota mid-turn
     // (Gemini free tier = 20/day). Cool the lane and replay ONCE on the next vendor.

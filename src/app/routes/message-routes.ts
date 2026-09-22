@@ -24,6 +24,7 @@
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | ONE-CHOKEPOINT node dispatch: when the resolved agent has a dedicated node endpoint, this route now executes the turn through executeBotOrInline (budget gate + ADR-090 skills + the ADR-127 REMOTE brain stamp — the demo operator's mounted CLI, a guest's hosted lane) instead of calling the controller orchestrator directly with the hosted-ONLY ladder — which is exactly how a node-backed bot's chat turns kept dying on an exhausted hosted key while a healthy CLI login sat mounted at its node. The controller persists both turns (persistJarvisTurn, the shared chat-turn writer) so GET /api/:taskId/messages replays node threads; ticket/chat-task bookkeeping and guest chatOnly containment are identical to the inline path. Inline bots are byte-identical to seq 18.
  * 20 | maintainer@emeraldcoastsystemsgroup.com | Require current exact-principal authorization for protected thread writes and history reads, including after asynchronous history retrieval.
  * 21 | maintainer@emeraldcoastsystemsgroup.com | ONE-CHOKEPOINT admission on the INLINE half (BACKLOG "One bot-invocation chokepoint - the INLINE half of /api/send-message"). Seq 19 routed the NODE half through executeBotOrInline, so a chat turn to a bot with its own node endpoint has cleared the cost-governance gate since then; a bot the registry binds to the controller took the other branch and called ctx.orchestrator.processMessage DIRECTLY - no budget check, no specialist-context or credential-carrier refusal. A user sitting on a tripped HARD daily cap could therefore keep spending through the cockpit chat panel indefinitely, as long as the bot they were talking to was inline, which is most of the concierge fleet. That branch now calls the SAME decision executeBotOrInline applies (assertBotInvocationAdmissible, extracted for exactly this caller - this route's turn carries a ticketContext and an interactionMode BotNodeRequest cannot hold), ahead of the hosted-brain ladder and ticket creation, and BudgetBlockedError maps to 402 budget_cap_exceeded so the refusal names its reason instead of arriving as an anonymous 500. Guard: tests/unit/send-message-budget-gate.spec.ts.
+ * 22 | maintainer@emeraldcoastsystemsgroup.com | Bounded SAME-endpoint retry on the cockpit chat path (operator decision 2026-09-22), the twin of inline-bot-execution seq 14. This route had the same two outcomes for a provider wall - rotate, or surface it - and rotation is permanently refused for an explicitly chosen BYO endpoint, so exactly those turns got no retry and an intermittently tripping provider spend cap became the assistant answer. When isExplicitByoTurn says the ladder resolved the user own BYO row, the first attempt runs inside runWithSameEndpointRetry (same URL, same key, same account; attempt, backoff and wall-clock bounds) reading swallowedTurnFailure so it also sees the resolved-failure shape the agentic loop produces. The rotation legs below are unchanged and resolver-owned lanes are not wrapped.
  */
 
 import { Router, type NextFunction, type Request, type Response } from 'express';
@@ -36,7 +37,8 @@ import { requireTrustedServiceUserIdentity } from '@/shared/middleware/trusted-s
 import { requireAiEnabled } from '@/shared/middleware/ai-availability';
 import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-issuer';
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
-import { BudgetBlockedError, NoHostedBrainError, assertBotInvocationAdmissible, executeBotOrInline, hostedBrainWire, resolveHostedBrainMeta, retryHostedBrainTurn, swallowedTurnFailure } from './inline-bot-execution';
+import { BudgetBlockedError, NoHostedBrainError, assertBotInvocationAdmissible, executeBotOrInline, hostedBrainWire, isExplicitByoTurn, resolveHostedBrainMeta, retryHostedBrainTurn, swallowedTurnFailure } from './inline-bot-execution';
+import { runWithSameEndpointRetry } from './same-endpoint-retry';
 import { BotNodeClient, createRegistryEndpointResolver } from '@/features/agent-management';
 import { persistJarvisTurn } from './jarvis-task-store';
 import type { AppContext } from '../composition-root';
@@ -386,9 +388,22 @@ function handleSendMessage(ctx: AppContext) {
           // Caller's resolved hosted brain (server-side resolution above — never from the body).
           byoLlmConnection,
         } as any);
+      const firstEndpoint = hostedBrainWire(resolvedBrain);
+      // Operator decision 2026-09-22: the cockpit chat panel is the other conversational entry
+      // point, and it gets the same treatment as the inline chokepoint — an explicitly chosen BYO
+      // endpoint is never rotated away from, but a retryable wall on it is replayed against that
+      // SAME endpoint (same URL, same key, same billing account) under an attempt/backoff/clock
+      // bound, instead of handing the caller the provider's cap as the assistant's answer.
+      const runFirstAttempt = isExplicitByoTurn(undefined, resolvedBrain)
+        ? () => runWithSameEndpointRetry(
+          { agentId: resolvedAgentId, baseUrl: firstEndpoint?.baseUrl, model: firstEndpoint?.model },
+          () => runTurn(firstEndpoint),
+          { failureOf: swallowedTurnFailure },
+        )
+        : () => runTurn(firstEndpoint);
       let result: Awaited<ReturnType<typeof runTurn>>;
       try {
-        result = await runTurn(hostedBrainWire(resolvedBrain));
+        result = await runFirstAttempt();
       } catch (turnError) {
         // Turn-time failover: a lane that passed its resolution probe can hit its quota
         // mid-turn (Gemini free tier = 20/day). Cool the lane and replay ONCE on the next

@@ -34,6 +34,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Added the DEMO-gated OPERATOR-KEY lane (DEMO_MODE, default OFF — a non-demo deployment never lends its own vendor keys to a turn). The operator's exemption from the free legs used to return undefined, which handed the turn to the bot's configured CLI harness — and SEC-05 refuses every unattended CLI at a bot node, so an operator turn with no explicit BYO row had no admissible brain at all ("Sorry, that didn't work"). The operator now falls back to this deployment's OWN hosted keys (GEMINI/GROQ/CEREBRAS/MISTRAL/OPENAI env, ordered, probed once and cached) as a normal hosted byoLlmConnection. Non-operator callers are unaffected: they never see these keys. Also raised the require-content probe budget from 16 to 512 max_tokens — a reasoning model spends the whole 16 on hidden thinking and answers 200-but-empty, which scored live lanes (gemini-2.5-flash, gpt-oss-120b) as dead.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Operator-lane failure COOLDOWN (live 2026-08-11): a ~16-token probe passes on a quota trickle while full turns 429, so "invalidate the verdict and re-probe" handed the SAME walled Gemini lane back to the turn-time failover, whose same-lane check then (correctly) refused to replay — the 429 surfaced despite two layers of failover. reportResolvedLlmFailure now puts the failed lane on a 15-min exclusion (coolOperatorKeyLane, keyed by baseUrl→laneId) and operatorKeyConnection skips cooled lanes before probing, so re-resolution rotates to the next configured vendor by construction. Guard: operator-key-lane.spec cooldown cases.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | The operator lane now SAYS so when it is about to run a model this build's catalog does not carry (warnIfModelUncatalogued -> checkModelAgainstCatalog). OSHAL_OPERATOR_LLM_MODEL is read here and was measured against nothing at all: a pinned id absent from provider-definitions produced no error, no warning and no log line, while usage-cost-resolver — pricing from that same catalog — booked the real call at $0, which was the pin's only trace anywhere. It warns and proceeds rather than refusing, because this catalog lags the vendor's and gemini-3.8-flash was a real, current model absent from ours. The helper sits ABOVE operatorKeyConnection's docstring rather than between the two: inserted into that gap it orphaned a 20-line JSDoc onto the wrong member and left the exported function undocumented.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | Separated the two questions reportResolvedLlmFailure was conflating (operator decision 2026-09-22). It gates ROTATION — may this prompt be replayed on a DIFFERENT provider — and for an explicit BYO endpoint the answer stays a permanent no. But because it was also the only retryability gate on the path, an explicit BYO turn got no retry at all, so a provider-side spend cap that trips intermittently cost the whole turn and showed the user an error. RETRYABLE_PROVIDER_FAILURE is now exported as the ONE wall vocabulary and same-endpoint-retry.ts subtracts from it (403 and the completed-but-empty answers are rotation-only); the refusal here is byte-identical.
  *
  * @module free-tier-rotation
  */
@@ -563,14 +564,25 @@ export function freeTierRuntimeSnapshot(): {
   };
 }
 
-const RETRYABLE_PROVIDER_FAILURE = /(?:\b(?:402|403|429)\b|too many requests|rate[-\s]?limit|quota|throttl\w*|resourceexhausted|empty_final_answer|returned no final answer)/i;
+/**
+ * The ONE vocabulary of "this is a provider wall, not a content failure", shared by the rotation
+ * gate below and by the same-endpoint retry in `same-endpoint-retry.ts`. Exported so that module
+ * subtracts from it rather than growing a second opinion about what counts as retryable — two
+ * patterns would drift, and the answer to "was this a wall?" has to be one answer.
+ */
+export const RETRYABLE_PROVIDER_FAILURE = /(?:\b(?:402|403|429)\b|too many requests|rate[-\s]?limit|quota|throttl\w*|resourceexhausted|empty_final_answer|returned no final answer)/i;
 
 /**
- * @description Records a real execution-time provider wall. Probes can race with the provider's
- * free-tier quota, so a cached "live" verdict is not authoritative for the later completion call.
- * User-owned free connections are cooled in the LRU table; the shared platform verdict is changed
- * to a short all-walled result so the immediate retry uses the bot's configured provider without
- * burning six more probe completions.
+ * @description The ROTATION gate: answers *may this turn be replayed on a DIFFERENT provider?*,
+ * and records the wall that prompted the question. Probes can race with the provider's free-tier
+ * quota, so a cached "live" verdict is not authoritative for the later completion call. User-owned
+ * free connections are cooled in the LRU table; the shared platform verdict is changed to a short
+ * all-walled result so the immediate retry uses the bot's configured provider without burning six
+ * more probe completions.
+ *
+ * It deliberately does NOT answer "may this turn be retried at all". Retrying the SAME endpoint
+ * crosses no boundary and is decided separately by `same-endpoint-retry.ts` — see the explicit-BYO
+ * branch below for why the two had to be pulled apart.
  */
 export async function reportResolvedLlmFailure(
   pool: any,
@@ -579,6 +591,12 @@ export async function reportResolvedLlmFailure(
 ): Promise<boolean> {
   // An explicit BYO endpoint is a user-selected privacy/billing boundary. Never silently replay
   // that prompt on the bot's configured provider; surface its failure to the user instead.
+  //
+  // This refusal is about ROTATION only, and that distinction is load-bearing (operator decision
+  // 2026-09-22). Until it was drawn, an explicit BYO turn got no retry of ANY kind, so a
+  // provider-side spend cap that trips intermittently cost the whole turn. A same-endpoint replay
+  // is not a rotation: same URL, same key, same billing account, same privacy posture. The caller
+  // performs it (runWithSameEndpointRetry) BEFORE reaching this gate, which keeps saying no here.
   if (!connection || connection.resolutionSource === 'explicit') {
     return false;
   }
