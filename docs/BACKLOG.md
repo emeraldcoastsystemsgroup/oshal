@@ -2478,6 +2478,20 @@ including across a directory belonging to a different owner. Full reasoning and 
 - **Remaining:** the button ships in `@oshal/chat` source (core #394) and is proven by unit guards, but nothing on this machine is running it. The satellite executes built `dist/` output, so the node needs `npm run build` + a restart before the Config screen shows the row. **The version bump has since landed and the publish has not** — the repo is at `@oshal/chat` 0.4.0 while npm `latest` is still 0.3.0 (checked 2026-09-09), so no fresh install has the button. Publishing is outward-facing, so it is the operator's call, not an agent's. The capture path itself is also unproven end-to-end: the cookie extraction, the both-halves rule and the connector response shapes are guarded, but no run has yet opened a real ESPN window, read a real jar, and stored a real connection — Electron's `session.fromPartition` and `BrowserWindow` are the boundary the unit tests deliberately do not cross.
 - **What this is actually blocking, which is more than a convenience button:** there is still no `espn-fantasy` row in `oshal_connections` (checked on the box 2026-09-09), so every credentialed fantasy path in `sports-edge` — the whole 0.6.0 P(win) optimiser included — has only ever run against fixtures and the public feed. Until a real league is linked, that work cannot be graded, and an unverified objective change is exactly the kind of thing that looks correct in tests and is wrong in a season.
 - **Done when:** a rebuilt node shows the ESPN Fantasy row under Config → Accounts; one real sign-in captures the pair and the connectors page reports ESPN Fantasy connected with the SWID as the account; `/api/sports-edge/fantasy/status` reads a private league with it; an `espn-fantasy` row exists in `oshal_connections`; and `@oshal/chat` 0.4.0 (or later) is on npm `latest` so a fresh install has the button. The paste path on `/utilities` is the fallback and now works on its own — that half is live (both fields render, the copy names the two cookies).
+- **Measured 2026-09-22, and most of this entry is already met.** The ESPN sign-in half is DONE: a
+  single `espn-fantasy` row exists in `oshal_connections` with `status=connected`, a credential
+  present, `is_default=true`, and the label "ESPN Fantasy (captured from browser login)" — created
+  **2026-09-09**, the same day this entry was written recording none. So the node was on
+  `@oshal/chat` 0.4.0, the "Log in + push" button reached it, and the capture worked. Nothing further
+  is needed on the install/restart clause.
+- **What remains is one interactive check, and only the operator can run it.**
+  `GET /api/sports-edge/fantasy/status` refuses a minted operator PAT with **401** — measured by an
+  agent probe that minted a token, called the route and revoked the token — so it accepts only an
+  authenticated browser session. The clause "confirm `/utilities` shows ESPN Fantasy connected and
+  the status route reads your private league" therefore stays open until the operator opens
+  `/utilities` while logged in and hits that route. Everything else in the done-when is satisfied by
+  the row above. No decision is being asked for; this is a handover note so the entry is not re-raised
+  as though the connector were unbuilt.
 
 ### Connector marketplace live brokered reads
 - **Remaining:** run at least five distinct credentialed connectors through caller-scoped broker resolution; loopback/captured-fetch fixtures do not qualify.
