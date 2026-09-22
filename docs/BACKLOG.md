@@ -2279,10 +2279,6 @@ including across a directory belonging to a different owner. Full reasoning and 
 - **Remaining:** recreate Compose services with a reachable `OLLAMA_HOST`, register a Cline-harness Ollama bot, add the `oshal-model` Kubernetes Service, and benchmark a real ticket.
 - **Done when:** Compose and Kubernetes both resolve the local endpoint and evidence records a successful ticket, latency/throughput, and zero available cloud credentials. See [ADR-078](adr/078-kubernetes-argo-batch-and-multi-tenant-proofout.md).
 
-### Local-LLM hardware decision
-- **Remaining:** inventory the existing gaming-PC GPU and choose the $0/current, used-3090, large unified-memory, or later fleet tier; no purchase is implied by this item.
-- **Done when:** the operator records a tier and, if hardware is selected, its OpenAI-compatible LAN endpoint passes the all-local ticket proof above.
-
 ### Gemini one-click harness login
 - **Remaining:** register the ECSG Google OAuth client and implement start/callback/status/signout for Gemini Code Assist credentials; AI Studio key paste remains a separate existing path.
 - **Done when:** a signed-in user completes Google consent and a Gemini-harness bot answers with the resulting credentials without pasting a key.
