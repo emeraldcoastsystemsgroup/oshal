@@ -20,6 +20,11 @@
 #     it becomes the training set, take the paths/target/measurements/overrides as arguments instead
 #     of hard-coding them, add a rejected-candidate review sheet for the human override, and degrade
 #     the sheets (never the zip) when PIL is absent.
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | Derive every remaining default from --character
+#     instead of the first character this script ever curated: the pool, curated set, zip, sheets,
+#     glob patterns, hero and structural judge prompts all come from that character own
+#     configuration, and without --character the paths must be given explicitly rather than
+#     defaulting to another character dataset.
 import argparse
 import math
 import os
@@ -28,14 +33,13 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
+from character_config import add_character_arguments, character_config  # noqa: E402
 from curation_judge import curate, discover_candidates, load_json, measure_candidates  # noqa: E402
 
 HOME = os.path.expanduser("~")
 COMFY = os.path.join(HOME, "oshal-comfyui", "ComfyUI_windows_portable", "ComfyUI")
 OUT = os.path.join(COMFY, "output")
-DATA = os.path.join(HOME, "lora-brainrot", "img")
-DEST = os.path.join(HOME, "overnight")
-HERO = os.path.join(COMFY, "input", "hero_brainrot_00002_.png")
+INP = os.path.join(COMFY, "input")
 TARGET = 90        # aim for ~90 curated images
 
 
@@ -79,21 +83,53 @@ def contact_sheet(rows, path, thumb=220, cols=9):
 
 
 def build_parser():
-    """Build the CLI; every default is the path this script used to hard-code."""
+    """
+    @description Build the CLI. Paths default from the --character configuration; with no
+      --character there are no defaults, because the only defaults this script could offer would
+      be another character dataset.
+    @returns The argparse parser.
+    """
     ap = argparse.ArgumentParser(description="Sample, judge and package a LoRA training set")
-    ap.add_argument("--source", default=DATA, help="candidate pool directory")
-    ap.add_argument("--dest", default=os.path.join(DEST, "curated"), help="curated output directory")
-    ap.add_argument("--zip", dest="zip_path", default=os.path.join(OUT, "curated.zip"))
-    ap.add_argument("--sheet", default=os.path.join(OUT, "curated-sheet.png"))
-    ap.add_argument("--rejected-sheet", default=os.path.join(OUT, "rejected-sheet.png"))
+    add_character_arguments(ap, required=False)
+    ap.add_argument("--source", default="", help="candidate pool directory")
+    ap.add_argument("--dest", default="", help="curated output directory")
+    ap.add_argument("--zip", dest="zip_path", default="")
+    ap.add_argument("--sheet", default="")
+    ap.add_argument("--rejected-sheet", default="")
     ap.add_argument("--target", type=int, default=TARGET)
-    ap.add_argument("--pattern", default="oshbrainrot_h*.png")
-    ap.add_argument("--fallback-pattern", default="oshbrainrot_*.png")
-    ap.add_argument("--hero", default=HERO, help="locked hero; required when measuring with CLIP")
+    ap.add_argument("--pattern", default="")
+    ap.add_argument("--fallback-pattern", default=None)
     ap.add_argument("--measurements", help="precomputed id -> measurements JSON (skips CLIP)")
     ap.add_argument("--overrides", help="human override JSON: id -> {decision, note}")
     ap.add_argument("--thresholds", help="threshold override JSON")
     return ap
+
+
+def resolve_paths(args):
+    """
+    @description Fill the unset paths and patterns from the --character configuration, and refuse
+      when neither a character nor an explicit pool was given.
+    @param args - Parsed arguments, mutated in place.
+    @returns The CharacterConfig when one was given, else None.
+    @raises SystemExit - when nothing identifies the pool to curate.
+    """
+    cfg = character_config(args) if args.character else None
+    if cfg:
+        args.source = args.source or cfg.pool_dir
+        args.dest = args.dest or cfg.curated_dir
+        args.zip_path = args.zip_path or cfg.curated_zip
+        args.sheet = args.sheet or os.path.join(cfg.root, "curated-sheet.png")
+        args.rejected_sheet = args.rejected_sheet or os.path.join(cfg.root, "rejected-sheet.png")
+        args.pattern = args.pattern or cfg.pool_glob("h")
+        if args.fallback_pattern is None:
+            args.fallback_pattern = cfg.pool_glob()
+        args.hero = cfg.hero_image_path(INP, OUT) or ""
+    if not args.source:
+        raise SystemExit("no pool to curate: pass --character, or --source explicitly")
+    args.zip_path = args.zip_path or os.path.join(OUT, "curated.zip")
+    args.dest = args.dest or os.path.join(OUT, "curated")
+    args.fallback_pattern = args.fallback_pattern or ""
+    return cfg
 
 
 def collect(args):
@@ -110,15 +146,18 @@ def collect(args):
 def main(argv=None):
     """Sample the pool, judge it, and build the training set from the survivors."""
     args = build_parser().parse_args(argv)
+    cfg = resolve_paths(args)
     pool = collect(args)
     sampled = sample_even(pool, args.target)
     thresholds = load_json(args.thresholds) if args.thresholds else {}
     prompts = thresholds.pop("structural_prompts", None) if thresholds else None
+    if prompts is None and cfg:
+        prompts = cfg.structural_prompts()
     if args.measurements:
         measurements = load_json(args.measurements)
     else:
-        if not os.path.exists(args.hero):
-            raise SystemExit("hero %s not found - pass --hero or --measurements" % args.hero)
+        if not args.hero or not os.path.exists(args.hero):
+            raise SystemExit("hero %s not found - pass --hero or --measurements" % (args.hero or "(unset)"))
         measurements = measure_candidates(sampled, args.hero, prompts)
     overrides = load_json(args.overrides) if args.overrides else {}
     report = curate(sampled, measurements, args.dest, args.zip_path,

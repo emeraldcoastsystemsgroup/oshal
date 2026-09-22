@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Real-boundary guard for the LoRA automated curation judge. Runs the REAL scripts/comfyui-edge/make-curate.py over a real pool of image/caption pairs and inspects the artefact train-lora.py actually consumes - curated.zip - so "rejected candidates do not enter the training set" is proved at the training-set boundary rather than at the decision function. Also drives curation_judge.py's labelled-fixture mode: the false accept/reject rates are measured and shown to bite when the thresholds are loosened, and a fixture that cannot measure a rate is refused instead of reported as a perfect zero. Fails loudly (never skips) when Python is missing, because a skipped guard is no guard.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Pin that curating INTO the candidate pool refuses. curate() empties --dest first, and this change made --dest operator-supplied beside an independent --source, so --source X --dest X wiped the pool - measured on this fixture: 36 files to 0, then a traceback.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Cover the AUTONOMOUS improve path, which had no judge at all. make-targeted-batch.recurate() zipped an even-sample straight into curated.zip, and overnight-loop.py trains on that exact path - so the judge was a make-curate-only feature and every unattended improve round trained on unjudged renders, rejects included. Two cases, both asserting on curated.zip rather than on the decision function, because the defect was in what got WRITTEN: every fixture reject stays out of the training set the loop consumes, and an unmeasurable run refuses instead of writing one.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Drive the improve path through a resolved character configuration instead of poking module-level DATA/DEST globals, which no longer exist: the pool, curated set and glob are now that character's own. Every assertion is unchanged - the same fixture verdicts, against the same curated.zip the loop trains on - and the pool is named for a character that is not the one the scripts used to hard-code, so the glob has to follow the character to pass.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Cover the TRAINER, where the training set is actually assembled and where no case reached. Every case above asserts on curated.zip, but the LoRA Studio dispatch passes a FOLDER (~/overnight/curated) to both /train and /improve-overnight and never the zip. train-lora.prepare_dataset copied that folder wholesale into the kohya image directory, ignoring the curation.json lying in it, so a rejected pair present in the folder trained anyway and the judge's own report became a training file. Three cases drive the REAL prepare_dataset and assert on the kohya staging directory: survivors only from a judged folder, a refusal for an unjudged one that destroys nothing, and the human override staging it deliberately.
  */
 
@@ -21,6 +22,9 @@ const JUDGE = join(EDGE_DIR, 'curation_judge.py');
 const MAKE_CURATE = join(EDGE_DIR, 'make-curate.py');
 const FIXTURE_PATH = join(EDGE_DIR, 'fixtures/curation-labels.json');
 const RUN_TIMEOUT_MS = 60_000;
+// Deliberately NOT the character these scripts used to hard-code: the pool glob, the captions and
+// the curated set all have to follow whichever character is being curated.
+const SUBJECT = 'fixture-character';
 
 // A real 1x1 PNG, so the pool the judge walks is genuine image files and the review sheet renders.
 const PNG_1X1 = Buffer.from(
@@ -234,16 +238,16 @@ describe('LoRA automated curation judge', () => {
     const fixture = loadFixture();
     const work = mkdtempSync(join(tmpdir(), 'lora-improve-'));
     const pool = join(work, 'img');
-    const destRoot = join(work, 'overnight');
     mkdirSync(pool, { recursive: true });
 
-    // recurate() globs oshbrainrot_*.png, so the pool is built under the name the REAL code looks
-    // for; the fixture stays the source of truth for the verdicts and the measurements.
+    // recurate() globs <subject>_*.png out of the character's own pool, so the pool is built under
+    // the name the REAL code looks for for THIS character; the fixture stays the source of truth
+    // for the verdicts and the measurements.
     const measurements: Record<string, Record<string, number>> = {};
     for (const row of fixture.candidates) {
-      const id = `oshbrainrot_${row.id}`;
+      const id = `${SUBJECT}_${row.id}`;
       writeFileSync(join(pool, `${id}.png`), PNG_1X1);
-      writeFileSync(join(pool, `${id}.txt`), `oshbrainrot, ${row.id.replace(/_/g, ' ')}\n`);
+      writeFileSync(join(pool, `${id}.txt`), `${SUBJECT}, ${row.id.replace(/_/g, ' ')}\n`);
       measurements[id] = row.measurements;
     }
     const measurementsPath = join(work, 'measurements.json');
@@ -254,23 +258,22 @@ describe('LoRA automated curation judge', () => {
       'spec = importlib.util.spec_from_file_location("mtb", sys.argv[1])',
       'm = importlib.util.module_from_spec(spec)',
       'spec.loader.exec_module(m)',
-      'm.DATA = sys.argv[2]',
-      'm.DEST = sys.argv[3]',
-      'print(json.dumps({"kept": m.recurate(measurements_path=sys.argv[4])}))',
+      'cfg = m.character_config(m.argparse.Namespace(character=sys.argv[2], box_root=sys.argv[3]))',
+      'print(json.dumps({"kept": m.recurate(cfg, measurements_path=sys.argv[4])}))',
     ].join('\n');
     const r = spawnSync(
       python(),
-      ['-c', driver, join(EDGE_DIR, 'make-targeted-batch.py'), pool, destRoot, measurementsPath],
+      ['-c', driver, join(EDGE_DIR, 'make-targeted-batch.py'), SUBJECT, work, measurementsPath],
       { encoding: 'utf8', timeout: RUN_TIMEOUT_MS },
     );
     expect(r.status, `recurate failed: ${r.stderr}`).toBe(0);
 
-    const zipPath = join(destRoot, 'curated.zip');
+    const zipPath = join(work, 'curated.zip');
     expect(existsSync(zipPath), 'the improve path wrote no training set at all').toBe(true);
     const names = zipNames(zipPath);
 
     for (const row of fixture.candidates) {
-      const png = `oshbrainrot_${row.id}.png`;
+      const png = `${SUBJECT}_${row.id}.png`;
       if (row.label === 'reject') {
         expect(names, `${row.id} (${row.failure}) reached the training set the overnight loop trains on`)
           .not.toContain(png);
@@ -291,27 +294,27 @@ describe('LoRA automated curation judge', () => {
     const work = mkdtempSync(join(tmpdir(), 'lora-improve-closed-'));
     const pool = join(work, 'img');
     mkdirSync(pool, { recursive: true });
-    writeFileSync(join(pool, 'oshbrainrot_unmeasured.png'), PNG_1X1);
-    writeFileSync(join(pool, 'oshbrainrot_unmeasured.txt'), 'oshbrainrot, unmeasured\n');
+    writeFileSync(join(pool, `${SUBJECT}_unmeasured.png`), PNG_1X1);
+    writeFileSync(join(pool, `${SUBJECT}_unmeasured.txt`), `${SUBJECT}, unmeasured\n`);
 
     const driver = [
       'import importlib.util, sys',
       'spec = importlib.util.spec_from_file_location("mtb", sys.argv[1])',
       'm = importlib.util.module_from_spec(spec)',
       'spec.loader.exec_module(m)',
-      'm.DATA = sys.argv[2]',
-      'm.DEST = sys.argv[3]',
-      'm.INP = sys.argv[3]',  // no hero there, so it cannot measure
-      'm.recurate()',
+      'm.INP = sys.argv[3]',  // no hero in either search directory, so it cannot measure
+      'm.OUT = sys.argv[3]',
+      'cfg = m.character_config(m.argparse.Namespace(character=sys.argv[2], box_root=sys.argv[3]))',
+      'm.recurate(cfg)',
     ].join('\n');
     const r = spawnSync(
       python(),
-      ['-c', driver, join(EDGE_DIR, 'make-targeted-batch.py'), pool, join(work, 'overnight')],
+      ['-c', driver, join(EDGE_DIR, 'make-targeted-batch.py'), SUBJECT, work],
       { encoding: 'utf8', timeout: RUN_TIMEOUT_MS },
     );
     expect(r.status, 'an unmeasurable run must not exit 0').not.toBe(0);
     expect(r.stderr).toMatch(/REFUSING to recurate unjudged/);
-    expect(existsSync(join(work, 'overnight', 'curated.zip')), 'it wrote a training set anyway').toBe(false);
+    expect(existsSync(join(work, 'curated.zip')), 'it wrote a training set anyway').toBe(false);
   }, RUN_TIMEOUT_MS);
 
   it('refuses to curate INTO the candidate pool instead of deleting it', () => {

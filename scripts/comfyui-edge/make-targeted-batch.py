@@ -7,12 +7,23 @@
 # Reuses make-overnight-hq's identity-preserving hires() off the locked hero so the character never
 # drifts. Weak values are passed as a '||'-separated list (the scorecard's weak_cells[].value).
 #
-#   python make-targeted-batch.py --character oshbrainrot --weak "side profile view||screaming wide open mouth" --count 60
+#   python make-targeted-batch.py --character <subject> --trigger <word> --hero <hero.png> #       --ident "<look sentence>" --weak "side profile view||screaming wide open mouth" --count 60
+#
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                                    | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Take the hero, identity sentence, trigger word,
+#     negative prompt, base checkpoint and dataset directory from the character's own configuration
+#     instead of the first character this script ever generated for. The pool glob, the written
+#     file stems, the captions, the curated set and the ComfyUI hero input name are all keyed on
+#     the subject, so a second character neither reads nor overwrites the first one's dataset.
 import argparse, json, os, time, shutil, glob, random, sys, urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
+from character_config import add_character_arguments, character_config  # noqa: E402
 from curation_judge import curate, discover_candidates, load_json, measure_candidates  # noqa: E402
 
 HOME = os.path.expanduser("~")
@@ -20,12 +31,6 @@ BASE = "http://127.0.0.1:8188"
 COMFY = os.path.join(HOME, "oshal-comfyui", "ComfyUI_windows_portable", "ComfyUI")
 OUT = os.path.join(COMFY, "output")
 INP = os.path.join(COMFY, "input")
-DATA = os.path.join(HOME, "lora-brainrot", "img")
-DEST = os.path.join(HOME, "overnight")
-HERO = "hero_brainrot_00002_.png"
-IDENT = "a one-eyed leathery orange-red screaming cyclops creature, big single eye, wide toothy mouth, stubby clawed legs, long thin arms, glossy 3d render, italian brainrot meme style"
-QUAL = ", highly detailed, sharp focus, intricate, clean render, best quality"
-NEG = "blurry, low quality, deformed, extra eyes, two eyes, text, watermark, multiple characters, jpeg artifacts, lowres"
 STEPS, SAMP, SCHED, W1, H1 = 30, "dpmpp_2m", "karras", 768, 768
 TARGET_CURATED = 120
 
@@ -65,13 +70,14 @@ def run(wf):
     return None
 
 
-def hires(src, scene, seed, pfx, den=0.55):
+def hires(cfg, src, scene, seed, pfx, den=0.55):
+    """Identity-preserving img2img off this character's locked hero, at this character's checkpoint."""
     return run({
-        "ck": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "v1-5-pruned-emaonly-fp16.safetensors"}},
+        "ck": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": cfg.base_model}},
         "img": {"class_type": "LoadImage", "inputs": {"image": src}},
         "enc": {"class_type": "VAEEncode", "inputs": {"pixels": ["img", 0], "vae": ["ck", 2]}},
-        "pos": {"class_type": "CLIPTextEncode", "inputs": {"text": scene + QUAL, "clip": ["ck", 1]}},
-        "neg": {"class_type": "CLIPTextEncode", "inputs": {"text": NEG, "clip": ["ck", 1]}},
+        "pos": {"class_type": "CLIPTextEncode", "inputs": {"text": scene, "clip": ["ck", 1]}},
+        "neg": {"class_type": "CLIPTextEncode", "inputs": {"text": cfg.negative, "clip": ["ck", 1]}},
         "ks1": {"class_type": "KSampler", "inputs": {"seed": seed, "steps": STEPS, "cfg": 7.0, "sampler_name": SAMP, "scheduler": SCHED, "denoise": den, "model": ["ck", 0], "positive": ["pos", 0], "negative": ["neg", 0], "latent_image": ["enc", 0]}},
         "up": {"class_type": "LatentUpscale", "inputs": {"samples": ["ks1", 0], "upscale_method": "nearest-exact", "width": W1, "height": H1, "crop": "disabled"}},
         "ks2": {"class_type": "KSampler", "inputs": {"seed": seed, "steps": STEPS, "cfg": 7.0, "sampler_name": SAMP, "scheduler": SCHED, "denoise": 0.45, "model": ["ck", 0], "positive": ["pos", 0], "negative": ["neg", 0], "latent_image": ["up", 0]}},
@@ -88,7 +94,7 @@ def biased_pick(axis_vals, weak):
     return random.choice(axis_vals)
 
 
-def recurate(hero=None, measurements_path=None, overrides_path=None):
+def recurate(cfg, measurements_path=None, overrides_path=None):
     """Even-sample the augmented dataset for DIVERSITY, then JUDGE it before it becomes the
     training set.
 
@@ -103,85 +109,115 @@ def recurate(hero=None, measurements_path=None, overrides_path=None):
     failed; stopping", which is the correct outcome - a stopped loop beats a loop that trains on
     whatever it rendered.
 
-    @param hero - Locked hero image the identity check measures against.
+    @param cfg - This character's resolved configuration (pool, curated set, hero).
     @param measurements_path - Precomputed id -> measurements JSON, skipping the CLIP pass.
     @param overrides_path - Human override JSON; the human always wins, on this path too.
     @returns The number of candidates KEPT, which is the size of the training set.
     """
-    os.makedirs(DEST, exist_ok=True)
-    candidates = discover_candidates(DATA, "oshbrainrot_*.png")
+    os.makedirs(cfg.root, exist_ok=True)
+    candidates = discover_candidates(cfg.pool_dir, cfg.pool_glob())
     if not candidates:
         return 0
     step = max(1, len(candidates) // TARGET_CURATED)
     sampled = candidates[::step][:TARGET_CURATED]
 
-    hero_path = hero or os.path.join(INP, HERO)
+    hero_path = cfg.hero_image_path(INP, OUT)
     if measurements_path:
         measurements = load_json(measurements_path)
-    elif os.path.exists(hero_path):
-        measurements = measure_candidates(sampled, hero_path)
+    elif hero_path:
+        measurements = measure_candidates(sampled, hero_path, cfg.structural_prompts())
     else:
         raise SystemExit(
             "REFUSING to recurate unjudged: hero %s not found. Pass --hero or --measurements. "
             "overnight-loop.py trains on this zip, so writing it unjudged would train the next "
-            "version on rejects." % hero_path
+            "version on rejects." % cfg.hero
         )
 
     overrides = load_json(overrides_path) if overrides_path else {}
-    zpath = os.path.join(DEST, "curated.zip")
-    # dest_dir is the curated SUBdirectory, never DEST itself: curate() rebuilds its destination
-    # from scratch, and DEST is ~/overnight - the loop's own working directory.
-    report = curate(sampled, measurements, os.path.join(DEST, "curated"), zpath, overrides=overrides)
+    zpath = cfg.curated_zip
+    # dest_dir is the curated SUBdirectory, never the character root itself: curate() rebuilds its
+    # destination from scratch, and the root is this character's whole working directory.
+    report = curate(sampled, measurements, cfg.curated_dir, zpath, overrides=overrides)
     s = report["summary"]
     log("recurated -> %s (%d kept of %d sampled, %d rejected, %d overridden)"
         % (zpath, s["kept"], s["candidates"], s["rejected"], s["overridden"]))
     return s["kept"]
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--character", required=True)
+def build_parser():
+    """
+    @description The CLI. Identity comes from the character's own configuration (the controller
+      fills it from `oshal_lora_characters`); this file holds no character constant.
+    @returns The argparse parser.
+    """
+    ap = argparse.ArgumentParser(description="Regenerate training images biased to a character's weak cells")
+    add_character_arguments(ap)
     ap.add_argument("--weak", default="", help="'||'-separated weak axis-values from the scorecard")
     ap.add_argument("--count", type=int, default=60)
     ap.add_argument("--seed-base", type=int, default=700000)
     # The judge options, mirroring make-curate.py so the two paths are configured the same way.
-    ap.add_argument("--hero", help="locked hero image the identity check measures against")
     ap.add_argument("--measurements", help="precomputed id -> measurements JSON (skips CLIP)")
     ap.add_argument("--overrides", help="human override JSON: id -> {decision, note}")
-    a = ap.parse_args()
-    weak = set(v.strip() for v in a.weak.split("||") if v.strip())
-    os.makedirs(DATA, exist_ok=True)
-    random.seed(a.seed_base)
+    return ap
 
-    # Ensure the hero is available as a ComfyUI input for img2img identity.
-    hero_in = os.path.join(INP, "hq_hero.png")
-    if not os.path.exists(hero_in):
-        src = os.path.join(INP, HERO)
-        src = src if os.path.exists(src) else os.path.join(OUT, HERO)
+
+def stage_hero(cfg):
+    """
+    @description Copy this character's locked hero into ComfyUI's input directory under a name of
+      its own. The name is per character: a shared 'hq_hero.png' meant the second character to run
+      generated every frame off the FIRST character's face.
+    @param cfg - This character's resolved configuration.
+    @returns The ComfyUI-visible input filename.
+    """
+    staged = "hq_hero_%s.png" % cfg.subject
+    target = os.path.join(INP, staged)
+    if not os.path.exists(target):
+        src = os.path.join(INP, cfg.hero)
+        src = src if os.path.exists(src) else os.path.join(OUT, cfg.hero)
         if os.path.exists(src):
-            shutil.copy(src, hero_in)
-    log("targeted batch: %d images biased to weak=%s" % (a.count, sorted(weak) or "(none)"))
+            shutil.copy(src, target)
+    return staged
 
-    # Continue the dataset index past whatever's already there.
-    existing = glob.glob(os.path.join(DATA, "oshbrainrot_t*.png"))
-    start = len(existing)
+
+def generate(cfg, a, weak):
+    """
+    @description Render the biased batch into this character's own pool directory, captioned with
+      its own trigger word.
+    @param cfg - This character's resolved configuration.
+    @param a - Parsed arguments.
+    @param weak - The weak axis-values to over-sample.
+    @returns How many images were made.
+    """
+    staged_hero = stage_hero(cfg)
+    # Continue the dataset index past whatever this character already has.
+    start = len(glob.glob(os.path.join(cfg.pool_dir, cfg.pool_glob("t"))))
     made = 0
     for k in range(a.count):
         i = start + k
-        act = biased_pick(ACTIONS, weak)
-        cam = biased_pick(CAMERAS, weak)
-        exp = biased_pick(EXPRESS, weak)
-        lit = random.choice(LIGHTS)
-        desc = "%s, %s, %s, %s" % (act, cam, exp, lit)
-        o = hires("hq_hero.png", "%s, %s" % (IDENT, desc), a.seed_base + i, "tgt")
+        desc = "%s, %s, %s, %s" % (biased_pick(ACTIONS, weak), biased_pick(CAMERAS, weak),
+                                   biased_pick(EXPRESS, weak), random.choice(LIGHTS))
+        o = hires(cfg, staged_hero, cfg.prompt(desc), a.seed_base + i, "tgt")
         if not o:
             log("img %d FAILED | %s" % (i, desc)); continue
-        src = os.path.join(OUT, o["save"]["images"][0]["filename"])
-        shutil.copy(src, os.path.join(DATA, "oshbrainrot_t%04d.png" % i))
-        open(os.path.join(DATA, "oshbrainrot_t%04d.txt" % i), "w").write("oshbrainrot, " + desc)
+        stem = cfg.pool_stem("t", i)
+        shutil.copy(os.path.join(OUT, o["save"]["images"][0]["filename"]),
+                    os.path.join(cfg.pool_dir, stem + ".png"))
+        open(os.path.join(cfg.pool_dir, stem + ".txt"), "w").write(cfg.caption(desc))
         made += 1
         log("img %d ok | %s" % (i, desc))
-    n = recurate(hero=a.hero, measurements_path=a.measurements, overrides_path=a.overrides)
+    return made
+
+
+def main():
+    """Generate a weak-cell-biased batch for one character and rebuild its judged training set."""
+    a = build_parser().parse_args()
+    cfg = character_config(a)
+    weak = set(v.strip() for v in a.weak.split("||") if v.strip())
+    os.makedirs(cfg.pool_dir, exist_ok=True)
+    random.seed(a.seed_base)
+    log("targeted batch for %s: %d images biased to weak=%s" % (cfg.subject, a.count, sorted(weak) or "(none)"))
+    made = generate(cfg, a, weak)
+    n = recurate(cfg, measurements_path=a.measurements, overrides_path=a.overrides)
     log("==== TARGETED BATCH DONE: +%d images, curated set now %d ====" % (made, n))
 
 
