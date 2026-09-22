@@ -39,6 +39,7 @@ script and duplicate frames reached the renderer; the gates exist so that cannot
 | Node dispatch | `src/app/series-dispatch.ts` | `dispatchStoryboardedEpisode` — hands stills + prompts to the render node over `shell.exec`. |
 | Node renderer | `packages/oshal-vids-operator` `episode-render.js` | Runs on the node: downloads stills, animates each in Google Vids, stitches, saves. |
 | Assembly | vids worker `episode.assemble` tool | Stitches an episode from its clips, on the node, where the media already is. |
+| Season | `dispatchSeasonAssembly` + `packages/oshal-vids-operator` `season-assemble.js` | Stitches a MULTI-episode series' finished episodes, in ordinal order, into one season cut and reads the result's streams back before reporting it. |
 | Image providers | `src/features/video-generation/services/storyboard-image-providers.ts` | Codex / ComfyUI / Vertex behind one interface. |
 | Storyboard | `src/features/video-generation/services/storyboard-frames.ts` | Anchor frame, white-margin crop, near-duplicate rejection. |
 | Surface | `src/app/routes/bot-video-routes.ts` + `src/api/video.html` | `POST /api/video/series` and the "Make a series" form. |
@@ -114,6 +115,16 @@ beats and takes no per-scene still.
 `concatClips` fails loud on a missing or truncated clip rather than shipping a short episode
 as a success.
 
+**SEASON** (`dispatchSeasonAssembly` → `season-assemble.js` on the node). A series with two or
+more episodes parks in `assembling` while the node concatenates its finished episodes into one
+season cut. Two properties: the order is the **ordinal**, read from the database (`ORDER BY
+ordinal`) and sorted again on the node, never the order a caller happened to pass; and the
+**output is read back** with `probeStreams` — a cut with no picture, no sound, or far less than
+the running time of its episodes is a `SEASON_ERR`, not an upload. The series reaches `done`
+only when the artifact actually came back, and `season_drive_url` is written only when the
+upload really returned a link. A one-episode series still goes straight to `done`: a season of
+one is that episode.
+
 ## The speaker-pointer rule
 
 The video model is told who speaks by a **pointer** — the last words of a character's
@@ -185,7 +196,12 @@ routes mounted + auth-gated). Still open:
 3. **ComfyUI (the free path) is stubbed to throw**, not wired. Its `generate` deliberately
    fails rather than returning a placeholder. Wiring = the workflow submit + `/history` poll,
    mirroring `providers/comfyui-provider.ts`.
-4. **No series intro / no season-level assembly** through the pipeline yet — `episode.assemble`
-   exists but the season stitch is not wired.
+4. **The season stitch has never run live.** The intro and the season assembly are both built
+   (`intro_clip` → the render plan → the node's prepend; `dispatchSeasonAssembly` →
+   `season-assemble.js`), and both halves are guarded — the season's ordering and stream
+   validation against real ffmpeg in `tests/unit/season-assemble-node.spec.ts`, the conductor's
+   stage and the ordinal order against a real PostgreSQL in
+   `tests/unit/series-season-assembly.spec.ts`. What is still open is a real multi-episode run on
+   the render node producing an intro-bearing episode set and one season cut.
 
 See [ADR-082](../adr/082-video-series-pipeline.md) for the decision record.

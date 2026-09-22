@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: render-node selection is owner-scoped. findShellWorker/findVidsWorker picked on LIVENESS ALONE, so on a multi-user swarm one user's series rendered on whatever desktop happened to be connected — driving another person's logged-in Chrome and Google account with the requester's Drive token exported into that shell. The owner now comes from the SERIES ROW (video_series.user_sub, NOT NULL), never from the caller, and candidates run through filterUsableDevices BEFORE the preference order so a foreign VIDS_RENDER_CLIENT_ID pin resolves to null instead of executing. Guard: tests/unit/series-dispatch-device-ownership.spec.ts.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Await all journal-backed render, storyboarding, and assembly enqueues under trusted controller identity before persisting dispatch success.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Let a pump dispatch re-enter only the exact durable lease bound to its series while recap or another pump lease continues to fail closed.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | SEASON assembly: dispatchSeasonAssembly stitches a finished multi-episode series into one season cut on the render node, in ORDINAL order read from the database rather than from whatever order a caller happened to pass. Refuses a series that is not fully rendered, a season already in flight, and a node its owner may not drive — the same ownership rule as the render, because the stitch exports the owner's Drive token into a shell on that box.
  */
 /**
  * @description Video Series — remote-node render dispatch.
@@ -499,5 +500,161 @@ export async function dispatchAssembly(
     const error = err instanceof Error ? err.message : 'enqueue failed';
     logger.error({ err, episodeId }, 'episode assembly dispatch failed');
     return { ok: false, episodeId, error };
+  }
+}
+
+/** @description One finished episode, as the season stitch needs it: its place, and its file. */
+export interface SeasonEpisode {
+  /** Position in the season. The stitch order IS this order. */
+  ordinal: number;
+  /** The episode's title, for the node's log line only. */
+  title: string;
+  /** The finished episode file on the render node — the assembled cut if there is one, else the render. */
+  path: string;
+}
+
+/** A season is what a MULTI-episode series produces. One episode is not a season, it is that episode. */
+const MIN_SEASON_EPISODES = 2;
+
+/**
+ * @description Collect the inputs for a season stitch, in ordinal order, or say exactly why there
+ * are none. The ORDER comes from `ORDER BY ordinal` here and nowhere else: the plan the node
+ * receives is already sorted, so no argument a caller passes and no map iteration order can put
+ * episode 3 before episode 2.
+ * @param pool - Database pool.
+ * @param seriesId - The series being assembled.
+ * @returns The ordered episodes, or an `error` naming what is missing.
+ */
+async function seasonEpisodes(
+  pool: Pool,
+  seriesId: string,
+): Promise<{ episodes?: SeasonEpisode[]; error?: string }> {
+  const { rows } = await pool.query(
+    `SELECT ordinal, title, status, assembled_path, mp4_path
+       FROM video_episodes WHERE series_id = $1 ORDER BY ordinal ASC`,
+    [seriesId],
+  );
+  const all = rows as Array<Record<string, unknown>>;
+  if (all.length < MIN_SEASON_EPISODES) {
+    return { error: `a season needs at least ${MIN_SEASON_EPISODES} episodes; this series has ${all.length}` };
+  }
+  const missing = all
+    .filter((r) => !((r.assembled_path as string | null) || (r.mp4_path as string | null)))
+    .map((r) => Number(r.ordinal));
+  if (missing.length) {
+    return { error: `episode(s) ${missing.join(', ')} have no finished file — refusing to stitch a partial season` };
+  }
+  return {
+    episodes: all.map((r) => ({
+      ordinal: Number(r.ordinal),
+      title: String(r.title),
+      path: String((r.assembled_path as string | null) || (r.mp4_path as string | null)),
+    })),
+  };
+}
+
+/**
+ * @description SEASON ASSEMBLY — stitch every finished episode of a series into one season cut on
+ * the render node.
+ *
+ * Runs where the media already is, like every other post-production step here: the episode files
+ * live in the node's content folder and shipping hundreds of megabytes to the controller to
+ * concatenate them would be a pointless round trip. Transport is `shell.exec` into
+ * `season-assemble.js`, the same gated path `dispatchStoryboardedEpisode` uses — the Vids worker's
+ * own tools cannot validate the stitched streams, and an unplayable season reported as a success is
+ * the failure this stage exists to prevent.
+ *
+ * Three refusals, all before anything is enqueued: a series that is not in `assembling`, a season
+ * stitch already in flight (the reconciler sweeps every 20s and would otherwise start a second),
+ * and a node this series' OWNER may not drive — the command exports their Drive access token into a
+ * PowerShell environment on the chosen box.
+ *
+ * @param {Pool} pool database pool
+ * @param {string} seriesId the series whose episodes are all finished
+ * @param {{driveToken: string, ticketId?: string}} opts the owner's Drive token (the season upload)
+ * @returns {Promise<DispatchResult>} the enqueue outcome, never throwing
+ */
+export async function dispatchSeasonAssembly(
+  pool: Pool,
+  seriesId: string,
+  opts: { driveToken: string; ticketId?: string },
+): Promise<DispatchResult> {
+  const { rows } = await pool.query(
+    `SELECT title, orientation, status, user_sub, season_job_id FROM video_series WHERE series_id = $1`,
+    [seriesId],
+  );
+  const s = rows[0] as Record<string, unknown> | undefined;
+  if (!s) return { ok: false, error: `series ${seriesId} not found` };
+  if (s.status !== 'assembling') return { ok: false, error: `series is '${String(s.status)}', not 'assembling'` };
+  if (s.season_job_id) return { ok: false, error: `a season stitch is already in flight (task ${String(s.season_job_id)})` };
+
+  const ownerSub = (s.user_sub as string | null) ?? null;
+  if (!ownerSub) return { ok: false, error: 'series has no owner — refusing to assemble' };
+
+  const collected = await seasonEpisodes(pool, seriesId);
+  if (!collected.episodes) return { ok: false, error: collected.error };
+
+  const selfLeaseId = await activePumpLeaseId(pool, seriesId);
+  const free = await checkVidsNodeAvailability(pool, { skipProbe: true, selfLeaseId: selfLeaseId ?? undefined });
+  if (!free.available) return { ok: false, error: `the render node is not free: ${free.reason}` };
+
+  const worker = findShellWorker({ sub: ownerSub });
+  if (!worker) return { ok: false, error: NO_USABLE_NODE };
+
+  return enqueueSeasonStitch(pool, seriesId, {
+    title: String(s.title),
+    orientation: String(s.orientation ?? 'Landscape'),
+    episodes: collected.episodes,
+  }, worker, opts);
+}
+
+/**
+ * @description Enqueue the season stitch and record its task id. Split out so the refusals above
+ * read as one list; nothing is recorded unless the enqueue actually succeeded, because a phantom
+ * `season_job_id` would park the series in `assembling` forever waiting for a task the node never got.
+ * @param pool - Database pool.
+ * @param seriesId - The series being assembled.
+ * @param plan - Title, orientation and the ordered episodes.
+ * @param worker - The owner-scoped shell worker this runs on.
+ * @param opts - The owner's Drive token and the originating ticket.
+ * @returns The enqueue outcome.
+ */
+async function enqueueSeasonStitch(
+  pool: Pool,
+  seriesId: string,
+  plan: { title: string; orientation: string; episodes: SeasonEpisode[] },
+  worker: { clientId: string; agentId?: string },
+  opts: { driveToken: string; ticketId?: string },
+): Promise<DispatchResult> {
+  // Base64 JSON so no quoting on either side can corrupt a path.
+  const planB64 = Buffer.from(JSON.stringify({ seriesId, ...plan }), 'utf8').toString('base64');
+  const command = [
+    `$p='${nodePkgDir()}'`,
+    'Set-Location $p',
+    `$env:VIDS_DRIVE_ACCESS_TOKEN='${opts.driveToken}'`,
+    `& '${nodeExe()}' season-assemble.js '${planB64}'`,
+  ].join('; ');
+
+  const taskId = randomUUID();
+  try {
+    const task = await runWithSystemIdentity(() => remoteClientRegistry.enqueueTask(worker.clientId, {
+      taskId,
+      correlationId: opts.ticketId || taskId,
+      fromAgentId: SCREENPLAY_WRITER_AGENT_ID,
+      toAgentId: worker.agentId ?? worker.clientId,
+      intent: 'mcp.call-tool' as const,
+      input: { name: 'shell.exec', arguments: { command } },
+      createdAt: new Date().toISOString(),
+    }));
+    await pool.query(
+      `UPDATE video_series SET season_job_id=$2, error=NULL, updated_at=now() WHERE series_id=$1`,
+      [seriesId, task.taskId],
+    );
+    logger.info({ seriesId, taskId: task.taskId, episodes: plan.episodes.length, clientId: worker.clientId }, 'season assembly dispatched');
+    return { ok: true, taskId: task.taskId, clientId: worker.clientId };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : 'enqueue failed';
+    logger.error({ err, seriesId }, 'season assembly dispatch failed');
+    return { ok: false, error };
   }
 }
