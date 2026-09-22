@@ -3,63 +3,28 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the guard for the watchdog's DECIDABLE checks (scripts/lib/trading-watchdog-checks.js) and the PowerShell plumbing that carries them. Every check is MUTATION-PROVED: the shipped module's bytes are read, one condition is inverted or removed, the mutant is loaded from a temp file, and the case asserts the mutant no longer reports the finding (so a guard that could not fail is impossible) - the repo file is never written and its sha256 is compared before and after. Plus the real boundaries: a REAL http server standing in for the api proves the container-side fetcher's fail-closed reads, the ?book= query-first param and the trusted-service headers; REAL powershell.exe executes the ps1's own settings/exec/symbol-state sections against a real .env and a real state file (empty exec -> check-infra, .env precedence, corrupt state file); and the whole ps1 is parsed by the real PowerShell parser. Threshold floors are re-derived from src/features/trading/services/portfolio.ts so a posture change cannot silently start paging.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Round-2 review fixes, each with the boundary that proves it: real child processes drive Invoke-WdExec (empty output, non-zero exit, a DEADLINE that kills a hung child, a refused argument) instead of a stubbed PowerShell function no timeout could kill; the threshold-precedence lines are executed under real powershell against a real .env so the ORDER is pinned (AlertPct before LiveAlertPct - the other way round left the Schwab books on the param default); the core-hold section is executed with a failing exec to prove $coreKnown withholds every core-exempting check; the ps1's docker invocations are enumerated from the real PowerShell AST rather than a regex a `try { $x = docker exec ... }` site could slip past; the container-side fetcher's per-read deadline is proven against a REAL hanging http server (one wedged book errors, the others are still audited); plus the hysteresis band measured from the last alert and the materiality of the position-count floor.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Round-3 review fixes, each proven where it broke. The fetcher case that mattered is reproduced at the SHIPPED per-read cap: three wedged books plus a healthy one against the real hanging server must finish inside the audit budget and the healthy book must still be audited (the round-2 case only passed because it shrank the per-read cap to 1s, hiding that 3 books x 20s x 2 attempts overruns the 60s host deadline); a mutation removes the per-book clamp and asserts the same run overruns. Get-WdAuditBudgetSec is executed under real powershell to pin budget < deadline. docker cp is driven as a REAL child process for its three outcomes (clean exit, non-zero exit, a killed hang) and for the caller-owned alert key, and the AST walk now requires ZERO raw docker cp sites. The block-G withholding is EXECUTED over the marker-wrapped gate for all four (checksReady, coreKnown) combinations plus the failed-roster fallback, instead of being pinned by exact source text. Plus: a Windows path survives ConvertTo-WdArgLine while a trailing backslash is still refused, an unreadable suppression-state file surfaces as a warning, the two account findings re-page when they double, and dust no longer produces warnings.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Guards the bleed scope: an empty allow-list means every book (fail-open, asserted for blank/whitespace/undefined), a listed book fires, an unlisted one stays silent, DEEP-LOSS still fires on the excluded book, and refs are trimmed without the colon-splitting coreSymbolSet does to symbols. Two mutations: failing closed on an empty list silences every book, and dropping the scope check re-alerts the hand-traded one. The .env plumbing is executed under real powershell against a real .env file, including that an unset key yields "" rather than "False". Two neighbouring real-process cases gain the 30s allowance their sibling already carried - they were passing at ~4.9s against the 5s default and two more spawns in this file tipped them over.
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the guard for the watchdog's DECIDABLE checks (scripts/lib/trading-watchdog-checks.js) and the PowerShell plumbing that carries them. Every check is MUTATION-PROVED: the shipped module's bytes are read, one condition is inverted or removed, the mutant is loaded from a temp file, and the case asserts the mutant no longer reports the finding (so a guard that could not fail is impossible) - the repo file is never written and its sha256 is compared before and after. Plus the real boundaries: a REAL http server standing in for the api proves the container-side fetcher's fail-closed reads, the ?book= query-first param and the trusted-service headers; REAL powershell.exe executes the ps1's own settings/exec/symbol-state sections against a real .env and a real state file (empty exec -> check-infra, .env precedence, corrupt state file); and the whole ps1 is parsed by the real PowerShell parser. Threshold floors are re-derived from src/features/trading/services/portfolio.ts so a posture change cannot silently start paging.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Guards that an UNCONFIRMED sell is not cover. The status buckets are RE-DERIVED from the kernel rather than typed here - broker-adapter.ts's OrderStatus union plus the 'submitting' reservation trading-engine.ts INSERTs - and the case asserts the three buckets PARTITION that vocabulary, so a status added to either lands in a bucket instead of in silence; both adapters' normalizeStatus default arm is pinned to 'pending' as well, since that is what makes an unrecognized venue status fall into the unconfirmed bucket rather than read as protection. Behaviour: a confirmed sell still suppresses bleed, a pending/submitting row raises unconfirmed-cover instead of silencing the symbol, a terminal row is unchanged, the two bleed-family findings are disjoint per symbol, the materiality floor and the core-hold exemption both hold, the kind is inside the reconciliation scope, and the finding rides the existing hysteresis (suppressed inside the window, re-paged past the band, recovered exactly once when the venue confirms). It is SCOPED by the same bleedBooks allow-list as bleed, asserted both ways plus fail-open on blank, because on the hand-traded rollover an unconfirmed row is the normal resting state. Three mutations: restoring the ledger-working list to the coverage test silences the pending row (the defect itself), dropping the new check's materiality floor pages on the $0.04 delisted lot, and dropping the scope gate pages the hand-traded book.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Decomposed at 975 code lines (the 800-line proposal threshold was already behind it at 843). The fixtures, the MUTANT loader and the shipped-module hash guard moved to tests/helpers/trading-watchdog-checks-harness.ts, and two describes moved verbatim to tests/unit/trading-watchdog-corroboration.spec.ts: the pre-market gap print and the unconfirmed-sell cover cases (seq 5). Every case is kept; this file keeps the broker-number, status-list drift, silently-wrong-book, posture-floor, hysteresis, real-fetcher, PowerShell plumbing, wiring and bleed-scope cases. Change Log entries are now in sequence order.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import {
+  BOOK, C, NOW, kindsOf, minutesAgo, modulePath, moduleSource, mutationHarness, order, position, powershell,
+  root, settings, watchdogPath, watchdogSource,
+} from '../helpers/trading-watchdog-checks-harness';
 
-const root = join(__dirname, '..', '..');
-const modulePath = join(root, 'scripts', 'lib', 'trading-watchdog-checks.js');
-const watchdogPath = join(root, 'scripts', 'trading-watchdog.ps1');
-const moduleSource = readFileSync(modulePath, 'utf8');
-const watchdogSource = readFileSync(watchdogPath, 'utf8');
-const moduleHashBefore = createHash('sha256').update(readFileSync(modulePath)).digest('hex');
-const powershell = process.platform === 'win32' ? 'powershell.exe' : 'pwsh';
-const scratch = mkdtempSync(join(tmpdir(), 'oshal-wd-checks-'));
-
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const C = require(modulePath);
-
-const NOW = Date.parse('2026-09-04T15:00:00.000Z');
-const minutesAgo = (n: number): string => new Date(NOW - n * 60_000).toISOString();
-
-/**
- * Loads a MUTANT copy of the shipped module: one exact substring replaced. The repo file is never
- * touched (its hash is asserted unchanged at the end of the run) - the mutant lives in the scratch
- * dir. A mutation whose `from` text is absent throws, so a refactor that renames the guarded line
- * fails loudly instead of quietly proving nothing.
- */
-const mutant = (from: string, to: string): any => {
-  expect(moduleSource.split(from).length - 1, `mutation anchor is not unique: ${from}`).toBe(1);
-  const file = join(scratch, `mutant-${createHash('sha1').update(from + to).digest('hex').slice(0, 10)}.js`);
-  writeFileSync(file, moduleSource.replace(from, to));
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  return require(file);
-};
-
-const position = (symbol: string, over: Record<string, unknown> = {}): Record<string, unknown> =>
-  ({ symbol, qty: 100, avgEntryPrice: 100, marketValue: 10_000, unrealizedPl: 0, ...over });
-const order = (symbol: string, over: Record<string, unknown> = {}): Record<string, unknown> =>
-  ({ symbol, side: 'sell', status: 'accepted', qty: '10.000000', limit_price: null, created_at: minutesAgo(5), ...over });
-
-const settings = (over: Record<string, unknown> = {}): any => Object.assign(
-  C.defaultSettings({}), { core: new Set<string>(), rth: true, nowMs: NOW }, over);
-const BOOK = { ref: 'b-spec', enabled: true };
-const kindsOf = (r: { findings: Array<{ kind: string }> }): string[] => r.findings.map((f) => f.kind).sort();
-
-afterAll(() => {
-  rmSync(scratch, { recursive: true, force: true });
-  expect(createHash('sha256').update(readFileSync(modulePath)).digest('hex'),
-    'the mutation cases must never write to the shipped module').toBe(moduleHashBefore);
-});
+// The fixtures, the MUTANT loader and the shipped-module hash guard live in the harness, shared with
+// trading-watchdog-corroboration.spec.ts. This spec owns its own scratch dir and disposes it.
+const { scratch, mutant, dispose } = mutationHarness();
+afterAll(dispose);
 
 describe('watchdog checks: broker numbers never read as healthy', () => {
   it('parses real broker shapes and REFUSES everything else', () => {
@@ -421,42 +386,6 @@ describe('watchdog checks: per-symbol suppression with hysteresis', () => {
     const M = mutant("if (opts.scope.kinds.indexOf(String(e.kind)) < 0 || opts.scope.refs.indexOf(String(e.ref)) < 0) continue;", '');
     const first = M.decideAlerts({}, [f(6)], { nowMs: NOW, windowMin: 60, scope });
     expect(M.decideAlerts(first.state, [], { nowMs: NOW + 60_000, windowMin: 60, scope: { refs: [], kinds: [] } }).recovered).toEqual(['bleed-b-spec-AAPL']);
-  });
-});
-
-describe('watchdog checks: the pre-market gap needs a real print', () => {
-  const today = '2026-09-04';
-  const base = { priorClose: 500, todayIso: today, nowMs: Date.parse(`${today}T12:00:00.000Z`), minSize: 100, maxAgeMin: 15, gapPct: 1 };
-  const trade = (over: Record<string, unknown> = {}): any => ({ t: `${today}T11:58:00.000Z`, p: 490, s: 500, ...over });
-  const quote = (over: Record<string, unknown> = {}): any => ({ bp: 489.9, ap: 490.1, ...over });
-
-  it('alerts when the print AND the quote mid both cross', () => {
-    const r = C.assessGapPrint({ ...base, trade: trade(), quote: quote() });
-    expect(r.alert).toBe(true);
-    expect(Math.round(r.gap * 10) / 10).toBe(-2);
-  });
-
-  it('refuses a thin print, a stale print, yesterday\'s print, and a one-sided quote', () => {
-    expect(C.assessGapPrint({ ...base, trade: trade({ s: 1 }), quote: quote() }).skip).toMatch(/thin print/);
-    expect(C.assessGapPrint({ ...base, trade: trade({ t: `${today}T11:00:00.000Z` }), quote: quote() }).skip).toMatch(/stale print/);
-    expect(C.assessGapPrint({ ...base, trade: trade({ t: '2026-09-03T11:58:00.000Z' }), quote: quote() }).skip).toMatch(/no pre-market print yet/);
-    expect(C.assessGapPrint({ ...base, trade: trade(), quote: quote({ bp: 0 }) }).skip).toMatch(/two-sided quote/);
-    expect(C.assessGapPrint({ ...base, trade: null, quote: quote() }).skip).toMatch(/no prior close or no trade/);
-  });
-
-  it('does not alert when only the trade crosses but the quote mid does not', () => {
-    const r = C.assessGapPrint({ ...base, trade: trade(), quote: quote({ bp: 498, ap: 499 }) });
-    expect(r.alert).toBe(false);
-  });
-
-  it('MUTATION: dropping the size floor pages on a 1-share odd lot', () => {
-    const M = mutant("if (size < input.minSize) return { skip: 'thin print (size=' + size + ' < ' + input.minSize + ')' };", '');
-    expect(M.assessGapPrint({ ...base, trade: trade({ s: 1 }), quote: quote() }).alert).toBe(true);
-  });
-
-  it('MUTATION: dropping the quote corroboration pages on a print the book does not support', () => {
-    const M = mutant('return { alert: gap <= -input.gapPct && midGap <= -input.gapPct,', 'return { alert: gap <= -input.gapPct,');
-    expect(M.assessGapPrint({ ...base, trade: trade(), quote: quote({ bp: 498, ap: 499 }) }).alert).toBe(true);
   });
 });
 
@@ -1062,3 +991,4 @@ describe('watchdog checks: the bleed alert is scoped to the books something MANA
     expect(kindsOf(M.evaluateBook(BY_HAND, bleeding, st))).toEqual(['bleed']);
   });
 });
+

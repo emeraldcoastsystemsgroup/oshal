@@ -3022,8 +3022,38 @@ including across a directory belonging to a different owner. Full reasoning and 
 - **Done when:** the Trends tab's Paper · auto tile and curve are bankroll-based and labelled paper; open alerts show price-since-announced; and Real · auto is either still "not built" with the gate stated, or built behind a PROVEN scorecard row plus a double opt-in flag, with orders audited like the manual path.
 
 ### Trading watchdog hardening — the rest of the checks (ADR-134 D3.7)
-- **Remaining:** quote volume/recency corroboration beyond the pre-market gap check; ~~broker-number parsing~~ (shipped in the same change, #354 — `toNumber`, the "strict broker-number parse" in `scripts/lib/trading-watchdog-checks.js`, which throws on anything that is not a plain finite number; checked 2026-09-14); and the deliberate narrowing recorded in ADR-134 — "uncovered position" for autopilot-managed names is approximated as held-past-the-stop rather than reconciled against the venue's own working stop orders, because the watchdog reads the ledger, not the venue.
-- **Done when:** the remaining checks ship with the same mutation guards, and the uncovered-position check compares against venue-resident stops rather than a loss threshold.
+- **Remaining:** ~~quote volume/recency corroboration beyond the pre-market gap check~~ (shipped in the same change, #354 — `assessGapPrint` in `scripts/lib/trading-watchdog-checks.js` refuses a gap unless the trade PRINT carries at least `gapMinPrintSize` shares (print size — the quote's own bid/ask size is not read), is no older than `gapMaxPrintAgeMin`, is dated today, AND a two-sided quote's mid crosses the same threshold; `assessGapPrint` is the only watchdog conclusion that reads a tape print at all, so no second consumer is owed the corroboration; checked 2026-09-21); ~~broker-number parsing~~ (shipped in the same change, #354 — `toNumber`, the "strict broker-number parse" in `scripts/lib/trading-watchdog-checks.js`, which throws on anything that is not a plain finite number; checked 2026-09-14); and the deliberate narrowing recorded in ADR-134 — "uncovered position" for autopilot-managed names is approximated as held-past-the-stop rather than reconciled against the venue's own working stop orders, because the watchdog reads the ledger, not the venue. **That narrowing is now the separate entry below**, because closing it is a broker call with a deadline budget rather than another pure check over data the watchdog already holds.
+- **Done when:** both struck items ship with the same mutation guards *(met)*, and the venue-resident-stop comparison closes on its own done-when in [the entry below](#the-watchdogs-live-books-decide-cover-from-the-ledger-while-the-paper-book-asks-the-venue-2026-09-21).
+
+### The watchdog's live books decide cover from the ledger, while the paper book asks the venue (2026-09-21)
+
+- **Measured on the shipped files.** `scripts/trading-watchdog.ps1` block G reads `GET /api/trading/orders`
+  per live book ([line 687](../scripts/trading-watchdog.ps1#L687)) — the api's page over
+  `oshal_trading_orders`, capped at the 100 most recent rows for that book — and decides protective
+  cover from it. The PAPER path ([line 927](../scripts/trading-watchdog.ps1#L927)) instead queries the
+  venue directly (`/v2/orders?status=open&limit=100`), so it asks what is actually resting. The live
+  books, which are the real money, are the ones asking the ledger.
+- **Narrowed 2026-09-21, not closed.** A row the venue has not confirmed no longer counts as cover:
+  `CONFIRMED_WORKING_ORDER_STATUSES` (`accepted`, `partially_filled`) is the only set a coverage
+  conclusion may rest on, and `pending` / `submitting` now raise the `unconfirmed-cover` finding
+  instead of silencing the symbol. That makes the watchdog say "the ledger cannot answer this", which
+  is honest; it does not make the watchdog able to answer it. A stale `accepted` row still reads as
+  cover, and a resting sell older than the newest 100 rows is still invisible. And `accepted` itself
+  absorbs adapter mappings (Alpaca `done_for_day` / `replaced`, Schwab `REPLACED` /
+  `AWAITING_RELEASE_TIME`) whose resting semantics are not established anywhere in this repo; whether
+  those should count as cover is open and belongs with this entry's venue query, not with the list.
+- **Done when:** the live books compare against venue-resident stops the way the paper book already
+  does (a broker read per book, not a ledger page); `unconfirmed-cover` narrows to the rows that venue
+  read genuinely cannot account for; **the venue comparison stays scoped by `TRADING_WD_BLEED_BOOKS`,
+  exactly as `bleed` and `unconfirmed-cover` are** — on the hand-traded rollover every position
+  legitimately has no working sell, so widening that scope pages all day on a real-money book and
+  trains the operator to ignore the watchdog; and the per-book deadline budget in
+  `trading-watchdog.ps1` is extended to cover the extra broker call, with the arithmetic re-proved
+  against a real hanging server. The budget math is load-bearing, not bookkeeping: a round-3 review
+  measured three wedged books spending 126s inside a 60s exec deadline (20s per read x 2 attempts x
+  3 books), so the child was killed and every book's result — wedged and healthy alike — was thrown
+  away. `Get-WdAuditBudgetSec` (deadline minus slack), its equal per-book slice, and
+  `TRADING_WD_HTTP_TIMEOUT_SEC` must still leave room for the added read at the shipped defaults.
 
 ### Futures extension layer (ADR-116)
 - **Phased 2026-09-06:** [futures-phasing.md](apps/trading/futures-phasing.md) records what exists on disk today (the backtester and adapters, the Kibot ES/CL archives running to 2025-12-31, and an empty `market_bars`) and splits the remaining work into five independently shippable phases with an evidence gate and an explicit stop-line.
