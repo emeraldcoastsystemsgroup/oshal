@@ -6,7 +6,8 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | OpenAI-COMPATIBLE: constructor honors config.baseUrl (drives any chat-completions gateway — a user's BYO endpoint, LiteLLM, LM Studio, Ollama, Groq, …); added generateResponse() matching the BedrockProvider/Cline contract so TaskController can drive a BYO-LLM connection with no special-casing.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Bound OpenRouter reasoning to a low, non-disclosed budget for interactive completions, normalized multipart text, and fail explicitly when a gateway returns reasoning tokens without a final answer.
- * 4 | maintainer@emeraldcoastsystemsgroup.com   | A turn spent attempting a tool call is no longer thrown away. generateResponse now reads tool_calls AND the legacy function_call field, surfaces them as tool_use blocks, and - because it declares no tools, so any call is one the model invented from the system prompt's "you have access to N tools" - completes the exchange once with a truthful no-tools-available result to obtain a direct answer; a gateway-filtered malformed attempt, which leaves no call id to answer, restates the constraint as a user turn instead. Measured live on generativelanguage.googleapis.com 2026-09-22: gemini-2.5-flash and gemini-3.8-flash both return { role, tool_calls } with no content key, and 3.8-flash also returns finish_reason "function_call_filter: MALFORMED_FUNCTION_CALL" with message keys [extra_content, role]. The empty-answer error and warning now name provider, model, finish_reason and output tokens, report an ABSENT finish_reason as absent instead of defaulting the diagnostic to "stop" (that default is what made the genuinely empty turn read as a normal completion), and carry a content-free fingerprint of the response SHAPE in the message string, because the console transport prints only the message and drops metadata. Usage accumulates across both legs and honours an endpoint-reported total_tokens rather than assuming input + output.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | A turn spent attempting a tool call is no longer thrown away. generateResponse now reads tool_calls AND the legacy function_call field and surfaces both as tool_use blocks. Because it declares no tools, any call is one the model invented from the system prompt's "you have access to N tools", so a call carrying its own id completes the exchange once with a truthful no-tools-available result to obtain a direct answer; a gateway-filtered malformed attempt, which leaves no call id to answer, restates the constraint as a user turn instead. A call read out of the legacy function_call field was surfaced but did NOT complete that way - that field carries no id, and the continuation built for it was not a valid tool exchange, so it fell through to the empty-answer error; entry 5 is what makes that shape complete. Measured live on generativelanguage.googleapis.com 2026-09-22: gemini-2.5-flash and gemini-3.8-flash both return { role, tool_calls } with no content key, and 3.8-flash also returns finish_reason "function_call_filter: MALFORMED_FUNCTION_CALL" with message keys [extra_content, role]. The empty-answer error and warning now name provider, model, finish_reason and output tokens, report an ABSENT finish_reason as absent instead of defaulting the diagnostic to "stop" (that default is what made the genuinely empty turn read as a normal completion), and carry a content-free fingerprint of the response SHAPE in the message string, because the console transport prints only the message and drops metadata. Usage accumulates across both legs and honours an endpoint-reported total_tokens rather than assuming input + output.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | The tool-call continuation now builds its replayed assistant turn FROM the normalized calls instead of passing the raw tool_calls array through, because the two do not line up: normalizeToolCalls synthesizes call_${index} for a call that arrived without an id and for the legacy function_call field (which has no tool_calls array at all), and drops a call with no function name. Replaying the raw array while answering the normalized ids produced an assistant turn and a tool turn that disagreed in three shapes - a legacy function_call, a tool_calls entry with no id, and several calls of which one was unnamed - and a chat-completions gateway rejects that pairing with a 400, which landed in the continuation's catch. The recovery entry 4 claims therefore never happened for those shapes, and the caller was billed for two legs to receive the same empty-answer error. A call with no function name is not replayed at all: there is no name to attribute a result to, so it cannot be answered, and a declared-but-unanswered call is the same 400. rawArguments, which is the text replayed verbatim, now also carries arguments a gateway sent already parsed - the wire format is a JSON string, and dropping a non-string to '' told the model it had called with no arguments when it had not.
  */
 
 /**
@@ -210,8 +211,13 @@ class OpenAIProvider extends LLMService {
    * and asks for a direct answer. It is ONE bounded continuation, not a blind retry: it runs only
    * when the first response carried tool calls and no text, and a failure falls through to the
    * honest empty-answer error rather than looping.
+   *
+   * Both halves of that pair are built from `toolCalls`, so the ids answered are by construction
+   * the ids declared. `assistantMessage` contributes only its text content — never its raw
+   * `tool_calls`, whose ids are not the ids this answers.
    * @param {Object} request - the original chat-completions request (tool-less by construction)
-   * @param {Object} assistantMessage - the raw assistant message that carried the tool calls
+   * @param {Object} assistantMessage - the raw assistant message that carried the tool calls; only
+   *   its `content` is used, because its call ids are not the normalized ones being answered
    * @param {Array<{id:string,name:string,rawArguments:string}>} toolCalls - the normalized calls
    * @returns {Promise<{content:string,stopReason:string,usage:Object}|null>} the follow-up, or null
    */
@@ -219,9 +225,34 @@ class OpenAIProvider extends LLMService {
     // With readable calls there is a tool_call_id to answer, so the exchange is completed the
     // protocol's own way. A filtered/malformed attempt leaves no id to answer — there the only
     // available move is to restate the constraint as a user turn.
+    //
+    // The replayed assistant turn is built FROM the normalized calls, never from the raw
+    // `assistantMessage.tool_calls`. The two are not interchangeable: normalizeToolCalls
+    // synthesizes an id (`call_${index}`) for a call that arrived without one, and reads the
+    // legacy `function_call` field that has no `tool_calls` array behind it at all. Passing the
+    // raw array through while answering the normalized ids produced an assistant turn and a tool
+    // turn that did not line up — an id answered that the assistant turn never declared, or a
+    // declared id left unanswered — which every chat-completions gateway rejects with a 400. That
+    // landed in the catch below, so the recovery never happened and the caller was billed twice
+    // for the empty answer it got anyway. Building both halves from one list is what makes the
+    // pairing an invariant rather than a coincidence.
+    //
+    // A call the endpoint sent with no function name is absent here by construction
+    // (normalizeToolCalls filters it) and is therefore NOT replayed. That is deliberate: there is
+    // no name to attribute a result to, so it cannot be answered, and an unanswered call in the
+    // replay is the same 400. It is not lost — its tokens are in the usage total, and it is part
+    // of what made attemptedToolCall true and brought us here.
     const continuation = toolCalls.length > 0
       ? [
-        { role: 'assistant', content: assistantMessage?.content ?? null, tool_calls: assistantMessage.tool_calls },
+        {
+          role: 'assistant',
+          content: assistantMessage?.content ?? null,
+          tool_calls: toolCalls.map((call) => ({
+            id: call.id,
+            type: 'function',
+            function: { name: call.name, arguments: call.rawArguments },
+          })),
+        },
         ...toolCalls.map((call) => ({
           role: 'tool', tool_call_id: call.id, content: NO_TOOL_AVAILABLE_RESULT,
         })),
@@ -614,6 +645,25 @@ function addUsage(totals, usage) {
 }
 
 /**
+ * @description The argument payload EXACTLY as the endpoint sent it, as a wire-format string.
+ *
+ * `rawArguments` is not a convenience copy: it is the text replayed verbatim into the assistant
+ * turn of the tool-call continuation, so it must be what arrived, never a re-serialization of the
+ * parsed `input` (which would silently rewrite key order, number formatting and any argument that
+ * failed to parse). The chat-completions wire format is a JSON string and that path is a straight
+ * pass-through. Some OpenAI-compatible gateways emit `arguments` already parsed; serializing that
+ * object once here is the only way it survives into the replay, and the alternative — dropping it
+ * to an empty string — would tell the model it called with no arguments when it did not.
+ * @param {*} value - `call.function.arguments` as the endpoint returned it
+ * @returns {string} the wire-format argument string, or '' when there is nothing to carry
+ */
+function toRawArguments(value) {
+  if (typeof value === 'string') return value;
+  if (value === undefined || value === null) return '';
+  try { return JSON.stringify(value); } catch { return ''; }
+}
+
+/**
  * @description Normalizes an assistant message's function/tool calls into the tool_use shape the
  * rest of the harness speaks.
  *
@@ -622,6 +672,12 @@ function addUsage(totals, usage) {
  * in the field this did not check is indistinguishable from an empty turn. Arguments that are not
  * valid JSON are kept verbatim under `raw` rather than dropped — a malformed argument is still
  * evidence of what the model tried to do.
+ *
+ * Two properties of the returned list are relied on by resolveUnsolicitedToolCalls and must not be
+ * relaxed: `id` is ALWAYS a usable string (synthesized as `call_${index}` when the endpoint sent
+ * none, which is also the only id the legacy `function_call` shape can have), and `name` is always
+ * a non-empty string, because a call without one is filtered out here. Those two together are what
+ * let the continuation build a protocol-valid assistant turn out of this list alone.
  * @param {Object} [message] - `choice.message` as the endpoint returned it
  * @returns {Array<{id:string,name:string,input:Object,rawArguments:string}>} normalized calls
  */
@@ -632,7 +688,7 @@ function normalizeToolCalls(message) {
   return raw
     .filter((call) => call && call.function && call.function.name)
     .map((call, index) => {
-      const rawArguments = typeof call.function.arguments === 'string' ? call.function.arguments : '';
+      const rawArguments = toRawArguments(call.function.arguments);
       let input;
       try { input = rawArguments ? JSON.parse(rawArguments) : {}; } catch { input = { raw: rawArguments }; }
       return { id: String(call.id || `call_${index}`), name: String(call.function.name), input, rawArguments };
