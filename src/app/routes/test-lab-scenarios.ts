@@ -77,6 +77,7 @@
  * 25 | maintainer@emeraldcoastsystemsgroup.com   | Registered the remote-node binding card (DEVICE_SCENARIOS): a read-only step over GET /api/remote-clients that checks the surface can say, per computer, whether it finished enrolling and who it is bound to. A node bound to nobody heartbeats like a working one and receives no owner-scoped work, and nothing in the cockpit used to say so. Guard: tests/unit/device-ownership-visible.spec.ts.
  * 26 | maintainer@emeraldcoastsystemsgroup.com   | Attached the hand-off guards to 'jarvis-routing' regressionTests: jarvis-build-handoff (a build directive is filed with the swarm without a model turn, exactly once) and jarvis-task-complete-notify (a finished task reaches its owner). Both ship with the hand-off work and a test file on disk is not Test Lab registration. No live step was added for the build path on purpose - firing a real build directive at the deployment would open a real ticket on every lab run.
  * 27 | maintainer@emeraldcoastsystemsgroup.com   | Attached tests/unit/provider-model-catalog.spec.ts to the 'provider-switch' regressionTests. The scenario already covers which PROVIDER serves a bot; the MODEL on the same row was validated against nothing at all, so a configured id absent from provider-definitions was accepted silently and its real call recorded at $0. A test file on disk is not Test Lab registration.
+ * 28 | maintainer@emeraldcoastsystemsgroup.com   | Attached openai-compat-tool-call-extraction to 'jarvis-routing' regressionTests. Jarvis turns run through the OpenAI-compatible adapter, and a turn the model spent attempting a tool call was being thrown away there - the guard carries the response shapes captured live from the failure, so it belongs to this scenario rather than sitting unregistered on disk.
  * @module test-lab-scenarios
  */
 
@@ -398,6 +399,7 @@ export const SCENARIOS: Scenario[] = [
       { level: 'integration', path: 'tests/unit/jarvis-provider-intent-routing.spec.ts' },
       { level: 'integration', path: 'tests/unit/jarvis-build-handoff.spec.ts' },
       { level: 'unit', path: 'tests/unit/jarvis-task-complete-notify.spec.ts' },
+      { level: 'unit', path: 'tests/unit/openai-compat-tool-call-extraction.spec.ts' },
     ],
     steps: [
       { id: 'j-jobs', app: 'jarvis', label: '"What are my top job opportunities right now?"', run: (c) => jarvisStep(c, 'top jobs', 'What are my top job opportunities right now?') },
