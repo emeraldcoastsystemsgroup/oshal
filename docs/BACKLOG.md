@@ -544,6 +544,39 @@ including across a directory belonging to a different owner. Full reasoning and 
   load; the gate is green with no allowlist; a spec proves it goes red per violation shape; and the
   backfill landed in the store repo rather than being waived.
 
+### Jarvis cannot see the user's other conversations, so it defers instead of answering
+
+- **Commissioned (operator, 2026-09-22).** Asked something it does not hold in the current thread,
+  Jarvis tells the operator to go to the application. It has no way not to: the baseline tool registry
+  carries infrastructure, RAG, graph and finance tools and **nothing that reads the caller's own
+  conversations or tasks** (`tool-registry-baseline-tools.ts` — `execute_command`, `rag-query`,
+  `graph-query`, `kubectl`, `terraform`, … and no conversation, thread, task or history tool). The
+  operator's requirement, in his words: Jarvis should know that the user's other conversations and
+  Jarvis tasks exist, should **not** carry their detail by default, must be able to query them **on
+  behalf of the user**, and **should always try to get the answer** rather than defer.
+- **Scope, stated so it cannot be misread: the caller's OWN tasks, never another person's.** This is
+  a cross-*task* capability for one user, not a cross-user one.
+- **The isolation substrate already exists, which is what makes this safe.** `jarvis_tasks`
+  (`user_sub`, `session_id`, `title`, `status`, `result`, `kind`, `ticket_id`, `principal_issuer`),
+  `chat_tasks` (`owner_sub`), `tickets` (`owner_sub`) and `chat_messages` (owner derived through its
+  parent) all have row-level security **enabled and FORCED**, each with a policy. So the tool must
+  read through the identity-stamped pool and let the database do the scoping, rather than filtering in
+  application code — a tool that builds its own `WHERE user_sub = …` is the shape that goes wrong the
+  first time someone forgets it.
+- **Shape.** Two operations, not one: a **list/search** that returns only what a reader needs to
+  choose — title, status, kind, when, and the task id — and a **fetch** that returns the detail of one
+  named task. That is what "does not know their detail by default" means in practice, and it keeps a
+  broad question from pulling every past answer into the model's context.
+- **Sequencing.** This is worthless until the conversational path actually declares its tools (see the
+  tool-wiring entry): a tool that is computed and discarded answers nothing.
+- **Done when:** a kernel tool exists that lists and fetches the caller's own Jarvis tasks and chat
+  threads; a two-user real-database proof shows user B receives nothing of user A's through it,
+  refused by the database rather than by application filtering, with the paired "user A can" case so a
+  policy that denies everyone cannot pass as a success; the list operation returns no answer bodies;
+  the persona is updated so Jarvis reaches for this tool instead of deferring to the surface; and a
+  live ask on the box — a question whose answer lives in a DIFFERENT thread of the same user — is
+  answered rather than deflected.
+
 ### Jarvis starts cold on every conversation — prime the invariant context once
 
 - **Commissioned (operator, 2026-09-22).** Every Jarvis conversation re-sends the same invariant
