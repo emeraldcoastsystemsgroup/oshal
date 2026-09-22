@@ -18,6 +18,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-134 pin retirement: loadLegacyBook(pool, sub, kind) - the legacy 'paper'/'live' books resolved through their DB ROW, which is what carries the account binding (and the enabled flag / capital cap / settlement policy). It falls back to the pure legacyBook() constructor ONLY when the row is genuinely ABSENT; a loadBook THROW (book_binding_undecryptable) propagates, because degrading an undecryptable binding into an UNBOUND book is exactly how a caller ends up addressing whichever account the venue happens to enumerate first. Callers that used `loadBook(...).catch(() => null) ?? legacyBook(...)` must use this instead.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Bootstrap under the SCHEMA_LOCK_KEYS.trading advisory lock. These statements were running unserialised, so two processes sharing one database interleaved `DROP TRIGGER IF EXISTS` / `CREATE TRIGGER`, `CREATE TABLE IF NOT EXISTS` and the check-then-`CREATE POLICY` pair; Postgres answers that with 42710 "already exists" or 23505 on a catalog index, and it failed three trading specs in beforeAll on every unit run without --no-file-parallelism. The lock also moves the module onto the savepoint path, so owner-only DDL under a non-owner runtime role is reported and the requirements asserted instead of aborting the whole bootstrap.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The arming acknowledgement (BACKLOG "Arming a second autopilot leg is a deliberate, gated act"). oshal_trading_books gains arm_ack_at/arm_ack_by/arm_ack_note, recordArmAck() writes or withdraws them, and loadBook/listBooks carry them onto TradingBook. It is deliberately NOT part of updateBook's patch: `enabled` says the book may take risk, the acknowledgement says the operator has read what an autopilot leg does to an account whose positions the engine did not open, and collapsing the two into one PATCH is exactly the conflation this gate exists to prevent. Recording is idempotent per book and the withdrawal path clears all three columns, so a book can be handed back to the operator without deleting it.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-134 D8 gap 3: oshal_trading_books gains discovered_account_type ('cash'|'margin', CHECK-pinned), written by recordDiscoveredAccountType() the first time a venue account read answers for a book whose own type is unknown. The legacy 'live' book is UNBOUND by construction (there is no account_id to join a discovered type from), so settlementApplies() stayed true on it forever: every BUY paid one venue account read, and a read that failed refused the buy 503 settlement_unknown — on an account the venue reports as MARGIN, where the settlement guard has nothing to do at all. toBook reads the BOUND account's type first and falls back to this cache, so binding a book to an account later never inherits a stale answer, and a venue that changes its answer converges (the write is an unconditional UPDATE, not a fill-if-null).
  */
 
 import crypto from 'crypto';
@@ -120,6 +121,12 @@ async function bootstrapBooks(pool: AppContext['pool']): Promise<void> {
       'ALTER TABLE oshal_trading_books ADD COLUMN IF NOT EXISTS arm_ack_at TIMESTAMPTZ',
       'ALTER TABLE oshal_trading_books ADD COLUMN IF NOT EXISTS arm_ack_by TEXT',
       'ALTER TABLE oshal_trading_books ADD COLUMN IF NOT EXISTS arm_ack_note TEXT',
+      // ADR-134 D8 gap 3: what the VENUE said this book's account type is, cached on the row. The
+      // bound account's own discovered type (the accounts join below) still wins; this column is
+      // the only answer an UNBOUND book — the legacy 'live' book — can ever have, and without it
+      // every BUY on it costs a venue account read and a failed read refuses the buy. Same CHECK
+      // shape as settlement_policy: the DB, not only the writer, decides what values may land.
+      `ALTER TABLE oshal_trading_books ADD COLUMN IF NOT EXISTS discovered_account_type TEXT CHECK (discovered_account_type IN ('cash','margin'))`,
       'CREATE UNIQUE INDEX IF NOT EXISTS idx_trd_books_ref  ON oshal_trading_books (user_sub, ref)',
       'CREATE UNIQUE INDEX IF NOT EXISTS idx_trd_books_acct ON oshal_trading_books (user_sub, account_id) WHERE account_id IS NOT NULL',
       // The single-learning-book rule is a DB invariant, not a code-path promise.
@@ -162,7 +169,7 @@ async function bootstrapBooks(pool: AppContext['pool']): Promise<void> {
     ],
     requirements: [{
       table: 'oshal_trading_books',
-      columns: ['book_id', 'user_sub', 'ref', 'label', 'kind', 'broker', 'account_id', 'connection_key', 'enabled', 'learn', 'capital_cap_usd', 'settlement_policy', 'arm_ack_at', 'arm_ack_by', 'arm_ack_note', 'created_at'],
+      columns: ['book_id', 'user_sub', 'ref', 'label', 'kind', 'broker', 'account_id', 'connection_key', 'enabled', 'learn', 'capital_cap_usd', 'settlement_policy', 'discovered_account_type', 'arm_ack_at', 'arm_ack_by', 'arm_ack_note', 'created_at'],
     }],
   });
 }
@@ -195,6 +202,8 @@ interface BookRow {
   arm_ack_by?: string | null;
   /** Joined from oshal_trading_accounts (discovery stores Schwab's CASH/MARGIN verbatim). */
   account_type?: string | null;
+  /** This book's own cached venue answer (ADR-134 D8 gap 3) — the only type an UNBOUND book has. */
+  discovered_account_type?: string | null;
 }
 /** Lower-case the discovered account type onto the broker-neutral union; anything else is unknown (null). */
 function accountTypeOf(raw: string | null | undefined): 'cash' | 'margin' | null {
@@ -208,7 +217,9 @@ function toBook(r: BookRow, accountNumber: string | null): TradingBook {
     accountNumber, connectionKey: r.connection_key,
     capitalCapUsd: r.capital_cap_usd != null ? Number(r.capital_cap_usd) : null,
     learn: !!r.learn, enabled: !!r.enabled,
-    accountType: accountTypeOf(r.account_type), settlementPolicy: sp,
+    // The BOUND account's discovered type wins; the cached venue answer is what an unbound book
+    // (the legacy 'live' book) has instead, so binding one later never inherits a stale cache.
+    accountType: accountTypeOf(r.account_type) ?? accountTypeOf(r.discovered_account_type), settlementPolicy: sp,
     armAckAt: r.arm_ack_at ? new Date(r.arm_ack_at).toISOString() : null,
     armAckBy: r.arm_ack_by ?? null,
   };
@@ -228,7 +239,8 @@ export async function loadBook(pool: AppContext['pool'], sub: string, bookId: st
   await ensureBooksSchema(pool);
   const r = (await pool.query(
     `SELECT b.book_id, b.ref, b.kind, b.broker, b.account_id, b.connection_key, b.enabled, b.learn,
-            b.capital_cap_usd, b.settlement_policy, b.arm_ack_at, b.arm_ack_by, a.account_number_enc, a.account_type
+            b.capital_cap_usd, b.settlement_policy, b.discovered_account_type, b.arm_ack_at, b.arm_ack_by,
+            a.account_number_enc, a.account_type
        FROM oshal_trading_books b
        LEFT JOIN oshal_trading_accounts a ON a.account_id = b.account_id AND a.user_sub = b.user_sub
       WHERE b.user_sub = $1 AND b.book_id = $2`,
@@ -271,6 +283,45 @@ export async function loadLegacyBook(pool: AppContext['pool'], sub: string, kind
 }
 
 /**
+ * @description Cache what a VENUE account read said this book's account type is (ADR-134 D8 gap 3).
+ * The legacy 'live' book is unbound by construction — there is no `account_id` to join a discovered
+ * type from — so without this it stays typeless forever, and the settlement guard treats a typeless
+ * LIVE book as cash: one venue account read on EVERY buy, and a 503 refusal when that read fails,
+ * on an account the venue itself reports as MARGIN. Writing the answer down makes the next buy
+ * short-circuit in settlementApplies() with zero I/O.
+ *
+ * It is a CACHE, never an authority: `toBook` prefers the bound account's own discovered type, so
+ * binding this book to an account later cannot inherit a stale answer. The UPDATE is unconditional
+ * on value (not fill-if-null), so a venue that changes its answer converges rather than sticking.
+ * A book with no row yet (a brand-new user whose lazy mint has not run) gets the legacy mint and one
+ * retry — the same idempotent call the dispatch path already makes.
+ * @param pool - Postgres pool.
+ * @param sub - Owner sub. The WHERE is the wall: dispatch runs under system identity (is_operator=on).
+ * @param bookId - The book whose row carries the cache.
+ * @param accountType - What the venue reported ('cash' | 'margin').
+ * @returns True when a row now carries this answer; false when no such book exists for this user.
+ */
+export async function recordDiscoveredAccountType(
+  pool: AppContext['pool'], sub: string, bookId: string, accountType: 'cash' | 'margin',
+): Promise<boolean> {
+  await ensureBooksSchema(pool);
+  const write = (): Promise<number> => pool
+    .query('UPDATE oshal_trading_books SET discovered_account_type=$3 WHERE user_sub=$1 AND book_id=$2', [sub, bookId, accountType])
+    .then((r) => r.rowCount ?? 0);
+  let rows = await write();
+  if (rows === 0) {
+    await ensureLegacyBooks(pool, sub);
+    rows = await write();
+  }
+  if (rows === 0) {
+    logger.warn({ sub, bookId, accountType }, 'discovered account type not cached: no book row for this user');
+    return false;
+  }
+  logger.info({ sub, bookId, accountType }, 'cached the venue-discovered account type on the book');
+  return true;
+}
+
+/**
  * @description Resolve a book by its short ref ('paper' / 'live' / 'b-xxxxxxxx').
  * @param pool - Postgres pool.
  * @param sub - Owner sub.
@@ -296,7 +347,7 @@ export async function listBooks(pool: AppContext['pool'], sub: string): Promise<
   // list surfaces must not decrypt (readers are built from loadBook, never from a list row).
   const rows = (await pool.query(
     `SELECT b.book_id, b.ref, b.kind, b.broker, b.account_id, b.connection_key, b.enabled, b.learn,
-            b.capital_cap_usd, b.settlement_policy, b.arm_ack_at, b.arm_ack_by, a.account_type
+            b.capital_cap_usd, b.settlement_policy, b.discovered_account_type, b.arm_ack_at, b.arm_ack_by, a.account_type
        FROM oshal_trading_books b
        LEFT JOIN oshal_trading_accounts a ON a.account_id = b.account_id AND a.user_sub = b.user_sub
       WHERE b.user_sub=$1
