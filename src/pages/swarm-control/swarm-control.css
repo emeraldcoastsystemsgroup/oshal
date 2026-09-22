@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial swarm control page styles
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added selected-bot telemetry cards and model chip styling
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Repair four roles the BUG-12 token conversion collapsed or left on a raw hex. The auth lozenges and Propagate Auth took `background` AND `color` from the same `var(--status-*)`, which paints the label in the fill colour: measured 1.00:1 in every theme, an empty coloured pill. They now tint the page background with the status hue and ink it with the status hue pulled toward `--text-primary`, so the lozenge reads in a light theme and a dark one. The propagation status line got the same ink treatment (raw `--status-warning` on a light bar measures 3.2:1). Send and the operator chat bubble painted `#fff` on a fill the theme is free to make pale — `--text-on-accent` is the token that exists for exactly that, and Send is a primary action, so it takes `--accent-primary` rather than the success hue.
  */
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -73,8 +74,8 @@ body {
   white-space: nowrap;
 }
 
-.auth-ok { background: var(--status-success); color: var(--status-success); }
-.auth-none { background: var(--status-warning); color: var(--status-warning); }
+.auth-ok { background: color-mix(in srgb, var(--status-success) 18%, var(--bg-primary)); color: color-mix(in srgb, var(--status-success) 62%, var(--text-primary)); }
+.auth-none { background: color-mix(in srgb, var(--status-warning) 18%, var(--bg-primary)); color: color-mix(in srgb, var(--status-warning) 62%, var(--text-primary)); }
 .auth-unknown { background: var(--bg-tertiary); color: var(--text-secondary); }
 
 /* ── Action buttons ─────────────────────────────────────────────────────── */
@@ -99,8 +100,8 @@ body {
 .action-btn:hover:not(:disabled) { background: var(--border-color); }
 .action-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-.action-propagate { background: var(--status-success); color: var(--status-success); border-color: var(--status-success); }
-.action-propagate:hover:not(:disabled) { background: var(--status-success); color: #fff; }
+.action-propagate { background: color-mix(in srgb, var(--status-success) 18%, var(--bg-primary)); color: color-mix(in srgb, var(--status-success) 62%, var(--text-primary)); border-color: color-mix(in srgb, var(--status-success) 55%, transparent); }
+.action-propagate:hover:not(:disabled) { background: color-mix(in srgb, var(--status-success) 30%, var(--bg-primary)); }
 
 /* ── Propagation status ─────────────────────────────────────────────────── */
 .propagate-status {
@@ -111,10 +112,10 @@ body {
   flex-shrink: 0;
 }
 
-.propagate-status.status-ok { color: var(--status-success); }
-.propagate-status.status-partial { color: var(--status-warning); }
-.propagate-status.status-error { color: var(--status-error); }
-.propagate-status.status-working { color: var(--accent-primary); }
+.propagate-status.status-ok { color: color-mix(in srgb, var(--status-success) 62%, var(--text-primary)); }
+.propagate-status.status-partial { color: color-mix(in srgb, var(--status-warning) 62%, var(--text-primary)); }
+.propagate-status.status-error { color: color-mix(in srgb, var(--status-error) 62%, var(--text-primary)); }
+.propagate-status.status-working { color: color-mix(in srgb, var(--accent-primary) 62%, var(--text-primary)); }
 
 /* ── Selected bot telemetry ────────────────────────────────────────────── */
 .bot-telemetry {
@@ -236,7 +237,7 @@ body {
   word-break: break-word;
 }
 
-.chat-msg.user .msg-body { background: var(--accent-primary); color: #fff; }
+.chat-msg.user .msg-body { background: var(--accent-primary); color: var(--text-on-accent); }
 .chat-msg.bot .msg-body { background: var(--bg-tertiary); color: var(--text-primary); }
 
 /* ── Input ──────────────────────────────────────────────────────────────── */
@@ -269,8 +270,8 @@ body {
 .chat-input:disabled { opacity: 0.4; }
 
 .send-btn {
-  background: var(--status-success);
-  color: #fff;
+  background: var(--accent-primary);
+  color: var(--text-on-accent);
   border: none;
   border-radius: 8px;
   padding: 10px 20px;
@@ -280,7 +281,7 @@ body {
   align-self: flex-end;
 }
 
-.send-btn:hover:not(:disabled) { background: var(--status-success); }
+.send-btn:hover:not(:disabled) { background: var(--accent-primary-hover); }
 .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 @media (max-width: 1024px) {
