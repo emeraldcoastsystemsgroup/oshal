@@ -109,6 +109,15 @@ describe('bot-node boot config bootstrap-pull (ADR-034 env-as-seed)', () => {
       expect(normalizePulledProviderName('cline')).toBe('cline-cli');
       expect(normalizePulledProviderName('anthropic')).toBe('anthropic');
     });
+
+    it('antigravity-cli records write the model id the native runtime understands', () => {
+      const env: NodeJS.ProcessEnv = {};
+      const applied = applyPulledBotConfigToEnv({
+        providerId: 'antigravity-cli', modelId: 'gemini-3.8-flash-low', fallbackOrder: null, configVersion: 1,
+      }, env);
+      expect(env.ANTIGRAVITY_MODEL).toBe('gemini-3.8-flash-low');
+      expect(applied).toEqual(['FORCE_LLM_PROVIDER', 'FORCE_LLM_MODEL', 'ANTIGRAVITY_MODEL']);
+    });
   });
 
   describe('the chain-less pull must not blank a configured node (regression)', () => {

@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 audit: enforce exact operation scopes over request-start handler snapshots, remove model-readable GitLab credentials, and make completion side-effect free.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 audit: revalidate captured handler generations immediately before provider and tool execution.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: bind MCP handler attestations to the exact request user, agent, task, tool allowlist, and operation scopes already authorized at dispatch.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Dispatch the fourth native bot runtime, antigravity-cli, through its injected provider without changing existing defaults.
  */
 
 /**
@@ -63,12 +64,13 @@ class AgenticController {
    */
   constructor(providers, toolRegistry, streamController, taskController = null) {
     // Support both old (single provider) and new (provider map) initialization
-    if (providers.bedrockProvider || providers.clineProvider || providers.claudeCodeProvider || providers.codexProvider) {
+    if (providers.bedrockProvider || providers.clineProvider || providers.claudeCodeProvider || providers.codexProvider || providers.antigravityProvider) {
       // New format: { bedrockProvider, clineProvider, claudeCodeProvider, codexProvider, getCurrentProvider }
       this.bedrockProvider = providers.bedrockProvider;
       this.clineProvider = providers.clineProvider;
       this.claudeCodeProvider = providers.claudeCodeProvider || null;
       this.codexProvider = providers.codexProvider || null;
+      this.antigravityProvider = providers.antigravityProvider || null;
       // MANDATORY: Default agent provider is ALWAYS cline-cli (per oshal-agent-provider-rules.md)
       this.getCurrentProvider = providers.getCurrentProvider || (() => 'cline-cli');
     } else {
@@ -76,6 +78,7 @@ class AgenticController {
       this.bedrockProvider = providers;
       this.clineProvider = null;
       this.codexProvider = null;
+      this.antigravityProvider = null;
       // MANDATORY: Default agent provider is ALWAYS cline-cli (per oshal-agent-provider-rules.md)
       this.getCurrentProvider = () => 'cline-cli';
     }
@@ -106,6 +109,9 @@ class AgenticController {
     // PHASE_10: Claude Code CLI provider takes priority when selected
     if (providerName === 'claude-code' && this.claudeCodeProvider) {
       return this.claudeCodeProvider;
+    }
+    if (providerName === 'antigravity-cli' && this.antigravityProvider) {
+      return this.antigravityProvider;
     }
     if (providerName === 'cline-cli' && this.clineProvider) {
       return this.clineProvider;

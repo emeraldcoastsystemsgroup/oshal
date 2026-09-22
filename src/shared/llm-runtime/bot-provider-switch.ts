@@ -73,10 +73,10 @@ export interface ClassifiedProviderId {
   apiType: string | null;
   /**
    * The name a dedicated bot-node's runtime speaks for this id (`openai-codex`, `claude-code`,
-   * `cline-cli`), or null when no bot-node runtime exists for it (an api-side-only harness such as
-   * `gemini-cli` or `noop`): a dispatch carrying such an id is refused by the bot with its reason.
+   * `cline-cli`, `antigravity-cli`), or null when no bot-node runtime exists for it (an api-side-only
+   * harness such as `gemini-cli` or `noop`): a dispatch carrying such an id is refused by the bot.
    */
-  botNodeRuntime: 'openai-codex' | 'claude-code' | 'cline-cli' | null;
+  botNodeRuntime: 'openai-codex' | 'claude-code' | 'cline-cli' | 'antigravity-cli' | null;
   /** Set when the id is an API provider the generic Cline harness fronts (gemini, anthropic, …). */
   clineApiProvider: string | null;
 }
@@ -121,7 +121,7 @@ const HARNESS_BY_ID: Record<string, { harnessType: string; apiType: string | nul
   'openai-codex': { harnessType: 'codex-cli', apiType: 'openai-codex', botNodeRuntime: 'openai-codex' },
   'claude-code': { harnessType: 'claude-code', apiType: 'claude-code', botNodeRuntime: 'claude-code' },
   'gemini-cli': { harnessType: 'gemini-cli', apiType: 'google-gemini', botNodeRuntime: null },
-  'antigravity-cli': { harnessType: 'antigravity-cli', apiType: 'google-gemini', botNodeRuntime: null },
+  'antigravity-cli': { harnessType: 'antigravity-cli', apiType: 'google-gemini', botNodeRuntime: 'antigravity-cli' },
   'google-gemini': { harnessType: 'gemini-cli', apiType: 'google-gemini', botNodeRuntime: null },
   'cline': { harnessType: 'cline', apiType: null, botNodeRuntime: 'cline-cli' },
   'cline-cli': { harnessType: 'cline', apiType: null, botNodeRuntime: 'cline-cli' },
@@ -133,8 +133,8 @@ const HARNESS_BY_ID: Record<string, { harnessType: string; apiType: string | nul
  *
  * Distinct from {@link classifyProviderId}, which answers whether the id is a NAME this build
  * understands. An id can be perfectly classifiable, selectable in a switch row and stampable on a
- * dispatch, and still have no runtime behind it — `gemini-cli` and `antigravity-cli` are exactly
- * that (see SEQ 6). A dispatch carrying such an id reaches `reconcileDispatchProviderConfig` and
+ * dispatch, and still have no runtime behind it — `gemini-cli` is the current example. A dispatch
+ * carrying such an id reaches `reconcileDispatchProviderConfig` and
  * is refused by name with `AuthoritativeDispatchConfigError`, so every turn under it fails.
  *
  * Surfaces that OFFER a provider must ask this question, not the classification one, or they offer

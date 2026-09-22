@@ -28,7 +28,7 @@ const OPERATOR = 'operator-sub-1';
 const GUEST = 'guest-sub-9';
 const OWNED_ENV = [
   'DEMO_MODE', 'MOCK_OIDC', 'OSHAL_OPERATOR_SUBS',
-  'GEMINI_OAUTH_CREDS_PATH', 'ANTIGRAVITY_CLI_PATH', 'LOCALAPPDATA', 'HOME', 'USERPROFILE',
+  'GEMINI_OAUTH_CREDS_PATH', 'ANTIGRAVITY_OAUTH_TOKEN_PATH', 'ANTIGRAVITY_CLI_PATH', 'LOCALAPPDATA', 'HOME', 'USERPROFILE',
 ];
 
 /** The CLI ids a user can name, and whether a bot node holds a runtime for each one TODAY. */
@@ -42,6 +42,7 @@ beforeEach(() => {
   process.env.OSHAL_OPERATOR_SUBS = OPERATOR;
   // No credential path and no binary path: the probes must read absence, never a real home.
   process.env.GEMINI_OAUTH_CREDS_PATH = '/nonexistent-oshal-test/oauth_creds.json';
+  process.env.ANTIGRAVITY_OAUTH_TOKEN_PATH = '/nonexistent-oshal-test/antigravity-oauth-token';
   process.env.ANTIGRAVITY_CLI_PATH = '/nonexistent-oshal-test/agy';
 });
 
@@ -94,7 +95,7 @@ describe('the harness table decides what can execute, and nothing keeps a second
     expect(botNodeCanRunProvider('claude-code')).toBe(true);
     expect(botNodeCanRunProvider('cline-cli')).toBe(true);
     expect(botNodeCanRunProvider('gemini-cli')).toBe(false);
-    expect(botNodeCanRunProvider('antigravity-cli')).toBe(false);
+    expect(botNodeCanRunProvider('antigravity-cli')).toBe(true);
     // An id this build has never heard of is not runnable either — no accidental default-true.
     expect(botNodeCanRunProvider('not-a-provider')).toBe(false);
     expect(botNodeCanRunProvider('')).toBe(false);
@@ -104,12 +105,13 @@ describe('the harness table decides what can execute, and nothing keeps a second
   it('refuses a CLI brain whose id no node can run, naming that as the missing piece', () => {
     process.env.DEMO_MODE = 'true';
     expect(cliBrainAvailable(OPERATOR)).toBe(true);
-    for (const id of ['gemini-cli', 'antigravity-cli'] as CliBrainProviderId[]) {
-      const offer = cliBrainOffer(id, OPERATOR);
-      expect(offer.available, id).toBe(false);
-      expect(offer.refusal, id).toBe('no-node-runtime');
-      expect(offer.detail, id).toContain(id);
-    }
+    const gemini = cliBrainOffer('gemini-cli', OPERATOR);
+    expect(gemini.available).toBe(false);
+    expect(gemini.refusal).toBe('no-node-runtime');
+    expect(gemini.detail).toContain('gemini-cli');
+    const antigravity = cliBrainOffer('antigravity-cli', OPERATOR);
+    expect(antigravity.available).toBe(false);
+    expect(antigravity.refusal).toBe('node-cannot-run');
     // …and the two that DO have runtimes are offered, so the negatives above are not vacuous.
     for (const id of ['claude-code', 'openai-codex'] as CliBrainProviderId[]) {
       expect(cliBrainOffer(id, OPERATOR).available, id).toBe(true);
@@ -134,6 +136,7 @@ describe('the harness table decides what can execute, and nothing keeps a second
     })).toEqual({ available: true, refusal: null, detail: '' });
     expect(cliBrainOffer('antigravity-cli', OPERATOR, {
       canRunProvider: () => true, antigravityRunnable: () => ({ runnable: true, detail: '' }),
+      antigravityCredentialPresent: () => true,
     })).toEqual({ available: true, refusal: null, detail: '' });
   });
 });
@@ -173,7 +176,7 @@ describe('the settings surface offers only what a turn can run on', () => {
   });
   afterEach(async () => { await harness.close(); });
 
-  it('does not offer either Google CLI to the operator, and says which piece is missing', async () => {
+  it('does not offer either Google CLI until its remaining prerequisite exists, and names it', async () => {
     const options = await readOptions(harness, OPERATOR);
     for (const id of ['gemini-cli', 'antigravity-cli']) {
       const option = options.find((entry) => entry.id === id);
@@ -182,14 +185,14 @@ describe('the settings surface offers only what a turn can run on', () => {
       // The detail must be the CAUSE, not the generic sentence — an operator who pushed a login
       // and saw "runs through the Gemini CLI" believed a thing that was never true.
       expect(option?.detail, id).not.toContain('Runs ');
-      expect(option?.detail, id).toContain('No bot node can execute');
+      expect(option?.detail, id).toContain(id === 'gemini-cli' ? 'No bot node can execute' : 'not installed');
     }
     // The runnable pair stays on offer for the operator, so this is a narrowing and not an outage.
     expect(options.find((entry) => entry.id === 'openai-codex')?.available).toBe(true);
     expect(options.find((entry) => entry.id === 'claude-code')?.available).toBe(true);
   });
 
-  it('refuses both Google CLI ids on PUT, with the reason, and saves nothing', async () => {
+  it('refuses both Google CLI ids on PUT until their distinct prerequisites exist', async () => {
     for (const preferred of ['gemini-cli', 'antigravity-cli']) {
       const response = await fetch(`${harness.url}/api/settings/llm-default/`, {
         method: 'PUT',
@@ -199,7 +202,7 @@ describe('the settings surface offers only what a turn can run on', () => {
       expect(response.status, preferred).toBe(409);
       const body = await response.json() as { error: string; detail: string };
       expect(body.error, preferred).toContain('not available');
-      expect(body.detail, preferred).toContain('No bot node can execute');
+      expect(body.detail, preferred).toContain(preferred === 'gemini-cli' ? 'No bot node can execute' : 'not installed');
     }
   });
 
@@ -232,12 +235,13 @@ describe('the settings surface offers only what a turn can run on', () => {
 });
 
 describe('the resolver never produces a brain the surface would not offer', () => {
-  it('resolves neither Google CLI for the operator, even with every vendor condition met', () => {
+  it('keeps Gemini unresolved without a runtime while Antigravity resolves when its binary can run', () => {
     process.env.DEMO_MODE = 'true';
     expect(resolveGeminiCliBrain(OPERATOR, { pushedLoginPresent: () => true })).toBeNull();
     expect(resolveAntigravityCliBrain(OPERATOR, {
       antigravityRunnable: () => ({ runnable: true, detail: '' }),
-    })).toBeNull();
+      antigravityCredentialPresent: () => true,
+    })).toEqual({ kind: 'cli', providerId: 'antigravity-cli' });
   });
 
   it('produces the brain once the node runtime exists, proving the null above is the runtime', () => {
@@ -247,6 +251,7 @@ describe('the resolver never produces a brain the surface would not offer', () =
     expect(resolveAntigravityCliBrain(OPERATOR, {
       canRunProvider: () => true,
       antigravityRunnable: () => ({ runnable: true, detail: '' }),
+      antigravityCredentialPresent: () => true,
       model: 'gemini-3.8-flash-low',
     })).toEqual({ kind: 'cli', providerId: 'antigravity-cli', model: 'gemini-3.8-flash-low' });
   });

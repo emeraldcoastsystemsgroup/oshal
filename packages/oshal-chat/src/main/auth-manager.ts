@@ -7,7 +7,8 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-137 amendment A: each account reports whether the swarm can adopt its login (codex, claude), so the Config screen can offer "Log in + push" / "Push to swarm" on exactly those rows.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Windows: EVERY account row failed with the shell dialog "Windows cannot find 'login\'" — the launcher passed the console title pre-quoted ('"OSHAL login"'), libuv escaped those quotes into start "\"OSHAL login\"" cmd /k "<cmd>", and cmd.exe does not understand backslash-escaped quotes (that is a C-runtime convention): it re-tokenized, `start` took \"OSHAL as the title and `login\` as the program to run. Quoting is now left entirely to libuv (a title with a space comes back correctly quoted) and the command is split into its own argv entries, so no entry carries a quote. Broken since SEQ 1 — the launcher had never been run on Windows. Also fixes claude's verb: the CLI's login is `claude auth login`; `claude /login` is a REPL slash command that as an argv would have been read as a prompt. Guard: tests/unit/node-login-launch.spec.ts.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Google (Gemini) joins the account list so the swarm-adoptable row is offered for it too. Distinct from the gcloud row below it, which signs into Google CLOUD and writes an ADC file the swarm does not consume. Its login command is the bare `gemini`: the CLI publishes no top-level `auth` subcommand (its yargs surface is `$0 [query..]` plus mcp/extensions/skills/hooks) — `auth` is a built-in SLASH command in the interactive UI, so the terminal has to open on the CLI itself for the browser sign-in to run.
- * 5 | maintainer@emeraldcoastsystemsgroup.com   | The `antigravity` row, and the Gemini row demoted to a LOCAL account. Measured on the operator's box 2026-09-22: `gemini`'s "Sign in with Google" now answers "This client is no longer supported for Gemini Code Assist for individuals. To continue using Gemini, please migrate to the Antigravity suite of products" — so `oauth_creds.json` can no longer be produced by a sign-in and the row has nothing left to push (see login-push-core, where the target is marked dormant rather than deleted). Antigravity is where Google sent him, it signs in as his own identity, and it keeps its state beside the CLI's — which is why it answers on models the API key 503s on. It follows the gcloud/aws LOCAL shape deliberately: its state root is opaque, there is no single credential file to adopt, and a push button that cannot push is the same defect as a brain option that cannot execute.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Added the Antigravity account row and made the retired Gemini account-login row local-only.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Corrected the Antigravity boundary after inspecting the real vendor credential: Windows Credential Manager contains the same JSON agy's headless file-storage mode consumes. The row is pushable through the existing authenticated rail, reports real credential presence, and launches the absolute vendor install path even though the installer does not add it to PATH.
  */
 
 import { spawn } from 'child_process';
@@ -15,6 +16,7 @@ import { existsSync } from 'fs';
 import { homedir, platform } from 'os';
 import { join } from 'path';
 import { isPushableLogin } from './login-push-core';
+import { antigravityCredentialPresent } from './antigravity-credential';
 
 /** One local provider the user can sign into on this machine. */
 interface LocalAccount {
@@ -22,6 +24,8 @@ interface LocalAccount {
   label: string;
   /** The login command launched in a terminal (browser popup runs locally). */
   loginCmd: string;
+  /** Exact argv for binaries installed outside PATH (and paths containing spaces). */
+  loginArgv?: () => string[];
   /** True when this provider already has usable credentials in ~/. */
   isAuthed: () => boolean;
 }
@@ -56,8 +60,8 @@ const ACCOUNTS: LocalAccount[] = [
     // Antigravity suite of products: https://antigravity.google". So ~/.gemini/oauth_creds.json
     // can no longer be created by a sign-in, isAuthed below will read false on a fresh box, and
     // the push target is marked dormant in login-push-core. The row stays because the CLI's other
-    // two auth methods (an API key, Vertex) still work and the file is still what the swarm would
-    // adopt if Google ever reopens the path.
+    // other auth methods still work and the file is still what the swarm would adopt if Google
+    // ever reopens the path.
     loginCmd: 'gemini',
     isAuthed: () => existsSync(join(home, '.gemini', 'oauth_creds.json')),
   },
@@ -70,18 +74,17 @@ const ACCOUNTS: LocalAccount[] = [
     // Google identity and keeps its state beside the CLI's, which is why it keeps answering on
     // models the shared API key 503s on.
     //
-    // HONEST LIMIT of this row: `agy` is NOT on PATH. The vendor installer puts the binary in
-    // %LOCALAPPDATA%gyin (v1.2.8 measured there) and does not add that directory, so on a box
-    // that has not been adjusted this row reads correctly as signed-in-here while **Log in** cannot
-    // launch anything. It is left as the bare vendor verb rather than an absolute path because the
-    // path is per-platform and per-install; the swarm-side rail resolves the binary itself
-    // (ANTIGRAVITY_CLI_PATH) instead of depending on this one.
-    loginCmd: 'agy',
-    // Antigravity publishes no single credential file, so "signed in here" is the presence of its
-    // state root. Deliberately NOT pushable for that reason — see login-push-core.
-    isAuthed: () =>
-      existsSync(join(home, '.gemini', 'antigravity', 'installation_id')) ||
-      existsSync(join(home, '.gemini', 'antigravity-ide')),
+    // The vendor installer puts v1.2.8 under %LOCALAPPDATA%\agy\bin and does not add it to PATH,
+    // so Windows launches that exact path. An argv array preserves paths containing spaces.
+    loginCmd: platform() === 'win32'
+      ? join(process.env.LOCALAPPDATA || join(home, 'AppData', 'Local'), 'agy', 'bin', 'agy.exe')
+      : 'agy',
+    loginArgv: () => [platform() === 'win32'
+      ? join(process.env.LOCALAPPDATA || join(home, 'AppData', 'Local'), 'agy', 'bin', 'agy.exe')
+      : 'agy'],
+    // On Windows the durable vendor JSON lives in Credential Manager as `gemini:antigravity`.
+    // Presence is validated without writing or logging the credential.
+    isAuthed: antigravityCredentialPresent,
   },
   {
     id: 'gcloud',
@@ -121,8 +124,9 @@ export const WINDOWS_LOGIN_TITLE = 'OSHAL login';
  * @param loginCmd - The vendor's login command line, e.g. `claude auth login`.
  * @returns argv for cmd.exe — quote-free by construction.
  */
-export function windowsLoginArgv(loginCmd: string): string[] {
-  return ['/c', 'start', WINDOWS_LOGIN_TITLE, 'cmd', '/k', ...loginCmd.split(/\s+/).filter(Boolean)];
+export function windowsLoginArgv(loginCmd: string | readonly string[]): string[] {
+  const command = typeof loginCmd === 'string' ? loginCmd.split(/\s+/).filter(Boolean) : [...loginCmd];
+  return ['/c', 'start', WINDOWS_LOGIN_TITLE, 'cmd', '/k', ...command];
 }
 
 /** Current login state of every local account, for the config screen. */
@@ -145,7 +149,7 @@ export function launchLogin(id: string): { ok: boolean; command?: string; error?
   try {
     if (platform() === 'win32') {
       // `start` opens a fresh console; /k keeps it open so the user sees the prompt/result.
-      spawn('cmd.exe', windowsLoginArgv(account.loginCmd), {
+      spawn('cmd.exe', windowsLoginArgv(account.loginArgv?.() ?? account.loginCmd), {
         detached: true,
         stdio: 'ignore',
         windowsHide: false,

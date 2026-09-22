@@ -36,7 +36,7 @@
 import { createChildLogger } from '@/shared/logger';
 import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
 import { demoModeEnabled, isDeploymentOperatorSub } from '@/shared/deployment-mode';
-import { antigravityNodeReadiness, geminiPushedLoginPresent } from '@/features/llm-provider';
+import { antigravityNodeCredentialReady, antigravityNodeReadiness, geminiPushedLoginPresent } from '@/features/llm-provider';
 import { botNodeCanRunProvider } from '@/shared/llm-runtime';
 import { getUserLlmConnection } from './byo-llm-routes';
 import {
@@ -111,6 +111,7 @@ export interface CliBrainOfferOptions {
   pushedLoginPresent?: () => boolean;
   canRunProvider?: (providerId: string) => boolean;
   antigravityRunnable?: () => { runnable: boolean; detail: string };
+  antigravityCredentialPresent?: () => boolean;
 }
 
 const OFFERED: CliBrainOffer = { available: true, refusal: null, detail: '' };
@@ -133,7 +134,7 @@ const OFFERED: CliBrainOffer = { available: true, refusal: null, detail: '' };
  *      it flips by itself the day a runtime is wired rather than being a stale constant;
  *   3. this machine being able to load the vendor binary (Antigravity only — measured, see
  *      antigravity-cli-availability);
- *   4. the vendor credential existing at all (Google only — see resolveGeminiCliBrain).
+ *   4. the vendor credential existing at all (both Google CLIs, through their distinct probes).
  * @param providerId - The CLI harness id being considered
  * @param userSub - The caller's OIDC sub
  * @param options - Probe injection used by tests
@@ -163,8 +164,15 @@ export function cliBrainOffer(
 /** The Antigravity machine check: the binary has to be present and this node's libc able to load it. */
 function antigravityOffer(options: CliBrainOfferOptions): CliBrainOffer {
   const readiness = (options.antigravityRunnable ?? antigravityNodeReadiness)();
-  if (readiness.runnable) return OFFERED;
-  return { available: false, refusal: 'node-cannot-run', detail: readiness.detail };
+  if (!readiness.runnable) return { available: false, refusal: 'node-cannot-run', detail: readiness.detail };
+  const credential = options.antigravityCredentialPresent ?? antigravityNodeCredentialReady;
+  if (credential()) return OFFERED;
+  return {
+    available: false,
+    refusal: 'no-credential',
+    detail: 'No Antigravity login has been pushed to the swarm. Open OSHAL Node on the signed-in '
+      + 'computer and use Push to swarm.',
+  };
 }
 
 /** The Google credential check: an adopted sign-in has to actually be at the mounted path. */

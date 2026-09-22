@@ -4,11 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-137 amendment A, node half: push the vendor login this machine holds (the file `codex login` / `claude auth login` wrote after its own localhost redirect, the way VS Code's extension does it) into the swarm under the user's verified OIDC session, and wait for a just-launched browser login to finish before pushing. The credential travels only over the session's cookie jar to the configured swarm origin.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Antigravity reads the same rail from Windows Credential Manager: snapshot by content fingerprint, keep the credential in memory, validate its vendor JSON, then post it through the authenticated Electron session.
  */
+import { createHash } from 'crypto';
 import { readFileSync, statSync } from 'fs';
 import { homedir } from 'os';
 import { session } from 'electron';
 import type { ConfigStore } from './config';
+import { readAntigravityCredential } from './antigravity-credential';
 import {
   LOGIN_TARGETS,
   classifyPushResponse,
@@ -38,6 +41,12 @@ function failure(reason: string, detail: string, status = 0): PushOutcome {
  * @returns Presence + mtime + size
  */
 export function snapshotLogin(id: PushableLogin): LoginFileSnapshot {
+  if (id === 'antigravity') {
+    const raw = readAntigravityCredential();
+    return raw
+      ? { present: true, mtimeMs: 0, size: Buffer.byteLength(raw), fingerprint: createHash('sha256').update(raw).digest('hex') }
+      : { present: false, mtimeMs: 0, size: 0 };
+  }
   try {
     const stat = statSync(loginFilePath(homedir(), id));
     return { present: true, mtimeMs: stat.mtimeMs, size: stat.size };
@@ -60,9 +69,11 @@ export async function pushLoginToSwarm(store: ConfigStore, id: string): Promise<
   const file = loginFilePath(homedir(), id);
   let raw: string;
   try {
-    raw = readFileSync(file, 'utf8');
+    raw = id === 'antigravity' ? (readAntigravityCredential() ?? '') : readFileSync(file, 'utf8');
+    if (!raw) throw new Error('credential absent');
   } catch {
-    return failure('not_logged_in_here', `Log in first — ${file} does not exist yet.`);
+    const source = id === 'antigravity' ? 'Windows Credential Manager entry gemini:antigravity' : file;
+    return failure('not_logged_in_here', `Log in first — ${source} does not exist yet.`);
   }
   const parsed = parseLoginFile(id, raw);
   if (!parsed.ok) return failure('login_file_invalid', parsed.error);

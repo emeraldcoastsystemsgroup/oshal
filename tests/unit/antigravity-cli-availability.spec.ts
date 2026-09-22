@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   ANTIGRAVITY_BINARY_NAME,
   antigravityMuslBlockingReason,
+  antigravityNodeCredentialReady,
   antigravityNodeReadiness,
   resolveAntigravityCliBinary,
 } from '../../src/features/llm-provider';
@@ -61,6 +62,18 @@ describe('finding the Antigravity binary', () => {
 });
 
 describe('whether this node could run it at all', () => {
+  it('measures the imported vendor token file instead of a manual readiness flag', () => {
+    const tokenPath = path.join(root, '.gemini', 'antigravity-cli', 'antigravity-oauth-token');
+    expect(antigravityNodeCredentialReady({})).toBe(false);
+    expect(antigravityNodeCredentialReady({ ANTIGRAVITY_OAUTH_TOKEN_PATH: tokenPath })).toBe(false);
+    fs.mkdirSync(path.dirname(tokenPath), { recursive: true });
+    fs.writeFileSync(tokenPath, JSON.stringify({
+      token: { access_token: 'fixture-access', refresh_token: 'fixture-refresh' },
+      auth_method: 'oauth-personal', id_token: 'fixture-id',
+    }));
+    expect(antigravityNodeCredentialReady({ ANTIGRAVITY_OAUTH_TOKEN_PATH: tokenPath })).toBe(true);
+  });
+
   it('reports the binary as the missing piece when the libc is not the problem', () => {
     const readiness = antigravityNodeReadiness({ HOME: root, LOCALAPPDATA: root });
     if (antigravityMuslBlockingReason()) {
@@ -93,5 +106,14 @@ describe('whether this node could run it at all', () => {
   it('never reports a libc block off linux, where the question does not apply', () => {
     if (process.platform !== 'linux') expect(antigravityMuslBlockingReason()).toBeNull();
     else expect(typeof antigravityMuslBlockingReason()).toMatch(/string|object/);
+  });
+
+  it('accepts a complete private glibc runtime on musl without weakening the host libc', () => {
+    const runtimeDir = path.join(root, 'agy-runtime');
+    placeBinary('agy-runtime', 'ld-linux.so');
+    placeBinary('agy-runtime', 'agy');
+    if (process.platform === 'linux') {
+      expect(antigravityMuslBlockingReason({ ANTIGRAVITY_GLIBC_RUNTIME_DIR: runtimeDir })).toBeNull();
+    }
   });
 });

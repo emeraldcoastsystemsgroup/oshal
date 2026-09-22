@@ -231,6 +231,7 @@ describe('the provider fallback chain is configuration, not code', () => {
       'claude-code': { id: 'claude-code' },
       'openai-codex': { id: 'openai-codex' },
       'cline-cli': { id: 'cline-cli', generateResponse: async () => ({ ok: true }) },
+      'antigravity-cli': { id: 'antigravity-cli' },
     });
     const CATALOG = ['openrouter', 'anthropic', 'gemini'];
 
@@ -318,10 +319,9 @@ describe('the provider fallback chain is configuration, not code', () => {
       expect(rungNames(wrapped)).toEqual(['claude-code']);
     });
 
-    it('a harness with no bot-node runtime produces NO rung, and nothing may claim otherwise', () => {
-      // gemini-cli and antigravity-cli carry botNodeRuntime: null in HARNESS_BY_ID, and neither
-      // spelling is a ProviderRegistry id - the registry has 'gemini', not 'gemini-cli'. So
-      // resolveBotNodeSwitch answers null for both and no rung is built.
+    it('only a harness with no bot-node runtime produces no rung', () => {
+      // gemini-cli remains api-side-only. Antigravity now has a real built runtime and therefore
+      // survives as a rung; this assertion moves with the same HARNESS_BY_ID table as dispatch.
       //
       // This case exists because the opposite was asserted in SEVEN durable places (ROADMAP row,
       // four change-log entries, two JSDoc blocks) and was false in all of them. A claim that
@@ -331,8 +331,7 @@ describe('the provider fallback chain is configuration, not code', () => {
         ['gemini-cli', 'antigravity-cli'],
         { clineApiProviders: CATALOG },
       );
-      expect(rungNames(wrapped), 'neither harness can be a rung').toEqual([]);
-      expect(wrapped, 'with no usable rung the primary is returned bare').toEqual({ id: 'primary' });
+      expect(rungNames(wrapped)).toEqual(['antigravity-cli']);
 
       // ...while the API-provider id for the same vendor IS usable, which is the distinction the
       // corrected wording has to preserve: selectable api-side, and 'gemini' works as a rung.

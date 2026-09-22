@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | The measured musl cause reached NO surface. blockingReason() is consumed in run(), and run() is unreachable - assertAuditedAutonomousHarness throws first for every CLI harness by the fail-closed posture - so the diagnosis this adapter went and measured could never be shown to anyone, and the only message an operator saw was the generic unbrokered-CLI refusal, which says nothing about why THIS harness will not start. healthCheck() is not behind that guard, so it now reports false with the reason logged, and skips the pointless `agy --version` probe on a node where the binary is present and cannot relocate.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the harness-specific override still wins, but the fallback beneath it resolves through resolveSharedWorkspaceRoot() instead of reading one variable and then defaulting to the RELATIVE "./workspace" - a relative default resolves against whatever cwd the process happens to have, which is not the shared mount under any compose file.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | blockingReason() delegates to antigravity-cli-availability. The musl diagnosis had exactly one reader - this adapter - and a surface deciding whether to OFFER an Antigravity brain needs the same answer without importing an execution-stack module onto the controller graph. The measurement and its wording are unchanged; they simply live where both callers can reach them.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com  | Follow-on bot-node runtime stages a checksum-pinned vendor binary with a private real-glibc loader inside the Alpine image and uses the documented stream-json stdin protocol. This older api-side adapter retains its bounded argv path, but antigravity-cli is now a real bot-node rung when that private runtime is present and authenticated.
  */
 
 import fs from 'fs';
@@ -40,14 +41,12 @@ const DEFAULT_TIMEOUT_MS = 3_600_000;
  * Linux caps a SINGLE argument at `MAX_ARG_STRLEN` = 32 pages = 128 KiB, independently of the
  * much larger total `ARG_MAX`. Exceeding it is `spawn E2BIG`, which this repo has already paid
  * for live: the Codex adapter passed the prompt as a positional argv and every Dungeon Master
- * turn died once the conversation grew (see codex-cli-harness-adapter change-log 8). Both
- * siblings now deliver the prompt on stdin.
+ * turn died once the conversation grew (see codex-cli-harness-adapter change-log 8). The dedicated
+ * bot-node wrapper now delivers the prompt over documented stream-json stdin.
  *
- * This adapter cannot yet do the same, and the reason is measured rather than assumed: `agy`
- * documents `-p <prompt>` as a flag that TAKES its value, and whether omitting the value makes it
- * read stdin could not be tested here — the binary does not run on this image at all (no musl
- * build; see blockingReason). So the argv path stays, with an explicit bound and a legible
- * refusal, and switching to stdin is the first thing to try once a glibc node exists.
+ * This older api-side adapter still uses `-p <prompt>` and therefore retains the explicit bound
+ * and legible refusal. The dedicated bot-node path is the unbounded stdin implementation; keeping
+ * this guard here prevents the legacy path from silently regressing to E2BIG.
  */
 const MAX_ARGV_PROMPT_BYTES = 96 * 1024;
 
@@ -119,8 +118,8 @@ interface AntigravityJsonResult {
  * task workspace and reads the single JSON envelope it returns.
  *
  * This is a sibling of {@link GeminiCliHarnessAdapter}, not a replacement: both are registered
- * CLI harnesses over the same Google key. Either can be SELECTED; neither can be a fallback rung,
- * because both carry botNodeRuntime: null and therefore resolve to no runtime at a bot node.
+ * CLI harnesses over the same Google key. Either can be selected api-side; Antigravity also has a
+ * dedicated bot-node runtime, while Gemini CLI still carries botNodeRuntime: null.
  * Unattended execution remains gated by `assertAuditedAutonomousHarness`, exactly as every other
  * CLI harness in this inventory.
  */

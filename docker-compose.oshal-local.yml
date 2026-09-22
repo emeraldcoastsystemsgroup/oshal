@@ -38,6 +38,7 @@
 # 31 | maintainer@emeraldcoastsystemsgroup.com | The api boot no longer swallows a failed migration, a failed core-RLS enforce or a failed app-role provision. All three discarded their exit status — the migration runner's .catch() logged one line and let the boot continue, and the two governance scripts were followed by `|| echo '... (non-fatal)'` — so the api came up reporting healthy on a half-applied schema or an unprovisioned bot role, which is the same "reported success when it did nothing" shape as migration 099's swallowed GRANTs. Compose was the only one of the three deployment paths that did this: deploy/helm/oshal/templates/api.yaml:113-116 already exits 1 on each, and scripts/governance/bootstrap-managed-postgres.mjs fails the managed one-shot on each. This converges compose onto them. Guard: tests/unit/bot-role-grant-fail-loud-postgres.spec.ts.
 # 32 | maintainer@emeraldcoastsystemsgroup.com | x-bot-env: DB_MAX_CONNECTIONS, so the bot fleet has a DECLARED per-container Postgres ceiling instead of the code default of 5. Unset, the 38 bot-node services here could demand 190 connections from a role capped at 8, and a fleet boot produced FATAL too many connections for role "oshal_bot" in 24 of 36 containers - a pool outage that surfaced as an authorization-shaped refusal. Three per container is 114 for the whole fleet, which fits under the role's ceiling of 120 (docs/governance/app-role-provisioning.sql) and under max_connections=200 beside oshal_app's 24. The controller inherits this anchor but never reads the key: its own ceiling is OSHAL_DB_POOL_MAX. Guard: tests/unit/managed-postgres-pool-budget.spec.ts.
 # 33 | maintainer@emeraldcoastsystemsgroup.com | x-bot-env: RAG_ENGINE, the same pgvector value oshal-api carries as its own literal. The bot-node read-only tool rag_query refuses unless rag_chunks row-level security is what scopes the read, and only the pgvector engine reaches it; with the key on the api alone every bot booted on the chroma default and the tool shipped inert on the deployed box. Anchor rather than per-service so every bot that can be granted the tool gets the engine. Guard: tests/unit/bot-node-read-only-tools.spec.ts (the compose case).
+# 34 | maintainer@emeraldcoastsystemsgroup.com | Antigravity headless account login: every API/bot inheriting x-bot-env uses agy's file-storage mode and the shared .gemini token path, allowing OSHAL Node's authenticated operator push to seed one credential every bot can consume.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -232,6 +233,11 @@ x-bot-env: &bot-env
   OSHAL_PROVIDER_AUTO_FAILOVER: ${OSHAL_PROVIDER_AUTO_FAILOVER:-true}
   OSHAL_PROVIDER_STALL_FALLBACK: ${OSHAL_PROVIDER_STALL_FALLBACK:-}
   OSHAL_PROVIDER_STALL_FALLBACK_MODEL: ${OSHAL_PROVIDER_STALL_FALLBACK_MODEL:-}
+  # Antigravity v1.2.8 consumes the operator login pushed into the shared .gemini volume through
+  # its documented headless file-storage mode. The API writes this path; every bot reads it.
+  GEMINI_FORCE_FILE_STORAGE: "true"
+  ANTIGRAVITY_OAUTH_TOKEN_PATH: ${ANTIGRAVITY_OAUTH_TOKEN_PATH:-/root/.gemini/antigravity-cli/antigravity-oauth-token}
+  ANTIGRAVITY_MODEL: ${ANTIGRAVITY_MODEL:-gemini-3.8-flash-low}
   # ANTHROPIC_API_KEY is set at runtime via the cockpit Claude Code login module.
   # The login flow writes to ~/.claude/credentials.json and propagates via Redis.
   # Do NOT hardcode a key here — it will poison the cline CLI auth.

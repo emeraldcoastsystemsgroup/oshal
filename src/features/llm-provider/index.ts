@@ -143,6 +143,7 @@ export {
 export {
   ANTIGRAVITY_BINARY_NAME,
   antigravityMuslBlockingReason,
+  antigravityNodeCredentialReady,
   antigravityNodeReadiness,
   resolveAntigravityCliBinary,
   type AntigravityBlockReason,
@@ -156,6 +157,15 @@ export {
   type GeminiLoginAdoption,
   type GeminiLoginRemoval,
 } from './services/gemini-auth-adoption-service';
+export {
+  ANTIGRAVITY_TOKEN_FILENAME,
+  adoptOperatorAntigravityLogin,
+  antigravityPushedLoginPresent,
+  forgetAdoptedAntigravityLogin,
+  resolveAntigravityCredentialsPath,
+  type AntigravityAdoptionOptions,
+  type AntigravityLoginAdoption,
+} from './services/antigravity-auth-adoption-service';
 
 // FSD deep-import burn-down (2026-07-24). ONLY pure governance / config / data
 // members are surfaced here — verified (scratchpad boundary probe) to add NO new

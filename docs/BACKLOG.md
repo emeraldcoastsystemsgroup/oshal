@@ -132,8 +132,8 @@ carries the evidence that survived an adversarial re-derivation and the correcti
   `assertUnattendedProviderPreflight`'s refused set) shipped and stands on its own — it is a
   tightening, unrelated to whether any credential exists.
 - **The defect that refused the first cut: an option was offered that nothing could execute.**
-  `HARNESS_BY_ID` gives both `gemini-cli` and `antigravity-cli` `botNodeRuntime: null`, and
-  neither is a `ProviderRegistry` id, so `resolveBotNodeSwitch` answers null and
+  At PR #787's mergeable boundary, `HARNESS_BY_ID` gave both Google CLI ids
+  `botNodeRuntime: null`, so `resolveBotNodeSwitch` answered null and
   `reconcileDispatchProviderConfig` refuses the dispatch **by name**. The settings surface offered
   the Gemini brain the moment a login was pushed, `PUT` admitted it because `PUT` admits anything
   whose availability is true, and every turn afterwards failed. Fixed structurally: `cliBrainOffer`
@@ -143,7 +143,7 @@ carries the evidence that survived an adversarial re-derivation and the correcti
   retryable-to-hosted, so a future mis-selection degrades instead of dead-ending.
   Guards: `tests/unit/cli-brain-executability.spec.ts` (mutation-proven: re-offering the option,
   accepting it on PUT, or dropping the retryable classification each turns it red).
-- **Antigravity is the one Google path measured ANSWERING — and it cannot run on this stack.**
+- **Antigravity is the one Google path measured ANSWERING; its musl wall is closed in the runtime branch.**
   Measured on the operator's machine 2026-09-22: `agy` v1.2.8 under the vendor installer's
   TARGET_DIR in the local app-data tree, which the installer does not add to PATH — which is why
   an earlier `which agy` concluded it was absent. It is already authenticated as him, `agy models`
@@ -156,48 +156,28 @@ carries the evidence that survived an adversarial re-derivation and the correcti
   `Dockerfile.oshal` is `FROM node:20-alpine`, and the CLI ships no musl build
   (`manifests/linux_amd64_musl.json` is 404) while its glibc PIE fails to relocate under `gcompat`
   (`__open`, `__lseek`, `__read`, `pvalloc`: symbol not found — measured in a throwaway container
-  and carried in `AntigravityCliHarnessAdapter` since). So a bot-node runtime for it would refuse
-  on every container in the shipped stack: the same defect as the one above, one layer down.
+  and carried in `AntigravityCliHarnessAdapter` since). The `antigravity-bot-runtime` branch closes
+  that without rebasing the fleet: it checksum-pins the vendor amd64/arm64 artifacts, stages a
+  private Debian glibc loader/library tree under `/opt/agy-runtime`, and exposes a launcher that
+  opts only `agy` into it. Node and native addons remain musl. The production Dockerfile build
+  assertion and a throwaway run both report `agy 1.2.8`.
   Note the model ids are Antigravity's own and are effort-suffixed (`gemini-3.8-flash-low`, not
   `gemini-3.8-flash`); they must be discovered from `agy models`, never mapped from a hosted id.
-- **Three ways to close it, none of them free, and the choice is the operator's.**
-  1. **A glibc bot-node image.** A second Dockerfile (node:20-bookworm-slim) and one compose
-     service that runs it, so exactly one bot can hold the Antigravity harness. Smallest change to
-     the platform, but it adds a second base image to build, patch and keep at parity.
-  2. **Move the base image to glibc.** One image again, but it re-bases every bot in the fleet:
-     a large blast radius on a core that is load-bearing, and not a change to make for one CLI.
-  3. **Run it where it is already installed and signed in — the operator's own machine.** The
-     oshal client (`packages/oshal-chat`) already runs there with a worker and a mesh connection.
-     This is the architecturally honest home for a credential that IS the operator's identity, and
-     it needs no image change at all; what it needs is an execution rail from the swarm to that
-     node, which does not exist yet.
+- **The established operator login-push rail closes the credential half.** Antigravity's Windows
+  Credential Manager entry is vendor JSON with access, refresh, and ID tokens. The same JSON is
+  consumed on headless Linux at `~/.gemini/antigravity-cli/antigravity-oauth-token` when
+  `GEMINI_FORCE_FILE_STORAGE=true`. OSHAL Node now reads that entry in memory, validates its vendor
+  shape, and sends it over the existing authenticated exact-operator rail. The API writes it
+  atomically at mode 0600 in the shared `.gemini` volume; every bot reads that mounted path.
+  Readiness measures the file itself, not a manual assertion.
 
-  *Done when:* one of the three is chosen, the bot-node runtime for `antigravity-cli` exists
-  (`botNodeRuntime`, `BotNodeRuntimeName`, an any-bot provider + wrapper, the `AgenticController`
-  branch), and a recorded live turn answers on an Antigravity model the API key cannot reach.
-  `botNodeCanRunProvider` then flips on its own and the brain option becomes selectable with no
-  further change to the surface.
-- **Vertex is the viable FALLBACK, and it was proven on the operator's identity — not built.**
-  Measured 2026-09-22: a direct `generateContent` POST to the `us-central1` Vertex endpoint for
-  `gemini-2.5-flash`, in the operator's own gcloud project, under his gcloud identity, returned
-  HTTP 200. **The model list differs from the Generative Language API and must be discovered,
-  never assumed** — `gemini-3.8-flash` is 404 on Vertex in that region; it is simply not published
-  there. `.env` already carries `VERTEX_PROJECT` / `VERTEX_LOCATION`, `provider-definitions`
-  already has a `vertex` provider, and `getGoogleCloudPlatformAccessToken` already mints a
-  cloud-platform token from a service-account key — so the plumbing largely exists. Deliberately
-  NOT built here: the open question is not code, it is **which identity the container holds**, and
-  that is an operator decision with three shapes and different blast radii. Application-default
-  credentials mounted in are his own identity and bill him personally, and a mounted ADC file is a
-  long-lived user credential in a container. A dedicated service account with `aiplatform.user` is
-  separable, revocable, auditable and the only one that survives him rotating his own login, but
-  it has to be created, funded and its key mounted read-only. A token minted outside and mounted
-  expires within the hour and needs a refresher nothing here has. *Done when:* the identity shape
-  is chosen, a Gemini-on-Vertex hosted lane resolves through the existing `byoLlmConnection` rail
-  (hosted, so it needs no new spawn path and no harness), and a recorded live turn answers on a
-  model the free-tier key cannot reach.
-- **Still open and still the operator's:** one recorded live turn on a Gemini model the free-tier
-  API key cannot reach, by whichever of the two paths above he picks. Until then the honest interim
-  for ordinary turns remains pointing the hosted connection at a model the free tier still serves.
+  Proven end to end in a fresh Alpine container using the checksum-pinned private glibc runtime:
+  `agy models` succeeded, then `agy --model gemini-3.8-flash-low ...` returned the exact marker
+  `OSHAL_ANTIGRAVITY_CONTAINER_OK`. No host credential was printed or persisted outside the
+  disposable container. The remaining deployment action is operational: set
+  `GEMINI_AUTH_MOUNT_MODE=rw`, recreate the API/bots, and use **Push to swarm** in OSHAL Node.
+
+  *Done:* a recorded Alpine-node turn answered through the signed-in Antigravity account.
 
 ### PICK UP HERE — what was in flight when the 2026-09-21/22 overnight ended
 

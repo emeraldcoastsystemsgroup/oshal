@@ -444,7 +444,7 @@ async function signOut(): Promise<{ ok: boolean; error?: string }> {
 /**
  * @description Launches the vendor's own login on this machine and, for the logins the swarm
  * can adopt, waits for the CLI to write its file (the browser redirect landed) and pushes it.
- * @param id - Local account id (codex / claude / gemini / gcloud / aws)
+ * @param id - Local account id (codex / claude / gemini / antigravity / gcloud / aws)
  * @returns launched + command from the launcher, and the push outcome when one was attempted
  */
 async function loginAndPush(id: string): Promise<Record<string, unknown>> {

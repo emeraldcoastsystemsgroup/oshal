@@ -239,6 +239,7 @@ import {
   createOpenAiCodexOAuthRoutes,
   createClaudeCodeAuthRoutes,
   createGeminiAuthRoutes,
+  createAntigravityAuthRoutes,
   createFacebookAuthRoutes,
   createUiProfileRoutes,
   createSwarmAppRoutes,
@@ -1207,6 +1208,9 @@ function createApp(): express.Application {
   // host-side (Connect-AI.bat / `gemini` once); we never broker Google OAuth. The Utilities
   // tile polls this until the host login's ~/.gemini/oauth_creds.json (mounted ro) appears.
   app.use('/api/gemini/auth', createGeminiAuthRoutes(requiresAuth));
+  // Antigravity uses the same authenticated operator-push pattern, writing the vendor JSON into
+  // agy's headless file-storage path on the shared .gemini mount.
+  app.use('/api/antigravity/auth', createAntigravityAuthRoutes(requiresAuth));
   app.use('/api/facebook-auth', createFacebookAuthRoutes(requiresAuth));
   // (/api/email is no longer hard-mounted: the Email Summarizer surface carved to the
   //  oshal-applications store, ADR-085 Wave 3 — the installed package's manifest mounts it

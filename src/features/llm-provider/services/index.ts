@@ -72,6 +72,7 @@ export {
 export {
   ANTIGRAVITY_BINARY_NAME,
   antigravityMuslBlockingReason,
+  antigravityNodeCredentialReady,
   antigravityNodeReadiness,
   resolveAntigravityCliBinary,
   type AntigravityBlockReason,
@@ -86,6 +87,15 @@ export {
   type GeminiLoginAdoption,
   type GeminiLoginRemoval,
 } from './gemini-auth-adoption-service';
+export {
+  ANTIGRAVITY_TOKEN_FILENAME,
+  adoptOperatorAntigravityLogin,
+  antigravityPushedLoginPresent,
+  forgetAdoptedAntigravityLogin,
+  resolveAntigravityCredentialsPath,
+  type AntigravityAdoptionOptions,
+  type AntigravityLoginAdoption,
+} from './antigravity-auth-adoption-service';
 export {
   PROVIDER_CATALOG,
   getAllProviders,

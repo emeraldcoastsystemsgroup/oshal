@@ -8,8 +8,8 @@
 
 import { normalizePulledProviderName } from './bot-node-config-bootstrap';
 
-/** The three runtimes a bot node builds. */
-export type BotNodeRuntimeName = 'openai-codex' | 'claude-code' | 'cline-cli';
+/** The four runtimes a bot node builds. */
+export type BotNodeRuntimeName = 'openai-codex' | 'claude-code' | 'cline-cli' | 'antigravity-cli';
 
 /** Where a switch id lands on this node. */
 export interface BotNodeSwitchTarget {

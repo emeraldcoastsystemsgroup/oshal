@@ -113,6 +113,9 @@ describe('bot-provider-switch: what an id means', () => {
       expect(classifyProviderId(id, CATALOG)).toMatchObject({ ok: true, harnessType: 'codex-cli', apiType: 'openai-codex', botNodeRuntime: 'openai-codex' });
     }
     expect(classifyProviderId('claude-code', CATALOG)).toMatchObject({ ok: true, harnessType: 'claude-code', botNodeRuntime: 'claude-code' });
+    expect(classifyProviderId('antigravity-cli', CATALOG)).toMatchObject({
+      ok: true, harnessType: 'antigravity-cli', botNodeRuntime: 'antigravity-cli',
+    });
     for (const id of ['cline', 'cline-cli']) {
       expect(classifyProviderId(id, CATALOG)).toMatchObject({ ok: true, harnessType: 'cline', apiType: null, botNodeRuntime: 'cline-cli' });
     }
