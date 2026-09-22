@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Shared real-`helm template` renderer for the chart guards written after the first Docker Desktop Kubernetes install (chart-readiness-probes, chart-shared-env-extra, chart-monitoring-parity). One copy, so a flag or parse change reaches every guard that uses it. A missing helm binary is a loud failure, never a skip: these guards render the REAL chart.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | resolvedEnv: the environment a container actually starts with, resolved the way the kubelet does it - envFrom sources in order (later wins), then explicit env entries over all of them - against the ConfigMaps and Secrets the SAME render creates. A reference to an object the chart does not render (the optional api.envSecret an operator creates) resolves to nothing, because a guard asking "does the chart supply this" must not count a Secret nobody has made. Used by the bootstrap-env guard (rbac.botLauncher=false) and every guard that reads a value moved out of a literal env entry.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | helmNotes: the text `helm install` would print from templates/NOTES.txt, rendered offline. `helm template` never prints NOTES.txt and `helm install --dry-run` is an install command, so this copies the chart to a temp dir, wraps NOTES.txt unchanged in a named template, and has a probe ConfigMap include it: the same engine, values and helpers render the same file, with no cluster and no install. The helm call is shared with helmTemplate (runHelm), so both fail the same loud way. Used by the runtime-launched-bot guard (chart-dynamic-bot-env), whose fix is an install-time warning.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | helmRefusal: helm's OWN stderr for a render it refuses. The thrown Error's message embeds the --set list, so a guard asking "does the refusal name swarm.extraEnv.X" matched its own argument `swarm.extraEnv.X=...` and passed whatever helm said - the extraEnv clash and credential naming checks and the Vault TLS secretName check stayed green with the refusal reduced to one name or none. runHelm now throws HelmRenderError carrying helm's stderr separately (a missing binary stays a plain, loud Error), and refusal guards read that.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -37,6 +38,19 @@ const renders = new Map<string, K8sObject[]>();
 const notesRenders = new Map<string, string>();
 let notesChartDir: string | undefined;
 
+/** A render helm itself refused. `stderr` is helm's own output, without this helper's argument list. */
+export class HelmRenderError extends Error {
+  /**
+   * @description Keep helm's stderr apart from the message, which also names the --set list.
+   * @param message full message (arguments plus helm's output)
+   * @param stderr helm's output only
+   */
+  constructor(message: string, readonly stderr: string) {
+    super(message);
+    this.name = 'HelmRenderError';
+  }
+}
+
 /**
  * @description Run `helm template` on a chart directory and return its stdout. A missing binary
  * or a render error is thrown, never skipped: these guards render the REAL chart.
@@ -60,8 +74,30 @@ function runHelm(chartDir: string, opts: RenderOptions, extra: string[] = []): s
     });
   } catch (err) {
     const e = err as { code?: string; stderr?: string; message: string };
-    const why = e.code === 'ENOENT' ? 'the helm binary is not on PATH' : (e.stderr || e.message);
-    throw new Error(`helm template failed (${JSON.stringify([files, sets])}): ${why} - this guard renders the REAL chart and does not skip`);
+    const where = `helm template failed (${JSON.stringify([files, sets])})`;
+    if (e.code === 'ENOENT' || !e.stderr) {
+      const why = e.code === 'ENOENT' ? 'the helm binary is not on PATH' : e.message;
+      throw new Error(`${where}: ${why} - this guard renders the REAL chart and does not skip`);
+    }
+    throw new HelmRenderError(`${where}: ${e.stderr} - this guard renders the REAL chart and does not skip`, e.stderr);
+  }
+}
+
+/**
+ * @description What helm printed when it refused to render these values: its own stderr only,
+ * never the --set list, so a guard asking "does the refusal name X" cannot be satisfied by its own
+ * arguments. A render that succeeds returns '' (the caller's expectation then fails with its own
+ * message); a missing helm binary or any other failure is thrown.
+ * @param opts --set expressions and values files
+ * @returns {string} helm's refusal text, or '' when the render succeeded
+ */
+export function helmRefusal(opts: RenderOptions = {}): string {
+  try {
+    runHelm(CHART_DIR, opts);
+    return '';
+  } catch (err) {
+    if (err instanceof HelmRenderError) return err.stderr;
+    throw err;
   }
 }
 

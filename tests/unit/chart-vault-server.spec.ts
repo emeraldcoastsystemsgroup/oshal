@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the Helm half of "Production Vault hardening" (chart 0.5.0). The chart ran `vault server -dev`, shipped infra.vault.devRootToken (oshal-dev-root) and put that root token on the api as a literal VAULT_TOKEN. Renders the REAL chart (defaults and the Docker Desktop overlay) and requires: no -dev argument or VAULT_DEV_* env on the Vault container; the dev root token (read from docker-compose.oshal-local.yml, which still carries it for the development box) in no values file and nowhere in the render; no devRootToken key in values; and no Vault token reaching the api by any route the render controls - the token env name is READ from the platform source, not assumed. It also holds the server-mode shape to itself: the file storage path is the mount of the pod's own claim, the listener port is the Service's target and the api's VAULT_ADDR port, and mlock is disabled exactly because no IPC_LOCK is granted. And it proves the sealed/degraded path is wired at render level: the platform's console answers 503 when no token is configured (read from src), no probe fails on a sealed or uninitialized Vault (the query overrides both of Vault's non-2xx health codes), and a src AppRole login - which would let the chart supply a scoped credential - does not exist yet (the case fails the day one lands, so the chart gets wired to it). The TLS switch renders a TLS listener from the operator's Secret, an https VAULT_ADDR, HTTPS probes and the CA (only) trusted by the api; with the default Secret name it reads that Secret, and an empty name fails the render. The README runbook must name the StatefulSet pod the render creates.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The TLS-without-a-Secret refusal is checked against helm's own stderr (helmRefusal). The thrown error's message also carried the --set list, which contains infra.vault.tls.secretName itself, so the check passed whatever helm said; with the refusal reworded to omit the value it stayed green.
  */
 
 import fs from 'node:fs';
@@ -11,7 +12,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import yaml from 'js-yaml';
 import {
-  CHART_DIR, DOCKER_DESKTOP_VALUES, REPO_ROOT, RENDER_TIMEOUT_MS, containerOf, helmTemplate, renderedData, resolvedEnv,
+  CHART_DIR, DOCKER_DESKTOP_VALUES, REPO_ROOT, RENDER_TIMEOUT_MS, containerOf, helmRefusal, helmTemplate, renderedData, resolvedEnv,
   type K8sObject, type RenderOptions,
 } from '../helpers/helm-template';
 
@@ -186,8 +187,7 @@ describe('infra.vault.tls switches the listener, the api and the probes together
     const names = (sts.spec?.template?.spec?.volumes ?? []).map((v: { secret?: { secretName: string } }) => v.secret?.secretName).filter(Boolean);
     const values = yaml.load(fs.readFileSync(path.join(CHART_DIR, 'values.yaml'), 'utf8')) as Record<string, any>;
     expect(names).toEqual([values.infra?.vault?.tls?.secretName]);
-    let err = '';
-    try { helmTemplate({ sets: ['infra.vault.tls.enabled=true', 'infra.vault.tls.secretName='] }); } catch (e) { err = (e as Error).message; }
+    const err = helmRefusal({ sets: ['infra.vault.tls.enabled=true', 'infra.vault.tls.secretName='] });
     expect(err).toMatch(/infra\.vault\.tls\.secretName/);
   }, RENDER_TIMEOUT_MS);
 });

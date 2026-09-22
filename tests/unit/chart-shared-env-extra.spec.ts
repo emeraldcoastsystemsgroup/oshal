@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | swarm.extraEnv shares a data map with the keys the chart sets itself, and a clash used to render a duplicate data key (last-wins for one client, an apply error for another). For both roles this now reads every key the default render emits, sets ALL of them through extraEnv in one render, and requires the chart to refuse it and name each clashing key. A key the chart emits only while its service is in-cluster (ARANGO_URL) must stay settable through extraEnv once that service is off.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Chart 0.5.0 moved JWT_SECRET and ARANGO_ROOT_* out of the ConfigMap into the oshal-shared-secret Secret, so extraEnv must not become the way a credential gets back into a ConfigMap. For both roles every key the chart keeps in that Secret, set through extraEnv, must fail the render as chart-owned and be named; and every credential name the chart knows (each key of each Secret it renders, plus the *_API_KEY / *_SECRET / *_TOKEN / *AUTHKEY names values.yaml tells an operator to keep in a Secret) must fail as credential-shaped and be named.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The credential-name rule's known false positive is documented, and held true. values.yaml and the README say the rule also refuses a non-secret switch whose name matches it, naming compose's REMOTE_CLIENT_REQUIRE_NODE_TOKEN, and that such a switch goes on the workload that reads it (api.extraEnv). This reads the example out of values.yaml, confirms from the parsed docker-compose.oshal-local.yml that it is a boolean switch set on the oshal-api service alone, and requires that swarm.extraEnv refuses it while api.extraEnv renders it on the api container.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | The naming checks (SEQ 2 and 3: each clashing key, each chart Secret key, each credential name) now read helm's own stderr through helmRefusal. They matched the thrown error's message, which also carried the --set list, so `swarm.extraEnv.X` was always found in the test's own argument `swarm.extraEnv.X=guard-...`. With the refusal cut to its first name, or with TOKEN dropped from the credential rule so three names stopped being refused, the checks stayed green.
  */
 
 import fs from 'node:fs';
@@ -14,7 +15,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import yaml from 'js-yaml';
 import {
-  DOCKER_DESKTOP_VALUES, REPO_ROOT, RENDER_TIMEOUT_MS, containerOf, envValue, helmTemplate, type K8sObject,
+  DOCKER_DESKTOP_VALUES, REPO_ROOT, RENDER_TIMEOUT_MS, containerOf, envValue, helmRefusal, helmTemplate, type K8sObject,
 } from '../helpers/helm-template';
 
 const SHARED_ENV = 'oshal-shared-env';
@@ -121,12 +122,7 @@ describe('swarm.extraEnv cannot redefine a key the chart owns', () => {
   it.each(['main', 'bot-pod'])('role=%s: every chart-owned key set through extraEnv fails the render, each one named', (role) => {
     const owned = Object.keys(sharedEnv(helmTemplate({ sets: [`role=${role}`] })));
     expect(owned.length, `role=${role}: the default render owns too few keys - the read is broken`).toBeGreaterThan(10);
-    let message = '';
-    try {
-      helmTemplate({ sets: [`role=${role}`, ...owned.map((k) => `swarm.extraEnv.${k}=guard-clash`)] });
-    } catch (err) {
-      message = (err as Error).message;
-    }
+    const message = helmRefusal({ sets: [`role=${role}`, ...owned.map((k) => `swarm.extraEnv.${k}=guard-clash`)] });
     expect(message, `role=${role}: extraEnv redefining chart-owned keys rendered without the chart refusing it`).toMatch(/chart-owned/);
     const unnamed = owned.filter((k) => !new RegExp(`swarm\\.extraEnv\\.${k}(?![A-Za-z0-9_])`).test(message));
     expect(unnamed, 'the refusal does not name every clashing key').toEqual([]);
@@ -160,8 +156,7 @@ describe('swarm.extraEnv cannot put a credential back into the ConfigMap', () =>
     const secret = helmTemplate({ sets: [`role=${role}`] }).find((o) => o.kind === 'Secret' && o.metadata.name === 'oshal-shared-secret');
     const keys = Object.keys((secret as { stringData?: object } | undefined)?.stringData ?? {});
     expect(keys, `role=${role}: the render has no oshal-shared-secret keys - nothing was checked`).toContain('JWT_SECRET');
-    let message = '';
-    try { helmTemplate({ sets: [`role=${role}`, ...keys.map((k) => `swarm.extraEnv.${k}=guard-clash`)] }); } catch (err) { message = (err as Error).message; }
+    const message = helmRefusal({ sets: [`role=${role}`, ...keys.map((k) => `swarm.extraEnv.${k}=guard-clash`)] });
     expect(message, `role=${role}: extraEnv re-set a chart Secret key and the chart rendered it into the ConfigMap`).toMatch(/chart-owned/);
     expect(keys.filter((k) => !new RegExp(`swarm\.extraEnv\.${k}(?![A-Za-z0-9_])`).test(message)), 'the refusal does not name every key').toEqual([]);
   }, RENDER_TIMEOUT_MS);
@@ -171,8 +166,7 @@ describe('swarm.extraEnv cannot put a credential back into the ConfigMap', () =>
     // The derivation must see the Secrets and the documented operator secrets, or this is vacuous.
     expect(names).toEqual(expect.arrayContaining(['JWT_SECRET', 'BOT_DATABASE_URL', 'OPENAI_API_KEY', 'TS_AUTHKEY']));
     const outsideChartOwnership = names.filter((n) => !['JWT_SECRET', 'ARANGO_ROOT_USER', 'ARANGO_ROOT_PASSWORD'].includes(n));
-    let message = '';
-    try { helmTemplate({ sets: outsideChartOwnership.map((k) => `swarm.extraEnv.${k}=guard-credential`) }); } catch (err) { message = (err as Error).message; }
+    const message = helmRefusal({ sets: outsideChartOwnership.map((k) => `swarm.extraEnv.${k}=guard-credential`) });
     expect(message, 'a credential-shaped extraEnv key rendered into the ConfigMap').toMatch(/credential-shaped/);
     const unnamed = outsideChartOwnership.filter((k) => !new RegExp(`swarm\.extraEnv\.${k}(?![A-Za-z0-9_])`).test(message));
     expect(unnamed, 'the refusal does not name every credential key').toEqual([]);
@@ -193,8 +187,7 @@ describe('swarm.extraEnv cannot put a credential back into the ConfigMap', () =>
     expect(setters.map(([name]) => name), `compose does not set ${example} on oshal-api alone - the example is wrong`).toEqual(['oshal-api']);
     expect(setters[0][1], `${example} is not a boolean switch in compose - the example is wrong`)
       .toMatch(new RegExp(`^\\$\\{${example}:-(true|false)\\}$`));
-    let message = '';
-    try { helmTemplate({ sets: [`swarm.extraEnv.${example}=true`] }); } catch (err) { message = (err as Error).message; }
+    const message = helmRefusal({ sets: [`swarm.extraEnv.${example}=true`] });
     expect(message, 'the name rule no longer refuses the documented example - update values.yaml and the README').toMatch(/credential-shaped/);
     const api = containerOf(helmTemplate({ sets: [`api.extraEnv.${example}=true`] }), 'Deployment', 'oshal-api', 'api');
     expect(envValue(api, example!), 'api.extraEnv does not carry the switch the docs point at').toBe('true');
