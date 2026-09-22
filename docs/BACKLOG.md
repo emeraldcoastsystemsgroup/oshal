@@ -2836,6 +2836,37 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### Apply recipe runner and learned cache
 - **Remaining:** replay known Ashby/Greenhouse patterns without model turns, tune the Workday parse-correction grid live, and share a PII-free family recipe schema between the native runner and swarm apply operator; novel forms may fall back to vision and learn owner-scoped variants.
 - **Done when:** five supported ATS families replay deterministically where a recipe exists, Gmail verification is polled, novel forms learn safely, and auto-submit remains separately opted in per family.
+- **Decision (operator, 2026-09-22), three parts.**
+  **(1) The five ATS families are chosen from the corpus, not from convention:** **workday,
+  smartrecruiters, greenhouse, icims, ashby**. Measured over the box's own `career_postings`
+  (1,433,379 rows): workday 478,684 · smartrecruiters 124,267 · greenhouse 32,033 · icims 18,587 ·
+  ashby 11,048 — together **664,619 postings, about 98% of every row whose ATS is identifiable**. The
+  families usually assumed into such a list do not earn a place here: successfactors 6,324, lever
+  5,700, taleo 1,829, jobvite 682. Workday alone is 72% of the identifiable set, which is why its
+  recipe carries the most weight and the most risk.
+  **(2) Gmail verification codes come back as a DETERMINISTIC SERVER OPERATION, and the retired
+  callback stays retired.** The distinction the entry blurs is the whole decision: what was killed
+  with a 410 at `apply-ingest-routes.ts:219-223` was a **model-facing** callback — the model asking
+  for mailbox contents — and that stays dead. What is approved is a schema-bounded, owner-scoped
+  controller operation that obtains the verification code and passes **only the code** into reasoning.
+  The model never sees the mailbox, never holds the Gmail credential, and the apply-operator persona's
+  ban on email access is unchanged because the persona still has none. This is the boundary CLAUDE.md
+  already mandates for connector data rather than a reversal of the security decision that produced
+  the 410.
+  **(3) Auto-submit becomes PER-FAMILY opt-in, every family defaulting OFF.** Today it is a single
+  per-user flag, which forces the same trust on families whose risk is not comparable: Workday is
+  multi-page with knockout questions where a wrong auto-submit burns a real application at a real
+  employer, while Greenhouse and Ashby are usually a single form. Per-family arming lets the safe ones
+  run while Workday stays manual until its recipe has proven itself on real postings. This preserves
+  the standing rule that outward automation is opt-in and off by default — it makes the opt-in
+  finer-grained, never broader.
+- **Still needs the operator when the code exists:** live replay and Workday tuning require his
+  signed-in worker desktop and real postings; nothing about that changes here.
+- **Done when:** a family recipe schema and deterministic replay runner cover the five named families;
+  the learned cache is owner-scoped; the verification-code operation returns a code and nothing else,
+  with a spec proving the model cannot reach the mailbox through it and that the 410 callback is still
+  410; auto-submit is armed per family with every family off until armed, guarded so a family that was
+  never armed cannot submit; and a live replay on a real posting is recorded per family.
 
 ### Offline browser autofill smoke
 - **Remaining:** with the stack stopped, copy the current Career bookmarklet and exercise one real Ashby and one real Greenhouse form in an already authenticated browser.
