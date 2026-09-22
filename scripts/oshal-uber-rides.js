@@ -50,9 +50,34 @@
  *   controller routes pass credentials as function arguments. Ambient file/env/DB resolution is
  *   retained only for the guarded standalone CLI entrypoint.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Read Uber Rides connector configuration through the shared v2/k2/legacy connector-token codec.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Operator-owned geocoding, a geocode cache that survives a
+ *   restart, and an optional routing engine. Three things this file hardcoded, all of which the
+ *   operator has now decided on (2026-09-20):
+ *     - THE GEOCODER WAS A LITERAL. `https://nominatim.openstreetmap.org` was written into both
+ *       lookups, so an operator running their own Nominatim (or an air-gapped box, where the public
+ *       one is unreachable and every address silently fails to resolve) had no way to point at it
+ *       without editing this file. OSHAL_GEOCODER_URL now does it, validated the same way the
+ *       connector's baseUrl is — http(s), no credentials, no query, no fragment — and falling back
+ *       to the public endpoint rather than to something the operator did not ask for.
+ *     - THE CACHE DIED WITH THE PROCESS. `geoCache` was a bare Map, so every api restart re-asked
+ *       Nominatim for addresses it already knew, against a public endpoint whose usage policy this
+ *       file goes to some length to honour (~1 req/s, serialized). It is now backed by a JSON file
+ *       under OSHAL_WORKSPACE_ROOT (a named volume, so it survives a recreate as well as a
+ *       restart), overridable with OSHAL_GEOCODE_CACHE_PATH, TTL'd at 30 days and capped. Only
+ *       RESOLVED addresses are persisted: a miss is usually transient (rate limit, no egress) and
+ *       writing one to disk would make a one-off outage permanent for that address.
+ *     - THE ROAD DISTANCE WAS ALWAYS A MODEL. straight line x ROAD_FACTOR is ACCEPTED as the
+ *       keyless default and is now labelled as an estimate end to end, but an operator with an
+ *       OSRM/Valhalla endpoint can set OSHAL_ROUTING_URL and get a real road distance with no code
+ *       change; `basis` then says 'routed' instead of 'geocoded' and roadFactor comes back null,
+ *       because no factor was applied. An engine that is slow, down or malformed falls back to the
+ *       accepted straight-line estimate rather than failing the trip.
+ *   No new credential, no new connector: all three are plain operator env. Guard:
+ *   tests/unit/uber-rides-routing-and-cache.spec.ts.
  */
 'use strict';
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { Pool } = require('pg');
 const { resolveExactUserSubject } = require('./lib/exact-user-subject');
@@ -138,6 +163,93 @@ function parseCredential(raw, allowCustomBaseUrl) {
 }
 function baseUrlOf(cred) { return (cred && cred.baseUrl) || 'https://m.uber.com'; }
 
+// ── Operator-owned endpoints ────────────────────────────────────────────────
+// Both of these are plain operator env, never a credential and never a connector: they name a
+// service, they carry no secret, and an unset or unusable value falls back to the documented
+// default rather than to whatever was typed.
+const DEFAULT_GEOCODER_URL = 'https://nominatim.openstreetmap.org';
+
+/**
+ * Validate an operator-supplied service URL.
+ *
+ * @description Same shape the connector's baseUrl is held to: http(s) only, no embedded
+ *   credentials, no query and no fragment — those are how a "base URL" turns into something that
+ *   leaks or is appended to wrongly. A trailing slash is dropped so callers can concatenate.
+ * @param {string} raw - the raw env value
+ * @returns {string} the normalized base URL, or '' when it is absent or unusable
+ */
+function operatorServiceUrl(raw) {
+  const text = String(raw || '').trim().replace(/\/+$/, '');
+  if (!text || text.length > 512) return '';
+  let parsed;
+  try { parsed = new URL(text); } catch { return ''; }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return '';
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) return '';
+  return text;
+}
+
+/**
+ * The geocoding service this box talks to.
+ *
+ * @description OSHAL_GEOCODER_URL points at an operator's own Nominatim (or a compatible service)
+ *   — the reason it exists is that the public endpoint is unreachable on an air-gapped install and
+ *   rate-limited everywhere else. Unset, or set to something unusable, means the public endpoint.
+ * @returns {string} base URL, no trailing slash
+ */
+function geocoderBaseUrl() {
+  return operatorServiceUrl(process.env.OSHAL_GEOCODER_URL) || DEFAULT_GEOCODER_URL;
+}
+
+/**
+ * The optional routing engine.
+ *
+ * @description Empty means the accepted keyless default — straight line × ROAD_FACTOR. Set to an
+ *   OSRM-compatible endpoint it means a real road distance, with no other code change anywhere.
+ * @returns {string} base URL, or '' when no engine is configured
+ */
+function routingBaseUrl() {
+  return operatorServiceUrl(process.env.OSHAL_ROUTING_URL);
+}
+
+// A routing engine is an optimisation, never a dependency: a rider waiting on a wedged OSRM is
+// worse off than a rider shown the straight-line estimate the operator already accepted.
+const ROUTING_TIMEOUT_MS = 4000;
+
+/**
+ * Road distance between two pins, measured by the configured routing engine.
+ *
+ * @description Asks an OSRM-compatible `/route/v1/driving/{lon},{lat};{lon},{lat}` for the driving
+ *   distance in metres. Returns null for every reason it could fail — no engine configured, a
+ *   timeout, a non-2xx, a body without a usable distance — and the caller then prices the trip the
+ *   accepted keyless way. It never throws, because the fallback is a correct answer, not an error.
+ * @param {{lat:number,lon:number}} a - pickup pin
+ * @param {{lat:number,lon:number}} b - dropoff pin
+ * @returns {Promise<number|null>} road distance in km, or null when no engine answered
+ */
+async function routedKm(a, b) {
+  const base = routingBaseUrl();
+  if (!base || !a || !b) return null;
+  let url;
+  try {
+    url = new URL(`${base}/route/v1/driving/${a.lon},${a.lat};${b.lon},${b.lat}`);
+  } catch { return null; }
+  url.searchParams.set('overview', 'false');
+  url.searchParams.set('alternatives', 'false');
+  try {
+    const response = await fetch(url, {
+      headers: { 'User-Agent': NOMINATIM_UA },
+      signal: AbortSignal.timeout(ROUTING_TIMEOUT_MS),
+    });
+    if (!response.ok) return null;
+    const body = await response.json();
+    const metres = body && Array.isArray(body.routes) && body.routes[0]
+      ? Number(body.routes[0].distance)
+      : NaN;
+    if (!Number.isFinite(metres) || metres <= 0) return null;
+    return metres / 1000;
+  } catch { return null; }
+}
+
 // ── Ride types + distance-based estimate ─────────────────────────────────────
 // No live pricing API on the deep-link path, so the fare is MODELLED — but it is modelled on the
 // real distance between the two geocoded pins, not on the address text. The REAL fare shows in the
@@ -202,8 +314,11 @@ function buildRideOptions(distanceKm, pickupEtaMin) {
  * Price a trip from its two endpoints.
  *
  * @description Geocodes both ends (through the shared cache), measures, and prices. `basis` tells
- *   the caller exactly how much to trust the number: 'geocoded' = measured between two resolved
- *   pins; 'unresolved' = at least one address did not geocode, so fares are null.
+ *   the caller exactly how much to trust the number: 'routed' = a configured routing engine
+ *   measured the streets; 'geocoded' = the measured straight line between two resolved pins times
+ *   the stated ROAD_FACTOR, which is a model and is labelled as one; 'unresolved' = at least one
+ *   address did not geocode, so fares are null. `roadFactor` comes back null on a routed answer
+ *   because no factor was applied to it — the caller must not print one that was not used.
  * @param {string} pickup - pickup address, or "my location"
  * @param {string} dropoff - destination address
  * @returns {Promise<{options:Array<object>,distanceKm:number|null,basis:string,coords:object}>}
@@ -215,7 +330,11 @@ async function estimateRides(pickup, dropoff) {
     dropoff ? geocode(dropoff) : Promise.resolve(null),
   ]);
   const straightKm = pg && dg ? haversineKm(pg, dg) : null;
-  const distanceKm = straightKm === null ? null : Math.round(straightKm * ROAD_FACTOR * 10) / 10;
+  // A configured engine measures the streets; without one the accepted keyless estimate is the
+  // straight line times the stated detour factor. Either way the pins were measured for real.
+  const routed = straightKm === null ? null : await routedKm(pg, dg);
+  const modelled = straightKm === null ? null : Math.round(straightKm * ROAD_FACTOR * 10) / 10;
+  const distanceKm = routed === null ? modelled : Math.round(routed * 10) / 10;
   // Minutes to pickup is genuinely unknowable without Uber's driver supply — it is not modelled
   // from the address any more. The surface shows Uber's own ETA once the rider opens the handoff.
   const options = buildRideOptions(distanceKm, null);
@@ -223,8 +342,8 @@ async function estimateRides(pickup, dropoff) {
     options,
     distanceKm,
     straightLineKm: straightKm === null ? null : Math.round(straightKm * 10) / 10,
-    basis: distanceKm === null ? 'unresolved' : 'geocoded',
-    roadFactor: ROAD_FACTOR,
+    basis: distanceKm === null ? 'unresolved' : (routed === null ? 'geocoded' : 'routed'),
+    roadFactor: routed === null ? ROAD_FACTOR : null,
     coords: { pickup: pg, dropoff: dg },
   };
 }
@@ -258,6 +377,115 @@ const geoCache = new Map();
 let nominatimChain = Promise.resolve();
 let lastNominatimAt = 0;
 
+// ── The cache that survives a restart ───────────────────────────────────────
+// A per-process Map meant every api restart re-asked the public endpoint for addresses this box
+// had already resolved — the exact pattern its usage policy asks callers not to produce, and the
+// reason the rate limiter above exists at all. The Map is still the hot path; a JSON file behind
+// it carries the resolved entries across a restart, a recreate and a redeploy.
+//
+// Only RESOLVED addresses are written. A miss is usually transient — rate limited, no egress, the
+// endpoint down — and persisting one would turn a five-minute outage into a permanently
+// unresolvable address for as long as the TTL runs. Misses stay in the Map, so they still stop a
+// tight retry loop inside one process, and are re-asked after a restart.
+const GEO_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const GEO_CACHE_MAX_ENTRIES = 5000;
+const geoCacheStampedAt = new Map();
+let geoCacheLoaded = false;
+
+/**
+ * Where the durable geocode cache lives.
+ *
+ * @description Operator-owned: OSHAL_GEOCODE_CACHE_PATH wins outright. Otherwise it sits under
+ *   OSHAL_WORKSPACE_ROOT, which compose backs with a named volume mounted into the api and every
+ *   bot — so it survives a container recreate, not just a restart. With neither set (a bare CLI
+ *   run on a laptop) it falls back to the temp directory, where a lost cache costs a re-geocode
+ *   and nothing else.
+ * @returns {string} absolute path to the cache file
+ */
+function geocodeCachePath() {
+  const explicit = String(process.env.OSHAL_GEOCODE_CACHE_PATH || '').trim();
+  if (explicit) return explicit;
+  const workspace = String(process.env.OSHAL_WORKSPACE_ROOT || '').trim();
+  if (workspace) return path.join(workspace, '.oshal', 'uber-rides-geocode-cache.json');
+  return path.join(os.tmpdir(), 'oshal-uber-rides-geocode-cache.json');
+}
+
+/**
+ * Populate the in-process cache from disk, once.
+ *
+ * @description Every row is re-validated rather than trusted: a file that was hand-edited,
+ *   truncated by a crash mid-write, or written by a future version must not put a bogus coordinate
+ *   in front of a rider. Anything unparseable, expired, or not a finite lat/lon pair is dropped,
+ *   and a cache that cannot be read at all is simply an empty one.
+ * @returns {void}
+ */
+function loadDurableGeoCache() {
+  if (geoCacheLoaded) return;
+  geoCacheLoaded = true;
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(geocodeCachePath(), 'utf8'));
+  } catch { return; } // no cache yet, unreadable, or not JSON — all of them mean "start empty"
+  if (!parsed || typeof parsed !== 'object' || parsed.version !== 1) return;
+  if (!parsed.entries || typeof parsed.entries !== 'object') return;
+  const now = Date.now();
+  for (const [key, row] of Object.entries(parsed.entries)) {
+    if (!row || typeof row !== 'object' || !Number.isFinite(row.at)) continue;
+    if (now - row.at > GEO_CACHE_TTL_MS || row.at > now) continue;
+    const hit = row.hit;
+    if (!hit || typeof hit !== 'object') continue;
+    if (!Number.isFinite(hit.lat) || !Number.isFinite(hit.lon)) continue;
+    if (Math.abs(hit.lat) > 90 || Math.abs(hit.lon) > 180) continue;
+    geoCache.set(key, { lat: hit.lat, lon: hit.lon, label: String(hit.label || '') });
+    geoCacheStampedAt.set(key, row.at);
+  }
+}
+
+/**
+ * Write the resolved entries back to disk.
+ *
+ * @description Written to a sibling temp file and renamed, so a process that dies mid-write leaves
+ *   the previous cache intact rather than a truncated one. Best effort throughout: this is a cache,
+ *   and a box where it cannot be written (read-only mount, full disk) must still be able to hail a
+ *   ride. Nothing is logged because this CLI's stdout IS its result contract — a stray line there
+ *   breaks every caller that parses it.
+ * @returns {void}
+ */
+function saveDurableGeoCache() {
+  const file = geocodeCachePath();
+  const entries = {};
+  let written = 0;
+  for (const [key, hit] of geoCache) {
+    if (!hit || written >= GEO_CACHE_MAX_ENTRIES) continue;
+    entries[key] = { hit, at: geoCacheStampedAt.get(key) || Date.now() };
+    written += 1;
+  }
+  const tmp = `${file}.${process.pid}.tmp`;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(tmp, JSON.stringify({ version: 1, entries }));
+    fs.renameSync(tmp, file);
+  } catch {
+    // Unwritable cache: the lookup already succeeded, so the rider is served either way.
+    try { fs.unlinkSync(tmp); } catch { /* the temp file was never created */ }
+  }
+}
+
+/**
+ * Record one resolved lookup in both tiers of the cache.
+ *
+ * @description A miss updates the in-process Map only — see the note above the TTL constant.
+ * @param {string} key - the cache key ('f:<address>' or 'r:<lat>,<lon>')
+ * @param {{lat:number,lon:number,label:string}|null} hit - the resolved place, or null
+ * @returns {void}
+ */
+function rememberGeocode(key, hit) {
+  geoCache.set(key, hit);
+  if (!hit) return;
+  geoCacheStampedAt.set(key, Date.now());
+  saveDurableGeoCache();
+}
+
 /**
  * Run a Nominatim request behind the shared rate limiter.
  *
@@ -283,11 +511,12 @@ function nominatim(url) {
 
 async function geocode(address) {
   if (!address) return null;
+  loadDurableGeoCache();
   const key = `f:${address.trim().toLowerCase()}`;
   if (geoCache.has(key)) return geoCache.get(key);
   let hit = null;
   for (const cand of geoCandidates(address)) {
-    const u = new URL('https://nominatim.openstreetmap.org/search');
+    const u = new URL(`${geocoderBaseUrl()}/search`);
     u.searchParams.set('format', 'json');
     u.searchParams.set('q', cand);
     u.searchParams.set('limit', '1');
@@ -297,7 +526,7 @@ async function geocode(address) {
       break;
     }
   }
-  geoCache.set(key, hit);
+  rememberGeocode(key, hit);
   return hit;
 }
 
@@ -314,16 +543,17 @@ async function geocode(address) {
 async function reverseGeocode(lat, lon) {
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
   if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+  loadDurableGeoCache();
   const key = `r:${lat.toFixed(5)},${lon.toFixed(5)}`;
   if (geoCache.has(key)) return geoCache.get(key);
-  const u = new URL('https://nominatim.openstreetmap.org/reverse');
+  const u = new URL(`${geocoderBaseUrl()}/reverse`);
   u.searchParams.set('format', 'json');
   u.searchParams.set('lat', String(lat));
   u.searchParams.set('lon', String(lon));
   u.searchParams.set('zoom', '18');
   const j = await nominatim(u);
   const hit = j && j.display_name ? { lat, lon, label: String(j.display_name) } : null;
-  geoCache.set(key, hit);
+  rememberGeocode(key, hit);
   return hit;
 }
 
@@ -390,6 +620,28 @@ function operationUsage(message) {
   return error;
 }
 
+/**
+ * Say, in one sentence a rider can read, where the distance came from.
+ *
+ * @description The note is the honesty surface of the estimate: each `basis` gets its own sentence
+ *   and none of them borrows another's confidence. A modelled distance names the factor; a routed
+ *   one says it was measured and does not mention a factor that was never applied; an unresolved
+ *   trip says there is no fare rather than implying one is coming.
+ * @param {{basis:string,distanceKm:number|null,straightLineKm:number|null,roadFactor:number|null}} e - an estimateRides result
+ * @returns {string} the rider-facing note
+ */
+function estimateNote(e) {
+  if (e.basis === 'routed') {
+    return `Distance is a measured ${e.distanceKm} km road route from the configured routing engine. `
+      + 'Fares are still modelled from it; Uber quotes the real price at confirm time.';
+  }
+  if (e.basis === 'geocoded') {
+    return `Fares are modelled from a measured ${e.straightLineKm} km straight line × ${e.roadFactor} road factor `
+      + '— an estimate of the road distance, not a driven route. Uber quotes the real price at confirm time.';
+  }
+  return 'One of these addresses did not resolve to a location, so no fare is shown. Add a city or a street number and try again.';
+}
+
 /** Bound route-controlled values before geocoding or constructing third-party links. */
 function operationArguments(rawArgs) {
   if (!Array.isArray(rawArgs) || rawArgs.length > 8) throw operationUsage('Uber Rides operation arguments are invalid');
@@ -416,6 +668,9 @@ async function executeUberRidesCommand(cred, rawArgs, options = {}) {
       return {
         configured: !!cred, service: 'uber-rides', baseUrl: baseUrlOf(cred),
         ordering: 'deep-link-handoff', pricing: 'estimate',
+        // Which of the two distance paths this box is on, without printing the endpoint itself.
+        routing: routingBaseUrl() ? 'routing-engine' : 'straight-line-x-road-factor',
+        geocoder: geocoderBaseUrl() === DEFAULT_GEOCODER_URL ? 'public-nominatim' : 'operator-configured',
         note: 'Requesting a ride on someone else\'s behalf needs Uber for Business; this path is a universal deep link the rider confirms + pays in their own Uber app.',
       };
     case 'estimate': {
@@ -428,9 +683,7 @@ async function executeUberRidesCommand(cred, rawArgs, options = {}) {
         // The map surface draws its pins from these — no second geocode round-trip from the browser.
         coords: e.coords, distanceKm: e.distanceKm, straightLineKm: e.straightLineKm,
         basis: e.basis, roadFactor: e.roadFactor,
-        note: e.basis === 'geocoded'
-          ? `Fares are modelled from a measured ${e.straightLineKm} km straight line × ${e.roadFactor} road factor. Uber quotes the real price at confirm time.`
-          : 'One of these addresses did not resolve to a location, so no fare is shown. Add a city or a street number and try again.',
+        note: estimateNote(e),
       };
     }
     case 'geocode': {
@@ -507,6 +760,12 @@ module.exports = {
   haversineKm,
   buildRideOptions,
   geoCandidates,
+  estimateNote,
+  geocoderBaseUrl,
+  routingBaseUrl,
+  geocodeCachePath,
+  DEFAULT_GEOCODER_URL,
+  GEO_CACHE_TTL_MS,
   ROAD_FACTOR,
   AVG_SPEED_KMH,
   RIDE_TYPES,
