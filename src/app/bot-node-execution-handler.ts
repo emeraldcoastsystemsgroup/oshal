@@ -22,6 +22,7 @@
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Guard protected package execution with current caller policy, restricted business identity and durable node ownership.
  * 18 | maintainer@emeraldcoastsystemsgroup.com | Use one-execution protected workspaces and empty capabilities, with current authority checks around hosted inference.
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | The post-execution ADR-034 check passes the enforced identity's apiProvider alongside the runtime-reported provider/model, so a dispatch authorized as a switch row's Cline-backed id (gemini) and executed by cline-cli fronting gemini is a match, while the same record against cline-cli fronting anything else is still refused. Codex/claude paths unchanged.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127 carve extended to gemini-cli and antigravity-cli. Both were in the HarnessType union and in assertAuditedAutonomousHarness's refused set, but NOT in this preflight's set - so the check that runs before a task or workspace exists let them through, and the two Google CLIs were guarded once where codex-cli and claude-code are guarded twice. They are refused here now under the SAME two conditions and no others: a non-operator caller, a non-demo deployment and an identity-less request all keep the existing refusal. The hosted Google ids ('gemini', 'google-gemini') are deliberately left out - they name an HTTP endpoint with no tool loop, and refusing them would break the ordinary hosted lane.
  */
 
 /**
@@ -80,8 +81,24 @@ import { demoModeEnabled, isDeploymentOperatorSub } from '@/shared/deployment-mo
 import { getProtectedBotExecution } from './bot-node-protected-context';
 
 const logger = createChildLogger({ module: 'bot-node-execution-handler' });
+/**
+ * The local CLI harnesses this preflight refuses before a task or workspace is accepted.
+ *
+ * `gemini-cli` and `antigravity-cli` joined the set when Google got the same push-a-login rail
+ * Codex and Claude Code have: before that they were absent, so the preflight — the check that runs
+ * BEFORE any task or workspace exists — let both through, and the only thing standing between them
+ * and a spawn was `assertAuditedAutonomousHarness` deeper in the adapter. That is one guard where
+ * the two siblings have two, and giving Google a credential to run under is exactly the change
+ * that makes the gap worth closing rather than noting.
+ *
+ * The hosted Google lane is deliberately NOT in here. `gemini` (the Cline-backed API provider id)
+ * and `google-gemini` (the apiType) name an HTTP endpoint with no tool loop and no credential home,
+ * so refusing them would break the ordinary hosted path this rail exists to give the operator an
+ * alternative to. Only the two CLI harness ids are listed.
+ */
 const UNBROKERED_AUTONOMOUS_PROVIDERS = new Set([
   'cline', 'cline-cli', 'claude', 'claude-code', 'codex', 'codex-cli', 'openai-codex',
+  'gemini-cli', 'antigravity-cli',
 ]);
 
 /**

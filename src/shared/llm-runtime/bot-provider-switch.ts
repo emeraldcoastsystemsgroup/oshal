@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The FALLBACK ORDER resolves by the same rule as the provider id: resolveProviderFallbackChain reads the bot row, then the fleet row, then an environment override, then nothing. It names no provider, because the hardcoded chain it replaces (a three-name union and a literal Record in bot-node-runtime.ts) made an exhausted vendor unrecoverable by configuration - the only other name in the literal had been exhausted too, and no setting anywhere could add a third. A row's EMPTY array is a real answer (no failover, fail visibly) and does not inherit; only null/absent does. An id the platform cannot run is dropped and reported, never silently kept, and never allowed to disable failover for the rest of the chain.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | antigravity-cli added to HARNESS_BY_ID. It had been added to the HarnessType union and HARNESS_FACTORIES but not here, so classifyProviderId REFUSED it - it could be neither a fleet default nor a fallback rung - while the ROADMAP row and three comments said it was selectable and usable as a rung. botNodeRuntime is null for the same reason gemini-cli's is: the bot-node builds three runtimes and this is not one of them, so it is selectable on the api side only. The original wording of this entry claimed such an id is "refused with a reason at a node rather than silently dropped" - that was the opposite of the truth. A rung the node cannot resolve is collected into `unavailable` and reported as one logger.warn, which no api read and no cockpit surface shows; correcting the claim rather than the behaviour, because surfacing it is a separate change (F7/F8 in docs/backlog/provider-fallback-review-followups.md).
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | checkModelAgainstCatalog + ProviderSwitchCatalog.modelsByProvider: the provider ID was validated against the runnable catalog and the model id was not validated against anything at all. classifyProviderId refuses an unrunnable provider with the reason and the accepted list; the model beside it was only trimmed (`meaningful(row.modelId)`) and handed to the vendor unexamined, so a configured id absent from provider-definitions produced NO error, NO warning and NO log line — the only visible consequence was usage-cost-resolver finding no pricing and booking a real call at $0. It REPORTS rather than refuses, and the docstring says why: a provider id is a fact about this build (fail closed), a model id is a fact about the vendor's catalog that this file only lags (fail loud). The build-time gate in tests/unit/provider-model-catalog.spec.ts is where an absent id is fatal.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | botNodeCanRunProvider exports the fact SEQ 6 recorded in prose — whether a bot node has a runtime that can execute this provider id — so the api side can stop OFFERING a selection no node can serve. It is derived from HARNESS_BY_ID.botNodeRuntime, never a second list: a hardcoded "gemini-cli is unrunnable" would go stale the day a runtime is added, whereas this answers from the same table the node reconciles against and flips on its own. The settings surface had been offering gemini-cli the moment a login was pushed, and the resolved selection then died at reconcileDispatchProviderConfig with AuthoritativeDispatchConfigError — refused BY NAME, every turn, for a user who had followed the instructions exactly.
  *
  * @module shared/llm-runtime/bot-provider-switch
  */
@@ -126,6 +127,28 @@ const HARNESS_BY_ID: Record<string, { harnessType: string; apiType: string | nul
   'cline-cli': { harnessType: 'cline', apiType: null, botNodeRuntime: 'cline-cli' },
   'noop': { harnessType: 'noop', apiType: 'noop', botNodeRuntime: null },
 };
+
+/**
+ * @description Whether a BOT NODE holds a runtime that can actually execute this provider id.
+ *
+ * Distinct from {@link classifyProviderId}, which answers whether the id is a NAME this build
+ * understands. An id can be perfectly classifiable, selectable in a switch row and stampable on a
+ * dispatch, and still have no runtime behind it — `gemini-cli` and `antigravity-cli` are exactly
+ * that (see SEQ 6). A dispatch carrying such an id reaches `reconcileDispatchProviderConfig` and
+ * is refused by name with `AuthoritativeDispatchConfigError`, so every turn under it fails.
+ *
+ * Surfaces that OFFER a provider must ask this question, not the classification one, or they offer
+ * a choice the node will refuse. It is answered from `HARNESS_BY_ID.botNodeRuntime` rather than a
+ * second list on purpose: a separate "these are unrunnable" constant is a fact about today that
+ * nothing updates, while this one flips by itself the moment a runtime is wired.
+ * @param providerId - A provider id or harness alias as an operator or a preference would write it
+ * @returns true when some bot-node runtime serves it; false for an unknown id or a null runtime
+ */
+export function botNodeCanRunProvider(providerId: string | null | undefined): boolean {
+  const key = (providerId ?? '').trim().toLowerCase();
+  if (!key) return false;
+  return HARNESS_BY_ID[key]?.botNodeRuntime != null;
+}
 
 /**
  * Harness keys a switch row may NOT name. `a2a` is an external-agent boundary whose endpoint and

@@ -6,10 +6,12 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-137 amendment A, node half: the Electron-free logic behind "Log in + push" — which vendor login files are pushable, where the swarm accepts them, the vendor shapes we accept, the plain-http rule for the destination, how a finished browser login is detected (the vendor CLI writes its file), and how the swarm's answer is classified. Kept pure so core's vitest guards it.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added the ESPN Fantasy target and its pure halves — cookie-pair extraction from a jar listing and the connector's import body. Kept here, beside the vendor logins, so both live under the same vitest guard; ESPN is deliberately NOT folded into PushableLogin, because it is a connector credential rather than a vendor CLI file and shares none of the file-shape logic. A connector answer names the account in `account`, so that is accepted alongside `email`.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ESPN loginUrl now opens ESPN's own sign-in entry (`/login`, returnURL back to the Fantasy home) instead of the Fantasy home page. On the home page the first control a user reaches for — the person icon's Log In — does nothing in the node's Electron window, and the one that works sat in a side card; `/login` puts the MyDisney email + password form up with no click, and signing in or dismissing it returns the window to the Fantasy home the old entry opened on. Pinned by tests/unit/node-espn-cookie-login.spec.ts; `npm run test:espn-login` holds live ESPN to it.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Google joins the pushable logins as a THIRD row, not a third code path: the table already carried the file/import/status triple, so widening PushableLogin plus one LOGIN_TARGETS entry and one parseLoginFile arm is the whole client half, and the popup-login + push flow picks it up with no special-casing. The file is `.gemini/oauth_creds.json` — read from the installed @google/gemini-cli bundle, where packages/core/src/config/storage.ts declares `OAUTH_FILE = "oauth_creds.json"` under `getGlobalGeminiDir()` = `<home>/.gemini`. Its shape is the google-auth-library Credentials object (snake_case access_token/refresh_token), which is why it gets its own arm rather than reusing codex's `tokens` block or claude's `claudeAiOauth` block.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | The Google target is marked DORMANT rather than pushable, and isPushableLogin now reads that flag off the table instead of listing ids. Measured on the operator's box 2026-09-22: choosing "Sign in with Google" in the `gemini` CLI answers "Failed to sign in. Message: This client is no longer supported for Gemini Code Assist for individuals. To continue using Gemini, please migrate to the Antigravity suite of products: https://antigravity.google". oauth_creds.json therefore cannot be produced by a sign-in any more, so a Push to swarm button on that row is a button with nothing to send - the same class of defect as offering a brain option nothing can run. The row, the file shape, the parse arm and the swarm-side import route are all KEPT: they are correct, they are proven by their own guards, and they cost nothing while dormant. Reviving the row is deleting one `dormant` block.
  */
 
-/** The two vendor logins the swarm can adopt (codex via platform promotion, claude via ADR-137 A). */
-export type PushableLogin = 'codex' | 'claude';
+/** The vendor logins the swarm can adopt (codex via platform promotion, claude + gemini via ADR-137 A). */
+export type PushableLogin = 'codex' | 'claude' | 'gemini';
 
 /** Where a vendor login lives on this machine and where the swarm accepts it. */
 export interface LoginTarget {
@@ -19,6 +21,14 @@ export interface LoginTarget {
   file: string;
   importPath: string;
   statusPath: string;
+  /**
+   * Set when the vendor has retired the sign-in that produces `file`. A dormant target keeps its
+   * row, its shape check and its swarm-side import route — all of which are correct — but
+   * {@link isPushableLogin} refuses it, so the Config screen stops offering a push that has
+   * nothing to send. This is a statement about the VENDOR, not about our code: the day the
+   * credential becomes obtainable again, deleting this block is the whole revival.
+   */
+  dormant?: { since: string; reason: string };
 }
 
 export const LOGIN_TARGETS: Readonly<Record<PushableLogin, LoginTarget>> = {
@@ -35,6 +45,26 @@ export const LOGIN_TARGETS: Readonly<Record<PushableLogin, LoginTarget>> = {
     file: '.claude/.credentials.json',
     importPath: '/api/claude-code/auth/import',
     statusPath: '/api/claude-code/auth/status',
+  },
+  gemini: {
+    id: 'gemini',
+    label: 'Google (Gemini)',
+    // Verified against the installed @google/gemini-cli bundle: packages/core/src/config/storage.ts
+    // declares OAUTH_FILE = "oauth_creds.json" and getOAuthCredsPath() joins it onto
+    // getGlobalGeminiDir(), which is `<home>/.gemini`. The sign-in also writes
+    // google_accounts.json beside it; that file names the account and carries no token, so it is
+    // deliberately NOT pushed — the swarm only ever needs the credential.
+    file: '.gemini/oauth_creds.json',
+    importPath: '/api/gemini/auth/import',
+    statusPath: '/api/gemini/auth/status',
+    dormant: {
+      since: '2026-09-22',
+      reason:
+        'Google retired Gemini Code Assist sign-in for individuals. The CLI answers "This client '
+        + 'is no longer supported for Gemini Code Assist for individuals. To continue using Gemini, '
+        + 'please migrate to the Antigravity suite of products: https://antigravity.google", so '
+        + 'oauth_creds.json can no longer be produced by a sign-in and there is nothing to push.',
+    },
   },
 };
 
@@ -134,12 +164,21 @@ export interface PushOutcome {
 }
 
 /**
- * @description Narrows an account id to the two logins that can be pushed.
- * @param id - Account id from the local account list (codex / claude / gcloud / aws)
- * @returns true for codex and claude
+ * @description Narrows an account id to the logins that can be pushed RIGHT NOW.
+ *
+ * Reads {@link LOGIN_TARGETS} rather than listing ids, so a target the vendor has retired
+ * (`dormant`) stops being offered everywhere at once — the Config screen's push button, the
+ * login-and-push flow and the swarm-status poll all narrow through this one predicate. The guard
+ * is deliberately narrower than the `PushableLogin` TYPE: the gemini row, its file shape and its
+ * import route are all still correct and still compile, they simply have no credential to carry
+ * while Google's individual sign-in is retired.
+ * @param id - Account id from the local account list (codex / claude / gemini / antigravity / gcloud / aws)
+ * @returns true for codex and claude; false for gemini while its target is dormant
  */
 export function isPushableLogin(id: unknown): id is PushableLogin {
-  return id === 'codex' || id === 'claude';
+  if (typeof id !== 'string') return false;
+  const target = (LOGIN_TARGETS as Record<string, LoginTarget | undefined>)[id];
+  return Boolean(target) && !target!.dormant;
 }
 
 /**
@@ -203,8 +242,8 @@ function isPrivateOrLoopbackHost(hostname: string): boolean {
 }
 
 /**
- * @description Validates the file the vendor CLI wrote before it leaves this machine: only the two
- * exact shapes are accepted, so a stray file can never be pushed as a login.
+ * @description Validates the file the vendor CLI wrote before it leaves this machine: only the
+ * exact per-vendor shapes are accepted, so a stray file can never be pushed as a login.
  * @param id - Which login
  * @param raw - File contents
  * @returns The parsed object, or the reason it was rejected
@@ -230,6 +269,16 @@ export function parseLoginFile(
     }
     return { ok: true, body };
   }
+  if (id === 'gemini') {
+    // The google-auth-library Credentials object the CLI caches after its browser sign-in.
+    // A refresh token is what makes the push worth anything (access tokens expire within the
+    // hour), so a file without one is refused here rather than adopted and found dead later.
+    if (typeof body.access_token !== 'string' || !body.access_token.trim()
+      || typeof body.refresh_token !== 'string' || !body.refresh_token.trim()) {
+      return { ok: false, error: 'oauth_creds.json has no access/refresh token yet — finish the `gemini` sign-in (`/auth`) first.' };
+    }
+    return { ok: true, body };
+  }
   const oauth = body.claudeAiOauth as Record<string, unknown> | undefined;
   if (!oauth || typeof oauth !== 'object' || typeof oauth.accessToken !== 'string' || !oauth.accessToken) {
     return { ok: false, error: '.credentials.json has no claudeAiOauth token yet — finish `claude auth login` first.' };
@@ -244,6 +293,7 @@ export function parseLoginFile(
  * @returns JSON-serialisable body
  */
 export function importRequestBody(id: PushableLogin, parsed: Record<string, unknown>): Record<string, unknown> {
+  // claude and gemini both read `credentials`; codex's route reads `authJson`.
   return id === 'codex' ? { authJson: parsed } : { credentials: parsed };
 }
 
@@ -278,6 +328,12 @@ function describeRefusal(error: string | undefined): string {
   }
   if (error === 'claude_credentials_path_read_only') {
     return 'The swarm mounts its Claude login read-only; set CLAUDE_AUTH_MOUNT_MODE=rw there and recreate the api.';
+  }
+  if (error === 'gemini_credentials_path_read_only') {
+    return 'The swarm mounts its Gemini login read-only; set GEMINI_AUTH_MOUNT_MODE=rw there and recreate the api.';
+  }
+  if (error === 'gemini_credentials_path_unset') {
+    return 'The swarm has no Gemini login path configured; set GEMINI_OAUTH_CREDS_PATH there and recreate the api.';
   }
   return 'The swarm declined the push.';
 }

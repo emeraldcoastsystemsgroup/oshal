@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Barrel for the shared LLM-runtime rules — the per-bot provider precedence resolver. Shared (bottom) layer on purpose: the agent-profile feature computes it at read time and the Utilities panel renders it, and both must get the SAME answer from the SAME code.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export checkModelAgainstCatalog + UnknownModelId, so the api route and the operator-key lane measure a configured model against the catalog through the same rule rather than each re-deriving it.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Export botNodeCanRunProvider so the settings surface can ask whether a provider id has a bot-node runtime behind it before offering it, without a deep import and without keeping a second copy of the answer.
  */
 
 /**
@@ -27,6 +28,7 @@ export {
 } from './bot-provider-precedence';
 export {
   FLEET_DEFAULT_SWITCH_ID,
+  botNodeCanRunProvider,
   checkModelAgainstCatalog,
   classifyProviderId,
   requireModelForClineBackedId,

@@ -82,6 +82,8 @@
  * 30 | maintainer@emeraldcoastsystemsgroup.com   | Attached byo-connection-declared-tools to 'jarvis-routing' regressionTests. Entry 29's guard proves the direct path declares the tools it was GIVEN; this one proves a BYO connection is given any at all. Jarvis runs on the caller's own endpoint whenever the ADR-127 ladder resolves a hosted brain, and until the operator's 2026-09-22 decision landed, a BYO connection emptied the tool set before entry 29's boundary could matter - so the scenario's own lane was the one shape entry 29 did not cover. Same Jarvis turn, same scenario; a spec on disk is not Test Lab registration.
  * 31 | maintainer@emeraldcoastsystemsgroup.com   | Attached the read-only question-tool guards to 'jarvis-routing' regressionTests. Entries 28-30 end at the tools being DECLARED and READ; these two cover whether any tool worth declaring EXISTS. Every name the persisted-to-runtime map bound was a shell, a file write or an infrastructure CLI, and the bot-node's own registry was constructed empty - so the scenario's three steps could only ever be answered from the model's head. bot-node-read-only-tools pins the bindings, the declared-set/scope refusals and that no write path is reachable through a read-only binding; the -owner-scope-postgres sibling proves over a REAL PostgreSQL and the real NOBYPASSRLS role that one caller cannot read another's conversations. Same Jarvis turn, same scenario, and a spec on disk is not Test Lab registration.
  * 32 | maintainer@emeraldcoastsystemsgroup.com   | Registered the 'byo-hot-fallback' scenario (operator decision 2026-09-22): a read-only probe of the configured hot-fallback chain and each rung's readiness through the Settings llm-default route, with the two guards that prove the same-endpoint replay and the operator-only fallback attached as regressionTests. A test file on disk is not Test Lab registration.
+ * 33 | maintainer@emeraldcoastsystemsgroup.com   | Registered the 'vendor-login-seeding' scenario (test-lab-vendor-login-scenarios.ts): the closed door on all three vendor auth mounts - an anonymous caller reaching import, sign-out or the connect-state probe - with the guards that ship with the rail attached as regressionTests, including the Google half added 2026-09-22. The OPEN door is deliberately not a Lab step: it needs the operator's own browser login, and the Lab must never attempt one.
+ * 34 | maintainer@emeraldcoastsystemsgroup.com   | Attached the executability guards to 'vendor-login-seeding': cli-brain-executability (an option is offered, accepted on PUT and resolved on exactly the conditions a bot node can run it) and antigravity-cli-availability (whether this node could load `agy` at all). Registered against that scenario because seeding a credential and then offering a brain nothing executes is one rail with a hole in it, not two features - the operator followed the push instructions exactly and every turn afterwards was refused by name.
  * @module test-lab-scenarios
  */
 
@@ -90,6 +92,7 @@ import { INSTALLATION_SCENARIOS } from './test-lab-installation-scenarios';
 import { APPEARANCE_SCENARIOS } from './test-lab-appearance-scenarios';
 import { DASHBOARD_SCENARIOS } from './test-lab-dashboard-scenarios';
 import { CONNECTOR_OAUTH_SCENARIOS } from './test-lab-connector-scenarios';
+import { VENDOR_LOGIN_SCENARIOS } from './test-lab-vendor-login-scenarios';
 import { APP_REGISTRY_SCENARIOS } from './test-lab-app-registry-scenarios';
 import { AUTHORIZATION_SCENARIOS } from './test-lab-authorization-scenarios';
 import { AUTONOMOUS_SCENARIOS } from './test-lab-autonomous-scenarios';
@@ -253,6 +256,7 @@ export const SCENARIOS: Scenario[] = [
   ...APPEARANCE_SCENARIOS,
   ...DASHBOARD_SCENARIOS,
   ...CONNECTOR_OAUTH_SCENARIOS,
+  ...VENDOR_LOGIN_SCENARIOS,
   ...APP_REGISTRY_SCENARIOS,
   ...AUTHORIZATION_SCENARIOS,
   ...AUTONOMOUS_SCENARIOS,

@@ -94,23 +94,110 @@ carries the evidence that survived an adversarial re-derivation and the correcti
 - **Why Antigravity works while the swarm does not: they are different identities.** Antigravity
   keeps its own state and auth under `~/.gemini/antigravity`, signed in as the operator. The swarm
   uses the API key. They are not the same credential and do not share a quota.
-- **The `gemini` CLI does NOT route around this.** It is installed (`@google/gemini-cli@0.41.2`) but
-  has no login of its own — with `GEMINI_API_KEY` unset it refuses, naming `GEMINI_API_KEY`,
-  `GOOGLE_GENAI_USE_VERTEXAI` or `GOOGLE_GENAI_USE_GCA` as the auth methods it would accept. So it
-  falls back to the same key and returns the same 503. Moving the swarm onto the CLI changes the
-  transport, not the identity, and on its own fixes nothing.
-- **The actual gap: Gemini has no credential-seeding rail, while its siblings do.** `claude-code` and
-  `openai-codex` each have an import route that adopts a login pushed from the operator's machine or
-  a satellite, under the ADR-127 gates (`claude-code-auth-routes.ts`, `openai-codex-oauth-routes.ts`).
-  `gemini-auth-routes.ts` registers exactly one route, `GET /status`, a connect-state probe. There is
-  no push, no import, and no sign-in-on-the-remote-client path for Google at all.
-- **Done when:** Gemini has the same seeding shape its siblings have — the operator can sign in on the
-  oshal client, or a login is pushed/seeded at build time, and the swarm reasons under **that**
-  identity rather than a free-tier API key — gated exactly as the Claude Code and Codex imports are,
-  with the credential never reaching a model-visible process; `GET /api/gemini/status` reports which
-  identity is actually in use and its tier rather than only connected/not; and a recorded live turn
-  answers on a Gemini model that the API key alone cannot reach. Until then, the honest interim is to
-  point the connection at a model the free tier still serves.
+- **The `gemini` CLI does not route around this *on the API key*, but it is the only thing that can
+  use the operator's own login.** With `GEMINI_API_KEY` unset it refuses, naming `GEMINI_API_KEY`,
+  `GOOGLE_GENAI_USE_VERTEXAI` or `GOOGLE_GENAI_USE_GCA` — so pointing the swarm at the CLI while it
+  still authenticates with the key changes the transport, not the identity, and fixes nothing. The
+  third of those names is the one that matters: in `oauth-personal` mode the CLI builds a
+  `CodeAssistServer` against `https://cloudcode-pa.googleapis.com` (`CODE_ASSIST_ENDPOINT`,
+  `v1internal`), **not** `generativelanguage.googleapis.com` — read from the installed bundle, not
+  inferred. A pushed Google OAuth credential is therefore NOT a drop-in for the API key on the HTTP
+  path the swarm uses today, and a Gemini turn under that login has to execute through the
+  `gemini-cli` harness.
+- **The gap was the seeding rail, and the tree was further along than the first write-up said.**
+  `gemini-cli` and `antigravity-cli` were already `HarnessType`s with built adapters, factory
+  entries and the `agy`/`gemini` binaries wired; `gemini-auth-routes.ts` already had a connect-state
+  probe; and the oshal client's push flow is a TABLE — `LOGIN_TARGETS` in
+  `packages/oshal-chat/src/main/login-push-core.ts` — whose rows carry
+  `{ file, importPath, statusPath }`, so the whole client half was one row plus one shape check,
+  with no special-casing in the popup-login or push flow. What genuinely did not exist was the
+  server half: `gemini-auth-routes.ts` registered `GET /status` and nothing else, where
+  `claude-code-auth-routes.ts` and `openai-codex-oauth-routes.ts` each expose an import that adopts
+  a login pushed from the operator's machine under the ADR-127 gates.
+- **Google retired the sign-in this rail was built around, on the day it was built.** 2026-09-22,
+  operator's box, `gemini` -> *Sign in with Google*, verbatim: "Failed to sign in. Message: This
+  client is no longer supported for Gemini Code Assist for individuals. To continue using Gemini,
+  please migrate to the Antigravity suite of products: https://antigravity.google". So
+  `~/.gemini/oauth_creds.json` can no longer be produced by a sign-in, and a push rail that adopts
+  that file has nothing to carry. The CLI's remaining auth choices are an API key (the free-tier
+  one already measured here) and Vertex.
+- **Built 2026-09-22 (PR `gemini-signin-push-rail`), and kept DORMANT rather than deleted.**
+  `POST /api/gemini/auth/import` and `/signout` mirror the Claude Code routes exactly — same
+  operator-session guard, same SEC-05 409 for every other caller and every non-demo deployment,
+  same atomic 0600 write to the mounted path, with the credential absent from every response body
+  and every log line. The client's `gemini` row carries `dormant` in `LOGIN_TARGETS` and
+  `isPushableLogin` reads that flag, so the push button is gone while the row, the file shape, the
+  parse arm and the route all stay correct and guarded. Reviving it is deleting one block. The
+  ADR-127 carve extension (`gemini-cli`, `antigravity-cli` added to
+  `assertUnattendedProviderPreflight`'s refused set) shipped and stands on its own — it is a
+  tightening, unrelated to whether any credential exists.
+- **The defect that refused the first cut: an option was offered that nothing could execute.**
+  `HARNESS_BY_ID` gives both `gemini-cli` and `antigravity-cli` `botNodeRuntime: null`, and
+  neither is a `ProviderRegistry` id, so `resolveBotNodeSwitch` answers null and
+  `reconcileDispatchProviderConfig` refuses the dispatch **by name**. The settings surface offered
+  the Gemini brain the moment a login was pushed, `PUT` admitted it because `PUT` admits anything
+  whose availability is true, and every turn afterwards failed. Fixed structurally: `cliBrainOffer`
+  is one function answering "may this CLI brain be offered", called by both the surface and the
+  resolver, reading runnability off the harness table rather than a constant — so it flips by
+  itself the day a runtime is wired. An unresolvable dispatch is now also classified
+  retryable-to-hosted, so a future mis-selection degrades instead of dead-ending.
+  Guards: `tests/unit/cli-brain-executability.spec.ts` (mutation-proven: re-offering the option,
+  accepting it on PUT, or dropping the retryable classification each turns it red).
+- **Antigravity is the one Google path measured ANSWERING — and it cannot run on this stack.**
+  Measured on the operator's machine 2026-09-22: `agy` v1.2.8 under the vendor installer's
+  TARGET_DIR in the local app-data tree, which the installer does not add to PATH — which is why
+  an earlier `which agy` concluded it was absent. It is already authenticated as him, `agy models`
+  lists `gemini-3.8-flash-{high,medium,low}`, `-3.7-flash-*`, `-3.6-flash-*`,
+  `gemini-3.1-pro-{high,low}`, `claude-sonnet-4-6`, `claude-opus-4-6-thinking` and
+  `gpt-oss-120b-medium`, and `agy --model gemini-3.8-flash-low -p "..."` printed an answer — on the
+  exact model that returns 503 "high demand" through the API key on every other transport. It is
+  headless by design (`-p`, `--output-format text|json|stream-json`, `--model`, `--effort`).
+  **Why it still does not help the swarm:** every bot node runs the one `oshal-bot:latest` image,
+  `Dockerfile.oshal` is `FROM node:20-alpine`, and the CLI ships no musl build
+  (`manifests/linux_amd64_musl.json` is 404) while its glibc PIE fails to relocate under `gcompat`
+  (`__open`, `__lseek`, `__read`, `pvalloc`: symbol not found — measured in a throwaway container
+  and carried in `AntigravityCliHarnessAdapter` since). So a bot-node runtime for it would refuse
+  on every container in the shipped stack: the same defect as the one above, one layer down.
+  Note the model ids are Antigravity's own and are effort-suffixed (`gemini-3.8-flash-low`, not
+  `gemini-3.8-flash`); they must be discovered from `agy models`, never mapped from a hosted id.
+- **Three ways to close it, none of them free, and the choice is the operator's.**
+  1. **A glibc bot-node image.** A second Dockerfile (node:20-bookworm-slim) and one compose
+     service that runs it, so exactly one bot can hold the Antigravity harness. Smallest change to
+     the platform, but it adds a second base image to build, patch and keep at parity.
+  2. **Move the base image to glibc.** One image again, but it re-bases every bot in the fleet:
+     a large blast radius on a core that is load-bearing, and not a change to make for one CLI.
+  3. **Run it where it is already installed and signed in — the operator's own machine.** The
+     oshal client (`packages/oshal-chat`) already runs there with a worker and a mesh connection.
+     This is the architecturally honest home for a credential that IS the operator's identity, and
+     it needs no image change at all; what it needs is an execution rail from the swarm to that
+     node, which does not exist yet.
+
+  *Done when:* one of the three is chosen, the bot-node runtime for `antigravity-cli` exists
+  (`botNodeRuntime`, `BotNodeRuntimeName`, an any-bot provider + wrapper, the `AgenticController`
+  branch), and a recorded live turn answers on an Antigravity model the API key cannot reach.
+  `botNodeCanRunProvider` then flips on its own and the brain option becomes selectable with no
+  further change to the surface.
+- **Vertex is the viable FALLBACK, and it was proven on the operator's identity — not built.**
+  Measured 2026-09-22: a direct `generateContent` POST to the `us-central1` Vertex endpoint for
+  `gemini-2.5-flash`, in the operator's own gcloud project, under his gcloud identity, returned
+  HTTP 200. **The model list differs from the Generative Language API and must be discovered,
+  never assumed** — `gemini-3.8-flash` is 404 on Vertex in that region; it is simply not published
+  there. `.env` already carries `VERTEX_PROJECT` / `VERTEX_LOCATION`, `provider-definitions`
+  already has a `vertex` provider, and `getGoogleCloudPlatformAccessToken` already mints a
+  cloud-platform token from a service-account key — so the plumbing largely exists. Deliberately
+  NOT built here: the open question is not code, it is **which identity the container holds**, and
+  that is an operator decision with three shapes and different blast radii. Application-default
+  credentials mounted in are his own identity and bill him personally, and a mounted ADC file is a
+  long-lived user credential in a container. A dedicated service account with `aiplatform.user` is
+  separable, revocable, auditable and the only one that survives him rotating his own login, but
+  it has to be created, funded and its key mounted read-only. A token minted outside and mounted
+  expires within the hour and needs a refresher nothing here has. *Done when:* the identity shape
+  is chosen, a Gemini-on-Vertex hosted lane resolves through the existing `byoLlmConnection` rail
+  (hosted, so it needs no new spawn path and no harness), and a recorded live turn answers on a
+  model the free-tier key cannot reach.
+- **Still open and still the operator's:** one recorded live turn on a Gemini model the free-tier
+  API key cannot reach, by whichever of the two paths above he picks. Until then the honest interim
+  for ordinary turns remains pointing the hosted connection at a model the free tier still serves.
 
 ### PICK UP HERE — what was in flight when the 2026-09-21/22 overnight ended
 

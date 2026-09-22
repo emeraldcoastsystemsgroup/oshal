@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Bound the argv prompt, because this adapter reintroduces a failure mode the repo already fixed live. Linux caps a single argument at MAX_ARG_STRLEN (128 KiB) independently of ARG_MAX, and the Codex adapter passing a prompt as argv killed every Dungeon Master turn with spawn E2BIG once the conversation grew; both siblings now use stdin. Whether `agy -p` reads stdin when its value is omitted could NOT be tested here - the binary does not run on this image at all - so rather than assert an untested claim, the argv path stays with an explicit 96 KiB bound and a refusal that names the cause. Not truncated: a silently shortened prompt answers a different question than the one asked. Switching to stdin is the first thing to try on a glibc node.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | The measured musl cause reached NO surface. blockingReason() is consumed in run(), and run() is unreachable - assertAuditedAutonomousHarness throws first for every CLI harness by the fail-closed posture - so the diagnosis this adapter went and measured could never be shown to anyone, and the only message an operator saw was the generic unbrokered-CLI refusal, which says nothing about why THIS harness will not start. healthCheck() is not behind that guard, so it now reports false with the reason logged, and skips the pointless `agy --version` probe on a node where the binary is present and cannot relocate.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the harness-specific override still wins, but the fallback beneath it resolves through resolveSharedWorkspaceRoot() instead of reading one variable and then defaulting to the RELATIVE "./workspace" - a relative default resolves against whatever cwd the process happens to have, which is not the shared mount under any compose file.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | blockingReason() delegates to antigravity-cli-availability. The musl diagnosis had exactly one reader - this adapter - and a surface deciding whether to OFFER an Antigravity brain needs the same answer without importing an execution-stack module onto the controller graph. The measurement and its wording are unchanged; they simply live where both callers can reach them.
  */
 
 import fs from 'fs';
@@ -20,6 +21,7 @@ import { assertAuditedAutonomousHarness, buildConversationAwarePrompt, type Harn
 import { BaseCliHarnessAdapter } from './base-cli-harness-adapter';
 import type { TokenUsage } from './llm-service';
 import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
+import { antigravityMuslBlockingReason } from './antigravity-cli-availability';
 
 /** The installer drops the binary as `agy`, not `antigravity`. */
 const DEFAULT_BINARY = 'agy';
@@ -199,12 +201,11 @@ export class AntigravityCliHarnessAdapter extends BaseCliHarnessAdapter {
    * @returns A human-readable blocking reason, or null.
    */
   blockingReason(): string | null {
-    if (process.platform !== 'linux') return null;
-    const musl = fs.existsSync('/lib/libc.musl-x86_64.so.1') || fs.existsSync('/lib/libc.musl-aarch64.so.1');
-    if (!musl) return null;
-    return 'Antigravity CLI ships no musl build (manifests/linux_amd64_musl.json is 404) and its glibc '
-      + 'binary does not relocate under gcompat. Run this harness on a glibc-based node, or select '
-      + 'gemini-cli, which is npm-installed and runs here.';
+    // Delegated so the harness and the settings surface answer from ONE probe. A surface that has
+    // to decide whether to OFFER this harness cannot import the adapter (it would pull the
+    // execution stack onto the controller graph), and two copies of a measured fact is how one of
+    // them goes stale.
+    return antigravityMuslBlockingReason();
   }
 
   /**
