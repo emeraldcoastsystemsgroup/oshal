@@ -34,10 +34,12 @@
 # 27 | maintainer@emeraldcoastsystemsgroup.com   | The publish block refuses a SCHEDULED run whose source posture is not scheduled-origin-main. A failed fetch already degraded to local HEAD with only a warning and nothing in FAILED_GATES, so an all-green run of whatever branch the trunk checkout had (a feature branch, most nights in this tree) would have been pushed as :latest the moment --publish-image was passed. Interactive runs are the operator's call and are not gated here.
 # 28 | maintainer@emeraldcoastsystemsgroup.com   | gate_unit supplies OSHAL_STORE_DIR as well as OSHAL_STORE_REPO. The product-site guard resolves its catalog from STORE_DIR, whose default is a SIBLING of the tree it runs in - and --head mode runs from a git-archive export with no sibling anywhere near it, so eleven cases in site-product-pages.spec.ts it.runIf-SKIPPED in every nightly. One of them is the guard that catches the committed public site drifting away from the manifests, and it had drifted by seven whole apps before anyone looked. Measured both ways on this box: with STORE_DIR unresolvable the file reports "16 passed | 11 skipped", with it resolved "27 passed". A guard that skips in CI is a guard that does not exist.
 # 29 | maintainer@emeraldcoastsystemsgroup.com   | gate_trivy carries its POSTURE in the file instead of in nobody's head. It had been red for 46 consecutive nightly runs on a finding set nobody had read, which is the same as not scanning; the operator's 2026-09-21 decision is a CVE budget, so the comment above the function records what is settled - the floor stays CRITICAL,HIGH with --ignore-unfixed, the gate still fails the run, what cannot be fixed goes in .trivyignore with a reason and an `exp:` no more than 90 days out, and taking the published fix comes before writing a budget line. The expiry claim is measured, not assumed: against aquasec/trivy 0.72.0 on one image and one CVE id, no exp: suppressed it, a future exp: suppressed it, and a past exp: reported it again - so an unrenewed line reddens this gate by itself.
+# 30 | maintainer@emeraldcoastsystemsgroup.com   | Kubernetes gates, of which this file had none (docs/k8/remote-cluster-work-package.md items 7 and 8). Every full run now adds `argo-manifests` (kubeconform -strict over all five ops/deployment/argo/*.yaml, the Argo WorkflowTemplate included, against pinned schemas) and `terraform` (fmt -check -recursive + validate of deploy/terraform) - cluster-free, and red when kubeconform or terraform is missing rather than skipped. New --cluster-gates opts in to `cluster-bot-manifest` (validate-dynamic-bot-manifest.mjs --require-server) and `cluster-tenant-isolation` (verify-tenant-isolation.sh), the first callers either script has had: they need OSHAL_CLUSTER_CONTEXT and a reachable API server and fail closed without one, and without the flag they do not run and the log says so. New --k8s-only runs just these gates, before the lock, the logs and the Docker cleanup. The gate bodies live in scripts/ci/ci-k8s-gates.sh; tests/unit/ci-local-k8s-gates.spec.ts runs them.
 # =============================================================================
 #
 # Usage:  bash scripts/ci-local.sh [--scheduled] [--head] [--skip-e2e] [--skip-image] [--install]
-#                                  [--publish-image]
+#                                  [--publish-image] [--cluster-gates]
+#         bash scripts/ci-local.sh --k8s-only [--cluster-gates]
 #   --scheduled   quiet mode for the Windows task: full output to the run log,
 #                 email alert on failure only (never on success). Fetches + pins
 #                 origin/main; a fetch failure is an explicitly degraded HEAD fallback.
@@ -56,6 +58,14 @@
 #                 never creates or prints a credential). Refuses on a red run, on --skip-image,
 #                 and when either variable is absent. Nothing publishes without this flag.
 #   --store-compatibility-only  run just the committed core/store gate, without Docker
+#   --cluster-gates  ALSO run the two live-cluster gates (cluster-bot-manifest,
+#                 cluster-tenant-isolation) against the kube context named by
+#                 OSHAL_CLUSTER_CONTEXT (required; there is no default). No context, no
+#                 kubectl or no reachable API server is a FAIL, never a skip. Without this flag
+#                 they do not run, and the log says NOT RUN - they are not reported as passing.
+#   --k8s-only    run just the Kubernetes gates (argo-manifests, terraform, plus the cluster
+#                 gates when --cluster-gates is also given) against the working tree, before
+#                 the lock, the logs and any Docker cleanup. Exit 0 = all green, 1 = a gate failed.
 #
 # Contract:
 #   - working-tree mode runs node gates from disk and committed-artifact gates from pinned HEAD;
@@ -85,6 +95,7 @@ RUN_LOG="$STATE_DIR/ci-local-last-run.log"
 mkdir -p "$STATE_DIR"
 
 SCHEDULED=0; SKIP_E2E=0; SKIP_IMAGE=0; DO_INSTALL=0; HEAD_MODE=0; PUBLISH_IMAGE=0
+CLUSTER_GATES=0; K8S_ONLY=0
 for arg in "$@"; do
   case "$arg" in
     --scheduled)  SCHEDULED=1; HEAD_MODE=1 ;;
@@ -93,9 +104,24 @@ for arg in "$@"; do
     --skip-image) SKIP_IMAGE=1 ;;
     --install)    DO_INSTALL=1 ;;
     --publish-image) PUBLISH_IMAGE=1 ;;
+    --cluster-gates) CLUSTER_GATES=1 ;;
+    --k8s-only)   K8S_ONLY=1 ;;
     *) echo "unknown arg: $arg" >&2; exit 2 ;;
   esac
 done
+
+# Kubernetes gate bodies (argo-manifests, terraform, and the opt-in cluster gates).
+. "$REPO_DIR/scripts/ci/ci-k8s-gates.sh"
+# Standalone Kubernetes gates, before the full runner's lock, logs, or Docker cleanup: a cluster
+# box has no compose stack to clean up after, and a --k8s-only run must never truncate the last
+# nightly's run log. Any other flag beside it would be silently ignored, so it is refused instead.
+if [ "$K8S_ONLY" = "1" ]; then
+  if [ "$#" -ne $(( 1 + CLUSTER_GATES )) ]; then
+    echo "--k8s-only takes only --cluster-gates beside it" >&2; exit 2
+  fi
+  run_k8s_gates_standalone "$CLUSTER_GATES"
+  exit $?
+fi
 
 if [ "$SCHEDULED" = "1" ]; then exec >"$RUN_LOG" 2>&1; else : >"$RUN_LOG"; fi
 
@@ -667,6 +693,16 @@ if [ "$NODE_GATES_OK" = "1" ]; then
   run_gate repo-separation gate_repo_separation
   run_gate spec-database-default gate_spec_database_default
   run_gate worktree-strays gate_worktree_strays
+  # Cluster-free Kubernetes artifact gates (scripts/ci/ci-k8s-gates.sh). Red, not skipped, when
+  # kubeconform or terraform is not installed.
+  run_gate argo-manifests gate_argo_manifests
+  run_gate terraform gate_terraform
+  if [ "$CLUSTER_GATES" = "1" ]; then
+    run_gate cluster-bot-manifest gate_cluster_bot_manifest
+    run_gate cluster-tenant-isolation gate_cluster_tenant_isolation
+  else
+    log "$K8S_CLUSTER_GATES_NOT_REQUESTED"
+  fi
 else
   log "GATES typecheck/unit/lint/connectors/manifests/kernel-skills/e2e: SKIPPED (pinned source export failed)"
   FAILED_GATES+=(node-gates-skipped)

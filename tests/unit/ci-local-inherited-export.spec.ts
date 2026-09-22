@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Drive ci-local.sh's real gate sequence, in Git Bash, over a state directory that already holds the previous run's ci-src export - the state the 2026-09-09 nightly wedged nine hours in and wrote no outcome line from. The purge spec next door runs purge_tree alone and pins the call sites by text search; nothing ever ran the sequence itself, so the last done-when of that entry ("a run that inherits a leftover export from a failed run reaches its gates and writes an outcome line") rested on reading the code. This runs it: the production prepare_head_src, run_gate and gate block are sliced out of ci-local.sh, the gates are recording stand-ins, and the leftover on disk is real. It covers the export that purges, the export that will not purge inside the watchdog (which used to skip twelve gates and leave $GATE_SRC naming a half-deleted tree that the image-tier gates then read), and the retry of a tree an earlier run had to abandon.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | The gate block gained the cluster-free Kubernetes gates `argo-manifests` and `terraform` (both stubbed here like every other gate, so the sequence is still what is judged) and the opt-in `--cluster-gates` branch. The probe states the default posture - CLUSTER_GATES=0 - which the real runner sets in its argument parsing, and requires the two new gates among those the sequence reaches. It also states PUBLISH_IMAGE=0: the publish block (ci-local.sh SEQ 26) reads that variable under set -u, the probe never set it, and every case here was already red on `PUBLISH_IMAGE: unbound variable` before this change (measured on an unmodified export of d6e78088).
  */
 
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -113,7 +114,7 @@ const GATES = [
   'typecheck', 'store_compatibility', 'unit', 'lint', 'connectors', 'manifests', 'kernel_skills',
   'workflow_triggers', 'security_policy', 'repo_separation', 'spec_database_default',
   'worktree_strays', 'secrets', 'local_secret_hygiene', 'unpushed_commits', 'e2e', 'image',
-  'kernel_skills_image', 'smoke', 'trivy', 'alert_residue',
+  'kernel_skills_image', 'smoke', 'trivy', 'alert_residue', 'argo_manifests', 'terraform',
 ];
 
 interface ProbeRun {
@@ -167,7 +168,9 @@ function runProbe(seed: { leftover?: boolean; abandoned?: boolean }, stall = fal
     'prune_scoped() { :; }',
     'REPO_WIN="$REPO_DIR"',
     'SOURCE_REF=HEAD; SOURCE_SHORT_SHA="${SOURCE_SHA:0:12}"; SOURCE_POSTURE=probe',
-    'HEAD_MODE=1; DO_INSTALL=0; SKIP_E2E=0; SKIP_IMAGE=0',
+    'HEAD_MODE=1; DO_INSTALL=0; SKIP_E2E=0; SKIP_IMAGE=0; PUBLISH_IMAGE=0',
+    // The runner's default: the live-cluster gates run only behind --cluster-gates.
+    "CLUSTER_GATES=0; K8S_CLUSTER_GATES_NOT_REQUESTED='cluster gates not requested'",
     'FAILED_GATES=()',
     gateSequence(),
   ].join('\n')}\n`);
