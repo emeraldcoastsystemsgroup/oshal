@@ -3800,6 +3800,15 @@ including across a directory belonging to a different owner. Full reasoning and 
 - **Remaining:** `printServiceEnabled` was left **true** (port 633) on this machine's node, an
   outward-facing service advertising on the LAN.
 - **Done when:** the operator has decided whether the node's printer stays enabled on this machine.
+- **Decision (operator, 2026-09-21): turned OFF. Turn it back on when printing is wanted.** Measured
+  before asking: the desktop app's `config.json` still carried `printServiceEnabled: true` on port
+  633, unchanged since 2026-09-06, but **nothing was listening on 633** — the flag meant the service
+  would advertise on the LAN the next time the app started, not that it was advertising then. The flag
+  was set to `false` in place, with the previous file kept beside it as a dated backup; it takes effect
+  on the app's next start. No tracked file changed and no code changed — this was a per-machine
+  setting, which is exactly why it was an operator question rather than a fix.
+- **Closed.** The other leg of this entry, the orphaned operator PAT, was revoked on 2026-09-14.
+  Nothing outward-facing from that session remains enabled on this machine.
 
 ### App status contract (ADR-145) — build the `status:` declaration and the highlights section
 - **Built 2026-09-16 on `feat/adr-145-app-status-dashboard` (D3/D4/D5), on top of D1/D2.** The dashboard reports for ONE app rather than only a group: a manifest's `summary:` is fetched from a route that app itself owns, in the viewer's own session, and an app that declares nothing falls back to its recent `jarvis_tasks` rows. The plan route is caller-scoped through `listApps('active', {ownerSub, isOperator})`, so another person's person-scoped app 404s exactly like a name nothing installed - which the group plan it replaces did not do.
