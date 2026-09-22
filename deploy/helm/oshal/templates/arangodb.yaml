@@ -6,6 +6,7 @@
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | Readiness probe moved from /_api/version (authenticated: root password is set, so the probe got 401 forever, the pod never went Ready, the Service had no endpoints and helm --wait timed out) to the unauthenticated /_admin/server/availability. Found on the first Docker Desktop k8s install.
 # 3 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — ARANGO_ROOT_PASSWORD is a secretKeyRef into oshal-shared-secret (templates/secrets.yaml), the same key the api and every bot envFrom, instead of a literal here plus a copy in the oshal-shared-env ConfigMap. Guard: tests/unit/chart-credentials.spec.ts.
 # 4 | maintainer@emeraldcoastsystemsgroup.com   | Production-readiness baseline (chart 0.5.0): stays root (no USER in the image, an entrypoint that never drops privileges, and root-owned data on every volume it has written) with RuntimeDefault seccomp, no privilege escalation and every capability dropped; startup and liveness probes reuse the unauthenticated /_admin/server/availability; resources from infra.arangodb.resources, and ARANGODB_OVERRIDE_DETECTED_TOTAL_MEMORY from the container's memory limit via the downward API so its caches fit the container, not the node; storageClassName on the claim template. Guard: tests/unit/chart-production-baseline.spec.ts.
+# 5 | maintainer@emeraldcoastsystemsgroup.com   | checksum/shared-secret: ArangoDB reads its root credentials from oshal-shared-secret, so a credential change rolls the pod instead of leaving the old password in a running server (same fix and reason as api.yaml / bots.yaml).
 {{- if and (eq .Values.role "main") .Values.infra.arangodb.inCluster }}
 apiVersion: apps/v1
 kind: StatefulSet
@@ -26,6 +27,7 @@ spec:
         {{- include "oshal.labels" . | nindent 8 }}
       annotations:
         sidecar.istio.io/inject: "false"
+        checksum/shared-secret: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
     spec:
       # The image has no USER and its entrypoint does not drop privileges, so arangod runs as root
       # and every data volume this chart has created so far holds root-owned files. It stays root

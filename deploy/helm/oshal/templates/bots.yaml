@@ -8,6 +8,7 @@
 # 4 | maintainer@emeraldcoastsystemsgroup.com   | 0.2.0 — (a) fleet presets: the range walks oshal.activeBots (fleet preset + custom extras, deduped) instead of bare .Values.bots; (b) seeding-repair parity (compose 2026-08-12): the config-seed cp lines are GONE — bot-entrypoint.sh Step 1b copy-IF-MISSING is the ONLY seeding path, and the old cp -f here force-reimposed the seed on every pod restart, silently resetting runtime provider config; (c) K5 parity: main-cluster bots connect as the least-privilege oshal_bot role (migration 099, NOSUPERUSER, RLS enforced) — never the superuser DSN the 0.1.x chart injected; override via swarm.botDatabaseUrl for managed Postgres.
 # 5 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — bot credentials leave literal env and the ConfigMap: DATABASE_URL is a secretKeyRef to the single BOT_DATABASE_URL key of oshal-db-credentials (in-cluster default from infra.postgres.botPassword, or swarm.botDatabaseUrl), and JWT_SECRET / ARANGO_ROOT_* arrive by envFrom from oshal-shared-secret, between the ConfigMap and botDefaults.envSecret. Guard: tests/unit/chart-credentials.spec.ts.
 # 6 | maintainer@emeraldcoastsystemsgroup.com   | Production-readiness baseline (chart 0.5.0): RuntimeDefault seccomp; no privilege escalation, every capability dropped except DAC_OVERRIDE (root image, shared workspace written by code-server's uid 1000); startup (5 min) and liveness probes reuse the tcp:5000 check. Guard: tests/unit/chart-production-baseline.spec.ts.
+# 7 | maintainer@emeraldcoastsystemsgroup.com   | Pods roll when the shared config they read changes. Found live: `helm upgrade --set infra.arangodb.inCluster=true` put ARANGO_URL back in oshal-shared-env, but nothing in the pod template changed, so the api kept running with ARANGO_URL unset and /api/graph kept answering 503 until a manual restart. checksum/* annotations hash the rendered ConfigMap/Secret templates, so any change to them is a pod-template change.
 {{- $root := . }}
 {{- range include "oshal.activeBots" . | fromJsonArray }}
 ---
@@ -30,6 +31,9 @@ spec:
         app.kubernetes.io/name: {{ .name }}
         oshal.io/bot: "true"
         {{- include "oshal.labels" $root | nindent 8 }}
+      annotations:
+        checksum/shared-env: {{ include (print $root.Template.BasePath "/shared-env-configmap.yaml") $root | sha256sum }}
+        checksum/shared-secret: {{ include (print $root.Template.BasePath "/secrets.yaml") $root | sha256sum }}
     spec:
       # The oshal image has no USER (it runs as root), so no runAsNonRoot here.
       securityContext:
