@@ -1739,6 +1739,27 @@ including across a directory belonging to a different owner. Full reasoning and 
 - **Remaining:** keep the retired unordered credential pub/sub rail disabled. If platform credentials must again cross node-local storage boundaries, replace it with signed, audience-bound, monotonically versioned promotion/refresh events plus durable revocation tombstones and compare-and-set replay; a later operator allowlist change must not promote an earlier private-user credential.
 - **Done when:** a two-node restart/offline proof covers promote, refresh, revoke, duplicate, delayed, and out-of-order delivery; no pre-revocation event can resurrect a credential, a returning node converges to the tombstone, private credentials remain private across allowlist transitions, and neither payloads nor logs expose reusable secret material.
 - **Needs a deeper dive (operator, 2026-09-15) - what this actually asks, plainly:** oshal owns some credentials of its own (platform API keys, not a user's). With more than one machine running bot nodes, those machines sometimes need the same key. The old system broadcast keys between machines and was switched off because it could not guarantee delivery order, so a key you had REVOKED could arrive late and quietly come back to life. The real question is: will this deployment ever run more than one machine that must share platform keys? On a single box the answer is no and this entry can close as not commissioned; with several nodes it has to be rebuilt safely. Not decided yet - explain it again before asking.
+- **Decision (operator, 2026-09-21): NOT COMMISSIONED — the retired broadcast rail stays disabled
+  permanently, and the question it was asking is answered by the enrolment model that already
+  exists.** The operator's framing, which corrects the way this entry poses the problem: **joining a
+  swarm is not the same thing as sharing platform secrets.** Joining uses a **minted key** — that is
+  node enrolment, it is built, remote nodes have always worked that way, and swarm-to-swarm
+  federation will use the same shape when it arrives. This entry is about something narrower and
+  different: how oshal's OWN platform credentials reach a node that has ALREADY joined. The retired
+  mechanism *pushed* them between machines over pub/sub, and it was switched off because delivery
+  order was not guaranteed — a credential that had been REVOKED could arrive late and come back to
+  life on a node that had already dropped it. **The answer is that nothing needs to push them.** The
+  second machine now running oshal is an isolated tenant that does not connect to this box, so no
+  platform credential crosses a machine boundary today. When swarm-to-swarm does arrive, the join is
+  a minted key and any shared platform secret is *fetched* from the custody rail decided the same day
+  (a provider seam with Vault Transit as backend #1, where keys are generated inside Vault, are never
+  application-readable, and revocation is immediate at the source) — so the ordering hazard that
+  killed the old rail cannot recur by construction. **Standing instruction, unchanged and now with a
+  reason recorded:** keep the unordered credential pub/sub rail disabled
+  (`src/app/extensions/swarm/index.ts:1021-1023`); it is not to be revived, and a future need for
+  cross-node platform credentials is met by enrolment plus a broker, never by broadcast. (PM asked
+  whether to commission the versioned rail; the operator pointed out the enrolment model already
+  answers it and that the two things had been conflated.)
 
 ### Platform SaaS account migration (paused by operator)
 - **Remaining:** when unpaused, recreate platform-owned services under `maintainer@emeraldcoastsystemsgroup.com`, re-mint/re-consent credentials, and record the YouTube relinking flow; personal brokerage accounts remain out of scope.
