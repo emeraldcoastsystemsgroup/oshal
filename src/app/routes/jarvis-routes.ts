@@ -57,6 +57,7 @@
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | Record WHICH half of the /ask session gate refused. The 404 session_not_found was emitted with no log line at all, so an operator reading the api log could not tell a foreign-owned session id from a store that failed to answer - the same indistinguishability that let a Jarvis ownership fault read as an empty conversation for three days. The decision, the status, the body and the short-circuit order are all unchanged; only the refusal is now written down.
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | The tool block is built through the selector shadow step: a candidate selector is measured beside the shipped one and discarded, so a narrower cut can be judged on real traffic while the model keeps receiving exactly the block it received before.
  * 25 | maintainer@emeraldcoastsystemsgroup.com   | A decision timeout no longer files a ticket for a greeting or a question. The branch inferred that a slow turn was a big build and filed the user's own words as the title; with the operator's codex lane out of credits, every message timed out, so "Hi" was filed three times and escalated, alongside "what is 9 times 9" and "what screen am i on". Conversational messages now get the truth - the provider did not respond, nothing was filed - and substantive requests keep the existing hand-off.
+ * 26 | maintainer@emeraldcoastsystemsgroup.com   | A build request is handed to the swarm without a model turn. The decision step was an agentic bot turn raced against a 75s timeout, and on "build me X" the agent ignored the hand-off rule and ground the build inline (8.6 min, 1.87M tokens measured 2026-06-20) while the route, having lost the race, filed the same ask with the swarm - two builds of one request, acknowledged after 75 seconds. detectBuildRequest recognises the imperative deterministically alongside the existing recall/provider/schedule guards, fileBuildHandoff files it, and the turn returns before runJarvisBot is ever called, so there is no losing turn to abandon. The decision-timeout fallback now files through the same claim-guarded path, so a resent ask cannot open a second build.
  */
 
 import { getJarvisBriefingDelivery } from './jarvis-briefing-delivery';
@@ -119,6 +120,7 @@ import {
   jarvisSchedulingAvailable,
   schedulingTimezone,
 } from './jarvis-schedule-intent';
+import { detectBuildRequest, fileBuildHandoff } from './jarvis-build-handoff';
 import { visualSpecForDirectRequest } from './jarvis-visuals';
 import { visibleArtifactActions } from './artifact-action-visibility';
 import type { PickerVisibleApps } from './artifact-picker-routes';
@@ -729,12 +731,22 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
     const scheduleIntent = (!doRecall && !hasAttachments && !artifactSelection && !providerBoundIntent && !providerClarification && jarvisSchedulingAvailable())
       ? detectScheduleIntent(message, { now: new Date(), timezone: schedulingTimezone() })
       : null;
+    // Build intent (deterministic): an imperative "build me X" is handed to the swarm HERE, before
+    // any model turn exists to grind it. The decision turn was only ever model judgment, and on a
+    // build request the agent would ignore the hand-off rule and build inline (8.6 min, 1.87M
+    // tokens) while the timed-out route filed the same ask with the swarm — two builds, one ask,
+    // and a 75-second wait for the acknowledgement. Last of the deterministic guards so recall,
+    // media, provider-bound reads, clarifications and reminders all keep precedence.
+    const buildRequest = (!doRecall && !hasAttachments && !artifactSelection && !providerBoundIntent
+      && !providerClarification && !scheduleIntent)
+      ? detectBuildRequest(message)
+      : null;
     // Prepend the auto tool-feed (what Jarvis can actually DO) + the user's recent tasks/results only
     // when a direct model decision is still needed; the deterministic provider path needs neither.
     let botMessage = message;
     let offeredPackageTools: JarvisPackageToolDiscovery[] = [];
     try {
-      if (!providerBoundIntent) {
+      if (!providerBoundIntent && !buildRequest) {
         const authorizationActor = getApplicationAuthorizationActor();
         const authorizationTools = ctx.authorizationTool && authorizationActor
           ? await ctx.authorizationTool.discover(authorizationActor, true) : [];
@@ -836,6 +848,24 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
           return;
         }
 
+        if (buildRequest) {
+          // No model turn is started at all, so there is nothing to abandon and nothing to race:
+          // the swarm is the single execution of this ask, and the ack is immediate.
+          const filed = await fileBuildHandoff(ctx, sub, sessionId, buildRequest);
+          await persistJarvisTurn(ctx, sessionId, 'assistant', filed.ack);
+          await markJarvisSessionTaskStatus(ctx, sessionId, 'active');
+          const jb = askJobs.get(jobId);
+          askJobs.set(jobId, {
+            sub, issuer, label, taskId: sessionId, kind: 'chat', status: 'done',
+            createdAt: jb?.createdAt ?? Date.now(), finishedAt: Date.now(),
+            result: {
+              answer: filed.ack, routed: [], handoffs: [],
+              dispatched: [{ workJobId: filed.workJobId, title: buildRequest.title }],
+            },
+          });
+          return;
+        }
+
         // The decision turn should be quick (answer or emit a hand-off). But the persona is only
         // model judgment — on a "build me X" request the codex agent will sometimes IGNORE the
         // hand-off rule and grind the whole build inline (observed: 8.6 min, 1.8M tokens). So we
@@ -880,22 +910,14 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
             return;
           }
 
-          const workJobId = crypto.randomUUID();
-          let ticketId: string | undefined;
-          try {
-            // ADR-083: the auto-file names no owner — the queue manager's call-out routes
-            // it (and, filed as 'complex', an unclaimed ask promotes to the build lane).
-            const ticket = await ctx.ticketService.createTicket({
-              title: message.slice(0, 120), description: message, status: 'approved', priority: 'medium',
-              ownerSub: sub, ticketType: 'task',
-              metadata: {
-                source: 'jarvis', sessionId, complexity: 'complex', autoFiled: true,
-              },
-            } as never);
-            ticketId = (ticket as { ticketId?: string; id?: string }).ticketId ?? (ticket as { id?: string }).id;
-          } catch (err) { logger.error({ err }, 'jarvis: auto-file on decision timeout failed'); }
-          void saveTaskPending(ctx.pool, workJobId, sub, sessionId, message.slice(0, 120), 'complex', ticketId);
-          const ack = "That's a bigger build — I've handed it to the team and I'll let you know when it's ready.";
+          // Filed through the SAME claim-guarded path as the deterministic hand-off, so a message
+          // that was already filed (a resend, or a directive the fast path took first) reuses that
+          // claim instead of opening a second ticket and a second swarm build.
+          const filed = await fileBuildHandoff(ctx, sub, sessionId, {
+            request: message, title: message.slice(0, 120),
+          });
+          const { workJobId } = filed;
+          const ack = filed.ack;
           // A timeout acknowledgement contains no completed data. Never materialize a generic image
           // for it, even if the timed-out model later emits a stale visual directive.
           await persistJarvisTurn(ctx, sessionId, 'assistant', ack);

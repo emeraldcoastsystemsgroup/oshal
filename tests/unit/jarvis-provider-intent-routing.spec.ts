@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Exercise Jarvis provider-intent routing through an authenticated user principal so polling follows the SEC-01 rule that legacy fleet credentials cannot read owner-scoped results.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Partial-mock the database barrel instead of listing its exports. createPersistenceActivation arrived in the barrel and both in-memory stores call it, so this file's mock threw on construction and the suite was red on main with nobody acting on it.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Correct a stale assumption this file carried about the session-ownership gate, which is why it answered 404 session_not_found. Its task-store double resolved create() to undefined and get() to null forever; that satisfied ensureSessionTask while the check read `return !created || created.ownerSub === sub` (a store that returned nothing was treated as agreement), and stopped satisfying it when the 2026-09-11 ownership hardening made a store that cannot hand back an owner-bound task a refusal instead. Both halves of the gate now run against the REAL InMemoryTaskStore with Postgres configuration withheld, so the contract cannot drift out from under this file again. Nothing is loosened: the cross-owner case, which used to assert that another owner reaching the same session id got an ordinary model answer, now asserts the stricter truth - the ask is refused 404 before the model is reached - and the direct-model call count follows that refusal down from four to three.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Follow the commissioned change to where a BUILD goes. 'Build a weather app for our cockpit.' was this file's control for "the weather guard does not grab every message that says weather", and it proved that by reaching the model. Since the deterministic build hand-off (BACKLOG "Jarvis hand-off experience") a build directive is filed with the swarm without a model turn, so the control is re-pointed rather than dropped: the same message now has to be dispatched as a COMPLEX build ticket carrying no providerIntent - still proof the weather path did not take it - and a new direct ask that also says "weather" ('How does our weather app pick a default city?') carries the reaches-the-model half. Nothing is loosened: the direct-turn count stays three, the six provider intents keep every assertion they had, and the build ask now has MORE pinned about it than before.
  */
 
 import type { AddressInfo } from 'node:net';
@@ -257,8 +258,8 @@ describe('Jarvis /ask provider-bound routing', () => {
     };
 
     executeBot.mockImplementation(async (_ctx: unknown, _client: unknown, _agentId: string, input: { text: string }) => ({
-      response: input.text.includes('Build a weather app')
-        ? 'I can help design that weather app.'
+      response: input.text.includes('weather app pick a default city')
+        ? 'The weather app uses your saved home city.'
         : 'Hello. What can I help with?',
     }));
 
@@ -303,6 +304,11 @@ describe('Jarvis /ask provider-bound routing', () => {
       const ownerResolvedLocation = await ask('Destin, Florida', 'provider-cross-owner-session');
       const greeting = await ask('Hello Jarvis', 'provider-greeting-session');
       const build = await ask('Build a weather app for our cockpit.', 'provider-build-session');
+      // The direct-ask control the build ask used to be: it still says "weather", it is not a build
+      // directive, and it must still reach the model.
+      const weatherAppQuestion = await ask(
+        'How does our weather app pick a default city?', 'provider-weather-question-session',
+      );
 
       expect(clarification).toMatchObject({
         status: 'done', answer: 'What city or ZIP code should I use for the live weather check?',
@@ -338,19 +344,32 @@ describe('Jarvis /ask provider-bound routing', () => {
       expect(email).not.toHaveProperty('visual');
       expect(walmart).not.toHaveProperty('visual');
       expect(greeting).toMatchObject({ status: 'done', answer: 'Hello. What can I help with?' });
-      expect(build).toMatchObject({ status: 'done', answer: 'I can help design that weather app.' });
+      // The weather guard still does not grab every message that says "weather": this one is not
+      // dispatched as a live-weather read. Where a BUILD goes is what changed — the deterministic
+      // hand-off files it with the swarm without a model turn, instead of leaving it to the decision
+      // turn that used to grind the build inline (BACKLOG "Jarvis hand-off experience").
+      expect(build).toMatchObject({
+        status: 'done',
+        answer: "That's a bigger build — I've handed it to the team and I'll let you know when it's ready.",
+        dispatched: [expect.objectContaining({ title: 'Build a weather app for our cockpit.' })],
+      });
+      expect(weatherAppQuestion).toMatchObject({
+        status: 'done', answer: 'The weather app uses your saved home city.',
+      });
 
-      // Three direct turns: the cleared follow-up, the greeting and the build ask. The cross-owner
-      // attempt is NOT among them - it is refused at the ownership gate, upstream of the model.
+      // Three direct turns: the cleared follow-up, the greeting and the weather-app question. The
+      // cross-owner attempt is NOT among them - it is refused at the ownership gate, upstream of the
+      // model - and neither is the build, which never starts a turn at all.
       expect(executeBot).toHaveBeenCalledTimes(3);
       const modelInputs = executeBot.mock.calls.map((call) => String(call[3]?.text || ''));
       expect(modelInputs.some((text) => text.includes('Hello Jarvis'))).toBe(true);
-      expect(modelInputs.some((text) => text.includes('Build a weather app'))).toBe(true);
+      expect(modelInputs.some((text) => text.includes('weather app pick a default city'))).toBe(true);
+      expect(modelInputs.some((text) => text.includes('Build a weather app'))).toBe(false);
       expect(modelInputs.some((text) => text.includes('weather today in Destin'))).toBe(false);
       expect(modelInputs.some((text) => text.includes('important emails'))).toBe(false);
       expect(modelInputs.some((text) => text.includes('fish food options from Walmart'))).toBe(false);
 
-      expect(createTicket).toHaveBeenCalledTimes(6);
+      expect(createTicket).toHaveBeenCalledTimes(7);
       expect(createTicket).toHaveBeenNthCalledWith(1, expect.objectContaining({
         ticketType: 'task', ownerSub: OWNER,
         title: expect.stringContaining('Live weather:'),
@@ -397,7 +416,15 @@ describe('Jarvis /ask provider-bound routing', () => {
       expect(createTicket.mock.calls[3]?.[0]).toMatchObject({ metadata: { providerIntent: {
         schemaVersion: 1, kind: 'walmart-catalog', operation: 'product-search', query: 'fish food', limit: 2,
       } } });
-      await vi.waitFor(() => expect(jarvisTaskInserts).toHaveLength(6));
+      // The seventh is the build hand-off: filed as complex work for the swarm, carrying no provider
+      // intent, because a build is not a bounded provider read.
+      expect(createTicket).toHaveBeenNthCalledWith(7, expect.objectContaining({
+        ticketType: 'task', ownerSub: OWNER, status: 'approved',
+        title: 'Build a weather app for our cockpit.',
+        metadata: expect.objectContaining({ source: 'jarvis', complexity: 'complex', autoFiled: true }),
+      }));
+      expect(createTicket.mock.calls[6]?.[0]).not.toHaveProperty('metadata.providerIntent');
+      await vi.waitFor(() => expect(jarvisTaskInserts).toHaveLength(7));
       expect(visualArtifactInserts).toHaveLength(0);
 
       const providerAcknowledgements = messages.filter((message) => (

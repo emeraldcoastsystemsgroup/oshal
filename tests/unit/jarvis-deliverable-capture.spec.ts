@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard the deliverable capture boundaries. An adversarial review of the original design found it would have authorised a CROSS-TENANT READ: it checked only that the file resolved under /app/workspace-shared, and every user's private store lives inside that same root at userfiles/<sha256(sub)>. These cases exercise a real temp filesystem — including a symlink that escapes — because the whole control is realpath-based and a mocked fs would prove nothing about it.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Follow the capture property across the new publish seam. finishTask(summaryWithLinks, captured.files) moved into publishJarvisTaskCompletion when the completed-task return leg gained its outward notice, so a single regex over the orchestrator could no longer see it. Both halves are pinned instead of one: the orchestrator must hand the substituted summary AND the captured files to the publisher, and the publisher must be what reaches finishTask with them. Nothing is relaxed - a refactor that drops either half still goes red.
  */
 
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } from 'node:fs';
@@ -161,6 +162,7 @@ describe('deliverable capture — wired into the completion path', () => {
   const ORCH = 'src/app/routes/jarvis-orchestrator.ts';
   const STORE = 'src/app/routes/jarvis-task-store.ts';
   const ROUTES = 'src/app/routes/jarvis-routes.ts';
+  const PUBLISH = 'src/app/routes/jarvis-task-complete-notify.ts';
   const JARVIS_HTML = 'src/api/jarvis.html';
   const readFile = (p: string): string =>
     require('node:fs').readFileSync(require('node:path').resolve(process.cwd(), p), 'utf8');
@@ -173,7 +175,12 @@ describe('deliverable capture — wired into the completion path', () => {
     expect(src).toMatch(/captureDeliverableFiles\(ctx,\s*sub,\s*taskId,\s*deliverable\)/);
     // ...and the substitutions are then applied to the text the user actually reads.
     expect(src).toMatch(/captured\.replacements[\s\S]{0,160}summaryWithLinks\s*=\s*summaryWithLinks\.split/);
-    expect(src).toMatch(/finishTask\([^)]*summaryWithLinks[^)]*captured\.files\)/);
+    // The finish call moved behind publishJarvisTaskCompletion when the return leg gained its
+    // outward notice, so the same property is pinned across BOTH halves of that seam: the
+    // orchestrator hands the substituted summary and the captured files in...
+    expect(src).toMatch(/publishJarvisTaskCompletion\([\s\S]{0,240}summary:\s*summaryWithLinks[\s\S]{0,120}files:\s*captured\.files/);
+    // ...and the publisher is what reaches finishTask with them.
+    expect(readFile(PUBLISH)).toMatch(/finish\([^)]*completion\.summary[^)]*completion\.files\)/);
   });
 
   it('resets files when a task is re-filed under the same id', () => {
