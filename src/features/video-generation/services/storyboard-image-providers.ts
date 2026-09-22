@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | openrouter sibling: the swarm's OpenRouter key driving an image-capable chat model (default gemini-2.5-flash-image, image-to-image via data-URL parts). Needed because the codex identity is a ChatGPT-subscription OAuth token and api.openai.com/v1/images REJECTS those (misleading "token has expired" for a token valid to 07-22) — subscription auth works for the codex backend, never for the platform Images API. Explicit selection only, paid per image, fail-closed like its siblings.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | codex provider resolves the PLATFORM realm only (getSwarmPlatformApiKey): the mounted ChatGPT-subscription OAuth made available() read true while every /v1/images call 401'd (re-verified 2026-08-21 — missing scope api.model.images.request). Selection now fails closed at resolve time with the paste-a-platform-key hint instead of burning a doomed vendor call; codex gains a real healthCheck (GET /v1/models: 200 = platform key, 403 = subscription realm); the resolver hint no longer suggests the ChatGPT login for images.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | codex-cli sibling (ADR-130): renders through the swarm's own codex HARNESS on a bot node — codex CLI 0.147+ has native image generation (proven live 2026-08-22 on the bind-mounted ChatGPT login: text-to-image AND anchored edits, gpt-5.5 and gpt-5.6-sol both), which the subscription CAN use even though the platform Images API rejects it. The controller never spawns the CLI: an app-boot-registered executor (storyboard-cli-image-executor) delegates to a bot node over swarm-execute, where the SEC-05 demo carve (DEMO_MODE + operator sub) governs the spawn; files travel via the shared workspace volume. Demo-mode default: with STORYBOARD_IMAGE_PROVIDER unset and DEMO_MODE on, selection now defaults to codex-cli (config → swarm env → demo default); explicit env always wins.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | comfyui is a real provider, not a throw. Submit/poll/fetch against the ComfyUI HTTP API, the same protocol and shape as the video sibling providers/comfyui-provider.ts (ADR-070): probe /system_stats, inject the frame prompt into a pinned API-format workflow, POST /prompt, poll /history, fetch /view, and reject anything that is not a PNG. Built on the operator's 2026-09-21 decision: it is free per image, and it is the ONLY free rail that can serve a caller who is not the operator — the codex-cli sibling sits behind the DEMO_MODE + operator-sub carve — on the same box a trained LoRA lands on. URL reuses COMFYUI_URL (one box, one key to rotate); the workflow needs its own COMFYUI_STORYBOARD_WORKFLOW because COMFYUI_WORKFLOW_PATH is a text-to-VIDEO graph. The wait is bounded TWICE (wall-clock deadline + attempt cap) by COMFYUI_STORYBOARD_TIMEOUT_MS so a sleeping GPU box fails visibly instead of hanging the stage, and the timeout message avoids a bare HTTP-status number so the caller's retry classifier does not treat it as transient. available()/healthCheck() share one status() that names WHICH of url/workflow/reachability is missing, and the resolver's comfyui hint now quotes it. An anchor frame is uploaded via /upload/image into an optional %ANCHOR% slot; a workflow without that slot logs a WARN rather than silently rendering unanchored against a prompt that says "use the reference image".
  */
 /**
  * @description Storyboard image providers — siblings behind one interface.
@@ -23,7 +24,10 @@
  *            login is a different auth realm and is never offered here: /v1/images always
  *            rejects it (ADR-082, re-verified 2026-08-21).
  *   comfyui  the GPU box that already runs LoRA. FREE. No per-image charge, and the place a trained
- *            character LoRA would eventually make cast consistency exact rather than approximate.
+ *            character LoRA makes cast consistency exact rather than approximate. It is also the
+ *            only free rail that can serve a caller who is NOT the operator: codex-cli below is
+ *            behind the DEMO_MODE + operator-sub carve. Needs COMFYUI_URL +
+ *            COMFYUI_STORYBOARD_WORKFLOW.
  *   vertex   `gemini-2.5-flash-image`. PAID, per image. Never selected implicitly.
  *
  * Selection is explicit (`STORYBOARD_IMAGE_PROVIDER`) and FAILS CLOSED: if the chosen provider is
@@ -164,33 +168,273 @@ export function createCodexImageProvider(): StoryboardImageProvider {
   };
 }
 
+/** The prompt slot a pinned storyboard workflow must carry; the frame prompt replaces it. */
+export const COMFY_PROMPT_TOKEN = '%PROMPT%';
+/** The optional reference-image slot: present means the workflow can hold a cast across scenes. */
+export const COMFY_ANCHOR_TOKEN = '%ANCHOR%';
+/** Gap between `/history` polls. Storyboard stills finish in seconds, not the video path's minutes. */
+const COMFY_POLL_INTERVAL_MS = 1_500;
+/** Default bound on one frame's submit→poll→fetch. Overridden by COMFYUI_STORYBOARD_TIMEOUT_MS. */
+const COMFY_DEFAULT_TIMEOUT_MS = 180_000;
+/** Bound on the cheap reachability/poll calls, so an asleep box answers "unavailable", not "hang". */
+const COMFY_PROBE_TIMEOUT_MS = 4_000;
+
+/** A media file ComfyUI reports in a node's `outputs` map. */
+interface ComfyStoryboardFile { filename: string; subfolder?: string; type?: string }
+
+/** One `/history/{prompt_id}` entry, as far as this provider reads it. */
+interface ComfyHistoryEntry {
+  status?: { status_str?: string; messages?: unknown[] };
+  outputs?: Record<string, unknown>;
+}
+
+/** A live reference to one workflow input string that carries a placeholder token. */
+interface ComfySlot { inputs: Record<string, unknown>; key: string; text: string }
+
 /**
- * @description ComfyUI provider — the GPU box that already runs LoRA training. Free per image, and
- * the natural home for a trained character LoRA, which would make cast consistency exact instead of
- * merely anchored. Requires COMFYUI_URL and an API-format workflow with a %PROMPT% placeholder.
+ * @description The bounded wait for one storyboard frame, in milliseconds. Configuration, never a
+ * literal: a slow box gets a bigger number in `.env` rather than a code change, and a bad value
+ * falls back to the default instead of disabling the bound.
+ * @returns {number} the poll window in milliseconds
+ */
+function comfyStoryboardTimeoutMs(): number {
+  const raw = Number(process.env.COMFYUI_STORYBOARD_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : COMFY_DEFAULT_TIMEOUT_MS;
+}
+
+/**
+ * @description Find every workflow input string carrying `token`, as live references we can rewrite.
+ * Returned rather than replaced so the caller can decide what to do when a slot is absent — an
+ * absent prompt slot is a fatal misconfiguration, an absent anchor slot is only a dropped reference.
+ * @param {Record<string, unknown>} workflow an API-format ComfyUI workflow (already cloned)
+ * @param {string} token the placeholder to look for
+ * @returns {ComfySlot[]} one entry per input string containing the token
+ */
+function comfyTokenSlots(workflow: Record<string, unknown>, token: string): ComfySlot[] {
+  const slots: ComfySlot[] = [];
+  for (const node of Object.values(workflow)) {
+    const inputs = (node as { inputs?: Record<string, unknown> })?.inputs;
+    if (!inputs || typeof inputs !== 'object') continue;
+    for (const [key, value] of Object.entries(inputs)) {
+      if (typeof value === 'string' && value.includes(token)) slots.push({ inputs, key, text: value });
+    }
+  }
+  return slots;
+}
+
+/**
+ * @description Substitute `value` for every occurrence of `token` in the given slots, in place.
+ * @param {ComfySlot[]} slots the slots returned by comfyTokenSlots
+ * @param {string} token the placeholder being filled
+ * @param {string} value the replacement text
+ * @returns {void}
+ */
+function fillComfySlots(slots: ComfySlot[], token: string, value: string): void {
+  for (const slot of slots) slot.inputs[slot.key] = slot.text.split(token).join(value);
+}
+
+/**
+ * @description Pull the first image file out of a `/history` outputs map.
+ * @param {Record<string, unknown>} outputs the finished job's per-node outputs
+ * @returns {ComfyStoryboardFile | null} the first saved image, or null when the graph saved none
+ */
+function firstComfyImage(outputs: Record<string, unknown>): ComfyStoryboardFile | null {
+  for (const out of Object.values(outputs)) {
+    const files = (out as { images?: ComfyStoryboardFile[] })?.images;
+    if (Array.isArray(files) && files[0]?.filename) return files[0];
+  }
+  return null;
+}
+
+/**
+ * @description Turn a failed job's history entry into one readable line. ComfyUI reports failures as
+ * `status.messages` tuples carrying the Python exception; surfacing it is what makes a wrong model
+ * name or a missing LoRA legible instead of "the job failed".
+ * @param {ComfyHistoryEntry} entry the history entry whose status_str is 'error'
+ * @returns {string} the box's own error text, bounded in length
+ */
+function describeComfyFailure(entry: ComfyHistoryEntry): string {
+  for (const message of entry.status?.messages ?? []) {
+    const payload = Array.isArray(message) ? message[1] : message;
+    const detail = (payload as { exception_message?: unknown } | null)?.exception_message;
+    if (typeof detail === 'string' && detail.trim()) return detail.trim().slice(0, 240);
+  }
+  return 'the box reported an execution error with no message';
+}
+
+/**
+ * @description Upload the anchor frame so a LoadImage node in the pinned workflow can reference it.
+ * This is what makes ComfyUI image-to-image: the caller's anchored prompt literally instructs the
+ * model to "use the reference image", so a provider that accepted an anchor and never sent it would
+ * render a frame against an instruction that points at nothing.
+ * @param {string} base the ComfyUI base URL, no trailing slash
+ * @param {Buffer} anchor the earlier frame to match
+ * @returns {Promise<string>} the name (subfolder-qualified) a LoadImage node should load
+ */
+async function uploadComfyAnchor(base: string, anchor: Buffer): Promise<string> {
+  const form = new FormData();
+  form.append('image', new Blob([new Uint8Array(anchor)], { type: 'image/png' }), 'oshal-anchor.png');
+  form.append('overwrite', 'true');
+  const res = await fetch(`${base}/upload/image`, { method: 'POST', body: form });
+  if (!res.ok) {
+    throw new Error(`comfyui storyboard provider: /upload/image answered HTTP ${res.status} — ${(await res.text()).slice(0, 240)}`);
+  }
+  const body = await res.json() as { name?: string; subfolder?: string };
+  if (!body.name) throw new Error('comfyui storyboard provider: /upload/image returned no filename for the reference frame');
+  return body.subfolder ? `${body.subfolder}/${body.name}` : body.name;
+}
+
+/**
+ * @description Poll `/history/{prompt_id}` until the job produces an image, fails, or the bound runs
+ * out. BOUNDED TWICE on purpose — a wall-clock deadline and an attempt cap — so neither a stalled
+ * clock nor a zero-length interval can leave a storyboard stage waiting on a sleeping GPU box
+ * forever. A failure here is loud: it throws with what the box said.
+ * @param {string} base the ComfyUI base URL, no trailing slash
+ * @param {string} promptId the id `/prompt` returned for this submission
+ * @param {number} timeoutMs the whole poll window
+ * @returns {Promise<ComfyStoryboardFile>} the saved image the job produced
+ */
+async function awaitComfyStoryboardImage(base: string, promptId: string, timeoutMs: number): Promise<ComfyStoryboardFile> {
+  const interval = Math.max(50, Math.min(COMFY_POLL_INTERVAL_MS, timeoutMs));
+  const maxAttempts = Math.max(1, Math.ceil(timeoutMs / interval));
+  const deadline = Date.now() + timeoutMs;
+  let attempt = 0;
+  while (attempt < maxAttempts && Date.now() < deadline) {
+    attempt += 1;
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((r) => setTimeout(r, interval));
+    let history: Record<string, ComfyHistoryEntry>;
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const res = await fetch(`${base}/history/${promptId}`, { signal: AbortSignal.timeout(COMFY_PROBE_TIMEOUT_MS) });
+      if (!res.ok) continue;
+      // eslint-disable-next-line no-await-in-loop
+      history = await res.json() as Record<string, ComfyHistoryEntry>;
+    } catch (err) {
+      logger.error({ err, stack: (err as Error).stack, promptId, attempt }, 'comfyui storyboard history poll failed');
+      continue;
+    }
+    const entry = history[promptId];
+    if (!entry) continue;
+    if (entry.status?.status_str === 'error') {
+      throw new Error(`comfyui storyboard provider: job ${promptId} failed on the box — ${describeComfyFailure(entry)}`);
+    }
+    if (!entry.outputs) continue;
+    const file = firstComfyImage(entry.outputs);
+    if (file) return file;
+    throw new Error(`comfyui storyboard provider: job ${promptId} finished but saved no image — the pinned workflow needs a SaveImage node`);
+  }
+  // Deliberately worded without a bare HTTP-status number: the caller's retry classifier treats
+  // those as transient, and burning MAX_ATTEMPTS timeouts against a sleeping box is not a retry.
+  throw new Error(`comfyui storyboard provider: job ${promptId} did not finish inside the bounded poll window of ${Math.round(timeoutMs / 1000)}s — the GPU box may be asleep, wedged, or queued behind other work. Raise COMFYUI_STORYBOARD_TIMEOUT_MS if the box is simply slow.`);
+}
+
+/**
+ * @description ComfyUI provider — the GPU box that already runs LoRA training. FREE: no per-image
+ * charge, only the operator's own compute, and it is the one free rail that serves a caller who is
+ * NOT the operator (the codex-cli sibling sits behind the DEMO_MODE + operator-sub carve). It is
+ * also the box a trained character LoRA lands on, so a workflow pinned here makes the operator's own
+ * trained styles usable in storyboards (operator decision, 2026-09-21).
+ *
+ * Protocol is the video sibling's, exactly (`providers/comfyui-provider.ts`, ADR-070): probe
+ * `/system_stats`, inject the prompt into an API-format workflow, `POST /prompt`, poll `/history`,
+ * fetch `/view`. Configuration:
+ *
+ *   COMFYUI_URL                    the box. Reused, not duplicated — it is the SAME ComfyUI server
+ *                                  the video provider drives, and a second URL key would be a
+ *                                  second place to rotate one host and a silent divergence when
+ *                                  only one of them is updated.
+ *   COMFYUI_STORYBOARD_WORKFLOW    the path to an API-format IMAGE workflow carrying a %PROMPT%
+ *                                  placeholder (and optionally %ANCHOR% on a LoadImage input). This
+ *                                  one IS its own key: the video path's COMFYUI_WORKFLOW_PATH is a
+ *                                  text-to-VIDEO graph and cannot render a still.
+ *   COMFYUI_STORYBOARD_TIMEOUT_MS  the bounded poll window, default 180000.
+ *
  * @returns {StoryboardImageProvider} the provider
  */
 export function createComfyUiImageProvider(): StoryboardImageProvider {
-  const base = (): string => (process.env.COMFYUI_URL || '').replace(/\/+$/, '');
+  const base = (): string => (process.env.COMFYUI_URL || '').trim().replace(/\/+$/, '');
+  const workflowPath = (): string => (process.env.COMFYUI_STORYBOARD_WORKFLOW || '').trim();
+
+  /**
+   * The single truth behind both available() and healthCheck(): what is configured, and does the
+   * box answer. Never throws — an unreachable GPU box is an unavailable provider with a stated
+   * reason, not a crashed storyboard stage, and never a silent fall-through to a paid sibling.
+   */
+  const status = async (): Promise<{ ok: boolean; detail: string }> => {
+    const u = base();
+    if (!u) return { ok: false, detail: 'COMFYUI_URL is not set — point it at the GPU box running ComfyUI (the same box the video provider uses)' };
+    const wf = workflowPath();
+    if (!wf) return { ok: false, detail: `COMFYUI_STORYBOARD_WORKFLOW is not set — export the image workflow from ComfyUI in API format, put ${COMFY_PROMPT_TOKEN} in its positive-prompt text, and point this at the file` };
+    if (!fs.existsSync(wf)) return { ok: false, detail: `COMFYUI_STORYBOARD_WORKFLOW points at a file that does not exist: ${wf}` };
+    try {
+      const res = await fetch(`${u}/system_stats`, { signal: AbortSignal.timeout(COMFY_PROBE_TIMEOUT_MS) });
+      if (!res.ok) return { ok: false, detail: `ComfyUI at ${u} answered /system_stats with HTTP ${res.status}` };
+      return { ok: true, detail: `ComfyUI reachable at ${u}, workflow ${path.basename(wf)}, bounded at ${Math.round(comfyStoryboardTimeoutMs() / 1000)}s per frame` };
+    } catch (err) {
+      logger.error({ err, stack: (err as Error).stack, base: u }, 'comfyui storyboard reachability probe failed');
+      return { ok: false, detail: `ComfyUI at ${u} is unreachable: ${err instanceof Error ? err.message : String(err)}` };
+    }
+  };
+
   return {
     id: 'comfyui',
     costClass: 'free',
-    available: async () => {
+    available: async () => (await status()).ok,
+    healthCheck: status,
+    generate: async (prompt, anchor) => {
       const u = base();
-      if (!u || !process.env.COMFYUI_STORYBOARD_WORKFLOW) return false;
+      if (!u) throw new Error('comfyui storyboard provider: COMFYUI_URL is not set');
+      const wf = workflowPath();
+      if (!wf) throw new Error('comfyui storyboard provider: COMFYUI_STORYBOARD_WORKFLOW is not set');
+
+      let workflow: Record<string, unknown>;
       try {
-        const c = new AbortController();
-        const t = setTimeout(() => c.abort(), 4000);
-        const r = await fetch(`${u}/system_stats`, { signal: c.signal });
-        clearTimeout(t);
-        return r.ok;
-      } catch { return false; }
-    },
-    generate: async () => {
-      // Deliberately not a stub that returns a placeholder image: an unimplemented path must fail,
-      // not hand the renderer a fake frame. Wiring is the workflow JSON + /prompt + /history poll,
-      // mirroring providers/comfyui-provider.ts.
-      throw new Error('comfyui storyboard provider is not wired yet — set STORYBOARD_IMAGE_PROVIDER=codex, or implement the workflow submit/poll against COMFYUI_STORYBOARD_WORKFLOW');
+        workflow = JSON.parse(await fs.promises.readFile(wf, 'utf8')) as Record<string, unknown>;
+      } catch (err) {
+        logger.error({ err, stack: (err as Error).stack, workflow: wf }, 'comfyui storyboard workflow could not be read');
+        throw new Error(`comfyui storyboard provider: could not read the workflow at ${wf} — ${err instanceof Error ? err.message : String(err)}. It must be API-format JSON exported from ComfyUI.`);
+      }
+
+      const promptSlots = comfyTokenSlots(workflow, COMFY_PROMPT_TOKEN);
+      if (!promptSlots.length) {
+        throw new Error(`comfyui storyboard provider: the workflow at ${wf} carries no ${COMFY_PROMPT_TOKEN} placeholder, so the frame prompt would never reach the box and every frame would render the template's own fixed prompt`);
+      }
+      fillComfySlots(promptSlots, COMFY_PROMPT_TOKEN, prompt);
+
+      if (anchor) {
+        const anchorSlots = comfyTokenSlots(workflow, COMFY_ANCHOR_TOKEN);
+        if (anchorSlots.length) {
+          fillComfySlots(anchorSlots, COMFY_ANCHOR_TOKEN, await uploadComfyAnchor(u, anchor));
+        } else {
+          // Said out loud rather than dropped: the anchored prompt tells the model to use a
+          // reference image, so a workflow with no LoadImage slot renders an unanchored frame.
+          logger.warn({ workflow: wf }, `comfyui storyboard: a reference frame was supplied but the pinned workflow has no ${COMFY_ANCHOR_TOKEN} input — rendering unanchored, so cast consistency across scenes will drift`);
+        }
+      }
+
+      const queued = await fetch(`${u}/prompt`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: workflow, client_id: `oshal-storyboard-${randomUUID().slice(0, 8)}` }),
+      });
+      if (!queued.ok) {
+        throw new Error(`comfyui storyboard provider: /prompt answered HTTP ${queued.status} — ${(await queued.text()).slice(0, 240)}`);
+      }
+      const promptId = ((await queued.json()) as { prompt_id?: string }).prompt_id;
+      if (!promptId) throw new Error('comfyui storyboard provider: /prompt returned no prompt_id');
+      logger.info({ promptId, base: u, anchored: Boolean(anchor) }, 'comfyui storyboard job queued');
+
+      const file = await awaitComfyStoryboardImage(u, promptId, comfyStoryboardTimeoutMs());
+      const params = new URLSearchParams({ filename: file.filename, subfolder: file.subfolder || '', type: file.type || 'output' });
+      const view = await fetch(`${u}/view?${params.toString()}`);
+      if (!view.ok) throw new Error(`comfyui storyboard provider: /view answered HTTP ${view.status} for ${file.filename}`);
+      const image = Buffer.from(await view.arrayBuffer());
+      if (image.length < 8 || !image.subarray(0, 4).equals(PNG_MAGIC)) {
+        throw new Error(`comfyui storyboard provider: ${file.filename} is not a PNG — the pinned workflow's SaveImage node must write PNG, which is what the frame cropper decodes`);
+      }
+      logger.info({ promptId, file: file.filename, bytes: image.length }, 'comfyui storyboard frame rendered');
+      return image;
     },
   };
 }
@@ -408,10 +652,14 @@ export async function resolveStoryboardImageProvider(
   if (!chosen) throw new Error(`STORYBOARD_IMAGE_PROVIDER='${want}' is not a provider (codex | comfyui | vertex | openrouter | codex-cli)`);
 
   if (!(await chosen.available())) {
+    // comfyui can say exactly WHICH of url / workflow / reachability is missing, so it does, rather
+    // than handing the operator a list of three things to check. The extra probe only ever runs on
+    // the failure path, and it is bounded by COMFY_PROBE_TIMEOUT_MS like the availability check.
+    const comfyDetail = want === 'comfyui' && chosen.healthCheck ? (await chosen.healthCheck()).detail : '';
     const hint = want === 'codex'
       ? 'the swarm holds no PLATFORM OpenAI key — set OPENAI_API_KEY in .env, or openAiApiKey in config-seed/secrets.json. The codex/ChatGPT login cannot help here: /v1/images rejects subscription tokens (a different auth realm). Or pick a funded provider by name, e.g. STORYBOARD_IMAGE_PROVIDER=openrouter'
       : want === 'comfyui'
-        ? 'set COMFYUI_URL and COMFYUI_STORYBOARD_WORKFLOW, and make sure the GPU box is reachable'
+        ? `${comfyDetail}. The free GPU rail needs COMFYUI_URL pointed at the box and COMFYUI_STORYBOARD_WORKFLOW pointed at an API-format image workflow carrying a ${COMFY_PROMPT_TOKEN} placeholder; COMFYUI_STORYBOARD_TIMEOUT_MS bounds each frame`
         : want === 'openrouter'
           ? 'set OPENROUTER_API_KEY (or openRouterApiKey in config-seed/secrets.json) — the swarm OpenRouter key funds the image model per image'
           : want === 'codex-cli'

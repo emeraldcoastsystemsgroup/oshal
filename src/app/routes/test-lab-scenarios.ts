@@ -84,6 +84,7 @@
  * 32 | maintainer@emeraldcoastsystemsgroup.com   | Registered the 'byo-hot-fallback' scenario (operator decision 2026-09-22): a read-only probe of the configured hot-fallback chain and each rung's readiness through the Settings llm-default route, with the two guards that prove the same-endpoint replay and the operator-only fallback attached as regressionTests. A test file on disk is not Test Lab registration.
  * 33 | maintainer@emeraldcoastsystemsgroup.com   | Registered the 'vendor-login-seeding' scenario (test-lab-vendor-login-scenarios.ts): the closed door on all three vendor auth mounts - an anonymous caller reaching import, sign-out or the connect-state probe - with the guards that ship with the rail attached as regressionTests, including the Google half added 2026-09-22. The OPEN door is deliberately not a Lab step: it needs the operator's own browser login, and the Lab must never attempt one.
  * 34 | maintainer@emeraldcoastsystemsgroup.com   | Attached the executability guards to 'vendor-login-seeding': cli-brain-executability (an option is offered, accepted on PUT and resolved on exactly the conditions a bot node can run it) and antigravity-cli-availability (whether this node could load `agy` at all). Registered against that scenario because seeding a credential and then offering a brain nothing executes is one rail with a hole in it, not two features - the operator followed the push instructions exactly and every turn afterwards was refused by name.
+ * 35 | maintainer@emeraldcoastsystemsgroup.com   | Registered the storyboard image-rail card (STORYBOARD_SCENARIOS): a read-only readback of which rail renders storyboard stills plus the free ComfyUI GPU rail's own health probe, and the four storyboard guards attached as regressionTests. The comfyui rail stopped being a throw and became a real submit/poll/fetch provider; its guard, and the three that already shipped beside it, were registered nowhere - a test file on disk is not Test Lab registration. No generating step on purpose: one still on a paid rail is real money per lab run.
  * @module test-lab-scenarios
  */
 
@@ -101,6 +102,7 @@ import { DATA_MODEL_SCENARIOS } from './test-lab-data-model-scenarios';
 import { NOTIFICATION_SCENARIOS } from './test-lab-notification-scenarios';
 import { CHANNEL_SCENARIOS } from './test-lab-channel-scenarios';
 import { DEVICE_SCENARIOS } from './test-lab-device-scenarios';
+import { STORYBOARD_SCENARIOS } from './test-lab-storyboard-scenarios';
 import { renderCatalogVisual, VISUAL_CATALOG } from './test-lab-visual-catalog';
 
 const SELF_PORT = process.env.PORT || '5000';
@@ -265,6 +267,7 @@ export const SCENARIOS: Scenario[] = [
   ...NOTIFICATION_SCENARIOS,
   ...CHANNEL_SCENARIOS,
   ...DEVICE_SCENARIOS,
+  ...STORYBOARD_SCENARIOS,
   // ── Rich visuals — every kind rendered deterministically through the real renderer ──────────
   ...VISUAL_CATALOG.map((entry): Scenario => ({
     id: `visual-${entry.kind}`,

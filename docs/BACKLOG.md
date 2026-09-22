@@ -3515,8 +3515,40 @@ including across a directory belonging to a different owner. Full reasoning and 
 - **Done when:** the series reaches `done` with a real Drive link and `ffprobe` confirms video/audio streams and acceptable silence, with no manual intermediate stage calls. See [ADR-082](adr/082-video-series-pipeline.md).
 
 ### Free ComfyUI storyboard provider
-- **Remaining:** configure the GPU-box ComfyUI URL and a pinned storyboard workflow; do not retry ChatGPT/Codex subscription OAuth against the OpenAI Images API.
-- **Done when:** a real storyboard request returns a generated image through the ComfyUI provider, failure is bounded/visible, and the conductor can consume it without Vertex spend.
+- **Operator decision 2026-09-21 — build it.** Three reasons, recorded because they shape the
+  design: it is free, with no per-image charge; it is the only free rail that works for a caller
+  who is NOT the operator (codex-cli sits behind the DEMO_MODE + operator-sub carve, so it cannot
+  serve a real user); and it is the same GPU box a trained LoRA lands on, so the operator's own
+  trained styles become usable in storyboards.
+- **This entry was wrong about the shape of the work.** It read as configuration. It was CODE: the
+  `comfyui` arm of `storyboard-image-providers.ts` was a deliberate stub that threw "not wired
+  yet", so no amount of `.env` would have produced a frame.
+- **Built:** a real submit → poll → fetch provider on the ComfyUI HTTP API, the same protocol and
+  shape as the video sibling `providers/comfyui-provider.ts` (ADR-070) — probe `/system_stats`,
+  inject the frame prompt into a pinned API-format workflow, `POST /prompt`, poll `/history`, fetch
+  `/view`, reject anything that is not a PNG. `available()`/`healthCheck()` share one probe that
+  names WHICH of url / workflow / reachability is missing, and the resolver quotes it; selection
+  still fails closed rather than substituting a paid sibling. The wait is bounded twice — a
+  wall-clock deadline and an attempt cap — so an asleep or wedged box fails visibly instead of
+  hanging the storyboard stage, and the timeout wording avoids a bare HTTP-status number so the
+  caller's retry classifier does not treat it as transient.
+- **The URL is shared, the workflow is not.** `COMFYUI_URL` is reused deliberately: it is the same
+  ComfyUI server the video provider drives, and a second URL key would be a second place to rotate
+  one host. `COMFYUI_WORKFLOW_PATH` is NOT reusable here — that one names a text-to-VIDEO graph and
+  cannot render a still — which is why the storyboard path has its own `COMFYUI_STORYBOARD_WORKFLOW`.
+- **Guard:** `tests/unit/storyboard-comfyui-provider.spec.ts` (`npm run test:storyboard`). The
+  transport is real — a local `http.createServer` on an ephemeral loopback port speaking the five
+  ComfyUI routes, with nothing mocking `fetch`, because the HTTP protocol is the boundary this
+  provider lives on. Red 16 of 18 against the stub, green 18 of 18 after. Registered in the AI Test
+  Lab as the read-only `storyboard-image-rail` card.
+- **Still true:** do not retry ChatGPT/Codex subscription OAuth against the OpenAI Images API. That
+  auth realm is rejected by `/v1/images` and re-verifying it has cost time twice already.
+- **Done when:** on the box, the operator sets `COMFYUI_URL` to the GPU box's ComfyUI endpoint,
+  `COMFYUI_STORYBOARD_WORKFLOW` to an API-format image workflow exported from that ComfyUI with
+  `%PROMPT%` in its positive-prompt text (and optionally `%ANCHOR%` on a LoadImage input so scenes
+  keep one cast), optionally `COMFYUI_STORYBOARD_TIMEOUT_MS` (default 180000) if the box is slow,
+  and `STORYBOARD_IMAGE_PROVIDER=comfyui` — and a real storyboard request then returns a generated
+  image through the ComfyUI provider with the conductor consuming it at zero Vertex spend.
 
 ### Video Studio storyboards on the demo codex-cli rail
 - **Built 2026-09-17 on `fix/series-storyboard-owner-sub`.** The series storyboard stage reached
