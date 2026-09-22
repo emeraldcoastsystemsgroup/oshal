@@ -25,6 +25,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Catalog freshness rule: on the first live verification Jarvis stopped shrugging but answered the CRM question from a STALE OPEN WORK result ("0 in docs out, 4 total" against a live 473/7/2) - the OPEN WORK guidance's "read the RESULT and report it" was over-applied to a fresh data question. The catalog now states that an old task result answers questions about that task only; current-state questions get a fresh handoff or the owning app's link.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | buildCatalogBlock: the effective-route catalog (curated + dynamically discovered store apps, ADR-085/087) is injected into every live bot turn. The live path had NO catalog - the plan guidance said "the catalog keys above" over a message that never carried one, and the persona's baked specialist list was the bot's only (stale, platform-only) world model, so a CRM-only deployment had a Jarvis that had never heard of its own CRM and shrugged at a pipeline question (operator report 2026-09-04). Bounded, degrades to '' - a catalog failure never blocks the turn.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | looksLikeWorkRequest: the decision-timeout branch treated "the model did not answer in 75s" as "the model is grinding a big build", and filed a ticket titled with the user's own message. A timeout equally means the brain is unreachable, and on the operator box it did - the codex lane was answering `You've hit your usage limit`, so every message timed out and every message was filed: "Hi" three times, all escalated, plus "what is 9 times 9" and "what screen am i on" as build tickets. A work VERB now wins over grammar (a request can wear a question mark), and without one a greeting or a question is reported as an outage instead of opened as a project.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | The completed-task return leg now tells the owner. summarizeComplexTask finished the row and wrote the thread turn and stopped there, so work handed to the swarm - which by definition takes long enough that nobody is watching the thread - finished silently and was found only by going back to look. The tail publishes through publishJarvisTaskCompletion: row, then turn, then a bounded notice over the user's OWN NotificationRouter preference. The notice is last and deadline-bounded so a wedged or unconfigured channel can never cost the user the answer itself.
  *
  * @module jarvis-orchestrator
  */
@@ -56,7 +57,8 @@ import type { ByoLlmConnection } from './byo-llm-routes';
 import { executeBotOrInline } from './inline-bot-execution';
 import { createOptionalJarvisVisual } from './jarvis-visual-response';
 import { extractJsonObject, extractJarvisDirectives } from './jarvis-directives';
-import { finishTask, findJarvisTaskSessionId, persistJarvisTurn, saveTaskPending } from './jarvis-task-store';
+import { finishTask, findJarvisTaskSessionId, saveTaskPending } from './jarvis-task-store';
+import { publishJarvisTaskCompletion } from './jarvis-task-complete-notify';
 import { captureDeliverableFiles } from './jarvis-deliverable-files';
 import {
   providerRecordsMatchingTrustedIntent,
@@ -916,15 +918,12 @@ async function summarizeComplexTask(
     // Last check before anything is published: the model call and the file capture take time, and a
     // grant revoked in that window must withhold the answer rather than lose the race to it.
     if (!await permitted()) return;
-    await finishTask(ctx.pool, taskId, true, summaryWithLinks, visual, captured.files);
-    if (taskSessionId) {
-      await persistJarvisTurn(ctx, taskSessionId, 'assistant', summaryWithLinks, {
-        sourceJarvisTaskId: taskId,
-        sourceTicketId: ticketId,
-        ...(visual ? { visual } : {}),
-        ...(captured.files.length ? { files: captured.files } : {}),
-      });
-    }
+    // Finish the row, write the thread turn, THEN tell the owner — work handed to the swarm finishes
+    // while nobody is looking at the thread, which is exactly when a hand-off needs to speak.
+    await publishJarvisTaskCompletion(ctx, sub, {
+      taskId, ticketId, sessionId: taskSessionId, title,
+      summary: summaryWithLinks, visual, files: captured.files,
+    });
   } catch (err) {
     logger.warn({ err, taskId }, 'jarvis: summarizeComplexTask failed');
     await finishTask(ctx.pool, taskId, true, 'Done — open the task for the full result.');

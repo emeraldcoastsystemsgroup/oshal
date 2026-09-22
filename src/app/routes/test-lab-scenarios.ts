@@ -75,6 +75,7 @@
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | Attached the database-less completion floor guard (CKR-8): a bot node with no database repository resolved to zero tools including attempt_completion, so it could not say it was finished. The Helm federated bot-pod topology ships database-less on purpose.
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | Registered the messaging-channels card (CHANNEL_SCENARIOS): a read-only step over GET /api/channels that checks the surface reports which inbound channels this deployment has wired and which identities are bound to the caller. Guard: tests/unit/test-lab-channel-registration.spec.ts.
  * 25 | maintainer@emeraldcoastsystemsgroup.com   | Registered the remote-node binding card (DEVICE_SCENARIOS): a read-only step over GET /api/remote-clients that checks the surface can say, per computer, whether it finished enrolling and who it is bound to. A node bound to nobody heartbeats like a working one and receives no owner-scoped work, and nothing in the cockpit used to say so. Guard: tests/unit/device-ownership-visible.spec.ts.
+ * 26 | maintainer@emeraldcoastsystemsgroup.com   | Attached the hand-off guards to 'jarvis-routing' regressionTests: jarvis-build-handoff (a build directive is filed with the swarm without a model turn, exactly once) and jarvis-task-complete-notify (a finished task reaches its owner). Both ship with the hand-off work and a test file on disk is not Test Lab registration. No live step was added for the build path on purpose - firing a real build directive at the deployment would open a real ticket on every lab run.
  * @module test-lab-scenarios
  */
 
@@ -390,6 +391,8 @@ export const SCENARIOS: Scenario[] = [
     regressionTests: [
       { level: 'integration', path: 'tests/unit/jarvis-ask-session-ownership.spec.ts' },
       { level: 'integration', path: 'tests/unit/jarvis-provider-intent-routing.spec.ts' },
+      { level: 'integration', path: 'tests/unit/jarvis-build-handoff.spec.ts' },
+      { level: 'unit', path: 'tests/unit/jarvis-task-complete-notify.spec.ts' },
     ],
     steps: [
       { id: 'j-jobs', app: 'jarvis', label: '"What are my top job opportunities right now?"', run: (c) => jarvisStep(c, 'top jobs', 'What are my top job opportunities right now?') },
