@@ -1,6 +1,6 @@
 # ADR 035 — Multi-Tenant SaaS Foundation (Schools as Tenants)
 
-Status: **Proposed** (2026-06-12) — still Proposed as of 2026-07-19: no tenant provisioning script exists. (The RLS substrate landed separately as multi-*user* isolation under [ADR-076](076-tenant-aware-rls-and-least-privilege-db-role.md); the tenant root entity, realm-per-tenant provisioning, and seat licensing decided here remain unbuilt.)
+Status: **Accepted as amended** (operator decision 2026-09-21, recorded in [BACKLOG.md](../BACKLOG.md) under **"Two-tier tenant provisioning"**: "ISOLATED-ONLY. ADR-035 is amended and ACCEPTED on that basis"). Proposed 2026-06-12. The amendment is at [the end of this ADR](#amendment-2026-09-21-isolated-only); it replaces pillar 1's pooled database with a database per tenant. Nothing is built yet: no tenant provisioning script exists (`provision-tenant.sh` is that entry's done-when). (The RLS substrate landed separately as multi-*user* isolation under [ADR-076](076-tenant-aware-rls-and-least-privilege-db-role.md); the tenant root entity, realm-per-tenant provisioning, and seat licensing decided here remain unbuilt.)
 Supersedes: none. Related: [ADR 034 config-sync](034-bidirectional-config-ownership-sync.md), [ADR swarm-application-manifests](033b-swarm-application-manifests.md), [ADR 030 home-persona-layer](030-home-persona-layer.md)
 
 ## Context
@@ -115,3 +115,33 @@ First three phases yield a working "Benton has an isolated 100-seat instance" de
 A parallel **async/workflow** track slots alongside: per-tenant job queues land with phase 4 (where the
 usage cap + fairness live), and the durable workflow engine for the lecture pipeline is a follow-up once
 the pipeline grows beyond one LLM pass. Broker selection (RabbitMQ vs BullMQ) gets its own ADR.
+
+## Amendment (2026-09-21): isolated-only
+
+The operator amended and accepted this ADR on 2026-09-21. The decision is recorded in
+[BACKLOG.md](../BACKLOG.md) under **"Two-tier tenant provisioning"**:
+
+> **Decision (operator, 2026-09-21): ISOLATED-ONLY. ADR-035 is amended and ACCEPTED on that
+> basis; the shared tier is recorded as a future option with a trigger, not built.**
+
+What that changes in the decision above:
+
+- **Pillar 1 (isolation) is replaced.** Each tenant gets its own database instead of one pooled
+  Postgres with `tenant_id` RLS. The decision's words: `provision-tenant.sh` "ships one tenancy —
+  `--tenancy=isolated`, a database per tenant — and the flag keeps its name so a second value can
+  be added later without changing the interface."
+- **The pooled/shared tier becomes a future option, not built.** Its trigger for revisiting is "a
+  real customer whose economics require sharing one database; until then an isolated database per
+  tenant is both the cheaper build and the stronger boundary".
+- **Not approved by this amendment:** the tenant-scoped Postgres service identity under
+  [ADR-076](076-tenant-aware-rls-and-least-privilege-db-role.md). The decision says it "is a core
+  DB-role change, it is required only by the shared tier, and the shared tier has no customer".
+- **The isolation proof** has to attempt a cross-tenant database connection and a cross-tenant row
+  read and show both refused. `scripts/governance/verify-tenant-isolation.sh` checks only
+  Kubernetes NetworkPolicy, so it does not cover this.
+
+The decision does not address pillars 2 to 5, the async/workflow section or the phased plan. It
+also records that this ADR's context, "the schools/SaaS path", is one "the operator's 2026-08-01
+directive deliberately paused". The done-when is the BACKLOG entry's:
+`provision-tenant.sh <name> --tenancy=isolated|shared` renders the correct namespace/database
+policy and a two-tenant proof blocks cross-tenant database and row access.

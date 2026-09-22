@@ -6,6 +6,7 @@
 # SEQ                 | AUTHOR                                        | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-078 local prove-out: map the existing 'incident-rca' WorkflowDefinition (src/features/swarm-orchestration/services/dispatch-routing.ts) onto an Argo Workflows DAG. Scaffold — validates offline; a live cluster + Argo CRDs + a one-shot bot-node batch entrypoint are still required to run it (see ops/deployment/argo/README.md and docs/architecture/078-argo-batch-proveout-status.md).
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | bot-image default any-bot:latest -> oshal-bot:latest. oshal-bot:latest is the tag scripts/oshal-deploy.sh and the local installer build from Dockerfile.oshal, and the only sanctioned tag (CLAUDE.md). No script in this repo builds any-bot:latest, so the old default could not be pulled or side-loaded from any build this repo runs (remote-cluster work package items 9 and 15). Guard: tests/unit/k8s-legacy-quarantine.spec.ts.
 # =============================================================================
 #
 # WHAT THIS IS
@@ -83,9 +84,10 @@ spec:
       # (cline-config-builder.ts). LLM_BASE_URL was dead config: nothing reads it.
       - name: model-endpoint
         value: "http://ollama.oshal-model.svc.cluster.local:11434"
-      # ── The OSHAL runtime image (the real any-bot image; see Dockerfile.oshal) ──
+      # ── The OSHAL runtime image: oshal-bot, built from Dockerfile.oshal. A cluster that
+      # cannot see the local tag overrides this with the registry copy it pulls. ──
       - name: bot-image
-        value: "any-bot:latest"
+        value: "oshal-bot:latest"
       # ── Shared workspace PVC: deliverables must outlive the pod (podGC + ttl destroy
       # the pod filesystem) and the reviewer runs in a DIFFERENT pod. Single-node local
       # clusters can use the RWO example (tenant-workspace-pvc.example.yaml); multi-node

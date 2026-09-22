@@ -75,7 +75,7 @@ _Index last reconciled 2026-09-14 against the files on disk (`tests/unit/adr-sta
 | [033](033-multi-harness-execution-framework.md) | Multi-Harness Execution Framework | Accepted | 2026-04-13 |
 | [manifests](033b-swarm-application-manifests.md) | Swarm Application Manifests | Accepted — implemented (swarm-apps/*.yaml + the src/features/swarm-apps loader; evolved by ADR-085) | 2026-04-20 |
 | [034](034-bidirectional-config-ownership-sync.md) | Bidirectional Config Ownership and Sync | Accepted | 2026-06-08 |
-| [035](035-multi-tenant-saas-foundation.md) | Multi-Tenant SaaS Foundation (Schools as Tenants) | Proposed | 2026-06-12 |
+| [035](035-multi-tenant-saas-foundation.md) | Multi-Tenant SaaS Foundation (Schools as Tenants) | Accepted as amended 2026-09-21 — isolated-only (a database per tenant; the pooled tier is a future option); nothing built yet | 2026-06-12 |
 | [036](036-bot-owned-application-architecture.md) | Application architecture: the bot owns the domain, the surface is a view | Accepted | 2026-06-14 |
 | [037](037-communications-swarm.md) | The communications swarm: lean, tool-equipped bots | Accepted (Phases 1–2 built) | 2026-06-14 |
 | [038](038-swarms-bundled-by-type.md) | Swarms bundled by type (the swarm catalog) | Accepted — implemented (the shipped bundle pattern; comms ADR-037 = reference implementation) | 2026-06-15 |
