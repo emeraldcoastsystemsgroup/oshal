@@ -17,6 +17,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Surface the dependency-free unattended-provider denial through the feature barrel for FSD-compliant controller preflight imports.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127 inline hosted brain: export ByoHostedProvider + createGovernedByoHostedProvider (hosted OpenAI-compatible reasoning — no harness module on its graph, verified against the controller-runtime-boundary barrel scan) and the isUnbrokeredAutonomousProvider predicate the chat entry points share.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Export the same-endpoint retry (RETRYABLE_PROVIDER_FAILURE, the classifier, the plan and the provider decorator) — moved here from the app layer so the orchestrator can retry the PROVIDER CALL rather than its callers replaying the whole turn. Module graph is llm-service + logger only; no harness module.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Export SameEndpointRetryTurnBudget, the per-TURN replay ceiling the per-model-call budget now nests inside, so a guard can construct and assert one without a deep import.
  */
 
 export {
@@ -100,6 +101,7 @@ export {
   RETRYABLE_PROVIDER_FAILURE,
   SAME_ENDPOINT_RETRY_CEILING,
   SameEndpointRetryProvider,
+  SameEndpointRetryTurnBudget,
   classifySameEndpointRetry,
   endpointHost,
   resetSameEndpointRetryPlanWarningsForTesting,

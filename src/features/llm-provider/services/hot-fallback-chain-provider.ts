@@ -20,6 +20,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the chain decorator: primary (with its retry) then each pre-gated rung once, the sticky switch for the remainder of the turn, the marker the turn reports, and the WARN line (connection identity, attempts, reason, rung — never a key).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | "Each rung tried at most once" is now per TURN, not per model call. The walk was re-entered on every later sendRequest while the primary was still active, so an agentic turn whose primary recovered and then walled again could walk the chain a second time. It is bounded by the same decision that made the same-endpoint budget per-turn: this decorator is built once per orchestrator turn, so a single flag makes the promise true, and the comments say per-call or per-turn where they mean it.
  *
  * @module hot-fallback-chain-provider
  */
@@ -66,10 +67,19 @@ export class HotFallbackRungsExhaustedError extends Error {
  * @description The chain decorator. `sendRequest` goes to the primary until the primary surfaces
  * a retryable wall; then each rung is tried once, in order; the first to answer is the provider
  * for every later call in the turn, and {@link brainFallback} reports the switch.
+ *
+ * ONE INSTANCE IS ONE TURN, and ONE WALK. `createGovernedByoHostedProvider` builds this decorator
+ * inside `TaskOrchestrator.resolveProvider`, which runs once per `processMessage` — so its lifetime
+ * is exactly the orchestrator turn, and the walked flag is what makes "each rung is tried at most
+ * once" a promise about the TURN rather than about one model call. An agentic turn makes up to 25
+ * model calls; without the flag a primary that recovered and then walled again would start a second
+ * walk and spend a second billed call on a rung that had already been tried.
  */
 export class HotFallbackChainProvider extends LLMService {
   private active: LLMService;
   private taken: BrainFallbackMarker | null = null;
+  /** True once the chain has been walked in this turn; the walk never happens twice. */
+  private walked = false;
 
   constructor(
     private readonly primary: LLMService,
@@ -94,11 +104,15 @@ export class HotFallbackChainProvider extends LLMService {
       primaryFailure = err instanceof Error ? err : new Error(String(err));
     }
     const classified = classifySameEndpointRetry(primaryFailure);
-    if (!classified.retry || this.rungs.length === 0) throw primaryFailure;
+    // A non-retryable failure (a 400 or a 401 on the chosen endpoint is an authorization or request
+    // verdict, not a capacity wall) never reaches a rung: spending a billed call elsewhere would not
+    // answer it. Nor does a second wall after the chain has already been walked this turn.
+    if (!classified.retry || this.walked || this.rungs.length === 0) throw primaryFailure;
+    this.walked = true;
     return this.walkRungs(options, primaryFailure, classified.reason);
   }
 
-  /** Try each rung once, in order; the first that answers becomes the active provider. */
+  /** Try each rung once, in order; the first that answers becomes the active provider. Once a turn. */
   private async walkRungs(options: SendRequestOptions, primaryFailure: Error, reason: string): Promise<LLMResponse> {
     const attempts = sameEndpointAttemptsOf(primaryFailure);
     const failedEndpoint = { host: endpointHost(this.identity.baseUrl), model: this.identity.model ?? null };

@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards for the bounded SAME-endpoint BYO retry (operator decision 2026-09-22): the invariant that an explicit BYO turn never rotates onto another provider, that a retryable wall IS replayed against the same endpoint across a REAL http boundary with the real TaskOrchestrator, that the excluded classes are not replayed, and that neither the attempt bound nor the wall-clock ceiling can be exceeded.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Reworked after review refuted the first build. The retry now wraps the PROVIDER call inside the orchestrator turn, so the cases count what the turn persists: ONE saved user message and ONE error broadcast whatever the attempt count. Explicit-only keying: a threaded connection with no resolution source, or a free-tier / operator-key one, gets exactly one attempt. The cockpit path is crossed for real (POST /api/send-message through createMessageRoutes with the REAL orchestrator and a loopback endpoint; a decoy provider is the rotation lane and is never called). HTTP 503 "high demand" is in the vocabulary; a bare 500, 400, 401 and 404 are not. OSHAL_BYO_RETRY_MAX_ATTEMPTS=0 is OFF, an oversized override clamps and logs once.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added the bodyless 503 the operator's endpoint answered on 2026-09-22 ("503 status code (no body)"). Every 503 case here carried a high-demand body, so the vocabulary could have been narrowed to that wording and still read green while the failure that prompted the work went unretried.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Pins the budget as a per-TURN bound. Nothing here drove more than one sendRequest through a decorated provider, so the fact that budgetMs bounded ONE MODEL CALL — 25 agentic model calls could each spend it, measured at 75 attempts and 75000ms of backoff on one turn — was invisible while .env.example and ADR-137 Amendment B both described it as the turn's ceiling. Two cases on the real decorator with an injected clock: 25 model calls against a walling endpoint now make 35 attempts and exactly 15000ms of backoff, and a turn whose attempts are merely SLOW still gets its full retry because only replay time is charged.
  */
 
 import * as http from 'node:http';
@@ -52,6 +53,7 @@ import {
 import {
   DEFAULT_SAME_ENDPOINT_RETRY_PLAN,
   SAME_ENDPOINT_RETRY_CEILING,
+  SameEndpointRetryProvider,
   classifySameEndpointRetry,
   resetSameEndpointRetryPlanWarningsForTesting,
   runWithSameEndpointRetry,
@@ -578,6 +580,71 @@ describe('the bounds cannot be exceeded, 0 is off, and an override outside the c
     expect(sameEndpointBackoffMs(4, plan, () => 0.5)).toBe(4_000); // capped, not 8_000
     expect(sameEndpointBackoffMs(1, plan, () => 0)).toBe(750);
     expect(sameEndpointBackoffMs(1, plan, () => 1)).toBe(1_250);
+  });
+
+  it('the budget bounds the TURN, not one model call: 25 agentic model calls on ONE decorated provider make 35 attempts and 15000ms of backoff (measured at 75 attempts / 75000ms when it was per-call)', async () => {
+    // TaskOrchestrator.resolveProvider builds ONE SameEndpointRetryProvider per processMessage, and
+    // an agentic loop drives up to maxTurns (25, agentic-loop.ts) sendRequest calls through it. With
+    // the budget taken per sendRequest, each of those 25 model calls got its own 15000ms: measured
+    // 75 attempts and 75000ms of pure backoff against a budget that reads 15000, and the cockpit
+    // POST /api/send-message path has no DECISION_TIMEOUT_MS to catch it. The turn budget the
+    // decorator now holds spends once: the first five model calls replay fully (3 attempts, 3000ms
+    // of backoff each = 15000ms) and every later one gets a single attempt with no wait.
+    let clock = 0;
+    let attempts = 0;
+    class WalledEndpoint extends LLMService {
+      constructor() { super('walled-endpoint', {}); }
+
+      async sendRequest(_options: SendRequestOptions): Promise<LLMResponse> {
+        attempts += 1;
+        throw new Error(`byo-hosted endpoint walled.test returned HTTP 503: ${HIGH_DEMAND}`);
+      }
+    }
+    const provider = new SameEndpointRetryProvider(new WalledEndpoint(), { agentId: 'agent-1', baseUrl: 'https://walled.test/v1', model: 'user-model' }, {
+      plan: { maxAttempts: 3, baseDelayMs: 1_000, maxDelayMs: 4_000, budgetMs: 15_000 },
+      now: () => clock, sleep: async (ms: number) => { clock += ms; }, random: () => 0.5,
+    });
+    const options = { messages: [], systemPrompt: 'SYSTEM' } as unknown as SendRequestOptions;
+
+    for (let modelCall = 0; modelCall < 25; modelCall += 1) {
+      await expect(provider.sendRequest(options)).rejects.toThrow('503');
+    }
+
+    expect(attempts).toBe(35);
+    expect(clock).toBe(15_000);
+  });
+
+  it('a turn whose model calls are merely SLOW keeps its full retry — only replay time is charged to the turn budget', async () => {
+    // The turn budget must not be a clock on the turn: a long agentic turn (slow tool work, slow
+    // successful model calls) that walls late still deserves its replays. Only the sleeps and the
+    // attempts after the first are charged, so 60s of ordinary turn latency buys nothing back.
+    let clock = 0;
+    let attempts = 0;
+    const provider = new SameEndpointRetryProvider(
+      new (class extends LLMService {
+        constructor() { super('slow-endpoint', {}); }
+
+        async sendRequest(_options: SendRequestOptions): Promise<LLMResponse> {
+          attempts += 1;
+          clock += 20_000; // each attempt itself takes 20s of wall clock
+          throw new Error('429 too many requests');
+        }
+      })(),
+      { agentId: 'agent-1' },
+      {
+        plan: { maxAttempts: 3, baseDelayMs: 1_000, maxDelayMs: 4_000, budgetMs: 60_000 },
+        now: () => clock, sleep: async (ms: number) => { clock += ms; }, random: () => 0.5,
+      },
+    );
+    const options = { messages: [], systemPrompt: 'SYSTEM' } as unknown as SendRequestOptions;
+
+    await expect(provider.sendRequest(options)).rejects.toThrow('429');
+    // 63s of wall clock, of which 43s is replay (the 1s + 2s backoffs and attempts 2 and 3); the
+    // per-call budget saw 43s elapsed at its last scheduling decision and allowed all three.
+    expect(attempts).toBe(3);
+    // 43s of the 60s turn budget is spent, so the next model call of the same turn gets 2, not 3.
+    await expect(provider.sendRequest(options)).rejects.toThrow('429');
+    expect(attempts).toBe(5);
   });
 
   it('the default bound fits well inside the 75s decision race the conversational path already runs under', () => {

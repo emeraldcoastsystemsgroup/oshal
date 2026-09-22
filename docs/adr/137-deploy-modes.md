@@ -214,6 +214,17 @@ endpoint, it's already been set."*
    free-tier, platform or operator-key lane gets one attempt and rotates, as before. A 400, 401,
    403, 404, bare 500 or completed-but-empty answer is never retried.
 
+   **`OSHAL_BYO_RETRY_MAX_ATTEMPTS` bounds one model call; `OSHAL_BYO_RETRY_BUDGET_MS` bounds the
+   TURN.** An agentic turn makes up to `maxTurns` model calls (25), so a budget taken per model call
+   is not a bound on anything a user waits for: measured at 75 attempts and 75 s of pure backoff on
+   one turn against a budget reading 15 s, and the cockpit `POST /api/send-message` path has no
+   `DECISION_TIMEOUT_MS` to catch it the way Jarvis does. The decorator is built once per
+   `processMessage`, so it holds one `SameEndpointRetryTurnBudget` for the turn and each model
+   call's own budget nests inside it — the same 25 model calls then make 35 attempts and 15 s. Only
+   replay time is charged to it (the backoffs and the attempts after each call's first), never the
+   turn's ordinary latency, so a long agentic turn whose model calls are merely slow keeps its full
+   retry.
+
 2. **The operator's hot fallback (2026-09-22).** For the **operator's own** explicit turns, and only
    those, "never rotate a BYO turn" is superseded: once the retry is exhausted the turn falls
    **once** through the portal's **configured** fallback chain. The gates are exactly Amendment A's:
@@ -252,8 +263,12 @@ the same carve; nothing about that preflight is weakened. A controller-inline tu
 CLI, so for it only a hosted rung with an in-process lane (`openai-compat-lanes`) can serve, riding
 as the operator-key connection; the switch happens at the model call inside the same turn.
 
-**Never silent.** One pass through the chain; each ready rung once; no fallback-of-the-fallback; no
-fallback on a non-retryable failure. Every fallback turn carries the `brainFallback` marker
+**Never silent.** One pass through the chain per TURN — not per model call, which is the same
+decision as the budget above: the chain decorator is built once per `processMessage`, so a primary
+that walls, is walked over and walls again later in the same turn does not start a second walk. Each
+ready rung once; no fallback-of-the-fallback; no fallback on a non-retryable failure (a 400 or a 401
+on the chosen endpoint is an authorization or request verdict, and a rung cannot answer it — guarded
+on both transports). Every fallback turn carries the `brainFallback` marker
 (provider used, rung, chain source, the failed endpoint's host and model, the attempts, the reason —
 never a key), the cockpit chat panel and the Jarvis surface render it as "answered by X; Y was
 unavailable after N attempts", and the switch is logged at WARN. When the fallback applied and no
@@ -263,7 +278,8 @@ and each rung's readiness, with the PUT that changes the order.
 
 Guards: `tests/unit/byo-same-endpoint-retry.spec.ts` (the replay wraps the provider call across a
 loopback endpoint and the real cockpit router; explicit-only; 503; 0 = off; one saved message, one
-broadcast) and `tests/unit/byo-hot-fallback.spec.ts` (operator-only, readiness-gated, configured
+broadcast; 25 model calls on one decorated provider make 35 attempts and 15 s, and a slow turn keeps
+its retry) and `tests/unit/byo-hot-fallback.spec.ts` (operator-only, readiness-gated, configured
 chain honoured and re-ordered by the real PUT with no restart, the marker, the WARN line, the
-not-ready error, the node re-dispatch), both registered on the AI Test Lab `byo-hot-fallback`
-scenario.
+not-ready error, the node re-dispatch, a 401 and a 400 never reaching a READY rung on either
+transport, and one walk per turn), both registered on the AI Test Lab `byo-hot-fallback` scenario.

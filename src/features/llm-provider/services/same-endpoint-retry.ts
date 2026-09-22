@@ -34,12 +34,30 @@
  *   - A bare `500`, a `400`, a `401`, a `404`, or a timeout after the request was sent — none of
  *     these is a capacity signal, so none is in the vocabulary at all.
  *
+ * WHAT THE BUDGET BOUNDS, and why it had to become per-TURN. Moving the retry from the orchestrator
+ * turn down to the model call (seq 2) bought one saved user message and one broadcast — and quietly
+ * turned `budgetMs` into a bound on ONE model call, because `runWithSameEndpointRetry` takes its own
+ * `startedAt` and the decorator invokes it per `sendRequest`. An agentic turn makes up to
+ * `maxTurns` model calls (25, agentic-loop.ts), so an endpoint that walls intermittently could be
+ * replayed 3 times on each of them: measured at 75 attempts and 75_000 ms of pure backoff against a
+ * budget that reads 15_000, while `.env.example` and ADR-137 Amendment B both describe it as the
+ * turn's ceiling. Jarvis is separately capped by `DECISION_TIMEOUT_MS`; the cockpit
+ * `POST /api/send-message` path is not, so nothing else would have caught it. The fix is the bound
+ * the documents already promised: {@link SameEndpointRetryTurnBudget} is created once per decorator
+ * — and the decorator is created once per orchestrator turn (`TaskOrchestrator.resolveProvider`) —
+ * and the per-call budget nests inside it. It accounts REPLAY time only (the sleeps plus the
+ * attempts after the first), never the turn's ordinary latency, so a long agentic turn whose model
+ * calls are merely slow still gets its full retry; what it cannot do is spend the budget again on
+ * every model call. Same arithmetic, same env var, now honestly per turn: 35 attempts and 15_000 ms
+ * across those same 25 model calls.
+ *
  * CHANGE LOG
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial (as src/app/routes/same-endpoint-retry.ts) — classifier (a subtraction from the shared retryable vocabulary), the attempt/backoff/ceiling plan, and the bounded executor both chat entry points wrapped their turn in.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Moved into the llm-provider feature and turned into a PROVIDER decorator (SameEndpointRetryProvider) so the replay wraps the model call, not the orchestrator turn: one saved user message, one error broadcast, tools never re-run. Now owns RETRYABLE_PROVIDER_FAILURE (free-tier-rotation re-exports it) and adds HTTP 503 with a high-demand/overloaded/service-unavailable body — the exact refusal the operator's Gemini endpoint gave twice on 2026-09-21 — while a bare 500 stays outside the vocabulary. OSHAL_BYO_RETRY_MAX_ATTEMPTS=0 now means OFF (one attempt) instead of silently yielding the default, every override is clamped to a sane ceiling, and a clamp or an ignored value is logged once per process. The final surfaced failure is annotated with the attempt count (property + message suffix) so the hot fallback can say how many replays the endpoint refused.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | OSHAL_BYO_RETRY_BUDGET_MS now bounds the TURN, which is what .env.example and ADR-137 Amendment B already said it did. Seq 2's per-sendRequest startedAt made it a per-MODEL-CALL bound, so an agentic turn against an intermittently walling endpoint could spend it 25 times over — measured at 75 attempts and 75_000 ms of backoff on one turn, with no cap on the cockpit POST /api/send-message path. SameEndpointRetryTurnBudget is created once per decorator (one per orchestrator turn), accounts replay time only so ordinary turn latency never eats it, and the per-call budget nests inside it; the same 25 model calls now make 35 attempts and 15_000 ms. The attempt loop is split into runOneAttempt/surfaceFailure/refuseNextAttempt so it stays inside the function-length limit.
  *
  * @module same-endpoint-retry
  */
@@ -163,8 +181,11 @@ export interface SameEndpointRetryPlan {
  * rejection, so it comes back in well under a second. Two retries at 1 s and 2 s (±25% jitter, capped
  * at 4 s) therefore add at most ~7 s of the 75 s before the attempt that succeeds begins — leaving
  * far more than the documented typical turn. `budgetMs` is the backstop for the case the arithmetic
- * does not cover: attempts that are themselves slow. All four are env-overridable because the
- * numbers are a deployment's latency tolerance, not a fact about the code.
+ * does not cover: attempts that are themselves slow, and an agentic turn that walls on model call
+ * after model call — it is the TURN's replay ceiling ({@link SameEndpointRetryTurnBudget}), inside
+ * which each model call's own `budgetMs` applies, so 25 agentic model calls cannot multiply it. All
+ * four are env-overridable because the numbers are a deployment's latency tolerance, not a fact
+ * about the code.
  */
 export const DEFAULT_SAME_ENDPOINT_RETRY_PLAN: Readonly<SameEndpointRetryPlan> = Object.freeze({
   maxAttempts: 3,
@@ -270,6 +291,46 @@ export interface SameEndpointRetryContext {
   model?: string;
 }
 
+/**
+ * @description The TURN's shared replay ceiling, which each model call's own `budgetMs` nests
+ * inside. It counts ONLY what the retry machinery added — the backoff sleeps plus the attempts
+ * after the first — so a turn whose model calls are simply slow keeps its full retry, while a turn
+ * that walls on call after call cannot spend the budget once per call. One instance per
+ * {@link SameEndpointRetryProvider}, and one provider per orchestrator turn, is what makes "per
+ * turn" true; there is no clock here, because the executor owns the clock seam.
+ */
+export class SameEndpointRetryTurnBudget {
+  private spent = 0;
+
+  constructor(
+    /** The turn's total replay ceiling in ms — `budgetMs` from the effective plan. */
+    readonly budgetMs: number,
+  ) {}
+
+  /** Replay time this turn has already spent, across every model call in it. */
+  get spentMs(): number {
+    return this.spent;
+  }
+
+  /**
+   * @description Replay time this turn may still spend, never negative.
+   * @returns The remaining ms.
+   */
+  remainingMs(): number {
+    return Math.max(0, this.budgetMs - this.spent);
+  }
+
+  /**
+   * @description Records replay time one model call consumed. Called once per model call, on every
+   * exit path, so a call that threw still charges the turn for the replays it made.
+   * @param ms - Replay time to charge; non-positive values are ignored.
+   * @returns void
+   */
+  spend(ms: number): void {
+    if (ms > 0) this.spent += ms;
+  }
+}
+
 /** Injectable seams. Production passes at most `failureOf`; the clock/sleep/random are guard-only. */
 export interface SameEndpointRetryHooks<T> {
   /**
@@ -280,6 +341,12 @@ export interface SameEndpointRetryHooks<T> {
   failureOf?: (result: T) => Error | undefined;
   /** Overrides on top of {@link sameEndpointRetryPlan}. */
   plan?: Partial<SameEndpointRetryPlan>;
+  /**
+   * The TURN's replay ceiling this call nests inside. {@link SameEndpointRetryProvider} creates one
+   * per decorated provider, and the orchestrator creates one provider per turn. A direct caller that
+   * omits it gets the per-call budget alone, which is all a single unrepeated call needs.
+   */
+  turnBudget?: SameEndpointRetryTurnBudget;
   /** Clock source (guards only). */
   now?: () => number;
   /** Sleep (guards only). */
@@ -320,16 +387,89 @@ function annotateAttempts(failure: Error, attempts: number): void {
   }
 }
 
+/** One attempt's outcome, normalized so a thrown and a swallowed failure read the same way. */
+interface SameEndpointAttempt<T> {
+  /** The resolved value, when the attempt did not throw. */
+  result?: T;
+  /** The failure, thrown or lifted off the result; absent means the attempt succeeded. */
+  failure?: Error;
+  /** The exact value thrown, preserved by identity for the rethrow. */
+  thrown?: unknown;
+  didThrow: boolean;
+}
+
+/**
+ * @description Runs one attempt and folds "threw" and "resolved with a failed result" into one
+ * shape, so the loop reads a single outcome and the rethrow can preserve the original identity.
+ * @param run - Executes one attempt; receives the 1-based attempt number.
+ * @param attempt - The 1-based attempt number.
+ * @param failureOf - Lifts a swallowed failure off a resolved result, when the caller has one.
+ * @returns The attempt's normalized outcome.
+ */
+async function runOneAttempt<T>(
+  run: (attempt: number) => Promise<T>,
+  attempt: number,
+  failureOf?: (result: T) => Error | undefined,
+): Promise<SameEndpointAttempt<T>> {
+  try {
+    const result = await run(attempt);
+    return { result, failure: failureOf ? failureOf(result) : undefined, didThrow: false };
+  } catch (err) {
+    return { thrown: err, failure: err instanceof Error ? err : new Error(String(err)), didThrow: true };
+  }
+}
+
+/**
+ * @description Surfaces a failed attempt with its ORIGINAL semantics: a run that threw rethrows the
+ * same error object (annotated with the attempt count once it was retried), a run that resolved a
+ * failed result returns that result. Every caller's existing handling sees what it saw before.
+ * @param outcome - The attempt being surfaced.
+ * @param attempts - How many attempts were made, including the first.
+ * @returns The failed result, when the run did not throw.
+ * @throws The original thrown value, when it did.
+ */
+function surfaceFailure<T>(outcome: SameEndpointAttempt<T>, attempts: number): T {
+  if (!outcome.didThrow) return outcome.result as T;
+  if (outcome.thrown instanceof Error) annotateAttempts(outcome.thrown, attempts);
+  throw outcome.thrown;
+}
+
+/**
+ * @description Which wall-clock bound, if either, refuses one more attempt — the per-MODEL-CALL
+ * budget measured from this call's first attempt, or the TURN's replay ceiling the call nests
+ * inside. Both are checked before scheduling, which is what they can honestly promise: neither can
+ * cut short an attempt already in flight (that is the provider's request timeout and the route's
+ * decision race), but together they guarantee the retry machinery never schedules one more try past
+ * the budget, on this call or on any later model call of the same turn.
+ * @param input - The effective plan, the optional turn budget, and this call's elapsed/replay/delay.
+ * @returns The sentence naming the bound that refused, or null when a retry may be scheduled.
+ */
+function refuseNextAttempt(input: {
+  plan: SameEndpointRetryPlan;
+  turn?: SameEndpointRetryTurnBudget;
+  elapsedMs: number;
+  replaySpentMs: number;
+  delayMs: number;
+}): string | null {
+  if (input.elapsedMs + input.delayMs > input.plan.budgetMs) {
+    return `retry budget of ${input.plan.budgetMs}ms would be exceeded`;
+  }
+  const turn = input.turn;
+  if (turn && input.replaySpentMs + input.delayMs > turn.remainingMs()) {
+    const spent = Math.round(turn.spentMs + input.replaySpentMs);
+    return `the turn's retry budget of ${turn.budgetMs}ms would be exceeded (${spent}ms already replayed this turn)`;
+  }
+  return null;
+}
+
 /**
  * @description Runs a call against ONE endpoint, replaying it on the same endpoint for a bounded
  * number of attempts when the failure is a retryable provider wall.
  *
- * Three independent bounds, each of which ends the loop: the attempt count, the per-failure
- * classification, and a wall-clock budget measured from the first attempt's start. The budget is
- * checked BEFORE scheduling each retry (`elapsed + delay > budget` stops), which is what it can
- * honestly promise: this wrapper cannot cut short an attempt already in flight — that is the job of
- * the provider's own request timeout and the route's decision race — but it guarantees the retry
- * machinery never pushes a turn past the budget by scheduling one more try.
+ * Four independent bounds, each of which ends the loop: the attempt count, the per-failure
+ * classification, the per-model-call wall-clock budget measured from this call's first attempt, and
+ * — when the caller passes one — the TURN's replay ceiling shared by every model call of the turn.
+ * See {@link refuseNextAttempt} for what the two clocks can and cannot promise.
  *
  * Failure semantics are preserved: a run that threw rethrows its ORIGINAL error object (annotated
  * with the attempt count when it was retried), and a run that resolved with a failed result
@@ -337,7 +477,7 @@ function annotateAttempts(failure: Error, attempts: number): void {
  *
  * @param context - Endpoint/agent identification for the log lines (never the api key).
  * @param run - Executes one attempt; receives the 1-based attempt number.
- * @param hooks - `failureOf` for swallowed failures, plan overrides, and guard-only seams.
+ * @param hooks - `failureOf` for swallowed failures, the turn budget, plan overrides, guard seams.
  * @returns The first successful result, or the final attempt's failed result.
  * @throws The final attempt's original error, when the run threw.
  */
@@ -351,59 +491,52 @@ export async function runWithSameEndpointRetry<T>(
   const sleep = hooks.sleep ?? ((ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); }));
   const random = hooks.random ?? Math.random;
   const startedAt = now();
+  // When the FIRST attempt ended. Everything after it — the sleeps and the replay attempts — is
+  // what the retry machinery added to this turn, and the only thing the turn budget is charged.
+  let replayFrom: number | null = null;
+  const replaySpent = (): number => (replayFrom === null ? 0 : now() - replayFrom);
   const where = { agentId: context.agentId, endpoint: endpointHost(context.baseUrl), model: context.model };
 
-  for (let attempt = 1; ; attempt += 1) {
-    let result: T | undefined;
-    let failure: Error | undefined;
-    let thrown: unknown;
-    let didThrow = false;
-    try {
-      result = await run(attempt);
-      failure = hooks.failureOf ? hooks.failureOf(result) : undefined;
-    } catch (err) {
-      didThrow = true;
-      thrown = err;
-      failure = err instanceof Error ? err : new Error(String(err));
-    }
+  try {
+    for (let attempt = 1; ; attempt += 1) {
+      const outcome = await runOneAttempt(run, attempt, hooks.failureOf);
+      if (attempt === 1) replayFrom = now();
+      if (!outcome.failure) {
+        if (attempt > 1) {
+          logger.info(
+            { ...where, attempts: attempt, elapsedMs: now() - startedAt },
+            'same-endpoint retry: the endpoint recovered — the call answered on a replay, not an error',
+          );
+        }
+        return outcome.result as T;
+      }
 
-    if (!failure) {
-      if (attempt > 1) {
+      const { retry, reason } = classifySameEndpointRetry(outcome.failure);
+      const surface = (why: string): T => {
         logger.info(
-          { ...where, attempts: attempt, elapsedMs: now() - startedAt },
-          'same-endpoint retry: the endpoint recovered — the call answered on a replay, not an error',
+          { ...where, attempts: attempt, maxAttempts: plan.maxAttempts, reason, elapsedMs: now() - startedAt },
+          `same-endpoint retry: ${why} — surfacing the provider failure`,
         );
-      }
-      return result as T;
-    }
+        return surfaceFailure(outcome, attempt);
+      };
+      if (!retry) return surface(`not retried (${reason})`);
+      if (attempt >= plan.maxAttempts) return surface(`attempt bound of ${plan.maxAttempts} reached`);
 
-    const { retry, reason } = classifySameEndpointRetry(failure);
-    const surface = (why: string): T => {
-      logger.info(
-        { ...where, attempts: attempt, maxAttempts: plan.maxAttempts, reason, elapsedMs: now() - startedAt },
-        `same-endpoint retry: ${why} — surfacing the provider failure`,
+      const delayMs = sameEndpointBackoffMs(attempt, plan, random);
+      const elapsedMs = now() - startedAt;
+      const refusal = refuseNextAttempt({ plan, turn: hooks.turnBudget, elapsedMs, replaySpentMs: replaySpent(), delayMs });
+      if (refusal) return surface(refusal);
+
+      logger.warn(
+        { ...where, attempt, nextAttempt: attempt + 1, maxAttempts: plan.maxAttempts, reason, delayMs, elapsedMs },
+        'same-endpoint retry: retryable provider wall — replaying on the SAME endpoint (never another provider)',
       );
-      if (didThrow) {
-        if (thrown instanceof Error) annotateAttempts(thrown, attempt);
-        throw thrown;
-      }
-      return result as T;
-    };
-
-    if (!retry) return surface(`not retried (${reason})`);
-    if (attempt >= plan.maxAttempts) return surface(`attempt bound of ${plan.maxAttempts} reached`);
-
-    const delayMs = sameEndpointBackoffMs(attempt, plan, random);
-    const elapsedMs = now() - startedAt;
-    if (elapsedMs + delayMs > plan.budgetMs) {
-      return surface(`retry budget of ${plan.budgetMs}ms would be exceeded`);
+      await sleep(delayMs);
     }
-
-    logger.warn(
-      { ...where, attempt, nextAttempt: attempt + 1, maxAttempts: plan.maxAttempts, reason, delayMs, elapsedMs },
-      'same-endpoint retry: retryable provider wall — replaying on the SAME endpoint (never another provider)',
-    );
-    await sleep(delayMs);
+  } finally {
+    // Charged on EVERY exit — success, surfaced failure or rethrow — so the next model call of this
+    // turn sees what this one already spent.
+    hooks.turnBudget?.spend(replaySpent());
   }
 }
 
@@ -412,18 +545,31 @@ export async function runWithSameEndpointRetry<T>(
  * SAME delegate — same URL, same key, same billing account — under the bounded plan. It wraps the
  * model call and nothing else: the orchestrator's message persistence, tool execution, cost
  * recording and error broadcast all sit outside it and run once per turn.
+ *
+ * ONE INSTANCE IS ONE TURN. `TaskOrchestrator.resolveProvider` builds the provider once per
+ * `processMessage`, so this object's lifetime is exactly the turn — which is why the turn's replay
+ * ceiling lives here and is shared by every `sendRequest` an agentic loop makes.
  */
 export class SameEndpointRetryProvider extends LLMService {
+  /** The TURN's replay ceiling, shared by every model call this decorator serves. */
+  private readonly turnBudget: SameEndpointRetryTurnBudget;
+
   constructor(
     private readonly delegate: LLMService,
     private readonly context: SameEndpointRetryContext,
     private readonly hooks: SameEndpointRetryHooks<LLMResponse> = {},
   ) {
     super(delegate.getProviderName(), {});
+    this.turnBudget = hooks.turnBudget
+      ?? new SameEndpointRetryTurnBudget({ ...sameEndpointRetryPlan(), ...hooks.plan }.budgetMs);
   }
 
   async sendRequest(options: SendRequestOptions): Promise<LLMResponse> {
-    return runWithSameEndpointRetry(this.context, () => this.delegate.sendRequest(options), this.hooks);
+    return runWithSameEndpointRetry(
+      this.context,
+      () => this.delegate.sendRequest(options),
+      { ...this.hooks, turnBudget: this.turnBudget },
+    );
   }
 
   override calculateCost(usage: TokenUsage): CostResult {

@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards for the operator's HOT FALLBACK (operator decision 2026-09-22). The boundary crossed is real on both transports: the NODE path drives the real BotNodeClient against a loopback fake bot node (POST /api/swarm-execute + GET /api/health) through executeBotOrInline; the INLINE path drives the REAL TaskOrchestrator and the REAL hosted provider against a loopback BYO endpoint, with the vendor rung's transport faked at the fetch seam. The chain is the REAL ProviderSwitchSnapshot over an in-memory store and is re-ordered by the REAL PUT route. Readiness reads REAL login files in a temp dir. Cases: operator + explicit + 503 → fallback taken with the marker, one dispatch per rung, WARN logged, never the key; not ready → the clear error naming every rung and NO fallback call; a non-operator → the endpoint failure, the chain never walked; a 401 → no fallback; a threaded operator-key lane → one attempt; the CONFIGURED chain beats the default and a PUT re-orders it with no restart; a not-ready rung is skipped with its reason; a failed rung is followed by the next once; an unreachable node makes every rung not-ready; the inline path answers INSIDE one turn (one saved user message, one cost row on the rung); the cockpit router carries the marker and answers 503 BYO_FALLBACK_NOT_READY when nothing was ready; the probe stores no token and marks an expired login not-ready.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Closed a readiness hole the mutation run found: on the INLINE path the only not-ready rung under test was a CLI login, which a second guard (no in-process lane) would have skipped anyway — so removing the planner's readiness check stayed green. A HOSTED rung whose key IS present but whose lane is COOLING after a mid-turn failure is the case where only the probe's verdict stands between the rung and a billed call; it is now asserted to be skipped with its reason and never called.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The Settings read had no guard at all: GET /api/settings/llm-default — the route this change extends rather than adding a second status endpoint — was covered by nothing in tests/, so the whole hotFallback block could be deleted and every spec stayed green. The real router now answers a real request: the configured chain and its source, each rung's readiness (a lapsed Claude login reads not-ready with its reason), the gate verdict, the PUT that re-orders it, and no key or token anywhere in the payload.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Two gaps an adversarial verifier found. (a) "No fallback on a non-retryable failure" was guarded only on the NODE transport: deleting `!classified.retry ||` from hot-fallback-chain-provider.sendRequest left every case green, so an operator's 401 or 400 on the chosen endpoint could have been made to spend a billed call on a rung. The inline case now proves the rung rode into the turn READY and was still never called, for a 401 and a 400. (b) The walk itself is bounded per TURN, not per model call: a primary that walls, is walked over and walls again on a later sendRequest of the same turn must not start a second walk, and a rung that answered stays the provider — both asserted directly against the decorator whose lifetime is the turn.
  */
 
 import * as fs from 'node:fs';
@@ -52,6 +53,7 @@ import { probeRungReadiness, resetFallbackReadinessForTesting, fallbackReadiness
 import { createProviderSwitchRoutes } from '../../src/app/extensions/swarm/routes/provider-switch-routes';
 import { setInstalledProviderSwitchSnapshot } from '../../src/app/composition/provider-switch-runtime';
 import { resetSameEndpointRetryPlanWarningsForTesting } from '../../src/features/llm-provider/services/same-endpoint-retry';
+import { HotFallbackChainProvider } from '../../src/features/llm-provider/services/hot-fallback-chain-provider';
 import { coolOperatorKeyLane, resetOperatorLaneCooldownsForTesting } from '../../src/app/routes/free-tier-rotation';
 import { OPENAI_COMPAT_LANES } from '../../src/app/routes/openai-compat-lanes';
 import { FLEET_DEFAULT_SWITCH_ID, type ProviderSwitchCatalog, type ProviderSwitchRow } from '../../src/shared/llm-runtime';
@@ -508,6 +510,35 @@ describe('the INLINE path — the REAL orchestrator, a loopback endpoint, and th
     expect(geminiCalls).toHaveLength(0);
   });
 
+  it('a 401 and a 400 on the chosen endpoint never reach a rung — the READY rung rides into the turn and is still not spent on (the inline twin of the node 401 case)', async () => {
+    // Requirement E on the INLINE transport. The rungs ARE planned and ARE handed to the chain
+    // provider (the planned line below proves gemini rode in ready), so the only thing standing
+    // between an operator's authorization/request failure and a billed vendor call is the
+    // non-retryable classification in hot-fallback-chain-provider.sendRequest. Deleting
+    // `!classified.retry ||` there answers both of these turns from gemini instead.
+    for (const status of [401, 400] as const) {
+      await installChain({ providerId: 'claude-code', fallbackOrder: ['gemini'] });
+      byoRequests.length = 0; geminiCalls.length = 0; logSpies.info.mockClear();
+      byoFallback = { status, payload: `refused with ${status}` };
+      const { orchestrator } = buildOrchestrator();
+
+      await expect(executeBotOrInline({ orchestrator } as unknown as AppContext, inlineOnly, 'inline-agent',
+        inlineRequest({ taskId: `t-inline-${status}`, workspaceFolderId: `t-inline-${status}` })))
+        .rejects.toSatisfy((err: unknown) => {
+          expect((err as Error).message).toContain(String(status));
+          expect(err).not.toBeInstanceOf(ByoFallbackUnavailableError);
+          return true;
+        });
+
+      const planned = logSpies.info.mock.calls.find((call) => String(call[1]).includes('planned for an explicit operator turn'))!;
+      expect((planned[0] as { ready: string[] }).ready).toEqual(['gemini']);
+      // One attempt on the chosen endpoint (not a capacity wall, so no replay either) and the rung
+      // — whose key is present and whose lane is warm — is never called.
+      expect(byoRequests).toHaveLength(1);
+      expect(geminiCalls).toHaveLength(0);
+    }
+  });
+
   it('a NON-operator on the inline path gets the endpoint failure after its retry — no rung is planned, the vendor is never called', async () => {
     await installChain({ providerId: 'claude-code', fallbackOrder: ['gemini'] });
     const { orchestrator } = buildOrchestrator();
@@ -631,5 +662,60 @@ describe('the readiness probe — stored status without a token, expiry honoured
     // The whole payload, not just the rungs: no key, no token, ever.
     expect(raw).not.toContain(GEMINI_KEY);
     expect(raw).not.toContain('fixture-access-token');
+  });
+});
+
+describe('the chain is walked ONCE PER TURN — the decorator\'s lifetime is the orchestrator turn', () => {
+  /** A provider whose scripted answers make it wall, recover, then wall again across model calls. */
+  class ScriptedProvider extends LLMService {
+    readonly calls: string[] = [];
+
+    constructor(name: string, private readonly script: Array<'wall' | 'ok'>) { super(name, {}); }
+
+    async sendRequest(_o: SendRequestOptions): Promise<LLMResponse> {
+      this.calls.push(this.getProviderName());
+      const next = this.script.shift() ?? 'wall';
+      if (next === 'wall') throw new Error(`byo-hosted endpoint scripted.test returned HTTP 503: ${HIGH_DEMAND}`);
+      return { content: [{ type: 'text', text: `answered-by-${this.getProviderName()}` }], usage: { inputTokens: 1, outputTokens: 1 }, model: `${this.getProviderName()}-model` };
+    }
+  }
+
+  it('a primary that walls, is walked over, then walls again on a later model call does NOT start a second walk — each rung is spent on once per TURN, not once per model call', async () => {
+    // TaskOrchestrator.resolveProvider builds this decorator once per processMessage, so one
+    // instance IS one turn and an agentic loop makes up to 25 sendRequest calls through it. Before
+    // the walked flag the guard below read 2 rung calls for one turn: the chain was re-walked on
+    // the second wall and a rung that had already failed was billed again.
+    const primary = new ScriptedProvider('primary', ['wall', 'wall']);
+    const rung = new ScriptedProvider('gemini', ['wall', 'ok']);
+    const chain = new HotFallbackChainProvider(primary, { agentId: AGENT, baseUrl: 'https://scripted.test/v1', model: 'user-model' }, [
+      { providerId: 'gemini', rung: 1, chainSource: 'fleet-default', provider: rung, model: 'gemini-model' },
+    ]);
+    const options = { messages: [], systemPrompt: 'SYSTEM' } as unknown as SendRequestOptions;
+
+    // Model call 1: the primary walls, the one rung is tried once and fails too.
+    await expect(chain.sendRequest(options)).rejects.toThrow(/tried once each and all failed/);
+    expect(rung.calls).toHaveLength(1);
+
+    // Model call 2 of the SAME turn: the primary walls again. The chain is already walked.
+    await expect(chain.sendRequest(options)).rejects.toThrow(/503/);
+    expect(rung.calls).toHaveLength(1);
+    expect(primary.calls).toHaveLength(2);
+    expect(chain.brainFallback).toBeNull();
+  });
+
+  it('a rung that ANSWERED stays the provider for the rest of the turn — the primary is never consulted again', async () => {
+    const primary = new ScriptedProvider('primary', ['wall']);
+    const rung = new ScriptedProvider('gemini', ['ok', 'ok', 'ok']);
+    const chain = new HotFallbackChainProvider(primary, { agentId: AGENT, baseUrl: 'https://scripted.test/v1', model: 'user-model' }, [
+      { providerId: 'gemini', rung: 1, chainSource: 'fleet-default', provider: rung, model: 'gemini-model' },
+    ]);
+    const options = { messages: [], systemPrompt: 'SYSTEM' } as unknown as SendRequestOptions;
+
+    for (let modelCall = 0; modelCall < 3; modelCall += 1) {
+      expect((await chain.sendRequest(options)).content[0]).toMatchObject({ text: 'answered-by-gemini' });
+    }
+    expect(primary.calls).toHaveLength(1);
+    expect(rung.calls).toHaveLength(3);
+    expect(chain.brainFallback).toMatchObject({ providerUsed: 'gemini', rung: 1, chainSource: 'fleet-default' });
   });
 });
