@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added request-origin-aware redirect regression coverage so callbacks return to the runtime that initiated auth
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added OpenAI Codex OAuth service regression coverage for the corrected callback redirect and valid scope set
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: construct active flows with encrypted storage and prove missing-key services reject before creating OAuth state.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Scope assertion follows the Codex CLI 0.153.4 scope list the authorize request now mirrors (adds api.connectors.read and api.connectors.invoke).
  */
 
 import { test, expect } from '@playwright/test';
@@ -24,7 +25,7 @@ test.describe('OpenAI Codex OAuth service', () => {
 
     expect(parsed.origin + parsed.pathname).toBe('https://auth.openai.com/oauth/authorize');
     expect(redirectUri).toBe('http://localhost:1455/auth/callback');
-    expect(scope).toBe('openid profile email offline_access');
+    expect(scope).toBe('openid profile email offline_access api.connectors.read api.connectors.invoke');
     expect(scope).not.toContain('api.responses.write');
   });
 

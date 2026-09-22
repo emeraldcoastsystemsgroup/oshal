@@ -15,6 +15,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com  | Made sign-out tenant-safe, prevented status reads/allowlist transitions from promoting private credentials, and disabled unordered Redis credential broadcasts until versioned tombstones exist
  * 11 | maintainer@emeraldcoastsystemsgroup.com  | SEC-05 closure: require encrypted secret storage before OAuth state, exchange, import, status, or sign-out work so Codex credentials can never fall back to plaintext persistence.
  * 12 | maintainer@emeraldcoastsystemsgroup.com  | SEC-05 closure: replace the non-rotating shared config-seed credential mirror with an explicit owner-only live Codex auth source; platform promotion now fails closed without that controller path.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com  | Matched the authorize request to what the Codex CLI (0.153.4) sends alongside the client_id the swarm borrows from it: originator codex_cli_rs instead of cline, the CLI's full scope list, and id_token_add_organizations; made the issuer injectable so the token exchange is tested across a real loopback HTTP seam; the exchange failure log now records status, response headers, transport cause and elapsed ms without the code, verifier or any token. No retry was added.
  */
 
 import crypto from 'crypto';
@@ -24,11 +25,20 @@ import { createChildLogger } from '@/shared/logger';
 
 const logger = createChildLogger({ module: 'openai-codex-oauth-service' });
 
-const OPENAI_CODEX_AUTHORIZATION_ENDPOINT = 'https://auth.openai.com/oauth/authorize';
-const OPENAI_CODEX_TOKEN_ENDPOINT = 'https://auth.openai.com/oauth/token';
+// The wire contract below is MEASURED from the Codex CLI this swarm borrows its client_id from
+// (@openai/codex 0.153.4: codex-rs/login/src/server.rs `build_authorize_url` and
+// `exchange_code_for_tokens`; codex-rs/login/src/auth/default_client.rs `DEFAULT_ORIGINATOR`).
+// A client_id that names one tool next to an originator that names another is a request the
+// CLI never sends. Keep these together when the CLI moves.
+const OPENAI_CODEX_DEFAULT_ISSUER = 'https://auth.openai.com';
+const OPENAI_CODEX_AUTHORIZE_PATH = '/oauth/authorize';
+const OPENAI_CODEX_TOKEN_PATH = '/oauth/token';
 const OPENAI_CODEX_DEFAULT_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 const OPENAI_CODEX_DEFAULT_REDIRECT_URI = 'http://localhost:1455/auth/callback';
-const OPENAI_CODEX_SCOPES = 'openid profile email offline_access';
+const OPENAI_CODEX_SCOPES = 'openid profile email offline_access api.connectors.read api.connectors.invoke';
+const OPENAI_CODEX_ORIGINATOR = 'codex_cli_rs';
+const OPENAI_CODEX_TOKEN_REQUEST_TIMEOUT_MS = 30000;
+const REDACTED_RESPONSE_HEADERS = new Set(['set-cookie', 'cookie', 'authorization', 'proxy-authorization']);
 const OPENAI_CODEX_CREDENTIALS_KEY = 'openAiCodexOauthCredentials';
 const AUTHORIZATION_TTL_MS = 10 * 60 * 1000;
 const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
@@ -80,6 +90,81 @@ interface SecretsManagerLike {
 }
 
 /**
+ * @description Construction-time overrides for the OAuth service. The issuer is the authorization
+ * server origin every authorize and token request is built against; tests point it at a loopback
+ * endpoint so the token exchange is exercised across a real HTTP seam rather than a mocked fetch.
+ */
+export interface OpenAiCodexOAuthServiceOptions {
+  /** Authorization-server origin. Defaults to the production OpenAI issuer. */
+  issuer?: string;
+}
+
+interface TokenExchangeFailureRecord {
+  tokenEndpoint: string;
+  status?: number;
+  headers?: Record<string, string>;
+  contentType?: string | null;
+  bodyLength?: number;
+  errorCode?: string;
+  errorDescription?: string;
+}
+
+/**
+ * @description Flattens response headers into the failure record, redacting the few that can carry
+ * session material. Header names are always kept: a `cf-mitigated` or `server` header is what
+ * tells an operator a Cloudflare refusal from an OpenAI one.
+ * @param headers - Response headers from the token endpoint
+ * @returns Lower-cased header map with sensitive values replaced
+ */
+function summarizeResponseHeaders(headers: Headers): Record<string, string> {
+  const summary: Record<string, string> = {};
+  headers.forEach((value, name) => {
+    summary[name] = REDACTED_RESPONSE_HEADERS.has(name.toLowerCase()) ? '[redacted]' : value;
+  });
+  return summary;
+}
+
+/**
+ * @description Reads the OAuth error fields from a non-success token response the way the CLI's
+ * `parse_token_endpoint_error` does, bounded so an edge HTML page cannot flood the log. A failed
+ * exchange issues no token, so nothing here can carry one; the body itself is never logged.
+ * @param rawBody - Response body text of the non-success response
+ * @param contentType - Content-Type header the response carried, if any
+ * @returns Bounded error code/description plus the body's type and length
+ */
+function describeTokenEndpointError(rawBody: string, contentType: string | null): Partial<TokenExchangeFailureRecord> {
+  const detail: Partial<TokenExchangeFailureRecord> = { contentType, bodyLength: rawBody.length };
+  try {
+    const parsed = JSON.parse(rawBody) as Record<string, unknown>;
+    if (typeof parsed.error === 'string') detail.errorCode = parsed.error.slice(0, 120);
+    if (typeof parsed.error_description === 'string') detail.errorDescription = parsed.error_description.slice(0, 240);
+  } catch {
+    // A non-JSON error body (an edge HTML page) is described by its content type and length only.
+  }
+  return detail;
+}
+
+/**
+ * @description Surfaces the transport cause undici hides behind `TypeError: fetch failed` — the
+ * socket error name, code and message — and whether the request timed out, so "other side closed"
+ * arrives in the record with its code instead of as an opaque message.
+ * @param error - Whatever the exchange threw
+ * @returns Transport fields for the failure record; empty for a non-Error throw
+ */
+function describeTransportFailure(error: unknown): Record<string, unknown> {
+  if (!(error instanceof Error)) return {};
+  const cause = (error as Error & { cause?: unknown }).cause;
+  const causeRecord = cause && typeof cause === 'object' ? cause as Record<string, unknown> : undefined;
+  const readString = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
+  return {
+    timedOut: error.name === 'TimeoutError' || error.name === 'AbortError',
+    causeName: readString(causeRecord?.name),
+    causeCode: readString(causeRecord?.code),
+    causeMessage: readString(causeRecord?.message),
+  };
+}
+
+/**
  * @description Service that implements OpenAI Codex OAuth with PKCE for the OSHAL settings UI.
  * Handles authorization URL generation, callback token exchange, token refresh, and credential storage.
  */
@@ -89,31 +174,52 @@ export class OpenAiCodexOAuthService {
   private encryptedStorageReady: boolean;
   private clientId: string;
   private redirectUri: string;
+  private issuer: string;
 
   /**
    * @description Constructs the OpenAI Codex OAuth service with environment-aware configuration.
    * @param configOutputDir - Directory where settings and encrypted secrets are persisted
    * @param encryptionKey - Controller-only encryption key required for every credential operation
+   * @param options - Construction-time overrides; only the authorization-server issuer today
    * @returns New OpenAiCodexOAuthService instance
    */
   constructor(
     configOutputDir: string = process.env.CONFIG_OUTPUT_DIR || './output',
     encryptionKey: string | null = process.env.ENCRYPTION_KEY || null,
+    options: OpenAiCodexOAuthServiceOptions = {},
   ) {
     this.pendingAuthorizations = new Map<string, PendingAuthorization>();
     this.secretsManager = this.createSecretsManager(configOutputDir, encryptionKey);
     this.encryptedStorageReady = typeof encryptionKey === 'string' && encryptionKey.trim().length > 0;
     this.clientId = process.env.OPENAI_CODEX_CLIENT_ID || OPENAI_CODEX_DEFAULT_CLIENT_ID;
     this.redirectUri = this.resolveRedirectUri();
+    this.issuer = this.resolveIssuer(options.issuer);
 
     logger.info(
       {
         configOutputDir,
         hasEncryptionKey: !!encryptionKey,
         redirectUri: this.redirectUri,
+        issuer: this.issuer,
       },
       'OpenAI Codex OAuth service initialized',
     );
+  }
+
+  /**
+   * @description Authorize endpoint derived from the issuer, the same way the CLI derives it.
+   * @returns Absolute authorize URL without query
+   */
+  private get authorizationEndpoint(): string {
+    return `${this.issuer}${OPENAI_CODEX_AUTHORIZE_PATH}`;
+  }
+
+  /**
+   * @description Token endpoint derived from the issuer, used by both the exchange and the refresh.
+   * @returns Absolute token URL
+   */
+  private get tokenEndpoint(): string {
+    return `${this.issuer}${OPENAI_CODEX_TOKEN_PATH}`;
   }
 
   /**
@@ -488,6 +594,17 @@ export class OpenAiCodexOAuthService {
   }
 
   /**
+   * @description Normalizes the authorization-server origin: trimmed, no trailing slash, and the
+   * production OpenAI issuer when nothing was supplied.
+   * @param issuer - Optional issuer override from construction
+   * @returns Issuer origin without a trailing slash
+   */
+  private resolveIssuer(issuer?: string): string {
+    const trimmed = (issuer || '').trim().replace(/\/+$/, '');
+    return trimmed || OPENAI_CODEX_DEFAULT_ISSUER;
+  }
+
+  /**
    * @description Removes expired pending OAuth states to limit memory growth and replay window.
    * @returns Void after pruning stale pending authorization entries
    */
@@ -527,31 +644,43 @@ export class OpenAiCodexOAuthService {
   }
 
   /**
-   * @description Builds the full OpenAI authorization URL with PKCE and Codex-specific parameters.
+   * @description Builds the OpenAI authorization URL exactly as the Codex CLI builds its own
+   * (codex-rs/login/src/server.rs `build_authorize_url`): the CLI's scope list,
+   * `id_token_add_organizations`, `codex_cli_simplified_flow`, and the CLI's originator next to
+   * the CLI's client_id. The parameter order mirrors the CLI's for a readable diff against it.
    * @param codeChallenge - PKCE code challenge
    * @param state - CSRF protection state value
+   * @param redirectUri - Registered callback the provider redirects to
    * @returns OpenAI authorization URL for browser redirect
    */
   private buildAuthorizationUrl(codeChallenge: string, state: string, redirectUri: string): string {
     const params = new URLSearchParams({
+      response_type: 'code',
       client_id: this.clientId,
       redirect_uri: redirectUri,
       scope: OPENAI_CODEX_SCOPES,
       code_challenge: codeChallenge,
       code_challenge_method: 'S256',
-      response_type: 'code',
-      state,
+      id_token_add_organizations: 'true',
       codex_cli_simplified_flow: 'true',
-      originator: 'cline',
+      state,
+      originator: OPENAI_CODEX_ORIGINATOR,
     });
 
-    return `${OPENAI_CODEX_AUTHORIZATION_ENDPOINT}?${params.toString()}`;
+    return `${this.authorizationEndpoint}?${params.toString()}`;
   }
 
   /**
-   * @description Exchanges an OAuth authorization code for OpenAI access and refresh tokens.
+   * @description Exchanges an OAuth authorization code for OpenAI access and refresh tokens with
+   * the request the Codex CLI sends (codex-rs/login/src/server.rs `exchange_code_for_tokens`):
+   * one form-encoded POST carrying grant_type, code, redirect_uri, client_id and code_verifier,
+   * through a raw client with no Codex originator or user-agent header, and no retry. A failure
+   * is logged once with the status, response headers, transport cause and elapsed time that were
+   * observed — never the request body, the code, the verifier or a token — so a single operator
+   * attempt yields a diagnosable record. The original error is rethrown unchanged.
    * @param code - OAuth authorization code from callback
    * @param codeVerifier - PKCE code verifier tied to the original auth request
+   * @param redirectUri - Redirect URI the authorize request carried
    * @returns Parsed OpenAI token response payload
    */
   private async exchangeAuthorizationCode(
@@ -561,26 +690,36 @@ export class OpenAiCodexOAuthService {
   ): Promise<OAuthTokenResponse> {
     const body = new URLSearchParams({
       grant_type: 'authorization_code',
-      client_id: this.clientId,
       code,
       redirect_uri: redirectUri,
+      client_id: this.clientId,
       code_verifier: codeVerifier,
     });
+    const startedAt = Date.now();
+    const record: TokenExchangeFailureRecord = { tokenEndpoint: this.tokenEndpoint };
 
-    const response = await fetch(OPENAI_CODEX_TOKEN_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body.toString(),
-      signal: AbortSignal.timeout(30000),
-    });
-
-    const payload = await response.json();
-    if (!response.ok) {
-      logger.error({ status: response.status }, 'OpenAI Codex token exchange failed');
-      throw new Error('OpenAI Codex token exchange failed');
+    try {
+      const response = await fetch(this.tokenEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+        signal: AbortSignal.timeout(OPENAI_CODEX_TOKEN_REQUEST_TIMEOUT_MS),
+      });
+      record.status = response.status;
+      record.headers = summarizeResponseHeaders(response.headers);
+      const rawBody = await response.text();
+      if (!response.ok) {
+        Object.assign(record, describeTokenEndpointError(rawBody, response.headers.get('content-type')));
+        throw new Error('OpenAI Codex token exchange failed');
+      }
+      return this.parseTokenResponse(JSON.parse(rawBody) as unknown, true);
+    } catch (error) {
+      logger.error(
+        { err: error, ...record, ...describeTransportFailure(error), elapsedMs: Date.now() - startedAt },
+        'OpenAI Codex token exchange failed',
+      );
+      throw error;
     }
-
-    return this.parseTokenResponse(payload, true);
   }
 
   /**
@@ -596,11 +735,11 @@ export class OpenAiCodexOAuthService {
         refresh_token: credentials.refreshToken,
       });
 
-      const response = await fetch(OPENAI_CODEX_TOKEN_ENDPOINT, {
+      const response = await fetch(this.tokenEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: body.toString(),
-        signal: AbortSignal.timeout(30000),
+        signal: AbortSignal.timeout(OPENAI_CODEX_TOKEN_REQUEST_TIMEOUT_MS),
       });
 
       const payload = await response.json();
