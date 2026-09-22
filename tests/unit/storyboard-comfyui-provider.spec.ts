@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the free ComfyUI storyboard image provider. The boundary this feature lives on is the ComfyUI HTTP protocol, so the transport is REAL: every case runs against a local http.createServer on an ephemeral loopback port that speaks /system_stats, /prompt, /history, /view and /upload/image, and nothing here mocks fetch. Pins: (1) the submit -> poll -> fetch round trip returns the exact bytes the box served; (2) the pinned workflow's %PROMPT% slot actually receives the frame prompt, and a workflow carrying no slot is refused before anything is submitted; (3) the anchor frame is uploaded and injected into %ANCHOR%, and a workflow without that slot uploads nothing; (4) availability states WHICH of url / workflow / reachability is missing and never throws; (5) a job that never completes hits the bounded poll window and fails visibly instead of hanging; (6) a /prompt rejection, a box-side execution error and a non-PNG result each surface as a clear message; (7) selection still fails closed - comfyui unconfigured refuses even while a funded paid sibling is available and resolvable; (8) the AI Test Lab card is registered and its read-only step runs green against the same fake box.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The cases adversarial verification found missing. The fake box can now BLACK-HOLE a route (accept the TCP connection, never answer), and /prompt, /view and /upload/image are each black-holed with a 1500 ms window and must reject inside it naming the route - the first cut had no such case, which is how an unbounded /prompt (304753 ms measured) shipped. Also: two anchors uploaded back to back land under two distinct box-assigned names and no `overwrite` field is sent; a /history body of JSON null and a `messages` that is not an array are both survived; a corrupt workflow and a slotless workflow both read NOT ready on healthCheck() and the Test Lab card, not green; and a box that 500s on every poll is warned about once and named in the final timeout message.
  */
 
 import * as fs from 'fs';
@@ -30,6 +31,10 @@ const PNG_BYTES = Buffer.concat([
 const ANCHOR_BYTES = Buffer.concat([
   Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
   Buffer.from('the-scene-one-anchor-frame'),
+]);
+const OTHER_ANCHOR_BYTES = Buffer.concat([
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  Buffer.from('a-different-callers-anchor-frame'),
 ]);
 
 /** An API-format workflow with the prompt slot the provider requires. */
@@ -60,15 +65,23 @@ interface FakeBehaviour {
   completeAfterPolls: number;
   /** When set, the job reports status_str 'error' carrying this exception message. */
   historyError: string | null;
+  /** The shape of status.messages on an error entry; ComfyUI sends tuples, a broken box might not. */
+  historyErrorMessages: 'tuples' | 'not-an-array';
+  /** HTTP status every /history poll answers with (200 = normal). */
+  historyStatus: number;
+  /** How many leading /history polls answer the JSON literal null instead of an object. */
+  historyNullPolls: number;
   /** When true the finished job reports a node with an empty images array. */
   finishWithNoImage: boolean;
   viewBytes: Buffer;
+  /** Routes that accept the connection and never answer — the asleep-box shape per hop. */
+  blackhole: Set<string>;
 }
 
 /** What the fake box recorded, so a case can assert what the provider actually sent it. */
 interface FakeRecord {
   submissions: Array<{ prompt?: Record<string, { inputs?: Record<string, unknown> }>; client_id?: string }>;
-  uploadedBytes: Buffer[];
+  uploads: Array<{ body: Buffer; clientFilename: string; storedName: string }>;
   historyPolls: number;
   viewQueries: string[];
 }
@@ -79,10 +92,18 @@ const behaviour: FakeBehaviour = {
   promptBody: { prompt_id: 'sb-prompt-1' },
   completeAfterPolls: 1,
   historyError: null,
+  historyErrorMessages: 'tuples',
+  historyStatus: 200,
+  historyNullPolls: 0,
   finishWithNoImage: false,
   viewBytes: PNG_BYTES,
+  blackhole: new Set(),
 };
-const recorded: FakeRecord = { submissions: [], uploadedBytes: [], historyPolls: 0, viewQueries: [] };
+const recorded: FakeRecord = { submissions: [], uploads: [], historyPolls: 0, viewQueries: [] };
+/** Responses deliberately left hanging by a black-hole case; ended between cases to free the sockets. */
+const hung: http.ServerResponse[] = [];
+/** Names the fake box has already stored, so it can uniquify the way ComfyUI does without `overwrite`. */
+const storedNames = new Set<string>();
 
 /** Drain a request body to a Buffer — the provider posts real JSON and real multipart. */
 function readBody(req: http.IncomingMessage): Promise<Buffer> {
@@ -107,14 +128,45 @@ function finishedHistory(promptId: string): Record<string, unknown> {
   return { [promptId]: { status: { status_str: 'success', completed: true }, outputs: { '9': { images } } } };
 }
 
+/** The errored-job history shape, with the messages field in whichever shape the case asked for. */
+function erroredHistory(promptId: string): Record<string, unknown> {
+  // The non-array shape is an OBJECT on purpose: a string is iterable and would not reproduce the
+  // "object is not iterable" crash in the error-reporting path.
+  const messages = behaviour.historyErrorMessages === 'tuples'
+    ? [['execution_error', { exception_message: behaviour.historyError, node_type: 'CheckpointLoaderSimple' }]]
+    : { execution_error: { exception_message: behaviour.historyError } };
+  return { [promptId]: { status: { status_str: 'error', messages } } };
+}
+
+/**
+ * @description Store an uploaded image the way ComfyUI's /upload/image does: keep the client's
+ * filename unless one is already stored under it, in which case uniquify with " (n)".
+ * @param {Buffer} body the raw multipart body the provider posted
+ * @returns {{ clientFilename: string; storedName: string }} what was asked for and what was kept
+ */
+function storeUpload(body: Buffer): { clientFilename: string; storedName: string } {
+  const match = /filename="([^"]+)"/.exec(body.toString('latin1'));
+  const clientFilename = match ? match[1] : 'unnamed.png';
+  let storedName = clientFilename;
+  for (let n = 1; storedNames.has(storedName); n++) storedName = clientFilename.replace(/\.png$/, ` (${n}).png`);
+  storedNames.add(storedName);
+  return { clientFilename, storedName };
+}
+
 /**
  * @description Handle one request the way ComfyUI's own HTTP API would.
  * @param {http.IncomingMessage} req the inbound request
  * @param {http.ServerResponse} res the response to write
- * @returns {Promise<void>} resolves once the response is written
+ * @returns {Promise<void>} resolves once the response is written (or deliberately never, when black-holed)
  */
 async function handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const url = new URL(req.url || '/', 'http://fake.local');
+  const route = url.pathname.startsWith('/history/') ? '/history' : url.pathname;
+  if (behaviour.blackhole.has(route)) {
+    await readBody(req); // accept the whole request, then say nothing, ever
+    hung.push(res);
+    return;
+  }
   if (url.pathname === '/system_stats') {
     return sendJson(res, behaviour.systemStatsStatus, { system: { os: 'fake' }, devices: [] });
   }
@@ -123,17 +175,17 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     return sendJson(res, behaviour.promptStatus, behaviour.promptBody);
   }
   if (url.pathname === '/upload/image' && req.method === 'POST') {
-    recorded.uploadedBytes.push(await readBody(req));
-    return sendJson(res, 200, { name: 'oshal-anchor.png', subfolder: 'input-refs', type: 'input' });
+    const body = await readBody(req);
+    const stored = storeUpload(body);
+    recorded.uploads.push({ body, ...stored });
+    return sendJson(res, 200, { name: stored.storedName, subfolder: 'input-refs', type: 'input' });
   }
-  if (url.pathname.startsWith('/history/')) {
+  if (route === '/history') {
     recorded.historyPolls += 1;
+    if (behaviour.historyStatus !== 200) return sendJson(res, behaviour.historyStatus, { error: 'fake box unwell' });
+    if (recorded.historyPolls <= behaviour.historyNullPolls) return sendJson(res, 200, null);
     const promptId = url.pathname.slice('/history/'.length);
-    if (behaviour.historyError) {
-      return sendJson(res, 200, {
-        [promptId]: { status: { status_str: 'error', messages: [['execution_error', { exception_message: behaviour.historyError, node_type: 'CheckpointLoaderSimple' }]] } },
-      });
-    }
+    if (behaviour.historyError) return sendJson(res, 200, erroredHistory(promptId));
     return sendJson(res, 200, recorded.historyPolls >= behaviour.completeAfterPolls ? finishedHistory(promptId) : {});
   }
   if (url.pathname === '/view') {
@@ -150,6 +202,7 @@ let tempDir: string;
 let promptWorkflowPath: string;
 let anchorWorkflowPath: string;
 let plainWorkflowPath: string;
+let corruptWorkflowPath: string;
 
 const ENV_KEYS = [
   'COMFYUI_URL',
@@ -165,14 +218,19 @@ const ENV_KEYS = [
 ] as const;
 const savedEnv: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>> = {};
 
+/** The transient classifier in storyboard-frames.ts; a timeout must never match it. */
+const TRANSIENT = /RATE_LIMITED|EMPTY_RESPONSE|\b(429|500|502|503|504)\b/;
+
 beforeAll(async () => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-comfy-'));
   promptWorkflowPath = path.join(tempDir, 'storyboard.api.json');
   anchorWorkflowPath = path.join(tempDir, 'storyboard-anchored.api.json');
   plainWorkflowPath = path.join(tempDir, 'storyboard-no-slot.api.json');
+  corruptWorkflowPath = path.join(tempDir, 'storyboard-corrupt.api.json');
   fs.writeFileSync(promptWorkflowPath, JSON.stringify(WORKFLOW_WITH_PROMPT));
   fs.writeFileSync(anchorWorkflowPath, JSON.stringify(WORKFLOW_WITH_ANCHOR));
   fs.writeFileSync(plainWorkflowPath, JSON.stringify(WORKFLOW_WITHOUT_PROMPT));
+  fs.writeFileSync(corruptWorkflowPath, '{ "6": { "class_type": "CLIPTextEncode", "inputs": { "text": "%PROMPT%" }'); // truncated export
 
   server = http.createServer((req, res) => {
     handle(req, res).catch(() => { try { res.writeHead(500); res.end(); } catch { /* already gone */ } });
@@ -183,6 +241,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  server.closeAllConnections();
   await new Promise<void>((resolve) => server.close(() => resolve()));
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
@@ -191,7 +250,7 @@ beforeEach(() => {
   for (const key of ENV_KEYS) savedEnv[key] = process.env[key];
   process.env.COMFYUI_URL = boxUrl;
   process.env.COMFYUI_STORYBOARD_WORKFLOW = promptWorkflowPath;
-  process.env.COMFYUI_STORYBOARD_TIMEOUT_MS = '8000';
+  process.env.COMFYUI_STORYBOARD_TIMEOUT_MS = '4000';
   delete process.env.STORYBOARD_IMAGE_PROVIDER;
   delete process.env.DEMO_MODE;
   delete process.env.OPENROUTER_API_KEY;
@@ -206,23 +265,39 @@ beforeEach(() => {
   behaviour.promptBody = { prompt_id: 'sb-prompt-1' };
   behaviour.completeAfterPolls = 1;
   behaviour.historyError = null;
+  behaviour.historyErrorMessages = 'tuples';
+  behaviour.historyStatus = 200;
+  behaviour.historyNullPolls = 0;
   behaviour.finishWithNoImage = false;
   behaviour.viewBytes = PNG_BYTES;
+  behaviour.blackhole = new Set();
   recorded.submissions = [];
-  recorded.uploadedBytes = [];
+  recorded.uploads = [];
   recorded.historyPolls = 0;
   recorded.viewQueries = [];
+  storedNames.clear();
   logSpies.warn.mockClear();
   logSpies.error.mockClear();
 });
 
 afterEach(() => {
+  for (const res of hung.splice(0)) { try { res.destroy(); } catch { /* socket already closed */ } }
   for (const key of ENV_KEYS) {
     const value = savedEnv[key];
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   }
 });
+
+/** Time one generate() that is expected to reject, returning the message and the elapsed ms. */
+async function timedRejection(prompt: string, anchor: Buffer | null): Promise<{ message: string; elapsedMs: number }> {
+  const started = Date.now();
+  const message = await createComfyUiImageProvider().generate(prompt, anchor).then(
+    () => 'RESOLVED — expected a rejection',
+    (e: Error) => e.message,
+  );
+  return { message, elapsedMs: Date.now() - started };
+}
 
 describe('comfyui storyboard provider — availability states a reason and never throws', () => {
   it('is unavailable, and says so, when COMFYUI_URL is unset', async () => {
@@ -244,6 +319,25 @@ describe('comfyui storyboard provider — availability states a reason and never
     const missing = await createComfyUiImageProvider().healthCheck!();
     expect(missing.ok).toBe(false);
     expect(missing.detail).toContain('points at a file that does not exist');
+  });
+
+  it('is NOT ready when the workflow is corrupt JSON, and says which file and why', async () => {
+    process.env.COMFYUI_STORYBOARD_WORKFLOW = corruptWorkflowPath;
+    const provider = createComfyUiImageProvider();
+    await expect(provider.available()).resolves.toBe(false);
+    const health = await provider.healthCheck!();
+    expect(health.ok).toBe(false);
+    expect(health.detail).toContain('is not valid JSON');
+    expect(health.detail).toContain('storyboard-corrupt.api.json');
+  });
+
+  it('is NOT ready when the workflow parses but carries no %PROMPT% slot', async () => {
+    process.env.COMFYUI_STORYBOARD_WORKFLOW = plainWorkflowPath;
+    const provider = createComfyUiImageProvider();
+    await expect(provider.available()).resolves.toBe(false);
+    const health = await provider.healthCheck!();
+    expect(health.ok).toBe(false);
+    expect(health.detail).toContain('carries no %PROMPT% placeholder');
   });
 
   it('is unavailable, and says so, when /system_stats does not answer', async () => {
@@ -302,38 +396,107 @@ describe('comfyui storyboard provider — submit, poll, fetch', () => {
     expect(recorded.submissions).toHaveLength(0);
   });
 
-  it('uploads the anchor frame and injects the uploaded name into %ANCHOR%', async () => {
+  it('uploads the anchor frame and injects the name the box stored it under into %ANCHOR%', async () => {
     process.env.COMFYUI_STORYBOARD_WORKFLOW = anchorWorkflowPath;
     await createComfyUiImageProvider().generate('scene two, same cast', ANCHOR_BYTES);
 
-    expect(recorded.uploadedBytes).toHaveLength(1);
-    expect(recorded.uploadedBytes[0].includes(ANCHOR_BYTES)).toBe(true); // the real bytes, over real multipart
-    expect(recorded.submissions[0].prompt!['10'].inputs!.image).toBe('input-refs/oshal-anchor.png');
+    expect(recorded.uploads).toHaveLength(1);
+    expect(recorded.uploads[0].body.includes(ANCHOR_BYTES)).toBe(true); // the real bytes, over real multipart
+    expect(recorded.submissions[0].prompt!['10'].inputs!.image).toBe(`input-refs/${recorded.uploads[0].storedName}`);
+  });
+
+  it('gives two back-to-back anchors two distinct box-side names and never asks to overwrite', async () => {
+    // LoadImage reads its file when the node EXECUTES, so two runs sharing one input name would let
+    // the second caller's anchor render into the first caller's still-queued frame.
+    process.env.COMFYUI_STORYBOARD_WORKFLOW = anchorWorkflowPath;
+    await createComfyUiImageProvider().generate('caller A, scene two', ANCHOR_BYTES);
+    await createComfyUiImageProvider().generate('caller B, scene two', OTHER_ANCHOR_BYTES);
+
+    expect(recorded.uploads).toHaveLength(2);
+    const [a, b] = recorded.uploads;
+    expect(a.clientFilename).not.toBe(b.clientFilename);
+    expect(a.storedName).not.toBe(b.storedName);
+    for (const upload of recorded.uploads) expect(upload.body.toString('latin1')).not.toMatch(/name="overwrite"/);
+    expect(recorded.submissions[0].prompt!['10'].inputs!.image).toBe(`input-refs/${a.storedName}`);
+    expect(recorded.submissions[1].prompt!['10'].inputs!.image).toBe(`input-refs/${b.storedName}`);
   });
 
   it('uploads nothing, and says the reference was dropped, when the workflow has no %ANCHOR% slot', async () => {
     const image = await createComfyUiImageProvider().generate('scene two, same cast', ANCHOR_BYTES);
 
     expect(image.equals(PNG_BYTES)).toBe(true);
-    expect(recorded.uploadedBytes).toHaveLength(0);
+    expect(recorded.uploads).toHaveLength(0);
     expect(logSpies.warn).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('%ANCHOR%'));
+  });
+
+  it('keeps polling through a /history body that is JSON null instead of crashing', async () => {
+    behaviour.historyNullPolls = 1;
+    behaviour.completeAfterPolls = 2;
+    const image = await createComfyUiImageProvider().generate('a lighthouse at dusk', null);
+    expect(image.equals(PNG_BYTES)).toBe(true);
+    expect(recorded.historyPolls).toBeGreaterThanOrEqual(2);
   });
 });
 
-describe('comfyui storyboard provider — failure is bounded and visible', () => {
-  it('gives up on a job that never completes, inside the configured poll window', async () => {
+describe('comfyui storyboard provider — every hop is bounded by the one configured window', () => {
+  it('gives up on a job that never completes, inside the configured window, in words that are not transient', async () => {
     process.env.COMFYUI_STORYBOARD_TIMEOUT_MS = '600';
     behaviour.completeAfterPolls = Number.MAX_SAFE_INTEGER;
 
-    const started = Date.now();
-    await expect(createComfyUiImageProvider().generate('a lighthouse at dusk', null))
-      .rejects.toThrow(/did not finish inside the bounded poll window/);
-    expect(Date.now() - started).toBeLessThan(5_000);
-    // The wording must not look transient, or the caller's retry classifier burns the whole budget.
-    const message = await createComfyUiImageProvider().generate('a lighthouse at dusk', null).catch((e: Error) => e.message);
-    expect(/RATE_LIMITED|EMPTY_RESPONSE|\b(429|500|502|503|504)\b/.test(message as string)).toBe(false);
+    const { message, elapsedMs } = await timedRejection('a lighthouse at dusk', null);
+    expect(message).toMatch(/did not finish inside the bounded window/);
+    expect(message).toContain('never reported it finished');
+    expect(elapsedMs).toBeLessThan(5_000);
+    expect(TRANSIENT.test(message)).toBe(false);
   });
 
+  it('rejects inside the window, naming the route, when /prompt accepts the connection and never answers', async () => {
+    process.env.COMFYUI_STORYBOARD_TIMEOUT_MS = '1500';
+    behaviour.blackhole = new Set(['/prompt']);
+
+    const { message, elapsedMs } = await timedRejection('a lighthouse at dusk', null);
+    expect(message).toMatch(/comfyui storyboard provider: \/prompt did not answer inside the bounded window/);
+    expect(elapsedMs).toBeLessThan(5_000);
+    expect(TRANSIENT.test(message)).toBe(false);
+  });
+
+  it('rejects inside the window, naming the route, when /view accepts the connection and never answers', async () => {
+    process.env.COMFYUI_STORYBOARD_TIMEOUT_MS = '1500';
+    behaviour.blackhole = new Set(['/view']);
+
+    const { message, elapsedMs } = await timedRejection('a lighthouse at dusk', null);
+    expect(recorded.historyPolls).toBeGreaterThanOrEqual(1); // the job DID finish; it is the fetch that hung
+    expect(message).toMatch(/comfyui storyboard provider: \/view did not answer inside the bounded window/);
+    expect(elapsedMs).toBeLessThan(5_000);
+  });
+
+  it('rejects inside the window, naming the route, when /upload/image accepts the connection and never answers', async () => {
+    process.env.COMFYUI_STORYBOARD_TIMEOUT_MS = '1500';
+    process.env.COMFYUI_STORYBOARD_WORKFLOW = anchorWorkflowPath;
+    behaviour.blackhole = new Set(['/upload/image']);
+
+    const { message, elapsedMs } = await timedRejection('scene two, same cast', ANCHOR_BYTES);
+    expect(message).toMatch(/comfyui storyboard provider: \/upload\/image did not answer inside the bounded window/);
+    expect(elapsedMs).toBeLessThan(5_000);
+    expect(recorded.submissions).toHaveLength(0); // nothing was queued against a reference that never landed
+  });
+
+  it('warns once, not per poll, when /history 500s throughout, and names it in the timeout', async () => {
+    process.env.COMFYUI_STORYBOARD_TIMEOUT_MS = '800';
+    behaviour.historyStatus = 500;
+
+    const { message } = await timedRejection('a lighthouse at dusk', null);
+    expect(recorded.historyPolls).toBeGreaterThanOrEqual(2);
+    expect(message).toMatch(/did not finish inside the bounded window/);
+    expect(message).toContain('/history answered HTTP_500');
+    const nonTwoHundredWarnings = logSpies.warn.mock.calls.filter(([, msg]) => String(msg).includes('non-2xx'));
+    expect(nonTwoHundredWarnings).toHaveLength(1);
+    // Still not transient: HTTP_500 is deliberately not a bare status number.
+    expect(TRANSIENT.test(message)).toBe(false);
+  });
+});
+
+describe('comfyui storyboard provider — the box\'s errors surface clearly', () => {
   it('surfaces a /prompt rejection with the box\'s own words', async () => {
     behaviour.promptStatus = 400;
     behaviour.promptBody = { error: { message: 'Prompt outputs failed validation' }, node_errors: { '3': 'bad ckpt' } };
@@ -347,6 +510,14 @@ describe('comfyui storyboard provider — failure is bounded and visible', () =>
 
     await expect(createComfyUiImageProvider().generate('a lighthouse at dusk', null))
       .rejects.toThrow(/failed on the box.*sdxl_base\.safetensors not found/s);
+  });
+
+  it('still reports a box-side error when status.messages is not an array', async () => {
+    behaviour.historyError = 'anything';
+    behaviour.historyErrorMessages = 'not-an-array';
+
+    await expect(createComfyUiImageProvider().generate('a lighthouse at dusk', null))
+      .rejects.toThrow(/failed on the box.*reported an execution error with no message/s);
   });
 
   it('refuses a finished job that saved no image, and a result that is not a PNG', async () => {
@@ -408,6 +579,22 @@ describe('AI Test Lab registration', () => {
     expect(notReady.state).toBe('degraded');
     expect(notReady.detail).toContain('COMFYUI_URL is not set');
     // Read-only: the card never asked the box to render anything.
+    expect(recorded.submissions).toHaveLength(0);
+  });
+
+  it('never shows a green "ready" for a corrupt or slotless workflow', async () => {
+    const scenario = SCENARIOS.find((s) => s.id === 'storyboard-image-rail')!;
+    process.env.STORYBOARD_IMAGE_PROVIDER = 'comfyui';
+
+    process.env.COMFYUI_STORYBOARD_WORKFLOW = corruptWorkflowPath;
+    const corrupt = await scenario.steps[0].run('', {});
+    expect(corrupt.state).toBe('fail');
+    expect(corrupt.detail).toContain('is not valid JSON');
+
+    process.env.COMFYUI_STORYBOARD_WORKFLOW = plainWorkflowPath;
+    const slotless = await scenario.steps[0].run('', {});
+    expect(slotless.state).toBe('fail');
+    expect(slotless.detail).toContain('carries no %PROMPT% placeholder');
     expect(recorded.submissions).toHaveLength(0);
   });
 });

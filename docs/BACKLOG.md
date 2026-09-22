@@ -3528,10 +3528,16 @@ including across a directory belonging to a different owner. Full reasoning and 
   inject the frame prompt into a pinned API-format workflow, `POST /prompt`, poll `/history`, fetch
   `/view`, reject anything that is not a PNG. `available()`/`healthCheck()` share one probe that
   names WHICH of url / workflow / reachability is missing, and the resolver quotes it; selection
-  still fails closed rather than substituting a paid sibling. The wait is bounded twice — a
-  wall-clock deadline and an attempt cap — so an asleep or wedged box fails visibly instead of
-  hanging the storyboard stage, and the timeout wording avoids a bare HTTP-status number so the
-  caller's retry classifier does not treat it as transient.
+  still fails closed rather than substituting a paid sibling. **Bounded on every call:** one
+  deadline is taken at the top of `generate()` and the upload, the submit, each poll and the fetch
+  all draw a signal from what is left of it, so an asleep or wedged box fails visibly, by route
+  name, inside the configured window — the first cut bounded only the poll, and adversarial
+  verification measured a black-holed `/prompt` rejecting after 304753 ms on the OS socket timeout.
+  The timeout wording avoids a bare HTTP-status number so the caller's retry classifier does not
+  treat it as transient. The anchor upload uses a per-call unique name and never `overwrite`,
+  because LoadImage reads its file at execution time and a shared name lets one caller's anchor
+  render into another's queued frame; readiness performs the same workflow load `generate()` does,
+  so a corrupt or slotless workflow never reads green.
 - **The URL is shared, the workflow is not.** `COMFYUI_URL` is reused deliberately: it is the same
   ComfyUI server the video provider drives, and a second URL key would be a second place to rotate
   one host. `COMFYUI_WORKFLOW_PATH` is NOT reusable here — that one names a text-to-VIDEO graph and
@@ -3539,7 +3545,10 @@ including across a directory belonging to a different owner. Full reasoning and 
 - **Guard:** `tests/unit/storyboard-comfyui-provider.spec.ts` (`npm run test:storyboard`). The
   transport is real — a local `http.createServer` on an ephemeral loopback port speaking the five
   ComfyUI routes, with nothing mocking `fetch`, because the HTTP protocol is the boundary this
-  provider lives on. Red 16 of 18 against the stub, green 18 of 18 after. Registered in the AI Test
+  provider lives on, and three of its cases black-hole `/prompt`, `/view` and `/upload/image` (accept
+  the connection, never answer). Red 26 of 28 against the stub; red 11 of 28 against the refuted
+  first cut, where the three black-hole cases hung to the runner's 30 s ceiling; green 28 of 28
+  after. Registered in the AI Test
   Lab as the read-only `storyboard-image-rail` card.
 - **Still true:** do not retry ChatGPT/Codex subscription OAuth against the OpenAI Images API. That
   auth realm is rejected by `/v1/images` and re-verifying it has cost time twice already.
