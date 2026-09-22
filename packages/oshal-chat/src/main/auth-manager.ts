@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-137 amendment A: each account reports whether the swarm can adopt its login (codex, claude), so the Config screen can offer "Log in + push" / "Push to swarm" on exactly those rows.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Windows: EVERY account row failed with the shell dialog "Windows cannot find 'login\'" — the launcher passed the console title pre-quoted ('"OSHAL login"'), libuv escaped those quotes into start "\"OSHAL login\"" cmd /k "<cmd>", and cmd.exe does not understand backslash-escaped quotes (that is a C-runtime convention): it re-tokenized, `start` took \"OSHAL as the title and `login\` as the program to run. Quoting is now left entirely to libuv (a title with a space comes back correctly quoted) and the command is split into its own argv entries, so no entry carries a quote. Broken since SEQ 1 — the launcher had never been run on Windows. Also fixes claude's verb: the CLI's login is `claude auth login`; `claude /login` is a REPL slash command that as an argv would have been read as a prompt. Guard: tests/unit/node-login-launch.spec.ts.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Google (Gemini) joins the account list so the swarm-adoptable row is offered for it too. Distinct from the gcloud row below it, which signs into Google CLOUD and writes an ADC file the swarm does not consume. Its login command is the bare `gemini`: the CLI publishes no top-level `auth` subcommand (its yargs surface is `$0 [query..]` plus mcp/extensions/skills/hooks) — `auth` is a built-in SLASH command in the interactive UI, so the terminal has to open on the CLI itself for the browser sign-in to run.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | The `antigravity` row, and the Gemini row demoted to a LOCAL account. Measured on the operator's box 2026-09-22: `gemini`'s "Sign in with Google" now answers "This client is no longer supported for Gemini Code Assist for individuals. To continue using Gemini, please migrate to the Antigravity suite of products" — so `oauth_creds.json` can no longer be produced by a sign-in and the row has nothing left to push (see login-push-core, where the target is marked dormant rather than deleted). Antigravity is where Google sent him, it signs in as his own identity, and it keeps its state beside the CLI's — which is why it answers on models the API key 503s on. It follows the gcloud/aws LOCAL shape deliberately: its state root is opaque, there is no single credential file to adopt, and a push button that cannot push is the same defect as a brain option that cannot execute.
  */
 
 import { spawn } from 'child_process';
@@ -47,10 +48,40 @@ const ACCOUNTS: LocalAccount[] = [
     // @google/gemini-cli bundle, whose yargs surface is `$0 [query..]` plus mcp/extensions/
     // skills/hooks; `auth` is a BUILT_IN *slash* command (authCommand, subCommands
     // authLogin/authLogout) inside the interactive UI. So the launch is the bare CLI, where the
-    // first-run auth picker — or `/auth` — runs Google's browser sign-in on this machine and
-    // writes ~/.gemini/oauth_creds.json, which is what the push then hands to the swarm.
+    // first-run auth picker — or `/auth` — opens Google's sign-in on this machine.
+    //
+    // That sign-in is RETIRED for individuals as of 2026-09-22. Choosing "Sign in with Google"
+    // answers, verbatim: "Failed to sign in. Message: This client is no longer supported for
+    // Gemini Code Assist for individuals. To continue using Gemini, please migrate to the
+    // Antigravity suite of products: https://antigravity.google". So ~/.gemini/oauth_creds.json
+    // can no longer be created by a sign-in, isAuthed below will read false on a fresh box, and
+    // the push target is marked dormant in login-push-core. The row stays because the CLI's other
+    // two auth methods (an API key, Vertex) still work and the file is still what the swarm would
+    // adopt if Google ever reopens the path.
     loginCmd: 'gemini',
     isAuthed: () => existsSync(join(home, '.gemini', 'oauth_creds.json')),
+  },
+  {
+    id: 'antigravity',
+    label: 'Google Antigravity',
+    // Where Google now sends individuals: the CLI's own sign-in answers "This client is no longer
+    // supported for Gemini Code Assist for individuals … migrate to the Antigravity suite of
+    // products" (measured on the operator's box 2026-09-22). Antigravity signs in as the user's own
+    // Google identity and keeps its state beside the CLI's, which is why it keeps answering on
+    // models the shared API key 503s on.
+    //
+    // HONEST LIMIT of this row: `agy` is NOT on PATH. The vendor installer puts the binary in
+    // %LOCALAPPDATA%gyin (v1.2.8 measured there) and does not add that directory, so on a box
+    // that has not been adjusted this row reads correctly as signed-in-here while **Log in** cannot
+    // launch anything. It is left as the bare vendor verb rather than an absolute path because the
+    // path is per-platform and per-install; the swarm-side rail resolves the binary itself
+    // (ANTIGRAVITY_CLI_PATH) instead of depending on this one.
+    loginCmd: 'agy',
+    // Antigravity publishes no single credential file, so "signed in here" is the presence of its
+    // state root. Deliberately NOT pushable for that reason — see login-push-core.
+    isAuthed: () =>
+      existsSync(join(home, '.gemini', 'antigravity', 'installation_id')) ||
+      existsSync(join(home, '.gemini', 'antigravity-ide')),
   },
   {
     id: 'gcloud',

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-137 amendment A guard for the satellite half: only codex/claude are pushable, only their exact vendor file shapes leave the machine, a public plain-http swarm is refused, a finished browser login is detected from the file the CLI writes, and every swarm answer (adopted / sign in / not operator / not demo / read-only mount / bad shape) classifies to the reason the Config screen shows.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Google (Gemini) joins the pushable set: the row resolves to .gemini/oauth_creds.json and /api/gemini/auth/import, its google-auth-library shape is accepted, no vendor's file passes as another's in EITHER direction, an access token with no refresh token is refused, and the swarm's two Gemini-specific 409s classify to the sentence the Config screen shows. gcloud stays unpushable on purpose - it is the row below gemini in the account list and writes an ADC file the swarm does not consume.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The Google row is DORMANT, and this guard now pins that rather than its pushability. Measured on the operator's box 2026-09-22: the CLI's "Sign in with Google" answers "This client is no longer supported for Gemini Code Assist for individuals. To continue using Gemini, please migrate to the Antigravity suite of products", so oauth_creds.json cannot be produced by a sign-in and a push button on that row would have nothing to send. What is asserted is the SHAPE of that dormancy: the target, its file, its import path and its accepted vendor shape are all still there and still correct (reviving it is deleting one block), while isPushableLogin refuses it - and it refuses it by reading the table, which is why the last case flips the flag and watches the answer change.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -20,10 +21,12 @@ import {
 } from '../../packages/oshal-chat/src/main/login-push-core';
 
 describe('@oshal/chat login push — what may leave the machine, and where', () => {
-  it('pushes only the three vendor logins, from the files their CLIs write, to their import routes', () => {
+  it('pushes the two live vendor logins, from the files their CLIs write, to their import routes', () => {
     expect(isPushableLogin('codex')).toBe(true);
     expect(isPushableLogin('claude')).toBe(true);
-    expect(isPushableLogin('gemini')).toBe(true);
+    // Google is a KNOWN target that is not pushable: the vendor retired the sign-in that writes
+    // its file, so the row keeps everything except the button. See the dormant block below.
+    expect(isPushableLogin('gemini')).toBe(false);
     // gcloud signs into Google CLOUD and writes an ADC file the swarm does not consume — it sits
     // one row below gemini in the account list and must never be mistaken for it.
     for (const other of ['gcloud', 'aws', '', undefined, 42]) expect(isPushableLogin(other)).toBe(false);
@@ -37,6 +40,30 @@ describe('@oshal/chat login push — what may leave the machine, and where', () 
     // The file name is the vendor's, read from the installed @google/gemini-cli bundle
     // (packages/core/src/config/storage.ts: OAUTH_FILE = "oauth_creds.json" under ~/.gemini).
     expect(LOGIN_TARGETS.gemini.file).toBe('.gemini/oauth_creds.json');
+  });
+
+  it('keeps the Google target intact while it is dormant, and reads pushability off that flag', () => {
+    // Dormancy is a statement about the VENDOR, so the reason travels with the row rather than
+    // living in a comment somewhere: whoever revives it should see why it was parked.
+    expect(LOGIN_TARGETS.gemini.dormant?.since).toBe('2026-09-22');
+    expect(LOGIN_TARGETS.gemini.dormant?.reason).toContain('no longer supported for Gemini Code Assist for individuals');
+    expect(LOGIN_TARGETS.codex.dormant).toBeUndefined();
+    expect(LOGIN_TARGETS.claude.dormant).toBeUndefined();
+
+    // The predicate DERIVES its answer from the table, so deleting the dormant block is the whole
+    // revival. Proven by doing exactly that to the live record and watching the answer flip —
+    // if a second list were the real gate, this would stay false.
+    const row = LOGIN_TARGETS.gemini as { dormant?: unknown };
+    const parked = row.dormant;
+    try {
+      delete row.dormant;
+      expect(isPushableLogin('gemini')).toBe(true);
+    } finally {
+      row.dormant = parked;
+    }
+    expect(isPushableLogin('gemini')).toBe(false);
+    // An id that is not a target at all is still refused — dormancy is not the only gate.
+    expect(isPushableLogin('gemini-but-not-a-target')).toBe(false);
   });
 
   it('prefers the cockpit origin (where the OIDC cookie lives) and refuses plain http to a public host', () => {

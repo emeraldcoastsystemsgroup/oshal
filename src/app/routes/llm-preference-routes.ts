@@ -16,7 +16,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127: GET /options + GET|PUT the caller's default brain, auth-gated and owner-scoped.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | GET / also reports the operator's HOT FALLBACK (2026-09-22): the configured chain (switch-row fallback_order, ADR-162 precedence, default openai-codex → claude-code), each rung's readiness from the token-free stored status (?refresh=1 probes on demand), whether the two gates admit THIS caller, and the exact PUT that changes the order. Same route, same shape the Settings AI-Providers card already reads — no second status endpoint.
- * 3 | maintainer@emeraldcoastsystemsgroup.com   | The Google Gemini option, offered on exactly the conditions the resolver honours: the ADR-127 carve AND a pushed sign-in actually present at the mounted path. Availability is not derived from a Google API key on purpose - a key reaches generativelanguage on the free tier, the pushed login reaches cloudcode-pa through the CLI, and offering the option on the key would offer a choice the resolver falls straight back out of.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The two Google CLI options (gemini-cli, antigravity-cli), and every CLI option's availability moved onto cliBrainOffer - the same function the resolver calls, so what is OFFERED and what RESOLVES cannot drift. The first cut of this entry gated Gemini on the carve AND a pushed sign-in, and called that "exactly the conditions the resolver honours"; it was not. Nothing executes a gemini-cli dispatch (botNodeRuntime: null, and it is not a ProviderRegistry id), so pushing a login made the option selectable, PUT accepted it because PUT admits any option whose availability is true, and every turn afterwards was refused by name at the node. Availability is now the executability question for all four, and each unavailable option carries the piece that is missing rather than one generic sentence.
  *
  * @module llm-preference-routes
  */
@@ -29,12 +29,14 @@ import { getUserLlmConnection } from './byo-llm-routes';
 import { listFreeTierConnections } from './free-tier-rotation';
 import { resolveHotFallbackChain, type HotFallbackChain } from './byo-hot-fallback';
 import { fallbackReadinessSnapshot, refreshFallbackReadiness, type RungReadiness } from './fallback-rail-readiness';
-import { geminiPushedLoginPresent } from '@/features/llm-provider';
 import {
   LLM_PREFERENCE_IDS,
   cliBrainAvailable,
+  cliBrainOffer,
   getUserLlmPreference,
   saveUserLlmPreference,
+  type CliBrainOffer,
+  type CliBrainProviderId,
   type LlmPreferenceId,
 } from './user-brain-resolution';
 
@@ -102,9 +104,9 @@ interface BrainOption {
  */
 async function buildOptions(ctx: AppContext, sub: string): Promise<BrainOption[]> {
   const cli = cliBrainAvailable(sub);
-  // A pushed Google SIGN-IN, not a Google API key: the key runs on the free tier and reaches a
-  // different endpoint entirely, so offering this option without one would offer a dead choice.
-  const geminiPushed = geminiPushedLoginPresent();
+  // One question per CLI harness, asked of the SAME function the resolver asks, so an option can
+  // never be offered that resolution would not produce. See cliBrainOffer for why that mattered.
+  const offer = (id: CliBrainProviderId): CliBrainOffer => cliBrainOffer(id, sub);
   const [byo, freeLanes] = await Promise.all([
     getUserLlmConnection(ctx.pool, sub).catch(() => null),
     listFreeTierConnections(ctx.pool, sub).catch(() => []),
@@ -117,32 +119,18 @@ async function buildOptions(ctx: AppContext, sub: string): Promise<BrainOption[]
       detail: 'Use the best available: your own key first, then whatever this deployment offers.',
       available: true,
     },
-    {
-      id: 'claude-code',
-      label: 'Claude Code (this machine\'s login)',
-      detail: cli
-        ? 'Runs on the Claude Code subscription signed in on this machine.'
-        : 'Available only to the operator of a deployment running in demo mode.',
-      available: cli,
-    },
-    {
-      id: 'openai-codex',
-      label: 'OpenAI Codex (this machine\'s login)',
-      detail: cli
-        ? 'Runs on the Codex/ChatGPT login signed in on this machine.'
-        : 'Available only to the operator of a deployment running in demo mode.',
-      available: cli,
-    },
-    {
-      id: 'gemini-cli',
-      label: 'Google Gemini (this machine\'s login)',
-      detail: cli
-        ? (geminiPushed
-          ? 'Runs on the Google sign-in pushed from the oshal client, through the Gemini CLI.'
-          : 'Sign in to Google on the oshal client and push it here first — a Google API key alone runs on the free tier and cannot serve this option.')
-        : 'Available only to the operator of a deployment running in demo mode.',
-      available: cli && geminiPushed,
-    },
+    cliOption('claude-code', 'Claude Code (signed in on this machine)',
+      'Runs on the Claude Code subscription signed in on this machine.', offer('claude-code')),
+    cliOption('openai-codex', 'OpenAI Codex (signed in on this machine)',
+      'Runs on the Codex/ChatGPT login signed in on this machine.', offer('openai-codex')),
+    // Reached only when the option is actually available, which on this deployment it is not:
+    // cliBrainOffer supplies the sentence naming what is missing. The copy that used to sit here
+    // asserted it "Runs ... through the Gemini CLI" the moment a login was pushed, and that was
+    // never true - no bot node resolves gemini-cli, so the turn was refused by name, not run.
+    cliOption('gemini-cli', 'Google Gemini (Gemini CLI)',
+      'Runs the adopted Google sign-in through the Gemini CLI harness.', offer('gemini-cli')),
+    cliOption('antigravity-cli', 'Google Antigravity (signed in on this machine)',
+      'Runs on the Google identity signed in to Antigravity on this machine.', offer('antigravity-cli')),
     {
       id: 'any-llm',
       label: 'My own endpoint',
@@ -160,6 +148,26 @@ async function buildOptions(ctx: AppContext, sub: string): Promise<BrainOption[]
       available: usableFree > 0,
     },
   ];
+}
+
+/**
+ * @description One CLI-harness option, worded by its offer.
+ *
+ * An UNAVAILABLE option shows the piece that is missing rather than one generic sentence, because
+ * the four causes call for four different actions: a caller outside the carve can do nothing, a
+ * missing node runtime is a platform gap, an unloadable binary is a machine problem, and an absent
+ * credential is a sign-in. Collapsing them into "not available to you yet" is what let an operator
+ * believe that pushing a login had fixed something it had not.
+ * @param id - The preference id, which is also the harness id
+ * @param label - Display label
+ * @param availableDetail - What to say when it can actually be chosen
+ * @param offer - The verdict from cliBrainOffer
+ * @returns The option as the surface renders it
+ */
+function cliOption(
+  id: CliBrainProviderId, label: string, availableDetail: string, offer: CliBrainOffer,
+): BrainOption {
+  return { id, label, detail: offer.available ? availableDetail : offer.detail, available: offer.available };
 }
 
 /**
@@ -198,8 +206,18 @@ export function createLlmPreferenceRoutes(ctx: AppContext): Router {
       return;
     }
     const options = await buildOptions(ctx, me.sub);
-    if (!options.find((o) => o.id === preferred)?.available) {
-      res.status(409).json({ error: 'that provider is not available to you yet', options });
+    // The SAME availability the options list reports, which is the same question the resolver
+    // asks — so an id this route accepts is one a turn can actually run on. `detail` is carried
+    // because the four ways a CLI brain can be unavailable need four different responses from
+    // the person, and "not available to you yet" told them none of it.
+    const chosen = options.find((o) => o.id === preferred);
+    if (!chosen?.available) {
+      logger.warn({ sub: me.sub, preferred, detail: chosen?.detail ?? null }, 'llm-preference: refused an unavailable provider');
+      res.status(409).json({
+        error: 'that provider is not available to you yet',
+        detail: chosen?.detail ?? 'That provider is not one this deployment offers.',
+        options,
+      });
       return;
     }
     try {

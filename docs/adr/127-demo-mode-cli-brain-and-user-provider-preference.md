@@ -89,20 +89,63 @@ with the flag on.
 > outside the refused set: `gemini` (the Cline-backed API provider id) and `google-gemini` (the
 > apiType) name an HTTP endpoint with no tool loop and no credential home, and refusing them would
 > break the ordinary hosted Google lane rather than harden anything.
+
+> **Amended 2026-09-22 (second) — what shipped, and the two things that did not.**
 >
-> The reason this became worth doing now is that Google gained a credential to run *under*. The
-> deployment's `GOOGLE_API_KEY` is served on Google's free tier — a live `gemini-3.1-pro-preview`
-> call answers 429 naming `generate_content_free_tier_requests, limit: 0` — while the credential
-> the operator's own `gemini` sign-in writes is a different identity on a different endpoint: the
-> CLI's `oauth-personal` mode builds its content generator against
-> `https://cloudcode-pa.googleapis.com`, not `generativelanguage.googleapis.com` (read from the
-> installed `@google/gemini-cli` bundle: `createCodeAssistContentGenerator`,
-> `CODE_ASSIST_ENDPOINT`). So a pushed Google login is **not** a drop-in for the API key on the
-> HTTP path — it can only be used through the CLI harness, which is why the carve is the thing
-> that had to move. `resolveGeminiCliBrain` selects that harness only when the carve covers the
-> caller **and** a pushed sign-in is actually present at the mounted path; with no pushed login it
-> returns null and the turn falls back to the hosted lane, rather than naming a harness for a
-> credential that does not exist.
+> This amendment corrects the first one above, which described a Google rail as working when the
+> half that executes a turn does not exist. It is written to match
+> [the backlog entry](../BACKLOG.md) exactly; where the two ever disagree, the backlog is the one
+> being kept current and this is the one to fix.
+>
+> **Shipped and proven by guards.**
+> - The carve extension described above. It is a strict tightening and nothing depends on it
+>   being reverted.
+> - `POST /api/gemini/auth/import` and `/signout`, mirroring the Claude Code routes: the same
+>   operator-session guard, the same SEC-05 409 for every other caller and every non-demo
+>   deployment, an atomic 0600 write to the mounted path, and no credential material in any
+>   response body or log line (`tests/unit/gemini-demo-login-adoption.spec.ts` asserts the absence
+>   explicitly rather than assuming it).
+> - `cliBrainOffer`: one function answering whether a CLI brain may be offered, called by BOTH the
+>   settings surface and the resolver, so an option cannot be offered that a turn would not run on.
+> - An unresolvable dispatch (`AuthoritativeDispatchConfigError`) is classified retryable-to-hosted,
+>   so a mis-selected CLI brain degrades instead of reaching the user as a raw provider error.
+>
+> **Did NOT ship: a bot node that can execute either Google CLI.** `HARNESS_BY_ID` gives
+> `gemini-cli` and `antigravity-cli` `botNodeRuntime: null`, and neither is a `ProviderRegistry`
+> id, so `resolveBotNodeSwitch` answers null and `reconcileDispatchProviderConfig` refuses the
+> dispatch **by name**. The first version of this rail offered the Gemini brain the moment a login
+> was pushed; the option was selectable, `PUT` accepted it, and every turn afterwards failed. The
+> option is now unavailable and `PUT` refuses it, each naming the missing piece, until a runtime
+> exists. Adding one means a fourth any-bot provider — a new spawn path, which is an ADR-level
+> decision and was deliberately not taken here.
+>
+> **Did NOT ship, and cannot: the Gemini CLI sign-in the push rail was built around.** On
+> 2026-09-22 the operator ran `gemini` and chose *Sign in with Google*. Google answered, verbatim:
+>
+> > Failed to sign in. Message: This client is no longer supported for Gemini Code Assist for
+> > individuals. To continue using Gemini, please migrate to the Antigravity suite of products:
+> > https://antigravity.google
+>
+> `~/.gemini/oauth_creds.json` therefore cannot be produced by a sign-in any more, so the push rail
+> has nothing to carry. The client row is marked `dormant` in `LOGIN_TARGETS` rather than deleted,
+> and `isPushableLogin` reads that flag: the row, the file shape, the parse arm and the import
+> route are all still correct and still guarded, and reviving them is deleting one block. The
+> earlier claim that a pushed login "can only be used through the CLI harness" remains true about
+> the ENDPOINT — `oauth-personal` builds against `cloudcode-pa.googleapis.com`, not
+> `generativelanguage.googleapis.com` — but it is now moot, because the credential is unobtainable
+> and the harness is unrunnable.
+>
+> **What Google points individuals at instead is Antigravity, and it works — off the swarm.**
+> Measured on the operator's own machine: `agy` v1.2.8 at `%LOCALAPPDATA%\agy\bin\agy.exe`,
+> already authenticated as him, `agy models` listing ids the shared API key cannot reach, and
+> `agy --model gemini-3.8-flash-low -p "…"` answering — on the exact model that returns 503 "high
+> demand" through the API key on every other transport. It is headless by design (`-p`,
+> `--output-format`, `--model`, `--effort`). It still cannot run **here**: every bot node is the
+> one `oshal-bot:latest` image, `Dockerfile.oshal` is `FROM node:20-alpine`, and the CLI ships no
+> musl build while its glibc PIE fails to relocate under `gcompat` (measured in a throwaway
+> container; `AntigravityCliHarnessAdapter` has carried the sentence since). So the harness is
+> registered, selectable as configuration, and correctly NOT offered as a brain. The backlog entry
+> holds the three ways that could change and what each costs.
 
 ### 2. A per-user default provider, stored and honoured
 

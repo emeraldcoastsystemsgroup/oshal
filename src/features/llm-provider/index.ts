@@ -19,6 +19,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Export the same-endpoint retry (RETRYABLE_PROVIDER_FAILURE, the classifier, the plan and the provider decorator) — moved here from the app layer so the orchestrator can retry the PROVIDER CALL rather than its callers replaying the whole turn. Module graph is llm-service + logger only; no harness module.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Export SameEndpointRetryTurnBudget, the per-TURN replay ceiling the per-model-call budget now nests inside, so a guard can construct and assert one without a deep import.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Surface the Gemini adoption members on the feature barrel so the /api/gemini/auth import and sign-out routes reach them without a deep import.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | Surface the Antigravity NODE-READINESS probe (binary presence + the measured musl wall). Pure fs/path, no harness module on its graph - deliberately, because the caller is the settings surface deciding whether to OFFER the brain, and importing the adapter to ask would pull the execution stack onto this controller-graph barrel, which the note below forbids.
  */
 
 export {
@@ -139,6 +140,14 @@ export {
   type GeminiAuthReason,
   type GeminiAuthStatus,
 } from './services/gemini-auth-status-service';
+export {
+  ANTIGRAVITY_BINARY_NAME,
+  antigravityMuslBlockingReason,
+  antigravityNodeReadiness,
+  resolveAntigravityCliBinary,
+  type AntigravityBlockReason,
+  type AntigravityNodeReadiness,
+} from './services/antigravity-cli-availability';
 export {
   adoptOperatorGeminiLogin,
   forgetAdoptedGeminiLogin,

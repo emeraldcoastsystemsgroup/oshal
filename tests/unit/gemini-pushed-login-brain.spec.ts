@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for where a Gemini turn RUNS. Two claims are pinned here and they pull in opposite directions, which is why they are one spec: with a pushed sign-in present the turn must resolve to the gemini-cli harness and NOT the hosted HTTP provider (the API key reaches generativelanguage on the free tier, the pushed credential is oauth-personal against cloudcode-pa, so the HTTP lane cannot serve it) — and the ADR-127 carve must decide WHO exactly as it always did, so every negative is enumerated: off demo, a non-operator, an empty sub, a whitespace sub, and a sub that is a case/prefix/suffix variant of an operator sub. The pushed-login probe runs against a real file on a real temp path, never the operator's home.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Entry 1's first claim was wrong and is inverted here: a pushed sign-in does NOT make the turn resolve to the gemini-cli harness, because no bot node holds a runtime for that id, so the resolution was a dispatch the node refuses by name. The pushed-login probe and every carve negative were correct and are untouched - what changed is that the positive control now has to say so explicitly, injecting a node runtime to show the null is the RUNTIME and not the credential. Google also retired individual Code Assist sign-in on 2026-09-22, so the credential half is dormant; it is still exercised here because the probe and the import route are kept and still correct.
  */
 
 import fs from 'node:fs';
@@ -46,12 +47,23 @@ afterEach(() => {
 });
 
 describe('a Gemini turn under a pushed login runs on the CLI harness, not the HTTP provider', () => {
-  it('resolves to gemini-cli for the operator on a demo box once a sign-in has been pushed', () => {
+  it('does NOT resolve to gemini-cli even with a pushed sign-in, because no node runs that id', () => {
     process.env.DEMO_MODE = 'true';
     writePushedLogin(SIGNED_IN);
     expect(geminiPushedLoginPresent()).toBe(true);
-    expect(resolveGeminiCliBrain(OPERATOR)).toEqual({ kind: 'cli', providerId: 'gemini-cli' });
-    expect(resolveGeminiCliBrain(OPERATOR, { model: 'gemini-3.8-flash' }))
+    // The credential is present and the caller is carved in — and the answer is still null,
+    // because HARNESS_BY_ID gives gemini-cli no bot-node runtime. Returning the harness here is
+    // what made the operator's every turn fail at reconcileDispatchProviderConfig.
+    expect(resolveGeminiCliBrain(OPERATOR)).toBeNull();
+    expect(resolveGeminiCliBrain(OPERATOR, { model: 'gemini-3.8-flash' })).toBeNull();
+  });
+
+  it('resolves once a node runtime exists, which is what shows the null above is the runtime', () => {
+    process.env.DEMO_MODE = 'true';
+    writePushedLogin(SIGNED_IN);
+    const wired = { canRunProvider: () => true };
+    expect(resolveGeminiCliBrain(OPERATOR, wired)).toEqual({ kind: 'cli', providerId: 'gemini-cli' });
+    expect(resolveGeminiCliBrain(OPERATOR, { ...wired, model: 'gemini-3.8-flash' }))
       .toEqual({ kind: 'cli', providerId: 'gemini-cli', model: 'gemini-3.8-flash' });
   });
 
@@ -121,20 +133,31 @@ describe('the ADR-127 carve still decides WHO, unchanged', () => {
       OPERATOR.slice(0, -1),
       `x${OPERATOR}`,
     ]) {
-      expect(resolveGeminiCliBrain(lookalike), lookalike).toBeNull();
+      expect(resolveGeminiCliBrain(lookalike, { canRunProvider: () => true }), lookalike).toBeNull();
     }
-    // …and the exact sub still resolves, so the negatives above are not passing vacuously.
-    expect(resolveGeminiCliBrain(OPERATOR)).toEqual({ kind: 'cli', providerId: 'gemini-cli' });
+    // …and the exact sub still resolves once the runtime half is supplied, so the negatives
+    // above are failing on the SUBJECT and not merely on the missing runtime.
+    expect(resolveGeminiCliBrain(OPERATOR, { canRunProvider: () => true }))
+      .toEqual({ kind: 'cli', providerId: 'gemini-cli' });
   });
 
   it('reads the probe through the injected seam, so the carve is checked BEFORE any credential path is touched', () => {
     let probed = 0;
     const probe = () => { probed += 1; return true; };
-    expect(resolveGeminiCliBrain(GUEST, { pushedLoginPresent: probe })).toBeNull();
+    const wired = { canRunProvider: () => true, pushedLoginPresent: probe };
+    expect(resolveGeminiCliBrain(GUEST, wired)).toBeNull();
     expect(probed).toBe(0);
 
     process.env.DEMO_MODE = 'true';
-    expect(resolveGeminiCliBrain(OPERATOR, { pushedLoginPresent: probe })).toEqual({ kind: 'cli', providerId: 'gemini-cli' });
+    expect(resolveGeminiCliBrain(OPERATOR, wired)).toEqual({ kind: 'cli', providerId: 'gemini-cli' });
     expect(probed).toBe(1);
+  });
+
+  it('checks the node runtime before the credential too, so an absent login is never the reason', () => {
+    process.env.DEMO_MODE = 'true';
+    let probed = 0;
+    const probe = () => { probed += 1; return true; };
+    expect(resolveGeminiCliBrain(OPERATOR, { pushedLoginPresent: probe })).toBeNull();
+    expect(probed).toBe(0);
   });
 });
