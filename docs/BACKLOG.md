@@ -2660,6 +2660,33 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### Operator credential/configuration follow-ups
 - **Remaining:** register Outlook under `maintainer@emeraldcoastsystemsgroup.com`, set real daily cost caps, and configure `SWARM_SERVICE_SECRET` so bot-node auth is fail-closed.
 - **Done when:** Outlook reconnects and sends, at least one budget denial is proven, and unauthenticated `/api/swarm-execute` is rejected on the deployed stack.
+- **Decision (operator, 2026-09-22), leg by leg.**
+  **(1) Outlook / Azure — still the operator's, and half-done already.** Measured on the box:
+  `OUTLOOK_CLIENT_VALUE` and `AZURE_EMAIL_TENANT` are set, `AZURE_EMAIL_APPLICATION_ID` is **absent**.
+  So the registration was started and not finished; what remains is the application id, a reconnect
+  and one send. No agent can do it — the app registers under the business account.
+  **(2) Spend caps: NOT set in oshal, and deliberately so.** The cap that exists is on the PROVIDER
+  side: the operator runs a Pro account against a GCP backend account that carries its own spend cap,
+  including a short-window ceiling that "sometimes triggers and sometimes doesn't". `oshal_budgets` is
+  empty by choice, not by oversight. Two reasons not to set an oshal-side cap today, the second the
+  stronger: a cap measures against recorded spend, and recorded spend is currently wrong — of 92
+  `chat_tasks` rows in the last seven days only **12 carry any cost at all**, totalling **$0.83**,
+  because output tokens and cost are not written even on successful calls and 23 paid providers price
+  every model at 0/0. A cap on that meter is a control the operator would believe in and not have.
+  Front-end capping stays wanted; it follows the cost-accounting fix rather than preceding it.
+  **(3) What the operator asked for instead of a cap: a RETRY.** When the provider-side ceiling trips,
+  the turn should recover rather than surface an error. Commissioned separately, and the measurement
+  that makes it precise: retry machinery already exists —
+  `RETRYABLE_PROVIDER_FAILURE` (`src/app/routes/free-tier-rotation.ts:566`) already classifies
+  `402|403|429`, rate-limit, quota, throttle, `resourceexhausted` and `empty_final_answer` as
+  retryable — but an explicit BYO connection is excluded from all of it at `:582`
+  (`if (!connection || connection.resolutionSource === 'explicit') return false;`). The comment
+  explains a real boundary: never replay a BYO prompt on a *different* provider. The decision is that
+  this conflates two things — **retrying the SAME endpoint crosses no billing or privacy boundary**
+  and is now permitted, bounded and logged; **rotating away from a BYO endpoint stays refused**.
+  **(4) The service-secret leg is already met.** `SWARM_SERVICE_SECRET` is set,
+  `logBotNodeAuthPosture()` throws when it is not, and an unauthenticated `POST /api/swarm-execute`
+  against a bot node returns nothing at all — measured. Only the recorded probe was outstanding.
 
 ### Complete and cancel nightly backup checks safely
 - **Observed 2026-09-12:** the scheduled live dump/restore diagnostic held a table lock needed by API startup. Cancelling that exact dump restored progress, but the diagnostic still produced passing evidence from a partial restore. The generated evidence was marked incomplete and its original output preserved; release backups were unaffected.
