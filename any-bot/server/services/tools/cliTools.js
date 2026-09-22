@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | yq no longer reaches a shell: yqCommand now goes through cli-argv.js (cliArgsToArgv + executeCLIArgv), which spawns the binary with an argument vector (execFile, shell:false) and writes `input` to the child's stdin, instead of building `echo '<yaml>' | yq <args>` for child_process.exec. Model-supplied text can no longer be command syntax on this tool, and cli_yq advertises a preferred `argv` array so a caller that already has separate arguments never has to round-trip them through a string. The other executeCLI callers still build command strings; cli_cline, cli_jq and cli_fzf are the ones that also declare requiresApproval:false.
  */
 
 /**
@@ -22,6 +23,7 @@
  */
 
 const { exec } = require('child_process');
+const { cliArgsToArgv, executeCLIArgv } = require('./cli-argv');
 const logger = require('../../utils/logger');
 const config = require('../../utils/config');
 
@@ -455,25 +457,39 @@ async function jqCommand(input) {
 
 /**
  * YQ Tool - YAML processor
+ *
+ * Runs `yq` with an argument vector and no shell. `argv` is the lossless form and is used as
+ * given; `args` is the legacy string form and is split by cliArgsToArgv, where a metacharacter
+ * is an ordinary character rather than syntax. YAML input is written to yq's stdin, so there is
+ * no `echo '…' |` pipe and therefore no quoting to escape from.
+ *
+ * @param {{args?: string, argv?: string[], input?: string}} input - Tool input.
+ * @returns {Promise<{tool: string, command: string, argv: string[], output: string, success: boolean}>}
  */
 async function yqCommand(input) {
-  const { args, input: yamlInput } = input;
-  if (!args) {
+  const { args, argv: argvInput, input: yamlInput } = input;
+  const source = Array.isArray(argvInput) ? argvInput : args;
+  if (source === undefined || source === null || source === '') {
     throw new Error('YQ arguments are required');
   }
 
-  logger.info(`Executing yq command: yq ${args}`);
-  
-  // If input is provided, pipe it to yq
-  const cmd = yamlInput 
-    ? `echo '${yamlInput.replace(/'/g, "'\\''")}' | yq ${args}`
-    : `yq ${args}`;
-  
-  const result = await executeCLI(cmd);
-  
+  const argv = cliArgsToArgv(source, 'yq');
+  if (argv.length === 0) {
+    throw new Error('YQ arguments are required');
+  }
+
+  // Logged as a vector, not a command line: a joined string reads like something a shell ran.
+  logger.info(`Executing yq with argv: ${JSON.stringify(argv)}`);
+
+  const result = await executeCLIArgv('yq', argv, {
+    stdin: yamlInput,
+    cwd: config.filesystem.workspaceDir,
+  });
+
   return {
     tool: 'yq',
-    command: `yq ${args}`,
+    command: `yq ${argv.join(' ')}`,
+    argv,
     output: result.stdout || result.stderr,
     success: true,
   };
@@ -816,19 +832,23 @@ function registerCLITools(registry) {
   // YQ
   registry.register({
     name: 'cli_yq',
-    description: 'Process YAML data with yq. Provide yq arguments and optionally input YAML string',
+    description: 'Process YAML data with yq. Provide argv (preferred: one array entry per argument) or args, and optionally input YAML string. yq is run directly with these arguments — there is no shell, so shell syntax has no effect.',
     category: 'devops_cli',
     inputSchema: {
       type: 'object',
-      required: ['args'],
       properties: {
+        argv: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'YQ arguments, one per array entry — preferred, used verbatim (e.g., ["eval", ".items[] | select(.active)", "-"])',
+        },
         args: {
           type: 'string',
-          description: 'YQ arguments (e.g., ".name", ".spec.replicas", "eval .metadata")',
+          description: 'YQ arguments as a single string; quote any argument containing spaces (e.g., ".name", "eval \'.spec.replicas\'")',
         },
         input: {
           type: 'string',
-          description: 'YAML input string to process (optional if using file)',
+          description: 'YAML input string to process, written to yq stdin (optional if using file)',
         },
       },
     },

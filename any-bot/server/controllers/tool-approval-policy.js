@@ -4,16 +4,23 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — extracted the autonomous-path tool-approval decision out of AgenticController (which is at 961 lines) so the one rule that stands between an injected prompt and a shell is directly testable, and so its history is written down. Behaviour is byte-for-byte what AgenticController implemented inline; the only addition is NEVER_AUTO_APPROVE, which is a no-op today and becomes load-bearing the moment someone flips a registry flag.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added cli_yq to NEVER_AUTO_APPROVE. It is declared requiresApproval:false and, until this change, built its command line by string concatenation for child_process.exec — an unapproved arbitrary-command primitive for any agent granted yq. The handler now spawns an argv with no shell; this entry is the belt-and-braces half, so a future caller that does set the auto-approval flag still cannot run it unattended.
  */
 
 /**
  * Tools the unattended path must NEVER auto-approve, whatever the caller passes.
  *
- * Today this is belt-and-braces: `execute_command` is declared `requiresApproval: true` in the
- * baseline registry, so the check below already refuses it. It exists because that registry flag
- * is one edit away from `false`, and on the autonomous path there is no human to catch it.
+ * For `execute_command` this is belt-and-braces: it is declared `requiresApproval: true` in the
+ * baseline registry, so the check below already refuses it. It is listed because that registry
+ * flag is one edit away from `false`, and on the autonomous path there is no human to catch it.
+ *
+ * `cli_yq` is listed for the opposite reason — it is declared `requiresApproval: false`, so this
+ * set is the only thing in the policy that refuses it. Its handler no longer builds a shell
+ * command line (cliTools.js spawns an argv with shell:false), but a YAML processor pointed at
+ * arbitrary paths is still not something an unattended, prompt-injectable agent should get for
+ * free. Both halves have to hold; neither alone is the fix.
  */
-const NEVER_AUTO_APPROVE = new Set(['execute_command']);
+const NEVER_AUTO_APPROVE = new Set(['execute_command', 'cli_yq']);
 
 /**
  * @description Decides whether a tool call may execute without human approval on the autonomous
