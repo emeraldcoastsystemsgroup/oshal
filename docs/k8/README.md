@@ -71,7 +71,8 @@ OOM pairing); the installer refuses to create that shape.
   cluster.
 
 What a live run of both measured is recorded in the
-[remote-cluster work package](remote-cluster-work-package.md) status note (2026-09-21).
+[remote-cluster work package](remote-cluster-work-package.md) status note (2026-09-21), and item by
+item in [docker-desktop-live-proofs-2026-09-21.md](docker-desktop-live-proofs-2026-09-21.md).
 
 ## The legacy generation — quarantined
 
@@ -95,6 +96,9 @@ and keeping it:
 
 ## Available documents
 
+- [`docker-desktop-live-proofs-2026-09-21.md`](docker-desktop-live-proofs-2026-09-21.md) — what was
+  measured on the live Docker Desktop Kubernetes cluster (2026-09-21/22), by work-package item, with
+  PASS / PARTIAL / NOT RUN / BLOCKED labels, the defects fixed live and the ones left open.
 - [`any-bot-kubernetes-setup.md`](any-bot-kubernetes-setup.md) — **legacy, quarantined**: the
   pre-chart `ops/any-bot-k8s` render/apply workspace (`npm run k8:install:any-bot`,
   Keycloak-era stack, builds from source). Superseded by the chart path above; its scripts refuse

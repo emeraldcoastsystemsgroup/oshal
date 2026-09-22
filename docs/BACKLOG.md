@@ -956,6 +956,68 @@ including across a directory belonging to a different owner. Full reasoning and 
   installed app reaches Ready in a namespace with a ResourceQuota on `requests.cpu` and
   `requests.memory`, admitted under the `baseline` Pod Security Standard.
 
+### k8s cockpit toggle scales a Deployment named after the agent, not the chart's (2026-09-21)
+- **Remaining:** measured on the live Docker Desktop cluster ([k8/docker-desktop-live-proofs-2026-09-21.md](k8/docker-desktop-live-proofs-2026-09-21.md), item 12):
+  `PATCH /api/agents/<id>/status` on `weather-analyst` (`a0000000-...-004a`) made the launcher scale
+  `deployments.apps "weather-analyst"`, which answered 404 NotFound. The chart's Deployment is
+  `weather-bot`, the compose service name. The agent row flipped inactive and back to active, and the
+  pod never scaled: replicas stayed 1. Every chart bot whose agent name differs from its service
+  name is affected. In the tree, `setRunning` in
+  `src/features/agent-management/services/kubernetes-bot-launcher.ts` takes the agent name as "also
+  the Deployment name", while `templates/bots.yaml` names each Deployment after its fleet entry
+  (`{{ .name }}`) and labels it `app.kubernetes.io/name: <that name>` and `oshal.io/bot: "true"`.
+  Neither label names the agent. The fix is a core change and needs operator approval first
+  (CLAUDE.md Rule 0d).
+- **Decision needed (operator):** approve the launcher resolving a bot's Deployment by a label the
+  chart stamps on it, rather than by the agent name. That needs a chart label that carries the agent
+  (for example its `agentId`) on every bot Deployment, and a label-selector lookup in `setRunning`.
+- **Done when:** on a cluster, the cockpit toggle on `weather-analyst` scales the `weather-bot`
+  Deployment to 0 and back to 1; and a guard that renders the chart fleet fails when any chart bot's
+  agent does not resolve to its own Deployment through the launcher's lookup.
+
+### Opt-in apps revert on every api boot, which fails the groups that need them (2026-09-21)
+- **Remaining:** measured on the live Docker Desktop cluster ([k8/docker-desktop-live-proofs-2026-09-21.md](k8/docker-desktop-live-proofs-2026-09-21.md)): apps whose manifest says
+  `status: inactive` revert on every api boot, which then fails their groups (intelligent-career
+  needs print-ingest; marketing-suite needs brand-graphics). The upsert is in
+  `src/features/swarm-apps/services/swarm-app-repository.ts`: on a plain reload its `status = CASE`
+  keeps a row's status only when that status is already `inactive`, and otherwise writes the
+  manifest's status, so a row the operator activated is set back to the manifest's `inactive`. The
+  fix is a core change and needs operator approval first (CLAUDE.md Rule 0d).
+- **Decision needed (operator):** approve changing that upsert so a boot reload does not overwrite
+  an activation the operator made. The row does not record who set its status today, so the change
+  needs either that record or a narrower rule (for example: a manifest's `inactive` never
+  overwrites an existing row's status on a plain reload).
+- **Done when:** an opt-in app the operator activates stays active across an api restart and its
+  group resolves (intelligent-career with print-ingest active); and a guard runs the real upsert
+  against a real PostgreSQL twice (activate, then reload the same manifest) and reads `active`.
+
+### The published speaker-diarization image predates its source and has no `/v1/transcribe` (2026-09-21)
+- **Remaining:** measured on the live Docker Desktop cluster ([k8/docker-desktop-live-proofs-2026-09-21.md](k8/docker-desktop-live-proofs-2026-09-21.md), item 11):
+  `ghcr.io/emeraldcoastsystemsgroup/oshal-speaker-diarization:latest` answers `POST /v1/diarize` with
+  200 but `/v1/transcribe` with 404, because the published image predates the source. The
+  source-built image, side-loaded, answered `/v1/transcribe` with 200 in 13.8s. The chart pins
+  `2.1.0-beta.1`, which `deploy/helm/oshal/values.yaml` records as the digest `:latest` resolved to
+  on 2026-09-21. `values-docker-desktop.yaml` (SEQ 4) records the side-load override a box with
+  compose's source-built image can use meanwhile. The fix is a
+  republish from `origin/main`, an operator action that rides on work-package item 1
+  (`scripts/publish-images.sh`), then a new pin.
+- **Done when:** the image `infra.diarization.image` pins by default answers `POST /v1/transcribe`
+  with 200 through the diarization Service on a cluster, with no side-loaded image and no
+  `infra.diarization.image` override.
+
+### Check the report that core logs a missing education migration (2026-09-21)
+- **Remaining:** a defect was reported from the Docker Desktop run: that the core still logs a
+  missing education migration file, which now ships inside the little-monsters store package. **The
+  run's measured record does not contain that log line.** It shows only that the package's own
+  migrations 019, 020, 021 and 024 were applied from the package ([k8/docker-desktop-live-proofs-2026-09-21.md](k8/docker-desktop-live-proofs-2026-09-21.md), item 11). Nothing is to be
+  changed until the line is captured: on an api boot with little-monsters staged, record the exact
+  log message and file name, and find the code that emits it.
+- **Decision needed (operator):** if the line is real and its source is core, approve removing the
+  core's reference to a migration that now belongs to the package (CLAUDE.md Rule 0c).
+- **Done when:** either an api boot with little-monsters staged logs no missing-migration line, and
+  this entry closes with that log excerpt as its evidence; or the captured line is traced to core,
+  the reference is removed, and a guard fails if core names a migration file the tree does not hold.
+
 ### Rides map and fare follow-ups
 - **Remaining:** install the merged [`rides`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/rides) package; decide optional OSRM/Valhalla and Google Maps billing paths; make geocode/tile configuration operator-owned and the normalized-address cache durable.
 - **Decision (operator, 2026-09-20):** (1) keyless routing = straight-line x 1.3, ACCEPTED, to be labelled as an estimate in the surface; `OSHAL_ROUTING_URL` is to be built as an optional override so a routing engine can be plugged in later without a code change; (2) maps = OSM only -- no Google browser key and no Google billing; (3) install `rides` 1.3.0 on the box -- APPROVED, after the 2026-09-20 deploy lands. The remaining code (durable geocode cache, configurable geocoder endpoint) follows from these and is actionable. (PM recommended exactly this; the operator agreed.)
