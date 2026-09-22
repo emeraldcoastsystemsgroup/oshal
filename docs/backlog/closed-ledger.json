@@ -1,0 +1,8 @@
+[
+  {
+    "date": "2026-09-20",
+    "title": "partner-app-registration.md covers about a third of the wired hub connectors",
+    "pr": "688",
+    "evidence": "generated block is current (gen-partner-registration reports nothing written); tests/unit/partner-registration-reference.spec.ts 11/11 covers every done-when clause"
+  }
+]
