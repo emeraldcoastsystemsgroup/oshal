@@ -148,6 +148,20 @@ The copy is a snapshot. Run the patch again after you change `swarm.jwtSecret`,
 `botDefaults.envSecret: oshal-bot-env`, chart-declared bots list `oshal-bot-env` after
 `oshal-shared-secret`, so a stale copy would override the new value for them too.
 
+## Cockpit UI profiles
+
+The cockpit's layout — Home and Jarvis leading the sidebar, the top workspace navigation, every
+ribbon tile — comes from a UI profile (`config-seed/profiles/<name>.json`, `UI_PROFILE` picks one,
+`oshal-framework` by default). The image ships the tracked profiles in `/app/config-seed.dist/profiles`,
+and the api container seeds them into `/config-seed/profiles` (an `emptyDir`) at every start. To run
+your own profiles, put them in a ConfigMap and set `api.uiProfilesConfigMap`; it is mounted read-only
+in the same place and the seed step does nothing.
+
+The `configSeedSecret` cannot carry them: a Secret mounts flat keys, and mounting it over
+`/app/config-seed` is what hid the profiles on the first live install — the api then served a
+built-in fallback ribbon with no Jarvis and no workspaces. `tests/unit/chart-ui-profiles.spec.ts`
+holds this.
+
 ## Shared services
 
 The chart runs the same service tier a default `docker compose up` does, each

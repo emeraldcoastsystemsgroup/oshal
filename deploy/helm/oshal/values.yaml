@@ -12,6 +12,7 @@
 # 8 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — the rbac comment records that a runtime-launched bot does not read oshal-shared-secret (the core launcher's envFrom is oshal-shared-env + oshal-bot-env), so it needs JWT_SECRET copied into oshal-bot-env, and where the copy command is printed. Guard: tests/unit/chart-dynamic-bot-env.spec.ts.
 # 9 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — the swarm.extraEnv comment records the credential-name rule's known false positive: a non-secret switch such as compose's REMOTE_CLIENT_REQUIRE_NODE_TOKEN is refused too, and goes on the workload that reads it (api.extraEnv). Guard: tests/unit/chart-shared-env-extra.spec.ts.
 # 10 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — limitRange.enabled (default true, main role): the oshal-container-defaults LimitRange gives botDefaults.resources to any container that sets none, because the runtime bot launcher sets no resources and a ResourceQuota that requires requests would refuse its pods. The rbac comment now says plainly that the missing JWT_SECRET is a 0.5.0 regression for runtime bots on the default posture, names the one-line core fix, and records that such a bot also lacks a securityContext and liveness/startup probes, which no LimitRange can default. Guard: tests/unit/chart-runtime-bot-defaults.spec.ts.
+# 11 | maintainer@emeraldcoastsystemsgroup.com   | api.uiProfilesConfigMap: the cockpit's UI profiles (config-seed/profiles/*.json) now reach the api — seeded from the image by default, or from this ConfigMap.
 #
 # Defaults model the compose stack (docker-compose.oshal-local.yml) with DNS parity:
 # Services are named oshal-redis / oshal-db / oshal-chromadb / oshal-api / oshal-local-api
@@ -263,6 +264,11 @@ api:
   # Optional Secret mounted at /app/config-seed (global-config.json, secrets.json,
   # claude-code-mcp.json). Compose bind-mounts ./config-seed; this is its k8s form.
   configSeedSecret: oshal-config-seed
+  # Optional ConfigMap of cockpit UI profiles (<name>.json, e.g. oshal-framework.json), mounted at
+  # /config-seed/profiles. Empty = the profiles shipped in the image (config-seed.dist/profiles) are
+  # seeded there at start. The configSeedSecret above cannot carry them: a Secret mounts flat keys,
+  # and mounting it over /app/config-seed is exactly what hid the image's profiles directory.
+  uiProfilesConfigMap: ""
   # Non-secret env overrides/additions rendered verbatim into the Deployment.
   # MOCK_OIDC has NO sign-in page — pair it with MOCK_OIDC_EMAIL/NAME/SUB (the
   # installer wires these from --admin-email) or every visitor is the shared demo
