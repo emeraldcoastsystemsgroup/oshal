@@ -7,6 +7,7 @@
   2 | maintainer@emeraldcoastsystemsgroup.com   | Added the resource doctor, minting of the three fail-closed secrets (JWT/ENCRYPTION/SWARM_SERVICE), -Dev hot-swap mode, and -OffLan (Headscale pre-auth key packed into a v2 join code).
   3 | maintainer@emeraldcoastsystemsgroup.com   | Fixed a hard parse error that made the whole Windows installer dead-on-arrival: `$env$env:FORCE_LLM_PROVIDER` (doubled sigil) -> `$env:FORCE_LLM_PROVIDER`, so zero-keys mode sets noop as intended. Dropped the stale `--profile little-monsters` compose arg (profile left with the ADR-085 store carve; matches scripts/install.sh's empty PROFILE_ARGS).
   4 | maintainer@emeraldcoastsystemsgroup.com   | The cockpit firewall rule is named for the product as it is called today, and an upgrade renames it in place (operator decision 2026-09-20). Windows matches firewall rules by DisplayName, so simply changing the string would have left an upgraded box carrying two rules for the same port -- the old one still advertising the retired standalone name. Open-CockpitFirewallPort now looks the old rule up once, removes it, then creates the oshal-named one, which is the only place in the installer that still knows the old name.
+  5 | maintainer@emeraldcoastsystemsgroup.com   | -OffLan now REFUSES instead of silently degrading (operator decision 2026-09-21: Headscale stays opt-in, but it must fail loudly). Test-ShouldGoOffLan returned $false the moment Test-HeadscaleRunning was false -- before it ever looked at the switch -- so an explicit -OffLan against a stopped Headscale emitted a LAN-only OSJOIN1 code, and the operator found out when the remote machine could not join. The refusal is Stop-WithError naming scripts/headscale-setup.sh, and it fires in Assert-OffLanPrerequisites right after Assert-Docker -- BEFORE the .env write, the AI-login step and the build -- because the join code is minted in Show-Summary, the last step, and a refusal there would leave a running swarm behind a 'did not finish' exit with no RESULT: lines for the GUI. Test-ShouldGoOffLan repeats the check as defence in depth for a Headscale that dies mid-build. When Headscale IS running but the server_url, tailnet IP or pre-auth key comes back empty, an explicit -OffLan also refuses (that shape cannot be known before minting), so a partial success cannot mint a code weaker than the one asked for. The interactive prompt, its yes-then-fallback, and the -NonInteractive no-op path are unchanged.
 
   installer/lib/install-swarm.ps1 -- make THIS machine the swarm controller.
 
@@ -401,14 +402,53 @@ function Open-CockpitFirewallPort {
 }
 
 <#
+.SYNOPSIS The one refusal for an explicit -OffLan against a stopped Headscale.
+.DESCRIPTION Headscale is deliberately opt-in (operator decision 2026-09-21): it is an
+outward-facing network coordination service, and the standing rule on this repo is that
+outward-facing behaviour is off by default. Default-on was considered and declined. The cost
+accepted is one manual step before a remote machine can join -- so a STOPPED Headscale is a
+normal resting state, not a fault.
+
+What the installer must never do is answer an EXPLICIT -OffLan with a LAN-only code. That is the
+opposite of what was asked for, it is silent, and the operator finds out when the remote machine
+cannot join. Both call sites share this so the message and the remedy cannot drift apart.
+#>
+function Stop-ForAbsentHeadscale {
+    Stop-WithError "-OffLan was requested but Headscale is not running on this machine." `
+        "Start it with: bash scripts/headscale-setup.sh   (then re-run this installer)"
+}
+
+<#
+.SYNOPSIS Refuses an explicit -OffLan BEFORE anything is built, written or started.
+.DESCRIPTION The join code is minted inside Show-Summary, the LAST step of the install -- after
+the image is built, the stack is up, the controller has been waited on, verification has run and
+the firewall rule is open. A refusal that fires there leaves a running swarm behind an exit code
+that says "did not finish", never emits the RESULT: lines the GUI reads, and sends the operator
+back through a second full build. So the one precondition that CAN be known up front is checked
+here, right after Docker is confirmed reachable and before the .env write, the AI-login step or
+the build. The partial-success shape (Headscale up, but no key/URL/IP) genuinely cannot be known
+until the key is minted, so that refusal stays where the minting is.
+#>
+function Assert-OffLanPrerequisites {
+    if ($OffLan -and -not (Test-HeadscaleRunning)) { Stop-ForAbsentHeadscale }
+}
+
+<#
 .SYNOPSIS Decides whether this join code should carry tailnet credentials.
 .DESCRIPTION Embedding a Headscale pre-auth key makes the code work from anywhere, but it also
 puts a live credential into a string the operator will paste around. So it is never automatic:
--OffLan opts in, and an interactive run asks. Returns $false the moment Headscale is absent.
+-OffLan opts in, and an interactive run asks.
+
+Assert-OffLanPrerequisites already refused an explicit -OffLan with Headscale stopped before the
+build. The check is repeated here as defence in depth: a build takes minutes, and a Headscale that
+died in between must not turn the same explicit request into a LAN-only code at the last step.
 .OUTPUTS [bool]
 #>
 function Test-ShouldGoOffLan {
-    if (-not (Test-HeadscaleRunning)) { return $false }
+    if (-not (Test-HeadscaleRunning)) {
+        if ($OffLan) { Stop-ForAbsentHeadscale }
+        return $false
+    }
     if ($OffLan) { return $true }
     if ($NonInteractive) { return $false }
 
@@ -438,9 +478,22 @@ function New-JoinCodeForThisSwarm {
             return (ConvertTo-JoinCode -ControlPlaneUrl "http://${tailnetIp}:$CockpitPort" -SharedSecret $Secret `
                                        -HeadscaleUrl $hsUrl -HeadscaleAuthKey $authKey)
         }
+        # Headscale IS running, but one of the three ingredients came back empty. Each helper
+        # returns '' rather than throwing, so without this the run would reach ConvertTo-JoinCode
+        # with a blank key and mint an OSJOIN1 -- a code that is not what was asked for and that
+        # nothing downstream would flag.
+        $missing = @()
+        if (-not $hsUrl)     { $missing += "no server_url in infra/headscale/config/config.yaml" }
+        if (-not $tailnetIp) { $missing += "this machine is not on the tailnet (no 'tailscale ip -4')" }
+        if (-not $authKey)   { $missing += "Headscale would not mint a pre-auth key" }
+        if ($OffLan) {
+            Stop-WithError "-OffLan was requested but the off-LAN join code could not be built: $($missing -join '; ')." `
+                "Check the tailnet with: bash scripts/headscale-setup.sh   (see docs/runbooks/remote-swarm-node-enrollment.md)"
+        }
+        # Answered yes at the prompt rather than passing the switch: the operator is watching this
+        # run, so say what failed and carry on with a LAN-only code instead of ending the install.
         Write-Warn "Could not build an off-LAN join code; falling back to a LAN-only one."
-        if (-not $tailnetIp) { Write-Info "This machine is not on the tailnet (no 'tailscale ip -4')." }
-        if (-not $authKey)   { Write-Info "Headscale would not mint a pre-auth key." }
+        foreach ($reason in $missing) { Write-Info $reason }
     }
 
     $lanIp = Get-LanIPv4
@@ -493,6 +546,7 @@ if ($Down) { Invoke-TearDown }
 if ($ConnectOnly) { Invoke-ConnectOnly }   # login-only; no Docker needed, exits when done
 
 Assert-Docker
+Assert-OffLanPrerequisites   # an explicit -OffLan that cannot be honoured stops HERE, not after the build
 [void](Invoke-SystemDoctor -RepoRoot $RepoRoot -CockpitPort $CockpitPort)
 if ($Dev) {
     Write-Step "Developer mode"

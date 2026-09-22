@@ -6,6 +6,7 @@
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ordered, verified OSHAL local bring-up: infra → API (fully up) → bots. Recovers the recurring Docker-Desktop-restart half-broken state (Postgres/Chroma exit 255, API "healthy" but DB-less).
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | Run app-store-drift-check.sh after the parity check: warn when a deployed-apps package in the volume is stale vs the oshal-applications store checkout (little-monsters ran a pre-D10 v1.0.6 build for a week — every education asset 404'd from another app's package dir with nothing flagging it).
 # 3 | maintainer@emeraldcoastsystemsgroup.com   | Batch the bots step (5 at a time, 18s settle, OSHAL_UP_BATCH_SIZE/OSHAL_UP_BATCH_SETTLE knobs; 0 = old single-shot): the mass `up -d` cold-start spike OOM-crashed the 6 GB engine twice on 2026-07-23, and the Stack Watchdog re-running this script made it a crash loop.
+# 4 | maintainer@emeraldcoastsystemsgroup.com   | Report Headscale's state alongside the rest of the tier. It is opt-in and lives in its own compose under infra/headscale/, so this script neither starts it nor treats a stopped one as a fault (operator decision 2026-09-21) — but until now nothing said so anywhere in the bring-up, and "why can't my laptop join?" was only answerable by reading the compose, the installer switch, ADR-013 and the enrolment runbook. One advisory line now names the state and, when it is down, the one command that starts it.
 #
 # Why this exists: when the Docker engine restarts on this host, containers auto-start
 # out of order — Postgres/Chroma sometimes crash (exit 255) and the API comes up
@@ -172,6 +173,23 @@ fi
 # proxy broke, not that someone forgot a list entry.
 if [ -f "$(dirname "$0")/monitoring-liveness-check.sh" ]; then
   bash "$(dirname "$0")/monitoring-liveness-check.sh" || true
+fi
+
+# ── Headscale: can a machine off this LAN join at all? ───────────────────────────────
+# Headscale is NOT in this compose file and is NOT started here. That is deliberate (operator
+# decision 2026-09-21): it is an outward-facing network coordination service, and the standing
+# rule on this repo is that outward-facing behaviour is opt-in and off by default. Default-on
+# was considered and declined, so a STOPPED Headscale is a correct resting state — this is an
+# informational line, never a health failure and never a reason to hold up the bring-up.
+#
+# It is reported because "why can't my laptop join?" was otherwise only answerable by reading
+# four files: the compose that does not mention it, the installer switch, ADR-013 and the
+# enrolment runbook. One line here says which of the two states this box is in.
+hs_state=$(docker inspect --format '{{.State.Status}}' oshal-headscale 2>/dev/null || true)
+if [ "$hs_state" = running ]; then
+  echo "Headscale: running — off-LAN joining available (installer -OffLan mints an OSJOIN2 code)."
+else
+  echo "Headscale: not running (opt-in) — off-LAN joining unavailable until: bash scripts/headscale-setup.sh"
 fi
 
 if curl -sf -m 3 "$API_HEALTH" >/dev/null 2>&1; then
