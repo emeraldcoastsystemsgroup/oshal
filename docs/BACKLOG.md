@@ -2356,6 +2356,33 @@ including across a directory belonging to a different owner. Full reasoning and 
 - **Done when:** the controller holds a signing keypair and every bot node the matching public ring;
   the operator's question above (or an equivalent re-ask) returns an answer instead of escalating; and
   a live protected dispatch is observed completing with a recorded delegation.
+- **Decision (operator, 2026-09-21/22): CLOSED — the keypair this entry asks for already exists, and
+  a live protected dispatch proved the refusal is gone.** The entry's operator ask was "generate one
+  Ed25519 JWK keypair and set three variables"; measured before asking, all three were already
+  present and correctly wired, which the 2026-09-15 evidence ("the host .env sets no
+  `OSHAL_DELEGATION_*` key") predates. Verified structurally, without reading any secret value: the
+  controller carries `OSHAL_DELEGATION_SIGNING_KID` and a private JWK (`kty=OKP`, `crv=Ed25519`, with
+  a private component); the bot ring `OSHAL_DELEGATION_PUBLIC_KEYS` carries exactly one key id and it
+  is the signing kid; and the public half's `x` matches the private half's, so it is a real pair
+  rather than two unrelated keys.
+  **The live proof, run on the operator's own authenticated session because a minted PAT cannot do
+  it:** an agent probe reached the dispatch but failed a different check —
+  `User-bound delegation requires a verified principal issuer` — and that was an artefact of the
+  probe, not the product: a PAT only *preserves* an issuer from the caller that minted it, the probe
+  minted through the service-secret path with no interactive login behind it, and its token row
+  carried `principal_issuer = NULL` (2 of 358 tokens on the box carry one at all). The operator then
+  asked the trading question in the cockpit. Result: a real dispatch, accounted (`chat_tasks`
+  3629 → 3630), and **zero** `authorization_recorded_delegation_required` in 24 hours. The refusal
+  this entry exists for does not occur.
+  **What the same run surfaced, which is NOT this entry:** the ask still failed, downstream of
+  everything above, at the model adapter —
+  `OpenAI-compatible call (gemini-2.5-flash @ generativelanguage.googleapis.com): 2164ms, 6843 tokens`
+  followed by `OpenAI-compatible endpoint returned no final answer`. The provider call succeeded and
+  was billed; the adapter could not extract an answer from what came back, and the operator saw the
+  page catch-all. That is a separate live defect, commissioned the same night as its own fix, and it
+  is recorded here only so nobody later reads this entry's closure as "Jarvis answered".
+  (PM verified the keys, ran the probe, established the probe's own limitation, and the operator ran
+  the interactive proof.)
 
 ### Jarvis knows the shape of the data he can reach
 
