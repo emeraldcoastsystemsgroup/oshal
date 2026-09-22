@@ -68,7 +68,7 @@ highest-frequency fixes: stack half-up after a Docker engine restart → `bash s
 | [governance/](./governance/README.md) | RLS/RBAC policies, provisioning SQL, RLS runbook. |
 | [guides/](./guides/README.md) | **End-user guides** — one per cockpit screen, as-built: how to reach it, what each control does, what it deliberately does not do, and the confusions users actually hit. |
 | intelligent-career-automation/ | *Not in this repo* — the apply-agent specs and application-form playbook stayed in the private archive. |
-| [k8/](./k8/README.md) | Kubernetes docs: the codeless install path, the [remote-cluster work package](./k8/remote-cluster-work-package.md) for the machine that runs a real cluster, and the legacy handover. |
+| [k8/](./k8/README.md) | Kubernetes docs: the codeless install path for the Helm chart at [`deploy/helm/oshal`](../deploy/helm/oshal/README.md) ([ADR-129](./adr/129-codeless-k8s-install-path.md)), the [remote-cluster work package](./k8/remote-cluster-work-package.md) for the machine that runs a real cluster, and the quarantined legacy generation (`ops/any-bot-k8s/`, `ops/deployment/kubernetes/`, not a deploy path). |
 | [legal/](./legal/README.md) | Licensing, attribution, trademark, and inbound contribution terms — what AGPL-3.0 actually grants and requires, and the commercial exception. |
 | [little-monsters](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/little-monsters) | Little Monsters K-12 study app — carved out to the oshal-applications store (ADR-085): install, user guide, runbook, support, school deployment live in the package. |
 | [operations/](./operations/README.md) | Support / SLA / incident posture. |

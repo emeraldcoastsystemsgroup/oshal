@@ -1,4 +1,13 @@
 # =============================================================================
+# LEGACY — DO NOT DEPLOY
+# Part of the quarantined pre-chart Kubernetes generation.
+# This stack runs oshal-api-server:latest, an image nothing in this repo builds, with
+# MOCK_OIDC on a stack whose purpose is reachability from outside machines.
+# The current Kubernetes path is the Helm chart at deploy/helm/oshal: read
+# docs/k8/README.md and docs/adr/129-codeless-k8s-install-path.md. Kept, not deleted,
+# while delete-vs-quarantine is still open (docs/k8/remote-cluster-work-package.md,
+# item 9).
+# =============================================================================
 # OSHAL any-bot Kubernetes Stack
 # =============================================================================
 # CHANGE LOG
@@ -11,6 +20,7 @@
 # 4 | maintainer@emeraldcoastsystemsgroup.com   | Repointed the stack to the converted OSHAL root runtime, added Postgres, and aligned ports/env/probes with the current server build
 # 5 | maintainer@emeraldcoastsystemsgroup.com   | Renamed the Postgres network policy so the rendered manifest no longer contains duplicate policy resource names
 # 6 | maintainer@emeraldcoastsystemsgroup.com   | Added in-cluster Google Search MCP service and wired the canonical MCP URL into any-bot config
+# 7 | maintainer@emeraldcoastsystemsgroup.com   | Quarantined as legacy (remote-cluster work package item 9): LEGACY — DO NOT DEPLOY banner pointing at the Helm chart deploy/helm/oshal and docs/k8/README.md. No manifest content changed. Guard: tests/unit/k8s-legacy-quarantine.spec.ts.
 # =============================================================================
 ---
 apiVersion: v1

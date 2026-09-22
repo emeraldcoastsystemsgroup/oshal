@@ -15,10 +15,22 @@
 # canonical base64url identity header; a fleet secret without owner attribution is insufficient.
 # 2026-08-06 | maintainer@emeraldcoastsystemsgroup.com | Read the callback fleet secret only from
 # the edge process environment so it cannot leak through task payloads, argv, or shell history.
+# 2026-09-21 | maintainer@emeraldcoastsystemsgroup.com | POST a bounded thumbnail per scored cell to
+# the controller. The scorecard carried only a ComfyUI filename, which lives on THIS box and no
+# browser can fetch, so the studio rendered no image at all for any cell. One small JPEG per cell
+# goes to /api/lora/ingest/cell-image, which stores it owner-scoped with an expiry; the full-size
+# render stays here.
 #
 # Free-first: CLIP scoring is local ($0). The optional LLM-vision judge is a separate, metered,
 # opt-in step on the controller - never the primary score here.
-import urllib.request, json, time, os, glob, argparse
+import urllib.request, urllib.parse, json, time, os, glob, argparse, io
+
+# Bounds for the per-cell thumbnails the controller hosts. The route refuses anything above
+# MAX_CELL_IMAGE_BYTES (lora/src-routes/lora-cell-images.ts), so the encoder aims well under it and
+# gives up rather than posting a body the controller will reject.
+THUMB_MAX_EDGE = 320
+THUMB_MAX_BYTES = 240 * 1024
+THUMB_QUALITIES = (82, 70, 58, 45, 32)
 
 HOME = os.path.expanduser("~")
 BASE = "http://127.0.0.1:8188"
@@ -231,6 +243,9 @@ def main():
 
     if a.controller and secret and a.owner_sub_b64:
         post_ingest(a.controller, secret, a.owner_sub_b64, scorecard)
+        # The scorecard lands first: a cell thumbnail is an illustration of a score that already
+        # exists, so losing one must never cost the run its numbers.
+        post_cell_images(a.controller, secret, a.owner_sub_b64, a.character, a.version, meta)
     else:
         log("no complete controller/secret/owner binding given; scorecard saved locally only")
 
@@ -252,6 +267,74 @@ def write_gallery(a, sc, meta):
             % (a.character, a.version, a.character, a.version, sc["overall"], sc["identity_mean"],
                sc["quality_mean"], sc["min_cell"], "".join(cards)))
     open(os.path.join(DEST, "scorecard_v%d.html" % a.version), "w", encoding="utf-8").write(html)
+
+
+def thumbnail_bytes(path):
+    """Shrink one validation render to a bounded JPEG the controller will accept.
+
+    Returns (bytes, content_type) or None. None is a normal outcome, not an error: Pillow may be
+    absent on a minimal box, and a cell with no thumbnail simply renders without an image. The
+    encoder walks the quality ladder down and REFUSES rather than returning something over the
+    controller's bound, because a body the route rejects is worse than no body at all.
+    """
+    try:
+        from PIL import Image
+    except Exception as e:
+        log("Pillow unavailable (%r) - cells will have no hosted thumbnail" % e)
+        return None
+    try:
+        im = Image.open(path)
+        im.load()
+        im = im.convert("RGB")
+        im.thumbnail((THUMB_MAX_EDGE, THUMB_MAX_EDGE))
+        for quality in THUMB_QUALITIES:
+            buf = io.BytesIO()
+            im.save(buf, format="JPEG", quality=quality, optimize=True)
+            data = buf.getvalue()
+            if len(data) <= THUMB_MAX_BYTES:
+                return data, "image/jpeg"
+        log("thumbnail for %s stayed above %d bytes - not posting it" % (path, THUMB_MAX_BYTES))
+        return None
+    except Exception as e:
+        log("thumbnail err %s: %r" % (path, e))
+        return None
+
+
+def post_cell_image(controller, secret, owner_sub_b64, character, version, cell_index, filename, data, content_type):
+    """POST one bounded thumbnail. Same guard pair as the scorecard callback: the fleet secret from
+    this process's environment plus the separately encoded exact owner. The body is the raw image -
+    the controller's global JSON limit is 100kb, which a matrix of base64 cells would blow past."""
+    url = "%s/api/lora/ingest/cell-image?character=%s&version=%d&cell=%d&filename=%s" % (
+        controller.rstrip("/"),
+        urllib.parse.quote(str(character), safe=""),
+        int(version), int(cell_index),
+        urllib.parse.quote(str(filename or ""), safe=""),
+    )
+    try:
+        req = urllib.request.Request(
+            url, data=data,
+            headers={"Content-Type": content_type, "x-service-secret": secret,
+                     "x-oshal-user-sub-b64": owner_sub_b64})
+        urllib.request.urlopen(req, timeout=30).read()
+        return True
+    except Exception as e:
+        log("cell %d image POST FAILED (%r) - the scorecard is unaffected" % (cell_index, e))
+        return False
+
+
+def post_cell_images(controller, secret, owner_sub_b64, character, version, meta):
+    """Copy every scored cell's render to the controller as a bounded thumbnail. Best-effort per
+    cell: a failure costs that one image, never the scorecard that already landed."""
+    posted = 0
+    for cell_index, m in enumerate(meta):
+        made = thumbnail_bytes(os.path.join(OUT, m["f"]))
+        if not made:
+            continue
+        data, content_type = made
+        if post_cell_image(controller, secret, owner_sub_b64, character, version, cell_index, m["f"], data, content_type):
+            posted += 1
+    log("posted %d/%d cell thumbnails to the controller" % (posted, len(meta)))
+    return posted
 
 
 def post_ingest(controller, secret, owner_sub_b64, scorecard):

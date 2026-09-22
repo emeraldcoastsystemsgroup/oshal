@@ -29,13 +29,18 @@ Run the API server on the host while Docker provides Postgres, Redis, and Chroma
 bash scripts/start-localhost.sh
 ```
 
-### Kubernetes bundle rendering
+### Kubernetes install
 
-Render the core Kubernetes bundle:
+Install the Helm chart at `deploy/helm/oshal` onto a cluster, with no source checkout and no
+build:
 
 ```bash
-bash scripts/install-k8s.sh --env-file ops/deployment/oshal-k8s.env.example --skip-build
+bash scripts/oshal-install.sh --mode 4 --admin-email you@example.com
 ```
+
+Start with [docs/k8/README.md](../docs/k8/README.md); the decision is
+[ADR-129](../docs/adr/129-codeless-k8s-install-path.md). The older `install-k8s.sh` bundle
+renderer is legacy and refuses to run (see [Legacy Kubernetes helpers](#legacy-kubernetes-helpers-quarantined)).
 
 ### Legacy bot import
 
@@ -283,15 +288,25 @@ npm run repo:sync -- \
   --visibility private
 ```
 
-## Kubernetes deployment helper
+## Legacy Kubernetes helpers (quarantined)
 
-The scripts module now also contains:
+> **LEGACY — DO NOT DEPLOY.** These helpers belong to the pre-chart Kubernetes generation. The
+> stacks they render run `oshal-api-server:latest`, an image nothing in this repo builds. The
+> current path is the Helm chart at `deploy/helm/oshal`, installed with
+> `bash scripts/oshal-install.sh --mode 4` (see [docs/k8/README.md](../docs/k8/README.md)).
+> Each helper below refuses to run and names that path unless `OSHAL_ALLOW_LEGACY_K8S=1` is set,
+> and so does every `k8:*` npm script and the `oshal-any-bot-k8s-setup` bin that calls them. They
+> are kept, not deleted, while the operator decides between deleting the legacy generation and
+> keeping it quarantined. Prefix a command below with `OSHAL_ALLOW_LEGACY_K8S=1` to run it anyway.
 
-- `setup-oshal-k8s.sh`
-- `setup-any-bot-k8s.sh`
-- `any-bot-local-cli.js`
+The quarantined helpers are:
 
-These helpers render and optionally apply the root `oshal` and `any-bot-k8s` Kubernetes workspaces.
+- `setup-oshal-k8s.sh` and its wrapper `install-k8s.sh`
+- `setup-any-bot-k8s.sh` and its npm/bin wrapper `setup-any-bot-k8s-cli.js`
+- `build-any-bot-k8s-local-package.sh` and `build-any-bot-k8s-installer-image.sh`
+
+They render and optionally apply the legacy root `oshal` and `ops/any-bot-k8s` Kubernetes
+workspaces.
 
 ### Root OSHAL quick usage
 

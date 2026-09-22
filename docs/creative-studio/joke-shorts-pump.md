@@ -77,7 +77,7 @@ Most cycles produce nothing, and that is correct. The list shows why:
 Start the signed-in browser on the node:
 
 ```powershell
-chrome.exe --remote-debugging-port=9222 --user-data-dir=C:\Users\gabec\oshal-video-chrome
+chrome.exe --remote-debugging-port=9222 --user-data-dir="$env:USERPROFILE\oshal-video-chrome"
 ```
 
 The Google session persists on disk — it survived a two-week gap — so this needs no human sign-in.

@@ -20,6 +20,7 @@
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | Three defects an adversarial review measured. (1) The wrapping loop mutated baseProviderMap while iterating, so later runtimes wrapped ALREADY-WRAPPED providers: replayed with three throwing providers, cline-cli realized a NINE-attempt sequence and a two-rung chain made it fail over to itself - each attempt a real subprocess against a vendor that had just returned 429. It now snapshots first and rungs are always raw providers. (2) The new env key sat at the head of a ?? chain while compose defines it as an EMPTY STRING on every bot, and ?? does not fall through on '', so it permanently shadowed all four legacy variables and disabled a working configuration; the chain is truthiness-based now. (3) Rung matching lost its lowercasing while the route kept it, so a capitalised entry vanished at the node.
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | A fallback rung may name ANY provider the catalog knows. Rungs were resolved by indexing the three-key runtime map, so every id that is not a native runtime name - openrouter, anthropic, gemini, the ids the api accepts, the row stores, the cockpit renders and the boot pull carries - missed, landed in `unavailable`, and became one logger.warn nothing surfaces: the chain .env.example and the cockpit placeholder both advertise realized as a SINGLE rung. Rungs now resolve through resolveBotNodeSwitch, the same translator the primary already used, and a Cline-backed rung is wrapped by createClineBackedRungProvider so it fronts its OWN vendor for the duration of the call and restores what it found on entry (not the container seeds, so a Cline-backed primary keeps its backing when a rung returns); CLINE_API_MODEL is cleared rather than carried, because fallback_order stores provider ids only and one vendor's model id fails on another as a wrong-model error that looks nothing like a failover. Dedupe is on runtime+apiProvider, never the runtime alone, which had discarded the second of two Cline-backed vendors. resolveBotNodeProviderFallbackOrder also takes an injectable env so a guard can establish "unconfigured" across all five variables it reads instead of inheriting the ambient shell.
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | The bot's swarm memory is constructed with the 'reader-helper' ledger reach. oshal_bot holds no privilege on oshal_swarm_memory at all, so recall raised permission denied inside its own catch and every bot ran with zero memory behind one warning. The helper (migration 152) returns shared memories plus the reader's own, with the owner rule enforced in SQL, so the fix does not hand a bot the table.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com   | The bot-node's any-bot ToolRegistry was built empty and stayed empty. registerFileTools/registerCLITools run only from any-bot/server/app.js, the retired BOT_RUNTIME=any-bot server, so on every real worker registry.getAll() returned NOTHING - captureDispatchCapabilities therefore advertised attempt_completion and nothing else, and a granted, mapped, scoped tool still had no handler to reach. buildLlmStack now returns the registry it constructed and createBotNodeRuntime registers the read-only question tools on it (bot-node-read-only-tools.ts), which is the first point in the boot where the GUC-wrapped pool, the RagService and a graph connector all exist. Registration only makes a tool a CANDIDATE: authority is still declared set n allowlist n exact operation scope, resolved before any handler is reached.
  */
 import { createProtectedBotExecutionBoundary } from './bot-node-protected-execution';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
@@ -57,6 +58,8 @@ import { createClineBackingEnv, resolveBotNodeSwitch } from './bot-node-provider
 import { ProviderRegistry } from '@/features/llm-provider';
 import { createPromptAuthorizationResolver } from './prompt-authorization-resolver';
 import { connectPool, connectRecoverableBotNodeDatabase, type BotNodeDatabase } from './bot-node-database-pool';
+import { registerBotNodeReadOnlyTools, type ReadOnlyToolRegistration } from './bot-node-read-only-tools';
+import { createGraphConnector } from '@/features/graph';
 
 export { connectPool };
 
@@ -124,7 +127,8 @@ export async function createBotNodeRuntime(options: { recoverDatabase?: boolean 
   // through the derived helper (migration 152), which scopes the rows to shared memories plus the
   // reader's own in SQL. Reading the table directly here is what returned permission denied inside
   // the recall path's own catch, leaving every bot with no memory and one warning.
-  const swarmMemoryService = new SwarmMemoryService(new RagService(), pool ?? undefined, 'reader-helper');
+  const ragService = new RagService();
+  const swarmMemoryService = new SwarmMemoryService(ragService, pool ?? undefined, 'reader-helper');
   const workItemRepository = pool ? new WorkItemRepository(pool) : undefined;
   const costTrackingService = new CostTrackingService(pool);
   const ticketStore = pool ? new PostgresTicketStore(pool) : undefined;
@@ -138,7 +142,18 @@ export async function createBotNodeRuntime(options: { recoverDatabase?: boolean 
 
   const {
     taskController, providerName, modelName, agenticController, getActiveProvider, setActiveProvider,
+    toolRegistry,
   } = await buildLlmStack();
+
+  // The read-only question tools. This is the only place the registry, the GUC-wrapped pool, the
+  // RagService and the graph connector are all in scope, and it runs before the first dispatch can
+  // capture capabilities. A null pool / absent graph engine is not an error here: each handler
+  // reports its own unavailability rather than being silently missing from the advertised set.
+  registerBotNodeReadOnlyTools(toolRegistry, {
+    pool,
+    ragService,
+    graphConnector: createGraphConnector(),
+  });
 
   const executionHandler = createBotNodeExecutionHandler({
     runApplicationExecution: createProtectedBotExecutionBoundary(pool, agentId),
@@ -197,6 +212,8 @@ async function buildLlmStack(): Promise<{
   setActiveProvider: (provider: string, model?: string) => ActiveBotNodeProvider;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   agenticController: any;
+  /** The registry BOTH controllers dispatch from — returned so the caller can register on it. */
+  toolRegistry: ReadOnlyToolRegistration;
 }> {
   /* eslint-disable @typescript-eslint/no-require-imports */
   const config = require('../../any-bot/server/utils/config');
@@ -327,6 +344,7 @@ async function buildLlmStack(): Promise<{
     taskController: taskController as AnyBotTaskController,
     providerName: activeProviderName, modelName: activeModelName,
     getActiveProvider, setActiveProvider, agenticController,
+    toolRegistry: toolRegistry as ReadOnlyToolRegistration,
   };
 }
 

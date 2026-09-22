@@ -29,6 +29,30 @@ live-cluster proof (ADR-129)"** (line 887) reads:
 Parked is a statement about ordering, not cancellation. This package is what gets picked up when a
 cluster box exists.
 
+**Status note (2026-09-21) — one Docker Desktop Kubernetes install on the development box.** On the
+operator's explicit direction, and as an exception to section 1, the chart was installed on this
+box's Docker Desktop Kubernetes (kind provisioning, v1.36). Measured:
+
+- A full-fleet `helm upgrade --install` (30 pods) reached all-Ready only after the ArangoDB and
+  speaker-diarization readiness-probe fixes.
+- NodePorts are not host-reachable there; LoadBalancer Services map to `localhost`
+  ([`values-docker-desktop.yaml`](../../deploy/helm/oshal/values-docker-desktop.yaml)).
+- The api failed activation closed for every protected store app until
+  `APP_PACKAGE_DYNAMIC_ROUTES=1` reached it.
+- kube-prometheus-stack 91.4.1 ([`deploy/monitoring`](../../deploy/monitoring)) scraped 22 oshal
+  targets (1 core + 21 bots), all up, with the five `Swarm*` rules loaded. Item 16's templating
+  question was answered with a separate stack, not with chart templates.
+- 54 of 61 store apps staged; 7 were refused on audit-record version drift in the store.
+
+Not done: installer mode 4 was not run (the install was a manual `helm upgrade --install`); the
+`/welcome` wizard and a jarvis turn were not proven; the OCI chart was not published; delegation
+signing keys were absent, so protected dispatch refuses.
+
+**Update (2026-09-21/22) — item-by-item results.** The results on the same cluster for items 5,
+10, 11, 12, 13, 14, 16 and 17 (item 10 not run), with the defects fixed live and the ones left open, are recorded in
+[docker-desktop-live-proofs-2026-09-21.md](docker-desktop-live-proofs-2026-09-21.md). The sections
+below still describe the state this package measured before those runs.
+
 **Provenance of every claim below.** This document was assembled from four measured sweeps of the
 tree on `main` (backlog, deploy configuration, ADRs/docs, code and guards). Every factual claim
 carries a `file:line`. Where the sweeps disagreed with each other or with the tree, that is called
@@ -340,6 +364,28 @@ opposite — nothing invokes it. Same grep, no callers.
 kubeconform, not `kubectl --dry-run`, not `terraform validate`, not a spec. All of those would run
 cluster-free.
 
+**Update (2026-09-21, items 7 and 8).** The statements above record the state before those items
+landed.
+- `scripts/validate-dynamic-bot-manifest.mjs --require-server` exits 2 when no API server answers.
+  It exits 1 when any object lacks `(server dry run)` in the output, or when discovery lacks
+  `deployments/scale`. The default mode still exits 0 on its client-side fallback, and labels that
+  fallback NOT A PROOF.
+- Both governance scripts now have one caller, and it is opt-in: `scripts/ci-local.sh
+  --cluster-gates` runs the gates `cluster-bot-manifest` and `cluster-tenant-isolation` through
+  `scripts/ci/check-cluster-gates.sh`. It requires `OSHAL_CLUSTER_CONTEXT` and fails closed when no
+  API server answers. `cluster-bot-manifest` passes only when the validator exits 0 and prints both
+  server-side lines (4.3), with nothing labelled NOT A PROOF. `verify-tenant-isolation.sh` now
+  takes `--context`.
+- Every full ci-local run now has two more cluster-free gates. `argo-manifests` runs kubeconform
+  `-strict` over all five `ops/deployment/argo/*.yaml`, the WorkflowTemplate included. `terraform`
+  runs `fmt -check -recursive` and `validate`. Both fail when their tool is missing.
+- The unit guard for those two gates (`tests/unit/ci-local-k8s-gates.spec.ts`) drives them with
+  recording stand-ins for kubeconform and terraform, so it needs neither tool and runs in hosted CI.
+  The real-tool cases are in `tests/unit/ci-local-k8s-gates-real-tools.spec.ts`. Each one skips
+  where its tool is absent and prints why.
+- `bash scripts/ci-local.sh --k8s-only [--cluster-gates]` runs only these gates. It takes no lock and
+  does no Docker cleanup.
+
 ### 2g. Monitoring does not reach Kubernetes
 
 `ops/monitoring/prometheus.yml` discovers targets only through `docker_sd_configs` against the
@@ -646,6 +692,17 @@ Two documentation inconsistencies to resolve as part of this:
 **Done-when:** no backlog entry. Proposed: `node scripts/docs-link-check.js` stays clean, and no doc
 in `docs/` routes a reader to `oshal-api-server:latest` as a current path.
 
+**Status (2026-09-21): done, with the legacy generation QUARANTINED, not deleted.** Deleting it is
+still an operator decision. Every file above is kept. The legacy manifests and entry points carry a
+`LEGACY — DO NOT DEPLOY` banner. The entry points (`setup-oshal-k8s.sh`, `install-k8s.sh`,
+`setup-any-bot-k8s.sh`, `setup-any-bot-k8s-cli.js`, the `build-any-bot-k8s-*` scripts, and so every
+`k8:*` script and the `package.json` bin) refuse unless `OSHAL_ALLOW_LEGACY_K8S=1` is set. The docs
+listed above point at [README.md](./README.md) and ADR-129. The rest of this item's list is
+reconciled as well: the prompt, ADR-035, ADR-129, the BACKLOG chart version, the whitepaper copy,
+the Argo `bot-image` default and the competitive scorer's k8s check.
+`tests/unit/k8s-legacy-quarantine.spec.ts` and `tests/unit/incident-prompt-kubectl-claims.spec.ts`
+are the guards. The sections above still describe the state this package measured, before the fix.
+
 ---
 
 ### 10. Stand up the cluster and run the codeless install end to end
@@ -868,15 +925,22 @@ Five separate observations, from **"k8s shared-service tier"**:
 ### 4.3 The bot-launcher boundary (item 12)
 
 ```bash
-node scripts/validate-dynamic-bot-manifest.mjs --namespace oshal --context <ctx>
+npx tsx scripts/validate-dynamic-bot-manifest.mjs --require-server --namespace oshal --context <ctx>
+# or through the gate wrapper (the same check ci-local.sh --cluster-gates runs; ci-local.sh itself
+# derives its state directory with cygpath, so on a non-Windows box call the wrapper directly):
+OSHAL_CLUSTER_CONTEXT=<ctx> bash scripts/ci/check-cluster-gates.sh bot-manifest
 ```
 
 **Pass:** the output says `dry-run mode: server (validated by the real API server; nothing created)`
 **and** `OK: the API server exposes deployments/scale with verbs [...]`.
 
 **Fail, and this is the trap:** `dry-run mode: client` followed by
-`WARNING: client-side only` and `WARNING: no cluster reachable`. The script **exits 0** in that
-state (`:64`, `:97-99`). A zero exit code is not the pass signal here — the two `server` lines are.
+`WARNING: client-side only` and `WARNING: no cluster reachable`. Without `--require-server` the
+script **exits 0** in that state, and those lines now say NOT A PROOF. With `--require-server` it
+exits 2 and never falls back to a client-side dry-run. Run it with the flag. Even then, the two
+`server` lines are the pass signal, not the exit code alone. The gate wrapper checks for both. An
+exit 0 that lacks either line, or that carries anything labelled NOT A PROOF, is
+`cluster-bot-manifest: FAIL`.
 
 ### 4.4 Two-tenant isolation — both halves, and where each runs
 
@@ -987,7 +1051,7 @@ Each with its reason. Do not build these; do not propose them as improvements.
 
 - [ADR-129 — The codeless Kubernetes install path](../adr/129-codeless-k8s-install-path.md) — Accepted (2026-08-13). The live decision.
 - [ADR-078 — Kubernetes migration, Argo batch-job orchestration, and multi-tenant proof-out](../adr/078-kubernetes-argo-batch-and-multi-tenant-proofout.md) — still **Proposed**.
-- [ADR-035 — Multi-Tenant SaaS Foundation](../adr/035-multi-tenant-saas-foundation.md) — file still reads Proposed; see item 9.
+- [ADR-035 — Multi-Tenant SaaS Foundation](../adr/035-multi-tenant-saas-foundation.md) — accepted as amended (isolated-only, 2026-09-21); item 9 updated the file.
 - [ADR-076 — Tenant-aware RLS and least-privilege DB role](../adr/076-tenant-aware-rls-and-least-privilege-db-role.md)
 - [ADR-040 — DevOps Vault swarm](../adr/040-devops-vault-swarm.md)
 - [ADR-013 — Headscale self-hosted overlay network](../adr/013-headscale-self-hosted-overlay-network.md) — native Kubernetes networking stays the default inside the cluster; the overlay is for external nodes only.

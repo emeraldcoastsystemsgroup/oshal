@@ -5,6 +5,7 @@ SEQ                 | AUTHOR                      | DESCRIPTION
 -----------------------------------------------------------------------------
 1 | maintainer@emeraldcoastsystemsgroup.com   | Added deployment/runtime topology doc for compose and Kubernetes aligned to any-bot deployment language
 2 | maintainer@emeraldcoastsystemsgroup.com   | Reconciled the document with the canonical release image, current local Compose topology, Helm/Terraform deployment path, federated runtime, and Argo incident workflow
+3 | maintainer@emeraldcoastsystemsgroup.com   | The Argo template's bot-image default is now oshal-bot:latest, so it is no longer listed as a placeholder (remote-cluster work package item 9).
 -->
 
 # Deployment Runtime Topology
@@ -27,9 +28,9 @@ repository. When deployment files disagree, use this order:
    or manual alternatives. They are useful for their stated scenarios but do
    not define the public release topology.
 
-Names such as `ghcr.io/OWNER/any-bot` in Helm example values and
-`any-bot:latest` in the Argo template are operator-supplied placeholders. They
-do not supersede the canonical local image name, `oshal-bot`.
+Names such as `ghcr.io/OWNER/any-bot` in Helm example values are
+operator-supplied placeholders. They do not supersede the canonical local image
+name, `oshal-bot`, which is also the Argo template's `bot-image` default.
 
 ## Canonical image and runtime roles
 

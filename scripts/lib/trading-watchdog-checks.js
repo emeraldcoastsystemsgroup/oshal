@@ -4,8 +4,8 @@
  * The PowerShell watchdog fetches (docker exec / HTTP) and delivers (Raise / email); every
  * DECISION about whether a book is silently wrong lives here, as pure functions over plain
  * objects. No I/O, no docker, no database, no clock of its own (callers pass nowMs) - which is
- * what makes each check mutation-provable in tests/unit/trading-watchdog-checks.spec.ts rather
- * than only source-pinned inside a .ps1.
+ * what makes each check mutation-provable in tests/unit/trading-watchdog-checks.spec.ts and
+ * tests/unit/trading-watchdog-corroboration.spec.ts rather than only source-pinned inside a .ps1.
  *
  * THE RULE THIS FILE ENFORCES, IN CODE: a check must NEVER pass because data was missing. Every
  * broker number goes through toNumber() (a finite number or a plain numeric string - Postgres
@@ -24,18 +24,42 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Round-2 review fixes: the hysteresis band now measures from the severity at the LAST ALERT instead of a ratcheted high-water mark (a name drifting -6 -> -8 -> -10 -> -12 in 10-minute steps was suppressed for the whole window); the position-count and concentration floors count MATERIAL positions only, so dust cannot page about a runaway entry loop; and defaultSettings reports an unparseable setting through onInvalid rather than silently defaulting. Adds httpTimeoutSec (the per-read deadline the container-side fetcher applies).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Round-3 review fixes. The two ACCOUNT findings carry a worsening band derived from their own scale (negative funds re-pages when the hole doubles, the position count a quarter of the floor further out); with band null a book could go from -$100 to -$100,000 of buying power and stay silent for the rest of the window. The no-cost-basis warning now respects the materiality floor, so a book of delisted zero-basis dust no longer emits a wall of warnings. And the working-sell JSDoc says what the data actually is: the ORDER LEDGER's opinion (a capped page of oshal_trading_orders), not a venue query - a stale 'accepted' row silences that symbol's bleed finding, which is why the deep-loss check reports a held position regardless of any working sell.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | bleedBookSet + the bleed scope. The BLEED finding asserts "nothing is exiting this position", which is a defect only on a book something MANAGES; on a hand-traded book every position legitimately has no working sell, so the check reported the operator's own strategy back as a failure. evaluateBook now gates the bleed loop on settings.bleedBooks (empty = every book, so an unset or unreadable value fails OPEN rather than muting the one book that needed watching). Deep-loss is deliberately NOT scoped and moved into its own rth block: a position past every shipped stop is worth saying out loud on a hand-traded book too, and scoping both would trade alert noise for a real blind spot on real money.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | An UNCONFIRMED sell no longer counts as protective cover. The ledger's status vocabulary splits three ways, not two: 'accepted'/'partially_filled' are the statuses the adapters normalize a working order to (broker-adapter.ts labels 'accepted' "working at the venue") and are TREATED as confirmed cover - what the tree does and does not prove about that is on CONFIRMED_WORKING_ORDER_STATUSES, and the vendor states 'accepted' absorbs are an open question filed with the venue-query backlog entry, not closed here - while 'pending' is only "the broker took it" - and it is also the DEFAULT arm of BOTH adapters' normalizeStatus, so an unrecognized venue status lands there too - and 'submitting' is the pre-venue reservation row placeDecisionOrder writes before it ever calls the broker. Coverage now requires a CONFIRMED-WORKING status (isConfirmedWorkingSell), and a bleeding position whose only apparent cover is an unconfirmed row gets its own finding - unconfirmed-cover - instead of being silenced by it. WORKING_ORDER_STATUSES is unchanged: it stays the kernel mirror and the stranded-sell input, because a 'pending' sell that has sat for an hour is exactly the wedged submission that check exists to name. The new finding is bleed-family, so it is scoped by the SAME bleedBooks allow-list findBleeders respects (on a hand-traded book an unconfirmed row is the normal resting state, not a defect), honours minPositionUsd, and reuses alertPct/hysteresisPct rather than minting a knob for the same question.
  */
 'use strict';
 
 /**
- * The order statuses that mean "this order is still working at the venue". ONE list for every
- * watchdog conclusion about protection (the live bleed check and the per-book audit both call
- * isWorkingSell), so the two paths can no longer drift apart. The kernel keeps its own copies
- * (trading-dispatch-rail.ts IN_FLIGHT_STATUSES, trading-reconcile.ts OPEN_STATUSES); this is the
- * watchdog's single copy and tests/unit/trading-watchdog-checks.spec.ts fails when it drifts from
- * the kernel's - it is not a claim that the platform has one source of truth.
+ * The order statuses the LEDGER still calls non-terminal - the watchdog's mirror of the kernel's own
+ * copies (trading-dispatch-rail.ts IN_FLIGHT_STATUSES, trading-reconcile.ts OPEN_STATUSES), which
+ * tests/unit/trading-watchdog-checks.spec.ts fails on drift from. It is not a claim that the platform
+ * has one source of truth, and since seq 5 it is NOT the coverage test: a sell must be
+ * CONFIRMED_WORKING_ORDER_STATUSES before any conclusion may call a position covered. This list stays
+ * the STRANDED-SELL input, deliberately - a 'pending' sell that has sat for an hour is exactly the
+ * wedged submission that check exists to name, and narrowing this too would make it invisible.
  */
 const WORKING_ORDER_STATUSES = ['pending', 'accepted', 'partially_filled'];
+
+/**
+ * The statuses the adapters normalize a working order to, TREATED as venue-confirmed cover - the
+ * only set a coverage conclusion may rest on. What the tree proves about it: broker-adapter.ts
+ * labels 'accepted' "working at the venue", both adapters' normalizeStatus map their vendor's
+ * working states to it, and a partially_filled remainder is by definition still at the venue. What
+ * the tree does NOT establish: 'accepted' also absorbs vendor states (Alpaca done_for_day and
+ * replaced, Schwab REPLACED and AWAITING_RELEASE_TIME) whose resting semantics are documented
+ * nowhere in this repo. Whether those should count as cover is open, and belongs with the
+ * venue-query entry in docs/BACKLOG.md rather than with this list.
+ */
+const CONFIRMED_WORKING_ORDER_STATUSES = ['accepted', 'partially_filled'];
+
+/**
+ * The statuses that mean WE ASKED AND THE VENUE HAS NOT CONFIRMED. These must never count as cover.
+ * 'pending' is broker-adapter.ts's "accepted by the broker, not yet working/filled" AND the DEFAULT
+ * arm of both adapters' normalizeStatus, so a venue status neither adapter recognizes lands here too
+ * - it is the watchdog's "we cannot tell" bucket. 'submitting' is the submission reservation
+ * trading-engine.ts placeDecisionOrder INSERTs before it calls the venue at all; a row stuck there is
+ * a submit whose outcome nobody knows (the 2026-08-18 twin-fill shape), which is the same question.
+ */
+const UNCONFIRMED_ORDER_STATUSES = ['pending', 'submitting'];
 
 /** Thrown when a broker payload cannot be read exactly. Callers must report, never assume healthy. */
 class WatchdogDataError extends Error {
@@ -126,25 +150,62 @@ function bleedBookSet(raw) {
 }
 
 /**
- * @description True when an order row is a SELL that the LEDGER still calls working, per the one
- * shared status list. Unknown/absent status is NOT working (a filled/rejected order protects
- * nothing). READ THIS AS "the ledger says an exit is working", never "the venue holds an exit":
- * the rows come from the api's /orders read over oshal_trading_orders, so a row still saying
- * 'accepted' after the venue filled or cancelled it makes this return true - a fail-OPEN direction
- * that silences that symbol's bleed finding and depends on trading-reconcile keeping the ledger
- * honest. The deep-loss check exists partly because of that: it reports a held position REGARDLESS
- * of any working sell.
+ * @description True when an order row is a SELL the LEDGER still calls non-terminal. Unknown/absent
+ * status is NOT working (a filled/rejected order protects nothing). READ THIS AS "the ledger has a
+ * live row", never "the venue holds an exit": the rows come from the api's /orders read over
+ * oshal_trading_orders, so a row still saying 'accepted' after the venue filled or cancelled it makes
+ * this return true - which is why COVERAGE uses isConfirmedWorkingSell and not this. What this
+ * predicate still decides is the stranded-sell age check, where a stale row is the finding rather
+ * than a false reassurance. The residual fail-OPEN direction is a stale 'accepted' row, which
+ * depends on trading-reconcile keeping the ledger honest; the deep-loss check exists partly because
+ * of that, since it reports a held position REGARDLESS of any working sell.
  * @param {{side?:unknown, status?:unknown}} order - Ledger/broker order row.
  * @returns {boolean} Whether the ledger considers it a resting protective sell.
  */
 function isWorkingSell(order) {
-  const side = String((order && order.side) || '').toLowerCase();
-  const status = String((order && order.status) || '').toLowerCase();
-  return side === 'sell' && WORKING_ORDER_STATUSES.indexOf(status) >= 0;
+  return sellStatusIn(order, WORKING_ORDER_STATUSES);
 }
 
 /**
- * @description The symbols the ORDER LEDGER shows at least one working sell for. The caller's
+ * @description True when an order row is a SELL in a status the adapters normalize a working order
+ * to - the only predicate a COVERAGE conclusion may rest on. 'pending' and 'submitting' mean we
+ * asked (or did not even finish asking) and nobody has confirmed anything, so treating them as
+ * protection is how a genuinely uncovered position goes quiet. Unknown/absent status is not
+ * confirmed. CONFIRMED_WORKING_ORDER_STATUSES says what "confirmed" does and does not prove.
+ * @param {{side?:unknown, status?:unknown}} order - Ledger/broker order row.
+ * @returns {boolean} Whether the row is treated as confirmed cover.
+ */
+function isConfirmedWorkingSell(order) {
+  return sellStatusIn(order, CONFIRMED_WORKING_ORDER_STATUSES);
+}
+
+/**
+ * @description True when an order row is a SELL the ledger calls submitted-but-unconfirmed. Not
+ * cover, and not nothing either: the venue may well be holding this order right now, and the
+ * watchdog reads oshal_trading_orders rather than the venue, so it cannot tell which. That
+ * undecidability is the finding, not a reason to stay silent.
+ * @param {{side?:unknown, status?:unknown}} order - Ledger/broker order row.
+ * @returns {boolean} Whether it is a sell awaiting venue acknowledgement.
+ */
+function isUnconfirmedSell(order) {
+  return sellStatusIn(order, UNCONFIRMED_ORDER_STATUSES);
+}
+
+/**
+ * @description The shared side+status test behind the three sell predicates, so they cannot drift.
+ * @param {{side?:unknown, status?:unknown}} order - Ledger/broker order row.
+ * @param {Array<string>} statuses - The status list to match, lower-cased.
+ * @returns {boolean} Whether the row is a sell in one of those statuses.
+ */
+function sellStatusIn(order, statuses) {
+  const side = String((order && order.side) || '').toLowerCase();
+  const status = String((order && order.status) || '').toLowerCase();
+  return side === 'sell' && statuses.indexOf(status) >= 0;
+}
+
+/**
+ * @description The symbols the ORDER LEDGER shows at least one non-terminal sell for - the ledger's
+ * own opinion, which is NOT a coverage answer (see confirmedSellSymbols for that). The caller's
  * /orders read is a ledger page (the store's order-flow route selects the 100 most recent rows for
  * the book), so on a busy book an older stranded sell can fall off the page and go unseen - the
  * stranded-sell finding is "of the recent orders", not "of everything resting".
@@ -152,8 +213,50 @@ function isWorkingSell(order) {
  * @returns {Set<string>} Upper-cased symbols.
  */
 function workingSellSymbols(orders) {
+  return sellSymbolsWhere(orders, isWorkingSell);
+}
+
+/**
+ * @description The symbols the ledger shows a CONFIRMED-WORKING sell for (see
+ * CONFIRMED_WORKING_ORDER_STATUSES) - the only set a position may be called covered by. Same
+ * ledger-page caveat as workingSellSymbols.
+ * @param {Array<any>} orders - Order rows.
+ * @returns {Set<string>} Upper-cased symbols.
+ */
+function confirmedSellSymbols(orders) {
+  return sellSymbolsWhere(orders, isConfirmedWorkingSell);
+}
+
+/**
+ * @description The symbols whose sell rows are submitted but unconfirmed, mapped to the distinct
+ * ledger statuses seen, so a finding can name what the row actually says rather than a category.
+ * A Map (not a Set) for that reason; `.has()` still answers the membership question.
+ * @param {Array<any>} orders - Order rows.
+ * @returns {Map<string, Array<string>>} Upper-cased symbol -> its sorted distinct statuses.
+ */
+function unconfirmedSells(orders) {
+  const out = new Map();
+  for (const o of requireArray(orders, 'orders')) {
+    if (!isUnconfirmedSell(o)) continue;
+    const symbol = requireSymbol(o.symbol, 'order.symbol');
+    const status = String(o.status).toLowerCase();
+    const seen = out.get(symbol) || [];
+    if (seen.indexOf(status) < 0) seen.push(status);
+    out.set(symbol, seen.sort());
+  }
+  return out;
+}
+
+/**
+ * @description Collects the upper-cased symbols of the order rows a predicate accepts, failing
+ * closed on a non-array payload and on an unreadable symbol exactly as every other read does.
+ * @param {Array<any>} orders - Order rows.
+ * @param {function({side?:unknown, status?:unknown}): boolean} accept - The sell predicate.
+ * @returns {Set<string>} Upper-cased symbols.
+ */
+function sellSymbolsWhere(orders, accept) {
   const out = new Set();
-  for (const o of requireArray(orders, 'orders')) if (isWorkingSell(o)) out.add(requireSymbol(o.symbol, 'order.symbol'));
+  for (const o of requireArray(orders, 'orders')) if (accept(o)) out.add(requireSymbol(o.symbol, 'order.symbol'));
   return out;
 }
 
@@ -202,6 +305,31 @@ function findBleeders(positions, sells, core, alertPct, minValueUsd) {
   return materialPositions(positions, minValueUsd)
     .filter((p) => p.plPct !== null && p.plPct <= -alertPct && !sells.has(p.symbol) && !core.has(p.symbol))
     .map((p) => ({ symbol: p.symbol, plPct: p.plPct, pl: p.pl }))
+    .sort((a, b) => a.plPct - b.plPct);
+}
+
+/**
+ * @description UNCONFIRMED COVER: a material, non-core position bleeding past alertPct whose ONLY
+ * apparent protection is an order row the venue has not acknowledged ('pending' or 'submitting').
+ * Disjoint from findBleeders by construction - that check fires when the ledger shows no sell row at
+ * all, this one when it shows one that proves nothing - so a symbol raises one or the other, never
+ * both, and neither is silenced by the other's suppression.
+ *
+ * The same alertPct and materiality floor as the bleed check, deliberately: the question ("is this
+ * position bleeding?") is identical, only the answer about cover differs, so a second threshold
+ * would be two knobs for one decision and would drift.
+ * @param {Array<any>} positions - Normalized positions.
+ * @param {Set<string>} confirmed - Symbols with a confirmed-working sell.
+ * @param {Map<string, Array<string>>} unconfirmed - Symbol -> its unconfirmed ledger statuses.
+ * @param {Set<string>} core - Core/hold symbols to exclude.
+ * @param {number} alertPct - Positive percent threshold.
+ * @param {number} minValueUsd - Materiality floor.
+ * @returns {Array<{symbol:string, plPct:number, pl:number, statuses:string}>} Findings, worst first.
+ */
+function findUnconfirmedCover(positions, confirmed, unconfirmed, core, alertPct, minValueUsd) {
+  return materialPositions(positions, minValueUsd)
+    .filter((p) => p.plPct !== null && p.plPct <= -alertPct && unconfirmed.has(p.symbol) && !confirmed.has(p.symbol) && !core.has(p.symbol))
+    .map((p) => ({ symbol: p.symbol, plPct: p.plPct, pl: p.pl, statuses: unconfirmed.get(p.symbol).join('/') }))
     .sort((a, b) => a.plPct - b.plPct);
 }
 
@@ -329,7 +457,12 @@ function finding(kind, ref, symbol, severity, band, message) {
 function evaluateBook(book, data, settings) {
   const ref = String(book.ref);
   const positions = normalizePositions(data.positions);
-  const sells = workingSellSymbols(data.orders);
+  // Coverage rests ONLY on a confirmed-working sell; an unconfirmed row gets its own finding below.
+  // `sells` is the union, so findBleeders keeps meaning "the ledger shows no sell row at all" and the
+  // two bleed-family findings stay disjoint per symbol.
+  const confirmed = confirmedSellSymbols(data.orders);
+  const unconfirmed = unconfirmedSells(data.orders);
+  const sells = new Set([...confirmed, ...unconfirmed.keys()]);
   const acct = assessAccount(data.account, positions, { maxPositions: settings.maxPositions, concentrationPct: settings.concentrationPct, core: settings.core, minPositionUsd: settings.minPositionUsd });
   // MATERIAL positions only, like every conclusion: a book full of delisted zero-basis dust would
   // otherwise emit a wall of 'audit warning:' lines the operator learns to scroll past.
@@ -363,6 +496,12 @@ function evaluateBook(book, data, settings) {
     for (const b of findBleeders(positions, sells, settings.core, settings.alertPct, settings.minPositionUsd)) {
       out.push(finding('bleed', ref, b.symbol, Math.abs(b.plPct), settings.hysteresisPct,
         'Book ' + ref + ': ' + b.symbol + ' is down ' + pct(b.plPct) + ' percent ($' + usd(b.pl) + ') during regular hours with NO working sell. The strategy exits via market orders each run and rests no stops, so this is a failure only if the loop is not exiting it - confirm the autopilot is firing for this book (look for a live-loop-silent / live-exits-silent / run-errors alert).' + off));
+    }
+    // Same scope, same threshold, same band as bleed - it IS the bleed question, answered honestly
+    // for the one case the old code called covered.
+    for (const u of findUnconfirmedCover(positions, confirmed, unconfirmed, settings.core, settings.alertPct, settings.minPositionUsd)) {
+      out.push(finding('unconfirmed-cover', ref, u.symbol, Math.abs(u.plPct), settings.hysteresisPct,
+        'Book ' + ref + ': ' + u.symbol + ' is down ' + pct(u.plPct) + ' percent ($' + usd(u.pl) + ') during regular hours and its ONLY apparent cover is an UNCONFIRMED sell - the ledger shows a submitted sell (status ' + u.statuses + ') that the venue has NOT confirmed is working. This position may be genuinely uncovered. The watchdog reads the ORDER LEDGER (oshal_trading_orders), not the venue, so it CANNOT TELL which: the order may be resting at the broker, or it may never have arrived. Check the order at the broker and reconcile the ledger.' + off));
     }
   }
   if (settings.rth) {
@@ -465,7 +604,7 @@ function assessGapPrint(input) {
  */
 function evaluatedKinds(rth) {
   const base = ['acct-negative-funds', 'acct-position-count', 'acct-concentration', 'stranded-sell'];
-  return rth ? base.concat(['bleed', 'deep-loss']) : base;
+  return rth ? base.concat(['bleed', 'unconfirmed-cover', 'deep-loss']) : base;
 }
 
 /**
@@ -497,9 +636,11 @@ function defaultSettings(raw, onInvalid) {
 }
 
 module.exports = {
-  WORKING_ORDER_STATUSES, WatchdogDataError,
+  WORKING_ORDER_STATUSES, CONFIRMED_WORKING_ORDER_STATUSES, UNCONFIRMED_ORDER_STATUSES, WatchdogDataError,
   toNumber, requireArray, requireSymbol, coreSymbolSet, bleedBookSet,
-  isWorkingSell, workingSellSymbols, normalizePositions, materialPositions,
-  findBleeders, findDeepLosses, findStrandedSells, assessAccount,
+  isWorkingSell, isConfirmedWorkingSell, isUnconfirmedSell,
+  workingSellSymbols, confirmedSellSymbols, unconfirmedSells,
+  normalizePositions, materialPositions,
+  findBleeders, findUnconfirmedCover, findDeepLosses, findStrandedSells, assessAccount,
   finding, evaluateBook, evaluatedKinds, decideAlerts, assessGapPrint, defaultSettings,
 };

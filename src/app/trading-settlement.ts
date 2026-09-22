@@ -23,8 +23,10 @@
  * the fleet default; oshal_trading_books.settlement_policy (refuse | warn) overrides it per book;
  * 'off' exists only in the env — a book can tighten or soften the guard, never disarm it.
  * TRADING_SETTLEMENT_DAYS (default 1) is the settlement cycle; every message derives its "T+n" from
- * it. settlesOn is weekday-only (no exchange-holiday calendar — the same documented limitation as
- * ADR-136 D4 timed orders).
+ * it. settlesOn counts EXCHANGE business days: it skips weekends and the NYSE full closures the
+ * ADR-136 D4 timed-order validator already refuses on (nyse-holidays.ts), including the operator's
+ * additive TRADING_MARKET_HOLIDAYS, so one calendar answers both surfaces. Past that table's
+ * horizon it degrades to weekday-only, which its own refresh guard is what prevents.
  *
  * CHANGE LOG
  * -----------------------------------------------------------------------------
@@ -32,6 +34,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — settlement policy/days readers (env, per call), business-day settlesOn in ET, the book-scoped ledger fallback (filled sells keyed on COALESCE(submitted_at, created_at) — never updated_at, which every status re-poll bumps), buildSettlementView (venue figures win; unknown live type = cash), the pure clamp, settlementViolation (only a BUY that needs unsettled proceeds trips it — a plain shortfall is the venue's own refusal), gfvAdvisory (a warning on selling a symbol bought while proceeds were unsettled — never a block) and assertSettledFunding (the engine backstop: 422 settlement_blocked / 503 settlement_unknown under refuse, structured warn under warn). Guard: tests/unit/trading-settlement.spec.ts.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review fix: the market-price read for a market BUY no longer swallows its error (a bare catch that returned null) — sizingPrice() logs the failure at error and, under 'warn', assertSettledFunding returns an explicit "this buy was NOT checked" advisory (blindGuardWarning) instead of silently passing a $0 notional; 'refuse' stays 503 settlement_unknown. Documented the typeless-live-book cost (one venue read per BUY, failed read = refused buy) and the withdrawable-only fallback's possible over-refusal.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-134 D8 gaps 1 and 3. (1) nextSettlementDate counts EXCHANGE business days: exchangeClosed() skips weekends AND the NYSE full closures nyse-holidays.ts already carries for the ADR-136 D4 timed-order validator (operator TRADING_MARKET_HOLIDAYS included), so one calendar answers both surfaces — a Friday sale before Labor Day settled on the holiday itself and now settles on the Tuesday. Past that table's horizon it degrades to weekday-only, which the table's own refresh guard prevents. (2) assertSettledFunding now writes the venue's answer onto a book that has no type of its own (recordDiscoveredAccountType), so the legacy live book stops paying a venue read on every BUY and stops being refused 503 when that read fails; resolveAccountType is the one rule buildSettlementView and the guard now share, and a margin answer returns BEFORE the ledger read instead of after it.
  *
  * @module trading-settlement
  */
@@ -39,7 +42,9 @@
 import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '@/app/composition/app-context';
 import type { BrokerAccount, TradingBook } from '@/features/trading';
+import { nyseHolidayOn } from '@/features/trading';
 import { TradingError } from './routes/trading-routes-helpers';
+import { recordDiscoveredAccountType } from './trading-books-store';
 
 const logger = createChildLogger({ module: 'trading-settlement' });
 
@@ -112,7 +117,7 @@ export function settlementApplies(book: TradingBook): boolean {
   return true;
 }
 
-/* ── Eastern calendar helpers (weekday-only; holidays are the documented ADR-136 D4 limitation) ── */
+/* ── Eastern calendar helpers ─ weekends AND the NYSE full closures the D4 validator refuses on ── */
 const ET_TZ = 'America/New_York';
 const ET_DAY = new Intl.DateTimeFormat('en-US', { timeZone: ET_TZ, year: 'numeric', month: '2-digit', day: '2-digit' });
 const WORDS = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' });
@@ -125,7 +130,22 @@ export function etDay(at: Date): string {
 }
 
 /**
- * @description The settlement date of a trade: `days` business days (Mon–Fri) after its ET trade day.
+ * @description Whether the equities market is CLOSED on an ET calendar date: a weekend, or a NYSE
+ * full closure from the same static table (plus the operator's additive TRADING_MARKET_HOLIDAYS)
+ * that the ADR-136 D4 timed-order validator refuses a fire time on. Past the table's horizon only
+ * the weekend half answers — nyse-holidays' own refresh guard is what keeps that from going stale.
+ * @param at - The UTC-midnight Date carrying the ET calendar day.
+ * @returns True when no trade settles on that day.
+ */
+function exchangeClosed(at: Date): boolean {
+  if (at.getUTCDay() === 0 || at.getUTCDay() === 6) return true;
+  return nyseHolidayOn(at.toISOString().slice(0, 10)) !== null;
+}
+
+/**
+ * @description The settlement date of a trade: `days` EXCHANGE business days after its ET trade day —
+ * weekends and NYSE full closures are both skipped, so a Friday sale before Labor Day settles on the
+ * Tuesday rather than on a day the market is shut.
  * @param tradedAt - The trade instant.
  * @param days - Business days to settle (default TRADING_SETTLEMENT_DAYS).
  * @returns The ET date and its words ('Tue Sep 8').
@@ -133,14 +153,14 @@ export function etDay(at: Date): string {
 export function nextSettlementDate(tradedAt: Date, days: number = settlementDays()): SettlesOn {
   const [y, m, d] = etDay(tradedAt).split('-').map(Number);
   const cur = new Date(Date.UTC(y, m - 1, d));
-  const weekend = () => cur.getUTCDay() === 0 || cur.getUTCDay() === 6;
-  // A trade dated on a weekend (a reconcile row) counts as the next business day's trade — the
-  // conservative reading: its proceeds stay unsettled longer, never shorter.
-  while (weekend()) cur.setUTCDate(cur.getUTCDate() + 1);
+  // A trade dated on a closed day (a reconcile row, or a holiday-dated correction) counts as the
+  // next OPEN day's trade — the conservative reading: its proceeds stay unsettled longer, never
+  // shorter.
+  while (exchangeClosed(cur)) cur.setUTCDate(cur.getUTCDate() + 1);
   let left = days;
   while (left > 0) {
     cur.setUTCDate(cur.getUTCDate() + 1);
-    if (!weekend()) left -= 1;
+    if (!exchangeClosed(cur)) left -= 1;
   }
   return { iso: cur.toISOString().slice(0, 10), words: WORDS.format(cur).replace(',', '') };
 }
@@ -186,6 +206,19 @@ function latestSettlesOn(sells: LedgerSell[], days: number): SettlesOn | null {
 }
 
 /**
+ * @description PURE: the account type the guard reasons about. The book's OWN type wins (the bound
+ * account's discovered type, else the venue answer cached on the row — see recordDiscoveredAccountType),
+ * then this read's venue answer, then 'unknown' on a LIVE book (treated as cash — fail closed) or
+ * 'margin' on paper (every Alpaca paper account is margin).
+ * @param account - The broker snapshot, or null when the read failed.
+ * @param book - The book.
+ * @returns cash | margin | unknown.
+ */
+export function resolveAccountType(account: BrokerAccount | null, book: TradingBook): SettlementAccountType {
+  return book.accountType ?? account?.accountType ?? (book.kind === 'live' ? 'unknown' : 'margin');
+}
+
+/**
  * @description Build the settlement view for a book. PURE. Account type = the book's discovered type,
  * else the venue's report, else 'unknown' on a live book (treated as cash — fail closed) / 'margin'
  * on paper. Venue settled/unsettled figures win; otherwise settled = cash − Σ(unsettled ledger sells).
@@ -200,7 +233,7 @@ function latestSettlesOn(sells: LedgerSell[], days: number): SettlesOn | null {
 export function buildSettlementView(account: BrokerAccount | null, book: TradingBook, ledgerSells: LedgerSell[], now: Date = new Date()): SettlementView {
   const days = settlementDays();
   const policy = settlementPolicy(book);
-  const accountType: SettlementAccountType = book.accountType ?? account?.accountType ?? (book.kind === 'live' ? 'unknown' : 'margin');
+  const accountType = resolveAccountType(account, book);
   const cash = account ? Number(account.cash || 0) : null;
   if (accountType === 'margin') {
     return { accountType, policy, cash, settledCash: cash, unsettledCash: 0, settlesOn: null, source: 'n/a', settlementDays: days };
@@ -355,12 +388,22 @@ export async function assertSettledFunding(
   const now = deps.now ?? new Date();
   const account = await readAccountOrFail(deps, book, policy);
   if (!account) return { warning: null, view: null };
+  // ADR-134 D8 gap 3: the read has been paid for — write down what it said about a book that had no
+  // type of its own, so the NEXT buy short-circuits in settlementApplies() with no venue read at all
+  // (and a read that fails then cannot refuse it). Fail-soft: a cache that will not write is logged
+  // and the guard carries on with the answer it already has.
+  if (!book.accountType && (account.accountType === 'cash' || account.accountType === 'margin')) {
+    await recordDiscoveredAccountType(pool, sub, book.bookId, account.accountType)
+      .catch((err) => { logger.error({ err, bookRef: book.ref }, 'settlement guard: caching the venue account type failed'); });
+  }
+  // A margin account settles nothing, and buildSettlementView ignores ledgerSells for one, so the
+  // ledger read is skipped rather than paid for and discarded.
+  if (resolveAccountType(account, book) === 'margin') return { warning: null, view: buildSettlementView(account, book, [], now) };
   const sells = await unsettledLedgerSells(pool, sub, book, now).catch((err) => {
     logger.error({ err, bookRef: book.ref }, 'settlement guard: ledger read failed — using venue figures only');
     return [] as LedgerSell[];
   });
   const view = buildSettlementView(account, book, sells, now);
-  if (view.accountType === 'margin') return { warning: null, view };
   const price = await sizingPrice(deps, view, book, symbol, refPrice, policy);
   if (price == null) return { warning: blindGuardWarning(view, symbol), view };
   const violation = settlementViolation(view, qty * price);

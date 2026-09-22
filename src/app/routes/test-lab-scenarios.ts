@@ -80,6 +80,8 @@
  * 28 | maintainer@emeraldcoastsystemsgroup.com   | Attached openai-compat-tool-call-extraction to 'jarvis-routing' regressionTests. Jarvis turns run through the OpenAI-compatible adapter, and a turn the model spent attempting a tool call was being thrown away there - the guard carries the response shapes captured live from the failure, so it belongs to this scenario rather than sitting unregistered on disk.
  * 30 | maintainer@emeraldcoastsystemsgroup.com   | Registered the 'byo-hot-fallback' scenario (operator decision 2026-09-22): a read-only probe of the configured hot-fallback chain and each rung's readiness through the Settings llm-default route, with the two guards that prove the same-endpoint replay and the operator-only fallback attached as regressionTests. A test file on disk is not Test Lab registration.
  * 29 | maintainer@emeraldcoastsystemsgroup.com   | Attached direct-path-declared-tool-boundary to 'jarvis-routing' regressionTests. The sibling of entry 28: that guard covers a tool call being READ, this one covers the tools being DECLARED at all and the boundary around them being enforced - the direct conversational path told the model it had N tools and handed the provider none, which is why an ask for live information answered "go to the application". Registered here because it is the same Jarvis turn, and a spec on disk is not Test Lab registration.
+ * 30 | maintainer@emeraldcoastsystemsgroup.com   | Attached byo-connection-declared-tools to 'jarvis-routing' regressionTests. Entry 29's guard proves the direct path declares the tools it was GIVEN; this one proves a BYO connection is given any at all. Jarvis runs on the caller's own endpoint whenever the ADR-127 ladder resolves a hosted brain, and until the operator's 2026-09-22 decision landed, a BYO connection emptied the tool set before entry 29's boundary could matter - so the scenario's own lane was the one shape entry 29 did not cover. Same Jarvis turn, same scenario; a spec on disk is not Test Lab registration.
+ * 31 | maintainer@emeraldcoastsystemsgroup.com   | Attached the read-only question-tool guards to 'jarvis-routing' regressionTests. Entries 28-30 end at the tools being DECLARED and READ; these two cover whether any tool worth declaring EXISTS. Every name the persisted-to-runtime map bound was a shell, a file write or an infrastructure CLI, and the bot-node's own registry was constructed empty - so the scenario's three steps could only ever be answered from the model's head. bot-node-read-only-tools pins the bindings, the declared-set/scope refusals and that no write path is reachable through a read-only binding; the -owner-scope-postgres sibling proves over a REAL PostgreSQL and the real NOBYPASSRLS role that one caller cannot read another's conversations. Same Jarvis turn, same scenario, and a spec on disk is not Test Lab registration.
  * @module test-lab-scenarios
  */
 
@@ -432,6 +434,9 @@ export const SCENARIOS: Scenario[] = [
       { level: 'unit', path: 'tests/unit/jarvis-task-complete-notify.spec.ts' },
       { level: 'unit', path: 'tests/unit/openai-compat-tool-call-extraction.spec.ts' },
       { level: 'integration', path: 'tests/unit/direct-path-declared-tool-boundary.spec.ts' },
+      { level: 'integration', path: 'tests/unit/byo-connection-declared-tools.spec.ts' },
+      { level: 'unit', path: 'tests/unit/bot-node-read-only-tools.spec.ts' },
+      { level: 'integration', path: 'tests/unit/bot-node-read-only-tools-owner-scope-postgres.spec.ts' },
     ],
     steps: [
       { id: 'j-jobs', app: 'jarvis', label: '"What are my top job opportunities right now?"', run: (c) => jarvisStep(c, 'top jobs', 'What are my top job opportunities right now?') },

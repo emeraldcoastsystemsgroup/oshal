@@ -15,6 +15,124 @@ carries the evidence that survived an adversarial re-derivation and the correcti
 
 ## Promotion, deployment, and regression proof
 
+### A loader stamp pointing at an INACTIVE app fails ownership closed on the ticket list (2026-09-22)
+
+- **Measured on the box, on the `db02747f` boot:** `GET /api/tickets` raised
+  **8** `Ambiguous package ownership: no stamped owner` refusals, from exactly two agent ids. The
+  trace is `ticket-routes.js:152` → `Promise.all` (index 2011, so a per-ticket fan-out over the whole
+  list) → `canReadProtectedResult` → `isProtectedAgent` → `readApplicationExecutionOwnership` →
+  `readStampedOwner`, which throws; callers swallow it to `false`, so the protected result is treated
+  as unreadable.
+- **The mechanism, and it is NOT the multi-claim bug that `36dde7d6` fixed.** That commit made the
+  ADR-149 reader arbitrate a many-to-many `agent_ids` association using `agents.metadata.manifestApp`,
+  and it works: every multi-claimed agent on this box carries a stamp. What is unhandled is a stamp
+  that names an app which is **inactive**, so it is not among the *active* claimants and the reader
+  falls through to the fail-closed arm:
+  - `a0000000-…-0003` `code-reviewer`, active, stamped **`oshal-engineering`** — inactive. Its only
+    active claimant is `test-gate-flow`. 2 refusals.
+  - `a0000000-…-0016` `rca-specialist`, active, stamped **`intelligent-operations`** — inactive, as
+    are its other claimants `intelligent-processing` and `issue-rca`. 6 refusals.
+- **Why it appeared now.** Zero refusals were measured on 2026-09-21. Between then and now the set of
+  inactive apps grew (an accidental cold restart, then this deploy, with `create` additionally failing
+  auto-load on `authorization_catalog_migration_required`). The reader did not change; the population
+  it reads did. So this is latent on any box where an app is deactivated while its bot stays
+  registered and active — which is the normal state of a deactivated app.
+- **Fail-closed is the right default for an authorization path and must not be softened.** The
+  question is whether "the stamped owner is inactive" is genuinely unresolvable, or whether an
+  inactive owner should resolve and simply not grant, which is a different answer from refusing to
+  decide. That is an ADR-149 question, not a code tweak.
+- **A second, separate oddity found in the same query, recorded so it is not lost:** the assistant's
+  own agent row `a0000000-…-0050` `oshal-assistant` is **`status=inactive`** and stamped `jarvis`
+  (also inactive), while `swarm-routability-check.sh` reports its heartbeat live and the bot serves.
+  A row that says inactive while the bot runs is a contradiction worth explaining before anything is
+  built on `agents.status`. `general-bot` `a0000000-…-0099`, the fallback routing owner, carries **no
+  stamp at all**.
+- **Related but not the same:** PR `#778` and store `#249` correct two manifests that pin the wrong
+  bot's id and widen the integrity check to scan whole `agent_ids` arrays on active *and* inactive
+  apps. Neither touches the stamp-to-inactive-app path. Both were open and unverified when this was
+  found.
+- **Done when:** ADR-149 states what an inactive stamped owner means and the reader implements it
+  without softening the refusal for a genuinely unresolvable claim; a spec drives the real reader
+  against a real PostgreSQL carrying an active agent stamped to an INACTIVE app and proves the chosen
+  behaviour, extending `tests/unit/application-execution-ownership-postgres.spec.ts`; `GET /api/tickets`
+  as the operator returns every ticket he owns with no `Ambiguous package ownership` line across a full
+  boot; and the `oshal-assistant` row's `inactive`-while-heartbeating state is either explained in that
+  ADR or corrected.
+
+### PICK UP HERE — what was in flight when the 2026-09-21/22 overnight ended
+
+**Read this first if you are resuming that session.** Nothing below is a defect; it is a map of
+work that is real, partly done, and stopped mid-stride when the session limit hit at 01:1x CT. The
+detail behind each decision is on the entry it belongs to; this entry exists so the pickup does not
+start with an archaeology dig.
+
+**State of the world.** `main` is `5d48ad92`. The box runs **`fd7ac311`** — four merged fixes
+behind: `#770` (yq spawned with an argv, not a shell string), `#771` (the read-only tools that let
+the assistant answer, plus the `oshal_bot` column grants and `RAG_ENGINE` on the bot tier), `#773`
+(a sell the venue has not confirmed is not cover), `#780` (settlement counts exchange days), and the
+docs PRs `#772`/`#776`/`#781`. **A deploy is the next action** and it also clears the venture-plan
+surface, whose schema bootstrap deadlocked on a cold boot and shows empty until the api restarts.
+
+**Open core PRs, by what they still need. None merges without a CONFIRMED adversarial verdict.**
+
+| PR | branch | state |
+|---|---|---|
+| `#774` | `comfyui-storyboard-provider` | Round 1 **REFUTED** — the timeout it advertised covered one of five HTTP calls; a black-holed `/prompt` hung **304 753 ms** against a configured 1 500 ms. Reworked to a single deadline threaded through every hop (`f2176687`), plus eight smaller fixes. **Round-2 verification never ran.** |
+| `#775` | `headscale-fail-loud` | Round 1 **REFUTED** — the refusal fired from inside `Show-Summary`, after the image had built, the stack had started and the firewall had opened, so a refused `-OffLan` run was a completed install reported as exit 1. Reworked to a front-check after `Assert-Docker` (`c5209201`). **Round-2 verification never ran.** |
+| `#778` | `agent-id-pins-and-guard` | Built, **never verified**. Pairs with store `#249`. After it merges, the operator approved one live-DB statement: `DELETE FROM swarm_applications WHERE name='trading' AND manifest_path='/app/swarm-apps/trading.yaml' AND status='inactive'` — count-verify it returns exactly 1 first. |
+| `#779` | `codex-oauth-originator` | Built, **never verified**. Then the operator performs **one** browser round trip at `/api/openai-codex/oauth/start`. ⚠ Never retry it — repeated failed authorize attempts risk the account. |
+| `#767` | `byo-same-endpoint-retry` | **REFUTED** and superseded (see the lane below). Close it when the replacement PR opens. |
+| `#742` | `rides-routing-override-and-durable-geocode-cache` | **REFUTED**, 12 defects, two HIGH: a global unscoped cache of every rider's looked-up addresses on the shared workspace volume, readable by any bot's bash; and three env vars that no compose file passes, so the feature cannot be switched on. Rework or close. |
+| `#761`, `#689` | | Old, unverified, and **conflict with `main`**. |
+| `#753` | `video-season-assembly` | Old, unverified, mergeable. |
+
+**Store PRs open:** `#243`–`#249`. `#249` is the twin of core `#778`.
+
+**Four lane clones hold uncommitted work.** Each died mid-task; none is verified, and none should be
+committed without finishing and proving it:
+
+- `oshal-lanes/verify-767`, branch **`byo-retry-hot-fallback`** — 24 modified, 5 new. The largest and
+  the one that matters most: it reworks the refuted `#767` (retry keyed on an explicit BYO connection
+  only; the cockpit path guarded; no per-attempt saved messages or error broadcasts; `0` means off)
+  **and** adds the operator's hot fallback — after the retry budget is exhausted, for the operator
+  only under the ADR-127/137 portal gates, fall through a **configurable** chain read from the
+  ADR-162 provider-switch record (migration `148-provider-fallback-order.sql`), default
+  `['openai-codex','claude-code']`, each rung taken only if a readiness probe says it is available,
+  every fallback turn carrying a marker and a WARN. Readiness-gating is what makes re-adding
+  `claude-code` safe against ADR-128 Amendment 1's concern: an expired login is not-ready and is
+  skipped, never spent on.
+- `oshal-lanes/sec06-store`, branch **`sec06-pr-gates`** — 6 modified, 6 new. Splits the store gates
+  by cost: cheap ones (secret scan, dependency/action immutability, source-vs-generated drift) on
+  every PR as required checks; database gates stay `workflow_dispatch` as release-time. Also fixes
+  the workflow-file error that has failed the last four `store-ci` runs since August.
+- `oshal-lanes/adr140-p1`, branch **`adr140-accept-p1-print`** — 8 modified, 7 new. Accepts ADR-140
+  with the operator's actuate answer written in (confirm by default; pre-authorization is an explicit
+  owner opt-in scoped to exactly one operation on exactly one device, never a class, never default-on)
+  and builds P1, outbound confirm-gated print.
+- `oshal-lanes/presentron-store`, branch `fix/presentron-outline-unavailable` — 2 modified.
+
+**Approved, recorded on their own entries, not started:** deploy modes (`codeless` default, GitHub
+Issues as the tracker under the installer's own token), the AI Deal Finder design session, the Echo
+orphan-table retirement migration, the platform-wide stripping filter for fetched web content plus
+World's own outlet ranking, AI Office renderers taking a resolved look, `MOCK_OIDC` root
+auto-adoption with the non-operator 403 guard, the DevOps first slice, the 3D-printer package against
+the operator's **FlashForge Adventurer 5M** (probe the protocol first — the port-8899 claim in that
+entry is documented for the Finder and Adventurer 3/4, not the 5M), the drone API contract and stubs,
+and the camera and node-printer software halves on fakes.
+
+**Two engine wedges in one night, both at the 4.5 GB VM cap, both after a cold 37-container
+recreate.** The cap is `memory=4608MB` by deliberate operator choice — a coding posture that leaves
+host headroom; `6GB` is the serving size and is kept in `~/.wslconfig.bak-2026-09-20`. Restoring it
+needs `wsl --shutdown`, which is also the only real memory reclaim on this box, so it belongs in the
+same window as a deploy. Both wedges were recovered with the stop-Docker-tree → `wsl --shutdown` →
+relaunch-hidden → `oshal-up.sh` sequence. The monitoring overlay exits 255 on every ungraceful stop
+and does **not** come back on its own: run `scripts/monitoring-up.sh`, which also puts Prometheus on
+**9091** because `9090` is taken on this box.
+
+- **Done when:** every PR above carries a CONFIRMED verdict or is closed with its reason; the four
+  lane clones are finished and pushed or their work is deliberately abandoned and the clones removed;
+  the deploy has run so the box and `main` agree; and this entry is deleted rather than left to rot.
+
 ### Workspace isolation: ACCEPTED as a shared read-write mount, and what reopens it (operator, 2026-09-20)
 
 Every bot container mounts the same `oshal_workspace` volume at the same path, read-write, with no
@@ -993,8 +1111,136 @@ including across a directory belonging to a different owner. Full reasoning and 
 - **Done when:** a fresh box reaches `/welcome` in a browser via the NodePort with only kubectl+helm+the installer present, a model connects through the wizard and a jarvis turn answers, and `helm show chart oci://ghcr.io/emeraldcoastsystemsgroup/charts/oshal` succeeds anonymously.
 
 ### k8s shared-service tier — live proof of the features it restores (ADR-129 amendment)
-- **Remaining:** chart 0.3.0 templates the whole tier (tsdb, arangodb, vault, code-server, diarization; ollama opt-in) and stages store packages via an api initContainer, but only template-level proof exists (lint, render matrix, `kubectl apply --dry-run`, a mutation-tested guard). Nothing has run against a live cluster.
+- **Remaining:** the chart at `deploy/helm/oshal` (the tier arrived in chart 0.3.0; `Chart.yaml` carries the current version) templates the whole tier (tsdb, arangodb, vault, code-server, diarization; ollama opt-in) and stages store packages via an api initContainer, but only template-level proof exists (lint, render matrix, `kubectl apply --dry-run`, a mutation-tested guard). Nothing has run against a live cluster.
 - **Done when:** on a real cluster — a staged store package serves its surface and survives an api pod restart; a trading query returns series from the in-cluster tsdb; `/api/graph` answers instead of 503; a transcription round-trips through the diarization Service; and `helm upgrade --set infra.arangodb.inCluster=false` degrades the graph cleanly (null connector, no connection-refused) rather than erroring.
+
+### k8s runtime-launched bots do not read the chart's `oshal-shared-secret` (chart 0.5.0)
+- **Remaining:** chart 0.5.0 moved `JWT_SECRET`, `ARANGO_ROOT_USER` and `ARANGO_ROOT_PASSWORD`
+  out of the `oshal-shared-env` ConfigMap into the `oshal-shared-secret` Secret. Chart-declared bots
+  `envFrom` that Secret. A bot the controller launches at runtime does not:
+  `buildBotDeployment` in `src/features/agent-management/services/kubernetes-bot-launcher.ts`
+  hardcodes `envFrom` to `oshal-shared-env` plus the optional `oshal-bot-env`. The ConfigMap sets
+  `NODE_ENV=production`, so such a bot throws `JWT_SECRET must be set in production`
+  (`any-bot/server/utils/config.js`) at boot unless the operator's `oshal-bot-env` carries the key.
+  **This is a regression.** Chart 0.4.0 rendered `JWT_SECRET` into `oshal-shared-env`, which the
+  launcher reads, so runtime-launched bots booted. On chart 0.5.0's default posture
+  (`rbac.botLauncher: true`) every runtime-launched bot fails to boot until the fix below lands or
+  the operator copies the keys. With `rbac.botLauncher` on, NOTES.txt prints the command that
+  copies the chart Secret's keys into `oshal-bot-env` and calls it a regression, and the chart
+  README "Credentials" section documents it. `tests/unit/chart-dynamic-bot-env.spec.ts` measures
+  the gap from the real launcher and render, proves it is boot-fatal against the real config
+  module, and holds the chart to the warning while the gap exists. The fix is a core change and
+  needs operator approval first (CLAUDE.md Rule 0d).
+- **Decision needed (operator):** approve one line in `buildBotDeployment`
+  (`src/features/agent-management/services/kubernetes-bot-launcher.ts`): add
+  `{ secretRef: { name: 'oshal-shared-secret' } }` to the container's `envFrom`, after the
+  `oshal-shared-env` ConfigMap and before `oshal-bot-env` (the order `bots.yaml` uses, so an
+  operator Secret still wins a duplicate key), and update
+  `tests/unit/dynamic-bot-runtime-launcher.spec.ts`. Nothing else in core changes. The Role grants
+  no access to Secrets and needs none, because the kubelet resolves `envFrom`, not the launcher.
+- **Done when:** the launcher's `envFrom` names `oshal-shared-secret`;
+  `tests/unit/chart-dynamic-bot-env.spec.ts` finds no key that a chart-declared bot gets from the
+  chart and a runtime-launched bot does not, and the NOTES.txt and README copy steps are removed
+  (that spec is red until they are); and on a cluster, a bot launched at runtime by an installed app
+  reaches Ready with no `JWT_SECRET` in `oshal-bot-env`.
+
+### k8s runtime-launched bots set no securityContext, liveness or startup probe, or resources (chart 0.5.0)
+- **Remaining:** chart 0.5.0 gave every workload the chart renders a production-readiness
+  baseline. A bot the controller launches at runtime is not rendered by the chart:
+  `buildBotDeployment` in `src/features/agent-management/services/kubernetes-bot-launcher.ts`
+  builds its Deployment with no pod `securityContext`, and a container with no `securityContext`,
+  no `resources` and a TCP readiness probe only. A chart-declared bot (`templates/bots.yaml`) has
+  RuntimeDefault seccomp, `allowPrivilegeEscalation: false`, every capability dropped but
+  `DAC_OVERRIDE`, a startup and a liveness probe on the readiness handler, and
+  `botDefaults.resources`. The chart closes the resources half without core: on a main cluster the
+  `oshal-container-defaults` LimitRange (`limitRange.enabled`, default on) gives
+  `botDefaults.resources` to any container that sets none, so a ResourceQuota that requires
+  requests no longer refuses such a bot for lack of them. A LimitRange cannot default a
+  `securityContext` or a probe, so those stay missing. The chart README "Probes, resources and Pod
+  Security" states the gap, and `tests/unit/chart-runtime-bot-defaults.spec.ts` measures it from
+  the real launcher against a real chart bot and holds the README to it. The fix is a core change
+  and needs operator approval first (CLAUDE.md Rule 0d).
+- **Decision needed (operator):** approve changing `buildBotDeployment` to set what
+  `templates/bots.yaml` sets: pod `securityContext: { seccompProfile: { type: 'RuntimeDefault' } }`;
+  container `securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ['ALL'],
+  add: ['DAC_OVERRIDE'] } }`; `startupProbe` (tcp 5000, period 10, failureThreshold 30) and
+  `livenessProbe` (tcp 5000, period 20, timeout 5, failureThreshold 6) beside the existing
+  readiness probe; and `resources` equal to the chart's `botDefaults.resources`. The launcher has
+  no way to read values today, so the resources half needs the chart to hand `botDefaults.resources`
+  to the api (for example as a JSON env value next to `OSHAL_BOT_IMAGE`) for the launcher to apply.
+  Without that half the LimitRange keeps supplying the same figures.
+- **Done when:** the Deployment `buildBotDeployment` returns carries those fields, and
+  `tests/unit/dynamic-bot-runtime-launcher.spec.ts` asserts them;
+  `tests/unit/chart-runtime-bot-defaults.spec.ts` finds nothing a chart-declared bot has that a
+  runtime-launched bot lacks, and the README gap paragraph (the one naming `buildBotDeployment`) is
+  removed (that spec is red until it is); and on a cluster, a bot launched at runtime by an
+  installed app reaches Ready in a namespace with a ResourceQuota on `requests.cpu` and
+  `requests.memory`, admitted under the `baseline` Pod Security Standard.
+
+### k8s cockpit toggle scales a Deployment named after the agent, not the chart's (2026-09-21)
+- **Remaining:** measured on the live Docker Desktop cluster ([k8/docker-desktop-live-proofs-2026-09-21.md](k8/docker-desktop-live-proofs-2026-09-21.md), item 12):
+  `PATCH /api/agents/<id>/status` on `weather-analyst` (`a0000000-...-004a`) made the launcher scale
+  `deployments.apps "weather-analyst"`, which answered 404 NotFound. The chart's Deployment is
+  `weather-bot`, the compose service name. The agent row flipped inactive and back to active, and the
+  pod never scaled: replicas stayed 1. Every chart bot whose agent name differs from its service
+  name is affected. In the tree, `setRunning` in
+  `src/features/agent-management/services/kubernetes-bot-launcher.ts` takes the agent name as "also
+  the Deployment name", while `templates/bots.yaml` names each Deployment after its fleet entry
+  (`{{ .name }}`) and labels it `app.kubernetes.io/name: <that name>` and `oshal.io/bot: "true"`.
+  Neither label names the agent. The fix is a core change and needs operator approval first
+  (CLAUDE.md Rule 0d).
+- **Decision needed (operator):** approve the launcher resolving a bot's Deployment by a label the
+  chart stamps on it, rather than by the agent name. That needs a chart label that carries the agent
+  (for example its `agentId`) on every bot Deployment, and a label-selector lookup in `setRunning`.
+- **Done when:** on a cluster, the cockpit toggle on `weather-analyst` scales the `weather-bot`
+  Deployment to 0 and back to 1; and a guard that renders the chart fleet fails when any chart bot's
+  agent does not resolve to its own Deployment through the launcher's lookup.
+
+### Opt-in apps revert on every api boot, which fails the groups that need them (2026-09-21)
+- **Remaining:** measured on the live Docker Desktop cluster ([k8/docker-desktop-live-proofs-2026-09-21.md](k8/docker-desktop-live-proofs-2026-09-21.md)): apps whose manifest says
+  `status: inactive` revert on every api boot, which then fails their groups (intelligent-career
+  needs print-ingest; marketing-suite needs brand-graphics). The upsert is in
+  `src/features/swarm-apps/services/swarm-app-repository.ts`: on a plain reload its `status = CASE`
+  keeps a row's status only when that status is already `inactive`, and otherwise writes the
+  manifest's status, so a row the operator activated is set back to the manifest's `inactive`. The
+  fix is a core change and needs operator approval first (CLAUDE.md Rule 0d).
+- **Decision needed (operator):** approve changing that upsert so a boot reload does not overwrite
+  an activation the operator made. The row does not record who set its status today, so the change
+  needs either that record or a narrower rule (for example: a manifest's `inactive` never
+  overwrites an existing row's status on a plain reload).
+- **Done when:** an opt-in app the operator activates stays active across an api restart and its
+  group resolves (intelligent-career with print-ingest active); and a guard runs the real upsert
+  against a real PostgreSQL twice (activate, then reload the same manifest) and reads `active`.
+
+### The published speaker-diarization image predates its source and has no `/v1/transcribe` (2026-09-21)
+- **Remaining:** measured on the live Docker Desktop cluster ([k8/docker-desktop-live-proofs-2026-09-21.md](k8/docker-desktop-live-proofs-2026-09-21.md), item 11):
+  `ghcr.io/emeraldcoastsystemsgroup/oshal-speaker-diarization:latest` answers `POST /v1/diarize` with
+  200 but `/v1/transcribe` with 404, because the published image predates the source. The
+  source-built image, side-loaded, answered `/v1/transcribe` with 200 in 13.8s. The chart pins
+  `2.1.0-beta.1`, which `deploy/helm/oshal/values.yaml` records as the digest `:latest` resolved to
+  on 2026-09-21. `values-docker-desktop.yaml` (SEQ 4) records the side-load override a box with
+  compose's source-built image can use meanwhile. The fix is a
+  republish from `origin/main`, an operator action that rides on work-package item 1
+  (`scripts/publish-images.sh`), then a new pin.
+- **Done when:** the image `infra.diarization.image` pins by default answers `POST /v1/transcribe`
+  with 200 through the diarization Service on a cluster, with no side-loaded image and no
+  `infra.diarization.image` override.
+
+### little-monsters looks for its education migration at a core path (2026-09-21)
+- **Remaining:** captured on the Docker Desktop api boot of 2026-09-22T02:54:51Z (level 50,
+  module `education-schema`): "Education migration file not found; schema bootstrap skipped" for
+  `/app/scripts/migrations/019-education-platform.sql`. The emitter is the **store package**, not
+  core: oshal-applications `little-monsters/src-routes/education-schema.ts:219` resolves
+  `path.resolve(process.cwd(), 'scripts/migrations/019-education-platform.sql')`, a pre-carve-out
+  kernel path. Harmless where the platform applies package migrations (the same boot applied the
+  package's 019/020/021/024; [k8/docker-desktop-live-proofs-2026-09-21.md](k8/docker-desktop-live-proofs-2026-09-21.md)), but it logs an error on every boot.
+- **Done when:** the package resolves its own `migrations/` directory (or drops the redundant
+  bootstrap), ships as a new little-monsters version with its audit record re-bound, and an api boot
+  with little-monsters staged logs no `education-schema` error. Store-repo work; nothing in this
+  repo changes.
+- **Done when:** either an api boot with little-monsters staged logs no missing-migration line, and
+  this entry closes with that log excerpt as its evidence; or the captured line is traced to core,
+  the reference is removed, and a guard fails if core names a migration file the tree does not hold.
 
 ### Rides map and fare follow-ups
 - **Remaining:** install the merged [`rides`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/rides) package; decide optional OSRM/Valhalla and Google Maps billing paths; make geocode/tile configuration operator-owned and the normalized-address cache durable.
@@ -1544,6 +1790,46 @@ including across a directory belonging to a different owner. Full reasoning and 
   undefined on purpose; the entry's own rule against inventing definitions is what keeps them that
   way. (PM measured the mechanism and recommended the freeze; the operator chose it.)
 
+### Three CLI tools reach a shell with model-supplied arguments and require no approval (2026-09-21)
+- **Proved live, with side effects, against stubs on PATH** while verifying the `cli_yq` fix. Each
+  builds a command STRING and hands it to `child_process.exec`, which is a shell, while registered
+  `requiresApproval: false`:
+  - `cli_cline` — `cliTools.js:422`, `` executeCLI(`cline ${args}`) ``, `args` raw; registered at
+    `:804`. An injected marker came back in the tool's own output.
+  - `cli_jq` — `cliTools.js:446`, `` jq '${filter}' ``; `input` **is** POSIX-escaped, so the hole is
+    the FILTER, unescaped inside the single quotes; registered at `:828`. The injected command wrote
+    a file.
+  - `cli_fzf` — `cliTools.js:508`, `` echo '<escaped>' | fzf ${args} ``, `args` raw; registered at
+    `:880`. The injected command wrote a file.
+  A missing binary does not close any of these: the shell runs the whole string, so the injected half
+  executes whether or not `cline`/`jq`/`fzf` is installed.
+- **LATENT, not live — and this is why it is an entry rather than an incident.** The authorized
+  channel derives `allowedTools` solely from `anyBotRuntimeToolFor`
+  (`src/app/prompt-authorization-resolver.ts:39-45` → `bot-node-execution-handler.ts:440`), and
+  `PERSISTED_TO_RUNTIME_TOOL` has **no entry for `jq`, `fzf` or `cline`**; an unmapped name is dropped
+  with "Unmapped runtime tool denied". `yq → cli_yq` **is** mapped, which is exactly why `cli_yq` was
+  the one reachable end to end. These three become live the moment someone adds a map entry, which is
+  a one-line change nobody would think of as a security decision.
+- **The registry census, measured rather than assumed:** 16 tools registered; **12** carry
+  `requiresApproval: true` (git, kubectl, helm, terraform, ansible, aws, azure, gcloud, argocd, node,
+  npm, vault) and **4** carry `false` — `cli_cline`, `cli_jq`, `cli_yq`, `cli_fzf`. The four are
+  exactly the shell-reaching, unapproved set.
+- **The fix already exists and is not a new design.** `any-bot/server/services/tools/cli-argv.js`
+  (`cliArgsToArgv` + `executeCLIArgv`, `execFile` with `shell: false`, options built field by field so
+  a caller cannot smuggle `shell: true`) was built for `cli_yq`. These three convert onto it.
+- **Do NOT fix this by escaping or by a metacharacter denylist.** A denylist was wrong from the start
+  for `cli_jq`: a legitimate jq filter contains `|`, `$` and quotes. The argument vector is the fix.
+- **Done when:** all three call the binary through `executeCLIArgv` with an argument vector and no
+  shell; each is `requiresApproval: true` **and** in `NEVER_AUTO_APPROVE` (both, because the policy
+  set alone is inert — every consumer gates on `requiresApproval` first, `AgenticController.js:599`,
+  `dispatch-tool-executor.js:84`, `ToolRegistry.js:346`); a spec drives the REAL dispatch executor
+  with the unattended auto-approve payload and asserts `ok:false` for each, with a control proving the
+  harness can see a refusal at all; an injection case per tool proves the payload is passed as
+  arguments and never executed, spawning a real child against a stub on PATH rather than a doubled
+  `child_process`; and a guard fails if any tool in `cliTools.js` reaches `executeCLI`/`exec` with a
+  model-supplied argument while registered `requiresApproval: false`, so a fifth one cannot be added
+  silently.
+
 ### Web-control enforcement rollout
 - **Remaining:** promote the exact-byte Alertmanager parser/HMAC guard and corrected posture API; collect and classify the default report-only CSP stream, externalize or nonce remaining inline scripts, canary `OSHAL_STRICT_CSP=on`, tune/enable `OSHAL_RATE_LIMIT_INTERNAL` and `OSHAL_RATE_LIMIT_EXPENSIVE`, and provision a distinct `ALERT_WEBHOOK_HMAC_SECRET` on both receiver and sender.
 - **Done when:** a seven-day browser canary has no unexplained CSP violations, enforcement blocks a sanctioned inline-injection fixture without breaking supported surfaces, direct-origin and Jarvis/intake burst probes receive the intended 429s without throttling normal swarm traffic, and exact-body Alertmanager delivery passes while missing/tampered signatures fail before landing a row.
@@ -1652,6 +1938,16 @@ including across a directory belonging to a different owner. Full reasoning and 
   project's footprint, and the operator's custody preference is self-hosted. (PM offered a
   park-or-provide-AWS choice; the operator replied with a better split — a remote cluster box plus
   tagged, separated instructions.)
+- **Kubernetes engine: DONE 2026-09-22** (operator-run, on the Docker Desktop cluster the operator
+  directed this work onto). Every done-when clause is measured in
+  [k8/docker-desktop-live-proofs-2026-09-21.md](k8/docker-desktop-live-proofs-2026-09-21.md) item 14:
+  role `tenant-a-pod-reader` issues a 600s credential, `get pods -n tenant-a` succeeds, revocation
+  deletes the generated ServiceAccount and reuse is refused, and no bot Deployment carries kubeconfig
+  or token material. The engine authenticates as its own least-privilege ServiceAccount; the chart's
+  Vault no longer runs as the namespace `default` account (`1338d6ad`). The initial root token is
+  revoked; the api holds a policy-scoped token instead. **Still open here:** the same lifecycle
+  against the **PostgreSQL** engine on the development box, sequenced after "Production Vault
+  hardening" as decision 17 says.
 
 ### Multi-user ephemeral privileged runtime
 - **Remaining:** security-review and build a per-task, short-lived privileged runtime with tmpfs credentials, caller scoping, revocation, and residue inspection.
@@ -2660,6 +2956,33 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### Operator credential/configuration follow-ups
 - **Remaining:** register Outlook under `maintainer@emeraldcoastsystemsgroup.com`, set real daily cost caps, and configure `SWARM_SERVICE_SECRET` so bot-node auth is fail-closed.
 - **Done when:** Outlook reconnects and sends, at least one budget denial is proven, and unauthenticated `/api/swarm-execute` is rejected on the deployed stack.
+- **Decision (operator, 2026-09-22), leg by leg.**
+  **(1) Outlook / Azure — still the operator's, and half-done already.** Measured on the box:
+  `OUTLOOK_CLIENT_VALUE` and `AZURE_EMAIL_TENANT` are set, `AZURE_EMAIL_APPLICATION_ID` is **absent**.
+  So the registration was started and not finished; what remains is the application id, a reconnect
+  and one send. No agent can do it — the app registers under the business account.
+  **(2) Spend caps: NOT set in oshal, and deliberately so.** The cap that exists is on the PROVIDER
+  side: the operator runs a Pro account against a GCP backend account that carries its own spend cap,
+  including a short-window ceiling that "sometimes triggers and sometimes doesn't". `oshal_budgets` is
+  empty by choice, not by oversight. Two reasons not to set an oshal-side cap today, the second the
+  stronger: a cap measures against recorded spend, and recorded spend is currently wrong — of 92
+  `chat_tasks` rows in the last seven days only **12 carry any cost at all**, totalling **$0.83**,
+  because output tokens and cost are not written even on successful calls and 23 paid providers price
+  every model at 0/0. A cap on that meter is a control the operator would believe in and not have.
+  Front-end capping stays wanted; it follows the cost-accounting fix rather than preceding it.
+  **(3) What the operator asked for instead of a cap: a RETRY.** When the provider-side ceiling trips,
+  the turn should recover rather than surface an error. Commissioned separately, and the measurement
+  that makes it precise: retry machinery already exists —
+  `RETRYABLE_PROVIDER_FAILURE` (`src/app/routes/free-tier-rotation.ts:566`) already classifies
+  `402|403|429`, rate-limit, quota, throttle, `resourceexhausted` and `empty_final_answer` as
+  retryable — but an explicit BYO connection is excluded from all of it at `:582`
+  (`if (!connection || connection.resolutionSource === 'explicit') return false;`). The comment
+  explains a real boundary: never replay a BYO prompt on a *different* provider. The decision is that
+  this conflates two things — **retrying the SAME endpoint crosses no billing or privacy boundary**
+  and is now permitted, bounded and logged; **rotating away from a BYO endpoint stays refused**.
+  **(4) The service-secret leg is already met.** `SWARM_SERVICE_SECRET` is set,
+  `logBotNodeAuthPosture()` throws when it is not, and an unauthenticated `POST /api/swarm-execute`
+  against a bot node returns nothing at all — measured. Only the recorded probe was outstanding.
 
 ### Complete and cancel nightly backup checks safely
 - **Observed 2026-09-12:** the scheduled live dump/restore diagnostic held a table lock needed by API startup. Cancelling that exact dump restored progress, but the diagnostic still produced passing evidence from a partial restore. The generated evidence was marked incomplete and its original output preserved; release backups were unaffected.
@@ -2736,6 +3059,27 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### Combined home workspace
 - **Remaining:** compose communication, social, career, storage, media, and home package surfaces into one switchboard without copying their business logic; resolve the manifest bot requirement cleanly.
 - **Done when:** `/cockpit/?app=workspace` loads every enabled home app in one ribbon, preserves owner isolation, and routes each action/chat to the owning package. See [ADR-113](adr/113-switchboard-aggregation-surface-and-workspaces.md).
+- **Decision (operator, 2026-09-22): a FIXED-MEMBER ADR-141 group, store-only. No core change, and
+  ADR-141's "members are required" rule is not amended.** Members, six, named by the operator:
+  **home, social, career-hunter, storage, switchboard (communication), video (media)**. All six are
+  installed and active on the box today, so the group activates as soon as it is written. The
+  mechanism is already proven twice in the store — `intelligent-career/oshal-app.yaml:25` and
+  `marketing-suite/oshal-app.yaml:31` both ship `kind: group` with required members.
+- **The contradiction this resolves, recorded so it is not re-litigated.** The entry's done-when asked
+  that `?app=workspace` load every *enabled* home app, and a group cannot express that: members are
+  REQUIRED apps, `swarm-app-group.ts` fails activation when any member is not installed and active
+  (:372, :411), and its own change log says "optional apps are install-time offers, never members".
+  Optional membership would have meant a core change softening that rule and letting a group's
+  composition vary per box — which is precisely what ADR-141 chose against. The done-when is therefore
+  **amended** to the achievable and intended behaviour: the workspace activates when its six members
+  are present, and does not activate otherwise. A box missing a member getting no workspace is the
+  ADR working, not a defect.
+- **Trigger for revisiting optional membership:** a real install where the group fails to activate
+  because a member is absent. Evidence first; no core change before it.
+- **Done when:** a `workspace` group manifest exists in the store with exactly those six members;
+  `/cockpit/?app=workspace` borrows each member's surfaces by reference with no business logic copied
+  and no bot of its own; activation fails cleanly and says which member is missing when one is; and
+  the group is registered in the store catalog like its two siblings.
 
 ### OSHAL engineering-screen normalization
 - **Remaining:** apply the cockpit design system and verify live data contracts for task explorer, queue/admin, mesh, ops, health, config, Redis, and RAG screens.
@@ -2788,6 +3132,37 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### Apply recipe runner and learned cache
 - **Remaining:** replay known Ashby/Greenhouse patterns without model turns, tune the Workday parse-correction grid live, and share a PII-free family recipe schema between the native runner and swarm apply operator; novel forms may fall back to vision and learn owner-scoped variants.
 - **Done when:** five supported ATS families replay deterministically where a recipe exists, Gmail verification is polled, novel forms learn safely, and auto-submit remains separately opted in per family.
+- **Decision (operator, 2026-09-22), three parts.**
+  **(1) The five ATS families are chosen from the corpus, not from convention:** **workday,
+  smartrecruiters, greenhouse, icims, ashby**. Measured over the box's own `career_postings`
+  (1,433,379 rows): workday 478,684 · smartrecruiters 124,267 · greenhouse 32,033 · icims 18,587 ·
+  ashby 11,048 — together **664,619 postings, about 98% of every row whose ATS is identifiable**. The
+  families usually assumed into such a list do not earn a place here: successfactors 6,324, lever
+  5,700, taleo 1,829, jobvite 682. Workday alone is 72% of the identifiable set, which is why its
+  recipe carries the most weight and the most risk.
+  **(2) Gmail verification codes come back as a DETERMINISTIC SERVER OPERATION, and the retired
+  callback stays retired.** The distinction the entry blurs is the whole decision: what was killed
+  with a 410 at `apply-ingest-routes.ts:219-223` was a **model-facing** callback — the model asking
+  for mailbox contents — and that stays dead. What is approved is a schema-bounded, owner-scoped
+  controller operation that obtains the verification code and passes **only the code** into reasoning.
+  The model never sees the mailbox, never holds the Gmail credential, and the apply-operator persona's
+  ban on email access is unchanged because the persona still has none. This is the boundary CLAUDE.md
+  already mandates for connector data rather than a reversal of the security decision that produced
+  the 410.
+  **(3) Auto-submit becomes PER-FAMILY opt-in, every family defaulting OFF.** Today it is a single
+  per-user flag, which forces the same trust on families whose risk is not comparable: Workday is
+  multi-page with knockout questions where a wrong auto-submit burns a real application at a real
+  employer, while Greenhouse and Ashby are usually a single form. Per-family arming lets the safe ones
+  run while Workday stays manual until its recipe has proven itself on real postings. This preserves
+  the standing rule that outward automation is opt-in and off by default — it makes the opt-in
+  finer-grained, never broader.
+- **Still needs the operator when the code exists:** live replay and Workday tuning require his
+  signed-in worker desktop and real postings; nothing about that changes here.
+- **Done when:** a family recipe schema and deterministic replay runner cover the five named families;
+  the learned cache is owner-scoped; the verification-code operation returns a code and nothing else,
+  with a spec proving the model cannot reach the mailbox through it and that the 410 callback is still
+  410; auto-submit is armed per family with every family off until armed, guarded so a family that was
+  never armed cannot submit; and a live replay on a real posting is recorded per family.
 
 ### Offline browser autofill smoke
 - **Remaining:** with the stack stopped, copy the current Career bookmarklet and exercise one real Ashby and one real Greenhouse form in an already authenticated browser.
@@ -2816,6 +3191,33 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### Finance post-v1 rails and governance
 - **Remaining:** separately decide real A2A payouts, live-money compliance, broker trade execution, Plaid production access, household labels/sharing, and scheduled forecast/alert scope.
 - **Done when:** each commissioned capability has its own approved regulatory/security contract and live or sandbox proof; selecting an unimplemented rail continues to fail loudly.
+- **Decision (operator, 2026-09-22): SOFTWARE-ONLY is commissioned; every money-movement rail is
+  declined for now; execution stays with the trading app.** Capability by capability, so none of this
+  is re-asked as an open question:
+  **COMMISSIONED — scheduled forecasts and alerts.** No money moves, no second party's data, no
+  regulator. Becomes its own backlog entry with a sandbox proof.
+  **COMMISSIONED — household labels, WITHOUT sharing.** Labels are a personal data model on the
+  operator's own aggregation. **Sharing to another person is explicitly NOT commissioned**: it puts a
+  second person's financial data in this instance, which is a privacy and ownership design question
+  rather than a feature, and it is not being answered by shipping it.
+  **NOT COMMISSIONED — A2A payouts, live-money transfers, Plaid production access.** The first two
+  move real money; moving one's own money is not money transmission, but the analysis changes the
+  moment a second user holds a balance, and that is not a code decision. Plaid production is a
+  read-only upgrade rather than a money rail, and is declined for now only because nothing needs real
+  bank data while the rest stays software-only. Each is revisited on its own, deliberately, not as
+  part of a bundle.
+  **NOT COMMISSIONED — broker trade execution in the finance app.** Execution belongs to the **trading**
+  app, which already owns the arming gates, the books, the stop logic and the live Schwab and Kalshi
+  connections. The finance app's declared v1 scope
+  (`oshal-applications/finance/oshal-app.yaml:20`) already says "READ-ONLY aggregation + gated
+  transfers. NO trade execution", and that stands. Two independent code paths able to place real
+  orders is a class of defect worth never having. Reading balances and positions for aggregation is
+  not what was declined — only placing orders.
+- **What stays true regardless:** selecting an unimplemented rail must keep failing loudly, which the
+  entry records as already in place.
+- **Done when:** forecasts/alerts and personal household labels each exist as their own backlog entry
+  with a done-when and a proof; and this entry carries the declined list above so no rail is
+  commissioned by drift.
 
 ## Trading and market systems
 
@@ -2842,6 +3244,7 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### SK Hynix sleeve graduation
 - **Remaining:** after reliable permanent-ticker history exists, remove the temporary core exemption and evaluate the position through the normal sleeve/risk model.
 - **Done when:** the permanent symbol is used consistently, the position has ordinary data/stop/exit coverage, and no IPO-specific bypass remains without an explicit rule.
+- **Deferred to the operator (2026-09-21), not decided.** Whether SKHY is still held on the live Schwab book is a fact about the broker account and nothing on this box records it: the engine reads venue positions at runtime and does not persist them, and the only position-shaped table, `oshal_trading_pinned_lots`, holds five lots, all MSFT/NVDA on the **paper** book, no SKHY. The question is on the operator's errand list (item 9) with the three answers it can take. `TRADING_CORE_SYMBOLS=SKHYV:0,SKHY:0,USO:0` stays as is until he has looked; removing the exemption without an engine basis makes the lot unmanaged rather than graduated, and an adopted lot with a wrong basis is the phantom-stop-loss shape this book has already paid for once.
 
 ### IPO event-play design (ADR-142)
 - **Designed 2026-09-06:** [ADR-142](adr/142-ipo-event-sleeve.md) reconciles this item against the shipped ADR-136 D6 executor. Verdict: D6 v1 IS the sleeve's skeleton (single-issuer universe fixed by the EDGAR 424B4, day LIMIT at IPO × (1 + premium), percent/dollar sizing under the fleet guardrail, take-profit and stop GTC plus a time stop, one `event-playbook` order path on a gated leg). The generic pop-catcher stays closed and is not reopened — an IPO is a scheduled single-name event, not a latency race.
@@ -2876,8 +3279,38 @@ including across a directory belonging to a different owner. Full reasoning and 
 - **Done when:** the Trends tab's Paper · auto tile and curve are bankroll-based and labelled paper; open alerts show price-since-announced; and Real · auto is either still "not built" with the gate stated, or built behind a PROVEN scorecard row plus a double opt-in flag, with orders audited like the manual path.
 
 ### Trading watchdog hardening — the rest of the checks (ADR-134 D3.7)
-- **Remaining:** quote volume/recency corroboration beyond the pre-market gap check; ~~broker-number parsing~~ (shipped in the same change, #354 — `toNumber`, the "strict broker-number parse" in `scripts/lib/trading-watchdog-checks.js`, which throws on anything that is not a plain finite number; checked 2026-09-14); and the deliberate narrowing recorded in ADR-134 — "uncovered position" for autopilot-managed names is approximated as held-past-the-stop rather than reconciled against the venue's own working stop orders, because the watchdog reads the ledger, not the venue.
-- **Done when:** the remaining checks ship with the same mutation guards, and the uncovered-position check compares against venue-resident stops rather than a loss threshold.
+- **Remaining:** ~~quote volume/recency corroboration beyond the pre-market gap check~~ (shipped in the same change, #354 — `assessGapPrint` in `scripts/lib/trading-watchdog-checks.js` refuses a gap unless the trade PRINT carries at least `gapMinPrintSize` shares (print size — the quote's own bid/ask size is not read), is no older than `gapMaxPrintAgeMin`, is dated today, AND a two-sided quote's mid crosses the same threshold; `assessGapPrint` is the only watchdog conclusion that reads a tape print at all, so no second consumer is owed the corroboration; checked 2026-09-21); ~~broker-number parsing~~ (shipped in the same change, #354 — `toNumber`, the "strict broker-number parse" in `scripts/lib/trading-watchdog-checks.js`, which throws on anything that is not a plain finite number; checked 2026-09-14); and the deliberate narrowing recorded in ADR-134 — "uncovered position" for autopilot-managed names is approximated as held-past-the-stop rather than reconciled against the venue's own working stop orders, because the watchdog reads the ledger, not the venue. **That narrowing is now the separate entry below**, because closing it is a broker call with a deadline budget rather than another pure check over data the watchdog already holds.
+- **Done when:** both struck items ship with the same mutation guards *(met)*, and the venue-resident-stop comparison closes on its own done-when in [the entry below](#the-watchdogs-live-books-decide-cover-from-the-ledger-while-the-paper-book-asks-the-venue-2026-09-21).
+
+### The watchdog's live books decide cover from the ledger, while the paper book asks the venue (2026-09-21)
+
+- **Measured on the shipped files.** `scripts/trading-watchdog.ps1` block G reads `GET /api/trading/orders`
+  per live book ([line 687](../scripts/trading-watchdog.ps1#L687)) — the api's page over
+  `oshal_trading_orders`, capped at the 100 most recent rows for that book — and decides protective
+  cover from it. The PAPER path ([line 927](../scripts/trading-watchdog.ps1#L927)) instead queries the
+  venue directly (`/v2/orders?status=open&limit=100`), so it asks what is actually resting. The live
+  books, which are the real money, are the ones asking the ledger.
+- **Narrowed 2026-09-21, not closed.** A row the venue has not confirmed no longer counts as cover:
+  `CONFIRMED_WORKING_ORDER_STATUSES` (`accepted`, `partially_filled`) is the only set a coverage
+  conclusion may rest on, and `pending` / `submitting` now raise the `unconfirmed-cover` finding
+  instead of silencing the symbol. That makes the watchdog say "the ledger cannot answer this", which
+  is honest; it does not make the watchdog able to answer it. A stale `accepted` row still reads as
+  cover, and a resting sell older than the newest 100 rows is still invisible. And `accepted` itself
+  absorbs adapter mappings (Alpaca `done_for_day` / `replaced`, Schwab `REPLACED` /
+  `AWAITING_RELEASE_TIME`) whose resting semantics are not established anywhere in this repo; whether
+  those should count as cover is open and belongs with this entry's venue query, not with the list.
+- **Done when:** the live books compare against venue-resident stops the way the paper book already
+  does (a broker read per book, not a ledger page); `unconfirmed-cover` narrows to the rows that venue
+  read genuinely cannot account for; **the venue comparison stays scoped by `TRADING_WD_BLEED_BOOKS`,
+  exactly as `bleed` and `unconfirmed-cover` are** — on the hand-traded rollover every position
+  legitimately has no working sell, so widening that scope pages all day on a real-money book and
+  trains the operator to ignore the watchdog; and the per-book deadline budget in
+  `trading-watchdog.ps1` is extended to cover the extra broker call, with the arithmetic re-proved
+  against a real hanging server. The budget math is load-bearing, not bookkeeping: a round-3 review
+  measured three wedged books spending 126s inside a 60s exec deadline (20s per read x 2 attempts x
+  3 books), so the child was killed and every book's result — wedged and healthy alike — was thrown
+  away. `Get-WdAuditBudgetSec` (deadline minus slack), its equal per-book slice, and
+  `TRADING_WD_HTTP_TIMEOUT_SEC` must still leave room for the added read at the shipped defaults.
 
 ### Futures extension layer (ADR-116)
 - **Phased 2026-09-06:** [futures-phasing.md](apps/trading/futures-phasing.md) records what exists on disk today (the backtester and adapters, the Kibot ES/CL archives running to 2025-12-31, and an empty `market_bars`) and splits the remaining work into five independently shippable phases with an evidence gate and an explicit stop-line.
@@ -2997,6 +3430,27 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### Flow UI-automation video provider
 - **Remaining:** if the accepted personal-use/ToS tradeoff remains, run Flow on a dedicated fixed-geometry host using recorded deterministic interactions and explicit UI-drift detection.
 - **Done when:** the provider generates and downloads one clip into the pipeline and a changed UI fails clearly or escalates to the paid provider without hanging or accepting the wrong artifact. See [ADR-070](adr/070-multi-provider-video-generation.md).
+- **Decision (operator, 2026-09-21): CLOSED — will not build. Do not re-propose.** Nothing was ever
+  built, so nothing is removed: the video-generation feature ships three providers on disk
+  (`comfyui-provider.ts`, `deck-to-video-provider.ts`, `veo-provider.ts`) and there is no Flow
+  provider or partial one.
+  **The gap it existed to fill is now filled.** Flow's purpose was a FREE video path. The ComfyUI
+  provider is that path — the operator's own GPU box over a plain HTTP API (`/prompt` → poll
+  `/history` → `/view`), no per-image or per-clip charge, and on the same day this entry closed he
+  commissioned the storyboard sibling on the same box. Veo remains the paid path. Free and paid are
+  both covered by providers that already work.
+  **Its cost was structurally higher than any sibling's.** Flow drives a consumer web UI by
+  automation, so its own done-when is mostly about surviving a UI it does not control: a dedicated
+  fixed-geometry host, recorded deterministic interactions, and explicit drift detection. It could
+  not share this box either — the standing operator rule is that nothing opens a visible window on
+  the operator's desktop. A third generation path would have been the most fragile one in the set by
+  construction, and the only one whose failure mode is silently accepting the wrong artifact.
+  **The personal-use tradeoff this entry opened with is therefore moot** and is not the reason for
+  closing; it is recorded only because the entry itself made it a precondition.
+- **What closing costs, stated plainly:** whatever Flow's model can generate that neither Veo nor the
+  operator's local models can. That was judged not worth a dedicated machine and a drift-detection
+  rail. If a specific clip is ever wanted that only Flow can make, this reopens as a new entry with
+  that clip named as the evidence — not as a general capability gap.
 
 ### Vids Operator named-tool live proof
 - **Remaining:** live-tune each Vids tool, cache located controls, expose scenario/tool mode in both UIs, convert scenarios to explicit tool sequences, and add LoRA/Studio bridges.
@@ -3199,14 +3653,17 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### Drone physical payloads and peer coordination
 - **Remaining:** prove a real approved MAVLink airframe/adaptor, authenticated drone-to-drone coordination, physical camera/video, ESC telemetry, and LED payload through the remote-node envelope; the Drone package carve is already complete.
 - **Done when:** [`drone`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/drone) drives auditable capture/telemetry on a physical node and a multi-node mission self-realigns without bypassing geofence, approval, abort, or ownership gates. See [ADR-099](adr/099-drones-as-remote-swarm-nodes.md).
+- **Decision (operator, 2026-09-22): no drone exists, so write the CONTROLS AND STUBS.** The drone-facing API contract and stub adapters, so any individual airframe integrates through the API later without the swarm changing; proven against SITL and the existing envelope, labelled not-live-proven. The physical proof in the done-when stays, as an errand for the day a drone exists.
 
 ### Camera real-device follow-ups
 - **Remaining:** add GoPro BLE AP/COHN provisioning, pinned self-signed CA handling, browser-playable preview transcoding, one second-brand adapter, and package the camera node; deploy/install the current package for a browser smoke.
 - **Done when:** a real GoPro provisions and previews without disabling TLS verification, a Canon CCAPI or ONVIF device uses the same provider contract, and [`camera`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/camera) drives both without controller/surface changes.
+- **Decision (operator, 2026-09-22): software halves on a fake device now; live proof on the operator's HERO9 (errand 12).** GoPro BLE AP/COHN provisioning, pinned self-signed CA handling and preview transcoding are built against a fake camera with their own tests; the done-when's real-device clauses become the errand: the HERO9 on the LAN (USB mode needs no BLE) and one second-brand device (Canon CCAPI or any ONVIF camera) for the shared-contract proof.
 
 ### 3D-printer store package (FlashForge first)
 - **Remaining:** no printer connector exists anywhere (verified 2026-09-05 across core and both store repos); `3d-printing-bot` is an advisory persona with every tool authorization off. Build a store package cloning the camera device shape: deterministic ops (status/temps/upload/start/pause/cancel, cancel confirmation-gated like camera `deleteAll`) over the printer's network link — FlashForge Finder/Adventurer 3/4 speak the proprietary TCP protocol on port 8899 (`~M601`/`~M119`/`~M105`/`~M27`/`~M28`/`~M23`/`~M26`), Adventurer 5M/5M Pro expose HTTP on 8898 or Moonraker REST in open mode, both LAN-reachable from the api container with no node. USB requires a host-side printer-node (containers can't see USB serial under Docker Desktop) and FlashForge has no known Bluetooth control — WiFi first. Blocked on the operator naming the printer model (decides protocol and `.gx` vs `.gcode` upload format). Slicing stays a separate step (OrcaSlicer/PrusaSlicer CLI); the printer op takes finished gcode.
 - **Done when:** a store package in `oshal-applications` reports the real printer's status and temperatures in the cockpit, uploads and starts a real print job on the operator's FlashForge over the LAN, cancel requires an explicit confirm, and the `3d-printing-bot` persona serves as the package's concierge without any new core code.
+- **Decision (operator, 2026-09-22): BUILD FULLY. The operator owns a FlashForge ADVENTURER 5M, on the LAN behind him.** One correction to this entry: the port-8899 proprietary protocol described above is documented for the Finder and Adventurer 3/4; the **5M is a newer model and that claim is unverified for it**. So the package is built against a protocol fake with the deterministic operations above (status, temperatures, upload, start, pause, cancel with cancel confirm-gated like camera `deleteAll`), AND it ships a one-command probe the operator runs against the real printer to confirm which protocol and port it answers on **before** the live operations are wired to it (errand 10). `3d-printing-bot` is the package's concierge; no core code. **Done when** unchanged, plus: the probe's recorded output for the 5M is in the package README.
 
 ### Sat-ops forced-conjugate referee evidence
 - **Remaining:** replay a captured NASA 42 stream or run the referee with its convention lock forced to `conjugate`, retaining direct-run comparison evidence.
@@ -3223,6 +3680,7 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### DevOps cockpit Phase 2+
 - **Remaining:** discover topology from logged-in CLIs into the graph, add Connect-Vault and live traffic lights, discover/override Terraform and Kubernetes contexts, deploy NAT-friendly/push remote nodes, choose the bidirectional transport, and run specialist tasks with brokered credentials.
 - **Done when:** a NATed node self-registers and round-trips work, topology is queryable/rendered, each connection reports a truthful reasoned state, and a specialist completes a real read/plan with a revoked short-TTL credential while apply/deploy stays human-gated. See [connectivity design](architecture/devops-cockpit-connectivity.md).
+- **Decision (operator, 2026-09-22): FIRST SLICE ONLY.** A NATed node self-registers and round-trips: the one item the rest depends on, and the one the Headscale fail-loud work unblocks. Every other item in this entry (topology discovery into the graph, Connect-Vault and traffic lights, Terraform and Kubernetes context discovery, the bidirectional transport, specialist tasks under brokered short-TTL credentials) moves to `ROADMAP.md` as later slices, each with its own done-when. **Done when** narrowed to the first slice: a NATed node self-registers and a round trip works, recorded in the real-boundary audit.
 
 ### Container-health collection without cAdvisor names
 - **Remaining:** verify cAdvisor naming on supported Linux targets or adopt a Docker/agent collector whose OSHAL container identity is stable on Desktop and Linux.
@@ -3232,6 +3690,7 @@ including across a directory belonging to a different owner. Full reasoning and 
 - **Current state:** the reference `oshal` database holds `echo_pipeline_snapshots` (`snapshot_id`, `ts`, `stage`, `count`, `window_hours`; RLS off): 168 rows, 28 each for the stages `normalized`, `deduplicated`, `filtered`, `enriched`, `grouped` and `delivered`, all written between 2026-04-24 16:49 and 2026-04-25 04:27 UTC and none since. No tracked source in core, the store repo or the private package repo declares or writes it — `scripts/generate-schema-docs.js` reports it as the one undeclared live table — and no `.py`/`.sql`/`.ts`/`.js`/`.go`/`.sh` file in the separate Echo SRE project names it. Core's per-stage funnel, `oshal_alert_funnel_snapshot` (migration 108, written at `src/features/alert-pipeline/services/funnel-stats.ts`), has the same shape plus a `source` lane and `window_minutes`, holds 0 rows on the reference stack, and accepts only the closed `FUNNEL_STAGES` vocabulary (`envelopes` … `actions_applied`); its absence alarms sum every lane rather than judging one source alone.
 - **Remaining:** operator decision (2026-09-10): fold these Echo pipeline counts into the DevOps monitoring / self-healing workstream ([ADR-119](adr/119-autonomous-health-ticket-processing.md), [ADR-125](adr/125-operations-stream-event-to-action-pipeline.md)) instead of keeping an orphan table. Identify the April writer; decide how Echo's six stages enter the funnel — a mapping onto `FUNNEL_STAGES`, or new stages each with its own query (a stage added without one fails the build by design); capture them as an `echo` `source` lane; give that lane its own "went quiet" signal for the self-healing path; then retire `echo_pipeline_snapshots`, migrating or dropping its 168 April rows.
 - **Done when:** Echo's per-stage counts appear as their own lane in the Operations Stream funnel on the reference stack; stopping the Echo writer past its window raises an alarm naming the `echo` lane in `/api/ops/alert-pipeline/health` and that alarm reaches the ADR-119 intake as one ticket; and `node scripts/generate-schema-docs.js` reports no undeclared live table.
+- **Decision (operator, 2026-09-22): RETIRE the orphan table; keep the funnel-lane design as a note.** The April writer was never carried into the trunk (it lives only in the private archive; nothing in either public repo or the Echo project writes the table, and the only mentions of `ECHO_OS_URL` anywhere are planning documents). `echo_pipeline_snapshots` and its 168 April rows are dropped by migration so `scripts/generate-schema-docs.js` reports no undeclared live table. Nothing still producing data is lost. If Echo is revived it enters the funnel as its own `echo` source lane with a went-quiet signal, exactly as the 2026-09-10 decision described; that design is retained here as the note. **Done when** amended: the migration lands, the schema generator is clean, and this entry records what reviving the writer would take.
 
 ### Cockpit startup: remove blocking external script dependencies
 
@@ -3415,10 +3874,12 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### Ambient Recall — prosody tone via a sidecar model (optional, ADR-100 Phase 4)
 - **Remaining:** tone today is text-level (analyst inference). The ADR allows an acoustic sidecar writing the same tone column with a different `model` string.
 - **Done when:** a sidecar writes tone with its own `model` and confidence for at least one owner, renders as OSHAL's read beside the quote, and is purged by the same triggers and consent decline.
+- **Decision (operator, 2026-09-22): DEFERRED.** Optional by the ADR's own terms; text-level tone works; there is no free acoustic model on the box worth running for it. The ADR's design stays as the specification. Reopens only if a specific recall turns out to need what only the voice carries, or a local acoustic model becomes worth running on the GPU edge box. A hosted audio API was considered and declined because raw voice audio would leave the box.
 
 ### World Intelligence licensed outlet ratings
 - **Remaining:** license Ad Fontes and/or AllSides, map the data with provenance, and replace placeholder bias/reliability seeds; this requires operator budget and license approval.
 - **Done when:** every rating displayed in the World package is sourced to the licensed dataset/version and unknown outlets are represented as unknown rather than guessed. See [ADR-061](adr/061-world-intelligence-layer.md).
+- **Decision (operator, 2026-09-22): the premise of this entry is REJECTED. No external license, ever.** oshal has its own read and its own ranking: it pulls public information and ranks it itself. It does not take instruction from outside websites; that is bot injection. Two consequences, both commissioned. **(1) Own ranking, derived from oshal's own observed data:** an outlet's lean from its sustained divergence from cross-source consensus on the same subjects (the consensus and per-source divergence already exist in `sentiment-math.ts`); reliability from agreement with the consensus and how often its items are contradicted or vanish; every rating carries its observation count and date range as provenance; below a stated minimum the outlet shows as **insufficient data**, never a number. The seed table in `outlet-ratings.ts` and its "replace with AllSides/Ad Fontes" wording are deleted. **(2) A platform-wide stripping filter for fetched web content:** measured, `news-fetcher.ts` feeds RSS title and description into a model prompt with a coercion-only `txt()` and a 240-character cut, no cleanup at all, and the world engine's own model calls do not use the bot-node containment delimiter; nothing anywhere strips instruction-shaped content from fetched pages. One shared deterministic module in core neutralizes instruction-shaped text, hidden text, invisible characters, role markers and prompt-format lookalikes, applied at every ingress where fetched web text enters a prompt (the world engine, RAG web ingestion, the fetch and search tools, scraped postings), with the existing containment delimiter around what remains and a spec per ingress proving a seeded injection never reaches the model. **Done when** rewritten accordingly; the licensing done-when is void.
 
 ### Marketing suite — core dependencies (package work is in the store)
 - **Remaining:** the suite's application work — audience and recipient consent, compliant email broadcasts, a campaign budget held as a finance project, sequences, SMS, attribution, paid ads, and the Marketing Suite group — is designed in [the marketing suite spec](apps/marketing-suite-spec.md) and tracked with done-when criteria in `marketing-engine/BACKLOG.md` in [oshal-applications](https://github.com/emeraldcoastsystemsgroup/oshal-applications/blob/main/marketing-engine/BACKLOG.md) — its **How to continue** section at the top is the pickup order (land the two PRs, recreate the api for the env passthrough, install 0.5.0 plus the `marketing-suite` group on a healthy box, the two operator-only steps, then P1); the earlier engine-phase items (launch execution, waitlist capture, the X posting decision, per-user Mastodon instances, the first real campaign and its Monday ticket) moved there. Core owns four dependencies, each needing operator approval before it starts: (1) the Resend connector gains a `headers` parameter limited to `List-Unsubscribe`/`List-Unsubscribe-Post` and a bounded batch action — today's action is one recipient with `additionalProperties: false`; (2) a bounded PostHog stats resource so scorecard site-traffic ingest stops recording `resource_unavailable`; (3) ads connectors (Google Ads, Microsoft Advertising, Meta, LinkedIn Ads), read-only spend first.
@@ -3427,14 +3888,17 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### HTML5 Game Generator package (held)
 - **Remaining:** when commissioned, use a dedicated bot-node to emit a self-contained CSP-safe browser game; do not depend on co-located GUI editor MCPs.
 - **Done when:** one prompt produces a playable packaged game with bounded assets, no unsafe eval/network dependency, and browser/security regression coverage.
+- **Re-confirmed held (operator, 2026-09-22).** Nothing built; the shape above stands.
 
 ### Content atomizer, share cards, and judged A/B (held)
 - **Remaining:** if released, build independently in this order: one-input atomization, branded share-card generation, then judge-scored A/B using the existing scheduler, notification, and judge services.
 - **Done when:** each capability installs and runs separately, retains source/provenance and owner isolation, and publishing remains explicitly approved.
+- **Re-confirmed held (operator, 2026-09-22).** Nothing built; the order and the rules above stand.
 
 ### AI Deal Finder integration decision
 - **Remaining:** decide whether `C:\Projects\ai-dealfinder` joins as a bot, connector, app package, or external A2A service; do not rebuild its auction/foreclosure/real-estate domains inside the kernel.
 - **Done when:** an ADR names ownership, auth/data boundary, installation, and lifecycle, and one read-only end-to-end flow proves the chosen integration.
+- **Decision (operator, 2026-09-22): SCHEDULE THE DESIGN SESSION NOW.** The deliverable is the ADR this entry's done-when names, ownership, auth/data boundary, installation and lifecycle, plus one read-only end-to-end flow. Measured constraint the design must address: the natural shape is an external A2A service (the product already has its own login, its own database and runs on its own port), and the A2A gateway is default-off on the box and not yet production-proven, so the design either proves that rail or chooses another. The 2026-07-16 note that this is not mid-week work still describes its size; it is now scheduled.
 
 ### print-drop swarm adoption (print-to-swarm / print-to-RAG)
 - **Remaining:** the adoption phase the operator named at kickoff — an opt-in (default OFF, per the automation directive) drop-folder watcher that feeds oshal: (a) print-to-swarm (a printed document opens a ticket / reaches Jarvis) and (b) print-to-bot (routes into a chosen bot's RAG corpus keyed on the sidecar metadata). Ships as a store package (Rule 0c), not core; the drop folder is untrusted LAN input and must be parsed defensively.
@@ -3500,6 +3964,7 @@ including across a directory belonging to a different owner. Full reasoning and 
 - **Delivered (0.1.0, 2026-09-14):** relay chains designed and rehearsed before a radio is soldered — a transport catalog with sources, the link budget, the chain planner (hop, slots, spares, the relays a battery rotation needs), the on-board and controller rules, a source-routed signed envelope, a deterministic simulation with failure scenarios, a generated write-up, the relay-designer concierge and a tile. See [ADR-155](adr/155-drone-relay-chains.md) and [the link hardware](architecture/drone-relay-link-hardware.md). **0.2.0 (same day):** relay postures (hover or perch, with the antenna height a perch needs), an out-of-band control channel sized by reach and heartbeat air time, a courier sized by its trip, and the buffer and drain an outage costs on every run — [the expansion](architecture/drone-relay-expansion.md).
 - **Remaining:** the relay role on the drone node (`drone-node-server.ts`, a core PR — package B1); the ESP-NOW transport adapter and the bench range test that replaces the catalog rows (B2); frame loss below the modelled edge (B3); corridors from the drone package's map (B4); two tips on one chain (B5); the formation handed to Drone Ops as a draft fleet mission (B6); ground nodes (B7); the control plane inside the simulation (B8); a lattice (B9); two radios per relay (B10); proxy replies and the command queue in the relay role (B11) — each with done-when criteria in the package's `BACKLOG.md`.
 - **Done when:** a command reaches a drone beyond the base radio's reach through a relay node on the swarm rail, authenticated end to end, first against ArduPilot SITL and then in a three-drone chain inside direct-link range behind the fleet confirm; killing the relay produces the outage the simulation predicted on the measured catalog rows, within a stated tolerance.
+- **Decision (operator, 2026-09-22): the software pieces proceed against the simulation; radio and bench items wait for hardware.** B1 (the relay role on the drone node) and the ESP-NOW adapter's software shape proceed against the deterministic simulation; the bench range test that replaces the catalog rows, and everything the done-when measures on real radios, become an errand for when radios and a drone exist. Same rule as the drone package: controls and stubs so a real chain drops in.
 
 ## Provisioning and operator experience
 
@@ -3531,6 +3996,7 @@ including across a directory belonging to a different owner. Full reasoning and 
   decision that it should not); `/users` can invite and disable a local account; and a spec mounts
   `/api/swarm/roles` and `/api/swarm/registries` behind the real auth middleware and gets 403 as a
   signed-in non-operator and 200 as an admin granted through `swarm_roles`.
+- **Decision (operator, 2026-09-22) on piece (1): AUTO-ADOPT on `MOCK_OIDC` only.** When `MOCK_OIDC` is on, the installer-configured identity is claimed as root at first boot so a fresh dev box works without a manual claim; `MOCK_OIDC` is never a production posture, so the blast radius is a dev box. Production keeps the explicit claim from `/users`. Piece (3), the authenticated-non-operator 403 through the real Express middleware chain, is a guard rather than a decision and ships in the same change. Piece (2), promoting and verifying the invite/disable controls, rides the next deploy.
 
 ### App Loader — the ADR-147 decisions that did not ship
 - **Context:** [swarm administration — as built, and how to continue](architecture/swarm-administration.md).
@@ -3598,6 +4064,7 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### Deploy modes — `codebase` vs `codeless` development posture (ADR-137 amendment A)
 - **Remaining:** the operator's fourth axis is recorded, not built: a `codebase` swarm may modify its own code through the developer rails; a `codeless` swarm (installed from Docker images only) may not, and files defects to a tracker (repo issues or Bugzilla) instead. Needs a posture read in `resolveDeployPosture`, a gate on the oshal-developer / self-modification rails, and a defect-submission connector chosen and registered per `docs/partner-app-registration.md`.
 - **Done when:** `OSHAL_DEPLOY_MODE` (or a sibling `OSHAL_DEV_POSTURE`) resolves `codebase|codeless`; on `codeless` every self-modification rail refuses with a named reason and a defect ticket lands in the configured tracker from a real failing build; `tests/unit/deploy-mode.spec.ts` covers both; ADR-137's amendment table moves both rows from "recorded" to "built".
+- **Decision (operator, 2026-09-22): BUILD IT.** `OSHAL_DEV_POSTURE` resolves `codebase|codeless` and **defaults to `codeless`**, so a fresh install-from-images box fails closed on the three self-modification rails (`jarvis-directives`, `jarvis-routes`, `message-routes`, all gated today on `OSHAL_DEV_OWNER_SUB`) with a named reason; the operator's box sets `codebase` explicitly. Defects from a codeless box file to the public `oshal` repo's Issues through a connector registered with **that installer's own GitHub token**, never ECSG's, per `docs/partner-app-registration.md`. Bugzilla declined. **Done when** as written, with the tracker named as GitHub Issues and the default named as `codeless`.
 
 ### Node app — prove the npm install path on a bare machine
 - **Remaining:** `@oshal/chat@0.3.0` is on the registry (published 2026-09-08, 54 files; it carries #300's in-node print service, #302's satellite login push, and #364's Windows login-launcher fix), and `scripts/npm-parity-check.sh` now reports the registry in sync. The registry copy itself was verified with `npm pack @oshal/chat@0.3.0` — its `windowsLoginArgv` returns the fixed, quote-free argv. What has still never been exercised is the path the Get oshal Desktop tile hands a stranger: `install-oshal-node.cmd` on a machine with **no checkout**, installing from npm rather than from this tree. Every proof so far has been on the operator's box, where the app runs Electron straight out of `packages/oshal-chat`.
@@ -3617,6 +4084,7 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### The node-resident printer needs installer support to work on a fresh machine
 - **Remaining:** three gaps, all found 2026-09-06 while proving the printer on this box. (1) The installer runs `npm install` in `packages/oshal-chat` only, so `@oshal/print-drop`'s one runtime dependency (`bonjour-service`) is never installed — the printer still serves over WSD (which is how Windows discovers it) but loses mDNS, so Macs and iOS never see it. (2) The installer creates **no firewall rules**; on this box the working `oshal print-drop IPP` rule is TCP/631 `profile=Private`, hand-made, and the node's port has none — the blanket `node.exe` allows are **Public profile only**, so a Private LAN is blocked, and testing from the machine itself passes because loopback is exempt. (3) `@oshal/print-drop` is `private: true` and `@oshal/chat` does not declare it, so `npm install -g @oshal/chat` can **never** deliver the printer (`resolvePrintDropEntry` looks for `node_modules/@oshal/print-drop`) — decide between publishing it as a real dependency, bundling its files into the chat package, or accepting repo-checkout-only.
 - **Done when:** a machine with no checkout installs the node, enables the print service, and a **second** machine on that LAN sees the printer in its own Add-a-printer dialog and prints into the swarm inbox — with the firewall rule created by the installer, not by hand.
+- **Decision (operator, 2026-09-22): fix the installer gaps now, prove on a second machine as an errand.** Gap (1), the missing `bonjour-service` install, and gap (2), the firewall rule the installer never creates, are code and ship with installer-level tests. The done-when's fresh-machine and second-machine proof is errand 11 (a spare laptop or a VM on the LAN). Note: on 2026-09-21 the operator turned the print service OFF on this machine's node until printing is wanted; the proof is run with it deliberately on.
 
 ### ADR-140 local device access — acceptance and the P1 inputs
 - **Remaining:** [ADR-140](adr/140-local-device-access.md) is **Proposed**; core is untouched pending acceptance (Rule 0d). P0 is cleared (amendment A: Electron 43 reaches the radio and the serial bus on Windows; the "native module per OS" risk is retired) and amendment B reframed it around the operator's correction — this is **outbound**, the swarm's hands, not device sensing. Two operator inputs are still owed: the `actuate` gate (confirm every physical action, or pre-authorize per device?) and a real BLE **GATT peripheral** for P1 — the empty scan proved the AirPods and BT mouse on this box are Bluetooth Classic and structurally invisible to Web Bluetooth.
@@ -3633,6 +4101,15 @@ including across a directory belonging to a different owner. Full reasoning and 
 - **Remaining:** `printServiceEnabled` was left **true** (port 633) on this machine's node, an
   outward-facing service advertising on the LAN.
 - **Done when:** the operator has decided whether the node's printer stays enabled on this machine.
+- **Decision (operator, 2026-09-21): turned OFF. Turn it back on when printing is wanted.** Measured
+  before asking: the desktop app's `config.json` still carried `printServiceEnabled: true` on port
+  633, unchanged since 2026-09-06, but **nothing was listening on 633** — the flag meant the service
+  would advertise on the LAN the next time the app started, not that it was advertising then. The flag
+  was set to `false` in place, with the previous file kept beside it as a dated backup; it takes effect
+  on the app's next start. No tracked file changed and no code changed — this was a per-machine
+  setting, which is exactly why it was an operator question rather than a fix.
+- **Closed.** The other leg of this entry, the orphaned operator PAT, was revoked on 2026-09-14.
+  Nothing outward-facing from that session remains enabled on this machine.
 
 ### App status contract (ADR-145) — build the `status:` declaration and the highlights section
 - **Built 2026-09-16 on `feat/adr-145-app-status-dashboard` (D3/D4/D5), on top of D1/D2.** The dashboard reports for ONE app rather than only a group: a manifest's `summary:` is fetched from a route that app itself owns, in the viewer's own session, and an app that declares nothing falls back to its recent `jarvis_tasks` rows. The plan route is caller-scoped through `listApps('active', {ownerSub, isOperator})`, so another person's person-scoped app 404s exactly like a name nothing installed - which the group plan it replaces did not do.
@@ -3643,6 +4120,7 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### A global Home composing every app's status card (ADR-145 D9)
 - **Remaining:** a second renderer over the ADR-145 plan that fans out across every active app the user has, one card each. Needs a harder fan-out bound than D7's per-page one (59 active apps on the operator's box today) and probably a short-TTL cache. Also forces two decisions ADR-145 deliberately left open: what supersedes the cockpit `DashboardHomeView`, and whether the orphaned `src/pages/user-dashboard/` is retired or deleted outright (it is mounted at `/user-dashboard` and referenced by nothing).
 - **Done when:** one page renders a card per active app within a stated latency budget under the real installed-app count, a slow or failing app degrades to "can't check" without delaying the others, the superseded surface is removed in the same change rather than left as a second answer, and no card displays a value its owning app did not assert over its own declared route.
+- **Decision (operator, 2026-09-22): NOT BUILT; the existing application page stays exactly as it is.** The operator's words: it is an application search page, and it was being used to debug that applications are surfacing their most recent updates and what needs configuring. That is its role and it is kept. No global composed Home; nothing removed. The two questions D9 raised (what supersedes the cockpit `DashboardHomeView`, whether `src/pages/user-dashboard/` is retired) were not put to the operator and stay open; measured for the record: `user-dashboard` is three files, mounted at `/user-dashboard`, referenced by nothing else in the tree; `DashboardHomeView` is wired into `cockpit-view-controller.js`.
 
 ### Codex swarm-side OAuth — the token exchange fails at the last step (2026-09-08)
 
@@ -3750,6 +4228,7 @@ is not started; the operator asked for a brand kit, not for a renderer change.
 - Unit specs prove: a custom look renders its own colors and faces into .pptx, .docx and .xlsx; a refused look
   renders nothing; the ten built-in looks are unchanged.
 - No new dependency, and no core route reads Create's storage.
+- **Decision (operator, 2026-09-22): APPROVED as a core change.** `renderPptx` / `renderDocx` / `renderXlsx` accept a resolved look object, not only a `DECK_THEMES` id, so Create's brand kit drives the exact role colors and Office-safe faces in the generated file. Fixed themes keep working unchanged. **Done when:** a package can hand the renderer a look; a deck, a document and a workbook generated from a brand kit carry its colors and faces, proven by a spec that opens each generated file and reads the colors back; the ten built-in looks render byte-identically to before.
 
 ## Animatronics and the maker labs
 

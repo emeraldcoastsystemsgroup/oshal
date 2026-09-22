@@ -12,12 +12,13 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 — ArangoDB GraphHandle: upsert nodes/edges, neighbors traversal, shortest path, raw AQL. Node ids mapped to safe _keys; edges keyed by (from,type,to).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 closure: readQuery — the enforced read-only path for caller-supplied AQL. Enforcement is the ENGINE's, not ours: ArangoDB's explain plan carries isModificationQuery, so we ask it to plan the query and refuse when the plan writes. Deliberately NOT an AQL keyword denylist (bypassable, and it rots with each language release) and deliberately not a streaming read-only transaction (arangojs's trx.step attaches the transaction id to ONE request, so a multi-batch cursor would silently fetch its later batches outside the transaction).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | readQuery bounds a read BEFORE materialization when asked. It drained cursor.all() and every caller sliced afterwards, so a model-authored `FOR i IN 1..100000000 RETURN i` on the bot-node read path was an unbounded allocation inside the bot-node process - and the registry's Promise.race timeout rejected the caller without touching the running query. With maxRows the query runs as a STREAMING cursor whose batchSize is the bound: the engine computes only the first batch, the adapter reads exactly that batch, and a cursor reporting more is killed unread (DELETE /_api/cursor, which aborts the streaming query server-side). With maxRuntimeSeconds the engine's own maxRuntime kills the query, which is the abort a client-side timeout cannot perform. Chosen over injecting a LIMIT because a LIMIT appended to arbitrary AQL is a syntax error after RETURN and a subquery wrapper is still materialized by the optimizer in the general case; the cursor bound holds for any query shape. Without options the contract is unchanged.
  *
  * @module arango-graph-adapter
  */
 import type { Database } from 'arangojs';
 import { createChildLogger } from '@/shared/logger';
-import { GraphReadOnlyError, type GraphEdge, type GraphHandle, type GraphNode } from './graph-types';
+import { GraphReadOnlyError, type GraphEdge, type GraphHandle, type GraphNode, type GraphReadOptions } from './graph-types';
 import { nodeKey } from './graph-keys';
 
 const logger = createChildLogger({ module: 'arango-graph-adapter' });
@@ -93,14 +94,59 @@ export class ArangoGraphAdapter implements GraphHandle {
    * @returns the query's rows.
    * @throws GraphReadOnlyError when the engine's plan says the query modifies data.
    */
-  async readQuery(query: string, bindVars: Record<string, unknown> = {}): Promise<unknown[]> {
+  async readQuery(
+    query: string,
+    bindVars: Record<string, unknown> = {},
+    options: GraphReadOptions = {},
+  ): Promise<unknown[]> {
     const { plan } = await this.db.explain(query, bindVars);
     if (plan.isModificationQuery) {
       const written = plan.collections.filter((c) => c.type === 'write').map((c) => c.name);
       logger.warn({ written }, 'refused a data-modifying query on the read-only graph path');
       throw new GraphReadOnlyError(written.length ? `would write: ${written.join(', ')}` : undefined);
     }
-    return this.rawQuery(query, bindVars);
+    if (options.maxRows === undefined && options.maxRuntimeSeconds === undefined) {
+      return this.rawQuery(query, bindVars);
+    }
+    return this.boundedRead(query, bindVars, options);
+  }
+
+  /**
+   * @description A read whose bounds hold BEFORE any row is materialized. `maxRows` becomes the
+   * batch size of a STREAMING cursor, so the engine computes only that first batch and the adapter
+   * reads exactly it; a cursor that reports more is killed rather than drained, which aborts the
+   * streaming query on the server. `maxRuntimeSeconds` is handed to the engine as `maxRuntime`,
+   * the one timeout that actually kills a running query. Slicing after `cursor.all()` is exactly
+   * the shape this replaces: by then the whole result set is already in process memory.
+   * @param query - AQL the plan has already classified as a read.
+   * @param bindVars - AQL bind variables.
+   * @param options - Row and runtime bounds.
+   * @returns At most `maxRows` rows.
+   */
+  private async boundedRead(
+    query: string,
+    bindVars: Record<string, unknown>,
+    options: GraphReadOptions,
+  ): Promise<unknown[]> {
+    const maxRows = options.maxRows === undefined ? undefined : Math.max(1, Math.floor(options.maxRows));
+    const cursor = await this.db.query(query, bindVars, {
+      ...(maxRows === undefined ? {} : { batchSize: maxRows, stream: true }),
+      ...(options.maxRuntimeSeconds === undefined ? {} : { maxRuntime: options.maxRuntimeSeconds }),
+    });
+    if (maxRows === undefined) return cursor.all();
+    try {
+      const first = (await cursor.batches.next()) ?? [];
+      return first.slice(0, maxRows);
+    } finally {
+      if (cursor.batches.hasMore) {
+        logger.warn({ maxRows }, 'graph read exceeded its row bound; killing the cursor unread');
+        try {
+          await cursor.kill();
+        } catch (err) {
+          logger.error({ err, stack: (err as Error).stack }, 'failed to kill an over-bound graph cursor');
+        }
+      }
+    }
   }
 
   /** @description Escape hatch for trusted IN-PROCESS callers: raw AQL, reads or writes. Never hand it a string off the wire — use readQuery. @param query - AQL. @param bindVars - binds. @returns rows. */

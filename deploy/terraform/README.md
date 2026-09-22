@@ -63,6 +63,25 @@ not advisory:
 - **Postgres**: in-cluster StatefulSet with a real password, or
   `postgres_in_cluster=false` + managed `DATABASE_URL`/`BOOTSTRAP_DATABASE_URL`
   via `api_extra_secret_env` (the precondition insists).
+- **The rest of the shared-service tier** has a switch each, defaulting to
+  in-cluster like the chart: `tsdb_in_cluster`, `arangodb_in_cluster`,
+  `vault_in_cluster`, `code_server_in_cluster`, `diarization_in_cluster`.
+  `false` removes that workload from the namespace and the chart withholds its
+  URL env, so the api reads what you put in `api_extra_secret_env`:
+
+  | Switch set to `false` | Supply in `api_extra_secret_env` |
+  |---|---|
+  | `tsdb_in_cluster` | `TSDB_URL` |
+  | `arangodb_in_cluster` | `ARANGO_URL`, `ARANGO_ROOT_USER`, `ARANGO_ROOT_PASSWORD` |
+  | `vault_in_cluster` | `VAULT_ADDR`, `VAULT_TOKEN` |
+  | `diarization_in_cluster` | `SPEAKER_DIARIZATION_URL`, `SPEAKER_SERVICE_KEY` |
+  | `code_server_in_cluster` | nothing: set `code_server_external_url` to your IDE's browser URL for the cockpit's `/code` link |
+
+  Left unset, the feature degrades the way the chart documents (an unset
+  `ARANGO_URL` makes `/api/graph` answer 503). No precondition requires these,
+  because running without a service is a supported posture. The chart README's
+  [shared services](../helm/oshal/README.md#shared-services) section states what
+  each in-cluster service runs as.
 
 State for real tenants belongs in a remote backend (S3/azurerm/…) — add a
 `backend` block per deployment; local state is only acceptable for the kind
@@ -100,15 +119,17 @@ Before the weekend apply, in order:
    CLI home paths — which also needs a token-refresh story (the host keepalive
    refreshes OAuth 2-hourly; a static Secret goes stale). **Decide before the
    weekend; without it every bot heartbeats but no LLM executes.**
-5. **What the MODULE forwards, which is narrower than what the chart ships.**
-   The chart templates TimescaleDB, ArangoDB, Vault, code-server,
-   speaker-diarization and ollama, each behind its own `infra.<name>.inCluster`
-   flag (ollama defaults OFF, matching compose, where it sits behind the
-   `local-llm` profile and a plain `up` never starts it). Trading runs on k8s.
-   What this Terraform path still lacks is the *switch*: `main.tf` forwards only
-   `var.postgres_in_cluster`, so pointing Timescale or Vault at a managed
-   service from here needs those variables added to the module first — until
-   then they can only run in-cluster on this path.
+5. **Decide, per shared service, in-cluster or managed.** The chart templates
+   TimescaleDB, ArangoDB, Vault, code-server, speaker-diarization and ollama,
+   each behind its own `infra.<name>.inCluster` flag (ollama defaults OFF,
+   matching compose, where it sits behind the `local-llm` profile and a plain
+   `up` never starts it). Trading runs on k8s. The module forwards the switch for
+   Postgres and for each of those except ollama (`postgres_in_cluster`,
+   `tsdb_in_cluster`, `arangodb_in_cluster`, `vault_in_cluster`,
+   `code_server_in_cluster`, `diarization_in_cluster`); every one defaults to
+   in-cluster. For each you take out of the namespace, put its URL and
+   credentials in `api_extra_secret_env` (the table under *Multi-user
+   single-public-tenant deployment* above).
    For what the chart does and does not promise about durability, see
    [the chart's durability boundary](../helm/oshal/README.md#durability-boundary):
    the PVCs are ordinary claims, no backup or restore job ships with either the

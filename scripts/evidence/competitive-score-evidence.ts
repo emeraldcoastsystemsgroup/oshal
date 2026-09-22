@@ -1,4 +1,12 @@
 /**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Change-log block added (the file had none). The Local / Self-Host "Kubernetes setup path exists" check now reads deploy/helm/oshal/Chart.yaml, the chart ADR-129 made the install source, instead of scripts/setup-oshal-k8s.sh, the quarantined legacy renderer whose image nothing in this repo builds. Before this change, the legacy script being on disk was enough to pass the check. The check is still a file-existence signal; it does not claim a live install (remote-cluster work package item 9). Guard: tests/unit/k8s-legacy-quarantine.spec.ts.
+ */
+
+/**
  * Generates the competitive readiness artifact from repo evidence.
  *
  * The guardrail is intentional: code signals can raise confidence, but live-user
@@ -357,7 +365,7 @@ export function getCategorySpecs(): CategorySpec[] {
       checks: [
         fileExists('local-compose', 'Local docker compose profile exists', 'docker-compose.oshal-local.yml'),
         fileExists('local-start', 'Local start script exists', 'scripts/start-localhost.sh'),
-        fileExists('k8s-setup', 'Kubernetes setup path exists', 'scripts/setup-oshal-k8s.sh'),
+        fileExists('k8s-setup', 'Kubernetes setup path exists (Helm chart, ADR-129)', 'deploy/helm/oshal/Chart.yaml'),
         evidenceFile('local-boot', 'One-command local boot proof exists', 'local-boot-', [/health/i, /cockpit/i], true),
         evidenceFile('hosted-enough', 'Hosted-enough deployment proof exists', 'hosted-enough-', [/dns/i, /tls/i, /ingress/i], true),
         evidenceFile('backup-restore', 'Backup and restore proof exists', 'backup-restore-', [/backup/i, /restore/i, /passed/i], true),

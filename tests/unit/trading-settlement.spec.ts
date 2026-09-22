@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The prologue is the shared one (tests/helpers/trading-spec-schema.ts). Its three ensure* calls omitted ensureDekSchema, so on a bare cluster seedAccount's REAL envelope path died with 42P01 on oshal_user_deks before a single settlement case ran. tests/unit/trading-spec-bare-cluster-prerequisites.spec.ts proves the shared prologue complete on an EMPTY server.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Provisions its OWN disposable PostgreSQL instead of resolving an address. specDatabaseUrl has no default and throws at IMPORT, so with nothing set this file was one of 14 trading specs collapsed to "no tests" on main. A triage called that environmental - a missing database - and it is not: Docker is up, the image is cached, and the repo already ships DisposablePostgres. The blocker was an in-repo edit.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-134 D8 gaps 1 and 3. (1) settlesOn now counts EXCHANGE business days, so four dated expectations in this file were WRONG rather than merely stale: a Friday-before-Labor-Day sale was asserted to settle ON Labor Day. They are restated, and new cases pin the shared calendar (the same nyseHolidayOn the D4 validator refuses a fire time on), the operator's additive TRADING_MARKET_HOLIDAYS, a trade DATED on a closure, and Thanksgiving. (2) The legacy live book's discovered type, on its OWN user so no earlier case can seed it: recordDiscoveredAccountType persists through loadLegacyBook, the bound account's type still wins over the cache, the column CHECK refuses anything else, a changed venue answer converges, and the done-when itself — after ONE buy whose venue read said MARGIN, a second buy resolves with a venue seam that THROWS if touched, so neither the extra read nor the 503 applies any more.
  */
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { Pool } from 'pg';
@@ -39,7 +40,7 @@ vi.mock('@/features/trading', async (importOriginal) => {
 });
 
 import { placeDecisionOrder } from '../../src/app/trading-engine';
-import { ensureLegacyBooks, legacyBook, loadBook, createBook, updateBook, listBooks } from '../../src/app/trading-books-store';
+import { ensureLegacyBooks, legacyBook, legacyBookId, loadBook, loadLegacyBook, createBook, updateBook, listBooks, recordDiscoveredAccountType } from '../../src/app/trading-books-store';
 import { accountDigest } from '../../src/app/trading-accounts-store';
 import { TradingError } from '../../src/app/routes/trading-routes-helpers';
 import {
@@ -48,6 +49,7 @@ import {
 } from '../../src/app/trading-settlement';
 import { schwabSettlementFigures } from '../../src/features/trading/services/schwab-broker-adapter';
 import { alpacaAccountType } from '../../src/features/trading/services/alpaca-broker-adapter';
+import { nyseHolidayOn } from '../../src/features/trading/services/nyse-holidays';
 import { DisposablePostgres } from '../helpers/disposable-postgres';
 import { ensureTradingSpecSchema } from '../helpers/trading-spec-schema';
 
@@ -62,6 +64,8 @@ const fixture = new DisposablePostgres({
 });
 const RUN = crypto.randomUUID().slice(0, 8);
 const SUB = `spec-settle-${RUN}`;
+/** A SECOND user for the gap-3 cases, so no earlier case in this file can have seeded its legacy book's cache. */
+const LEGACY_SUB = `spec-legacy-${RUN}`;
 let pool: Pool;
 let cashBook: TradingBook;
 
@@ -116,7 +120,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   for (const t of ['oshal_trading_orders', 'oshal_trading_decisions', 'oshal_trading_signals', 'oshal_trading_books', 'oshal_trading_accounts']) {
-    await pool.query(`DELETE FROM ${t} WHERE user_sub = $1`, [SUB]).catch(() => {});
+    await pool.query(`DELETE FROM ${t} WHERE user_sub = ANY($1)`, [[SUB, LEGACY_SUB]]).catch(() => {});
   }
   await fixture.stop();
 });
@@ -174,17 +178,45 @@ describe('venue field semantics (pure adapter helpers)', () => {
   });
 });
 
-describe('settlement dates (ET, weekday-only)', () => {
-  it('T+1: Thu → Fri, Fri → Mon, a weekend-dated trade → the business day after Monday; T+2 Fri → Tue; the label derives from the env', () => {
+describe('settlement dates (ET, EXCHANGE business days — weekends AND NYSE closures)', () => {
+  it('T+1: Thu → Fri; the Friday before Labor Day → the TUESDAY, not the holiday; a weekend-dated trade counts as the next OPEN day; T+2 Fri → Wed', () => {
     expect(nextSettlementDate(new Date('2026-09-03T18:00:00Z'), 1)).toEqual({ iso: '2026-09-04', words: 'Fri Sep 4' });
-    expect(nextSettlementDate(new Date('2026-09-04T18:00:00Z'), 1)).toEqual({ iso: '2026-09-07', words: 'Mon Sep 7' });
-    expect(nextSettlementDate(new Date('2026-09-05T18:00:00Z'), 1).iso).toBe('2026-09-08');
-    expect(nextSettlementDate(new Date('2026-09-04T18:00:00Z'), 2)).toEqual({ iso: '2026-09-08', words: 'Tue Sep 8' });
+    // Mon 2026-09-07 IS Labor Day. Before ADR-134 D8 gap 1 this answered 2026-09-07 — a settlement
+    // date on a day the exchange is shut, which is the defect this case exists to hold closed.
+    expect(nextSettlementDate(new Date('2026-09-04T18:00:00Z'), 1)).toEqual({ iso: '2026-09-08', words: 'Tue Sep 8' });
+    expect(nextSettlementDate(new Date('2026-09-05T18:00:00Z'), 1).iso).toBe('2026-09-09');
+    expect(nextSettlementDate(new Date('2026-09-04T18:00:00Z'), 2)).toEqual({ iso: '2026-09-09', words: 'Wed Sep 9' });
     // 23:30 ET on Sep 4 is 03:30Z Sep 5 — the ET day, not the UTC day, is the trade day.
     expect(etDay(new Date('2026-09-05T03:30:00Z'))).toBe('2026-09-04');
     expect(settlementLabel()).toBe('T+1');
     process.env.TRADING_SETTLEMENT_DAYS = '2';
     expect(settlementLabel()).toBe('T+2');
+  });
+
+  it('it is the SAME calendar the ADR-136 D4 timed-order validator refuses a fire time on — no settlement date ever lands on one', () => {
+    for (const iso of ['2026-09-07', '2026-11-26', '2026-12-25', '2027-01-01', '2027-03-26', '2027-05-31']) {
+      expect(nyseHolidayOn(iso), `${iso} must be a closure in the shared table`).not.toBeNull();
+      const dayBefore = new Date(`${iso}T12:00:00Z`);
+      dayBefore.setUTCDate(dayBefore.getUTCDate() - 1);
+      const settles = nextSettlementDate(dayBefore, 1);
+      expect(settles.iso, `T+1 out of ${dayBefore.toISOString().slice(0, 10)} must not settle on the closure`).not.toBe(iso);
+      expect(nyseHolidayOn(settles.iso), `${settles.iso} must itself be an open day`).toBeNull();
+    }
+    // Thanksgiving 2026 is Thu 11-26, so a Wednesday sale settles on the Friday.
+    expect(nextSettlementDate(new Date('2026-11-25T18:00:00Z'), 1)).toEqual({ iso: '2026-11-27', words: 'Fri Nov 27' });
+  });
+
+  it('the additive TRADING_MARKET_HOLIDAYS is honoured, and a trade DATED on a closure counts as the next OPEN day', () => {
+    expect(nextSettlementDate(new Date('2026-10-01T18:00:00Z'), 1).iso).toBe('2026-10-02');
+    process.env.TRADING_MARKET_HOLIDAYS = '2026-10-02=Day of mourning';
+    try {
+      expect(nextSettlementDate(new Date('2026-10-01T18:00:00Z'), 1)).toEqual({ iso: '2026-10-05', words: 'Mon Oct 5' });
+      // A reconcile row dated ON the declared closure: its proceeds stay unsettled longer, never shorter.
+      expect(nextSettlementDate(new Date('2026-10-02T18:00:00Z'), 1).iso).toBe('2026-10-06');
+    } finally {
+      delete process.env.TRADING_MARKET_HOLIDAYS;
+    }
+    expect(nextSettlementDate(new Date('2026-10-01T18:00:00Z'), 1).iso).toBe('2026-10-02');
   });
 });
 
@@ -226,11 +258,12 @@ describe('the pure clamp and violation', () => {
   });
 
   it('settlementViolation trips only when the buy needs unsettled proceeds; the message names the date and the T+n label, never a typed literal', () => {
+    // Fri 2026-09-04, T+1 over Labor Day: the proceeds settle on the Tuesday, and the refusal says so.
     const view = buildSettlementView(CASH_ACCOUNT, cashBook, [{ symbol: 'NEW', qty: 20, price: 100, tradedAt: new Date('2026-09-04T18:00:00Z') }]);
     const v = settlementViolation(view, 5000);
-    expect(v).toMatchObject({ code: 'settlement_blocked', warnOnly: false, settlesOn: { iso: '2026-09-07', words: 'Mon Sep 7' } });
+    expect(v).toMatchObject({ code: 'settlement_blocked', warnOnly: false, settlesOn: { iso: '2026-09-08', words: 'Tue Sep 8' } });
     expect(v?.message).toContain('Only $2,000.00 of your $10,000.00 cash is settled');
-    expect(v?.message).toContain('settle on Mon Sep 7 (T+1)');
+    expect(v?.message).toContain('settle on Tue Sep 8 (T+1)');
     expect(settlementViolation(view, 1999)).toBeNull();
     expect(settlementViolation({ ...view, unsettledCash: 0, settledCash: 1000 }, 5000)).toBeNull(); // plain shortfall = the venue's own refusal
     expect(settlementViolation({ ...view, policy: 'warn' }, 5000)?.warnOnly).toBe(true);
@@ -348,6 +381,82 @@ describe('placeDecisionOrder — the refusal crosses the ENGINE boundary (real D
     const r = await placeDecisionOrder(pool as never, SUB, cashBook, dec, `off-${RUN}`, true);
     expect(r.status).toBe('filled');
     expect(h.getAccount).not.toHaveBeenCalled();
+  });
+});
+
+describe('ADR-134 D8 gap 3 - the legacy live book carries a discovered account type (real books row)', () => {
+  const LEGACY_ID = legacyBookId(LEGACY_SUB, 'live');
+  /** A pool that answers everything EXCEPT a ledger read, which a margin account must never pay for. */
+  const noLedgerPool = {
+    query: (text: unknown, params?: unknown) => {
+      if (/oshal_trading_orders/.test(String(text))) throw new Error('the ledger must not be read for a margin account');
+      return pool.query(text as string, params as never);
+    },
+  } as never;
+  const refusingPool = { query: async () => { throw new Error('pool must not be touched'); } } as never;
+
+  beforeAll(async () => { await ensureLegacyBooks(pool as never, LEGACY_SUB); }, 60_000);
+
+  it('it starts typeless and unbound, which is why the guard treats it as cash and has to read the venue', async () => {
+    const book = await loadLegacyBook(pool as never, LEGACY_SUB, 'live');
+    expect(book.bookId).toBe(LEGACY_ID);
+    expect(book.accountNumber, 'unbound by construction - there is no account row to join a type from').toBeNull();
+    expect(book.accountType).toBeNull();
+    expect(settlementApplies(book)).toBe(true);
+  });
+
+  it('recordDiscoveredAccountType persists onto the row and loadLegacyBook reads it back; the CHECK is the DB-side wall; a changed venue answer converges', async () => {
+    expect(await recordDiscoveredAccountType(pool as never, LEGACY_SUB, LEGACY_ID, 'margin')).toBe(true);
+    expect((await loadLegacyBook(pool as never, LEGACY_SUB, 'live')).accountType).toBe('margin');
+    expect(settlementApplies(await loadLegacyBook(pool as never, LEGACY_SUB, 'live')), 'a margin book is a no-op BEFORE any I/O').toBe(false);
+    await expect(pool.query(
+      "UPDATE oshal_trading_books SET discovered_account_type='off' WHERE user_sub=$1 AND book_id=$2", [LEGACY_SUB, LEGACY_ID],
+    )).rejects.toThrow(/check constraint/i);
+    // Not fill-if-null: a venue that answers differently later is believed.
+    expect(await recordDiscoveredAccountType(pool as never, LEGACY_SUB, LEGACY_ID, 'cash')).toBe(true);
+    expect((await loadLegacyBook(pool as never, LEGACY_SUB, 'live')).accountType).toBe('cash');
+  });
+
+  it('the WHERE is the wall: another user cannot write this book, and the miss is reported rather than swallowed', async () => {
+    expect(await recordDiscoveredAccountType(pool as never, SUB, LEGACY_ID, 'margin')).toBe(false);
+    expect((await loadLegacyBook(pool as never, LEGACY_SUB, 'live')).accountType, "the other user's write must not have landed").toBe('cash');
+  });
+
+  it("the BOUND account's own type still wins over the cache - binding a book later cannot inherit a stale answer", async () => {
+    await pool.query('UPDATE oshal_trading_books SET discovered_account_type=$3 WHERE user_sub=$1 AND book_id=$2', [SUB, cashBook.bookId, 'margin']);
+    expect(((await loadBook(pool as never, SUB, cashBook.bookId)) as TradingBook).accountType, 'the CASH account it is bound to is the authority').toBe('cash');
+    expect((await listBooks(pool as never, SUB)).find((b) => b.bookId === cashBook.bookId)?.accountType).toBe('cash');
+    await pool.query('UPDATE oshal_trading_books SET discovered_account_type=NULL WHERE user_sub=$1 AND book_id=$2', [SUB, cashBook.bookId]);
+  });
+
+  it('THE DONE-WHEN: after ONE buy whose venue read said MARGIN, the next buy costs no venue read and cannot be refused 503', async () => {
+    await pool.query('UPDATE oshal_trading_books SET discovered_account_type=NULL WHERE user_sub=$1 AND book_id=$2', [LEGACY_SUB, LEGACY_ID]);
+    const typeless = await loadLegacyBook(pool as never, LEGACY_SUB, 'live');
+    expect(typeless.accountType).toBeNull();
+    expect(settlementPolicy(typeless), 'the fleet default is refuse - the posture that used to 503 here').toBe('refuse');
+
+    let reads = 0;
+    const venue = {
+      readAccount: async () => { reads += 1; return { ...CASH_ACCOUNT, accountType: 'margin' as const }; },
+      priceOf: async () => { throw new Error('a margin book is never priced'); },
+    };
+    const first = await assertSettledFunding(noLedgerPool, LEGACY_SUB, typeless, 'buy', 'MSFT', 50, 100, venue);
+    expect(first.warning).toBeNull();
+    expect(first.view?.accountType).toBe('margin');
+    expect(reads, 'the first buy still pays for the read that TELLS it the type').toBe(1);
+
+    const learned = await loadLegacyBook(pool as never, LEGACY_SUB, 'live');
+    expect(learned.accountType, 'and the answer is on the row for every buy after it').toBe('margin');
+
+    // Both seams now throw if touched. Under 'refuse' a venue read that fails is 503
+    // settlement_unknown - exactly the refusal the done-when says no longer applies to this book.
+    const throwing = {
+      readAccount: async () => { throw new Error('the venue must not be read again'); },
+      priceOf: async () => { throw new Error('the price must not be read'); },
+    };
+    await expect(assertSettledFunding(refusingPool, LEGACY_SUB, learned, 'buy', 'MSFT', 50, 100, throwing))
+      .resolves.toEqual({ warning: null, view: null });
+    expect(reads, 'no second venue read at all').toBe(1);
   });
 });
 

@@ -94,13 +94,17 @@ Default localhost assumptions:
 
 ## Kubernetes Mode
 
-Render the deployment bundle:
+Kubernetes installs use the Helm chart at `deploy/helm/oshal`, with no source checkout and no
+build:
 
 ```bash
-bash scripts/install-k8s.sh --env-file ops/deployment/oshal-k8s.env.example --skip-build
+bash scripts/oshal-install.sh --mode 4 --admin-email you@example.com
 ```
 
-If you want a real deployment, replace the sample env file with your own values and add `--apply`.
+Start with [docs/k8/README.md](../k8/README.md); the decision is
+[ADR-129](../adr/129-codeless-k8s-install-path.md). The older `scripts/install-k8s.sh` bundle
+renderer belongs to the legacy, pre-chart generation. It is quarantined and refuses to run unless
+`OSHAL_ALLOW_LEGACY_K8S=1` is set.
 
 ## Environment Expectations
 

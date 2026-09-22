@@ -3,6 +3,7 @@
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial (ADR-129 amendment) — in-cluster Ollama, main role only. OFF by default, unlike the rest of the infra tier: compose gates it behind the `local-llm` profile, so a default `up` never starts it and neither does a default install. Model pulls run as an init container (compose oshal-ollama-pull parity) so the server is never Ready without the models the deployment asked for.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Production-readiness baseline (chart 0.5.0): stays root (no USER; models under /root/.ollama) with RuntimeDefault seccomp, no privilege escalation and every capability dropped; startup and liveness probes reuse /api/tags; resources from infra.ollama.resources; storageClassName on the claim template. Guard: tests/unit/chart-production-baseline.spec.ts.
 {{- if and (eq .Values.role "main") .Values.infra.ollama.inCluster }}
 apiVersion: apps/v1
 kind: StatefulSet
@@ -24,6 +25,10 @@ spec:
       annotations:
         sidecar.istio.io/inject: "false"
     spec:
+      # The image has no USER and keeps models under /root/.ollama, so it stays root, with no
+      # capability.
+      securityContext:
+        {{- include "oshal.podSeccomp" . | nindent 8 }}
       containers:
         - name: ollama
           image: {{ .Values.infra.ollama.image }}
@@ -36,6 +41,23 @@ spec:
             initialDelaySeconds: 10
             periodSeconds: 10
             failureThreshold: 30
+          startupProbe:
+            httpGet:
+              path: /api/tags
+              port: 11434
+            periodSeconds: 10
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /api/tags
+              port: 11434
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          securityContext:
+            {{- include "oshal.minimalContainerSecurity" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.infra.ollama.resources | nindent 12 }}
           volumeMounts:
             - name: models
               mountPath: /root/.ollama
@@ -54,6 +76,9 @@ spec:
         name: models
       spec:
         accessModes: [ReadWriteOnce]
+        {{- with include "oshal.storageClassName" (dict "root" $ "override" .Values.infra.ollama.storageClassName) }}
+        {{ . }}
+        {{- end }}
         resources:
           requests:
             storage: {{ .Values.infra.ollama.storage }}

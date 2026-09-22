@@ -3,6 +3,7 @@
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial (ADR-129 amendment) — in-cluster TimescaleDB (compose oshal-tsdb parity), main role only. Carries no compose profile, so it starts on every default `up` — core shared service, not an extra. Trading and the world-intelligence series layer read TSDB_URL; disabling this withholds that URL rather than pointing it at a dead host.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Production-readiness baseline (chart 0.5.0): the same shape as postgres.yaml - the timescaledb image is postgres:16-alpine underneath (uid/gid 70, the same entrypoint) - plus resources from infra.tsdb.resources, which its first-init tune reads as the memory to size for. Guard: tests/unit/chart-production-baseline.spec.ts.
 {{- if and (eq .Values.role "main") .Values.infra.tsdb.inCluster }}
 apiVersion: apps/v1
 kind: StatefulSet
@@ -24,6 +25,16 @@ spec:
       annotations:
         sidecar.istio.io/inject: "false"
     spec:
+      # The image's postgres user (uid/gid 70 in /etc/passwd of the alpine image). Its entrypoint
+      # documents running "with --user": it then skips the root chown and starts postgres
+      # directly. Data a root-started entrypoint initialised is already owned by 70.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70
+        runAsGroup: 70
+        fsGroup: 70
+        fsGroupChangePolicy: OnRootMismatch
+        {{- include "oshal.podSeccomp" . | nindent 8 }}
       containers:
         - name: timescaledb
           image: {{ .Values.infra.tsdb.image }}
@@ -43,6 +54,22 @@ spec:
               command: ["pg_isready", "-U", "{{ .Values.infra.tsdb.user }}", "-d", "{{ .Values.infra.tsdb.database }}"]
             periodSeconds: 5
             failureThreshold: 20
+          # Same check. Startup covers initdb and crash recovery (5 min) before liveness counts.
+          startupProbe:
+            exec:
+              command: ["pg_isready", "-U", "{{ .Values.infra.tsdb.user }}", "-d", "{{ .Values.infra.tsdb.database }}"]
+            periodSeconds: 5
+            failureThreshold: 60
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "{{ .Values.infra.tsdb.user }}", "-d", "{{ .Values.infra.tsdb.database }}"]
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          securityContext:
+            {{- include "oshal.minimalContainerSecurity" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.infra.tsdb.resources | nindent 12 }}
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
@@ -51,6 +78,9 @@ spec:
         name: data
       spec:
         accessModes: [ReadWriteOnce]
+        {{- with include "oshal.storageClassName" (dict "root" $ "override" .Values.infra.tsdb.storageClassName) }}
+        {{ . }}
+        {{- end }}
         resources:
           requests:
             storage: {{ .Values.infra.tsdb.storage }}

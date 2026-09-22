@@ -1,0 +1,94 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — overlay for Docker Desktop's built-in Kubernetes (kind provisioning) running a locally built image and the full compose-parity fleet. Found on the first install: (a) the kind node does not see the host engine's images, so the locally built oshal-bot is side-loaded (see below) and never pulled — GHCR latest is only published by a manual workflow and goes stale; (b) Docker Desktop does not publish NodePorts to Windows but DOES map LoadBalancer services to localhost:<port>; (c) the chart's 256Mi-per-bot request cannot schedule 21 bots on a ~7.6 GiB node while compose bots idle at ~64 MiB.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Chart 0.5.0 gives the nine infra workloads requests and limits; this overlay halves the default requests so the full fleet still fits the one ~7.6 GiB node beside kube-system and deploy/monitoring, and gives TimescaleDB a 4Gi limit because this install's volume was tuned from node memory at first init. Guard: tests/unit/chart-production-baseline.spec.ts.
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | The botDefaults comment records that the chart's namespace LimitRange hands these same figures to a bot the controller launches at runtime (it sets no resources of its own), and the node-fit guard now counts replicas and keeps room for one such bot at that default. Guard: tests/unit/chart-production-baseline.spec.ts, tests/unit/chart-runtime-bot-defaults.spec.ts.
+# 4 | maintainer@emeraldcoastsystemsgroup.com   | The published speaker-diarization image (2.1.0-beta.1, built 2026-07-12) predates services/speaker-diarization's last change (2026-08-06) and answers /v1/transcribe with 404 — measured live on 2026-09-21 (/v1/diarize answered 200). Until item 1 republishes it, a box that already has compose's source-built image can side-load it and override at install: --set infra.diarization.image=<local tag> --set infra.diarization.pullPolicy=Never. The overlay keeps the published tag, because a machine-local tag here would break every other box.
+#
+# Install (identity is per operator — pass it, never commit it):
+#   docker save oshal-bot:latest | docker exec -i desktop-control-plane ctr -n k8s.io images import --all-platforms -
+#   helm upgrade --install oshal deploy/helm/oshal -n oshal --create-namespace \
+#     -f deploy/helm/oshal/values-docker-desktop.yaml \
+#     --set-string api.extraEnv.MOCK_OIDC_EMAIL=you@example.com \
+#     --set-string api.extraEnv.OSHAL_OPERATOR_EMAILS=you@example.com
+# Secrets the chart reads optionally but a working swarm needs:
+#   oshal-bot-env / oshal-api-env  SWARM_SERVICE_SECRET (bots refuse to boot without it)
+#   oshal-api-env                  SESSION_SECRET, REMOTE_CLIENT_SHARED_SECRET
+#   oshal-store                    OSHAL_STORE_TOKEN (private store only)
+# Monitoring: deploy/monitoring/install-monitoring.sh
+
+image:
+  repository: oshal-bot
+  tag: latest
+  # Side-loaded into the node's containerd; a pull would fail (or fetch stale GHCR).
+  pullPolicy: Never
+
+api:
+  service:
+    type: LoadBalancer   # -> http://localhost:5000
+  extraEnv:
+    MOCK_OIDC: "true"
+    OSHAL_APP_ROLE_BOOTSTRAP: "true"
+    UI_PROFILE: oshal-framework
+
+fleet: full
+
+# Compose-parity platform switches (docker-compose.oshal-local.yml defaults). Without
+# APP_PACKAGE_DYNAMIC_ROUTES every protected store app fails activation closed, so its
+# bots are never registered and ?app=<name> finds nothing.
+swarm:
+  extraEnv:
+    APP_URL: http://localhost:5000
+    APP_PACKAGE_DYNAMIC_ROUTES: "1"
+    APP_PACKAGE_MIGRATIONS: "1"
+    OSHAL_PACKAGE_AUDIT_MODE: compatible
+    OSHAL_ALLOW_LEGACY_UNOWNED: "false"
+    ENABLE_GUEST_MODE: "false"
+    ENABLE_PERSONAL_INTELLIGENCE: "true"
+    ENABLE_WORLD_INTELLIGENCE: "true"
+    OSHAL_DELEGATION_AUDIENCE: urn:oshal:bot-node
+    OSHAL_DELEGATION_ISSUER: urn:oshal:controller
+    OSHAL_DELEGATION_TTL_SECONDS: "4200"
+    OSHAL_DELEGATION_CLOCK_SKEW_SECONDS: "30"
+    OSHAL_WORKLOAD_DELEGATION_MODE: legacy
+    TRADING_LIVE_ENABLED: "false"
+    KALSHI_LIVE_ENABLED: "false"
+
+# The namespace LimitRange (limitRange.enabled) gives these same figures to a bot the
+# controller launches at runtime, which sets no resources of its own.
+botDefaults:
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 1Gi }
+
+# Sized for one ~7.6 GiB node, shared with kube-system and deploy/monitoring: the
+# infra requests are the chart defaults halved (tests/unit/chart-production-baseline.spec.ts
+# holds the overlay's total memory request, replicas counted, plus one runtime-launched
+# bot at the LimitRange default, to what that node has left). Limits are
+# ceilings, not reservations, so they stay at the defaults - except TimescaleDB's: this
+# install's volume was first initialised with no limit, so timescaledb-tune sized it
+# from the node's memory, and its limit has to cover that.
+infra:
+  postgres:
+    resources: { requests: { cpu: 50m, memory: 128Mi }, limits: { memory: 2Gi } }
+  redis:
+    resources: { requests: { cpu: 25m, memory: 32Mi }, limits: { memory: 1Gi } }
+  chromadb:
+    resources: { requests: { cpu: 50m, memory: 128Mi }, limits: { memory: 2Gi } }
+  tsdb:
+    resources: { requests: { cpu: 50m, memory: 128Mi }, limits: { memory: 4Gi } }
+  arangodb:
+    resources: { requests: { cpu: 50m, memory: 128Mi }, limits: { memory: 2Gi } }
+  vault:
+    resources: { requests: { cpu: 25m, memory: 32Mi }, limits: { memory: 256Mi } }
+  codeServer:
+    resources: { requests: { cpu: 25m, memory: 64Mi }, limits: { memory: 1Gi } }
+  diarization:
+    resources: { requests: { cpu: 50m, memory: 128Mi }, limits: { memory: 1Gi } }
+
+store:
+  repo: https://github.com/emeraldcoastsystemsgroup/oshal-applications
+  auditMode: compatible
+  tokenSecret: oshal-store
