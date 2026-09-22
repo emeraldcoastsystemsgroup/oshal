@@ -901,19 +901,60 @@ including across a directory belonging to a different owner. Full reasoning and 
   hardcodes `envFrom` to `oshal-shared-env` plus the optional `oshal-bot-env`. The ConfigMap sets
   `NODE_ENV=production`, so such a bot throws `JWT_SECRET must be set in production`
   (`any-bot/server/utils/config.js`) at boot unless the operator's `oshal-bot-env` carries the key.
-  Until this is fixed, the operator closes the gap by hand. With `rbac.botLauncher` on, NOTES.txt
-  prints the command that copies the chart Secret's keys into `oshal-bot-env`, and the chart
+  **This is a regression.** Chart 0.4.0 rendered `JWT_SECRET` into `oshal-shared-env`, which the
+  launcher reads, so runtime-launched bots booted. On chart 0.5.0's default posture
+  (`rbac.botLauncher: true`) every runtime-launched bot fails to boot until the fix below lands or
+  the operator copies the keys. With `rbac.botLauncher` on, NOTES.txt prints the command that
+  copies the chart Secret's keys into `oshal-bot-env` and calls it a regression, and the chart
   README "Credentials" section documents it. `tests/unit/chart-dynamic-bot-env.spec.ts` measures
   the gap from the real launcher and render, proves it is boot-fatal against the real config
   module, and holds the chart to the warning while the gap exists. The fix is a core change and
-  needs operator approval first (CLAUDE.md Rule 0d). Proposed: add
-  `{ secretRef: { name: 'oshal-shared-secret' } }` to the launcher's `envFrom`, after the ConfigMap
-  and before `oshal-bot-env`, and update `tests/unit/dynamic-bot-runtime-launcher.spec.ts`.
+  needs operator approval first (CLAUDE.md Rule 0d).
+- **Decision needed (operator):** approve one line in `buildBotDeployment`
+  (`src/features/agent-management/services/kubernetes-bot-launcher.ts`): add
+  `{ secretRef: { name: 'oshal-shared-secret' } }` to the container's `envFrom`, after the
+  `oshal-shared-env` ConfigMap and before `oshal-bot-env` (the order `bots.yaml` uses, so an
+  operator Secret still wins a duplicate key), and update
+  `tests/unit/dynamic-bot-runtime-launcher.spec.ts`. Nothing else in core changes. The Role grants
+  no access to Secrets and needs none, because the kubelet resolves `envFrom`, not the launcher.
 - **Done when:** the launcher's `envFrom` names `oshal-shared-secret`;
   `tests/unit/chart-dynamic-bot-env.spec.ts` finds no key that a chart-declared bot gets from the
   chart and a runtime-launched bot does not, and the NOTES.txt and README copy steps are removed
   (that spec is red until they are); and on a cluster, a bot launched at runtime by an installed app
   reaches Ready with no `JWT_SECRET` in `oshal-bot-env`.
+
+### k8s runtime-launched bots set no securityContext, liveness or startup probe, or resources (chart 0.5.0)
+- **Remaining:** chart 0.5.0 gave every workload the chart renders a production-readiness
+  baseline. A bot the controller launches at runtime is not rendered by the chart:
+  `buildBotDeployment` in `src/features/agent-management/services/kubernetes-bot-launcher.ts`
+  builds its Deployment with no pod `securityContext`, and a container with no `securityContext`,
+  no `resources` and a TCP readiness probe only. A chart-declared bot (`templates/bots.yaml`) has
+  RuntimeDefault seccomp, `allowPrivilegeEscalation: false`, every capability dropped but
+  `DAC_OVERRIDE`, a startup and a liveness probe on the readiness handler, and
+  `botDefaults.resources`. The chart closes the resources half without core: on a main cluster the
+  `oshal-container-defaults` LimitRange (`limitRange.enabled`, default on) gives
+  `botDefaults.resources` to any container that sets none, so a ResourceQuota that requires
+  requests no longer refuses such a bot for lack of them. A LimitRange cannot default a
+  `securityContext` or a probe, so those stay missing. The chart README "Probes, resources and Pod
+  Security" states the gap, and `tests/unit/chart-runtime-bot-defaults.spec.ts` measures it from
+  the real launcher against a real chart bot and holds the README to it. The fix is a core change
+  and needs operator approval first (CLAUDE.md Rule 0d).
+- **Decision needed (operator):** approve changing `buildBotDeployment` to set what
+  `templates/bots.yaml` sets: pod `securityContext: { seccompProfile: { type: 'RuntimeDefault' } }`;
+  container `securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ['ALL'],
+  add: ['DAC_OVERRIDE'] } }`; `startupProbe` (tcp 5000, period 10, failureThreshold 30) and
+  `livenessProbe` (tcp 5000, period 20, timeout 5, failureThreshold 6) beside the existing
+  readiness probe; and `resources` equal to the chart's `botDefaults.resources`. The launcher has
+  no way to read values today, so the resources half needs the chart to hand `botDefaults.resources`
+  to the api (for example as a JSON env value next to `OSHAL_BOT_IMAGE`) for the launcher to apply.
+  Without that half the LimitRange keeps supplying the same figures.
+- **Done when:** the Deployment `buildBotDeployment` returns carries those fields, and
+  `tests/unit/dynamic-bot-runtime-launcher.spec.ts` asserts them;
+  `tests/unit/chart-runtime-bot-defaults.spec.ts` finds nothing a chart-declared bot has that a
+  runtime-launched bot lacks, and the README gap paragraph (the one naming `buildBotDeployment`) is
+  removed (that spec is red until it is); and on a cluster, a bot launched at runtime by an
+  installed app reaches Ready in a namespace with a ResourceQuota on `requests.cpu` and
+  `requests.memory`, admitted under the `baseline` Pod Security Standard.
 
 ### Rides map and fare follow-ups
 - **Remaining:** install the merged [`rides`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/rides) package; decide optional OSRM/Valhalla and Google Maps billing paths; make geocode/tile configuration operator-owned and the normalized-address cache durable.

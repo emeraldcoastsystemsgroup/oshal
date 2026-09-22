@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for what chart 0.5.0 took from a bot the controller launches at runtime. Moving JWT_SECRET and ARANGO_ROOT_* out of the oshal-shared-env ConfigMap into the oshal-shared-secret Secret reached every chart-declared bot (bots.yaml envFrom it) but not a runtime-launched one: buildBotDeployment in src/features/agent-management/services/kubernetes-bot-launcher.ts hardcodes envFrom to oshal-shared-env plus the optional oshal-bot-env, the ConfigMap sets NODE_ENV=production, and any-bot's config throws "JWT_SECRET must be set in production" at boot. Closing that is a core change awaiting operator approval (docs/BACKLOG.md), so the chart's fix is an install-time warning with a copy command. This guard measures the gap from the REAL launcher (buildBotDeployment, called, not parsed) against the REAL render (helm template, resolved the kubelet's way), proves it is boot-fatal by loading the REAL any-bot config module with exactly the env such a bot would get, and then holds the chart to it: while the gap exists, the NOTES.txt helm install prints (rendered offline, helmNotes) and the README carry a command that copies the chart Secret into the launcher's Secret, that copy closes the gap and lets the config load, the notes stay silent where no launcher runs, and a BACKLOG entry tracks the core fix. Once the launcher reads the chart Secret itself, the warning and the copy step must go - this guard turns red until they do.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review follow-up: while the gap exists, NOTES.txt and the README Credentials section must say plainly that it is a regression (chart 0.4.0 kept JWT_SECRET in the ConfigMap the launcher reads), NOTES.txt must name the fix (oshal-shared-secret in the launcher's envFrom), and the README and the BACKLOG entry must carry the exact one-line change, with the BACKLOG entry recording it as an operator decision. A warning that reads like a configuration step hid that every runtime-launched bot on the default posture stopped booting.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -27,6 +28,8 @@ const README = fs.readFileSync(path.join(CHART_DIR, 'README.md'), 'utf8');
 const BACKLOG = fs.readFileSync(path.join(REPO_ROOT, 'docs', 'BACKLOG.md'), 'utf8');
 const BOT_POD_VALUES = path.join(CHART_DIR, 'values-bot-pod.example.yaml');
 const BOOT_TIMEOUT_MS = 60_000;
+/** The one-line core fix: the entry the launcher's envFrom needs, written as the launcher's own TypeScript would hold it. */
+const ONE_LINE_FIX = "{ secretRef: { name: 'oshal-shared-secret' } }";
 
 /** Postures in which the api can launch bots at runtime (role main, rbac.botLauncher on). */
 const LAUNCHER_ON: Array<[string, RenderOptions]> = [
@@ -189,6 +192,8 @@ describe.each(LAUNCHER_ON)('%s: the chart warns about every key a runtime-launch
     expect(target, 'the command patches a Secret the launcher does not read').toBe(operatorSecrets(objects, launchedBot(objects))[0]);
     const fatal = /([A-Z][A-Z0-9_]+) must be set in production/.exec(bootConfig(resolvedEnv(objects, launchedBot(objects))).output)?.[1];
     expect(notes, 'NOTES.txt does not name the key whose absence kills the boot').toContain(String(fatal));
+    expect(notes, 'NOTES.txt does not say plainly that this is a regression').toMatch(/\bregression\b/);
+    expect(notes, 'NOTES.txt does not name the fix: oshal-shared-secret in the launcher\'s envFrom').toMatch(/envFrom[\s\S]{0,40}oshal-shared-secret/);
     const patched = afterCopy(objects, target, source);
     const launched = resolvedEnv(patched, launchedBot(patched));
     const declared = resolvedEnv(objects, chartBot(objects));
@@ -218,6 +223,8 @@ describe('the rest of the record follows the gap', () => {
     expect(command![2]).toBe('oshal-bot-env');
     expect(command![4]).toBe('oshal-shared-secret');
     for (const k of missing) expect(section, `README Credentials does not name ${k}`).toContain(k);
+    expect(section, 'README Credentials does not say plainly that this is a regression').toMatch(/\bregression\b/);
+    expect(section, 'README Credentials does not name the one-line core fix').toContain(ONE_LINE_FIX);
   }, RENDER_TIMEOUT_MS);
 
   it('while the gap exists, docs/BACKLOG.md tracks the core fix with a done-when', () => {
@@ -226,5 +233,7 @@ describe('the rest of the record follows the gap', () => {
     const entry = entries.find((e) => e.includes('kubernetes-bot-launcher.ts') && e.includes('oshal-shared-secret'));
     expect(entry, 'no BACKLOG entry names the launcher and the chart Secret it does not read').toBeTruthy();
     expect(entry!, 'the BACKLOG entry has no done-when').toMatch(/\*\*Done when:\*\*/);
+    expect(entry!, 'the BACKLOG entry does not name the exact one-line fix').toContain(ONE_LINE_FIX);
+    expect(entry!, 'the BACKLOG entry does not record the fix as an operator decision').toMatch(/\*\*Decision needed \(operator\):\*\*/);
   }, RENDER_TIMEOUT_MS);
 });

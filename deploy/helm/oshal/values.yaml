@@ -11,6 +11,7 @@
 # 7 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — production-readiness baseline: resources (requests cpu+memory, a memory limit) for the nine infra workloads (infra.<name>.resources) and the relay's two containers; storageClassName chart-wide plus a per-claim override (infra.<name>.storageClassName, api.outputStorageClassName, swarm.workspaceStorageClassName, relay.stateStorageClassName), empty = the cluster default; pinned tags for every floating infra image (timescaledb 2.30.1-pg16, code-server 4.138.0, speaker-diarization 2.1.0-beta.1, ollama 0.34.2, tailscale v1.102.4, socat 1.8.1.3 - each the tag whose digest the floating tag resolved to on 2026-09-21, checked read-only against the registry); infra.diarization.pullPolicy so the registry sidecar no longer inherits a side-loaded platform image's Never. Guard: tests/unit/chart-production-baseline.spec.ts.
 # 8 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — the rbac comment records that a runtime-launched bot does not read oshal-shared-secret (the core launcher's envFrom is oshal-shared-env + oshal-bot-env), so it needs JWT_SECRET copied into oshal-bot-env, and where the copy command is printed. Guard: tests/unit/chart-dynamic-bot-env.spec.ts.
 # 9 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — the swarm.extraEnv comment records the credential-name rule's known false positive: a non-secret switch such as compose's REMOTE_CLIENT_REQUIRE_NODE_TOKEN is refused too, and goes on the workload that reads it (api.extraEnv). Guard: tests/unit/chart-shared-env-extra.spec.ts.
+# 10 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — limitRange.enabled (default true, main role): the oshal-container-defaults LimitRange gives botDefaults.resources to any container that sets none, because the runtime bot launcher sets no resources and a ResourceQuota that requires requests would refuse its pods. The rbac comment now says plainly that the missing JWT_SECRET is a 0.5.0 regression for runtime bots on the default posture, names the one-line core fix, and records that such a bot also lacks a securityContext and liveness/startup probes, which no LimitRange can default. Guard: tests/unit/chart-runtime-bot-defaults.spec.ts.
 #
 # Defaults model the compose stack (docker-compose.oshal-local.yml) with DNS parity:
 # Services are named oshal-redis / oshal-db / oshal-chromadb / oshal-api / oshal-local-api
@@ -341,6 +342,21 @@ botDefaults:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { memory: 1Gi }
 
+# ── Namespace container defaults (main role only) ─────────────────────────────
+# enabled renders the oshal-container-defaults LimitRange: any container in the
+# namespace that sets no resources gets botDefaults.resources at admission (its
+# requests as the default requests, its memory limit as the default limit). Every
+# container this chart renders sets its own, so this changes none of them. It is
+# for the bots the controller launches at runtime (rbac.botLauncher): the launcher
+# sets no resources, so without it they run BestEffort and a ResourceQuota that
+# requires requests refuses them. Following botDefaults keeps a runtime bot no
+# larger than a chart bot. No CPU limit is defaulted, because it would also land
+# on every chart container; a CPU limit in botDefaults fails the render while this
+# is on. A LimitRange cannot default a securityContext or a probe, so runtime bots
+# still lack both (README "Probes, resources and Pod Security").
+limitRange:
+  enabled: true
+
 # Which fleet ships: kernel (the Tier-0 kernel bots — install default), full (every
 # compose bot-node eligible on k8s), or custom (exactly the `bots:` list below).
 # kernel/full render the preset PLUS `bots:` extras. The preset lists are GENERATED
@@ -479,8 +495,12 @@ fleets:
 #
 # A bot launched this way reads oshal-shared-env and the optional oshal-bot-env
 # Secret only, not oshal-shared-secret, so without JWT_SECRET it fails to boot.
-# Copy the chart Secret's keys into oshal-bot-env; NOTES.txt and the README
-# "Credentials" section print the command (docs/BACKLOG.md tracks the launcher fix).
+# That is a 0.5.0 regression on this default posture: 0.4.0 kept JWT_SECRET in
+# the ConfigMap the launcher reads. Copy the chart Secret's keys into
+# oshal-bot-env; NOTES.txt and the README "Credentials" section print the command.
+# The fix is one line of core (oshal-shared-secret in the launcher's envFrom),
+# awaiting approval in docs/BACKLOG.md. Such a bot also sets no securityContext,
+# liveness or startup probe, or resources; limitRange above supplies resources only.
 rbac:
   create: true
   serviceAccountName: oshal-api

@@ -130,7 +130,8 @@ values (or install the whole fleet) was a static workaround for a dynamic model.
    ServiceAccount — raw HTTPS against the API, because the surface is three verbs
    on two resource types and a client library is a large dependency for that. The
    workload it renders is the chart's bot shape, so a dynamically-launched bot and
-   a chart-declared one are indistinguishable at runtime; it is labelled
+   a chart-declared one are indistinguishable at runtime (true of chart 0.4.0; chart
+   0.5.0 made them differ, see Amendment 4 items 12 and 14); it is labelled
    `oshal.io/dynamic` so Helm never adopts or deletes it. Substrate is detected
    from `KUBERNETES_SERVICE_HOST` (kubelet-injected), not a config flag someone
    can set wrong.
@@ -221,13 +222,29 @@ render-level work. The cluster proofs that remain are listed in that package.
     database URLs moved out of literal env into `oshal-db-credentials`, where a
     bot can read only its own key. `oshal_app` and `oshal_bot` get a values path.
     Guard: [tests/unit/chart-credentials.spec.ts](../../tests/unit/chart-credentials.spec.ts).
+    This regressed bots the controller launches at runtime. The launcher's
+    `envFrom` names `oshal-shared-env` and `oshal-bot-env`, not
+    `oshal-shared-secret`, so on the default posture such a bot no longer boots
+    without `JWT_SECRET`. NOTES.txt and the chart README print a copy step until
+    the one-line core fix (that Secret in the launcher's `envFrom`) is approved;
+    [BACKLOG](../BACKLOG.md) tracks it. Guard:
+    [tests/unit/chart-dynamic-bot-env.spec.ts](../../tests/unit/chart-dynamic-bot-env.spec.ts).
 13. **`rbac.botLauncher=false` boots.** The api's app-role bootstrap receives
     `BOT_DATABASE_URL` whatever the launcher setting. Guard:
     [tests/unit/chart-bootstrap-env.spec.ts](../../tests/unit/chart-bootstrap-env.spec.ts).
-14. **A production-readiness baseline.** Every workload with a readiness check
-    now has a liveness probe on the same handler, plus a startup probe. Every
-    container has requests and a memory limit. Every pod runs RuntimeDefault
-    seccomp, with no privilege escalation and capabilities dropped. The
+14. **A production-readiness baseline.** Every workload the chart renders with a
+    readiness check now has a liveness probe on the same handler, plus a startup
+    probe. Every container the chart renders has requests and a memory limit.
+    Every pod the chart renders runs RuntimeDefault seccomp, with no privilege
+    escalation and capabilities dropped. A bot the controller launches at runtime
+    is not rendered by the chart. Its Deployment sets no resources, no
+    `securityContext` and no liveness or startup probe (it has a TCP readiness
+    probe only). On a main
+    cluster the `oshal-container-defaults` LimitRange gives any container that
+    sets none `botDefaults.resources`, so such a bot gets resources at admission.
+    A LimitRange cannot default a `securityContext` or a probe; that is a core
+    launcher change tracked in [BACKLOG](../BACKLOG.md). Guard:
+    [tests/unit/chart-runtime-bot-defaults.spec.ts](../../tests/unit/chart-runtime-bot-defaults.spec.ts). The
     datastores, Vault, code-server and diarization run as their images' own
     users. Infra images are pinned, and every claim honours a
     `storageClassName`. The workspace claim survives `helm uninstall`. The

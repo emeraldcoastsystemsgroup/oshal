@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the chart's production-readiness baseline (chart 0.5.0; remote-cluster work package item 5). The chart shipped no liveness or startup probe anywhere, no container resources on the nine infra workloads, a securityContext on three templates only, no storageClassName on any claim, :latest (or another floating tag) on six infra images, and a workspace claim `helm uninstall` deleted. This renders the REAL chart in four postures (defaults, the Docker Desktop overlay that ran live, the bot-pod example, and every optional switch on with a store package so the init container renders too) and holds every workload to: liveness wherever readiness exists, with the SAME handler (so ArangoDB's unauthenticated path and diarization's key/Host headers carry over), and the same for any startup probe; requests (cpu, memory) and a memory limit on every container, init containers included, with each infra workload's figures coming from its own infra.<name>.resources; RuntimeDefault seccomp, no privilege escalation and every capability dropped; no floating infra image tag; every claim honouring the chart-wide storageClassName and its own override (the override paths are read from values.yaml, not listed here) while an empty value leaves the field out; and the overlay's total memory request fitting the node it declares, after deploy/monitoring's own requests (read from its values) and a kube-system reserve. Finally it evaluates each pod against the Pod Security Standards' Restricted and Baseline rules and holds the README's "Pod Security" table to the result, so the list of workloads that cannot meet Restricted is measured, not asserted. A render is not admission: the real restricted/baseline dry-run is a cluster check.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The overlay's node-fit check counts replicas (a workload's pod request times spec.replicas, default 1) instead of one pod per workload, and reserves room for one bot the controller launches at runtime at the namespace LimitRange's default memory request (templates/limitrange.yaml): that bot sets no resources, so the LimitRange's default is what the scheduler counts for it. quantity() now comes from the shared helm-template helper, which the LimitRange guard (chart-runtime-bot-defaults) uses too.
  */
 
 import fs from 'node:fs';
@@ -11,7 +12,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import yaml from 'js-yaml';
 import {
-  CHART_DIR, DOCKER_DESKTOP_VALUES, REPO_ROOT, RENDER_TIMEOUT_MS, helmTemplate, type K8sObject, type RenderOptions,
+  CHART_DIR, DOCKER_DESKTOP_VALUES, REPO_ROOT, RENDER_TIMEOUT_MS, helmTemplate, quantity, type K8sObject, type RenderOptions,
 } from '../helpers/helm-template';
 
 const values = yaml.load(fs.readFileSync(path.join(CHART_DIR, 'values.yaml'), 'utf8')) as Record<string, any>;
@@ -48,7 +49,7 @@ const POSTURES: Array<[string, RenderOptions]> = [
 ];
 
 interface Ctr { id: string; owner: string; init: boolean; c: Record<string, any> }
-interface Pod { owner: string; bot: boolean; spec: Record<string, any>; containers: Ctr[] }
+interface Pod { owner: string; bot: boolean; replicas: number; spec: Record<string, any>; containers: Ctr[] }
 
 /**
  * @description Every Deployment/StatefulSet pod template in a render, with its containers.
@@ -60,7 +61,7 @@ function pods(objects: K8sObject[]): Pod[] {
     const spec = o.spec?.template?.spec ?? {};
     const list = (arr: any[] | undefined, init: boolean): Ctr[] => (arr ?? []).map((c) => ({ id: `${o.metadata.name}/${c.name}`, owner: o.metadata.name, init, c }));
     return {
-      owner: o.metadata.name, bot: o.metadata.labels?.['oshal.io/bot'] === 'true', spec,
+      owner: o.metadata.name, bot: o.metadata.labels?.['oshal.io/bot'] === 'true', replicas: o.spec?.replicas ?? 1, spec,
       containers: [...list(spec.initContainers, true), ...list(spec.containers, false)],
     };
   });
@@ -74,18 +75,6 @@ function pods(objects: K8sObject[]): Pod[] {
 function handler(probe: Record<string, any>): string {
   const { httpGet, tcpSocket, exec, grpc } = probe;
   return JSON.stringify({ httpGet, tcpSocket, exec, grpc });
-}
-
-/**
- * @description A Kubernetes quantity in base units (bytes for memory, cores for cpu).
- * @param q quantity string
- * @returns {number}
- */
-function quantity(q: string | number): number {
-  const m = /^(\d+(?:\.\d+)?)(m|Ki|Mi|Gi|Ti|k|K|M|G|T)?$/.exec(String(q));
-  if (!m) throw new Error(`unparseable quantity ${q}`);
-  const unit: Record<string, number> = { m: 1e-3, Ki: 1024, Mi: 1024 ** 2, Gi: 1024 ** 3, Ti: 1024 ** 4, k: 1e3, K: 1e3, M: 1e6, G: 1e9, T: 1e12 };
-  return Number(m[1]) * (m[2] ? unit[m[2]] : 1);
 }
 
 /**
@@ -212,7 +201,7 @@ describe('resources: every container requests cpu and memory and has a memory li
     expect(wrong.map(([k, ids]) => `infra.${k}.resources -> [${ids.join(', ')}]`), 'each infra resources value must reach exactly one container').toEqual([]);
   }, RENDER_TIMEOUT_MS);
 
-  it('the Docker Desktop overlay fits the node it declares, beside kube-system and deploy/monitoring', () => {
+  it('the Docker Desktop overlay fits the node it declares, beside kube-system, deploy/monitoring and one runtime-launched bot', () => {
     const node = /Sized for one ~(\d+(?:\.\d+)?) GiB node/.exec(OVERLAY_TEXT)?.[1];
     expect(node, 'values-docker-desktop.yaml no longer says which node it is sized for').toBeTruthy();
     let monitoring = 0;
@@ -225,9 +214,15 @@ describe('resources: every container requests cpu and memory and has a memory li
     walk(MONITORING_VALUES);
     expect(monitoring, 'read no memory request from deploy/monitoring - the walk is broken').toBeGreaterThan(0);
     const budget = Number(node) * 1024 ** 3 - monitoring - KUBE_SYSTEM_RESERVE_BYTES;
-    const asked = pods(helmTemplate({ valuesFiles: [DOCKER_DESKTOP_VALUES] })).reduce((a, p) => a + podMemoryRequest(p), 0);
+    const objects = helmTemplate({ valuesFiles: [DOCKER_DESKTOP_VALUES] });
+    const chartPods = pods(objects).reduce((a, p) => a + p.replicas * podMemoryRequest(p), 0);
+    // A bot launched at runtime sets no resources, so the scheduler counts the LimitRange's default.
+    const container = objects.find((o) => o.kind === 'LimitRange')?.spec?.limits?.find((l: { type: string }) => l.type === 'Container');
+    const runtimeBot = quantity(container?.defaultRequest?.memory ?? container?.default?.memory ?? 0);
+    const asked = chartPods + runtimeBot;
     const mi = (b: number) => `${Math.round(b / 1024 ** 2)}Mi`;
-    expect(asked, `the overlay asks ${mi(asked)}; the node leaves ${mi(budget)} after monitoring and kube-system`).toBeLessThanOrEqual(budget);
+    expect(asked, `the overlay asks ${mi(chartPods)} plus ${mi(runtimeBot)} for one runtime bot; the node leaves ${mi(budget)} after monitoring and kube-system`)
+      .toBeLessThanOrEqual(budget);
   }, RENDER_TIMEOUT_MS);
 });
 

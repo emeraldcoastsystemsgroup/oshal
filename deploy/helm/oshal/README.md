@@ -122,15 +122,20 @@ refuses a switch that is not a secret but whose name matches, such as compose's
 `REMOTE_CLIENT_REQUIRE_NODE_TOKEN`. Set a switch like that on the workload that reads it
 (`api.extraEnv` for that one).
 
+**Runtime-launched bots do not boot on the default posture. This is a chart 0.5.0 regression.**
 A bot the controller launches at runtime (see [Dynamic bots](#dynamic-bots--apps-bring-their-own))
 is built by `src/features/agent-management/services/kubernetes-bot-launcher.ts`, not by this
 chart. Its `envFrom` names `oshal-shared-env` and `oshal-bot-env` only, so it does not get
-`oshal-shared-secret`: no `JWT_SECRET`, `ARANGO_ROOT_USER` or `ARANGO_ROOT_PASSWORD`. Without
-`JWT_SECRET` such a bot fails to boot, because the ConfigMap sets `NODE_ENV=production` and the
-bot's config (`any-bot/server/utils/config.js`) then throws `JWT_SECRET must be set in production`.
-Chart-declared bots are not affected. Until the launcher reads `oshal-shared-secret` itself, which
-is a core change tracked in [the backlog](../../../docs/BACKLOG.md), copy the chart Secret's keys
-into `oshal-bot-env`. With `rbac.botLauncher` on, `helm install` prints the same commands:
+`oshal-shared-secret`: no `JWT_SECRET`, `ARANGO_ROOT_USER` or `ARANGO_ROOT_PASSWORD`. Chart 0.4.0
+kept those keys in `oshal-shared-env`, so such a bot booted. Since 0.5.0 it fails to boot,
+because the ConfigMap sets `NODE_ENV=production` and the bot's config
+(`any-bot/server/utils/config.js`) then throws `JWT_SECRET must be set in production`. That is
+true of every runtime-launched bot with `rbac.botLauncher: true`, the default, until one of two
+things happens. Either the launcher reads `oshal-shared-secret` itself, a one-line core fix (add
+`{ secretRef: { name: 'oshal-shared-secret' } }` to its `envFrom`) awaiting approval in
+[the backlog](../../../docs/BACKLOG.md), or `oshal-bot-env` carries the keys because you copied
+them there. Chart-declared bots are not affected. With `rbac.botLauncher` on, `helm install`
+prints the copy commands:
 
 ```bash
 kubectl -n oshal create secret generic oshal-bot-env   # only if it does not exist yet
@@ -289,16 +294,19 @@ keep the chart defaults on that path.
 
 ## Probes, resources and Pod Security
 
-**Probes.** Each workload that has a readiness check uses that same check as its
-liveness probe, and adds a startup probe that holds liveness off through a slow
+This section is measured from the workloads this chart renders. A bot the controller
+launches at runtime is not one of them, and the last paragraph says what it gets.
+
+**Probes.** Each workload the chart renders that has a readiness check uses that same
+check as its liveness probe, and adds a startup probe that holds liveness off through a slow
 first boot. The api waits up to 10 minutes for Postgres and its bootstrap. The
 datastores wait 5 minutes for initdb or crash recovery. ArangoDB asks the
 unauthenticated `/_admin/server/availability`. Speaker-diarization sends its key
 and a `Host` it admits. Vault's probes pass while it is sealed. The relay has no
 probes: tailscaled and socat expose no health endpoint.
 
-**Resources.** Every container requests CPU and memory and has a memory limit:
-`api.resources`, `botDefaults.resources`, `infra.<name>.resources`,
+**Resources.** Every container the chart renders requests CPU and memory and has a
+memory limit: `api.resources`, `botDefaults.resources`, `infra.<name>.resources`,
 `relay.tailscaleResources` / `forwarderResources`. The api's init container
 reuses the api's figures. There are no CPU limits, as there never were on the api
 and the bots; a CPU limit throttles rather than protects. ArangoDB is told its
@@ -307,14 +315,23 @@ the container. TimescaleDB's first-init tune sizes Postgres from the memory limi
 if there is one, and from the node's memory otherwise. It never re-runs, so a
 volume first initialised without a limit needs a limit that covers what it chose
 then. [values-docker-desktop.yaml](values-docker-desktop.yaml) halves the default
-requests to fit its one node.
+requests to fit its one node, and leaves room for one bot launched at runtime.
+
+**Namespace defaults.** On a main cluster the chart also renders the
+`oshal-container-defaults` LimitRange (`limitRange.enabled`, default on). At admission it
+gives `botDefaults.resources` to any container in the namespace that sets no resources: the
+requests become its default requests, the memory limit its default limit. Every container
+the chart renders sets its own figures, so the LimitRange changes none of them. It defaults
+no CPU limit. No chart container sets one, so a default CPU limit would land on all of them
+and refuse any whose CPU request is above it. For that reason a CPU limit in
+`botDefaults.resources` fails the render while the LimitRange is on.
 
 **Images.** Every infra image is a pinned tag, never `:latest`. The platform
 image (`image.repository` / `image.tag`) is set separately.
 
-**Pod Security.** Every pod runs the RuntimeDefault seccomp profile. Every
-container runs with `allowPrivilegeEscalation: false` and drops every capability,
-except as the table says. Measured from the render only; admission itself is proven
+**Pod Security.** Every pod the chart renders runs the RuntimeDefault seccomp profile.
+Every container the chart renders runs with `allowPrivilegeEscalation: false` and drops
+every capability, except as the table says. Measured from the render only; admission itself is proven
 on a cluster, not here:
 
 | Workload | Runs as | Restricted | Why not |
@@ -324,13 +341,13 @@ on a cluster, not here:
 | `oshal-vault` | uid 100, the image's `vault` user | yes | |
 | `code-server` | uid 1000, the image's `USER` | yes | |
 | `speaker-diarization` | uid 10001, the image's `USER` | yes | |
-| `oshal-api` and every bot | root | no (Baseline) | the oshal image has no `USER`; and it keeps `DAC_OVERRIDE`, because code-server writes the shared workspace as uid 1000 and root without it cannot write there |
+| `oshal-api` and every bot the chart declares | root | no (Baseline) | the oshal image has no `USER`; and it keeps `DAC_OVERRIDE`, because code-server writes the shared workspace as uid 1000 and root without it cannot write there |
 | `oshal-chromadb` | root | no (Baseline) | the image has no `USER` and caches its embedding model under `/root` |
 | `oshal-arangodb` | root | no (Baseline) | the image has no `USER`, its entrypoint never drops privileges, and the data volumes it has written are root-owned |
 | `oshal-ollama` | root | no (Baseline) | the image has no `USER` and keeps models under `/root/.ollama` |
 | `oshal-relay` | root | no (Privileged only) | it mounts `/dev/net/tun` from the host and adds `NET_ADMIN`; off by default |
 
-**Capabilities on the api and the bots.** Before chart 0.5.0 these containers set no
+**Capabilities on the api and the chart-declared bots.** Before chart 0.5.0 these containers set no
 `securityContext`, so they ran with the container runtime's default capability set. They
 now keep only `DAC_OVERRIDE`. That is enough to read and write the files code-server
 (uid 1000) creates in the shared workspace. It is not enough to change those files' mode,
@@ -340,15 +357,33 @@ It allows `chown` only with `CAP_CHOWN` (see chmod(2), utimensat(2) and chown(2)
 file code-server owns, those calls now fail with `EPERM`. A render cannot show whether any
 bot task makes them; that is checked on a cluster.
 
+**Bots launched at runtime.** Of everything above, only the LimitRange reaches a bot the
+controller launches at runtime. That bot's Deployment is built by `buildBotDeployment` in
+`src/features/agent-management/services/kubernetes-bot-launcher.ts`, not by this chart. It
+sets no `resources` and no `securityContext` on the pod or the container, and it has a TCP
+readiness probe only. So such a bot sets no seccomp profile (the kubelet's default applies,
+which is Unconfined unless the kubelet enables `seccompDefault`). It does not block privilege
+escalation, it keeps the container runtime's default capabilities, and it has no liveness or
+startup probe. Its resources come from the `oshal-container-defaults` LimitRange above, so a
+ResourceQuota that requires requests does not refuse it for lack of them; that is the remedy
+the Kubernetes ResourceQuota documentation names. A LimitRange cannot default a
+`securityContext` or a probe. Setting those in the launcher is a core change, awaiting
+approval in [the backlog](../../../docs/BACKLOG.md). Admission of such a bot is a cluster
+check, and nothing here runs it.
+
 ## Dynamic bots — apps bring their own
 
 An installed app can declare a bot that needs its own node. Under compose the
 controller writes a compose overlay and starts the container; on a cluster it
-creates a **Deployment + Service in this namespace**, using the same shape as a
-chart-declared bot (bot entrypoint, `oshal-shared-env` + `oshal-bot-env`, the
-workspace PVC, and a Service named for the bot because that name *is* the DNS the
-controller dials). One difference: it does not read `oshal-shared-secret`, so it
-needs `JWT_SECRET` copied into `oshal-bot-env` (see [Credentials](#credentials)).
+creates a **Deployment + Service in this namespace**: the bot entrypoint,
+`oshal-shared-env` + `oshal-bot-env`, the workspace PVC, and a Service named for
+the bot because that name *is* the DNS the controller dials. It is not the same
+workload as a chart-declared bot, in two ways. It does not read
+`oshal-shared-secret`, so on the default posture it fails to boot until
+`JWT_SECRET` is copied into `oshal-bot-env` (see [Credentials](#credentials)).
+And it sets no resources, `securityContext`, liveness or startup probe. The
+namespace LimitRange supplies its resources, and nothing supplies the rest (see
+[Probes, resources and Pod Security](#probes-resources-and-pod-security)).
 Those runtimes are labelled `oshal.io/dynamic: "true"`, so `helm upgrade` never
 adopts or deletes them.
 

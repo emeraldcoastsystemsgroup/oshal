@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | resolvedEnv: the environment a container actually starts with, resolved the way the kubelet does it - envFrom sources in order (later wins), then explicit env entries over all of them - against the ConfigMaps and Secrets the SAME render creates. A reference to an object the chart does not render (the optional api.envSecret an operator creates) resolves to nothing, because a guard asking "does the chart supply this" must not count a Secret nobody has made. Used by the bootstrap-env guard (rbac.botLauncher=false) and every guard that reads a value moved out of a literal env entry.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | helmNotes: the text `helm install` would print from templates/NOTES.txt, rendered offline. `helm template` never prints NOTES.txt and `helm install --dry-run` is an install command, so this copies the chart to a temp dir, wraps NOTES.txt unchanged in a named template, and has a probe ConfigMap include it: the same engine, values and helpers render the same file, with no cluster and no install. The helm call is shared with helmTemplate (runHelm), so both fail the same loud way. Used by the runtime-launched-bot guard (chart-dynamic-bot-env), whose fix is an install-time warning.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | helmRefusal: helm's OWN stderr for a render it refuses. The thrown Error's message embeds the --set list, so a guard asking "does the refusal name swarm.extraEnv.X" matched its own argument `swarm.extraEnv.X=...` and passed whatever helm said - the extraEnv clash and credential naming checks and the Vault TLS secretName check stayed green with the refusal reduced to one name or none. runHelm now throws HelmRenderError carrying helm's stderr separately (a missing binary stays a plain, loud Error), and refusal guards read that.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | quantity: a Kubernetes resource quantity in base units (bytes, cores), shared by the guards that compare resources - chart-production-baseline (the overlay's node budget) and chart-runtime-bot-defaults (the namespace LimitRange held to no more than a chart bot). It was private to the baseline spec; one parser means both compare the same way.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -242,4 +243,17 @@ export function resolvedEnv(objects: K8sObject[], container: Record<string, any>
     else delete env[entry.name];
   }
   return env;
+}
+
+/**
+ * @description A Kubernetes resource quantity in base units: bytes for memory, cores for cpu.
+ * Throws on a form it does not parse, so a comparison can never pass against NaN.
+ * @param q quantity string ("250m", "128Mi", "2Gi", "1")
+ * @returns {number} the quantity in base units
+ */
+export function quantity(q: string | number): number {
+  const m = /^(\d+(?:\.\d+)?)(m|Ki|Mi|Gi|Ti|k|K|M|G|T)?$/.exec(String(q));
+  if (!m) throw new Error(`unparseable quantity ${q}`);
+  const unit: Record<string, number> = { m: 1e-3, Ki: 1024, Mi: 1024 ** 2, Gi: 1024 ** 3, Ti: 1024 ** 4, k: 1e3, K: 1e3, M: 1e6, G: 1e9, T: 1e12 };
+  return Number(m[1]) * (m[2] ? unit[m[2]] : 1);
 }
