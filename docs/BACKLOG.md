@@ -15,6 +15,80 @@ carries the evidence that survived an adversarial re-derivation and the correcti
 
 ## Promotion, deployment, and regression proof
 
+### PICK UP HERE — what was in flight when the 2026-09-21/22 overnight ended
+
+**Read this first if you are resuming that session.** Nothing below is a defect; it is a map of
+work that is real, partly done, and stopped mid-stride when the session limit hit at 01:1x CT. The
+detail behind each decision is on the entry it belongs to; this entry exists so the pickup does not
+start with an archaeology dig.
+
+**State of the world.** `main` is `5d48ad92`. The box runs **`fd7ac311`** — four merged fixes
+behind: `#770` (yq spawned with an argv, not a shell string), `#771` (the read-only tools that let
+the assistant answer, plus the `oshal_bot` column grants and `RAG_ENGINE` on the bot tier), `#773`
+(a sell the venue has not confirmed is not cover), `#780` (settlement counts exchange days), and the
+docs PRs `#772`/`#776`/`#781`. **A deploy is the next action** and it also clears the venture-plan
+surface, whose schema bootstrap deadlocked on a cold boot and shows empty until the api restarts.
+
+**Open core PRs, by what they still need. None merges without a CONFIRMED adversarial verdict.**
+
+| PR | branch | state |
+|---|---|---|
+| `#774` | `comfyui-storyboard-provider` | Round 1 **REFUTED** — the timeout it advertised covered one of five HTTP calls; a black-holed `/prompt` hung **304 753 ms** against a configured 1 500 ms. Reworked to a single deadline threaded through every hop (`f2176687`), plus eight smaller fixes. **Round-2 verification never ran.** |
+| `#775` | `headscale-fail-loud` | Round 1 **REFUTED** — the refusal fired from inside `Show-Summary`, after the image had built, the stack had started and the firewall had opened, so a refused `-OffLan` run was a completed install reported as exit 1. Reworked to a front-check after `Assert-Docker` (`c5209201`). **Round-2 verification never ran.** |
+| `#778` | `agent-id-pins-and-guard` | Built, **never verified**. Pairs with store `#249`. After it merges, the operator approved one live-DB statement: `DELETE FROM swarm_applications WHERE name='trading' AND manifest_path='/app/swarm-apps/trading.yaml' AND status='inactive'` — count-verify it returns exactly 1 first. |
+| `#779` | `codex-oauth-originator` | Built, **never verified**. Then the operator performs **one** browser round trip at `/api/openai-codex/oauth/start`. ⚠ Never retry it — repeated failed authorize attempts risk the account. |
+| `#767` | `byo-same-endpoint-retry` | **REFUTED** and superseded (see the lane below). Close it when the replacement PR opens. |
+| `#742` | `rides-routing-override-and-durable-geocode-cache` | **REFUTED**, 12 defects, two HIGH: a global unscoped cache of every rider's looked-up addresses on the shared workspace volume, readable by any bot's bash; and three env vars that no compose file passes, so the feature cannot be switched on. Rework or close. |
+| `#761`, `#689` | | Old, unverified, and **conflict with `main`**. |
+| `#753` | `video-season-assembly` | Old, unverified, mergeable. |
+
+**Store PRs open:** `#243`–`#249`. `#249` is the twin of core `#778`.
+
+**Four lane clones hold uncommitted work.** Each died mid-task; none is verified, and none should be
+committed without finishing and proving it:
+
+- `oshal-lanes/verify-767`, branch **`byo-retry-hot-fallback`** — 24 modified, 5 new. The largest and
+  the one that matters most: it reworks the refuted `#767` (retry keyed on an explicit BYO connection
+  only; the cockpit path guarded; no per-attempt saved messages or error broadcasts; `0` means off)
+  **and** adds the operator's hot fallback — after the retry budget is exhausted, for the operator
+  only under the ADR-127/137 portal gates, fall through a **configurable** chain read from the
+  ADR-162 provider-switch record (migration `148-provider-fallback-order.sql`), default
+  `['openai-codex','claude-code']`, each rung taken only if a readiness probe says it is available,
+  every fallback turn carrying a marker and a WARN. Readiness-gating is what makes re-adding
+  `claude-code` safe against ADR-128 Amendment 1's concern: an expired login is not-ready and is
+  skipped, never spent on.
+- `oshal-lanes/sec06-store`, branch **`sec06-pr-gates`** — 6 modified, 6 new. Splits the store gates
+  by cost: cheap ones (secret scan, dependency/action immutability, source-vs-generated drift) on
+  every PR as required checks; database gates stay `workflow_dispatch` as release-time. Also fixes
+  the workflow-file error that has failed the last four `store-ci` runs since August.
+- `oshal-lanes/adr140-p1`, branch **`adr140-accept-p1-print`** — 8 modified, 7 new. Accepts ADR-140
+  with the operator's actuate answer written in (confirm by default; pre-authorization is an explicit
+  owner opt-in scoped to exactly one operation on exactly one device, never a class, never default-on)
+  and builds P1, outbound confirm-gated print.
+- `oshal-lanes/presentron-store`, branch `fix/presentron-outline-unavailable` — 2 modified.
+
+**Approved, recorded on their own entries, not started:** deploy modes (`codeless` default, GitHub
+Issues as the tracker under the installer's own token), the AI Deal Finder design session, the Echo
+orphan-table retirement migration, the platform-wide stripping filter for fetched web content plus
+World's own outlet ranking, AI Office renderers taking a resolved look, `MOCK_OIDC` root
+auto-adoption with the non-operator 403 guard, the DevOps first slice, the 3D-printer package against
+the operator's **FlashForge Adventurer 5M** (probe the protocol first — the port-8899 claim in that
+entry is documented for the Finder and Adventurer 3/4, not the 5M), the drone API contract and stubs,
+and the camera and node-printer software halves on fakes.
+
+**Two engine wedges in one night, both at the 4.5 GB VM cap, both after a cold 37-container
+recreate.** The cap is `memory=4608MB` by deliberate operator choice — a coding posture that leaves
+host headroom; `6GB` is the serving size and is kept in `~/.wslconfig.bak-2026-09-20`. Restoring it
+needs `wsl --shutdown`, which is also the only real memory reclaim on this box, so it belongs in the
+same window as a deploy. Both wedges were recovered with the stop-Docker-tree → `wsl --shutdown` →
+relaunch-hidden → `oshal-up.sh` sequence. The monitoring overlay exits 255 on every ungraceful stop
+and does **not** come back on its own: run `scripts/monitoring-up.sh`, which also puts Prometheus on
+**9091** because `9090` is taken on this box.
+
+- **Done when:** every PR above carries a CONFIRMED verdict or is closed with its reason; the four
+  lane clones are finished and pushed or their work is deliberately abandoned and the clones removed;
+  the deploy has run so the box and `main` agree; and this entry is deleted rather than left to rot.
+
 ### Workspace isolation: ACCEPTED as a shared read-write mount, and what reopens it (operator, 2026-09-20)
 
 Every bot container mounts the same `oshal_workspace` volume at the same path, read-write, with no
