@@ -86,6 +86,35 @@ MEDIUM items keep 5–11, which is what the cross-references in this file and in
    trim, while a real decline past the stop measured from the engine's fill price still does — and the divergence
    between the two bases is visible on the surface rather than silently corrected.
 
+   **CLOSED 2026-09-21 — both clauses met, each proven by a guard that was watched fail.** The engine owns
+   its entry price: `withEngineCostBasis`
+   ([trading-engine-cost-basis.ts:104](../../src/app/trading-engine-cost-basis.ts#L104)) replays this book's
+   own filled orders average-cost with a reset on flat — the reset is exactly what the venue's adjusted
+   average does not do — and `washSaleStopVetoed`
+   ([portfolio.ts:268](../../src/features/trading/services/portfolio.ts#L268)) suppresses a stop that exists
+   only because the venue basis wanted it. The suppression is one-directional and can never create a stop.
+   The venue's `averagePrice` still lands on `avgEntryPrice`
+   ([schwab-broker-adapter.ts:672](../../src/features/trading/services/schwab-broker-adapter.ts#L672)),
+   which is the reconciliation-and-tax figure the fix asked to keep.
+   - *Clause 1, the adapter boundary.*
+     [tests/unit/trading-wash-sale-adapter-boundary.spec.ts](../../tests/unit/trading-wash-sale-adapter-boundary.spec.ts)
+     drives a recorded Schwab `?fields=positions` payload through `SchwabBrokerAdapter.getPositions()` and then
+     through the fire's own `computeExits` (stop + trailing + cap trim), over the CRM round trip this item
+     verified to the cent: 144.56 → 137.05 → re-buy 143.97, venue average 151.48. A venue average above the
+     engine's fill emits no stop and no trim; a decline to 130.00 — a real −9.7% on the 143.97 the engine paid —
+     still emits `stop_loss`; a holding with no engine fill emits nothing even past both the stop and the
+     per-name cap. Re-run 2026-09-21: `Tests  5 passed (5)`.
+     **Proven red** the same day by making `washSaleStopVetoed` return `false`, which is the defect: the CRM
+     row came back `{"reason": "stop_loss", "pnlPct": -5.598098758912061}` against an expected `[]`.
+   - *Clause 2, the divergence on the surface.* The store's `intelligent-trades` Exits card prints the venue
+     number with the engine's own beneath it wherever the two differ, and the foot names the adjustment and
+     counts the rows carrying one — `engineBasisPx` / `engineStopPx` on the payload
+     (`trading/src-routes/trading-routes-book-read-builders.ts:320`) and both cells in
+     `trading/tools/ui/view-account.js:547,562`, shipped in oshal-applications `47c7509` (#215). Guard:
+     `trading/tests/trading-basis-divergence.spec.ts`, which drives the ledger through `withEngineCostBasis`
+     into the exported route builder and then executes the card itself in a `vm`. Re-run 2026-09-21 against
+     this checkout: `Tests  11 passed (11)`.
+
 22. **Every position in a bound account is managed, including one a human placed.** `runAutopilot` reads LIVE broker
    positions rather than its own ledger, so a position the operator opened by hand is indistinguishable from one the
    engine opened. On an armed book that means `rebalanceTrims` sells the excess over the per-name cap at the next
@@ -102,6 +131,36 @@ MEDIUM items keep 5–11, which is what the cross-references in this file and in
    the account as the operator's — reported, never traded. **Done when:** a position present at the venue with no
    engine fill behind it survives a full fire (no trim, no rotation sell, no stop), a guard proves it over a real
    store/query boundary, and the surface names which holdings the engine is managing and which it is leaving alone.
+
+   **CLOSED 2026-09-21 — all three clauses met, and the guard was watched go red with the withholding removed.** The ownership
+   record the fix asked for is the engine's own ledger, read once per fire: `withEngineCostBasis`
+   ([trading-engine-cost-basis.ts:104](../../src/app/trading-engine-cost-basis.ts#L104)) marks every long its
+   filled orders do not fully cover `unmanaged`, and that one mark — not a second heuristic — is what every
+   order-decision path reads (`unmanagedSymbols`,
+   [portfolio.ts:177](../../src/features/trading/services/portfolio.ts#L177), plus the five sell rules in that
+   file). The operator's decision behind it is
+   [ADR-159](../adr/159-the-engine-manages-only-what-it-can-account-for.md); the position keeps counting toward
+   exposure, capital and drawdown, because it is real money at the venue.
+   - *Clauses 1 and 2, survives a full fire, over a real store boundary.*
+     [tests/unit/trading-dispatch-unmanaged-fire.spec.ts](../../tests/unit/trading-dispatch-unmanaged-fire.spec.ts)
+     drives a real `dispatchTradingSchedule` against a DISPOSABLE PostgreSQL container over a book whose ledger
+     covers only half its positions, and asserts no order of any kind for the uncovered half — through the stop,
+     the 2a short-timeframe breakdown, the 2b technical sell, the 2c bench, the entry dedup and both rotation
+     paths. A covered twin of each uncovered name sits in the same book and its order IS asserted, so a fire
+     that simply did nothing cannot pass. Re-run 2026-09-21: `Tests  5 passed (5)`.
+     **Proven red** the same day by making `withEngineCostBasis` return the uncovered position unmarked, which
+     is the pre-ADR-159 behaviour this item describes: three cases failed and the uncovered names took orders
+     again — `USTP sell 50`, `USEL sell 20`, `UCLD sell 10`, `UBRK sell 40` (twice on the rotation fire) and a
+     `UBUY buy 146`.
+   - *Clause 3, the surface.* The store's positions table badges every holding the engine will not trade and
+     says why in the operator's own words, and states the rule for the rest: "The engine manages every row that
+     carries no badge; a badged row it does not, and says why."
+     (`trading/tools/ui/shared-positions.js:289`, shipped in oshal-applications `7a3fd09`). The words and the
+     reason codes are the kernel's — `positionGovernance`
+     ([trading-position-governance.ts:186](../../src/app/trading-position-governance.ts#L186)) restates what the
+     order paths already do, so the surface never grows a second definition of "unmanaged"; a failed ledger read
+     reads NOT KNOWN rather than managed. Guard: `trading/tests/trading-unmanaged-positions.spec.ts`. Re-run
+     2026-09-21 against this checkout: `Tests  23 passed (23)`.
 
 ## Backlog — MEDIUM (signal quality)
 
