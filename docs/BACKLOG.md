@@ -1764,6 +1764,26 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### Platform SaaS account migration (paused by operator)
 - **Remaining:** when unpaused, recreate platform-owned services under `maintainer@emeraldcoastsystemsgroup.com`, re-mint/re-consent credentials, and record the YouTube relinking flow; personal brokerage accounts remain out of scope.
 - **Done when:** every platform credential traces to an ECSG-owned or explicitly demo-only account, old accounts are drained/closed as appropriate, the relinking video is published, and Twilio A2P is completed on the ECSG account.
+- **Decision (operator, 2026-09-21): STILL PAUSED — no paid tier today; and the Twilio clause in this
+  entry is not reproducible and should stop being repeated.** The 2026-08-01 directive stands: do not
+  upgrade, register or add a paid tier to any current demo SaaS account, because anything that is
+  paid for or registered once should happen once, on the ECSG account. Nothing on 2026-09-21 changed
+  that. **Correction to this entry's premise:** it carries "complete Twilio A2P on the ECSG account"
+  as remaining work on the assumption that A2P registration is blocking the SMS leg. Measured on the
+  box the same day: **zero** occurrences of `30034`, "not registered" or "A2P" in the api's last
+  seven days of logs, and zero Twilio log activity of any kind in that window, against four
+  `TWILIO_*` keys configured. The operator's account: Twilio works, and it is part of the swarm core.
+  So the A2P clause is UNVERIFIED on this deployment rather than a known blocker — it is not to be
+  restated as a blocker without a reproduction, and if carrier filtering is ever observed the
+  evidence goes here first. **Direction recorded for when the pause lifts** (the operator's framing,
+  not a commitment): selling as SaaS stays plausible **product by product** rather than platform-wide
+  — a package such as little-monsters could carry a subscription where the subscriber uses the
+  platform's embedded inference instead of bringing a key — but the hardware to serve a high-end model
+  in-house does not exist today, so what is actually being held right now is free, multi-user. And
+  consistent with the "principle of one" recorded under the seeding-repair entry: a user who wants
+  their own Twilio account must be able to configure one as a connector, while the swarm's own Twilio
+  stays the default for anything with nothing configured. (PM asked whether the pause had changed;
+  the operator re-affirmed it and corrected the Twilio premise.)
 
 ### Every deterministic service-route schedule on this box is refused under ADR-149 enforce (2026-09-14)
 - **Observed (api log from the 22:31Z recreate to 23:25Z):** seven `ApplicationExecutionDeniedError` /
