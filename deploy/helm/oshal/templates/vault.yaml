@@ -3,14 +3,50 @@
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial (ADR-129 amendment) — in-cluster Vault in DEV MODE (compose oshal-vault parity: `server -dev`, in-memory, auto-unsealed, fixed root token), main role only. No compose profile, so a default `up` starts it. Deliberately NOT a production secrets posture: dev mode loses everything on restart. A real deployment sets inCluster: false and points VAULT_ADDR/VAULT_TOKEN at a real Vault through api.envSecret — which is why there is no PVC here to imply durability it does not have.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — the Helm half of "Production Vault hardening": no more `server -dev`, no devRootToken, no root token anywhere in the chart. Vault runs in server mode as a one-replica StatefulSet with file storage on its own claim (data-oshal-vault-0) and a config rendered from values (listener, storage, ui) into the oshal-vault-config ConfigMap. TLS is a values switch (infra.vault.tls) that defaults to the plain in-cluster listener, because the certificate source is not decided yet. Unseal custody is Shamir with the operator (no cloud-KMS auto-unseal), so a fresh install comes up SEALED and UNINITIALIZED until the operator runs `vault operator init` / `unseal` (README "Vault runbook"). The probes ask /v1/sys/health with sealedcode/uninitcode 200: a sealed Vault is a healthy process doing what it should, so it is Ready (`helm --wait` completes, and the api's status call reads "sealed" instead of "unreachable") and never restart-looped by liveness. Runs as the image's vault user (uid 100, gid 1000) with every capability dropped: SKIP_CHOWN/SKIP_SETCAP keep the entrypoint from needing root, and disable_mlock replaces the IPC_LOCK capability the dev pod added (no swap is the Kubernetes node default). Guard: tests/unit/chart-vault-server.spec.ts.
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | Production-readiness baseline (chart 0.5.0): resources from infra.vault.resources, storageClassName on the claim template, and the shared seccomp/minimal-capability helpers in place of the inline copies. Guard: tests/unit/chart-production-baseline.spec.ts.
 {{- if and (eq .Values.role "main") .Values.infra.vault.inCluster }}
+{{- $v := .Values.infra.vault }}
+{{- $scheme := ternary "https" "http" $v.tls.enabled }}
+{{- if and $v.tls.enabled (not $v.tls.secretName) }}
+{{- fail "infra.vault.tls.enabled=true needs infra.vault.tls.secretName (default oshal-vault-tls): a kubernetes.io/tls Secret you create, carrying tls.crt, tls.key and ca.crt, for a certificate that names oshal-vault" }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oshal-vault-config
+  labels:
+    {{- include "oshal.labels" . | nindent 4 }}
+data:
+  vault.hcl: |
+    # Rendered by the oshal chart from infra.vault. Server mode: sealed until the operator unseals.
+    ui = {{ $v.ui }}
+    # The pod drops every capability (IPC_LOCK included), so Vault may not mlock; Kubernetes
+    # nodes run without swap by default, which is what mlock guards against.
+    disable_mlock = true
+    api_addr = "{{ $scheme }}://oshal-vault:8200"
+    listener "tcp" {
+      address = "0.0.0.0:8200"
+      {{- if $v.tls.enabled }}
+      tls_cert_file = "/vault/tls/tls.crt"
+      tls_key_file = "/vault/tls/tls.key"
+      {{- else }}
+      # Plain in-cluster listener: the TLS source is not decided yet (infra.vault.tls).
+      tls_disable = 1
+      {{- end }}
+    }
+    storage "file" {
+      path = "/vault/data"
+    }
+---
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: oshal-vault
   labels:
     {{- include "oshal.labels" . | nindent 4 }}
 spec:
+  serviceName: oshal-vault
   replicas: 1
   selector:
     matchLabels:
@@ -22,30 +58,100 @@ spec:
         {{- include "oshal.labels" . | nindent 8 }}
       annotations:
         sidecar.istio.io/inject: "false"
+        # A config change restarts the pod (and so re-seals Vault: plan the unseal).
+        checksum/config: {{ toJson (dict "ui" $v.ui "tls" $v.tls) | sha256sum | trunc 16 }}
     spec:
+      # The image's vault user (uid 100, gid 1000); fsGroup makes the claim writable to it.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        {{- include "oshal.podSeccomp" . | nindent 8 }}
       containers:
         - name: vault
-          image: {{ .Values.infra.vault.image }}
-          args: ["server", "-dev"]
+          image: {{ $v.image }}
+          # `vault server -config=...` through the image entrypoint. NOT `server`: the entrypoint
+          # expands a bare `server` with -dev-* flags; and never `-dev`.
+          args: ["vault", "server", "-config=/vault/config/vault.hcl"]
           env:
-            - name: VAULT_DEV_ROOT_TOKEN_ID
-              value: {{ .Values.infra.vault.devRootToken | quote }}
-            - name: VAULT_DEV_LISTEN_ADDRESS
-              value: 0.0.0.0:8200
+            # Already the vault user: the entrypoint must not chown or setcap (both need root).
+            - name: SKIP_CHOWN
+              value: "true"
+            - name: SKIP_SETCAP
+              value: "true"
+            # For `kubectl exec ... vault operator init|unseal` inside the pod.
             - name: VAULT_ADDR
-              value: http://127.0.0.1:8200
+              value: {{ printf "%s://127.0.0.1:8200" $scheme }}
+            {{- if $v.tls.enabled }}
+            - name: VAULT_CACERT
+              value: /vault/tls/ca.crt
+            - name: VAULT_TLS_SERVER_NAME
+              value: oshal-vault
+            {{- end }}
           securityContext:
-            capabilities:
-              add: ["IPC_LOCK"]
+            {{- include "oshal.minimalContainerSecurity" . | nindent 12 }}
+          resources:
+            {{- toYaml $v.resources | nindent 12 }}
           ports:
             - containerPort: 8200
+          # Sealed (503) and uninitialized (501) are overridden to 200: the process is healthy and
+          # waiting for its operator. Ready lets `helm --wait` finish and lets the api read "sealed";
+          # a liveness probe that failed on sealed would restart it forever, sealed each time.
+          startupProbe:
+            httpGet:
+              path: /v1/sys/health?standbyok=true&sealedcode=200&uninitcode=200
+              port: 8200
+              scheme: {{ upper $scheme }}
+            periodSeconds: 5
+            failureThreshold: 24
           readinessProbe:
             httpGet:
-              path: /v1/sys/health
+              path: /v1/sys/health?standbyok=true&sealedcode=200&uninitcode=200
               port: 8200
-            initialDelaySeconds: 5
+              scheme: {{ upper $scheme }}
             periodSeconds: 10
-            failureThreshold: 12
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /v1/sys/health?standbyok=true&sealedcode=200&uninitcode=200
+              port: 8200
+              scheme: {{ upper $scheme }}
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          volumeMounts:
+            - name: data
+              mountPath: /vault/data
+            - name: config
+              mountPath: /vault/config
+              readOnly: true
+            {{- if $v.tls.enabled }}
+            - name: tls
+              mountPath: /vault/tls
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: oshal-vault-config
+        {{- if $v.tls.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ $v.tls.secretName }}
+        {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with include "oshal.storageClassName" (dict "root" $ "override" $v.storageClassName) }}
+        {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ $v.storage }}
 ---
 apiVersion: v1
 kind: Service

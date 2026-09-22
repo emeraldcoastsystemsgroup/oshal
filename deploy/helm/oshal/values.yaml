@@ -5,6 +5,13 @@
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — defaults for the MAIN role (controller + infra + relay). Bot-pod overrides in values-bot-pod.example.yaml. Trust rule: bot-pod clusters NEVER receive DATABASE_URL.
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | 0.2.0 (ADR-129) — codeless-install defaults: image pulls ghcr.io/emeraldcoastsystemsgroup/oshal-bot (was a CHANGE-ME under a retired image name); relay + Kyma APIRule default OFF (generic clusters have neither headscale nor the APIRule CRD — both stay as opt-ins); api Service gains type/nodePort; LLM defaults follow the codex fleet floor (openai-codex / gpt-5.5 / CODEX_REASONING_EFFORT, compose SEQ-13 parity); fleet presets kernel|full|custom with the lists GENERATED from docker-compose.oshal-local.yml by scripts/generate-chart-fleet.mjs (guard: tests/unit/chart-fleet-parity.spec.ts); bots connect as oshal_bot (K5), overridable via swarm.botDatabaseUrl.
 # 3 | maintainer@emeraldcoastsystemsgroup.com   | swarm.extraEnv (default {}): non-secret env rendered into the oshal-shared-env ConfigMap, so it reaches EVERY runtime (the api and every bot envFrom it). Found on the first Docker Desktop install (2026-09-21): compose sets platform switches such as APP_PACKAGE_DYNAMIC_ROUTES=1 for every container and the chart had no way to, so every ADR-149 protected store app failed activation closed. Secrets never go here (api.envSecret / botDefaults.envSecret). A key the chart already sets in that ConfigMap fails the render (templates/shared-env-configmap.yaml), and explicit per-workload env still wins over it. Guard: tests/unit/chart-shared-env-extra.spec.ts.
+# 4 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — the rbac.botLauncher comment records that the api keeps BOT_DATABASE_URL with the launcher off (templates/api.yaml SEQ 6): its bootstrap provisions oshal_bot for the chart-declared bots and refused to start without it. Guard: tests/unit/chart-bootstrap-env.spec.ts.
+# 5 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — infra.postgres.appPassword / botPassword (dev defaults oshal-app-dev / oshal-bot-dev): the oshal_app and oshal_bot passwords get a values path. api.yaml hardcoded oshal_app:oshal-app-dev, so the only escape was taking Postgres out of the cluster. jwtSecret, arangodb.rootUser/rootPassword and botDatabaseUrl are now rendered into chart-managed Secrets instead of the ConfigMap or literal env (templates/secrets.yaml), and the swarm.extraEnv comment records that the render refuses a chart-owned or credential-shaped key there. Guard: tests/unit/chart-credentials.spec.ts.
+# 6 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — infra.vault leaves dev mode: devRootToken is gone, and storage / ui / tls (enabled, secretName) configure a server-mode Vault on its own claim. tls defaults off (plain in-cluster listener) and the backup destination is unset, both because the operator has not named them yet; the comments say so. Guard: tests/unit/chart-vault-server.spec.ts.
+# 7 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — production-readiness baseline: resources (requests cpu+memory, a memory limit) for the nine infra workloads (infra.<name>.resources) and the relay's two containers; storageClassName chart-wide plus a per-claim override (infra.<name>.storageClassName, api.outputStorageClassName, swarm.workspaceStorageClassName, relay.stateStorageClassName), empty = the cluster default; pinned tags for every floating infra image (timescaledb 2.30.1-pg16, code-server 4.138.0, speaker-diarization 2.1.0-beta.1, ollama 0.34.2, tailscale v1.102.4, socat 1.8.1.3 - each the tag whose digest the floating tag resolved to on 2026-09-21, checked read-only against the registry); infra.diarization.pullPolicy so the registry sidecar no longer inherits a side-loaded platform image's Never. Guard: tests/unit/chart-production-baseline.spec.ts.
+# 8 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — the rbac comment records that a runtime-launched bot does not read oshal-shared-secret (the core launcher's envFrom is oshal-shared-env + oshal-bot-env), so it needs JWT_SECRET copied into oshal-bot-env, and where the copy command is printed. Guard: tests/unit/chart-dynamic-bot-env.spec.ts.
+# 9 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — the swarm.extraEnv comment records the credential-name rule's known false positive: a non-secret switch such as compose's REMOTE_CLIENT_REQUIRE_NODE_TOKEN is refused too, and goes on the workload that reads it (api.extraEnv). Guard: tests/unit/chart-shared-env-extra.spec.ts.
+# 10 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — limitRange.enabled (default true, main role): the oshal-container-defaults LimitRange gives botDefaults.resources to any container that sets none, because the runtime bot launcher sets no resources and a ResourceQuota that requires requests would refuse its pods. The rbac comment now says plainly that the missing JWT_SECRET is a 0.5.0 regression for runtime bots on the default posture, names the one-line core fix, and records that such a bot also lacks a securityContext and liveness/startup probes, which no LimitRange can default. Guard: tests/unit/chart-runtime-bot-defaults.spec.ts.
 #
 # Defaults model the compose stack (docker-compose.oshal-local.yml) with DNS parity:
 # Services are named oshal-redis / oshal-db / oshal-chromadb / oshal-api / oshal-local-api
@@ -27,6 +34,13 @@ image:
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 
+# StorageClass for EVERY claim the chart creates (the PVCs and each StatefulSet's
+# volumeClaimTemplate). Empty = omitted = the cluster's default class. Each claim
+# also has its own override (infra.<name>.storageClassName, api.outputStorageClassName,
+# swarm.workspaceStorageClassName, relay.stateStorageClassName), which wins over this.
+# A StatefulSet's claim template is immutable: set this before the first install.
+storageClassName: ""
+
 # ── Tailnet (headscale) — used only when relay.enabled ────────────────────────
 tailnet:
   loginServer: "https://headscale.example.com"
@@ -46,8 +60,16 @@ tailnet:
 # REQUIRES it — that role's entire transport is the relay).
 relay:
   enabled: false
-  tailscaleImage: tailscale/tailscale:stable
-  socatImage: alpine/socat:latest
+  # Pinned tags (the floating :stable / :latest resolved to these on 2026-09-21).
+  tailscaleImage: tailscale/tailscale:v1.102.4
+  socatImage: alpine/socat:1.8.1.3
+  stateStorageClassName: ""
+  tailscaleResources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits: { memory: 256Mi }
+  forwarderResources:
+    requests: { cpu: 10m, memory: 16Mi }
+    limits: { memory: 64Mi }
   # main role: listeners the tailnet can reach, forwarded to in-cluster Services.
   # (Bots on contributor clusters dial mainRelayIP:6379 / :5000.)
   inbound:
@@ -74,17 +96,38 @@ infra:
     image: postgres:16-alpine
     database: oshal
     user: oshal
-    # Dev parity with compose. Override via api.envSecret DATABASE_URL for real deploys.
+    # Superuser (bootstrap) password. Dev parity with compose.
     password: oshal
+    # Passwords of the two least-privilege runtime roles the api's app-role bootstrap
+    # provisions: oshal_app (the api's DATABASE_URL) and oshal_bot (every bot's
+    # DATABASE_URL, unless swarm.botDatabaseUrl overrides it). The defaults are the
+    # committed dev values; anything else must be 48-128 hex characters
+    # (openssl rand -hex 24) and the two must differ - the render refuses otherwise,
+    # because the bootstrap would. The DSNs are built into the chart's
+    # oshal-db-credentials Secret; a bot reads only its own key of it.
+    appPassword: oshal-app-dev
+    botPassword: oshal-bot-dev
     storage: 8Gi
+    storageClassName: ""
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { memory: 2Gi }
   redis:
     inCluster: true
     image: redis:7-alpine
     storage: 2Gi
+    storageClassName: ""
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { memory: 1Gi }
   chromadb:
     inCluster: true
     image: chromadb/chroma:0.4.24
     storage: 4Gi
+    storageClassName: ""
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { memory: 2Gi }
   # ── The rest of the shared-service tier ────────────────────────────────────
   # These carry NO compose profile: they start on every default `docker compose
   # up`, which makes them core framework, not extras. Omitting them ships a
@@ -95,26 +138,60 @@ infra:
   tsdb:
     # TimescaleDB — the trading/world series store (compose oshal-tsdb).
     inCluster: true
-    image: timescale/timescaledb:latest-pg16
+    # Pinned (latest-pg16 resolved to this digest on 2026-09-21).
+    image: timescale/timescaledb:2.30.1-pg16
     database: oshal_ts
     user: oshal
     password: oshal
     storage: 8Gi
+    storageClassName: ""
+    # timescaledb-tune (the image's first-init script) sizes shared_buffers and
+    # friends from THIS memory limit when one is set, and from the node's memory
+    # when not; it never re-runs on an existing volume. A volume first initialised
+    # without a limit needs a limit that covers what the tune chose then.
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { memory: 2Gi }
   arangodb:
     # Graph tier: RCA topology, jobs↔companies↔recruiters, world graph.
     inCluster: true
     image: arangodb:3.11
+    # Rendered into the oshal-shared-secret Secret (never the ConfigMap); the
+    # arangodb container, the api and every bot read the same key.
     rootUser: root
     rootPassword: oshal
     storage: 4Gi
+    storageClassName: ""
+    # ArangoDB is told this memory limit (ARANGODB_OVERRIDE_DETECTED_TOTAL_MEMORY)
+    # so it sizes its caches to the container, not to the node.
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { memory: 2Gi }
   vault:
-    # DEV MODE, exactly like compose: in-memory, auto-unsealed, fixed root token.
-    # Fine for a single-box swarm; a real secrets posture replaces this (point
-    # VAULT_ADDR/VAULT_TOKEN at a real Vault via api.envSecret and set
-    # inCluster: false).
+    # SERVER MODE (never -dev): file storage on its own claim (data-oshal-vault-0),
+    # config rendered from these values. The chart ships NO root token and gives the
+    # api NO Vault token. Unseal custody is Shamir, held by the operator: a fresh
+    # install comes up SEALED and UNINITIALIZED, and so does every restart after the
+    # operator's `vault operator unseal`. Until then the DevOps Vault console answers
+    # 503; everything else runs. README "Vault runbook" has init/unseal.
     inCluster: true
     image: hashicorp/vault:1.18
-    devRootToken: oshal-dev-root
+    storage: 1Gi
+    storageClassName: ""
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { memory: 256Mi }
+    ui: true
+    tls:
+      # NOT DECIDED YET: the certificate source. Default off = the plain in-cluster
+      # listener (http://oshal-vault:8200). On = the listener serves the
+      # kubernetes.io/tls Secret named in secretName, which you create (tls.crt,
+      # tls.key, ca.crt; the certificate must name oshal-vault); the api then dials
+      # https://oshal-vault:8200 and trusts ca.crt through NODE_EXTRA_CA_CERTS.
+      enabled: false
+      secretName: oshal-vault-tls
+    # Backups: NOT DECIDED YET either. The chart ships no backup job for
+    # data-oshal-vault-0 (README "Durability boundary").
   codeServer:
     # Workspace IDE the cockpit's /code bridge redirects to. Serves the shared
     # workspace PVC read-write.
@@ -127,7 +204,11 @@ infra:
     # Do NOT switch this to NodePort/LoadBalancer, or put it behind an ingress,
     # without adding authentication in front of it.
     inCluster: true
-    image: codercom/code-server:latest
+    # Pinned (:latest resolved to this digest on 2026-09-21).
+    image: codercom/code-server:4.138.0
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits: { memory: 1Gi }
     serviceType: ClusterIP
     # Browser-facing URL for the cockpit's /code bridge. Empty = the port-forward
     # address above (which is what the cockpit link assumes).
@@ -137,7 +218,15 @@ infra:
     # cluster. Compose BUILDS it from services/speaker-diarization; k8s pulls the
     # published image (same artifact, no build on the install path).
     inCluster: true
-    image: ghcr.io/emeraldcoastsystemsgroup/oshal-speaker-diarization:latest
+    # Pinned to the release tag scripts/publish-images.sh pushes (the package.json
+    # version); :latest and every sha-* tag resolved to this digest on 2026-09-21.
+    image: ghcr.io/emeraldcoastsystemsgroup/oshal-speaker-diarization:2.1.0-beta.1
+    # Its own pull policy: this is a registry image, NOT the side-loaded platform
+    # image whose image.pullPolicy may be Never.
+    pullPolicy: IfNotPresent
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { memory: 1Gi }
     serviceKey: oshal-local-speaker-service-key
     maxAudioBytes: "16777216"
     # Controller imports stop at 55s; three extra seconds tolerate rounding.
@@ -146,8 +235,14 @@ infra:
     # Local-LLM engine. OFF by default — matching compose, where it is gated
     # behind the `local-llm` profile and a default `up` never starts it.
     inCluster: false
-    image: ollama/ollama:latest
+    # Pinned (:latest resolved to this digest on 2026-09-21).
+    image: ollama/ollama:0.34.2
     storage: 20Gi
+    storageClassName: ""
+    # Loaded models live in this memory: size the limit to the models you pull.
+    resources:
+      requests: { cpu: 250m, memory: 1Gi }
+      limits: { memory: 8Gi }
     # Models pulled once at first start (compose oshal-ollama-pull parity).
     pullModels: []
 
@@ -177,6 +272,7 @@ api:
     MOCK_OIDC: "true"
     OSHAL_APP_ROLE_BOOTSTRAP: "true"
   outputStorage: 8Gi
+  outputStorageClassName: ""
   resources:
     requests: { cpu: 500m, memory: 1Gi }
     limits: { memory: 3Gi }
@@ -203,23 +299,34 @@ swarm:
   logLevel: info
   queuePollIntervalMs: "30000"
   # any-bot JS layer refuses to boot in NODE_ENV=production without JWT_SECRET.
-  # Dev parity with the committed compose value; override via api.envSecret /
-  # botDefaults.envSecret (envFrom secretRef is listed after the ConfigMap, so
-  # the Secret's value wins) for anything beyond your own machine.
+  # Dev parity with the committed compose value, rendered into the chart's
+  # oshal-shared-secret Secret (never the ConfigMap). Set this value, or override
+  # it via api.envSecret / botDefaults.envSecret (listed after the chart Secret,
+  # so the operator's value wins), for anything beyond your own machine.
   jwtSecret: oshal-local-dev-secret-do-not-use-in-prod
   # K5 parity: bots connect as the least-privilege oshal_bot role (migration 099
-  # creates it at api bootstrap; NOSUPERUSER, RLS enforced). Empty = the committed
-  # dev-parity URL for the in-cluster Postgres. Managed-Postgres deployments set
+  # creates it at api bootstrap; NOSUPERUSER, RLS enforced). Empty = the in-cluster
+  # DSN built from infra.postgres.botPassword. Managed-Postgres deployments set
   # the real oshal_bot URL here (or a DATABASE_URL in botDefaults.envSecret has no
-  # effect — explicit env beats envFrom; this value is the override point).
+  # effect — explicit env beats envFrom; this value is the override point). It is
+  # rendered into the oshal-db-credentials Secret, never a literal env entry.
   botDatabaseUrl: ""
   # Cluster-local shared workspace (RWO: single-node clusters — the default
   # target — schedule every pod together; multi-node needs an RWX StorageClass).
   workspaceStorage: 5Gi
+  # The workspace claim carries helm.sh/resource-policy: keep - `helm uninstall`
+  # leaves it (and every file the swarm wrote) in place; delete it by hand.
+  workspaceStorageClassName: ""
   # Non-secret env for EVERY runtime (api + bots), rendered into the shared ConfigMap.
-  # Secrets never go here — use api.envSecret / botDefaults.envSecret. A key the chart
-  # already sets in that ConfigMap (REDIS_URL, LOG_LEVEL, ...) fails the render: set
-  # it through the chart's own value instead.
+  # Secrets never go here — use api.envSecret / botDefaults.envSecret. The render
+  # enforces it: a key the chart already sets (REDIS_URL, LOG_LEVEL, ... in the
+  # ConfigMap, or JWT_SECRET / ARANGO_ROOT_* in its oshal-shared-secret Secret) fails,
+  # and so does any credential-shaped name (SECRET, PASSWORD, PASSWD, TOKEN, CREDENTIAL,
+  # a name ending in KEY, DATABASE_URL, *_DSN), so extraEnv cannot put a credential
+  # back into a ConfigMap. Set a chart-owned key through the chart's own value instead.
+  # The name rule is broad on purpose, so it also refuses a switch that is not a
+  # secret but whose name matches, such as compose's REMOTE_CLIENT_REQUIRE_NODE_TOKEN.
+  # Set a switch like that on the workload that reads it (api.extraEnv for that one).
   extraEnv: {}
 
 # ── Bots (both roles) ─────────────────────────────────────────────────────────
@@ -234,6 +341,21 @@ botDefaults:
   resources:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { memory: 1Gi }
+
+# ── Namespace container defaults (main role only) ─────────────────────────────
+# enabled renders the oshal-container-defaults LimitRange: any container in the
+# namespace that sets no resources gets botDefaults.resources at admission (its
+# requests as the default requests, its memory limit as the default limit). Every
+# container this chart renders sets its own, so this changes none of them. It is
+# for the bots the controller launches at runtime (rbac.botLauncher): the launcher
+# sets no resources, so without it they run BestEffort and a ResourceQuota that
+# requires requests refuses them. Following botDefaults keeps a runtime bot no
+# larger than a chart bot. No CPU limit is defaulted, because it would also land
+# on every chart container; a CPU limit in botDefaults fails the render while this
+# is on. A LimitRange cannot default a securityContext or a probe, so runtime bots
+# still lack both (README "Probes, resources and Pod Security").
+limitRange:
+  enabled: true
 
 # Which fleet ships: kernel (the Tier-0 kernel bots — install default), full (every
 # compose bot-node eligible on k8s), or custom (exactly the `bots:` list below).
@@ -367,7 +489,18 @@ fleets:
 #
 # botLauncher: false withholds that permission — the controller then degrades to
 # persona-only agents (a create-and-start rolls back rather than half-launching),
-# and apps whose bots run inline on the api still work.
+# and apps whose bots run inline on the api still work. The api keeps its
+# BOT_DATABASE_URL either way: its app-role bootstrap provisions oshal_bot for the
+# chart-declared bots and refuses to start without it.
+#
+# A bot launched this way reads oshal-shared-env and the optional oshal-bot-env
+# Secret only, not oshal-shared-secret, so without JWT_SECRET it fails to boot.
+# That is a 0.5.0 regression on this default posture: 0.4.0 kept JWT_SECRET in
+# the ConfigMap the launcher reads. Copy the chart Secret's keys into
+# oshal-bot-env; NOTES.txt and the README "Credentials" section print the command.
+# The fix is one line of core (oshal-shared-secret in the launcher's envFrom),
+# awaiting approval in docs/BACKLOG.md. Such a bot also sets no securityContext,
+# liveness or startup probe, or resources; limitRange above supplies resources only.
 rbac:
   create: true
   serviceAccountName: oshal-api

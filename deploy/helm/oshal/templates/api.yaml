@@ -7,6 +7,10 @@
 # 3 | maintainer@emeraldcoastsystemsgroup.com   | Cold-start fix #2 (virgin DB): apply-rls prerequisites hard-reference tickets/workspaces/chat_tasks, but those legacy core tables live in NO migration file — they are lazily created by the server's schema-ensure chokepoints (which is why compose, with its organically-grown DB, never hit this). Bootstrap now runs the canonical ensureTicketSchema/ensureWorkspaceSchema/ensureConversationStoreSchema (idempotent, born-with-RLS via buildOwnerRlsPolicyStatements) as the superuser BEFORE the RLS enforce; OSHAL_SCHEMA_BOOTSTRAP is forced empty for that call so a validate-only pod env can never silently skip creation.
 # 4 | maintainer@emeraldcoastsystemsgroup.com   | 0.2.0 — seeding-repair parity (compose SEQ 5 of bot-entrypoint.sh): global-config.json now copies IF-MISSING (cp -n) like secrets.json — the old cp -f force-reimposed the seed on every pod restart, silently resetting runtime provider config. Service gains spec.type + nodePort (api.service values) so a single-box cluster exposes the cockpit without an ingress controller.
 # 5 | maintainer@emeraldcoastsystemsgroup.com   | 0.3.0 — (a) store-package staging as an initContainer: packages land in the workspace PVC's deployed-apps/ before the api boots, because auto-load registers bots/surfaces once at boot; idempotent in compatible mode, FATAL on failure (booting without an app the operator asked for is the silent-cap failure this whole tier exists to avoid). (b) The shared-service URLs the platform actually reads — TSDB_URL (trading/world series), VAULT_ADDR/TOKEN, SPEAKER_DIARIZATION_URL/KEY — emitted only when their service is inCluster, so switching one off degrades cleanly instead of pointing the feature at a refused connection.
+# 6 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — BOT_DATABASE_URL is emitted whenever the chart runs Postgres in-cluster, no longer only inside the rbac.botLauncher block. With botLauncher=false the api still ran the app-role bootstrap (OSHAL_APP_ROLE_BOOTSTRAP=true), provision-app-role.mjs refused with "BOT_DATABASE_URL is required", and the command's `exit 1` restarted the pod forever on a posture values.yaml documents as supported. Of the two ways out, this one keeps least privilege intact: the chart-declared bots connect as oshal_bot whatever botLauncher is, so the role must be provisioned either way (skipping the bot half of the bootstrap would leave it without LOGIN, and the script provisions both roles in one pass with no bot-less mode), and the api already holds the superuser BOOTSTRAP_DATABASE_URL, so also holding the oshal_bot DSN widens nothing. Bots still never see anything but the oshal_bot DSN. OSHAL_BOT_IMAGE and OSHAL_IMAGE_PULL_POLICY stay launcher-only. Guard: tests/unit/chart-bootstrap-env.spec.ts.
+# 7 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — no credential is a literal here any more. DATABASE_URL, BOOTSTRAP_DATABASE_URL and BOT_DATABASE_URL are secretKeyRefs into the chart's oshal-db-credentials Secret (templates/secrets.yaml); DATABASE_URL was the literal oshal_app:oshal-app-dev with no values path, and its password now comes from infra.postgres.appPassword. They stay explicit entries, so they still beat envFrom and managed Postgres still supplies them through api.envSecret with inCluster=false. JWT_SECRET and ARANGO_ROOT_* arrive by envFrom from oshal-shared-secret, listed after the ConfigMap and before api.envSecret. Guard: tests/unit/chart-credentials.spec.ts.
+# 8 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — no Vault root token on the api. VAULT_TOKEN was the literal infra.vault.devRootToken, the dev Vault's root token; the chart's Vault is now server mode, sealed until its operator unseals it (templates/vault.yaml), and the chart supplies the api no Vault token at all: src reads only VAULT_TOKEN and has no AppRole login to obtain a scoped one. Without it the DevOps Vault console answers 503 vault_not_configured and nothing else in the api reads Vault. VAULT_ADDR follows infra.vault.tls (https when on, and the listener's ca.crt, only that key, is mounted and named in NODE_EXTRA_CA_CERTS). Guard: tests/unit/chart-vault-server.spec.ts.
+# 9 | maintainer@emeraldcoastsystemsgroup.com   | Production-readiness baseline (chart 0.5.0): RuntimeDefault seccomp; the api and its stage-packages init container run with no privilege escalation and every capability dropped except DAC_OVERRIDE (the oshal image is root with no USER, and the shared workspace holds files code-server writes as uid 1000); startup (10 min: Postgres wait, migrations, RLS, role provisioning) and liveness probes reuse /api/health; the init container carries the api's resources; the output claim honours storageClassName. Guard: tests/unit/chart-production-baseline.spec.ts.
 {{- if eq .Values.role "main" }}
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -16,6 +20,9 @@ metadata:
     {{- include "oshal.labels" . | nindent 4 }}
 spec:
   accessModes: [ReadWriteOnce]
+  {{- with include "oshal.storageClassName" (dict "root" $ "override" .Values.api.outputStorageClassName) }}
+  {{ . }}
+  {{- end }}
   resources:
     requests:
       storage: {{ .Values.api.outputStorage }}
@@ -39,6 +46,9 @@ spec:
         app.kubernetes.io/name: oshal-api
         {{- include "oshal.labels" . | nindent 8 }}
     spec:
+      # The oshal image has no USER (it runs as root), so no runAsNonRoot here.
+      securityContext:
+        {{- include "oshal.podSeccomp" . | nindent 8 }}
       {{- if .Values.rbac.create }}
       serviceAccountName: {{ .Values.rbac.serviceAccountName }}
       {{- end }}
@@ -86,6 +96,12 @@ spec:
                   || { echo "package $p FAILED to stage — exiting so the pod restarts rather than booting without an app you asked for"; exit 1; };
               done
               echo "package staging complete"
+          securityContext:
+            {{- include "oshal.platformContainerSecurity" . | nindent 12 }}
+          # Init containers count toward a request-requiring ResourceQuota too. The api's own
+          # figures: an init container runs before the api, so the pod's request does not grow.
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
           volumeMounts:
             - name: workspace
               mountPath: /app/workspace-shared
@@ -123,6 +139,10 @@ spec:
           envFrom:
             - configMapRef:
                 name: oshal-shared-env
+            # Chart-managed credentials (JWT_SECRET, ARANGO_ROOT_*). After the ConfigMap,
+            # before api.envSecret: an operator Secret still wins a duplicate key.
+            - secretRef:
+                name: oshal-shared-secret
             {{- if .Values.api.envSecret }}
             - secretRef:
                 name: {{ .Values.api.envSecret }}
@@ -144,12 +164,30 @@ spec:
             - name: ENABLE_AGENT_SCHEDULER
               value: "true"
             {{- if .Values.infra.postgres.inCluster }}
-            # Dev-parity URLs (compose defaults). Managed-Postgres deployments set
-            # infra.postgres.inCluster=false and provide both via api.envSecret.
+            # In-cluster DSNs, from the chart's oshal-db-credentials Secret (passwords:
+            # infra.postgres.password / appPassword / botPassword). Explicit entries still
+            # beat envFrom, so managed-Postgres deployments set
+            # infra.postgres.inCluster=false and provide all three via api.envSecret.
             - name: DATABASE_URL
-              value: postgresql://oshal_app:oshal-app-dev@oshal-db:5432/{{ .Values.infra.postgres.database }}
+              valueFrom:
+                secretKeyRef:
+                  name: oshal-db-credentials
+                  key: DATABASE_URL
             - name: BOOTSTRAP_DATABASE_URL
-              value: postgresql://{{ .Values.infra.postgres.user }}:{{ .Values.infra.postgres.password }}@oshal-db:5432/{{ .Values.infra.postgres.database }}
+              valueFrom:
+                secretKeyRef:
+                  name: oshal-db-credentials
+                  key: BOOTSTRAP_DATABASE_URL
+            # K5: the oshal_bot DSN. NOT gated on rbac.botLauncher: the app-role
+            # bootstrap (provision-app-role.mjs) provisions oshal_bot for the
+            # chart-declared bots too and refuses to run without this URL, so gating
+            # it crash-looped the api on the documented botLauncher=false degrade.
+            # The dynamic launcher also hands it to the bots it creates.
+            - name: BOT_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: oshal-db-credentials
+                  key: BOT_DATABASE_URL
             {{- end }}
             {{- if .Values.rbac.botLauncher }}
             # What the dynamic bot launcher renders into a Deployment. The image is
@@ -159,12 +197,6 @@ spec:
               value: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
             - name: OSHAL_IMAGE_PULL_POLICY
               value: {{ .Values.image.pullPolicy }}
-            {{- if .Values.infra.postgres.inCluster }}
-            # K5: dynamically-launched bots get the same least-privilege DSN as
-            # chart-declared ones.
-            - name: BOT_DATABASE_URL
-              value: {{ .Values.swarm.botDatabaseUrl | default (printf "postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/%s" .Values.infra.postgres.database) | quote }}
-            {{- end }}
             {{- end }}
             {{- if .Values.infra.tsdb.inCluster }}
             # Trading + world-intelligence series store (compose api-env parity).
@@ -172,10 +204,18 @@ spec:
               value: postgresql://{{ .Values.infra.tsdb.user }}:{{ .Values.infra.tsdb.password }}@oshal-tsdb:5432/{{ .Values.infra.tsdb.database }}
             {{- end }}
             {{- if .Values.infra.vault.inCluster }}
+            # The address only. The chart gives the api NO Vault token: the in-cluster Vault
+            # is sealed and uninitialized until its operator unseals it, and src has no
+            # AppRole login to mint one from. With no VAULT_TOKEN the DevOps Vault console
+            # answers 503 vault_not_configured (README "Vault runbook").
             - name: VAULT_ADDR
-              value: http://oshal-vault:8200
-            - name: VAULT_TOKEN
-              value: {{ .Values.infra.vault.devRootToken | quote }}
+              value: {{ ternary "https" "http" .Values.infra.vault.tls.enabled }}://oshal-vault:8200
+            {{- if .Values.infra.vault.tls.enabled }}
+            # Trust the CA that signed the Vault listener's certificate (additive to the
+            # system roots; Node reads it at start).
+            - name: NODE_EXTRA_CA_CERTS
+              value: /etc/oshal/vault-tls/ca.crt
+            {{- end }}
             {{- end }}
             {{- if .Values.infra.diarization.inCluster }}
             - name: SPEAKER_DIARIZATION_URL
@@ -196,6 +236,23 @@ spec:
             initialDelaySeconds: 20
             periodSeconds: 10
             failureThreshold: 30
+          # Same endpoint. Startup allows the whole bootstrap (Postgres wait, migrations, RLS,
+          # role provisioning: up to 10 min on a first boot) before liveness starts counting.
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: {{ .Values.api.port }}
+            periodSeconds: 10
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: {{ .Values.api.port }}
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          securityContext:
+            {{- include "oshal.platformContainerSecurity" . | nindent 12 }}
           resources:
             {{- toYaml .Values.api.resources | nindent 12 }}
           volumeMounts:
@@ -206,6 +263,11 @@ spec:
             {{- if .Values.api.configSeedSecret }}
             - name: config-seed
               mountPath: /app/config-seed
+              readOnly: true
+            {{- end }}
+            {{- if and .Values.infra.vault.inCluster .Values.infra.vault.tls.enabled }}
+            - name: vault-ca
+              mountPath: /etc/oshal/vault-tls
               readOnly: true
             {{- end }}
       volumes:
@@ -220,6 +282,15 @@ spec:
           secret:
             secretName: {{ .Values.api.configSeedSecret }}
             optional: true
+        {{- end }}
+        {{- if and .Values.infra.vault.inCluster .Values.infra.vault.tls.enabled }}
+        # Only the CA from the Vault listener's TLS Secret - never its private key.
+        - name: vault-ca
+          secret:
+            secretName: {{ .Values.infra.vault.tls.secretName }}
+            items:
+              - key: ca.crt
+                path: ca.crt
         {{- end }}
 ---
 apiVersion: v1

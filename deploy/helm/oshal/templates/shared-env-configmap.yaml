@@ -7,6 +7,7 @@
 # 3 | maintainer@emeraldcoastsystemsgroup.com   | 0.3.0 — ARANGO_* joins the shared env (compose *bot-env parity: it sits in the anchor, so EVERY bot and the api see it, not just the controller). Each URL is emitted ONLY when its service is inCluster: an unset ARANGO_URL is the documented degradation signal (connector returns null, /api/graph 503s), so advertising a URL for a service that was switched off would convert a clean degrade into a connection-refused every call.
 # 4 | maintainer@emeraldcoastsystemsgroup.com   | swarm.extraEnv: non-secret platform switches every runtime needs (api AND bots — both envFrom this ConfigMap). Found on the first Docker Desktop install: without APP_PACKAGE_DYNAMIC_ROUTES=1 every ADR-149 protected store app fails activation closed, and bots lacking OSHAL_DELEGATION_AUDIENCE/ISSUER cannot verify a protected dispatch. Explicit per-workload env still wins over this map.
 # 5 | maintainer@emeraldcoastsystemsgroup.com   | swarm.extraEnv may not redefine a key the chart already sets here. It was appended to the same data map unchecked, so e.g. swarm.extraEnv.REDIS_URL rendered a DUPLICATE data key — last-wins for one client, an apply error for another, and silently different between them. The chart-owned keys are now rendered once (oshal.sharedEnv.owned), parsed, and every extraEnv key they already hold fails the render, naming each one. Ownership is per render: a key the chart only emits when its service is inCluster (ARANGO_URL, CHROMADB_URL, OLLAMA_HOST) stays settable through extraEnv when that service is switched off. The rendered ConfigMap is otherwise unchanged.
+# 6 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — no credential in this ConfigMap. JWT_SECRET and ARANGO_ROOT_USER/ARANGO_ROOT_PASSWORD moved to the oshal-shared-secret Secret (templates/secrets.yaml), which the api and every chart bot envFrom right after this map. swarm.extraEnv may not put one back: a key the chart now keeps in that Secret is chart-owned and fails the render like a ConfigMap key does, and any credential-shaped name (oshal.credentialNameRegex: SECRET, PASSWORD, PASSWD, TOKEN, CREDENTIAL, a name ending in KEY, DATABASE_URL, *_DSN) fails the render and points at api.envSecret / botDefaults.envSecret. Guard: tests/unit/chart-credentials.spec.ts and tests/unit/chart-shared-env-extra.spec.ts.
 {{- /*
 The keys the chart itself sets in oshal-shared-env, for THIS render. Rendered once, parsed to
 check swarm.extraEnv against exactly what is emitted, then written out below.
@@ -44,9 +45,7 @@ CLAUDE_CLI_PATH: claude
 CODEX_CLI_PATH: codex
 CLAUDE_MCP_CONFIG: /app/config-seed/claude-code-mcp.json
 NODE_TLS_REJECT_UNAUTHORIZED: "1"
-# Compose *bot-env parity (kind proveout 2026-07-18): bot-node bridges into the
-# any-bot JS layer, whose config throws at boot in production without this.
-JWT_SECRET: {{ .Values.swarm.jwtSecret | quote }}
+# JWT_SECRET is NOT here: it lives in the oshal-shared-secret Secret (templates/secrets.yaml).
 QUEUE_POLL_INTERVAL_MS: {{ .Values.swarm.queuePollIntervalMs | quote }}
 {{- if eq .Values.role "main" }}
 # Main-cluster-only endpoints: these Services do not exist on bot-pod clusters,
@@ -56,9 +55,8 @@ CHROMADB_URL: http://oshal-chromadb:8000
 {{- end }}
 {{- if .Values.infra.arangodb.inCluster }}
 # Graph tier (compose *bot-env parity — every bot sees these, not just the api).
+# The root credentials are in the oshal-shared-secret Secret.
 ARANGO_URL: http://oshal-arangodb:8529
-ARANGO_ROOT_USER: {{ .Values.infra.arangodb.rootUser | quote }}
-ARANGO_ROOT_PASSWORD: {{ .Values.infra.arangodb.rootPassword | quote }}
 {{- end }}
 {{- if .Values.infra.ollama.inCluster }}
 # The cline harness resolves local models through OLLAMA_HOST (cline-config-builder).
@@ -72,12 +70,23 @@ CODE_SERVER_URL: {{ .Values.infra.codeServer.externalUrl | quote }}
 {{- end }}
 {{- $owned := include "oshal.sharedEnv.owned" . }}
 {{- $ownedKeys := fromYaml $owned }}
+{{- /* The keys the chart puts in oshal-shared-secret for THIS render are chart-owned too. */}}
+{{- $secretKeys := dict "JWT_SECRET" true }}
+{{- if and (eq .Values.role "main") .Values.infra.arangodb.inCluster }}
+{{- $_ := set $secretKeys "ARANGO_ROOT_USER" true }}
+{{- $_ := set $secretKeys "ARANGO_ROOT_PASSWORD" true }}
+{{- end }}
 {{- $clash := list }}
+{{- $credential := list }}
 {{- range $k, $_ := .Values.swarm.extraEnv }}
-{{- if hasKey $ownedKeys $k }}{{ $clash = append $clash (printf "swarm.extraEnv.%s" $k) }}{{ end }}
+{{- if or (hasKey $ownedKeys $k) (hasKey $secretKeys $k) }}{{ $clash = append $clash (printf "swarm.extraEnv.%s" $k) }}
+{{- else if regexMatch (include "oshal.credentialNameRegex" $) $k }}{{ $credential = append $credential (printf "swarm.extraEnv.%s" $k) }}{{ end }}
 {{- end }}
 {{- if $clash }}
-{{- fail (printf "%s: already set by the chart in ConfigMap oshal-shared-env (chart-owned); a duplicate data key is last-wins for one client and an apply error for another. Set it through the chart's own value (swarm.logLevel, swarm.forceLlmModel, infra.*) or a workload's extraEnv, not swarm.extraEnv." (join ", " (sortAlpha $clash))) }}
+{{- fail (printf "%s: already set by the chart in ConfigMap oshal-shared-env or Secret oshal-shared-secret (chart-owned); a duplicate data key is last-wins for one client and an apply error for another. Set it through the chart's own value (swarm.logLevel, swarm.forceLlmModel, swarm.jwtSecret, infra.*) or a workload's extraEnv, not swarm.extraEnv." (join ", " (sortAlpha $clash))) }}
+{{- end }}
+{{- if $credential }}
+{{- fail (printf "%s: a credential-shaped name, and swarm.extraEnv renders into a ConfigMap, which is not where a credential goes. Put it in the api.envSecret / botDefaults.envSecret Secret instead." (join ", " (sortAlpha $credential))) }}
 {{- end }}
 apiVersion: v1
 kind: ConfigMap

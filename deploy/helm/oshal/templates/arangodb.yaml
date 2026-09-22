@@ -4,6 +4,8 @@
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial (ADR-129 amendment) — in-cluster ArangoDB (compose oshal-arangodb parity), main role only. Carries no compose profile: a default `up` starts it, so the graph tier is part of the shipped platform rather than an optional add-on. ADR-045's "absent by default" degradation is expressed by inCluster: false (which also withholds ARANGO_URL, the exact signal the connector reads to return null).
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | Readiness probe moved from /_api/version (authenticated: root password is set, so the probe got 401 forever, the pod never went Ready, the Service had no endpoints and helm --wait timed out) to the unauthenticated /_admin/server/availability. Found on the first Docker Desktop k8s install.
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — ARANGO_ROOT_PASSWORD is a secretKeyRef into oshal-shared-secret (templates/secrets.yaml), the same key the api and every bot envFrom, instead of a literal here plus a copy in the oshal-shared-env ConfigMap. Guard: tests/unit/chart-credentials.spec.ts.
+# 4 | maintainer@emeraldcoastsystemsgroup.com   | Production-readiness baseline (chart 0.5.0): stays root (no USER in the image, an entrypoint that never drops privileges, and root-owned data on every volume it has written) with RuntimeDefault seccomp, no privilege escalation and every capability dropped; startup and liveness probes reuse the unauthenticated /_admin/server/availability; resources from infra.arangodb.resources, and ARANGODB_OVERRIDE_DETECTED_TOTAL_MEMORY from the container's memory limit via the downward API so its caches fit the container, not the node; storageClassName on the claim template. Guard: tests/unit/chart-production-baseline.spec.ts.
 {{- if and (eq .Values.role "main") .Values.infra.arangodb.inCluster }}
 apiVersion: apps/v1
 kind: StatefulSet
@@ -25,12 +27,28 @@ spec:
       annotations:
         sidecar.istio.io/inject: "false"
     spec:
+      # The image has no USER and its entrypoint does not drop privileges, so arangod runs as root
+      # and every data volume this chart has created so far holds root-owned files. It stays root
+      # (a different uid could not write them) with no capability at all.
+      securityContext:
+        {{- include "oshal.podSeccomp" . | nindent 8 }}
       containers:
         - name: arangodb
           image: {{ .Values.infra.arangodb.image }}
           env:
+            # The same Secret key the api and the bots read, so the three can never disagree.
             - name: ARANGO_ROOT_PASSWORD
-              value: {{ .Values.infra.arangodb.rootPassword | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: oshal-shared-secret
+                  key: ARANGO_ROOT_PASSWORD
+            # Size caches to the container's memory limit (bytes, via the downward API), not to
+            # the node's memory, which ArangoDB would otherwise detect.
+            - name: ARANGODB_OVERRIDE_DETECTED_TOTAL_MEMORY
+              valueFrom:
+                resourceFieldRef:
+                  containerName: arangodb
+                  resource: limits.memory
           ports:
             - containerPort: 8529
           readinessProbe:
@@ -41,6 +59,24 @@ spec:
             initialDelaySeconds: 10
             periodSeconds: 10
             failureThreshold: 20
+          # The same unauthenticated endpoint (never /_api/version, which answers 401).
+          startupProbe:
+            httpGet:
+              path: /_admin/server/availability
+              port: 8529
+            periodSeconds: 10
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /_admin/server/availability
+              port: 8529
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          securityContext:
+            {{- include "oshal.minimalContainerSecurity" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.infra.arangodb.resources | nindent 12 }}
           volumeMounts:
             - name: data
               mountPath: /var/lib/arangodb3
@@ -49,6 +85,9 @@ spec:
         name: data
       spec:
         accessModes: [ReadWriteOnce]
+        {{- with include "oshal.storageClassName" (dict "root" $ "override" .Values.infra.arangodb.storageClassName) }}
+        {{ . }}
+        {{- end }}
         resources:
           requests:
             storage: {{ .Values.infra.arangodb.storage }}

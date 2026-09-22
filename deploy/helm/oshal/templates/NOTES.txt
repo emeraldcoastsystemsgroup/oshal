@@ -1,3 +1,13 @@
+{{- /*
+CHANGE LOG
+-----------------------------------------------------------------------------
+SEQ                 | AUTHOR                      | DESCRIPTION
+-----------------------------------------------------------------------------
+1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — post-install notes per role: how to reach the cockpit, fleet summary, relay/tailnet steps (ADR-129).
+2 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — with in-cluster Vault, say it comes up SEALED and uninitialized (server mode, Shamir keys held by the operator), what answers 503 until it is unsealed, and the two kubectl exec commands; the README "Vault runbook" has the rest.
+3 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — with rbac.botLauncher on, warn that a bot the controller launches at runtime does not get oshal-shared-secret (the launcher's envFrom is oshal-shared-env + oshal-bot-env only), so without JWT_SECRET it fails to boot, and print the command that copies the chart Secret's keys into oshal-bot-env. Closing the gap in the launcher is a core change awaiting approval (docs/BACKLOG.md). Guard: tests/unit/chart-dynamic-bot-env.spec.ts.
+4 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — the runtime-bot warning says plainly that the missing JWT_SECRET is a 0.5.0 regression on this posture, lasting until the one-line core fix (oshal-shared-secret in the launcher's envFrom) or the copy step; and adds that such a bot sets no securityContext or liveness/startup probe, with its resources from the oshal-container-defaults LimitRange (or none, with limitRange.enabled=false). Guards: tests/unit/chart-dynamic-bot-env.spec.ts, tests/unit/chart-runtime-bot-defaults.spec.ts.
+*/ -}}
 oshal {{ .Values.role }} cluster deployed (chart {{ .Chart.Version }}).
 
 {{- if eq .Values.role "main" }}
@@ -25,6 +35,32 @@ Relay disabled — single-cluster tenant (relay.enabled=true for tailnet federat
 {{- end }}
 Swarm apps: the manifests baked into the image (swarm-apps/*.yaml) auto-load at
 api boot — same as compose. Store packages install from the cockpit (Explore Apps).
+{{- if .Values.infra.vault.inCluster }}
+Vault: server mode, SEALED and uninitialized until you unseal it (Shamir keys stay
+with you). Until then the DevOps Vault console answers 503; nothing else waits on it.
+  kubectl -n {{ .Release.Namespace }} exec -ti oshal-vault-0 -- vault operator init
+  kubectl -n {{ .Release.Namespace }} exec -ti oshal-vault-0 -- vault operator unseal
+Runbook: deploy/helm/oshal/README.md ("Vault runbook").
+{{- end }}
+{{- if .Values.rbac.botLauncher }}
+Runtime-launched bots: a regression in chart 0.5.0. On this posture a bot the
+controller launches at runtime (an app that brings its own bot-node) fails to boot
+with "JWT_SECRET must be set in production". It reads oshal-shared-env and the
+optional oshal-bot-env Secret, not oshal-shared-secret, where 0.5.0 moved
+JWT_SECRET. That lasts until the one-line core fix lands (the launcher's envFrom
+gains oshal-shared-secret; awaiting approval in docs/BACKLOG.md) or you copy the
+chart Secret's keys into oshal-bot-env. Copy them now, and again after you change
+swarm.jwtSecret or infra.arangodb.root*:
+  kubectl -n {{ .Release.Namespace }} create secret generic oshal-bot-env   # only if it does not exist yet
+  kubectl -n {{ .Release.Namespace }} patch secret oshal-bot-env --type merge -p "{\"data\":$(kubectl -n {{ .Release.Namespace }} get secret oshal-shared-secret -o jsonpath='{.data}')}"
+Such a bot also sets no securityContext and no liveness or startup probe.
+{{- if .Values.limitRange.enabled }} Its resources
+come from the oshal-container-defaults LimitRange (botDefaults.resources).
+{{- else }} With
+limitRange.enabled=false it gets no resources either, and runs BestEffort.
+{{- end }}
+Details: deploy/helm/oshal/README.md ("Credentials", "Probes, resources and Pod Security").
+{{- end }}
 {{- else }}
 
 Bot pod for contributor "{{ .Values.contributor }}" — bots: {{ range .Values.bots }}{{ .name }} {{ end }}
