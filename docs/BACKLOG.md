@@ -1699,6 +1699,37 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### Bot-endpoint delegated identity
 - **Remaining:** promote migration 119 and the implemented hash-only workload credential, signed HTTP delegation, exact route/body/scope binding, and one-time durable replay denial. Extend that authority through the still-unowned agent-tool grants and dynamic ribbon definitions with exact tool/version binding and durable ASK consume/recheck; in enforce mode a fleet/service secret may authenticate transport but must never assert or upgrade the initiating principal.
 - **Done when:** a two-owner real-boundary route/database proof shows the exact owner can approve and consume one matching request once, while fleet-secret-only, cross-owner, wrong-agent/tool/task/version/digest, replayed, expired, and revoked attempts fail before ticket/model/tool execution or ribbon mutation. The audit record contains the full delegation tuple, and the deployed restricted-user Jarvis path remains denied while an entitled path succeeds without inheriting operator authority.
+- **Decision (operator, 2026-09-21): REGISTER the workload identities and run SHADOW now; enforce and
+  the fleet-secret rotation are separate decisions taken on the shadow evidence. The unbuilt second
+  half waits until the rollout has proven out.** Why it matters beyond this entry: the
+  read-only database audit of the same day found that a machine caller holding the shared service
+  secret is stamped **operator** by the global request middleware, and an operator sees every row on
+  the 278 of 326 protected tables whose policies carry an operator arm — making this the single
+  largest lever on "no user reaches another user's data". Delegated identity is what replaces "holds
+  the fleet secret" with "proves which principal it acts for".
+  **State measured on the box before deciding, and it is further along than the entry reads:**
+  migration 119 IS applied (`app_migrations`, both `oshal_workload_identities` and
+  `oshal_user_delegations` exist — a first check that said otherwise was the Docker engine returning
+  500 under load, not the truth), and three of the four keys are already minted in `.env`
+  (`OSHAL_DELEGATION_SIGNING_KID`, `OSHAL_DELEGATION_SIGNING_PRIVATE_KEY`,
+  `OSHAL_DELEGATION_PUBLIC_KEYS`). What is actually missing: the api's
+  `OSHAL_WORKLOAD_DELEGATION_PUBLIC_KEYS` is unset, `oshal_workload_identities` holds **0 rows**, and
+  `OSHAL_WORKLOAD_DELEGATION_MODE` is unset so the mode defaults to **legacy** — signing nothing and
+  verifying nothing.
+  **The authorized sequence, in order, and it is a sequence rather than a switch:** set the api's
+  public-key variable (a PUBLIC key, so no secret material is handled by an agent) → register the
+  workload identities → mode **shadow**, which signs and verifies but never denies → observe a real
+  window and report what WOULD have been denied and for whom → then, as separate operator decisions
+  on that evidence, canary **enforce** on one route, fleet enforce, and rotation of
+  `SWARM_SERVICE_SECRET`. The shadow window is where a mis-registered identity surfaces harmlessly;
+  skipping it is how the fleet goes down. In enforce mode the standing constraint holds: a
+  fleet/service secret may authenticate transport but must never assert or upgrade the initiating
+  principal.
+  **Second half deferred with a trigger, not parked:** the durable owner on agent records, the
+  operator-only agent-tool grant routes and the ribbon delegation binding are built AFTER shadow has
+  run clean, because their done-when is a deployed two-owner Jarvis proof and that wants a delegation
+  rail whose behaviour under real traffic has been watched. (PM recommended exactly this split; the
+  operator chose both halves of it.)
 
 ### Reviewed non-NONE tool provisioning and attestation
 - **Remaining:** add an immutable code-owned installer/verifier or signed out-of-band attestation rail for tools whose `executionMethod` is not `none`. Catalog and runtime-registration payloads may select a reviewed recipe/artifact but must never persist or supply a shell command; record artifact version, cryptographic digest, provenance, verifier identity, and revocation state, and require that current attestation at invocation.
