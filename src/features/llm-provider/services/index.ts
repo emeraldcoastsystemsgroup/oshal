@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Barrel-export A2AHarnessAdapter + its config/cost-event types (outbound A2A gateway harness, Plan F item 3)
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Barrel-export gemini-auth-status-service (Plan E residual: gemini connect-state probe for the /api/gemini/auth/status route)
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Barrel split (TODO-BOUNDARY-FINDING 2026-07-19): removed every harness runtime re-export (HarnessLLMBridge/harness-adapter types, CodexCliHarnessAdapter, A2AHarnessAdapter, ClaudeCodeCliHarnessAdapter) so controller imports of this barrel stop loading the harness stack; A2A cost-event types stay available via the pure-types a2a-cost-events module. Harness consumers use '@/features/llm-provider/harness'.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | Barrel-export gemini-auth-adoption-service: the write half of the Gemini login rail (adopt an operator-pushed oauth_creds.json, forget it, and probe whether a pushed SIGN-IN rather than an API key is present).
  */
 
 /**
@@ -67,6 +68,14 @@ export {
   type GeminiAuthReason,
   type GeminiAuthStatus,
 } from './gemini-auth-status-service';
+export {
+  adoptOperatorGeminiLogin,
+  forgetAdoptedGeminiLogin,
+  geminiPushedLoginPresent,
+  type GeminiAdoptionOptions,
+  type GeminiLoginAdoption,
+  type GeminiLoginRemoval,
+} from './gemini-auth-adoption-service';
 export {
   PROVIDER_CATALOG,
   getAllProviders,

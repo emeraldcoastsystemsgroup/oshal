@@ -71,6 +71,39 @@ gate. A shared box leaves `DEMO_MODE` off and nothing changes. The guest demo su
 this stack are covered by the operator-identity half: a guest turn can never reach the CLI even
 with the flag on.
 
+> **Amended 2026-09-22 — the carve covers Google's two CLIs as well, and nothing else changes.**
+> `gemini-cli` and `antigravity-cli` were in the `HarnessType` union and in
+> `assertAuditedAutonomousHarness`'s refused set, but not in
+> `assertUnattendedProviderPreflight`'s — so the check that runs *before* a task or workspace
+> exists let them through, and the two Google terminal agents were guarded once where `codex-cli`
+> and `claude-code` are guarded twice. They are now listed there, refused on exactly the same two
+> conditions and no others: `DEMO_MODE` on **and** an exact `OSHAL_OPERATOR_SUBS` subject. A
+> non-operator caller, a non-demo deployment and an identity-less request all keep the existing
+> refusal, and `tests/unit/demo-cli-brain-carve.spec.ts` now runs every one of those negatives
+> against both new ids.
+>
+> **The limit of this amendment.** It widens *which harness* the carve can select. It does not
+> widen *who* the carve covers, it does not change `assertAuditedAutonomousHarness`, and it does
+> not touch the any-bot spawn boundary — `assert-cli-tool-boundary.js` already listed every
+> spelling of both CLIs under this same carve. Two ids that look adjacent stay deliberately
+> outside the refused set: `gemini` (the Cline-backed API provider id) and `google-gemini` (the
+> apiType) name an HTTP endpoint with no tool loop and no credential home, and refusing them would
+> break the ordinary hosted Google lane rather than harden anything.
+>
+> The reason this became worth doing now is that Google gained a credential to run *under*. The
+> deployment's `GOOGLE_API_KEY` is served on Google's free tier — a live `gemini-3.1-pro-preview`
+> call answers 429 naming `generate_content_free_tier_requests, limit: 0` — while the credential
+> the operator's own `gemini` sign-in writes is a different identity on a different endpoint: the
+> CLI's `oauth-personal` mode builds its content generator against
+> `https://cloudcode-pa.googleapis.com`, not `generativelanguage.googleapis.com` (read from the
+> installed `@google/gemini-cli` bundle: `createCodeAssistContentGenerator`,
+> `CODE_ASSIST_ENDPOINT`). So a pushed Google login is **not** a drop-in for the API key on the
+> HTTP path — it can only be used through the CLI harness, which is why the carve is the thing
+> that had to move. `resolveGeminiCliBrain` selects that harness only when the carve covers the
+> caller **and** a pushed sign-in is actually present at the mounted path; with no pushed login it
+> returns null and the turn falls back to the hosted lane, rather than naming a harness for a
+> credential that does not exist.
+
 ### 2. A per-user default provider, stored and honoured
 
 New per-user preference (`oshal_user_llm_prefs`, keyed by `user_sub`, one row) holding the brain

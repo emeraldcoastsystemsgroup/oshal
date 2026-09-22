@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for ADR-127's SEC-05 carve. The carve is the one place an autonomous CLI harness may run at a bot node, so the guard's real job is the NEGATIVE space: every provider in the refused set stays refused off-demo, for a non-operator, and for an identity-less request, and the demo flag reads DEMO_MODE alone (never MOCK_OIDC — mock auth must not unlock a real subscription). Exercises the exported preflight directly, which is the function the handler calls before any task or workspace is created.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | gemini-cli and antigravity-cli join CLI_PROVIDERS, so every negative this guard already enumerated - off demo, non-operator, identity-less, MOCK_OIDC, and the case/whitespace lookalikes - now covers the two Google terminal agents as well. 'google-gemini' is added to the hosted list beside 'gemini' to pin the other half: the apiType names an HTTP endpoint and must never be swept into the refused set along with the harness ids.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -11,7 +12,14 @@ import { assertUnattendedProviderPreflight } from '../../src/app/bot-node-execut
 
 const OPERATOR = 'operator-sub-1';
 const GUEST = 'guest-sub-9';
-const CLI_PROVIDERS = ['cline', 'cline-cli', 'claude', 'claude-code', 'codex', 'codex-cli', 'openai-codex'];
+const CLI_PROVIDERS = [
+  'cline', 'cline-cli', 'claude', 'claude-code', 'codex', 'codex-cli', 'openai-codex',
+  // The two Google terminal agents. They were in the HarnessType union and in
+  // assertAuditedAutonomousHarness's set but NOT in this preflight's, so the check that runs
+  // before a task or workspace exists let them through — a single guard where their siblings
+  // have two. Every negative below now covers them too.
+  'gemini-cli', 'antigravity-cli',
+];
 
 const OWNED_ENV = ['DEMO_MODE', 'MOCK_OIDC', 'OSHAL_OPERATOR_SUBS'];
 let saved: Record<string, string | undefined> = {};
@@ -92,7 +100,11 @@ describe('SEC-05 preflight — what it must allow', () => {
   });
 
   it('never refuses a hosted provider', () => {
-    for (const providerName of ['openai', 'anthropic-api', 'gemini', 'byo-llm', 'noop', '']) {
+    // 'gemini' (the Cline-backed API provider id) and 'google-gemini' (the apiType) name an HTTP
+    // endpoint with no tool loop and no credential home. They must stay OUT of the refused set
+    // even though the two Google CLI harnesses are in it, or the ordinary hosted Google lane —
+    // the one the pushed-login rail exists to give the operator an alternative to — would break.
+    for (const providerName of ['openai', 'anthropic-api', 'gemini', 'google-gemini', 'byo-llm', 'noop', '']) {
       expect(() => assertUnattendedProviderPreflight({ providerName })).not.toThrow();
     }
   });

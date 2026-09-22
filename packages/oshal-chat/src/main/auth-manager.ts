@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Local account manager: probes whether the user's CLIs are logged in (creds live in ~/.) and launches each CLI's own login in a visible terminal so its browser-popup OAuth runs HERE, on the user's machine — the thing a headless swarm container can't do.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-137 amendment A: each account reports whether the swarm can adopt its login (codex, claude), so the Config screen can offer "Log in + push" / "Push to swarm" on exactly those rows.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Windows: EVERY account row failed with the shell dialog "Windows cannot find 'login\'" — the launcher passed the console title pre-quoted ('"OSHAL login"'), libuv escaped those quotes into start "\"OSHAL login\"" cmd /k "<cmd>", and cmd.exe does not understand backslash-escaped quotes (that is a C-runtime convention): it re-tokenized, `start` took \"OSHAL as the title and `login\` as the program to run. Quoting is now left entirely to libuv (a title with a space comes back correctly quoted) and the command is split into its own argv entries, so no entry carries a quote. Broken since SEQ 1 — the launcher had never been run on Windows. Also fixes claude's verb: the CLI's login is `claude auth login`; `claude /login` is a REPL slash command that as an argv would have been read as a prompt. Guard: tests/unit/node-login-launch.spec.ts.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Google (Gemini) joins the account list so the swarm-adoptable row is offered for it too. Distinct from the gcloud row below it, which signs into Google CLOUD and writes an ADC file the swarm does not consume. Its login command is the bare `gemini`: the CLI publishes no top-level `auth` subcommand (its yargs surface is `$0 [query..]` plus mcp/extensions/skills/hooks) — `auth` is a built-in SLASH command in the interactive UI, so the terminal has to open on the CLI itself for the browser sign-in to run.
  */
 
 import { spawn } from 'child_process';
@@ -38,6 +39,18 @@ const ACCOUNTS: LocalAccount[] = [
     label: 'Anthropic (Claude)',
     loginCmd: 'claude auth login',
     isAuthed: () => existsSync(join(home, '.claude', '.credentials.json')),
+  },
+  {
+    id: 'gemini',
+    label: 'Google (Gemini)',
+    // The Gemini CLI has no top-level `auth` subcommand — verified against the installed
+    // @google/gemini-cli bundle, whose yargs surface is `$0 [query..]` plus mcp/extensions/
+    // skills/hooks; `auth` is a BUILT_IN *slash* command (authCommand, subCommands
+    // authLogin/authLogout) inside the interactive UI. So the launch is the bare CLI, where the
+    // first-run auth picker — or `/auth` — runs Google's browser sign-in on this machine and
+    // writes ~/.gemini/oauth_creds.json, which is what the push then hands to the swarm.
+    loginCmd: 'gemini',
+    isAuthed: () => existsSync(join(home, '.gemini', 'oauth_creds.json')),
   },
   {
     id: 'gcloud',

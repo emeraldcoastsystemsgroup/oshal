@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Exposed openJarvis — opens the full swarm-hosted cockpit window (full-Jarvis mode)
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-137 amendment A: exposed authLoginAndPush / authPush / authSwarmStatus — the Codex and Claude rows can push the login this machine holds into the swarm.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Exposed espnConnect / espnStatus / espnForget. ESPN publishes no OAuth for fantasy, so the credential is a cookie pair captured from a real sign-in window; only presence and an outcome cross this bridge, never the cookies.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Account-list comment names Gemini; the bridge itself is unchanged because the auth:* channels are keyed by account id, not by vendor.
  */
 
 import { contextBridge, ipcRenderer } from 'electron';
@@ -32,7 +33,7 @@ const api = {
   onWorkerEvent: (cb: (event: unknown) => void) =>
     ipcRenderer.on('worker:event', (_event, payload) => cb(payload)),
 
-  // Local accounts (codex / claude / gcloud / aws) — and pushing the two swarm-adoptable ones.
+  // Local accounts (codex / claude / gemini / gcloud / aws) — and pushing the swarm-adoptable ones.
   authStatus: () => ipcRenderer.invoke('auth:status'),
   authLogin: (id: string) => ipcRenderer.invoke('auth:login', id),
   authLoginAndPush: (id: string) => ipcRenderer.invoke('auth:login-and-push', id),

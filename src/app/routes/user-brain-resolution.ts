@@ -25,6 +25,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added isRetryableCliBrainFailure so a CLI-lane turn can fall back to a hosted lane. reportResolvedLlmFailure speaks only for hosted connections (it refuses when there is none, which is every CLI turn), so a logged-out CLI login dead-ended instead of retrying.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | DEMO_CLI_ORDER flipped to codex-first (operator directive 2026-08-12: codex is the swarm's default CLI/API/LLM). Claude Code stays as the second rung so a codex blip degrades to the other mounted login instead of dead-ending.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-128 Amendment 1 (operator directive 2026-08-13): claude-code removed as a DEFAULT — the subscription is being cancelled, so an automatic degrade onto it turns a codex outage into silent spend on a dying account. DEMO_CLI_ORDER is ['openai-codex'] only; an explicitly named claude-code preference (resolveNamedPreference) still resolves.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | gemini-cli joins the preference ids and the cli ResolvedBrain, through resolveGeminiCliBrain. Google is the only vendor where the pushed login and the API key are not the same lane: the key reaches generativelanguage.googleapis.com on the free tier (live 429, generate_content_free_tier_requests limit 0), while the credential 'gemini' writes is oauth-personal against cloudcode-pa.googleapis.com - verified in the installed CLI bundle. So a turn under a pushed login MUST resolve to the CLI harness and cannot be served by the HTTP provider. The carve is unchanged: cliBrainAvailable still decides WHO, and the extra pushed-login condition only decides whether the selection is honest; with no pushed login the resolution falls through to the hosted lane rather than naming a harness nothing can run. DEMO_CLI_ORDER is untouched - Gemini is selectable, never a default.
  *
  * @module user-brain-resolution
  */
@@ -32,6 +33,7 @@
 import { createChildLogger } from '@/shared/logger';
 import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
 import { demoModeEnabled, isDeploymentOperatorSub } from '@/shared/deployment-mode';
+import { geminiPushedLoginPresent } from '@/features/llm-provider';
 import { getUserLlmConnection } from './byo-llm-routes';
 import {
   resolveLiveFreeTierConnection,
@@ -42,7 +44,7 @@ import {
 const logger = createChildLogger({ module: 'user-brain-resolution' });
 
 /** The providers a user may name as their default. `auto` = walk the ladder. */
-export const LLM_PREFERENCE_IDS = ['auto', 'claude-code', 'openai-codex', 'any-llm', 'free-tier'] as const;
+export const LLM_PREFERENCE_IDS = ['auto', 'claude-code', 'openai-codex', 'gemini-cli', 'any-llm', 'free-tier'] as const;
 export type LlmPreferenceId = typeof LLM_PREFERENCE_IDS[number];
 
 /** The mounted CLI logins the demo default tries, in order. **Codex is the only rung**
@@ -64,7 +66,7 @@ export interface UserLlmPreference {
 /** What the caller should run this turn on. */
 export type ResolvedBrain =
   | { kind: 'hosted'; connection: ResolvedUserLlmConnection }
-  | { kind: 'cli'; providerId: 'claude-code' | 'openai-codex'; model?: string }
+  | { kind: 'cli'; providerId: 'claude-code' | 'openai-codex' | 'gemini-cli'; model?: string }
   | { kind: 'none' };
 
 /**
@@ -76,6 +78,44 @@ export type ResolvedBrain =
  */
 export function cliBrainAvailable(userSub: string): boolean {
   return demoModeEnabled() && isDeploymentOperatorSub(userSub);
+}
+
+/**
+ * @description Whether a Gemini turn for this caller must run on the gemini-cli harness rather
+ * than the hosted HTTP provider.
+ *
+ * This is the one place the Google rail differs from its two siblings, and the difference is
+ * measured, not stylistic. A `GOOGLE_API_KEY` reaches
+ * `generativelanguage.googleapis.com` on Google's FREE tier — a live `gemini-3.1-pro-preview` call
+ * on this deployment's key answers 429 naming `generate_content_free_tier_requests, limit: 0` —
+ * while the credential the operator's own `gemini` sign-in writes is a different identity on a
+ * different endpoint: the CLI's `oauth-personal` mode builds a CodeAssistServer against
+ * `https://cloudcode-pa.googleapis.com` (verified in the installed @google/gemini-cli bundle,
+ * `createCodeAssistContentGenerator` + `CODE_ASSIST_ENDPOINT`). So the pushed token is NOT a
+ * drop-in for the API key on the HTTP path: a turn that is to run under the operator's own login
+ * has to go through the CLI harness, and a turn that cannot must stay on the hosted lane rather
+ * than pretend.
+ *
+ * Both ADR-127 conditions still apply unchanged — this widens WHICH harness the carve can select,
+ * never WHO the carve covers.
+ * @param userSub - the caller's OIDC sub
+ * @param options - probe injection; tests pass a fake so no real credential path is read
+ * @returns the CLI brain when the carve covers this caller AND a pushed login is present, else null
+ */
+export function resolveGeminiCliBrain(
+  userSub: string,
+  options: { pushedLoginPresent?: () => boolean; model?: string } = {},
+): ResolvedBrain | null {
+  if (!cliBrainAvailable(userSub)) return null;
+  const probe = options.pushedLoginPresent ?? geminiPushedLoginPresent;
+  if (!probe()) {
+    logger.info(
+      { userSub, providerId: 'gemini-cli' },
+      'llm-preference: no pushed Gemini login at the mounted path — staying on the hosted lane',
+    );
+    return null;
+  }
+  return { kind: 'cli', providerId: 'gemini-cli', ...(options.model ? { model: options.model } : {}) };
 }
 
 /**
@@ -196,6 +236,11 @@ async function resolveNamedPreference(
     if (!cliBrainAvailable(userSub)) return null;
     return { kind: 'cli', providerId: pref.preferred, ...(pref.model ? { model: pref.model } : {}) };
   }
+  // Google is the same carve with one extra condition: a pushed sign-in must actually be present,
+  // because the CLI harness is the ONLY way that credential can be used (see resolveGeminiCliBrain).
+  // Returning null here falls down the ladder onto the hosted lane, which is the honest answer when
+  // the operator has not signed in yet — not a dead-letter CLI selection.
+  if (pref.preferred === 'gemini-cli') return resolveGeminiCliBrain(userSub, { model: pref.model });
   if (pref.preferred === 'any-llm') return explicitHosted(pool, userSub);
   if (pref.preferred === 'free-tier') return freeTierHosted(pool, userSub);
   return null;

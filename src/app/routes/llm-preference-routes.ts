@@ -16,6 +16,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127: GET /options + GET|PUT the caller's default brain, auth-gated and owner-scoped.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | GET / also reports the operator's HOT FALLBACK (2026-09-22): the configured chain (switch-row fallback_order, ADR-162 precedence, default openai-codex → claude-code), each rung's readiness from the token-free stored status (?refresh=1 probes on demand), whether the two gates admit THIS caller, and the exact PUT that changes the order. Same route, same shape the Settings AI-Providers card already reads — no second status endpoint.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The Google Gemini option, offered on exactly the conditions the resolver honours: the ADR-127 carve AND a pushed sign-in actually present at the mounted path. Availability is not derived from a Google API key on purpose - a key reaches generativelanguage on the free tier, the pushed login reaches cloudcode-pa through the CLI, and offering the option on the key would offer a choice the resolver falls straight back out of.
  *
  * @module llm-preference-routes
  */
@@ -28,6 +29,7 @@ import { getUserLlmConnection } from './byo-llm-routes';
 import { listFreeTierConnections } from './free-tier-rotation';
 import { resolveHotFallbackChain, type HotFallbackChain } from './byo-hot-fallback';
 import { fallbackReadinessSnapshot, refreshFallbackReadiness, type RungReadiness } from './fallback-rail-readiness';
+import { geminiPushedLoginPresent } from '@/features/llm-provider';
 import {
   LLM_PREFERENCE_IDS,
   cliBrainAvailable,
@@ -100,6 +102,9 @@ interface BrainOption {
  */
 async function buildOptions(ctx: AppContext, sub: string): Promise<BrainOption[]> {
   const cli = cliBrainAvailable(sub);
+  // A pushed Google SIGN-IN, not a Google API key: the key runs on the free tier and reaches a
+  // different endpoint entirely, so offering this option without one would offer a dead choice.
+  const geminiPushed = geminiPushedLoginPresent();
   const [byo, freeLanes] = await Promise.all([
     getUserLlmConnection(ctx.pool, sub).catch(() => null),
     listFreeTierConnections(ctx.pool, sub).catch(() => []),
@@ -127,6 +132,16 @@ async function buildOptions(ctx: AppContext, sub: string): Promise<BrainOption[]
         ? 'Runs on the Codex/ChatGPT login signed in on this machine.'
         : 'Available only to the operator of a deployment running in demo mode.',
       available: cli,
+    },
+    {
+      id: 'gemini-cli',
+      label: 'Google Gemini (this machine\'s login)',
+      detail: cli
+        ? (geminiPushed
+          ? 'Runs on the Google sign-in pushed from the oshal client, through the Gemini CLI.'
+          : 'Sign in to Google on the oshal client and push it here first — a Google API key alone runs on the free tier and cannot serve this option.')
+        : 'Available only to the operator of a deployment running in demo mode.',
+      available: cli && geminiPushed,
     },
     {
       id: 'any-llm',

@@ -18,6 +18,7 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | ADR-137 amendment A: auth:push / auth:swarm-status / auth:login-and-push — the vendor login runs HERE (its CLI listens on the localhost redirect, like VS Code), the node notices the file the CLI writes, and pushes it to the swarm under the user's verified OIDC session. Restores the "log in to Codex / Claude and the swarm has it" flow for a swarm whose browser is on a satellite.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | The print service starts BEFORE the mesh handshake, not after it. Proven on the operator's box 2026-09-06: with printServiceEnabled=true the node restarted and spawned NO print-drop child at all, because register() throws on a non-2xx (a swarm with REMOTE_CLIENT_REQUIRE_NODE_TOKEN refuses a shared-secret node with 401), client.start() rejects, and connect() returned before the printer was ever reached. The printer is a LOCAL service - it advertises on this machine's own segment and needs the swarm only to DELIVER - so an unreachable or not-yet-enrolled swarm must not remove it from everyone's print dialog. print-drop KEEPS an undeliverable document and names the reason, so nothing is lost meanwhile.
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | espn:connect / espn:status / espn:forget — the Sports Edge fantasy connector's credential is a pair of ESPN account session cookies, not a token, so it is captured from a real ESPN sign-in window on this machine instead of asking the user to open DevTools and copy two values by hand. The window runs in its own partition (a swarm sign-out clears defaultSession, which would otherwise wipe the ESPN jar as a side effect).
+ * 16 | maintainer@emeraldcoastsystemsgroup.com   | Google (Gemini) is now one of the swarm-adoptable logins, so the comments naming the account list and the pushable subset say so. No handler changed: loginAndPush, auth:push and auth:swarm-status are all generic over isPushableLogin/LOGIN_TARGETS, which is exactly why the third vendor needed no code here.
  */
 
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, session, shell, Tray } from 'electron';
@@ -441,9 +442,9 @@ async function signOut(): Promise<{ ok: boolean; error?: string }> {
 }
 
 /**
- * @description Launches the vendor's own login on this machine and, for the two logins the swarm
+ * @description Launches the vendor's own login on this machine and, for the logins the swarm
  * can adopt, waits for the CLI to write its file (the browser redirect landed) and pushes it.
- * @param id - Local account id (codex / claude / gcloud / aws)
+ * @param id - Local account id (codex / claude / gemini / gcloud / aws)
  * @returns launched + command from the launcher, and the push outcome when one was attempted
  */
 async function loginAndPush(id: string): Promise<Record<string, unknown>> {
@@ -498,7 +499,7 @@ function registerIpc(): void {
     return client.sendChat(text);
   });
 
-  // Local accounts (codex / claude / gcloud / aws) — probe + browser-popup login.
+  // Local accounts (codex / claude / gemini / gcloud / aws) — probe + browser-popup login.
   ipcMain.handle('auth:status', () => accountStatus());
   ipcMain.handle('auth:login', (_event, id: string) => launchLogin(id));
   // ADR-137 amendment A: push the login this machine holds into the swarm, or launch the vendor
