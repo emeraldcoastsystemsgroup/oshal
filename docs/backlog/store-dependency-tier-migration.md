@@ -23,13 +23,16 @@ after a core carrying the tiers is deployed.**
 | every published package manifest | `oshal-applications` `main` `64fb705` (PR #197 merged 2026-09-14) | **converted and merged** — all 61 tiered, the floor declared on all 59 non-group packages, membership unchanged. Checked on store `main`: 61 of 61 `*/oshal-app.yaml` use `required`/`optional` and none the flat form; the two without the floor are the groups `intelligent-career` and `marketing-suite` |
 | the App Loader page | bind-mounted `src/pages/app-loader` | live, and the API half it was waiting for is now deployed |
 | Test Lab scenario `app-dependency-tiers` | registered | its precondition is now met (the core is deployed); **not re-run yet** — that is step 2 and needs a signed-in session |
+| `marketplace.json`'s dependency mirror | `oshal-applications` `main` `d062a82` (PR #226 merged 2026-09-16) | **generated and gated** — step 5, landed the day after this plan last recorded it open. Re-derived on 2026-09-21 in a fresh clone of store `origin/main` (`f16c2b7`): `node scripts/check-catalog.mjs` prints *"Catalog integrity passed: 61 package manifests, catalog entries, and generated README rows agree"* and `node scripts/gen-catalog-dependencies.mjs --check` prints *"Catalog dependency mirror is current for 61 package(s)"*, both exit 0 |
 
 ## Next steps, in order
 
-Each step was gated by the one before it. Steps 1, 3 and 4 are done — step 4 merged (PR #197) while
-step 2 was still recorded open, so step 2 is the next action: it is now the check that the merged
-store and the deployed core agree, and it needs a signed-in browser session. Steps 5-6 are an
-ordinary branch of work in the store repo.
+Each step was gated by the one before it. Steps 1, 3, 4 and 5 are done. **The only two left are
+steps 2 and 6, and both are the same live proof:** a signed-in operator session against the deployed
+box. Neither is code work, and neither can be done headlessly — the Test Lab step forwards the
+caller's own session cookie to the API it reads (`readerFor(cookie)` in
+`src/app/routes/test-lab-app-registry-scenarios.ts`), so a token-authenticated call reaches the Lab
+route with no cookie to forward and every inner read degrades instead of passing.
 
 1. ~~**Deploy a core that carries the tiers.**~~ **DONE 2026-09-14.** PR #431 merged to `main` as
    `b8de2099` and deployed with `bash scripts/oshal-deploy.sh` (image `1fe73566ae87`, api + 34 bots,
@@ -52,8 +55,14 @@ ordinary branch of work in the store repo.
    and `check-catalog.mjs`, `check-store-test-discovery.mjs` and `check-store-separation.mjs` pass.
    Versions were **not** bumped: the catalog mirrors identity/version/suite/displayName, not
    dependencies, so nothing in `marketplace.json` moved — that is step 5.
-5. **Regenerate the catalog mirror** so `marketplace.json` carries each package's new dependency
-   shape; today it drifts unguarded (see the follow-ups at the end).
+5. ~~**Regenerate the catalog mirror**~~ **DONE 2026-09-16**, store PR #226 (`d062a82`) — the day
+   after this plan last recorded it open, which is why the entry that points here kept naming it.
+   `scripts/gen-catalog-dependencies.mjs` now *generates* every catalog entry's dependency block from
+   its manifest (tiered shape included, with the flat keys kept alongside so an older catalog consumer
+   still reads it), and drift is release-blocking by three independent paths: `check-catalog.mjs`
+   compares the block itself, `gen-catalog-dependencies.mjs --check` exits 1 on a stale mirror, and the
+   `catalog-parity` CI job runs `gen-catalog-dependencies.test.mjs`, whose case *"this store's own
+   catalog mirrors every manifest it ships"* asserts against the real store rather than a fixture.
 6. **Prove it on the box.** Install a converted launcher through the App Loader: its optional apps
    must appear as unchecked checkboxes, declining them must install only the package, and choosing
    one must install exactly that one. Record the result in `COLLABORATE.md`.
@@ -187,12 +196,14 @@ drive the preview's "needs" vs "can use" text and tell an author what the app ca
 - **[met 2026-09-14]** The launchers (`create`, `life`, `games`, `system`) declare under `required` only what they truly
   cannot run without; installing one no longer installs apps it merely routes to.
 - **[met 2026-09-14]** The three "needs code evidence" rows are resolved with a file:line reference recorded here.
-- **[open]** `marketplace.json` mirrors each manifest's dependencies again (see the catalog-drift item below)
-  and `node scripts/check-catalog.mjs` passes.
-- **[open]** A real install proves it end to end on the box: install a converted launcher and confirm the App
+- **[met 2026-09-16]** `marketplace.json` mirrors each manifest's dependencies again (see the catalog-drift item below)
+  and `node scripts/check-catalog.mjs` passes. Re-derived 2026-09-21 on store `origin/main` `f16c2b7`:
+  the mirror is current for all 61 packages, and a census of the checkout reads *"manifests: 61 |
+  tiered: 61 | flat: 0 | no dependencies block: 0"*.
+- **[open — needs the operator]** A real install proves it end to end on the box: install a converted launcher and confirm the App
   Loader offers its optional apps as unchecked checkboxes, that declining them installs only the
   package, and that choosing one installs exactly that one.
-- **[open]** The Test Lab step `app-dependency-tiers` reports **pass** (not `gap`) against the deployed API.
+- **[open — needs the operator]** The Test Lab step `app-dependency-tiers` reports **pass** (not `gap`) against the deployed API.
 
 ## Related open items this surfaced
 
@@ -212,13 +223,24 @@ probe. **Done when:** a package can ask the kernel whether a named app is instal
 (read-only, no new route per package) so its surface can hide a tile instead of rendering a dead
 one, with a guard proving the answer follows an uninstall.
 
-### `marketplace.json` dependency mirror has drifted (not started)
+### ~~`marketplace.json` dependency mirror has drifted~~ CLOSED 2026-09-16 (store PR #226, `d062a82`)
 
-The catalog entry for `creative-studio` lists `dependencies.apps: [vids]` while its manifest lists
-four; `scripts/check-catalog.mjs` mirrors identity/version/suite/displayName/source but **not**
-dependencies, so the drift is invisible. **Done when:** the catalog's dependency block is generated
-from the manifest (tiered shape included) and the catalog gate fails on drift, with a mutation
-proving it goes red.
+The catalog entry for `creative-studio` listed `dependencies.apps: [vids]` while its manifest lists
+four, and `scripts/check-catalog.mjs` mirrored identity/version/suite/displayName/source but **not**
+dependencies, so the drift was invisible. Both halves of the done-when are now satisfied, and the
+mutation was re-run on 2026-09-21 rather than taken on trust: putting that exact defect back —
+rewriting `creative-studio`'s catalog entry to the pre-tier flat `{apps:[vids],tools:[],connectors:[]}`
+— turned all three gates red, `check-catalog.mjs` with
+
+```
+Catalog integrity failed with 1 problem(s):
+  - creative-studio: catalog dependencies={"apps":["vids"],…}, manifest dependencies={…,"optional":{"apps":["video","portrait-studio","lora"],…}} (run node scripts/gen-catalog-dependencies.mjs)
+```
+
+exit 1, `gen-catalog-dependencies.mjs --check` with *"dependency mirror is stale for 1 package(s):
+creative-studio"* exit 1, and the CI suite `gen-catalog-dependencies.test.mjs` failing its
+real-store case on `actual: [ 'creative-studio' ] / expected: []`. Restoring the entry returned all
+three to green.
 
 ### The one-click installer still hard-codes bundle dependencies (not started)
 
