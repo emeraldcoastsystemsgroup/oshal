@@ -20,6 +20,7 @@
  * 15 | maintainer@emeraldcoastsystemsgroup.com  | Bind the explicit tool-less path to an empty tool allowlist so bypassing the agentic loop cannot advertise or invoke registry tools.
  * 16 | maintainer@emeraldcoastsystemsgroup.com  | Revalidate protected remote reasoning before hosted inference and before releasing its response through a trusted function port.
  * 17 | maintainer@emeraldcoastsystemsgroup.com  | The direct path told the model it had N tools and then handed the provider nothing it could act on: tools, enforceToolBoundary and authorizedScopes were passed from here and discarded by generateResponse, so an ask for live information came back as "I cannot report on live data, go to the application". The call now also threads executeTool - the one authorized channel to a registry tool, built by dispatch-tool-executor.js from THIS request's captured capabilities - and passes the normalized scope Set the capture used rather than re-reading the caller's raw field, so a multi-leg tool exchange stays bound to the authority the request started with. No widening: the tool set is still exactly captureDispatchCapabilities' definitions, the approval policy is unchanged, and a tool-less or unauthorized request still executes nothing.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com  | Operator decision 2026-09-22: a BYO connection may carry tools, with the per-call boundary enforced. resolveToolLessMarker answered TWO questions off one call - which path the turn takes, and whether the turn may be handed the tools its caller was granted - and its legacy BYO fallback therefore emptied the tool set for every BYO turn, so the default-LLM-is-BYO operator got a Jarvis that was told it had N tools and handed none. processMessage now asks the marker twice: with byoLlm for ROUTING (unchanged - a BYO provider still takes the direct path, because AgenticController.getActiveProvider can only return codex/claude-code/cline/bedrock and processWithAgenticMode takes no provider argument, so an agentic BYO turn would silently run on the bot's own harness instead of the caller's endpoint), and with null for AUTHORITY, which drops only the BYO fallback. Nothing is widened: allowedTools is still exactly what the caller was issued, an explicit toolLess:true (and OSHAL_TOOL_LESS=true) still means no tools, and every call still has to clear the #757 boundary. Guard: tests/unit/byo-connection-declared-tools.spec.ts.
  */
 
 /**
@@ -67,15 +68,30 @@ function normalizeRuntimeIdentity(value, maxLength) {
 }
 
 /**
- * @description Resolve the explicit tool-less (agentic-bypass) marker for a request.
+ * @description Resolve the explicit tool-less marker for a request.
+ *
  * Precedence: options.toolLess (boolean or 'true'/'false' string, threaded from the
  * caller) wins; then the process-level env default OSHAL_TOOL_LESS; when neither is
- * set, fall back to the legacy derivation — a BYO-LLM connection implies the
- * tool-less direct path, because no vendor CLI harness can target an arbitrary
- * endpoint. The fallback keeps existing callers behaviorally unchanged.
+ * set, fall back to the legacy derivation — a BYO-LLM connection routes down the
+ * direct path, because no vendor CLI harness can target an arbitrary endpoint.
+ *
+ * processMessage asks this TWICE, because the marker answers two different questions
+ * and only one of them takes the BYO fallback:
+ *   - `resolveToolLessMarker(options, byoLlm)` is the ROUTING question — agentic loop
+ *     or direct path. A BYO connection genuinely cannot drive the agentic loop (see
+ *     processMessage), so the fallback belongs here.
+ *   - `resolveToolLessMarker(options, null)` is the AUTHORITY question — may this
+ *     request be handed the tools its caller was granted. Which endpoint reasons on
+ *     the prompt says nothing about what the CALLER is authorized to do, so the BYO
+ *     fallback is deliberately excluded by passing null. An explicit toolLess:true (or
+ *     OSHAL_TOOL_LESS=true) still answers yes, which is what keeps "a caller that asks
+ *     for no tools gets none" true.
+ * Asking the same function twice, rather than writing a second one, is what stops the
+ * two precedences drifting apart.
  * @param {Object} [options] - processMessage options (may carry toolLess)
- * @param {Object|null} byoLlm - the per-request BYO provider, or null
- * @returns {boolean} true when this request must bypass the agentic loop
+ * @param {Object|null} byoLlm - the per-request BYO provider, or null to ask the
+ *   question without the legacy BYO fallback
+ * @returns {boolean} true when this request is marked tool-less
  */
 function resolveToolLessMarker(options, byoLlm) {
   const explicit = options ? options.toolLess : undefined;
@@ -320,11 +336,22 @@ class TaskController {
     // PHASE_42: Always use AgenticController (no dual routing)
     // Provider selection (Bedrock vs Cline CLI) happens in AgenticController
     // ═══════════════════════════════════════════════════════════════════
-    // Explicit marker replaces the old silent `!byoLlm` inference: callers state
-    // intent via options.toolLess (or OSHAL_TOOL_LESS); when absent, the legacy
-    // BYO-implies-tool-less derivation applies (see resolveToolLessMarker).
-    const toolLess = resolveToolLessMarker(options, byoLlm);
-    const useAgenticMode = !toolLess && options.agenticMode !== false && this.agenticController;
+    // The marker answers two questions, and only the first takes the BYO fallback.
+    //
+    // ROUTING: agentic loop or direct path. A BYO turn still takes the direct path, and that is
+    // not a convention - AgenticController.getActiveProvider resolves to codex / claude-code /
+    // cline / bedrock and nothing else, and processWithAgenticMode takes no provider argument, so
+    // `byoLlm` cannot reach the loop. Routing a BYO turn there would silently run the caller's
+    // prompt on the BOT's own harness, on the bot's account, and on this node the CLI harnesses
+    // additionally fail closed. The fallback belongs here.
+    const directPath = resolveToolLessMarker(options, byoLlm);
+    // AUTHORITY: may this request be handed the tools its caller was granted. Which endpoint
+    // reasons on the prompt says nothing about what the CALLER may do, so the BYO fallback is
+    // excluded (byoLlm passed as null) - that is the operator's 2026-09-22 decision, "no caller
+    // gets a tool it was not granted" in place of "BYO means no tools". An explicit
+    // toolLess: true, or OSHAL_TOOL_LESS=true, still answers yes here and still empties the set.
+    const toolsSuppressed = resolveToolLessMarker(options, null);
+    const useAgenticMode = !directPath && options.agenticMode !== false && this.agenticController;
 
     if (useAgenticMode) {
       return this.processWithAgenticMode(taskId, userMessage, options);
@@ -394,7 +421,7 @@ class TaskController {
       // empty list is kept deliberately: it states the intent at the call site rather than
       // relying on the primitive's default. (That default is now deny-all - an absent option no
       // longer means unrestricted - but a boundary should not be silent about what it intends.)
-      const allowedTools = normalizeAllowedTools(toolLess ? [] : options.allowedTools);
+      const allowedTools = normalizeAllowedTools(toolsSuppressed ? [] : options.allowedTools);
       const authorizedScopes = normalizeAuthorizedScopes(options.authorizedScopes);
       const dispatchCapabilities = captureDispatchCapabilities(
         this.toolRegistry, allowedTools, authorizedScopes,
