@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the read-only question tools a bot node may answer with. Until now the bot-node built `new ToolRegistry()` and registered NOTHING into it (registerFileTools/registerCLITools run only from any-bot/server/app.js, which BOT_RUNTIME=bot-node never boots), so captureDispatchCapabilities advertised attempt_completion and nothing else no matter what a bot was granted. These three handlers are the first real capabilities on that registry, and they are deliberately the ones that let a bot ANSWER rather than act: retrieval, the caller's own graph, and the caller's own conversation history. No shell, no file write, no cloud CLI, no ingestion. Owner scoping is never a WHERE clause this module writes — RAG and conversation reads run inside runWithRequestIdentity so the GUC pool stamps the caller and PostgreSQL row-level security refuses another owner's rows, and the graph is resolved by personDbName(sub) into a physically separate ArangoDB database.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Adversarial verification of the first cut. (1) graph_query materialized the ENTIRE result before bounding it - readQuery drained cursor.all() and the slice ran afterwards, so a model-authored `FOR i IN 1..100000000 RETURN i` was an unbounded allocation in the bot-node process and the registry's Promise.race timeout rejected the caller without touching the running query; the read now passes maxRows and maxRuntimeSeconds, enforced at the cursor and by the engine respectively, before any row exists in memory. (2) The comments overstated the scoping as one layer: ChatSearchSource carries its own owner_sub predicate and RagService its own permission filter, so it is defense in depth - the database boundary AND the adapter predicate - and the comments now say so.
  */
 
 /**
@@ -15,6 +16,13 @@
  * from declared set ∩ allowlist ∩ exact `tool:<name>` scope, resolved by
  * `captureDispatchCapabilities` / `authorizeCapability` before `dispatch-tool-executor` reaches a
  * handler. Registration is necessary, never sufficient.
+ *
+ * Owner scoping is defense in depth, and this module writes neither layer. The services it calls
+ * carry their own owner predicate (ChatSearchSource's `owner_sub = $1`, RagService's permission
+ * filter); independently, every read runs inside runWithRequestIdentity so the GUC pool stamps the
+ * caller onto the CONNECTION and PostgreSQL row-level security refuses another owner's rows even if
+ * an adapter predicate were dropped. The graph is the third shape: personDbName(sub) resolves to a
+ * physically separate database, so there is no predicate to forget.
  *
  * Every handler fails closed with no caller subject: an unattended turn with no owner is exactly
  * the content-driven case the bot-node refusals exist for, and a read with no owner would be read
@@ -47,8 +55,14 @@ export const BOT_NODE_READ_ONLY_TOOL_NAMES: readonly string[] = Object.freeze([
   BOT_NODE_CONVERSATION_QUERY_TOOL,
 ]);
 
-/** Upper bound on rows/hits any one read returns, so a tool result cannot flood a prompt. */
-const MAX_RESULTS = 25;
+/**
+ * Upper bound on rows/hits any one read returns, so a tool result cannot flood a prompt. For the
+ * graph it is also the CURSOR bound: no more rows than this are ever fetched from the engine.
+ */
+export const BOT_NODE_READ_ONLY_MAX_RESULTS = 25;
+const MAX_RESULTS = BOT_NODE_READ_ONLY_MAX_RESULTS;
+/** Registry timeout for the graph read, and the engine-side maxRuntime derived from it. */
+export const BOT_NODE_GRAPH_QUERY_TIMEOUT_MS = 30_000;
 /** Default when the model asks for no bound. */
 const DEFAULT_RESULTS = 5;
 /** Longest caller-supplied text this module forwards to a service. */
@@ -196,11 +210,11 @@ export function registerBotNodeReadOnlyTools(
       const query = requireText(input.query, 'query');
       const topK = boundedCount(input.topK);
       const collection = typeof input.collection === 'string' ? input.collection.trim() : '';
-      // The caller identity rides the CONNECTION, not a predicate this module writes: the pgvector
-      // engine's pool is GUC-wrapped, rag_chunks is FORCE ROW LEVEL SECURITY, and its policy
-      // compares owner_sub to oshal.current_sub. The permission context below narrows further at
-      // the application layer (source ACLs Postgres cannot see) but never widens what the database
-      // already returned.
+      // Two layers. The caller identity rides the CONNECTION: the pgvector engine's pool is
+      // GUC-wrapped, rag_chunks is FORCE ROW LEVEL SECURITY, and its policy compares owner_sub to
+      // oshal.current_sub - that is the layer that holds even if the application filter were
+      // dropped. The permission context below is the second: RagService's own filter, which also
+      // narrows on source ACLs Postgres cannot see. Neither is written here.
       return runWithRequestIdentity({ sub, isOperator: false }, async () => {
         const permission = { userSub: sub, isOperator: false, allowPublic: true };
         const results = collection
@@ -240,7 +254,7 @@ export function registerBotNodeReadOnlyTools(
       },
     },
     requiresApproval: false,
-    timeout: 30_000,
+    timeout: BOT_NODE_GRAPH_QUERY_TIMEOUT_MS,
     handler: async (input, context) => {
       const sub = requireCallerSub(context, BOT_NODE_GRAPH_QUERY_TOOL);
       const connector = deps.graphConnector;
@@ -260,9 +274,16 @@ export function registerBotNodeReadOnlyTools(
       // readQuery, never rawQuery: readQuery asks ArangoDB to plan the query and refuses when the
       // plan reports isModificationQuery. rawQuery is the trusted in-process escape hatch and must
       // never be handed a string that came off a model turn.
-      const rows = await handle.readQuery(aql, optionalBindVars(input.bindVars));
+      // The bounds ride INTO the read. maxRows is the streaming cursor's batch size, so the engine
+      // computes one batch and the adapter never fetches a row past it; maxRuntime is the engine's
+      // own kill switch. Slicing here after an unbounded read would already be too late - the
+      // registry's timeout is a Promise.race that rejects the caller and leaves the query running.
+      const rows = await handle.readQuery(aql, optionalBindVars(input.bindVars), {
+        maxRows: MAX_RESULTS,
+        maxRuntimeSeconds: BOT_NODE_GRAPH_QUERY_TIMEOUT_MS / 1000,
+      });
       logger.info({ tool: BOT_NODE_GRAPH_QUERY_TOOL, rowCount: rows.length }, 'read-only tool completed');
-      return { rows: rows.slice(0, MAX_RESULTS) };
+      return { rows };
     },
   });
 
@@ -291,9 +312,12 @@ export function registerBotNodeReadOnlyTools(
       }
       const query = requireText(input.query, 'query');
       const limit = boundedCount(input.limit);
-      // Same shape as RAG: the identity rides the connection. chat_tasks is FORCE ROW LEVEL
-      // SECURITY on owner_sub and chat_messages is walled by oshal_owns_task(task_id), so a
-      // conversation this caller does not own is refused by PostgreSQL — not by the adapter.
+      // Two layers, same as RAG. ChatSearchSource carries its own `owner_sub = $1` predicate, and
+      // independently the identity rides the connection: chat_tasks is FORCE ROW LEVEL SECURITY on
+      // owner_sub and chat_messages is walled by oshal_owns_task(task_id), so a conversation this
+      // caller does not own is refused by PostgreSQL even if the adapter predicate were dropped.
+      // The owner-scope guard proves the database layer on its own by handing the adapter one
+      // identity while the connection carries another.
       return runWithRequestIdentity({ sub, isOperator: false }, async () => {
         const hits = await new ChatSearchSource(pool).search(sub, query, limit);
         logger.info(

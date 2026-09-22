@@ -4,13 +4,20 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the read-only question tools. Four failures it must catch: a new tool left UNBOUND in the persisted->runtime map (the state every one of rag-query/graph-query/conversation-query was in, which is why a granted bot was advertised nothing but attempt_completion); a tool reachable OUTSIDE the declared set or without its exact operation scope; a WRITE-capable path reachable through a read-only binding (rag-ingestion binding, rawQuery instead of readQuery, a modifying AQL, graph provisioning as a side effect of a read); and an identity-less dispatch executing at all. Crosses the boundary each claim lives on: the map is the real module, the advertise/authorize decision runs through the REAL any-bot ToolRegistry + captureDispatchCapabilities + authorizeCapability, and the handlers are the REAL registered ones invoked through executeSnapshot. Owner scoping over PostgreSQL is NOT claimed here - that boundary is a database and it is proven in bot-node-read-only-tools-owner-scope-postgres.spec.ts.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Two cases from adversarial verification. (1) The graph read is bounded at the CURSOR, before materialization: a stubbed arangojs Database hands the REAL ArangoGraphAdapter a lazy cursor over a million rows, and the case asserts the bound rode into the query options, that no more rows than the bound were ever pulled, that all() was never called and that the over-bound cursor was killed. Slicing after all() - the shape that was shipped - goes red on the pull count. (2) The compose file carries RAG_ENGINE on the shared bot anchor, because rag_query refuses without the pgvector engine and the key sat on oshal-api alone, so the tool would have shipped inert on every bot.
  */
 
 import { describe, expect, it, vi } from 'vitest';
+import type { Database } from 'arangojs';
+import yaml from 'js-yaml';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   BOT_NODE_CONVERSATION_QUERY_TOOL,
+  BOT_NODE_GRAPH_QUERY_TIMEOUT_MS,
   BOT_NODE_GRAPH_QUERY_TOOL,
   BOT_NODE_RAG_QUERY_TOOL,
+  BOT_NODE_READ_ONLY_MAX_RESULTS,
   BOT_NODE_READ_ONLY_TOOL_NAMES,
   registerBotNodeReadOnlyTools,
   type BotNodeReadOnlyToolDeps,
@@ -18,8 +25,7 @@ import {
 } from '@/app/bot-node-read-only-tools';
 import { anyBotRuntimeToolFor, anyBotRuntimeToolScope } from '@/shared/llm-runtime';
 import { GraphReadOnlyError } from '@/features/graph';
-import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { ArangoGraphAdapter } from '@/features/graph/services/arango-graph-adapter';
 
 /* eslint-disable @typescript-eslint/no-require-imports */
 const ToolRegistry = require('../../any-bot/server/services/ToolRegistry');
@@ -31,6 +37,7 @@ const {
 const { normalizeAllowedTools } = require('../../any-bot/server/utils/untrusted-content');
 /* eslint-enable @typescript-eslint/no-require-imports */
 
+const ROOT = join(__dirname, '..', '..');
 const CALLER = 'auth0|read-only-caller';
 /** The trusted context ToolRegistry mints — the ONLY place a handler learns who is asking. */
 const OWNED = { extraEnv: { OSHAL_USER_SUB: CALLER } };
@@ -73,6 +80,52 @@ function ragDouble() {
       }),
     },
   };
+}
+
+/**
+ * A stubbed arangojs Database whose cursor is LAZY over `totalRows` rows and counts every row it
+ * hands out. `all()` drains it (and says so); `batches.next()` hands out one batch of the
+ * requested size; `kill()` records that the rest was abandoned. Nothing here talks to an engine -
+ * the boundary under test is the adapter's cursor handling, which is the shipped code.
+ */
+function unboundedStubDb(totalRows: number) {
+  const stats = { pulled: 0, drained: false, killed: false, queryOptions: undefined as unknown };
+  function* rows(): Generator<{ i: number }> {
+    for (let i = 0; i < totalRows; i += 1) yield { i };
+  }
+  const query = vi.fn(async (_q: string, _b: Record<string, unknown>, options?: { batchSize?: number }) => {
+    stats.queryOptions = options;
+    const source = rows();
+    const batchSize = options?.batchSize ?? totalRows;
+    let more = true;
+    let served = false;
+    const takeBatch = (): Array<{ i: number }> => {
+      const batch: Array<{ i: number }> = [];
+      while (batch.length < batchSize) {
+        const next = source.next();
+        if (next.done) { more = false; break; }
+        batch.push(next.value);
+        stats.pulled += 1;
+      }
+      return batch;
+    };
+    return {
+      batches: {
+        next: async () => { if (served && !more) return undefined; served = true; return takeBatch(); },
+        get hasMore() { return more; },
+      },
+      all: async () => {
+        stats.drained = true;
+        const out: Array<{ i: number }> = [];
+        for (const row of source) { out.push(row); stats.pulled += 1; }
+        more = false;
+        return out;
+      },
+      kill: async () => { stats.killed = true; more = false; },
+    };
+  });
+  const explain = vi.fn(async () => ({ plan: { isModificationQuery: false, collections: [] } }));
+  return { db: { explain, query } as unknown as Database, query, stats };
 }
 
 /** A registry carrying the real tools, plus the deps each case wants to observe. */
@@ -143,7 +196,7 @@ describe('read-only question tools: the persisted names are BOUND', () => {
         }
       }
     };
-    walk(join(__dirname, '..', '..', 'src'));
+    walk(join(ROOT, 'src'));
     expect(hits.map((h) => h.replace(/\\/g, '/').replace(/^.*\/src\//, 'src/'))).toEqual([
       'src/shared/llm-runtime/any-bot-runtime-capabilities.ts',
     ]);
@@ -261,5 +314,74 @@ describe('read-only question tools: no write path is reachable', () => {
     const { output } = await runThroughDispatch(registry, BOT_NODE_CONVERSATION_QUERY_TOOL,
       { query: 'anything' }, fullAuthority(BOT_NODE_CONVERSATION_QUERY_TOOL));
     expect(output).toEqual({ conversations: [], unavailable: 'no_database' });
+  });
+});
+
+describe('read-only question tools: the graph read is bounded BEFORE materialization', () => {
+  it('a million-row result is never pulled past the bound, never drained, and the cursor is killed', async () => {
+    // The shape that shipped: readQuery drained cursor.all() and the tool sliced afterwards, so the
+    // whole result set was in process memory before the bound meant anything - and the registry's
+    // Promise.race timeout rejects the caller without touching the running query. The REAL adapter
+    // runs here over a stubbed Database whose cursor is lazy and counts what it hands out.
+    const TOTAL_ROWS = 1_000_000;
+    const stub = unboundedStubDb(TOTAL_ROWS);
+    const registry = new ToolRegistry();
+    registerBotNodeReadOnlyTools(registry as ReadOnlyToolRegistration, {
+      pool: null,
+      ragService: ragDouble().service as unknown as BotNodeReadOnlyToolDeps['ragService'],
+      graphConnector: {
+        personGraphExists: async () => true,
+        getPersonGraph: async () => new ArangoGraphAdapter(stub.db),
+      } as unknown as BotNodeReadOnlyToolDeps['graphConnector'],
+      ragOwnerScopingIsDatabaseEnforced: async () => true,
+    });
+
+    const { output } = await runThroughDispatch(registry, BOT_NODE_GRAPH_QUERY_TOOL,
+      { aql: 'FOR i IN 1..100000000 RETURN i' }, fullAuthority(BOT_NODE_GRAPH_QUERY_TOOL));
+
+    expect((output as { rows: unknown[] }).rows).toHaveLength(BOT_NODE_READ_ONLY_MAX_RESULTS);
+    // The bound rode INTO the query: one streaming batch of exactly the bound, and the engine's
+    // own kill switch armed at the registry timeout.
+    expect(stub.stats.queryOptions).toEqual({
+      batchSize: BOT_NODE_READ_ONLY_MAX_RESULTS,
+      stream: true,
+      maxRuntime: BOT_NODE_GRAPH_QUERY_TIMEOUT_MS / 1000,
+    });
+    expect(stub.stats.pulled, 'rows fetched from the engine must never exceed the bound')
+      .toBeLessThanOrEqual(BOT_NODE_READ_ONLY_MAX_RESULTS);
+    expect(stub.stats.drained, 'all() materializes the whole result set before any slice can run').toBe(false);
+    expect(stub.stats.killed, 'an over-bound cursor left alive keeps computing on the engine').toBe(true);
+  });
+
+  it('a result inside the bound is returned whole and nothing is killed', async () => {
+    const stub = unboundedStubDb(3);
+    const registry = new ToolRegistry();
+    registerBotNodeReadOnlyTools(registry as ReadOnlyToolRegistration, {
+      pool: null,
+      ragService: ragDouble().service as unknown as BotNodeReadOnlyToolDeps['ragService'],
+      graphConnector: {
+        personGraphExists: async () => true,
+        getPersonGraph: async () => new ArangoGraphAdapter(stub.db),
+      } as unknown as BotNodeReadOnlyToolDeps['graphConnector'],
+      ragOwnerScopingIsDatabaseEnforced: async () => true,
+    });
+    const { output } = await runThroughDispatch(registry, BOT_NODE_GRAPH_QUERY_TOOL,
+      { aql: 'FOR n IN nodes RETURN n' }, fullAuthority(BOT_NODE_GRAPH_QUERY_TOOL));
+    expect((output as { rows: unknown[] }).rows).toEqual([{ i: 0 }, { i: 1 }, { i: 2 }]);
+    expect(stub.stats.killed).toBe(false);
+  });
+});
+
+describe('read-only question tools: the deployment carries the engine the tool requires', () => {
+  it('every bot-node service and the api resolve RAG_ENGINE=pgvector from the compose file', () => {
+    // rag_query refuses outright without the pgvector engine. The key sat on oshal-api alone, so on
+    // the deployed box every bot booted on the chroma default and the tool shipped inert.
+    type Service = { environment?: Record<string, unknown> };
+    const doc = yaml.load(readFileSync(join(ROOT, 'docker-compose.oshal-local.yml'), 'utf8')) as { services: Record<string, Service> };
+    const bots = Object.entries(doc.services).filter(([, s]) => s.environment?.BOT_RUNTIME === 'bot-node');
+    expect(bots.length, 'no bot-node services parsed - the file shape changed').toBeGreaterThanOrEqual(30);
+    const missing = bots.filter(([, s]) => s.environment?.RAG_ENGINE !== 'pgvector').map(([name]) => name);
+    expect(missing, 'a bot without the engine key boots on chroma and its rag_query refuses').toEqual([]);
+    expect(doc.services['oshal-api'].environment?.RAG_ENGINE).toBe('pgvector');
   });
 });

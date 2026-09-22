@@ -10,6 +10,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 — engine-agnostic graph types: GraphNode/GraphEdge + the GraphHandle interface every adapter implements.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 closure: added readQuery + GraphReadOnlyError. POST /api/graph/query documents itself as "run a raw AQL READ", but the route called rawQuery, which hands the string straight to the engine — so a REMOVE/INSERT went through. It is scoped to the caller's own database (not a cross-tenant hole) but it contradicted its own contract, and a bot that mis-writes its own topology silently corrupts the next investigation. readQuery is the enforced read path the HTTP layer uses; rawQuery stays the in-process escape hatch for trusted core callers (the data-lifecycle exporter dumps with it).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | readQuery takes GraphReadOptions: maxRows, enforced at the CURSOR before any row is materialized, and maxRuntimeSeconds, enforced by the ENGINE. A model-authored `FOR i IN 1..100000000 RETURN i` on the bot-node read path was an unbounded allocation inside the bot-node process - readQuery drained cursor.all() and the caller sliced afterwards, and the registry's Promise.race timeout rejected the caller without touching the running query. Without options the contract is unchanged.
  *
  * @module graph-types
  */
@@ -49,13 +50,28 @@ export interface GraphHandle {
    * Run a query the ENGINE has classified as non-modifying. Rejects with GraphReadOnlyError when
    * the engine's own plan says the query writes. This is the path any caller-supplied query string
    * must take (the HTTP layer uses it); `rawQuery` is for trusted in-process callers only.
+   * With `options.maxRows` the read is bounded at the cursor: no more than that many rows are ever
+   * fetched from the engine, and a cursor holding more is killed rather than drained.
    */
-  readQuery(query: string, bindVars?: Record<string, unknown>): Promise<unknown[]>;
+  readQuery(query: string, bindVars?: Record<string, unknown>, options?: GraphReadOptions): Promise<unknown[]>;
   /**
    * Escape hatch: run a raw engine query with bind vars, reads OR writes. Trusted in-process
    * callers only (e.g. the data-lifecycle exporter's full dump) — never a string off the wire.
    */
   rawQuery(query: string, bindVars?: Record<string, unknown>): Promise<unknown[]>;
+}
+
+/**
+ * Bounds a caller-facing read. Both are enforced BEFORE materialization: `maxRows` by reading a
+ * single cursor batch of that size and killing the cursor if the engine holds more, and
+ * `maxRuntimeSeconds` by the engine itself (ArangoDB's `maxRuntime` kills the running query, which
+ * a client-side timeout cannot do).
+ */
+export interface GraphReadOptions {
+  /** Read at most this many rows; anything past it is never fetched from the engine. */
+  maxRows?: number;
+  /** Engine-side execution ceiling in seconds; the engine kills the query when it is exceeded. */
+  maxRuntimeSeconds?: number;
 }
 
 /** Stable error code for a refused write on the read-only query path (the HTTP layer maps it to 400). */

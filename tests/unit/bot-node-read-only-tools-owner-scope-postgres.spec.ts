@@ -4,10 +4,11 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The owner-scoping half of the read-only question tools, proven over a REAL PostgreSQL rather than asserted. conversation_query reads another person's conversations for a living, so the claim that it cannot is only worth what the database does: this file starts its own server, mints the NOSUPERUSER NOBYPASSRLS role production runs as, creates chat_tasks/chat_messages with migration 094's policies and oshal_owns_task verbatim, hands the tables to that role, and drives the REAL registered handler through the REAL ToolRegistry snapshot path. The last case is the one that matters - it asks for identity A's rows while the CONNECTION carries identity B, so the adapter's own owner predicate says yes and only row-level security can say no. Nothing here points at a deployment: the address is invented at start() and the container is force-removed in afterAll.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Adversarial verification corrections. (1) The header called oshal_app "the role production connects as" - true of the api, wrong for the bot-node these tools run on: docker-compose.oshal-local.yml wires every bot to oshal_bot through BOT_DATABASE_URL, and oshal_bot is a NON-owner, so the isolation it gets is plain ENABLE RLS rather than FORCE. Every case now runs for BOTH roles, each a minted NOSUPERUSER NOBYPASSRLS LOGIN role. (2) The scoping is two layers, not one - ChatSearchSource carries its own owner_sub predicate - so a mutation that stamped the OPERATOR instead of the caller went red on nothing: the adapter still scoped. Added the case that reads the GUC values PostgreSQL itself saw on the tool's connection, through a recording proxy on the role pool, so operator-stamping goes red on its own.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { wrapPoolWithGuc } from '@/shared/services/database';
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
 import { ChatSearchSource } from '@/features/global-search';
@@ -30,8 +31,12 @@ const {
 const { normalizeAllowedTools } = require('../../any-bot/server/utils/untrusted-content');
 /* eslint-enable @typescript-eslint/no-require-imports */
 
-/** The NOSUPERUSER NOBYPASSRLS identity production connects as; a superuser would bypass RLS. */
-const ENFORCING_ROLE = 'oshal_app';
+/** The api's role: owns the tables, so only FORCE ROW LEVEL SECURITY binds it. */
+const OWNER_ROLE = 'oshal_app';
+/** The bot-node's role (compose BOT_DATABASE_URL): a non-owner, bound by plain ENABLE RLS. */
+const BOT_ROLE = 'oshal_bot';
+const ROLES = [OWNER_ROLE, BOT_ROLE] as const;
+type Role = (typeof ROLES)[number];
 
 const ALICE = 'auth0|conversation-owner-alice';
 const BOB = 'auth0|conversation-owner-bob';
@@ -47,13 +52,15 @@ const database = new DisposablePostgres({
   max: 4,
   connectionTimeoutMillis: 10_000,
   statementTimeoutMs: 60_000,
-  roles: [{ name: ENFORCING_ROLE, max: 4 }],
+  roles: [{ name: OWNER_ROLE, max: 4 }, { name: BOT_ROLE, max: 4 }],
 });
 
 /**
  * chat_tasks + chat_messages as the live database carries them: the owner-or-operator policy on
  * the task row, and migration 094's derived-owner policy on messages through oshal_owns_task.
  * oshal_owns_task is SECURITY DEFINER in production too — it must see past RLS to answer at all.
+ * The bot role is GRANTed SELECT here so that what is under test is the policy, not the grant;
+ * whether the deployed oshal_bot holds that grant is a provisioning fact this file does not claim.
  */
 const SCHEMA_DDL = `
   CREATE TABLE chat_tasks (
@@ -79,7 +86,7 @@ const SCHEMA_DDL = `
   REVOKE ALL ON FUNCTION oshal_owns_task(text) FROM PUBLIC;
   GRANT EXECUTE ON FUNCTION oshal_owns_task(text) TO PUBLIC;
 
-  ALTER TABLE chat_tasks OWNER TO ${ENFORCING_ROLE};
+  ALTER TABLE chat_tasks OWNER TO ${OWNER_ROLE};
   ALTER TABLE chat_tasks ENABLE ROW LEVEL SECURITY;
   ALTER TABLE chat_tasks FORCE ROW LEVEL SECURITY;
   CREATE POLICY chat_tasks_owner_or_operator ON chat_tasks
@@ -89,23 +96,68 @@ const SCHEMA_DDL = `
     WITH CHECK ((owner_sub = current_setting('oshal.current_sub', true))
            OR (current_setting('oshal.is_operator', true) = 'on'));
 
-  ALTER TABLE chat_messages OWNER TO ${ENFORCING_ROLE};
+  ALTER TABLE chat_messages OWNER TO ${OWNER_ROLE};
   ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
   ALTER TABLE chat_messages FORCE ROW LEVEL SECURITY;
   CREATE POLICY chat_messages_task_owner_or_operator ON chat_messages
     AS PERMISSIVE FOR ALL
     USING (current_setting('oshal.is_operator', true) = 'on' OR oshal_owns_task(task_id))
     WITH CHECK (current_setting('oshal.is_operator', true) = 'on' OR oshal_owns_task(task_id));
+
+  GRANT SELECT ON chat_tasks, chat_messages TO ${BOT_ROLE};
 `;
 
+/** What PostgreSQL saw on the connection at the moment the tool's own SELECT ran. */
+interface Stamp { sub: string; op: string }
+
+/** Per role: the GUC-wrapped pool the tool reads through, its registry, and the stamps observed. */
+interface Harness { gucPool: Pool; registry: InstanceType<typeof ToolRegistry>; stamps: Stamp[] }
+
 let fixtureAdmin: Pool;
-let gucPool: Pool;
-let registry: InstanceType<typeof ToolRegistry>;
+const harnesses = new Map<Role, Harness>();
 const savedStrict = process.env.OSHAL_DB_GUC_STRICT;
 const savedGuc = process.env.OSHAL_DB_GUC;
 
+/**
+ * Wrap the role pool so that, on the SAME client the GUC wrapper just stamped, the moment the
+ * adapter's chat_tasks SELECT arrives we first read back the GUC values the policy is about to
+ * read. This observes the connection, not the adapter's result - the only way to tell an
+ * operator stamp from a caller stamp when the adapter predicate scopes the rows either way.
+ */
+function recordingPool(raw: Pool, stamps: Stamp[]): Pool {
+  const patched = new WeakSet<PoolClient>();
+  return new Proxy(raw, {
+    get(target, prop, receiver) {
+      if (prop !== 'connect') {
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      }
+      return async () => {
+        const client = await target.connect();
+        if (!patched.has(client)) {
+          patched.add(client);
+          const original = client.query.bind(client) as (...args: unknown[]) => Promise<unknown>;
+          (client as unknown as { query: unknown }).query = async (...args: unknown[]) => {
+            const first = args[0];
+            const text = typeof first === 'string' ? first : (first as { text?: string } | undefined)?.text;
+            if (typeof text === 'string' && text.includes('FROM chat_tasks')) {
+              const seen = await original(
+                "SELECT current_setting('oshal.current_sub', true) AS sub, current_setting('oshal.is_operator', true) AS op",
+              ) as { rows: Stamp[] };
+              stamps.push(seen.rows[0]);
+            }
+            return original(...args);
+          };
+        }
+        return client;
+      };
+    },
+  });
+}
+
 /** Run conversation_query exactly as a dispatch does: capture, authorize, execute the snapshot. */
-async function conversationQueryAs(sub: string, query: string): Promise<Array<{ taskId: string; title: string }>> {
+async function conversationQueryAs(role: Role, sub: string, query: string): Promise<Array<{ taskId: string; title: string }>> {
+  const { registry } = harnesses.get(role)!;
   const caps = captureDispatchCapabilities(
     registry,
     normalizeAllowedTools([BOT_NODE_CONVERSATION_QUERY_TOOL]),
@@ -132,14 +184,18 @@ beforeAll(async () => {
     `INSERT INTO chat_messages (task_id, text) VALUES ($1,$2), ($3,$4)`,
     [ALICE_TASK, 'we agreed the budget lands in October', BOB_TASK, 'we agreed the budget lands in November'],
   );
-  gucPool = wrapPoolWithGuc(database.rolePool(ENFORCING_ROLE));
-  registry = new ToolRegistry();
-  registerBotNodeReadOnlyTools(registry as ReadOnlyToolRegistration, {
-    pool: gucPool,
-    // Not this file's boundary: nothing below reaches RAG or the graph.
-    ragService: { search: async () => [], searchAllCollections: async () => [] } as unknown as BotNodeReadOnlyToolDeps['ragService'],
-    graphConnector: null,
-  });
+  for (const role of ROLES) {
+    const stamps: Stamp[] = [];
+    const gucPool = wrapPoolWithGuc(recordingPool(database.rolePool(role), stamps));
+    const registry = new ToolRegistry();
+    registerBotNodeReadOnlyTools(registry as ReadOnlyToolRegistration, {
+      pool: gucPool,
+      // Not this file's boundary: nothing below reaches RAG or the graph.
+      ragService: { search: async () => [], searchAllCollections: async () => [] } as unknown as BotNodeReadOnlyToolDeps['ragService'],
+      graphConnector: null,
+    });
+    harnesses.set(role, { gucPool, registry, stamps });
+  }
 }, 180_000);
 
 afterAll(async () => {
@@ -148,41 +204,45 @@ afterAll(async () => {
   if (savedGuc === undefined) delete process.env.OSHAL_DB_GUC; else process.env.OSHAL_DB_GUC = savedGuc;
 }, 120_000);
 
-describe('conversation_query owner scoping is the database, over a real PostgreSQL', () => {
+describe.each(ROLES)('conversation_query owner scoping is the database, over a real PostgreSQL, as %s', (role) => {
   it('the role the tool connects as really is subject to row-level security', async () => {
     // Without this, every case below could pass for the wrong reason: a superuser (or a BYPASSRLS
     // role) ignores every policy, and the assertions would be vacuous.
     const { rows } = await fixtureAdmin.query(
-      'SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = $1', [ENFORCING_ROLE],
+      'SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = $1', [role],
     );
     expect(rows[0]).toEqual({ rolsuper: false, rolbypassrls: false });
   });
 
-  it('the caller identity reaches the CONNECTION, which is what the policy reads', async () => {
-    const stamped = await runWithRequestIdentity({ sub: ALICE, isOperator: false }, () =>
-      gucPool.query(`SELECT current_setting('oshal.current_sub', true) AS sub,
-                            current_setting('oshal.is_operator', true) AS op`));
-    expect(stamped.rows[0]).toEqual({ sub: ALICE, op: 'off' });
-  });
-
   it('identity A reads its OWN conversation', async () => {
-    const hits = await conversationQueryAs(ALICE, SHARED_WORD);
+    const hits = await conversationQueryAs(role, ALICE, SHARED_WORD);
     expect(hits.map((h) => h.taskId)).toEqual([ALICE_TASK]);
   });
 
+  it("the tool's SELECT ran on a connection stamped with the CALLER, not the operator", async () => {
+    // The adapter predicate would scope the rows even if the handler stamped the operator, so a
+    // result assertion cannot see that mutation. This reads what PostgreSQL itself saw on the
+    // connection at the moment the tool's own SELECT arrived.
+    const { stamps } = harnesses.get(role)!;
+    stamps.length = 0;
+    await conversationQueryAs(role, ALICE, SHARED_WORD);
+    expect(stamps.length, 'the tool must have reached chat_tasks at least once').toBeGreaterThan(0);
+    for (const stamp of stamps) expect(stamp).toEqual({ sub: ALICE, op: 'off' });
+  });
+
   it('identity A reads its own conversation by MESSAGE text, through oshal_owns_task', async () => {
-    const hits = await conversationQueryAs(ALICE, 'lands in October');
+    const hits = await conversationQueryAs(role, ALICE, 'lands in October');
     expect(hits.map((h) => h.taskId)).toEqual([ALICE_TASK]);
   });
 
   it('identity B gets NOTHING of A, on a word that matches both conversations', async () => {
-    const hits = await conversationQueryAs(BOB, SHARED_WORD);
+    const hits = await conversationQueryAs(role, BOB, SHARED_WORD);
     expect(hits.map((h) => h.taskId)).toEqual([BOB_TASK]);
     expect(hits.map((h) => h.taskId)).not.toContain(ALICE_TASK);
   });
 
   it("identity B asking for A's message text gets nothing", async () => {
-    expect(await conversationQueryAs(BOB, 'lands in October')).toEqual([]);
+    expect(await conversationQueryAs(role, BOB, 'lands in October')).toEqual([]);
   });
 
   it('the DATABASE is what refuses, not the adapter predicate', async () => {
@@ -190,6 +250,7 @@ describe('conversation_query owner scoping is the database, over a real PostgreS
     // result alone cannot say WHICH layer refused. Here the adapter is handed ALICE as its owner
     // parameter while the connection carries BOB: the application predicate matches Alice's row
     // and the only thing standing between it and the caller is row-level security.
+    const { gucPool } = harnesses.get(role)!;
     const source = new ChatSearchSource(gucPool);
     const asAlice = await runWithRequestIdentity({ sub: ALICE, isOperator: false }, () =>
       source.search(ALICE, SHARED_WORD, 10));
@@ -204,6 +265,7 @@ describe('conversation_query owner scoping is the database, over a real PostgreS
     // OSHAL_DB_GUC_STRICT=deny stamps an identity-less query anonymous non-operator. This is what
     // makes dropping the runWithRequestIdentity wrapper in the handler fail loudly rather than
     // quietly returning every owner's rows.
+    const { gucPool } = harnesses.get(role)!;
     const source = new ChatSearchSource(gucPool);
     expect(await source.search(ALICE, SHARED_WORD, 10)).toEqual([]);
   });
