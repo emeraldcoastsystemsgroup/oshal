@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: disable raw Redis credential publication/subscription because unordered pub/sub cannot prevent stale credential resurrection after logout.
  * 10 | maintainer@emeraldcoastsystemsgroup.com  | SEC-05: remove credential export/import APIs; only local mounted-file status and local OAuth persistence remain until an ordered versioned distribution rail exists.
  * 11 | maintainer@emeraldcoastsystemsgroup.com  | ADR-137 amendment A: adoptOperatorLoginFile — a DEMO deployment's exact operator may hand the controller the .credentials.json that `claude auth login` wrote on a satellite; validated to the vendor shape, written atomically at 0600 into the mounted login path, with a read-only mount named as its own failure. The route owns both gates; this never broadcasts.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com  | getPersistedLoginExpiry: the hot-fallback readiness probe (operator decision 2026-09-22) reads presence + expiry of the mounted login from the file only, never via `claude auth status` — the probe runs on an interval and must not spawn a process. Reports expired as present-and-expired, the actionable answer, and never returns the token.
  */
 
 import crypto from 'crypto';
@@ -548,6 +549,35 @@ export class ClaudeCodeAuthService {
       logger.info({ credentialsPath }, 'Claude Code OAuth credentials cleared');
     } catch (error) {
       logger.warn({ err: error }, 'Failed to clear Claude Code OAuth credentials');
+    }
+  }
+
+  /**
+   * @description Presence and expiry of the persisted Claude login WITHOUT spawning the CLI —
+   * for the hot-fallback readiness probe, which runs on an interval and must never open a
+   * process (or a window) to answer. Reads the same file `getStatus` falls back to and reports
+   * only whether a login is there and when it lapses; the token itself never leaves this method.
+   * Unlike `readPersistedCredentials`, an expired login is reported as present-and-expired
+   * rather than absent, because "not-ready: login expired" is the actionable answer.
+   * @returns Presence, the expiry instant when the file carries one, and whether it has passed.
+   */
+  getPersistedLoginExpiry(): { present: boolean; expiresAt: number | null; expired: boolean } {
+    const absent = { present: false, expiresAt: null, expired: false };
+    const credentialsPath = this.resolveClaudeCredentialsPath();
+    if (!credentialsPath || !fs.existsSync(credentialsPath)) return absent;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(credentialsPath, 'utf-8')) as Record<string, unknown>;
+      const oauth = (parsed.claudeAiOauth && typeof parsed.claudeAiOauth === 'object')
+        ? parsed.claudeAiOauth as Record<string, unknown>
+        : null;
+      const accessToken = oauth ? oauth.accessToken : parsed.access_token;
+      if (typeof accessToken !== 'string' || accessToken.length === 0) return absent;
+      const rawExpiry = oauth ? oauth.expiresAt : parsed.expires_at;
+      const expiresAt = typeof rawExpiry === 'number' && rawExpiry > 0 ? rawExpiry : null;
+      return { present: true, expiresAt, expired: expiresAt !== null && Date.now() > expiresAt };
+    } catch (error) {
+      logger.warn({ err: error }, 'Failed to read the persisted Claude Code login for a readiness probe');
+      return absent;
     }
   }
 

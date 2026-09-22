@@ -15,6 +15,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127: GET /options + GET|PUT the caller's default brain, auth-gated and owner-scoped.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | GET / also reports the operator's HOT FALLBACK (2026-09-22): the configured chain (switch-row fallback_order, ADR-162 precedence, default openai-codex → claude-code), each rung's readiness from the token-free stored status (?refresh=1 probes on demand), whether the two gates admit THIS caller, and the exact PUT that changes the order. Same route, same shape the Settings AI-Providers card already reads — no second status endpoint.
  *
  * @module llm-preference-routes
  */
@@ -22,8 +23,11 @@
 import { Router, type Request, type Response } from 'express';
 import type { AppContext } from '@/app/composition/app-context';
 import { createChildLogger } from '@/shared/logger';
+import { demoModeEnabled, isDeploymentOperatorSub } from '@/shared/deployment-mode';
 import { getUserLlmConnection } from './byo-llm-routes';
 import { listFreeTierConnections } from './free-tier-rotation';
+import { resolveHotFallbackChain, type HotFallbackChain } from './byo-hot-fallback';
+import { fallbackReadinessSnapshot, refreshFallbackReadiness, type RungReadiness } from './fallback-rail-readiness';
 import {
   LLM_PREFERENCE_IDS,
   cliBrainAvailable,
@@ -33,6 +37,44 @@ import {
 } from './user-brain-resolution';
 
 const logger = createChildLogger({ module: 'llm-preference-routes' });
+
+/** The hot-fallback block of the GET / payload: the chain, its rungs' readiness, and the gates. */
+export interface HotFallbackStatus {
+  /** Whether the fallback would run for THIS caller: demo deployment AND an operator subject. */
+  gate: { demoMode: boolean; operator: boolean; available: boolean };
+  chain: HotFallbackChain;
+  rungs: RungReadiness[];
+  /** When the stored readiness was last refreshed by the loop or on demand; null = never. */
+  refreshedAt: number | null;
+  /** How the operator changes the order — the endpoint that already exists. */
+  setWith: { method: 'PUT'; path: string; body: { providerId: string; fallbackOrder: string[] } };
+}
+
+/**
+ * @description The hot-fallback status for a caller. Readiness comes from the stored status the
+ * loop keeps warm; `refresh` (or a never-probed store) probes now. No turn is spent either way.
+ * @param sub - The caller's OIDC sub, for the gate verdict.
+ * @param refresh - Probe every rung now instead of reading the stored verdicts.
+ * @returns The block, never carrying a token.
+ */
+export async function describeHotFallback(sub: string, refresh: boolean): Promise<HotFallbackStatus> {
+  const chain = resolveHotFallbackChain(null);
+  const stored = fallbackReadinessSnapshot(chain.order);
+  const rungs = refresh || stored.refreshedAt === null
+    ? await refreshFallbackReadiness(chain.order)
+    : stored.rungs;
+  return {
+    gate: { demoMode: demoModeEnabled(), operator: isDeploymentOperatorSub(sub), available: cliBrainAvailable(sub) },
+    chain,
+    rungs,
+    refreshedAt: fallbackReadinessSnapshot(chain.order).refreshedAt,
+    setWith: {
+      method: 'PUT',
+      path: '/api/agents/provider-switch/fleet-default',
+      body: { providerId: '<the fleet primary, e.g. claude-code>', fallbackOrder: [...chain.order] },
+    },
+  };
+}
 
 /** Authenticated caller, or null. Mirrors the helper the sibling connector routes use. */
 function caller(req: Request): { sub: string } | null {
@@ -114,15 +156,21 @@ async function buildOptions(ctx: AppContext, sub: string): Promise<BrainOption[]
 export function createLlmPreferenceRoutes(ctx: AppContext): Router {
   const router = Router();
 
-  /** GET / — the caller's current default plus the options they may pick. */
+  /** GET / — the caller's current default, the options they may pick, and the hot-fallback status. */
   router.get('/', async (req: Request, res: Response) => {
     const me = caller(req);
     if (!me) { res.status(401).json({ error: 'not authenticated' }); return; }
-    const [preference, options] = await Promise.all([
+    const refresh = String(req.query.refresh ?? '') === '1';
+    const [preference, options, hotFallback] = await Promise.all([
       getUserLlmPreference(ctx.pool, me.sub),
       buildOptions(ctx, me.sub),
+      describeHotFallback(me.sub, refresh).catch((err) => {
+        // The card must still render the preference when the fallback status cannot be read.
+        logger.error({ err, sub: me.sub }, 'llm-preference: hot-fallback status failed');
+        return null;
+      }),
     ]);
-    res.json({ preference, options });
+    res.json({ preference, options, hotFallback });
   });
 
   /** PUT / — set the caller's default. Rejects an unknown id and an option they cannot use. */

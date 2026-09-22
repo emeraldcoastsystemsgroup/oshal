@@ -4,9 +4,22 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted cockpit right-rail chat session, message send/load, and rendering behavior from app.js for Session 74 chat consolidation
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | A fallback turn says so (2026-09-22): when /api/send-message answers with the brainFallback marker, one attribution line is rendered beneath the reply — "answered by X; Y was unavailable after N attempts" — so the switch is never passed off as a normal turn. The reply itself still arrives over the stream as before.
  */
 
 const DASHBOARD_TASK_KEY = 'cockpit-dashboard-taskId';
+
+/**
+ * @description One honest sentence for a turn the hot fallback answered: which provider actually
+ * answered, and which endpoint was unavailable after how many attempts. Never a key.
+ * @param {object} marker - The brainFallback marker from the send-message answer.
+ * @returns {string} The attribution line.
+ */
+export function describeBrainFallback(marker) {
+  const failed = [marker.failedEndpoint?.host, marker.failedEndpoint?.model].filter(Boolean).join(' / ') || 'your selected endpoint';
+  const attempts = Number(marker.attempts) || 1;
+  return `Answered by ${marker.providerUsed} (hot fallback, rung ${marker.rung}); ${failed} was unavailable after ${attempts} attempt${attempts === 1 ? '' : 's'} (${marker.failure}).`;
+}
 
 /**
  * @description Controller for the cockpit right-side chat panel.
@@ -109,11 +122,16 @@ export class CockpitChatPanelController {
         }
       }
 
-      await this.api.sendMessage(this.currentTaskId, text, {
+      const sent = await this.api.sendMessage(this.currentTaskId, text, {
         autoApprove: this.getAutoApprove(),
         source: 'dashboard',
         targetBot: options.targetBot || 'assistant',
       });
+      // A turn the hot fallback answered must say so — the reply above arrived over the stream
+      // looking like any other, and the marker on the HTTP answer is the only honest trace.
+      if (sent && sent.brainFallback) {
+        this.addRenderedMessage({ ts: String(Date.now()), type: 'say', say: 'text', text: describeBrainFallback(sent.brainFallback) });
+      }
       this.markIdle();
     } catch (error) {
       this.addRenderedMessage({

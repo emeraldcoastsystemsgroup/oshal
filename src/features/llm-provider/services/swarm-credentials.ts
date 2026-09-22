@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | One shared resolver for the SWARM's own provider credentials. Extracted from cline-runtime-config-sync-service's private buildCredentialBag so features stop inventing their own env-var reads.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: resolve Codex OAuth only from the live vendor auth source and fail closed when it is absent; never revive a static config-seed token copy.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Platform-realm siblings getSwarmPlatformApiKey/hasSwarmPlatformApiKey: consumers of platform-only endpoints (the Images API) must never be handed the codex ChatGPT-subscription OAuth token — /v1/images 401s on it (missing scope api.model.images.request, re-verified live 2026-08-21) while plain key-presence reads as configured. Chat-harness resolution (getSwarmApiKey) is unchanged.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | liveCodexAuthExpiry: the hot-fallback readiness probe needs "present AND not expired" for the live Codex login without ever holding the token. Reads the same live auth.json hasLiveCodexAuth reads, decodes the access token's JWT `exp` claim locally (no verification, no network — this is a readiness read, not an authorization) and returns only the expiry instant.
  */
 /**
  * @description The swarm's own provider credentials — one source of truth.
@@ -142,6 +143,44 @@ export function extractOpenAiCodexAccessToken(envelope: Record<string, unknown>)
 export function hasLiveCodexAuth(): boolean {
   const liveAuthPath = resolveCodexAuthSourcePath();
   return !!liveAuthPath && !!extractOpenAiCodexAccessToken(readJsonObject(liveAuthPath));
+}
+
+/** What a readiness probe may know about the live Codex login: presence and expiry, never the token. */
+export interface LiveCodexAuthExpiry {
+  /** A readable live auth.json with an access token exists. */
+  present: boolean;
+  /** Epoch ms the access token's `exp` claim names; null when absent or not a JWT. */
+  expiresAt: number | null;
+  /** True when `expiresAt` is known and already in the past. */
+  expired: boolean;
+}
+
+/**
+ * @description Presence and expiry of the live Codex login, for a readiness probe. The access
+ * token is a JWT; its `exp` claim is decoded locally from the payload segment and discarded —
+ * nothing is verified, nothing leaves the process, and the token itself is never returned or
+ * logged. A token that is not a JWT reads as present with an unknown expiry rather than as
+ * expired, because absence of a claim is not evidence of a dead login.
+ * @returns Presence, the expiry instant when the token carries one, and whether it has passed.
+ */
+export function liveCodexAuthExpiry(): LiveCodexAuthExpiry {
+  const liveAuthPath = resolveCodexAuthSourcePath();
+  const token = liveAuthPath ? extractOpenAiCodexAccessToken(readJsonObject(liveAuthPath)) : null;
+  if (!token) return { present: false, expiresAt: null, expired: false };
+  const expiresAt = jwtExpiryMs(token);
+  return { present: true, expiresAt, expired: expiresAt !== null && expiresAt <= Date.now() };
+}
+
+/** @description Decode a JWT's `exp` claim (seconds) to epoch ms, or null when it has none. @param {string} token the JWT @returns {number | null} epoch ms */
+function jwtExpiryMs(token: string): number | null {
+  const parts = token.split('.');
+  if (parts.length < 2) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as { exp?: unknown };
+    return typeof payload.exp === 'number' && Number.isFinite(payload.exp) ? payload.exp * 1000 : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

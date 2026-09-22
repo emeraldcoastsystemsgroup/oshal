@@ -200,6 +200,7 @@
  * 184 | maintainer@emeraldcoastsystemsgroup.com | Resolve artifact destination tiers for the complete verified principal.
  * 185 | maintainer@emeraldcoastsystemsgroup.com   | Install the LLM provider switch snapshot (migration 147, "a bot's LLM provider is a row in a table") once the DB bootstrap completes: one awaited read of oshal_bot_provider_switch under the SYSTEM identity, then the periodic refresh. Independent of the autoload chain; a failed read logs and leaves the registry behaviour in place.
  * 186 | maintainer@emeraldcoastsystemsgroup.com   | Mounted /api/jarvis/ambient/test-fixture (requiresAuth + a strict in-router service-secret gate) ahead of the general ambient routers. POST /api/jarvis/ambient/segments refuses speaker ids, so the AI Test Lab could only ever prove the UNATTRIBUTED path; this router seeds one attributed line for a stable per-owner fixture voice so asks, per-person profiles and consent are provable without a microphone.
+ * 187 | maintainer@emeraldcoastsystemsgroup.com   | Start the hot-fallback readiness loop beside the llm-default mount (operator decision 2026-09-22): the fleet chain's rungs are probed on an interval so the fallback is ready before it is needed. Unref'd, OSHAL_HOT_FALLBACK_PROBE_INTERVAL_MS=0 disables it.
  */
 
 require('dotenv').config();
@@ -270,6 +271,8 @@ import { connectorCallbackAuth, createConnectorsRoutes, createFacebookDataDeleti
 import { createConnectorLivenessRoutes } from './routes/connector-liveness';
 import { createByoLlmRoutes } from './routes/byo-llm-routes';
 import { createFreeTierRoutes } from './routes/free-tier-routes';
+import { resolveHotFallbackChain } from './routes/byo-hot-fallback';
+import { startFallbackReadinessLoop } from './routes/fallback-rail-readiness';
 import { createLlmPreferenceRoutes } from './routes/llm-preference-routes';
 import { createTvPairingRoutes, createTvTokenAuthMiddleware } from './routes/tv-pairing-routes';
 import { createCliTokenAuthMiddleware, createCliTokenRoutes } from './routes/cli-token-routes';
@@ -1171,6 +1174,9 @@ function createApp(): express.Application {
   // Default brain (ADR-127): which connected provider runs THIS caller's work. Owner-scoped —
   // every handler reads the authenticated sub and never accepts a subject parameter.
   app.use('/api/settings/llm-default', requiresAuth, createLlmPreferenceRoutes(ctx));
+  // The operator's hot fallback is HOT because its rungs are probed before they are needed: the
+  // loop keeps the token-free readiness of the fleet chain warm (2026-09-22). Unref'd; 0 disables.
+  startFallbackReadinessLoop(() => resolveHotFallbackChain(null).order);
   // Connectors / Utilities hub — per-user provider authorization (Gmail, etc.)
   app.use('/api/connect', connectorCallbackAuth(requiresAuth), createConnectorsRoutes(ctx));
   // Live connection health (INSTALLER-GAPS G14): GET /api/connect/liveness probes whether the

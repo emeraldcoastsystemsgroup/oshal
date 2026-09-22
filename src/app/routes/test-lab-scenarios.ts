@@ -78,6 +78,7 @@
  * 26 | maintainer@emeraldcoastsystemsgroup.com   | Attached the hand-off guards to 'jarvis-routing' regressionTests: jarvis-build-handoff (a build directive is filed with the swarm without a model turn, exactly once) and jarvis-task-complete-notify (a finished task reaches its owner). Both ship with the hand-off work and a test file on disk is not Test Lab registration. No live step was added for the build path on purpose - firing a real build directive at the deployment would open a real ticket on every lab run.
  * 27 | maintainer@emeraldcoastsystemsgroup.com   | Attached tests/unit/provider-model-catalog.spec.ts to the 'provider-switch' regressionTests. The scenario already covers which PROVIDER serves a bot; the MODEL on the same row was validated against nothing at all, so a configured id absent from provider-definitions was accepted silently and its real call recorded at $0. A test file on disk is not Test Lab registration.
  * 28 | maintainer@emeraldcoastsystemsgroup.com   | Attached openai-compat-tool-call-extraction to 'jarvis-routing' regressionTests. Jarvis turns run through the OpenAI-compatible adapter, and a turn the model spent attempting a tool call was being thrown away there - the guard carries the response shapes captured live from the failure, so it belongs to this scenario rather than sitting unregistered on disk.
+ * 30 | maintainer@emeraldcoastsystemsgroup.com   | Registered the 'byo-hot-fallback' scenario (operator decision 2026-09-22): a read-only probe of the configured hot-fallback chain and each rung's readiness through the Settings llm-default route, with the two guards that prove the same-endpoint replay and the operator-only fallback attached as regressionTests. A test file on disk is not Test Lab registration.
  * 29 | maintainer@emeraldcoastsystemsgroup.com   | Attached direct-path-declared-tool-boundary to 'jarvis-routing' regressionTests. The sibling of entry 28: that guard covers a tool call being READ, this one covers the tools being DECLARED at all and the boundary around them being enforced - the direct conversational path told the model it had N tools and handed the provider none, which is why an ask for live information answered "go to the application". Registered here because it is the same Jarvis turn, and a spec on disk is not Test Lab registration.
  * @module test-lab-scenarios
  */
@@ -387,6 +388,35 @@ export const SCENARIOS: Scenario[] = [
           if (refused) return { state: 'fail', detail: `${refused} bot(s) hold a switch row this build cannot run: ${summary}`, output: counts };
           if (unknown === agents.length) return { state: 'gap', detail: 'no bot reports providerSource — the switch report is missing.', output: counts };
           return { state: 'pass', detail: summary, output: counts };
+        }) },
+    ],
+  },
+
+  // ── The BYO same-endpoint retry + the operator's hot fallback chain ─────────────────────────
+  {
+    id: 'byo-hot-fallback', title: 'BYO endpoint retry + the operator\'s hot fallback chain', group: 'tool',
+    description: 'Read-only: GET /api/settings/llm-default reports the CONFIGURED hot-fallback chain (the switch row\'s fallback_order, ADR-162 precedence; default openai-codex → claude-code when no record carries one) and each rung\'s readiness (login present and unexpired, key present) from the token-free stored status. No turn is spent here; the same-endpoint replay, the operator-only gate and the fallback itself are proven by the registered guards.',
+    regressionTests: [
+      // The retry wraps the PROVIDER call (one saved user message, one error broadcast), keyed on
+      // an explicitly chosen endpoint only, across the real cockpit router and a loopback endpoint.
+      { level: 'integration', path: 'tests/unit/byo-same-endpoint-retry.spec.ts' },
+      // The operator-only, readiness-gated, one-pass walk of the configured chain, the marker, the
+      // WARN line, the not-ready error, and the PUT that re-orders the chain with no restart.
+      { level: 'integration', path: 'tests/unit/byo-hot-fallback.spec.ts' },
+    ],
+    steps: [
+      { id: 'chain', app: 'settings', label: '1) GET /api/settings/llm-default — the chain and each rung\'s readiness', run: (c) => step(c, 'settings', 'hot fallback', 'GET', '/api/settings/llm-default', undefined,
+        (j) => {
+          const hf = j?.hotFallback;
+          if (!hf || !hf.chain) return { state: 'gap', detail: 'unexpected shape (no hotFallback block).' };
+          const order: string[] = Array.isArray(hf.chain.order) ? hf.chain.order : [];
+          const rungs: Array<{ providerId: string; ready: boolean; reason: string }> = Array.isArray(hf.rungs) ? hf.rungs : [];
+          if (!order.length) return { state: 'degraded', detail: `no fallback rung configured (chain source: ${hf.chain.source}) — set fallbackOrder on the fleet-default switch row.`, output: hf };
+          const ready = rungs.filter((r) => r.ready).map((r) => r.providerId);
+          const cold = rungs.filter((r) => !r.ready).map((r) => `${r.providerId}: ${r.reason}`);
+          const gate = hf.gate?.available ? 'gates admit this caller' : 'gates do not admit this caller (demo + operator only)';
+          if (!ready.length) return { state: 'degraded', detail: `chain ${order.join(' → ')} (${hf.chain.source}); NO rung ready — ${cold.join('; ')}; ${gate}.`, output: hf };
+          return { state: 'pass', detail: `chain ${order.join(' → ')} (${hf.chain.source}); ready: ${ready.join(', ')}${cold.length ? `; not ready: ${cold.join('; ')}` : ''}; ${gate}.`, output: { chain: hf.chain, rungs, gate: hf.gate } };
         }) },
     ],
   },

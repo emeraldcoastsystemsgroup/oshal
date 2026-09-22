@@ -27,6 +27,7 @@
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | Guard protected package execution with current caller policy, restricted business identity and durable node ownership.
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | Append caller-authorized bounded package facts before signing and recheck bot permission after the read.
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | Say why a protected dispatch cannot be recorded. The recorded issuer is derived from controller signing material, so a controller with none refused every protected package dispatch with the bare code `authorization_recorded_delegation_required` — a queued ticket escalated carrying that string and nothing an operator could act on (ticket aaa86e48 on 2026-09-15). The refusal stays fail-closed and keeps the code as its first token; it now names the unset configuration and logs the agent, package and prepared execution at ERROR.
+ * 25 | maintainer@emeraldcoastsystemsgroup.com   | Hot fallback wire fields (operator decision 2026-09-22). BotNodeRequest.byoLlmResolutionSource is CONTROLLER-SIDE metadata naming which rung of the ADR-127 ladder produced a threaded byoLlmConnection — 'explicit' is the one value that earns the same-endpoint retry and, for the operator, the hot fallback; executeBotOrInline strips it before a dispatch leaves the controller. BotNodeResponse.brainFallback is the machine-readable marker a fallback turn carries (provider actually used, the rung, why, how many attempts the chosen endpoint refused) so every surface can say "answered by X — Y was unavailable" instead of passing the switch off as normal.
  */
 import { runWithApplicationExecution } from '@/shared/application-authorization-execution';
 import { getApplicationAuthorizationActor } from '@/shared/application-authorization-context';
@@ -34,6 +35,7 @@ import { getApplicationRemoteExecutionAuthority, type ApplicationRemoteExecution
 import type { AuthorizationActor } from '@/shared/application-authorization';
 import { captureRemoteExecutionResult } from '@/shared/remote-execution-results';
 import { getSpecialistContextRegistry } from '@/shared/specialist-context';
+import type { BrainFallbackMarker } from '@/shared/types';
 
 import * as http from 'node:http';
 import * as https from 'node:https';
@@ -176,6 +178,8 @@ export function resolveDisplayOnline(
 export interface BotNodeResponse {
   /** Controller-authored lineage; worker response fields are never trusted as authority. */
   applicationExecutionId?: string;
+  /** Set only when the turn was answered by the portal's hot fallback — see {@link BrainFallbackMarker}. */
+  brainFallback?: BrainFallbackMarker;
   success: boolean;
   response: string;
   usage: {
@@ -233,6 +237,12 @@ export interface BotNodeRequest {
    *  inference on the user's endpoint instead of its configured provider; cost is
    *  tracked under provider 'byo-llm'. Omit to use the bot's default provider. */
   byoLlmConnection?: { baseUrl: string; apiKey: string; model: string };
+  /** CONTROLLER-SIDE metadata, never sent to a node: which rung of the ADR-127 ladder produced
+   *  `byoLlmConnection`. `'explicit'` — the user's own saved endpoint — is the only value that
+   *  earns the bounded same-endpoint retry and, for the deployment operator, the hot fallback;
+   *  a resolver-owned lane (free-tier / platform / operator-key) rotates instead. Absent means
+   *  "not explicit". executeBotOrInline strips it before a dispatch leaves the controller. */
+  byoLlmResolutionSource?: 'explicit' | 'free-tier' | 'platform' | 'operator-key';
   /** Server-authored, schema-bounded read-only provider operation. Never derived by a worker LLM. */
   providerIntent?: TrustedProviderIntent;
   /** ADR-090 skill-profile GENERAL carrier — the calling app's manifest name. Paired with
@@ -309,6 +319,9 @@ export interface BotEndpointRegistryEntry {
 }
 
 export type BotEndpointRegistryProvider = () => ReadonlyArray<BotEndpointRegistryEntry>;
+
+/** Re-exported so node-dispatch consumers read the marker type from the same barrel as the response. */
+export type { BrainFallbackMarker };
 
 /** @description Construction boundaries for deterministic delegation-aware client tests. */
 export interface BotNodeClientOptions {

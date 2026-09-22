@@ -35,12 +35,13 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Operator-lane failure COOLDOWN (live 2026-08-11): a ~16-token probe passes on a quota trickle while full turns 429, so "invalidate the verdict and re-probe" handed the SAME walled Gemini lane back to the turn-time failover, whose same-lane check then (correctly) refused to replay — the 429 surfaced despite two layers of failover. reportResolvedLlmFailure now puts the failed lane on a 15-min exclusion (coolOperatorKeyLane, keyed by baseUrl→laneId) and operatorKeyConnection skips cooled lanes before probing, so re-resolution rotates to the next configured vendor by construction. Guard: operator-key-lane.spec cooldown cases.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | The operator lane now SAYS so when it is about to run a model this build's catalog does not carry (warnIfModelUncatalogued -> checkModelAgainstCatalog). OSHAL_OPERATOR_LLM_MODEL is read here and was measured against nothing at all: a pinned id absent from provider-definitions produced no error, no warning and no log line, while usage-cost-resolver — pricing from that same catalog — booked the real call at $0, which was the pin's only trace anywhere. It warns and proceeds rather than refusing, because this catalog lags the vendor's and gemini-3.8-flash was a real, current model absent from ours. The helper sits ABOVE operatorKeyConnection's docstring rather than between the two: inserted into that gap it orphaned a 20-line JSDoc onto the wrong member and left the exported function undocumented.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Separated the two questions reportResolvedLlmFailure was conflating (operator decision 2026-09-22). It gates ROTATION — may this prompt be replayed on a DIFFERENT provider — and for an explicit BYO endpoint the answer stays a permanent no. But because it was also the only retryability gate on the path, an explicit BYO turn got no retry at all, so a provider-side spend cap that trips intermittently cost the whole turn and showed the user an error. RETRYABLE_PROVIDER_FAILURE is now exported as the ONE wall vocabulary and same-endpoint-retry.ts subtracts from it (403 and the completed-but-empty answers are rotation-only); the refusal here is byte-identical.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | RETRYABLE_PROVIDER_FAILURE now LIVES in the llm-provider feature (the retry wraps the provider call there, and a feature may not import this app module) and is re-exported here unchanged in meaning, gaining 503/high-demand. The explicit-BYO branch of the rotation gate records the SECOND rule beside the first (operator, 2026-09-22): a non-operator's explicit endpoint is still never rotated, but the OPERATOR'S OWN explicit turns may fall to the portal's configured hot-fallback chain after the same-endpoint retry is exhausted — decided in byo-hot-fallback.ts under the ADR-127/137 gates, never here. isOperatorKeyLaneCooling exposes the lane cooldown to that readiness probe.
  *
  * @module free-tier-rotation
  */
 
 import { createChildLogger } from '@/shared/logger';
-import { ProviderRegistry } from '@/features/llm-provider';
+import { ProviderRegistry, RETRYABLE_PROVIDER_FAILURE } from '@/features/llm-provider';
 import { checkModelAgainstCatalog } from '@/shared/llm-runtime';
 import { demoModeEnabled } from '@/shared/deployment-mode';
 import { getRequestIdentity } from '@/shared/services/database/request-identity';
@@ -565,12 +566,14 @@ export function freeTierRuntimeSnapshot(): {
 }
 
 /**
- * The ONE vocabulary of "this is a provider wall, not a content failure", shared by the rotation
- * gate below and by the same-endpoint retry in `same-endpoint-retry.ts`. Exported so that module
- * subtracts from it rather than growing a second opinion about what counts as retryable — two
- * patterns would drift, and the answer to "was this a wall?" has to be one answer.
+ * @description The ONE vocabulary of "this is a provider wall, not a content failure", shared by
+ * the rotation gate below and by the same-endpoint retry. It is DEFINED in
+ * `@/features/llm-provider` (same-endpoint-retry.ts), where the retry wraps the provider call, and
+ * re-exported here so this module's callers and guards keep their import; the same-endpoint
+ * classifier subtracts from it rather than growing a second opinion about what counts as
+ * retryable — two patterns would drift, and the answer to "was this a wall?" has to be one answer.
  */
-export const RETRYABLE_PROVIDER_FAILURE = /(?:\b(?:402|403|429)\b|too many requests|rate[-\s]?limit|quota|throttl\w*|resourceexhausted|empty_final_answer|returned no final answer)/i;
+export { RETRYABLE_PROVIDER_FAILURE };
 
 /**
  * @description The ROTATION gate: answers *may this turn be replayed on a DIFFERENT provider?*,
@@ -592,11 +595,26 @@ export async function reportResolvedLlmFailure(
   // An explicit BYO endpoint is a user-selected privacy/billing boundary. Never silently replay
   // that prompt on the bot's configured provider; surface its failure to the user instead.
   //
-  // This refusal is about ROTATION only, and that distinction is load-bearing (operator decision
-  // 2026-09-22). Until it was drawn, an explicit BYO turn got no retry of ANY kind, so a
-  // provider-side spend cap that trips intermittently cost the whole turn. A same-endpoint replay
-  // is not a rotation: same URL, same key, same billing account, same privacy posture. The caller
-  // performs it (runWithSameEndpointRetry) BEFORE reaching this gate, which keeps saying no here.
+  // TWO RULES live around this `return false`, and the next reader needs both.
+  //
+  // RULE 1 — the same-endpoint retry (operator decision 2026-09-21/22). This refusal is about
+  // ROTATION only, and that distinction is load-bearing. Until it was drawn, an explicit BYO turn
+  // got no retry of ANY kind, so a provider-side spend cap that trips intermittently cost the
+  // whole turn. A same-endpoint replay is not a rotation: same URL, same key, same billing
+  // account, same privacy posture. It happens at the model call (SameEndpointRetryProvider,
+  // requested by the entry point through options.byoLlmRetry) BEFORE this gate is ever consulted,
+  // which keeps saying no here.
+  //
+  // RULE 2 — the operator's HOT FALLBACK (operator decision 2026-09-22: "fix the retry but use the
+  // fallback ... keep a HOT fallback as well - this portal has Codex and Claude Code"). For the
+  // OPERATOR'S OWN explicit turns, and only those, "never rotate a BYO turn" is superseded: once
+  // the same-endpoint retry is exhausted, the turn may fall — once, one pass — through the
+  // portal's CONFIGURED fallback chain (the switch row's fallback_order, ADR-162), each rung
+  // readiness-gated. That is decided in byo-hot-fallback.ts under exactly the gates that already
+  // govern lending the portal's own logins (ADR-127 / ADR-137 Amendment B: DEMO_MODE truthy AND
+  // the exact OSHAL_OPERATOR_SUBS subject). For every NON-operator caller this refusal is the
+  // whole answer: their endpoint is their billing/privacy boundary and the portal's logins are
+  // never lent to them. Nothing about rule 2 is decided in this function.
   if (!connection || connection.resolutionSource === 'explicit') {
     return false;
   }
@@ -683,6 +701,18 @@ export function coolOperatorKeyLane(baseUrl: string): string | null {
 /** Test-only: clears lane cooldowns so specs cannot leak walls into one another. */
 export function resetOperatorLaneCooldownsForTesting(): void {
   operatorLaneCooldowns.clear();
+}
+
+/**
+ * @description Whether an operator lane is sitting out a failure cooldown right now. The hot
+ * fallback's readiness probe reads this so a rung that walled a real turn minutes ago is reported
+ * (and skipped) as not-ready instead of being spent on again.
+ * @param laneId - The lane id (an OPENAI_COMPAT_LANES key).
+ * @returns The cooldown expiry epoch ms when cooling, else null.
+ */
+export function operatorKeyLaneCoolingUntil(laneId: string): number | null {
+  const until = operatorLaneCooldowns.get(laneId) ?? 0;
+  return until > Date.now() ? until : null;
 }
 
 /**
