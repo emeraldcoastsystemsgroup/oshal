@@ -59,6 +59,59 @@ carries the evidence that survived an adversarial re-derivation and the correcti
   boot; and the `oshal-assistant` row's `inactive`-while-heartbeating state is either explained in that
   ADR or corrected.
 
+### Gemini reaches the swarm as a FREE-TIER API key, and there is no rail to seed the operator's own login (2026-09-22)
+
+- **Measured outside the swarm, with plain `curl`, so none of this is an oshal defect.** The assistant
+  was failing its post-deploy check with `503 status code (no body)`; the same `GOOGLE_API_KEY` from
+  `.env`, called directly, reproduces it exactly:
+
+  | model | native `generateContent` | OpenAI-compat `chat/completions` | `gemini` CLI 0.41.2 |
+  |---|---|---|---|
+  | `gemini-3.8-flash` | 503 | 503 | 503 |
+  | `gemini-3.7-flash` | 503 | 503 | 503 |
+  | `gemini-3.6-flash` | 503 | 200 | 503 |
+  | `gemini-3.5-flash` | 200 | 200 | — |
+  | `gemini-3-flash-preview` | 200 | — | — |
+  | `gemini-flash-latest` | 503 | — | — |
+  | `gemini-3.1-pro-preview` | **429** | — | — |
+
+  Every 503 carries `"This model is currently experiencing high demand"`. `gemini-3.8-flash` **does
+  exist** — it is in the live `/v1beta/models` listing, so the earlier suspicion that the model name
+  was wrong is closed as wrong.
+
+- **The 429 is the answer, and it is Google's own words.** `gemini-3.1-pro-preview` returns
+  `RESOURCE_EXHAUSTED` naming
+  `generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0` and
+  `…/generate_content_free_tier_input_token_count, limit: 0`, under
+  `quotaId: GenerateContentInputTokensPerModelPerDay-FreeTier`. So the key is served on the **free
+  tier**: pro models are `limit: 0` outright, and the newest flash models are capacity-refused under
+  load. The older flash models still answer, which is why the failure looks intermittent and
+  model-specific rather than like an auth problem.
+- **A consumer Gemini/Google One Pro subscription is not the same thing as a paid Gemini API tier.**
+  The API tier is a property of the **GCP project that owns the key** and whether billing is enabled
+  on the Generative Language API for it. That is the discrepancy to resolve: the operator believes
+  this key belongs to his Pro account, and Google is answering it as free tier.
+- **Why Antigravity works while the swarm does not: they are different identities.** Antigravity
+  keeps its own state and auth under `~/.gemini/antigravity`, signed in as the operator. The swarm
+  uses the API key. They are not the same credential and do not share a quota.
+- **The `gemini` CLI does NOT route around this.** It is installed (`@google/gemini-cli@0.41.2`) but
+  has no login of its own — with `GEMINI_API_KEY` unset it refuses, naming `GEMINI_API_KEY`,
+  `GOOGLE_GENAI_USE_VERTEXAI` or `GOOGLE_GENAI_USE_GCA` as the auth methods it would accept. So it
+  falls back to the same key and returns the same 503. Moving the swarm onto the CLI changes the
+  transport, not the identity, and on its own fixes nothing.
+- **The actual gap: Gemini has no credential-seeding rail, while its siblings do.** `claude-code` and
+  `openai-codex` each have an import route that adopts a login pushed from the operator's machine or
+  a satellite, under the ADR-127 gates (`claude-code-auth-routes.ts`, `openai-codex-oauth-routes.ts`).
+  `gemini-auth-routes.ts` registers exactly one route, `GET /status`, a connect-state probe. There is
+  no push, no import, and no sign-in-on-the-remote-client path for Google at all.
+- **Done when:** Gemini has the same seeding shape its siblings have — the operator can sign in on the
+  oshal client, or a login is pushed/seeded at build time, and the swarm reasons under **that**
+  identity rather than a free-tier API key — gated exactly as the Claude Code and Codex imports are,
+  with the credential never reaching a model-visible process; `GET /api/gemini/status` reports which
+  identity is actually in use and its tier rather than only connected/not; and a recorded live turn
+  answers on a Gemini model that the API key alone cannot reach. Until then, the honest interim is to
+  point the connection at a model the free tier still serves.
+
 ### PICK UP HERE — what was in flight when the 2026-09-21/22 overnight ended
 
 **Read this first if you are resuming that session.** Nothing below is a defect; it is a map of
