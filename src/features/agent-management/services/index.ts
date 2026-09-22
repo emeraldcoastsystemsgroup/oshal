@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Exported SEC-05 memory namespace, ACL, provenance, and promotion contracts.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Exported resolveBotRuntimeLauncher so every bot-runtime caller picks the substrate the same way
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Exported the provider switch store + snapshot (migration 147): the rows behind "a bot's LLM provider is a row in a table".
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | Exported BrainFallbackMarker, the wire marker a hot-fallback turn carries (operator decision 2026-09-22).
  */
 
 export { RedisMeshTransport, type RedisMeshTransportOptions } from './redis-mesh-transport';
@@ -162,6 +163,7 @@ export {
   type BotNodeRequest,
   type BotNodeClientOptions,
   type BotEndpointResolver,
+  type BrainFallbackMarker,
 } from './bot-node-client';
 export {
   NodeAllocatorService,

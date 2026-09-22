@@ -15,6 +15,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: remove the generic connector-credential carrier from ProcessMessageOptions; model requests keep owner identity only.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127 inline hosted brain: typed byoLlmConnection on ProcessMessageOptions (baseUrl+apiKey+model — the user-brain ladder result) so the orchestrator can honor a caller-resolved hosted endpoint instead of the callers smuggling it through an `as any` cast the orchestrator never read.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | ProcessResult carries a tier-aware tool trace (toolRuns) beside the flat toolsUsed names, so a finished run says which tier owned each tool and which provider operation an embedded tool actually ran. Optional, so every existing ProcessResult literal stays valid.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | ProcessMessageOptions gains byoLlmRetry: the entry point that resolved an EXPLICITLY chosen BYO endpoint asks the orchestrator to replay a retryable wall against that same endpoint at the model call (operator decision 2026-09-22). Optional and default-off, so a threaded resolver-owned lane keeps its single attempt and rotates instead. Also byoLlmFallback: the READY hosted rungs of the operator's configured hot-fallback chain, resolved and gated by the entry point, which the provider switches to at the model call once the chosen endpoint is exhausted — inside the same turn, so the user message is saved once. ProcessResult.brainFallback is the marker such a turn carries (BrainFallbackMarkerSchema, shared here because the node client, the orchestrator and the routes all speak it).
  */
 
 import { z } from 'zod';
@@ -189,7 +190,55 @@ export const ProcessMessageOptionsSchema = z.object({
     apiKey: z.string().min(1),
     model: z.string().min(1),
   }).optional(),
+  /** Replay a retryable provider wall against the SAME byoLlmConnection at the model call,
+   *  bounded (same-endpoint-retry). Set only by an entry point that resolved an EXPLICITLY chosen
+   *  endpoint; a resolver-owned lane is left unset and rotates instead. */
+  byoLlmRetry: z.boolean().optional(),
+  /** The operator's hot fallback for THIS turn (2026-09-22): the ready hosted rungs of the
+   *  configured chain, in order, each with the connection it rides in-process. Resolved, gated
+   *  (demo deployment + operator subject) and readiness-probed by the entry point — the
+   *  orchestrator never decides WHO may fall back, only switches the model call to the first
+   *  rung that answers once byoLlmConnection is exhausted. Absent = no fallback. */
+  byoLlmFallback: z.array(z.object({
+    providerId: z.string().min(1),
+    rung: z.number().int().positive(),
+    chainSource: z.string().min(1),
+    connection: z.object({
+      baseUrl: z.string().min(1),
+      apiKey: z.string().min(1),
+      model: z.string().min(1),
+    }),
+  })).optional(),
 });
+
+/**
+ * @description The machine-readable marker a HOT-FALLBACK turn carries (operator decision
+ * 2026-09-22): the caller's explicitly chosen BYO endpoint refused every same-endpoint attempt,
+ * and the operator's turn was answered by a rung of the portal's configured fallback chain
+ * instead. Present ONLY on such a turn, so its absence means "answered where you asked".
+ * Never carries a key: the failed endpoint is named by host and model only.
+ */
+export const BrainFallbackMarkerSchema = z.object({
+  /** Why the switch happened. The one value today: the chosen endpoint exhausted its retry. */
+  reason: z.literal('byo_exhausted'),
+  /** The provider that actually answered (the rung's provider id, as configured). */
+  providerUsed: z.string().min(1),
+  /** The rung's position in the configured chain, 1-based. */
+  rung: z.number().int().positive(),
+  /** Where the chain came from: bot-row | fleet-default | environment | default. */
+  chainSource: z.string().min(1),
+  /** The endpoint that refused — host and model, never the key. */
+  failedEndpoint: z.object({ host: z.string().nullable(), model: z.string().nullable() }),
+  /** How many attempts that endpoint refused before the fallback was taken. */
+  attempts: z.number().int().positive(),
+  /** The classified failure the endpoint gave (rate-limit / quota / capacity). */
+  failure: z.string().min(1),
+});
+
+/**
+ * @description The marker a hot-fallback turn carries. See {@link BrainFallbackMarkerSchema}.
+ */
+export type BrainFallbackMarker = z.infer<typeof BrainFallbackMarkerSchema>;
 
 /**
  * @description Options for processing a user message.
@@ -221,6 +270,8 @@ export const ProcessResultSchema = z.object({
   usageSummary: TaskUsageSummarySchema.optional(),
   error: z.string().optional(),
   completionType: z.enum(['natural', 'tool_limit', 'error', 'user_cancel', 'waiting_for_input']).optional(),
+  /** Set only when the turn was answered by the operator's hot fallback — see {@link BrainFallbackMarkerSchema}. */
+  brainFallback: BrainFallbackMarkerSchema.optional(),
 });
 
 /**

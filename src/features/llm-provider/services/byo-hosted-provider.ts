@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127 inline hosted brain: OpenAI-compatible hosted LLMService driven by a caller-resolved { baseUrl, apiKey, model } connection (the exact shape resolveUserLlmConnection returns), so controller-inline turns for CLI-harness bots can run on the user-brain ladder instead of dying on the SEC-05 unattended-CLI refusal. Maps the platform's ContentBlock history (incl. tool_use/tool_result) to the OpenAI wire shape and back; plus a governed factory that applies the same GovernedProvider wrap the composition root gives every other provider path.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Tool-call arguments must parse to a plain JSON object: valid-but-wrong shapes (a scalar, an array, null) are now skipped like parse failures instead of handing executeTool a malformed input.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | createGovernedByoHostedProvider takes { sameEndpointRetry } and, when set, decorates the raw provider with SameEndpointRetryProvider INSIDE the GovernedProvider wrap — so a retryable wall (429/402/503 high demand) is replayed against the same endpoint at the model call, and the governance gate and its usage record see exactly one completed call. Off by default: only an entry point that resolved an EXPLICITLY chosen endpoint (resolutionSource 'explicit') asks for it. Also { fallbackRungs }: the operator's pre-gated, ready hot-fallback rungs, folded in as a HotFallbackChainProvider between the retry and the gate; readBrainFallback reads the marker off the governed provider after the turn.
  */
 
 import type { Pool } from 'pg';
@@ -17,9 +18,57 @@ import {
   type SendRequestOptions,
   type TokenUsage,
 } from './llm-service';
+import type { BrainFallbackMarker } from '@/shared/types';
 import { GovernedProvider } from './governed-provider';
+import { withSameEndpointRetry } from './same-endpoint-retry';
+import { HotFallbackChainProvider } from './hot-fallback-chain-provider';
 
 const logger = createChildLogger({ module: 'byo-hosted-provider' });
+
+/** One READY rung of the operator's hot fallback, as the entry point resolved and gated it. */
+export interface ByoHostedFallbackRung {
+  providerId: string;
+  /** 1-based position in the configured chain. */
+  rung: number;
+  chainSource: string;
+  connection: ByoHostedConnection;
+}
+
+/**
+ * @description How the governed factory shapes the provider it builds.
+ */
+export interface ByoHostedProviderOptions {
+  /**
+   * Replay a retryable provider wall (429 / 402 / 503 "high demand") against this SAME
+   * endpoint, bounded by the same-endpoint retry plan. Only an entry point that resolved an
+   * explicitly chosen endpoint sets this; a resolver-owned lane rotates instead, which is faster
+   * than any backoff on a lane already known to be walled.
+   */
+  sameEndpointRetry?: boolean;
+  /** The bot whose turn this is, for the retry log lines. */
+  agentId?: string;
+  /**
+   * The operator's hot fallback for this turn: the READY rungs of the configured chain, each
+   * tried once at the model call after the endpoint above exhausted its retry. The caller has
+   * already decided WHO may fall back and WHICH rungs are ready; an empty or absent list means no
+   * fallback, and this factory never invents one.
+   */
+  fallbackRungs?: readonly ByoHostedFallbackRung[];
+}
+
+/** The chain decorator behind each governed provider that was built with rungs. */
+const chainByProvider = new WeakMap<LLMService, HotFallbackChainProvider>();
+
+/**
+ * @description The hot-fallback marker for a provider built by {@link createGovernedByoHostedProvider},
+ * once a rung answered on the turn it served. Null for a provider built without rungs, and while
+ * the chosen endpoint is still the one answering.
+ * @param provider - The governed provider the turn ran on.
+ * @returns The marker, or null.
+ */
+export function readBrainFallback(provider: LLMService): BrainFallbackMarker | null {
+  return chainByProvider.get(provider)?.brainFallback ?? null;
+}
 
 const DEFAULT_MAX_TOKENS = 4096;
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -215,15 +264,35 @@ export class ByoHostedProvider extends LLMService {
  * process provider before it reaches an orchestrated turn, so the BYO path gains the model
  * gateway (quota window; budget legs fail open without a pool) instead of skipping
  * governance. Callers that hold no pg pool (the chat orchestrator) pass nothing.
+ * The same-endpoint retry, when asked for, sits BETWEEN the governance wrap and the raw provider:
+ * the gate admits the call once, the replays happen beneath it against the identical endpoint,
+ * and the usage it records is the one completed call. Wrapping outside the gate would instead
+ * re-run the budget decision per attempt and could downshift a replay onto a different model.
+ * The hot-fallback chain, when rungs are given, sits outside the retry and inside the gate for
+ * the same reason: the retry exhausts the chosen endpoint first, the rungs are tried once each,
+ * and governance sees one admitted call whichever provider answered.
  * @param connection - Caller-resolved OpenAI-compatible endpoint + key + model.
  * @param pool - Optional pg pool for budget reads; null keeps budgets fail-open.
+ * @param options - `sameEndpointRetry` for an explicitly chosen endpoint; `fallbackRungs` for the
+ *   operator's gated, ready rungs; `agentId` for the logs.
  * @returns Governed LLMService ready for `runAgenticLoop` / direct sends.
  */
 export function createGovernedByoHostedProvider(
   connection: ByoHostedConnection,
   pool: Pool | null = null,
+  options: ByoHostedProviderOptions = {},
 ): LLMService {
-  return new GovernedProvider(new ByoHostedProvider(connection), pool);
+  const identity = { agentId: options.agentId, baseUrl: connection.baseUrl, model: connection.model };
+  const raw: LLMService = new ByoHostedProvider(connection);
+  const retried = options.sameEndpointRetry ? withSameEndpointRetry(raw, identity) : raw;
+  const rungs = (options.fallbackRungs ?? []).map((rung) => ({
+    providerId: rung.providerId, rung: rung.rung, chainSource: rung.chainSource,
+    provider: new ByoHostedProvider(rung.connection) as LLMService, model: rung.connection.model,
+  }));
+  const chain = rungs.length ? new HotFallbackChainProvider(retried, identity, rungs) : null;
+  const governed = new GovernedProvider(chain ?? retried, pool);
+  if (chain) chainByProvider.set(governed, chain);
+  return governed;
 }
 
 /**

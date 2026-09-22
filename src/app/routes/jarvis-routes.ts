@@ -57,6 +57,7 @@
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | Record WHICH half of the /ask session gate refused. The 404 session_not_found was emitted with no log line at all, so an operator reading the api log could not tell a foreign-owned session id from a store that failed to answer - the same indistinguishability that let a Jarvis ownership fault read as an empty conversation for three days. The decision, the status, the body and the short-circuit order are all unchanged; only the refusal is now written down.
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | The tool block is built through the selector shadow step: a candidate selector is measured beside the shipped one and discarded, so a narrower cut can be judged on real traffic while the model keeps receiving exactly the block it received before.
  * 25 | maintainer@emeraldcoastsystemsgroup.com   | A decision timeout no longer files a ticket for a greeting or a question. The branch inferred that a slow turn was a big build and filed the user's own words as the title; with the operator's codex lane out of credits, every message timed out, so "Hi" was filed three times and escalated, alongside "what is 9 times 9" and "what screen am i on". Conversational messages now get the truth - the provider did not respond, nothing was filed - and substantive requests keep the existing hand-off.
+ * 27 | maintainer@emeraldcoastsystemsgroup.com   | The ask job result carries brainFallback when the turn was answered by the operator's hot fallback (2026-09-22) so the surface says which rung answered and that the chosen endpoint was unavailable; a fallback that was not ready reaches the job as its own clear error text.
  * 26 | maintainer@emeraldcoastsystemsgroup.com   | A build request is handed to the swarm without a model turn. The decision step was an agentic bot turn raced against a 75s timeout, and on "build me X" the agent ignored the hand-off rule and ground the build inline (8.6 min, 1.87M tokens measured 2026-06-20) while the route, having lost the race, filed the same ask with the swarm - two builds of one request, acknowledged after 75 seconds. detectBuildRequest recognises the imperative deterministically alongside the existing recall/provider/schedule guards, fileBuildHandoff files it, and the turn returns before runJarvisBot is ever called, so there is no losing turn to abandon. The decision-timeout fallback now files through the same claim-guarded path, so a resent ask cannot open a second build.
  */
 
@@ -73,6 +74,7 @@ import {
   rejectLegacyServiceIdentityForUserRead,
 } from '@/features/security';
 import type { AppContext } from '@/app/composition/app-context';
+import type { BrainFallbackMarker } from '@/features/agent-management';
 import {
   VisualResponseService,
   inferVisualSpec,
@@ -273,6 +275,8 @@ interface AskJob {
     surfaceOps?: SurfaceDirectiveOp[];
     artifactAction?: JarvisArtifactAction;
     packageToolProposal?: JarvisPackageToolProposal;
+    // Present only when the operator's chosen endpoint was exhausted and a fallback rung answered.
+    brainFallback?: BrainFallbackMarker;
   };
   error?: string;
   // Machine code for a failure the surface answers specifically (today only NO_HOSTED_BRAIN): it lets
@@ -879,12 +883,14 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
         // codex lane sat on `You've hit your usage limit`. A greeting or a question is never a
         // build, so on those a timeout is reported as what it is.
         let answer: string;
+        let brainFallback: BrainFallbackMarker | undefined;
         try {
           const raced = await Promise.race([
             runJarvisBot(ctx, sub, botMessage, sessionId, true, message),
             new Promise<never>((_, rej) => setTimeout(() => rej(new Error('DECISION_TIMEOUT')), DECISION_TIMEOUT_MS)),
           ]);
           answer = raced.answer;
+          brainFallback = raced.brainFallback;
         } catch (e) {
           if ((e as Error).message !== 'DECISION_TIMEOUT' || artifactSelection) throw e;
 
@@ -1025,6 +1031,7 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
             ...(directVisual ? { visual: directVisual } : {}),
             ...(surfaceOps.length ? { surfaceOps } : {}),
             ...(artifactReply.artifactAction ? { artifactAction: artifactReply.artifactAction } : {}),
+            ...(brainFallback ? { brainFallback } : {}),
           },
         });
       } catch (err) {

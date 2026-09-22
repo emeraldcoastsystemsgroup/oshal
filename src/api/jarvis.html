@@ -19,6 +19,7 @@
   2 | maintainer@emeraldcoastsystemsgroup.com | Compact the existing assistant controls and group task updates without changing conversation or delivery ownership.
   3 | maintainer@emeraldcoastsystemsgroup.com | Stop the hidden dashboard node animation while retaining the assistant orb and voice rendering.
   4 | maintainer@emeraldcoastsystemsgroup.com | A failed ask carrying code NO_HOSTED_BRAIN (no AI engine connected) is spoken as the server's actionable sentence instead of "Sorry, that didn't work"; askFailureLines decides both lines, every other failure keeps its message and the apology.
+  6 | maintainer@emeraldcoastsystemsgroup.com | A fallback turn says so (2026-09-22): when the ask result carries brainFallback, one attribution line is rendered beneath the answer — "answered by X (hot fallback); Y was unavailable after N attempts" — on both the live and the durable result paths, so the switch is never passed off as a normal turn.
   5 | maintainer@emeraldcoastsystemsgroup.com | Load and mount the Manage Voices → Ambient Recall bridge: every voice row in the Voice & Speakers panel opens that voice's profile page.
 -->
 <html lang="en" data-theme="midnight">
@@ -1167,6 +1168,14 @@ function trustedVisualMetadata(candidate) {
     return {...candidate,artifactId,type:'image',mimeType:'image/svg+xml',url:expected,alt,width,height};
   }catch(_){return null;}
 }
+/* A turn the hot fallback answered says so (2026-09-22): which provider answered, and which
+   endpoint was unavailable after how many attempts. The server never sends a key here. */
+function brainFallbackHtml(marker) {
+  if (!marker || !marker.providerUsed) return '';
+  const failed = [marker.failedEndpoint && marker.failedEndpoint.host, marker.failedEndpoint && marker.failedEndpoint.model].filter(Boolean).join(' / ') || 'your selected endpoint';
+  const attempts = Number(marker.attempts) || 1;
+  return `<div class="meta" style="opacity:.75;font-size:.85em;margin-top:6px;">Answered by ${esc(marker.providerUsed)} (hot fallback, rung ${esc(marker.rung)}); ${esc(failed)} was unavailable after ${attempts} attempt${attempts === 1 ? '' : 's'} (${esc(marker.failure)}).</div>`;
+}
 function visualReplayHtml(visual) {
   const trusted=trustedVisualMetadata(visual); if(!trusted)return '';
   const safeUrl=trusted.url,alt=trusted.alt;
@@ -1539,6 +1548,7 @@ async function handleInput(text) {
       let html = renderMarkdown(d.answer || '(no answer)');
       if (d.handoffs && d.handoffs.length) html += chipsHtml(d.handoffs);
       html += visualReplayHtml(d.visual);
+      html += brainFallbackHtml(d.brainFallback);
       bubble.innerHTML = html;
       showInlineResult(html);
       if (d.packageToolProposal) window.oshalPresentPackageTool?.(d.packageToolProposal, $('resultContent'));
@@ -1962,6 +1972,7 @@ async function openJob(jobId) {
     let html = renderMarkdown(d.answer);
     if (d.handoffs && d.handoffs.length) html += chipsHtml(d.handoffs);
     html += visualReplayHtml(d.visual);
+    html += brainFallbackHtml(d.brainFallback);
     html += downloadsHtml(d.files);
     html += workspaceChipHtml(d.ticketId || d.sourceTicketId || d.taskId);
     showInlineResult(html);

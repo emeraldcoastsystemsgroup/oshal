@@ -26,6 +26,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | buildCatalogBlock: the effective-route catalog (curated + dynamically discovered store apps, ADR-085/087) is injected into every live bot turn. The live path had NO catalog - the plan guidance said "the catalog keys above" over a message that never carried one, and the persona's baked specialist list was the bot's only (stale, platform-only) world model, so a CRM-only deployment had a Jarvis that had never heard of its own CRM and shrugged at a pipeline question (operator report 2026-09-04). Bounded, degrades to '' - a catalog failure never blocks the turn.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | looksLikeWorkRequest: the decision-timeout branch treated "the model did not answer in 75s" as "the model is grinding a big build", and filed a ticket titled with the user's own message. A timeout equally means the brain is unreachable, and on the operator box it did - the codex lane was answering `You've hit your usage limit`, so every message timed out and every message was filed: "Hi" three times, all escalated, plus "what is 9 times 9" and "what screen am i on" as build tickets. A work VERB now wins over grammar (a request can wear a question mark), and without one a greeting or a question is reported as an outage instead of opened as a project.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | The completed-task return leg now tells the owner. summarizeComplexTask finished the row and wrote the thread turn and stopped there, so work handed to the swarm - which by definition takes long enough that nobody is watching the thread - finished silently and was found only by going back to look. The tail publishes through publishJarvisTaskCompletion: row, then turn, then a bounded notice over the user's OWN NotificationRouter preference. The notice is last and deadline-bounded so a wedged or unconfigured channel can never cost the user the answer itself.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | runJarvisBot names WHICH rung of the ladder produced the connection it threads (byoLlmResolutionSource, controller-side only): the chokepoint keys the same-endpoint retry and the operator's hot fallback on 'explicit' alone, so a free-tier or operator-key lane Jarvis threads keeps its single attempt and rotates here as before. The turn's result now carries the brainFallback marker so the surface can say a fallback rung answered.
  *
  * @module jarvis-orchestrator
  */
@@ -35,7 +36,7 @@ import type { AppContext } from '@/app/composition/app-context';
 import { createChildLogger } from '@/shared/logger';
 import { isApplicationExecutionProtected } from '@/shared/application-authorization-execution';
 import type { AuthorizationActor } from '@/shared/application-authorization';
-import { BotNodeClient, createRegistryEndpointResolver } from '@/features/agent-management';
+import { BotNodeClient, createRegistryEndpointResolver, type BrainFallbackMarker } from '@/features/agent-management';
 import { learnFromExchange, withHavenContext } from '@/features/user-model';
 import {
   VisualResponseService,
@@ -359,7 +360,7 @@ async function runJarvis(
  */
 export async function runJarvisBot(
   ctx: AppContext, sub: string, message: string, taskId: string, agentic = true, userText?: string,
-): Promise<{ answer: string; routed: AppRoute[]; handoffs: AppRoute[] }> {
+): Promise<{ answer: string; routed: AppRoute[]; handoffs: AppRoute[]; brainFallback?: BrainFallbackMarker }> {
   // ADR-127: which brain runs this turn — the caller's saved default, else the ladder (demo CLI
   // login for the operator, their own endpoint, their free tiers, this deployment's keys). A
   // `hosted` result rides as byoLlmConnection; a `cli` result is STAMPED as the dispatch's
@@ -391,6 +392,11 @@ export async function runJarvisBot(
     direct: true,
     userSub: sub,
     byoLlmConnection,
+    // Which rung produced that connection. Only 'explicit' (the user's own saved endpoint) earns
+    // the same-endpoint retry and, for the operator, the hot fallback; a free-tier / platform /
+    // operator-key lane keeps one attempt and rotates in the catch below. Controller-side only —
+    // the chokepoint strips it before a dispatch leaves for the node.
+    ...(resolvedLlmConnection ? { byoLlmResolutionSource: resolvedLlmConnection.resolutionSource } : {}),
     ...cliProvider,
   };
   let result: Awaited<ReturnType<typeof executeBotOrInline>>;
@@ -435,7 +441,7 @@ export async function runJarvisBot(
   // reads only its first 2,000 characters: under the old context-first order those characters were
   // the tool catalog, so the loop was recording the catalog as durable facts about the person.
   void learnFromExchange(ctx.pool, sub, userText ?? message, answer, (p) => runJarvis(ctx, sub, p, 'haven-learn', byoLlmConnection));
-  return { answer, routed: [], handoffs: [] };
+  return { answer, routed: [], handoffs: [], ...(result.brainFallback ? { brainFallback: result.brainFallback } : {}) };
 }
 
 /**

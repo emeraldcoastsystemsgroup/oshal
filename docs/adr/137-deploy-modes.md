@@ -2,6 +2,8 @@
 
 **Status:** Proposed — operator direction 2026-09-04, minimal implementation landed with this ADR.
 Amendment A (credential posture per mode) accepted and built 2026-09-04.
+Amendment B (the operator's own turns fall to the portal fallback after their endpoint is
+exhausted) accepted and built 2026-09-22.
 
 **Date:** 2026-09-04
 
@@ -181,3 +183,103 @@ Guards: store `career-no-sync-api.test.mjs` (wall vs carve, brokered-key mapping
 `claude-code-demo-login-adoption.spec.ts` (real router + service: both gates, atomic 0600 write,
 read-only 409, wrong-shape 400), `claude-code-credential-distribution-boundary.spec.ts` (the carve
 cannot widen past both gates), `node-login-push.spec.ts` (what may leave the satellite, and where).
+
+---
+
+## Amendment B — the operator's own turns may fall to the portal fallback after their endpoint is exhausted (operator, 2026-09-22)
+
+Amendment A lends the portal's own vendor logins to the operator under two gates. It said nothing
+about a turn the operator had pointed at **his own** endpoint (Settings → My default brain → "My own
+endpoint"). The platform's standing rule for such an explicit BYO endpoint was *never rotate it*
+(`reportResolvedLlmFailure`): the endpoint is the caller's billing and privacy boundary. On
+2026-09-21 that rule cost the operator two turns — his Gemini Pro endpoint (a GCP backend with a
+provider-side spend cap and a short-window ceiling) answered HTTP 503 "This model is currently
+experiencing high demand" twice, once through Jarvis and once through the inline class-tutor path —
+and each time the whole turn was lost with no retry of any kind.
+
+The operator's words, in order: *"fix the retry but use the fallback - no big deal, we have an
+immediate fallback. I like Google, it's fast, but we do have a fallback. Can we keep a HOT fallback
+as well - this portal has Codex and Claude Code."* Then: *"Configurable. Codex followed by Claude
+Code, if either is available, by default - but this is configurable, there is literally an API
+endpoint, it's already been set."*
+
+**Two rules now stand side by side, and both are written at the refusal in `free-tier-rotation.ts`.**
+
+1. **The same-endpoint retry (2026-09-21).** An explicitly chosen endpoint (`resolutionSource:
+   'explicit'`, and only that) that answers a capacity wall — 429, 402, 503 with a high-demand /
+   overloaded / service-unavailable body — is replayed against *itself*: same URL, same key, same
+   account. That is not a rotation and crosses no boundary. It wraps the **model call**
+   (`SameEndpointRetryProvider`, inside the orchestrator's turn), so the user message is saved once
+   and the error is broadcast once; `OSHAL_BYO_RETRY_*` bound it, `0` switches it off. A threaded
+   free-tier, platform or operator-key lane gets one attempt and rotates, as before. A 400, 401,
+   403, 404, bare 500 or completed-but-empty answer is never retried.
+
+   **`OSHAL_BYO_RETRY_MAX_ATTEMPTS` bounds one model call; `OSHAL_BYO_RETRY_BUDGET_MS` bounds the
+   TURN.** An agentic turn makes up to `maxTurns` model calls (25), so a budget taken per model call
+   is not a bound on anything a user waits for: measured at 75 attempts and 75 s of pure backoff on
+   one turn against a budget reading 15 s, and the cockpit `POST /api/send-message` path has no
+   `DECISION_TIMEOUT_MS` to catch it the way Jarvis does. The decorator is built once per
+   `processMessage`, so it holds one `SameEndpointRetryTurnBudget` for the turn and each model
+   call's own budget nests inside it — the same 25 model calls then make 35 attempts and 15 s. Only
+   replay time is charged to it (the backoffs and the attempts after each call's first), never the
+   turn's ordinary latency, so a long agentic turn whose model calls are merely slow keeps its full
+   retry.
+
+2. **The operator's hot fallback (2026-09-22).** For the **operator's own** explicit turns, and only
+   those, "never rotate a BYO turn" is superseded: once the retry is exhausted the turn falls
+   **once** through the portal's **configured** fallback chain. The gates are exactly Amendment A's:
+   `DEMO_MODE` truthy **and** the caller's sub in `OSHAL_OPERATOR_SUBS` (`cliBrainAvailable`). For
+   every non-operator caller nothing changes — their endpoint is never rotated and the portal's
+   logins are never lent to them.
+
+**The chain is the record [ADR-162](162-a-bots-brain-is-layered-records.md) already resolves the
+brain from.** The bot's own switch row's `fallback_order` if it carries one, else the fleet-default
+row's (migration 148), else `OSHAL_PROVIDER_FALLBACK_ORDER`, most specific first; only when every
+record is silent does the default `openai-codex, claude-code` apply. It is changed with the endpoint
+that already exists, and takes effect on the next turn with no restart:
+
+```
+PUT /api/agents/provider-switch/fleet-default
+{"providerId":"<the fleet primary>","fallbackOrder":["openai-codex","claude-code"]}
+```
+
+Measured on the operator box on 2026-09-22, the fleet-default row reads `provider_id=claude-code`,
+`fallback_order={gemini,openrouter}` — so today his hot fallback walks Gemini then OpenRouter, which
+is what he configured; the default applies only where no record carries a chain.
+
+**Readiness is what makes a rung safe to take.** Each rung is taken only when the probe
+(`fallback-rail-readiness.ts`) says it is ready right now: a CLI login rung has its login file
+present and unexpired and its bot node answering; a hosted rung has its vendor key present and is
+not sitting out a failure cooldown. A rung that is not ready is skipped with its reason logged and
+never spent on. That gating is what makes re-admitting `claude-code` to an automatic chain safe
+against the 2026-08-13 concern that removed it ([ADR-128](128-codex-fleet-default.md) Amendment 1,
+"silent spend on a dying account"): a dying account's login has lapsed, reads not-ready, and is
+skipped. The 2026-09-22 decision supersedes that removal **for this configurable, readiness-gated
+fallback only**; `DEMO_CLI_ORDER` (the chat/user rung) is not changed by it.
+
+**Where each rung can run.** A CLI login rung serves only a turn on a bot node — re-dispatched with
+the rung stamped as the authoritative provider, where the node's own SEC-05 preflight re-enforces
+the same carve; nothing about that preflight is weakened. A controller-inline turn cannot ride a
+CLI, so for it only a hosted rung with an in-process lane (`openai-compat-lanes`) can serve, riding
+as the operator-key connection; the switch happens at the model call inside the same turn.
+
+**Never silent.** One pass through the chain per TURN — not per model call, which is the same
+decision as the budget above: the chain decorator is built once per `processMessage`, so a primary
+that walls, is walked over and walls again later in the same turn does not start a second walk. Each
+ready rung once; no fallback-of-the-fallback; no fallback on a non-retryable failure (a 400 or a 401
+on the chosen endpoint is an authorization or request verdict, and a rung cannot answer it — guarded
+on both transports). Every fallback turn carries the `brainFallback` marker
+(provider used, rung, chain source, the failed endpoint's host and model, the attempts, the reason —
+never a key), the cockpit chat panel and the Jarvis surface render it as "answered by X; Y was
+unavailable after N attempts", and the switch is logged at WARN. When the fallback applied and no
+rung could answer, the user gets a 503 `BYO_FALLBACK_NOT_READY` whose text names the endpoint, the
+attempts and every rung's reason. The Settings → My default brain card shows the chain, its source,
+and each rung's readiness, with the PUT that changes the order.
+
+Guards: `tests/unit/byo-same-endpoint-retry.spec.ts` (the replay wraps the provider call across a
+loopback endpoint and the real cockpit router; explicit-only; 503; 0 = off; one saved message, one
+broadcast; 25 model calls on one decorated provider make 35 attempts and 15 s, and a slow turn keeps
+its retry) and `tests/unit/byo-hot-fallback.spec.ts` (operator-only, readiness-gated, configured
+chain honoured and re-ordered by the real PUT with no restart, the marker, the WARN line, the
+not-ready error, the node re-dispatch, a 401 and a 400 never reaching a READY rung on either
+transport, and one walk per turn), both registered on the AI Test Lab `byo-hot-fallback` scenario.

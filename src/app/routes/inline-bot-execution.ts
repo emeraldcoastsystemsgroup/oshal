@@ -16,18 +16,22 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com  | One harness resolution for guard AND executor (live 2026-08-13, career.oshal.ai swarmbot popup): agentRequiresHostedBrain matched the registry by agentId ONLY, but provider-runtime's resolveHarnessForAgent ALSO falls back to the entry named by process BOT_NAME. The controller runs BOT_NAME=project-manager (harness codex-cli), so every agent absent from the registry — 84 of 116 active rows on the operator box — was EXECUTED through a CLI harness while this guard answered "not a CLI bot", skipped the ladder, and let assertAuditedAutonomousHarness hand the user its raw SEC-05 text (reproduced on email-bot a695dd5f-…). resolveGoverningEntry now mirrors the executor's two-step lookup, so both entry points resolve a brain for exactly the agents that will need one. The refusal itself, demoOperatorCliUnlock, and the node path are untouched — this closes a guard gap, it does not widen what may execute.
  * 12 | maintainer@emeraldcoastsystemsgroup.com  | Refuse inline specialist dispatch until that transport can carry the required bounded package context.
  * 13 | maintainer@emeraldcoastsystemsgroup.com  | ONE bot-invocation chokepoint, the INLINE half (BACKLOG "One bot-invocation chokepoint - the INLINE half of /api/send-message"): the admission gates executeBotOrInline applied inline in its own body - specialist-context, the two credential-carrier refusals and the cost-governance HARD cap - are extracted into the exported assertBotInvocationAdmissible so a caller that CANNOT take this function's bot-node request shape (message-routes' inline branch carries a ticketContext and an interactionMode BotNodeRequest has no room for) clears the same decision instead of no decision at all. Behaviour here is byte-identical except the budget refusal is now the typed BudgetBlockedError (same message, code budget_cap_exceeded, statusCode 402) so a route can say WHY rather than 500. Entitlement stays asserted by each caller - one assert, one audit line. Guard: tests/unit/send-message-budget-gate.spec.ts.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com  | Bounded SAME-endpoint retry for an explicitly chosen BYO turn (operator decision 2026-09-22). The inline branch previously had exactly two outcomes for a provider wall: rotate to another lane, or surface the error - and rotation is permanently refused for an explicit BYO endpoint, so those turns got NO retry at all and an intermittently tripping provider spend cap cost the whole turn. isExplicitByoTurn names the two shapes of explicit choice (caller-threaded connection, or a ladder resolution whose top rung was the user own BYO row) and the first attempt is wrapped in runWithSameEndpointRetry, which replays the SAME URL/key/account under an attempt, backoff and wall-clock bound. The rotation legs below are untouched, resolver-owned lanes are not wrapped (rotating beats waiting out a backoff on a known-walled lane), and the wrapper reads swallowedTurnFailure so it sees the resolved-failure shape the agentic loop produces.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com  | Reworked after review refuted seq 14 on two counts, and extended with the operator's hot fallback (2026-09-22). (a) "caller-threaded means explicit" was FALSE: jarvis-orchestrator threads free-tier/platform/operator-key lanes as byoLlmConnection too, so every Jarvis hosted turn — free-tier users included — took 3 attempts before Jarvis's own rotation. isExplicitByoTurn now keys on resolutionSource === 'explicit' ONLY, carried on the request as byoLlmResolutionSource by the caller that resolved it; a threaded connection with no source gets one attempt. (b) Wrapping processMessage replayed the WHOLE turn — three saved user messages, three error broadcasts. The retry now rides options.byoLlmRetry into the orchestrator, which wraps the provider call. (c) runInlineTurnWithRecovery is the ONE inline turn body both entry points share: first attempt → rotation for resolver-owned lanes → the operator-only, readiness-gated hot fallback (byo-hot-fallback.ts) for an exhausted explicit endpoint; the remote branch recovers the same way by re-dispatching once per ready rung with the rung stamped as the authoritative provider. A fallback turn returns the brainFallback marker.
  */
 
 import type { AppContext } from '@/app/composition/app-context';
 import { canonicalBotWorkspaceId } from '@/app/bot-node-request-scope';
-import type { BotNodeClient, BotNodeRequest, BotNodeResponse } from '@/features/agent-management';
-import type { TaskUsageSummary } from '@/shared/types';
+import type { BotNodeClient, BotNodeRequest, BotNodeResponse, BrainFallbackMarker } from '@/features/agent-management';
+import type { ProcessResult, TaskUsageSummary } from '@/shared/types';
 import { createChildLogger } from '@/shared/logger';
 import { BudgetService, type BudgetDecision } from '@/features/cost-governance';
 import { isUnbrokeredAutonomousProvider } from '@/features/llm-provider';
 import { composeSkillProfilePrompt, resolveSkillProfileByApp } from '@/shared/skill-profiles';
 import { assertExecuteEntitlement } from '@/app/bot-node-execute-entitlement';
 import { reportResolvedLlmFailure, resolveUserLlmConnection, type ResolvedUserLlmConnection } from './free-tier-rotation';
+import { explainInlineFallbackMiss, planInlineHotFallback, recoverExplicitByoWall } from './byo-hot-fallback';
+import type { ByoHostedFallbackRung } from '@/features/llm-provider';
 import { resolveUserBrain, type ResolvedBrain } from './user-brain-resolution';
 import type { ByoLlmConnection } from './byo-llm-routes';
 import { getSpecialistContextRegistry, SpecialistContextError } from '@/shared/specialist-context';
@@ -363,6 +367,105 @@ export function swallowedTurnFailure(
 }
 
 /**
+ * @description True when the endpoint this turn runs on was EXPLICITLY chosen by the user — the
+ * ladder's top rung, their own saved BYO row (`resolutionSource: 'explicit'`) — and nothing else.
+ * Two carriers of that one fact: a caller that resolved the ladder itself and threaded the wire
+ * trio says so with `byoLlmResolutionSource` on the request (jarvis-orchestrator); an entry point
+ * that resolved the ladder here reads it off the resolved connection's metadata.
+ *
+ * A threaded connection with NO source is not explicit. The first build treated every threaded
+ * connection as explicit, and jarvis-orchestrator threads free-tier, platform and operator-key
+ * lanes the same way, so every Jarvis hosted turn — free-tier users included — paid three
+ * attempts and a backoff before Jarvis's own rotation. A resolver-owned lane rotates; it does not
+ * wait out a backoff on a lane already known to be walled.
+ *
+ * It is the condition for the bounded SAME-endpoint retry and for the operator's hot fallback.
+ * Rotation for these turns stays refused by `reportResolvedLlmFailure`, which is the boundary.
+ * @param request - The request facts: the threaded connection and the source its caller declared.
+ * @param resolved - The ladder-resolved connection (with metadata), if this entry point resolved it.
+ * @returns Whether this turn is running on an explicitly chosen endpoint.
+ */
+export function isExplicitByoTurn(
+  request: Pick<BotNodeRequest, 'byoLlmConnection' | 'byoLlmResolutionSource'> | undefined,
+  resolved: ByoLlmConnection | undefined,
+): boolean {
+  if (request?.byoLlmConnection) return request.byoLlmResolutionSource === 'explicit';
+  return (resolved as ResolvedUserLlmConnection | undefined)?.resolutionSource === 'explicit';
+}
+
+/** The per-attempt options the shared inline turn body hands the entry point's runner. */
+export interface InlineTurnOptions {
+  /** Ask the orchestrator to replay a retryable wall against the same endpoint at the model call. */
+  byoLlmRetry: boolean;
+  /** The operator's READY hot-fallback rungs for this turn, if the fallback applies. */
+  byoLlmFallback?: ByoHostedFallbackRung[];
+}
+
+/** What the shared inline turn body needs from an entry point. */
+export interface InlineTurnRecoveryInput {
+  pool: AppContext['pool'];
+  agentId: string;
+  userSub: string | undefined;
+  /** The ladder-resolved connection WITH metadata (rotation needs it), when this entry point resolved one. */
+  resolvedBrain: ByoLlmConnection | undefined;
+  /** The wire trio the first attempt runs on (caller-threaded, or the ladder's pick stripped). */
+  firstEndpoint: ByoLlmConnection | undefined;
+  /** Whether that endpoint was explicitly chosen — the retry and the hot fallback key on this. */
+  explicit: boolean;
+  /** Runs one orchestrator turn on a connection with the given per-attempt options. */
+  runTurn: (connection: ByoLlmConnection | undefined, turn: InlineTurnOptions) => Promise<ProcessResult>;
+}
+
+/**
+ * @description The ONE inline turn body both conversational entry points ride (executeBotOrInline
+ * and the inline half of /api/send-message), so the three decisions around a provider wall are
+ * made once and all of them at the model call, inside ONE orchestrator turn: (1) the first attempt
+ * runs with the same-endpoint replay when the endpoint was explicitly chosen (options.byoLlmRetry —
+ * the provider call replays; the turn's persistence and broadcast do not); (2) for the deployment
+ * operator only, the ready hosted rungs of the configured chain ride along as options.byoLlmFallback
+ * (planInlineHotFallback gates, resolves and probes them BEFORE the turn) and the orchestrator's
+ * chain provider switches to the first that answers once the endpoint is exhausted — one saved user
+ * message, one broadcast, the marker on the result; (3) a resolver-owned lane that walled rotates
+ * once to the next lane (retryHostedBrainTurn), which refuses an explicit endpoint. An explicit
+ * endpoint whose fallback applied and still got no answer surfaces ByoFallbackUnavailableError,
+ * naming every rung's reason; anyone else gets the original failure.
+ * @param input - The turn facts and the runner.
+ * @returns The result, and the fallback marker when a rung answered.
+ * @throws The original failure when nothing may recover it; ByoFallbackUnavailableError when the
+ *   operator's fallback applied and no rung could answer.
+ */
+export async function runInlineTurnWithRecovery(
+  input: InlineTurnRecoveryInput,
+): Promise<{ result: ProcessResult; fallback?: BrainFallbackMarker }> {
+  const plan = await planInlineHotFallback({ agentId: input.agentId, userSub: input.userSub, explicit: input.explicit });
+  const firstAttempt: InlineTurnOptions = {
+    byoLlmRetry: input.explicit,
+    ...(plan.rungs.length ? { byoLlmFallback: plan.rungs } : {}),
+  };
+  let result: ProcessResult;
+  try {
+    result = await input.runTurn(input.firstEndpoint, firstAttempt);
+  } catch (turnError) {
+    // Turn-time failover: a lane that passed its resolution probe can hit its quota mid-turn
+    // (Gemini free tier = 20/day). Cool the lane and replay ONCE on the next vendor.
+    const nextLane = await retryHostedBrainTurn(input.pool, input.agentId, input.userSub, input.resolvedBrain, turnError);
+    if (nextLane) return { result: await input.runTurn(nextLane, { byoLlmRetry: false }) };
+    const failure = turnError instanceof Error ? turnError : new Error(String(turnError));
+    throw explainInlineFallbackMiss(plan, failure, input.firstEndpoint) ?? turnError;
+  }
+  if (result.brainFallback) return { result, fallback: result.brainFallback };
+  // The agentic loop catches provider errors internally and resolves with a failed result —
+  // the catch above never sees those. Same failover, keyed off the result shape instead.
+  const swallowed = swallowedTurnFailure(result);
+  if (!swallowed) return { result };
+  const nextLane = await retryHostedBrainTurn(input.pool, input.agentId, input.userSub, input.resolvedBrain, swallowed);
+  if (nextLane) return { result: await input.runTurn(nextLane, { byoLlmRetry: false }) };
+  const miss = explainInlineFallbackMiss(plan, swallowed, input.firstEndpoint);
+  if (miss) throw miss;
+  return { result };
+}
+
+/**
  * @description Thrown when cost governance definitively refuses an invocation — a HARD
  * daily cap exceeded, or the runaway kill switch. Typed (rather than the bare Error this
  * used to be) so a route can answer `402 budget_cap_exceeded` instead of an anonymous 500:
@@ -508,7 +611,7 @@ export async function executeBotOrInline(
     // cli as the authoritative provider (the demo operator's mounted login), hosted riding as
     // byoLlmConnection. See stampRemoteBrain; explicit caller choices pass through untouched.
     await stampRemoteBrain(ctx.pool, agentId, request);
-    const remote = await botClient.execute(agentId, request);
+    const remote = await executeRemoteWithRecovery(botClient, agentId, request);
     await settleBotNodeCostTask(ctx, agentId, request, remote);
     return remote;
   }
@@ -526,7 +629,7 @@ export async function executeBotOrInline(
   const resolvedBrain = request.byoLlmConnection
     ? undefined
     : await resolveHostedBrainMeta(ctx.pool, agentId, request.userSub);
-  const runTurn = (byoLlmConnection: typeof request.byoLlmConnection) =>
+  const runTurn = (byoLlmConnection: typeof request.byoLlmConnection, turn: InlineTurnOptions) =>
     ctx.orchestrator.processMessage(request.taskId, inlineText, {
       agenticMode: request.agenticMode ?? true,
       autoApprove: false,
@@ -537,29 +640,19 @@ export async function executeBotOrInline(
       model: request.model,
       interactionMode: request.direct ? 'task' : 'chat',
       byoLlmConnection,
+      // Operator decision 2026-09-22: an explicitly chosen endpoint replays a retryable wall
+      // against ITSELF at the model call — same URL, key and billing account, no boundary crossed
+      // — and, for the operator, switches to a ready fallback rung there once it is exhausted.
+      ...turn,
     } as any);
-  let result: Awaited<ReturnType<typeof runTurn>>;
-  try {
-    result = await runTurn(request.byoLlmConnection ?? hostedBrainWire(resolvedBrain));
-  } catch (turnError) {
-    // Turn-time failover: a lane that passed its resolution probe can hit its quota mid-turn
-    // (Gemini free tier = 20/day). Cool the lane and replay ONCE on the next vendor.
-    const nextLane = await retryHostedBrainTurn(
-      ctx.pool, agentId, request.userSub, resolvedBrain, turnError,
-    );
-    if (!nextLane) throw turnError;
-    result = await runTurn(nextLane);
-  }
-
-  // The agentic loop catches provider errors internally and resolves with a failed result —
-  // the catch above never sees those. Same failover, keyed off the result shape instead.
-  const swallowed = swallowedTurnFailure(result);
-  if (swallowed) {
-    const nextLane = await retryHostedBrainTurn(
-      ctx.pool, agentId, request.userSub, resolvedBrain, swallowed,
-    );
-    if (nextLane) result = await runTurn(nextLane);
-  }
+  // The endpoint this turn actually runs on: the caller's explicit choice when there is one,
+  // otherwise the ladder's pick stripped to the wire trio.
+  const { result, fallback } = await runInlineTurnWithRecovery({
+    pool: ctx.pool, agentId, userSub: request.userSub, resolvedBrain,
+    firstEndpoint: request.byoLlmConnection ?? hostedBrainWire(resolvedBrain),
+    explicit: isExplicitByoTurn(request, resolvedBrain),
+    runTurn,
+  });
 
   if (!result.success) {
     throw new Error(`Inline bot execution failed: ${result.error || 'Unknown error'}`);
@@ -579,10 +672,50 @@ export async function executeBotOrInline(
     },
     cost: usage?.totalCost ?? 0,
     model,
-    provider: (request.byoLlmConnection || resolvedBrain) ? 'byo-llm' : 'inline-orchestrator',
+    provider: fallback ? fallback.providerUsed : (request.byoLlmConnection || resolvedBrain) ? 'byo-llm' : 'inline-orchestrator',
     durationMs: Date.now() - start,
     taskId: request.taskId,
+    ...(fallback ? { brainFallback: fallback } : {}),
   };
+}
+
+/**
+ * @description The remote half of the same recovery: dispatch to the bot node, and when an
+ * EXPLICITLY chosen endpoint the caller threaded refused with a capacity wall, re-dispatch once
+ * per ready rung of the operator's configured chain with that rung stamped as the authoritative
+ * provider (the node's own SEC-05 preflight re-enforces the demo+operator carve for a CLI rung;
+ * a hosted rung runs there as the node's failover rung already does). The controller-side
+ * `byoLlmResolutionSource` never travels to the node. Cost lands at the node under the rung, as
+ * any turn on that rail would.
+ *
+ * The same-endpoint retry is NOT applied around the node call: the node runs its own provider
+ * stack, and replaying the whole dispatch would re-run the node's turn — the exact "whole turn
+ * per attempt" shape the inline path was reworked to avoid.
+ * @param botClient - The node client.
+ * @param agentId - The target bot.
+ * @param request - The stamped dispatch.
+ * @returns The node's response, with the fallback marker when a rung answered.
+ */
+async function executeRemoteWithRecovery(
+  botClient: BotNodeClient,
+  agentId: string,
+  request: BotNodeRequest,
+): Promise<BotNodeResponse> {
+  const { byoLlmResolutionSource: _controllerOnly, ...wire } = request;
+  try {
+    return await botClient.execute(agentId, wire);
+  } catch (dispatchError) {
+    const failure = dispatchError instanceof Error ? dispatchError : new Error(String(dispatchError));
+    const recovered = await recoverExplicitByoWall<BotNodeResponse>({
+      agentId, userSub: request.userSub, explicit: isExplicitByoTurn(request, undefined),
+      endpoint: request.byoLlmConnection, failure, botClient,
+      executeRung: (rung) => botClient.execute(agentId, {
+        ...wire, byoLlmConnection: undefined, providerId: rung.providerId, model: undefined,
+      }),
+    });
+    if (!recovered) throw dispatchError;
+    return { ...recovered.result, brainFallback: recovered.marker };
+  }
 }
 
 /**

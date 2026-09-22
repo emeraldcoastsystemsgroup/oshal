@@ -81,6 +81,7 @@
  * 29 | maintainer@emeraldcoastsystemsgroup.com   | Attached direct-path-declared-tool-boundary to 'jarvis-routing' regressionTests. The sibling of entry 28: that guard covers a tool call being READ, this one covers the tools being DECLARED at all and the boundary around them being enforced - the direct conversational path told the model it had N tools and handed the provider none, which is why an ask for live information answered "go to the application". Registered here because it is the same Jarvis turn, and a spec on disk is not Test Lab registration.
  * 30 | maintainer@emeraldcoastsystemsgroup.com   | Attached byo-connection-declared-tools to 'jarvis-routing' regressionTests. Entry 29's guard proves the direct path declares the tools it was GIVEN; this one proves a BYO connection is given any at all. Jarvis runs on the caller's own endpoint whenever the ADR-127 ladder resolves a hosted brain, and until the operator's 2026-09-22 decision landed, a BYO connection emptied the tool set before entry 29's boundary could matter - so the scenario's own lane was the one shape entry 29 did not cover. Same Jarvis turn, same scenario; a spec on disk is not Test Lab registration.
  * 31 | maintainer@emeraldcoastsystemsgroup.com   | Attached the read-only question-tool guards to 'jarvis-routing' regressionTests. Entries 28-30 end at the tools being DECLARED and READ; these two cover whether any tool worth declaring EXISTS. Every name the persisted-to-runtime map bound was a shell, a file write or an infrastructure CLI, and the bot-node's own registry was constructed empty - so the scenario's three steps could only ever be answered from the model's head. bot-node-read-only-tools pins the bindings, the declared-set/scope refusals and that no write path is reachable through a read-only binding; the -owner-scope-postgres sibling proves over a REAL PostgreSQL and the real NOBYPASSRLS role that one caller cannot read another's conversations. Same Jarvis turn, same scenario, and a spec on disk is not Test Lab registration.
+ * 32 | maintainer@emeraldcoastsystemsgroup.com   | Registered the 'byo-hot-fallback' scenario (operator decision 2026-09-22): a read-only probe of the configured hot-fallback chain and each rung's readiness through the Settings llm-default route, with the two guards that prove the same-endpoint replay and the operator-only fallback attached as regressionTests. A test file on disk is not Test Lab registration.
  * @module test-lab-scenarios
  */
 
@@ -389,6 +390,35 @@ export const SCENARIOS: Scenario[] = [
           if (refused) return { state: 'fail', detail: `${refused} bot(s) hold a switch row this build cannot run: ${summary}`, output: counts };
           if (unknown === agents.length) return { state: 'gap', detail: 'no bot reports providerSource — the switch report is missing.', output: counts };
           return { state: 'pass', detail: summary, output: counts };
+        }) },
+    ],
+  },
+
+  // ── The BYO same-endpoint retry + the operator's hot fallback chain ─────────────────────────
+  {
+    id: 'byo-hot-fallback', title: 'BYO endpoint retry + the operator\'s hot fallback chain', group: 'tool',
+    description: 'Read-only: GET /api/settings/llm-default reports the CONFIGURED hot-fallback chain (the switch row\'s fallback_order, ADR-162 precedence; default openai-codex → claude-code when no record carries one) and each rung\'s readiness (login present and unexpired, key present) from the token-free stored status. No turn is spent here; the same-endpoint replay, the operator-only gate and the fallback itself are proven by the registered guards.',
+    regressionTests: [
+      // The retry wraps the PROVIDER call (one saved user message, one error broadcast), keyed on
+      // an explicitly chosen endpoint only, across the real cockpit router and a loopback endpoint.
+      { level: 'integration', path: 'tests/unit/byo-same-endpoint-retry.spec.ts' },
+      // The operator-only, readiness-gated, one-pass walk of the configured chain, the marker, the
+      // WARN line, the not-ready error, and the PUT that re-orders the chain with no restart.
+      { level: 'integration', path: 'tests/unit/byo-hot-fallback.spec.ts' },
+    ],
+    steps: [
+      { id: 'chain', app: 'settings', label: '1) GET /api/settings/llm-default — the chain and each rung\'s readiness', run: (c) => step(c, 'settings', 'hot fallback', 'GET', '/api/settings/llm-default', undefined,
+        (j) => {
+          const hf = j?.hotFallback;
+          if (!hf || !hf.chain) return { state: 'gap', detail: 'unexpected shape (no hotFallback block).' };
+          const order: string[] = Array.isArray(hf.chain.order) ? hf.chain.order : [];
+          const rungs: Array<{ providerId: string; ready: boolean; reason: string }> = Array.isArray(hf.rungs) ? hf.rungs : [];
+          if (!order.length) return { state: 'degraded', detail: `no fallback rung configured (chain source: ${hf.chain.source}) — set fallbackOrder on the fleet-default switch row.`, output: hf };
+          const ready = rungs.filter((r) => r.ready).map((r) => r.providerId);
+          const cold = rungs.filter((r) => !r.ready).map((r) => `${r.providerId}: ${r.reason}`);
+          const gate = hf.gate?.available ? 'gates admit this caller' : 'gates do not admit this caller (demo + operator only)';
+          if (!ready.length) return { state: 'degraded', detail: `chain ${order.join(' → ')} (${hf.chain.source}); NO rung ready — ${cold.join('; ')}; ${gate}.`, output: hf };
+          return { state: 'pass', detail: `chain ${order.join(' → ')} (${hf.chain.source}); ready: ${ready.join(', ')}${cold.length ? `; not ready: ${cold.join('; ')}` : ''}; ${gate}.`, output: { chain: hf.chain, rungs, gate: hf.gate } };
         }) },
     ],
   },

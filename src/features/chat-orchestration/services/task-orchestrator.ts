@@ -24,6 +24,7 @@
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127 inline hosted brain: both agentic and direct turns now honor options.byoLlmConnection — a caller-resolved hosted OpenAI-compatible endpoint runs the turn (governed, same GovernedProvider wrap the composition root applies) instead of deps.getProvider's registry harness, which for CLI-harness bots is refused unattended on the controller. Callers (executeBotOrInline, jarvis runInline) were already threading the option; nothing here read it.
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | Guard protected package execution with current caller policy, restricted business identity and durable node ownership.
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | Every finished turn now appends its usage to the oshal_cost_events ledger (deps.costLedger, per-model rows under the owner sub) beside the chat_tasks rollup. The ledger is what BudgetService's trailing-window caps sum, and nothing on the inline path wrote it — recordUsage only bumps chat_tasks lifetime totals — so the HARD cap at the bot-invocation chokepoint could never see the spend its own inline branch produced. The provider is resolved once per turn so the ledger row names the provider that actually ran (BYO vs registry), and the append is non-fatal: a ledger failure logs at ERROR and never fails the chat turn.
+ * 22 | maintainer@emeraldcoastsystemsgroup.com   | options.byoLlmRetry (an EXPLICITLY chosen BYO endpoint, operator decision 2026-09-22) is handed to createGovernedByoHostedProvider so the same-endpoint replay wraps the PROVIDER CALL inside this turn: the user message is saved once, handleError broadcasts once, tools never re-run. The first build wrapped processMessage from the routes and re-did all three per attempt.
  */
 import { runWithApplicationExecution } from '@/shared/application-authorization-execution';
 
@@ -42,6 +43,7 @@ import {
   type LLMService,
   type LLMToolDefinition,
   type LLMResponse,
+  readBrainFallback,
 } from '@/features/llm-provider';
 import { StreamManager } from '@/features/streaming';
 import type { ToolAuthInterceptor } from '@/features/tool-approval';
@@ -127,9 +129,13 @@ export class TaskOrchestrator {
 
       // Resolved once so the ledger row names the provider that actually ran this turn.
       const provider = this.resolveProvider(options);
-      const result = options.agenticMode
+      const turn = options.agenticMode
         ? await this.processAgentic(taskId, text, options, provider)
         : await this.processDirect(taskId, text, options, provider);
+      // A hot-fallback switch at the model call is reported on the result, so the entry point
+      // and the surface can say a rung answered; getProviderName() below already names that rung.
+      const brainFallback = readBrainFallback(provider);
+      const result: ProcessResult = brainFallback ? { ...turn, brainFallback } : turn;
 
       await this.handleResult(taskId, result, startTime, {
         agentId: options.agentId,
@@ -339,8 +345,18 @@ export class TaskOrchestrator {
     const connection = options.byoLlmConnection;
     if (connection) {
       // Model only — the endpoint host is logged inside the provider; the key is never logged.
-      logger.info({ model: connection.model, agentId: options.agentId }, 'Turn runs on caller-resolved hosted BYO connection');
-      return createGovernedByoHostedProvider(connection);
+      logger.info(
+        { model: connection.model, agentId: options.agentId, sameEndpointRetry: options.byoLlmRetry === true },
+        'Turn runs on caller-resolved hosted BYO connection',
+      );
+      // The same-endpoint replay and the hot-fallback switch both live at the model call so
+      // message persistence, tool execution and the error broadcast around it run exactly once
+      // per turn. The rungs arrive already gated and probed by the entry point.
+      return createGovernedByoHostedProvider(connection, null, {
+        sameEndpointRetry: options.byoLlmRetry === true,
+        agentId: options.agentId,
+        fallbackRungs: options.byoLlmFallback,
+      });
     }
     return this.deps.getProvider(options.agentId);
   }
