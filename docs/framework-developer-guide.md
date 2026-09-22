@@ -77,7 +77,7 @@ There are also three deployment/runtime configurations to keep separate:
 |---|---|---|
 | Core/standalone | `docker-compose.core.yml`, [setup/core-setup.md](./setup/core-setup.md) | Small local stack for cockpit/chat/API with mock auth by default. |
 | Local swarm | `docker-compose.oshal-local.yml`, `docker-compose.swarm-local.yml` | Multi-bot local swarm with Redis, Postgres, ChromaDB, and bot containers. |
-| Kubernetes/AnyBot | [k8/any-bot-kubernetes-setup.md](./k8/any-bot-kubernetes-setup.md), `ops/deployment/` | Cluster deployment path with rendered manifests, secrets, gateway, and optional Headscale access. |
+| Kubernetes | [k8/README.md](./k8/README.md), [ADR-129](./adr/129-codeless-k8s-install-path.md), `deploy/helm/oshal` | Helm chart installed onto a cluster you run (`scripts/oshal-install.sh --mode 4`); multi-user tenants go through `deploy/terraform`. The pre-chart `ops/any-bot-k8s` and `ops/deployment/kubernetes` manifests are legacy and quarantined. |
 
 Do not mix these concepts with app manifests. A deployment runtime answers "where does OSHAL run?" A swarm app manifest answers "what product/workflow is installed into OSHAL?"
 
@@ -404,22 +404,21 @@ Key files:
 Use these docs depending on the target:
 
 - Local/core: [setup/core-setup.md](./setup/core-setup.md)
-- Kubernetes/AnyBot: [k8/any-bot-kubernetes-setup.md](./k8/any-bot-kubernetes-setup.md)
+- Kubernetes: [k8/README.md](./k8/README.md), the Helm chart path decided in [ADR-129](./adr/129-codeless-k8s-install-path.md)
 - General topology: [architecture/deployment-runtime-topology.md](./architecture/deployment-runtime-topology.md)
 - Headscale/remote overlay design: [adr/013-headscale-self-hosted-overlay-network.md](./adr/013-headscale-self-hosted-overlay-network.md)
 
-Minimal Kubernetes render flow:
+Minimal Kubernetes install. The installer finds a reachable cluster (or offers to create one)
+and installs the `deploy/helm/oshal` chart onto it, with no source checkout and no build:
 
 ```bash
-cp any-bot-k8s/setup.env.example any-bot-k8s/setup.env
-npm run k8:install:any-bot -- --env-file any-bot-k8s/setup.env
+bash scripts/oshal-install.sh --mode 4 --admin-email you@example.com
 ```
 
-Apply when the kube context is correct:
-
-```bash
-npm run k8:install:any-bot -- --env-file any-bot-k8s/setup.env --apply
-```
+The chart reference is [deploy/helm/oshal/README.md](../deploy/helm/oshal/README.md). The older
+any-bot workspace ([k8/any-bot-kubernetes-setup.md](./k8/any-bot-kubernetes-setup.md)) is the
+legacy, pre-chart generation: it is quarantined, and its scripts refuse to run unless
+`OSHAL_ALLOW_LEGACY_K8S=1` is set.
 
 Current limitation: cluster deployment docs exist, but there is not yet a single environment matrix for Docker Desktop, kind/k3d, managed Kubernetes, and remote Headscale nodes.
 

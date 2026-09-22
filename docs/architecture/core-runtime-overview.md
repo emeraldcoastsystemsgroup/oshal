@@ -89,9 +89,16 @@ This runs the server on the host while reusing the same backing services from Do
 
 This is the packaging path, not the first-time onboarding path.
 
-- `bash scripts/install-k8s.sh`
-- wraps `scripts/setup-oshal-k8s.sh`
-- renders bundle output under `output/k8/oshal/`
+- `bash scripts/oshal-install.sh --mode 4 --admin-email you@example.com` (Windows:
+  `scripts/oshal-install.ps1 -Kubernetes`)
+- installs the Helm chart at `deploy/helm/oshal`, from the published OCI package with a fallback
+  to this repository
+- start with [docs/k8/README.md](../k8/README.md); the decision is
+  [ADR-129](../adr/129-codeless-k8s-install-path.md)
+
+The older `scripts/install-k8s.sh` bundle renderer (a wrapper around `scripts/setup-oshal-k8s.sh`)
+belongs to the legacy, pre-chart generation. It is quarantined and refuses to run unless
+`OSHAL_ALLOW_LEGACY_K8S=1` is set.
 
 ## Current Product Truth
 

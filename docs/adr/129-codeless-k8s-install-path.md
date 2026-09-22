@@ -159,9 +159,16 @@ compose entry behind for a deleted agent — on the rollback path, where the
 container usually does not exist, which is exactly when it fires. Fixed, with a
 regression case.
 
-Out of scope, logged in BACKLOG rather than half-done: the cockpit's
-enable/disable **toggle** (`agent-status-routes`) still constructs the compose
-pair directly, so on k8s that toggle is inert.
+The cockpit's enable/disable **toggle** was out of scope when this amendment
+landed: `agent-status-routes` constructed the compose pair directly, so on k8s the
+toggle was inert. **Since fixed.** Both runtime routes in
+`src/app/routes/agent-status-routes.ts` now go through `resolveBotRuntimeLauncher`,
+and `src/features/agent-management/services/kubernetes-bot-launcher.ts` gained
+`setRunning`, which patches the Deployment's `scale` subresource to 0 or 1 instead
+of deleting the workload. Guard: `tests/unit/bot-status-toggle-substrate.spec.ts`.
+The live `deployments/scale` discovery check against a real API server is still
+owed on the next reachable cluster
+([real-boundary audit](../governance/real-boundary-regression-audit.md)).
 
 ## Amendment 3 (2026-08-14): the installer owns its prerequisites
 

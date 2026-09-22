@@ -181,12 +181,15 @@ registry · Redis · Postgres. This loop is the line between a *starter repo* an
 ## 10. Deployment and scalability
 
 - **Runs where you need it:** Windows, Docker Compose (the primary local path — from an 11‑service core
-  stack to a ~115‑service full swarm), and Kubernetes (`ops/deployment/kubernetes` + `ops/any-bot-k8s`,
-  with a Headscale‑compatible gateway).
+  stack to a ~115‑service full swarm), and Kubernetes (the Helm chart at `deploy/helm/oshal`,
+  installed by `oshal-install.sh --mode 4` per [ADR-129](adr/129-codeless-k8s-install-path.md)).
+  Single-node clusters are the supported default.
 - **Models, hosted or local:** 40+ providers, including self‑hosted **Ollama / LM Studio / LiteLLM**;
   Llama and Mistral run fully local.
 - **Scale levers:** per‑bot containers (independent workers), Redis‑Streams consumer groups
-  (add consumers to a lane), one image with a runtime switch, and Kubernetes for elastic scale.
+  (add consumers to a lane), and one image with a runtime switch. The Helm chart deploys the same
+  bot fleet to a cluster, with no autoscaler: it ships no HPA, and its shared workspace volume is
+  ReadWriteOnce.
 
 ## 11. Evidence
 

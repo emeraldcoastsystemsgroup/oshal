@@ -1,4 +1,13 @@
 # =============================================================================
+# LEGACY — DO NOT DEPLOY
+# Part of the quarantined pre-chart Kubernetes generation.
+# This Deployment runs presentron:latest, an image nothing in this repo builds, in the
+# legacy oshal namespace, and reads its key from the legacy oshal-secrets Secret.
+# The current Kubernetes path is the Helm chart at deploy/helm/oshal: read
+# docs/k8/README.md and docs/adr/129-codeless-k8s-install-path.md. Kept, not deleted,
+# while delete-vs-quarantine is still open (docs/k8/remote-cluster-work-package.md,
+# item 9).
+# =============================================================================
 # OSHAL Presentron Kubernetes Integration
 # =============================================================================
 # CHANGE LOG
@@ -7,6 +16,7 @@
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial Presentron deployment scaffold
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | Added oshal namespace alignment, service exposure, and oshal secret contract
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | Quarantined as legacy (remote-cluster work package item 9): LEGACY — DO NOT DEPLOY banner pointing at the Helm chart deploy/helm/oshal and docs/k8/README.md. No manifest content changed. Guard: tests/unit/k8s-legacy-quarantine.spec.ts.
 # =============================================================================
 ---
 apiVersion: apps/v1

@@ -1,4 +1,14 @@
 # =============================================================================
+# LEGACY — DO NOT DEPLOY
+# Part of the quarantined pre-chart Kubernetes generation.
+# This manifest runs oshal-api-server:latest, an image nothing in this repo builds, on a
+# Keycloak-era topology (port 3456, /health) that no longer matches the platform, and it
+# commits a Secret with literal REPLACE_ME values.
+# The current Kubernetes path is the Helm chart at deploy/helm/oshal: read
+# docs/k8/README.md and docs/adr/129-codeless-k8s-install-path.md. Kept, not deleted,
+# while delete-vs-quarantine is still open (docs/k8/remote-cluster-work-package.md,
+# item 9).
+# =============================================================================
 # OSHAL Platform Stack (Kubernetes)
 # =============================================================================
 # CHANGE LOG
@@ -7,6 +17,7 @@
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Added Kubernetes manifests for OSHAL runtime stack (api, keycloak, postgres, redis, chromadb)
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | Fixed inline Keycloak realm ConfigMap termination so the imported JSON no longer contains a trailing YAML document separator
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | Quarantined as legacy (remote-cluster work package item 9): LEGACY — DO NOT DEPLOY banner pointing at the Helm chart deploy/helm/oshal and docs/k8/README.md. No manifest content changed. Guard: tests/unit/k8s-legacy-quarantine.spec.ts.
 # =============================================================================
 ---
 apiVersion: v1
