@@ -655,7 +655,8 @@ including across a directory belonging to a different owner. Full reasoning and 
 
 ### Refusal visibility: the substrate for P1, P3 and P4
 - **Status:** OPEN — actionable
-- **Progress:** P1 shipped live on 2026-09-23; P3 and P4 remain.
+- **Progress:** P1 shipped live on 2026-09-23; the P3 catalog foundation is live, while its full
+  classification and P4 remain.
 
 - **Found 2026-09-14, measured:** **125** distinct refusal reason codes in `src/**` and **zero**
   surfaces that aggregate them. A refusal is a return value and, at best, a log line - not a row,
@@ -679,6 +680,16 @@ including across a directory belonging to a different owner. Full reasoning and 
   codes (not all are; some are correct hard denials) and make each name what is unset and what to
   set, with the setting names in one exported constant so check and message cannot drift. `8ae6a57b`
   did this for exactly one code and is the pattern.
+- **P3 foundation live (`5b4b7d08`, 2026-09-23):** the shared chokepoint now enriches declared
+  operator-remediable codes from one exported catalog without replacing a more specific remedy.
+  The first reviewed set is deliberately narrow: `authorization_permission_denied` and
+  `authorization_recorded_delegation_required`; exact delegation setting names come from the
+  enforcing policy constants, and the guard fails if a declared member has no remedy or its
+  generated message omits a setting. Hard tenant, management, scope, guest and public-profile
+  denials are explicitly not advertised as bypassable. Live image `694f25136dce` stored and served
+  the permission remedy with `requires: ["metrics.write"]`. The code census now finds 141 matching
+  tokens; classifying the remainder into remediable versus hard/validation denials is still P3 work,
+  so this bullet does not close the stage.
 - **Remaining - P4 (Stage 2 tail):** refused work strands. Observed at `escalated` and at
   `chat_tasks.status='created'`. Needs a terminal state carrying the reason, or a reaper.
 - **Done when:** a query answers "every refusal in the last 24 h by code, actor, package and
