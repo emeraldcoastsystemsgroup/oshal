@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Resolve an ambiguous bot association to the loader-stamped owner instead of refusing. `swarm_applications.agent_ids` is an ASSOCIATION column and is deliberately many-to-many (swarm-app-repository `upsert` resolves `workflow.workerBot` by name for carved apps with no `bots:`, so Jarvis catalog/mesh/selector keep working after ADR-085) — twelve live ids are claimed by more than one app, several of them correctly. Reading it as ownership, which must be 1:1, raised `Ambiguous package ownership` on every such read; callers swallow that to `false`, so tickets vanished from the operator's own listing (docs/operations/agent-id-ownership-collisions.md). `agents.metadata.manifestApp` is loader-stamped (manifest-bot-runtime `upsertManifestBot`) and is the authoritative owner, so arbitrate with it. No stamp, an inactive agent, a tool name, or a stamp that is not one of the claimants still refuses: this is an authorization path and an unresolvable case must fail closed.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Read the claims through oshal_application_execution_claims (migration 142) instead of querying oshal_authorization_applications and swarm_applications inline. The bot node runs this same reader as oshal_bot, and the governed bot contract gives that role the derived answer, not the tables - so the posture guard stops failing closed on 42501 for every bot execution (BUG-25). The controller calls the same helper, so ownership has one definition.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Carry the underlying failure as `cause`. The read path threw a bare ApplicationOwnershipUnavailableError, so the bot posture guard could not tell an unreachable database (socket refused after a lost cold-start race) from a database that answered with an error, and named both as an authorization fault. Additive: same class, same code, same 503, same fail-closed throw.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Keep loader-stamped ownership durable when an application or agent is inactive. `agents.status` is routing/lifecycle state (reconciliation sets it inactive when no active app references the id), not proof that the loader stamp disappeared; requiring status='active' made historical protected results unreadable while a still-heartbeating dedicated node could carry an inactive row. Read the stamp regardless of status, then retain the existing fail-closed proof that the stamped application is one of the durable claimants and OR protection across every claimant.
  */
 /** Durable package ownership closes the interval before activation and survives disabled/uninstalled packages. */
 import type { Pool } from 'pg';
@@ -41,15 +42,17 @@ function describeClaims(claims: OwnershipClaim[]): string {
 /**
  * @description Read the loader-stamped owner of a bot. The stamp is written by the manifest loader
  * (`upsertManifestBot`) and re-asserted on every load, so it is the one authoritative 1:1 statement
- * of ownership; the association array is not. Only an active agent arbitrates — a disabled row's
- * stamp can name a package that no longer owns it, and guessing there would be worse than refusing.
+ * of ownership; the association array is not. Lifecycle status is deliberately not a predicate here:
+ * inactive applications withdraw routing/execution, but ownership must remain attributable so prior
+ * protected results retain their policy. A stale stamp still refuses unless the durable application
+ * association returned by the ownership helper independently proves the claim.
  * @param pool - System-identity database handle.
  * @param id - Bound agent identifier, compared as text so a non-UUID input refuses instead of erroring.
  * @returns The single stamped application name.
  */
 async function readStampedOwner(pool: Pick<Pool, 'query'>, id: string): Promise<string> {
   const stamped = await runWithSystemIdentity(() => pool.query(
-    `SELECT metadata->>'manifestApp' AS app FROM agents WHERE agent_id::text=$1 AND status='active'`, [id]));
+    `SELECT metadata->>'manifestApp' AS app FROM agents WHERE agent_id::text=$1`, [id]));
   const app = stamped.rows.length === 1 ? (stamped.rows[0] as { app?: unknown }).app : undefined;
   if (typeof app !== 'string' || !app) throw new Error('Ambiguous package ownership: no stamped owner');
   return app;

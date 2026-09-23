@@ -395,6 +395,27 @@ self-affecting change. This is application governance, not protection from a hos
 | Stream/download/report | Authorize subscription and revalidate on policy changes; scope payloads, generated files, counts and result ownership |
 | Database | Use restricted business-data context and package predicates/RLS; platform management privileges must not stamp a universal business-data bypass |
 
+### Durable executable ownership is independent of lifecycle state
+
+Executable ownership is durable attribution, not a liveness or routing decision. The loader-stamped
+`agents.metadata.manifestApp` remains authoritative when either the owning application or the agent
+row is inactive, but only while the installed application's durable `agent_ids` association still
+claims that exact agent id. In a many-claim collision the reader attributes ownership to that stamp
+and computes protection as the OR of every claim, so lifecycle changes cannot lower protection.
+
+This does not reactivate anything. Application activation, route gates, agent selection and dispatch
+eligibility continue to use their own current-state checks. No stamp, no matching application claim,
+no agent row, an invalid helper answer, or an ambiguous tool claim still refuses closed. This
+separation is required for historical tickets and protected results: disabling an executor must stop
+new routing without erasing who owns work it already produced.
+
+`agents.status` and runtime heartbeat therefore answer different questions. During app reconciliation,
+a manifest-contributed agent is marked inactive when no currently active application references its
+id. A dedicated node such as `oshal-assistant` can still report a live heartbeat because its process
+exists, while its database row remains ineligible for ordinary mesh routing because `jarvis` is
+inactive. The heartbeat is process presence, not an activation grant; the inactive row is expected
+catalog/routing state, not evidence that its durable loader stamp is unusable.
+
 Reuse existing signed delegation and scoped MCP execution. A `direct: false` marker, internal service
 key, `runWithSystemIdentity`, bot caller role or model-generated payload is not sufficient business
 authority. Delegation includes expiry and bounded audience/action and is resolved from trusted server

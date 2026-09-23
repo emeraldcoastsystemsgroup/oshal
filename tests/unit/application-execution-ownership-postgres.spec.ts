@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Regression guard for the silent Jarvis outage of 2026-09-11..14: `swarm_applications.agent_ids` is UUID[] (migration 022) but the ownership reader binds the executable name as text, so `$1=ANY(agent_ids)` raised `operator does not exist: text = uuid` for every kind:'bots' read. readApplicationExecutionOwnership converted that to ApplicationOwnershipUnavailableError, canReadProtectedResult swallowed it to `false`, and POST /api/jarvis/ask answered 404 session_not_found with nothing logged. This crosses the real boundary that failed: the real reader against a real PostgreSQL carrying the real UUID[] column, never a doubled query.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard the ambiguous-association arbitration: twelve live agent ids are claimed by more than one application because `agent_ids` is an association column, and the ownership read refused every one of them (docs/operations/agent-id-ownership-collisions.md). The reader now arbitrates with the loader-stamped `agents.metadata.manifestApp`. These cases carry the real `agents` table from migration 001 alongside the real UUID[] column, so the stamp, its absence, a stamp naming no application, an inactive agent and the unarbitrable `tools` path are all exercised against real PostgreSQL rather than a doubled query.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | BUG-25: run the same reader as a real oshal_bot login role holding exactly the governed contract (statements executed verbatim from docs/governance/app-role-provisioning.sql): it answers what the controller answers, the bot-side posture guard runs, the tables stay denied (42501), a missing helper grant fails closed, and a malformed question raises instead of reading as unprotected. Apply migration 142 in the real schema.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Pin durable ownership independently from lifecycle state. An active agent stamped to an inactive app still resolves when that app durably claims its id, and an inactive agent row does too: status withdraws routing/execution eligibility, not historical ownership of protected results. Missing stamps, ghost stamps, missing agent rows and tool ambiguity remain fail-closed.
  */
 
 import type { Pool } from 'pg';
@@ -30,6 +31,7 @@ const SHARED_UNSTAMPED_ID = 'a0000000-0000-0000-0000-0000000000c3';
 const SHARED_GHOST_STAMP_ID = 'a0000000-0000-0000-0000-0000000000c4';
 const SHARED_INACTIVE_ID = 'a0000000-0000-0000-0000-0000000000c5';
 const SHARED_NO_AGENT_ID = 'a0000000-0000-0000-0000-0000000000c6';
+const SHARED_INACTIVE_APP_ID = 'a0000000-0000-0000-0000-0000000000c7';
 const SHARED_TOOL_NAME = 'ownership-spec-shared-tool';
 
 let pool: Pool;
@@ -52,6 +54,7 @@ async function seedStampedAgents(target: Pool): Promise<void> {
     [SHARED_UNSTAMPED_ID, 'shared-unstamped-bot', null, 'active'],
     [SHARED_GHOST_STAMP_ID, 'shared-ghost-bot', 'app-that-does-not-exist', 'active'],
     [SHARED_INACTIVE_ID, 'shared-inactive-bot', 'owner-pkg', 'inactive'],
+    [SHARED_INACTIVE_APP_ID, 'shared-inactive-app-bot', 'inactive-owner-pkg', 'active'],
   ];
   for (const [agentId, name, stamp, status] of stamps) {
     await target.query(`INSERT INTO agents (agent_id, name, api_provider_id, status, metadata)
@@ -62,18 +65,19 @@ async function seedStampedAgents(target: Pool): Promise<void> {
 
 /** Two claimants per shared id, the many-to-many shape `swarm-app-repository.upsert` really writes. */
 async function seedSharedClaims(target: Pool): Promise<void> {
-  const apps: Array<[string, string, string[], string[]]> = [
-    ['owner-pkg', 'deployed-apps/owner-pkg/oshal-app.yaml', [SHARED_OWNED_ID, SHARED_INACTIVE_ID], [SHARED_TOOL_NAME]],
+  const apps: Array<[string, string, string[], string[], 'active' | 'inactive']> = [
+    ['owner-pkg', 'deployed-apps/owner-pkg/oshal-app.yaml', [SHARED_OWNED_ID, SHARED_INACTIVE_ID], [SHARED_TOOL_NAME], 'active'],
     ['rider-app', 'swarm-apps/rider-app.yaml', [SHARED_OWNED_ID, SHARED_UNSTAMPED_ID, SHARED_GHOST_STAMP_ID,
-      SHARED_INACTIVE_ID, SHARED_NO_AGENT_ID], [SHARED_TOOL_NAME]],
-    ['kernel-app', 'swarm-apps/kernel-app.yaml', [SHARED_KERNEL_ID], []],
+      SHARED_INACTIVE_ID, SHARED_NO_AGENT_ID, SHARED_INACTIVE_APP_ID], [SHARED_TOOL_NAME], 'active'],
+    ['inactive-owner-pkg', 'deployed-apps/inactive-owner-pkg/oshal-app.yaml', [SHARED_INACTIVE_APP_ID], [], 'inactive'],
+    ['kernel-app', 'swarm-apps/kernel-app.yaml', [SHARED_KERNEL_ID], [], 'active'],
     ['squatter-pkg', 'deployed-apps/squatter-pkg/oshal-app.yaml', [SHARED_KERNEL_ID, SHARED_UNSTAMPED_ID,
-      SHARED_GHOST_STAMP_ID, SHARED_NO_AGENT_ID], []],
+      SHARED_GHOST_STAMP_ID, SHARED_NO_AGENT_ID], [], 'active'],
   ];
-  for (const [name, manifestPath, agentIds, toolNames] of apps) {
-    await target.query(`INSERT INTO swarm_applications (name, display_name, manifest_path, agent_ids, tool_names, manifest)
-      VALUES ($1,$1,$2,$3::uuid[],$4::text[],'{}'::jsonb) ON CONFLICT (name) DO NOTHING`,
-      [name, manifestPath, agentIds, toolNames]);
+  for (const [name, manifestPath, agentIds, toolNames, status] of apps) {
+    await target.query(`INSERT INTO swarm_applications (name, display_name, manifest_path, agent_ids, tool_names, manifest, status)
+      VALUES ($1,$1,$2,$3::uuid[],$4::text[],'{}'::jsonb,$5) ON CONFLICT (name) DO NOTHING`,
+      [name, manifestPath, agentIds, toolNames, status]);
   }
 }
 
@@ -145,9 +149,14 @@ describe('arbitrating an agent id that more than one application associates', ()
       .rejects.toBeInstanceOf(ApplicationOwnershipUnavailableError);
   });
 
-  it('refuses when the stamped agent is inactive, because a disabled stamp can name a stale owner', async () => {
+  it('resolves an inactive agent when its durable stamped owner still claims the id', async () => {
     await expect(readApplicationExecutionOwnership(pool, { kind: 'bots', id: SHARED_INACTIVE_ID, mode: 'enforce' }))
-      .rejects.toBeInstanceOf(ApplicationOwnershipUnavailableError);
+      .resolves.toEqual({ app: 'owner-pkg', protected: true });
+  });
+
+  it('resolves an active agent stamped to an inactive application without treating status as ownership', async () => {
+    await expect(readApplicationExecutionOwnership(pool, { kind: 'bots', id: SHARED_INACTIVE_APP_ID, mode: 'enforce' }))
+      .resolves.toEqual({ app: 'inactive-owner-pkg', protected: true });
   });
 
   it('refuses when no agent row exists to arbitrate the claim', async () => {
@@ -210,7 +219,8 @@ describe('the bot node reads ownership as oshal_bot under the governed contract 
   afterAll(async () => { await bot?.end(); });
 
   it('resolves the same answers the controller does, including the loader-stamped arbitration', async () => {
-    for (const id of [JARVIS_AGENT_ID, PROTECTED_AGENT_ID, SHARED_OWNED_ID, SHARED_KERNEL_ID]) {
+    for (const id of [JARVIS_AGENT_ID, PROTECTED_AGENT_ID, SHARED_OWNED_ID, SHARED_KERNEL_ID,
+      SHARED_INACTIVE_ID, SHARED_INACTIVE_APP_ID]) {
       const asBot = await readApplicationExecutionOwnership(bot, { kind: 'bots', id, mode: 'enforce' });
       expect(asBot).toEqual(await readApplicationExecutionOwnership(pool, { kind: 'bots', id, mode: 'enforce' }));
     }
