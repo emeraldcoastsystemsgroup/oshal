@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise signed protected worker reasoning, current-rights refusal and exact issuer SQLite workspace isolation.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Assert the normalized authorized-scope Set passed to the provider boundary instead of the pre-normalization array shape.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -26,7 +27,7 @@ describe('protected worker HTTP execution', () => {
     expect(fixture.state.calls).toHaveLength(1);
     expect(fixture.state.calls[0]).toMatchObject({ identity: { sub: REMOTE_SUB, principalIssuer: REMOTE_ISSUER, isOperator: false },
       actor: { sub: REMOTE_SUB, issuer: REMOTE_ISSUER, isSwarmAdmin: false, tenantIds: ['fixture-tenant'], allowedPermissions: [`${REMOTE_APP}:read`] },
-      options: { tools: [], authorizedScopes: [], enforceToolBoundary: true } });
+      options: { tools: [], authorizedScopes: new Set(), enforceToolBoundary: true } });
     expect(fixture.store.listTasks()).toHaveLength(1);
     expect(fixture.store.listTasks()[0].id).toMatch(/^protected-[a-f0-9]{64}$/);
   });
@@ -54,6 +55,9 @@ describe('protected supported mode and authority continuity', () => {
   it.each([
     { agenticMode: true }, { agenticMode: undefined }, { direct: false }, { byoLlmConnection: undefined },
     { creds: {} }, { providerIntent: {} }, { byoLlmConnection: { baseUrl: 'x', apiKey: '', model: 'x' } },
+    { providerId: 'antigravity-cli', providerConfigRequired: true },
+    { byoLlmConnection: undefined, providerId: 'antigravity-cli', providerConfigRequired: true, model: 42 },
+    { byoLlmConnection: null, providerId: 'antigravity-cli', providerConfigRequired: true },
   ])('refuses unsupported mode %j before controller start or workspace creation', async override => {
     const request = fixture.issue(override);
     const response = await fixture.post(request);

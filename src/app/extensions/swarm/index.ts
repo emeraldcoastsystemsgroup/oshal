@@ -67,6 +67,7 @@
  * 60 | maintainer@emeraldcoastsystemsgroup.com   | Dispatch stamping reads the provider switch rows (tier 1) from the same installed snapshot resolveHarnessForAgent reads, so inline execution and bot-node dispatch agree; the operator routes for the rows are mounted under /api/agents beside the ADR-034 runtime routes.
  * 61 | maintainer@emeraldcoastsystemsgroup.com   | The /api/agents runtime + fleet-default switch mounts move to routes/agent-provider-mount.ts (this file crossed 800 code lines): the runtime routes take the switch seams (resolver, catalog, post-write snapshot refresh) and the fleet-default routes run over a ProviderSwitchStore on the GUC-wrapped pool, so the table's operator-only policy applies to the browser session that writes.
  * 62 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six, and it is the root every TaskFolderService write lands under.
+ * 63 | maintainer@emeraldcoastsystemsgroup.com   | Queue workers now resolve the ticket owner's brain through resolveUserBrain, the same configuration ladder Jarvis uses, instead of bypassing the selected provider through a hosted-only resolver.
  */
 
 import type { Pool } from 'pg';
@@ -186,7 +187,7 @@ import { mountAgentProviderRoutes } from './routes/agent-provider-mount';
 import { waitForBootstrapComplete } from '@/app/composition/app-runtime-factory';
 import { registerShutdownHook } from '@/shared/services/shutdown-hooks';
 import { resolveServerOperationCreds } from '@/app/routes/connector-token-broker';
-import { resolveUserLlmConnection } from '@/app/routes/free-tier-rotation';
+import { resolveUserBrain } from '@/app/routes/user-brain-resolution';
 import { buildQueueDlqOperatorNotifier } from '@/app/routes/queue-dlq-routes';
 import {
   canUseRuntimeRegistry,
@@ -814,18 +815,11 @@ export function createSwarmExtensionBindings(
                 : {};
             }
           : undefined,
-        // Protected application dispatch (docs/security/remote-application-execution.md): the
-        // worker admits only a direct, non-agentic request carrying a server-resolved hosted
-        // connection. This is the queue's resolver for it. HOSTED ladder on purpose — the full
-        // user-brain ladder returns a local CLI brain first for a configured operator on a demo
-        // box, and the worker refuses a CLI brain, which is the same denial this closes.
-        resolveHostedConnection: pool
-          ? async (ownerSub: string) => {
-              const connection = await resolveUserLlmConnection(pool, ownerSub);
-              return connection
-                ? { baseUrl: connection.baseUrl, apiKey: connection.apiKey, model: connection.model }
-                : null;
-            }
+        // Protected application dispatch (docs/security/remote-application-execution.md): use the
+        // same configured user-brain ladder as Jarvis. The protected boundary still requires a
+        // direct, non-agentic request and verifies either endpoint or provider authority exactly.
+        resolveBrain: pool
+          ? async (ownerSub: string) => resolveUserBrain(pool, ownerSub)
           : undefined,
         workflowRunRecorder,
         resolveAgentIdByName: agentProfileRepository

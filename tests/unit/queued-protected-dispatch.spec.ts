@@ -21,6 +21,7 @@ import type { StoredTask } from '@/shared/types';
 import type { ITaskStore } from '@/entities/task';
 import type { InternalTicket } from '@/entities/ticket';
 import { executeManifestApplicationBot } from '@/features/swarm-orchestration/services/manifest-worker-application-execution';
+import type { QueuedResolvedBrain } from '@/features/swarm-orchestration/services/manifest-worker-application-execution';
 import { dispatchManifestWorkerTicket } from '@/features/swarm-orchestration/services/dispatch-manifest-worker';
 import { startProtectedWorkerFixture, REMOTE_AGENT, REMOTE_APP, REMOTE_ISSUER, REMOTE_SUB } from '../fixtures/bot-node-protected-execution';
 
@@ -91,7 +92,7 @@ function dispatch(request = queuedRequest()) {
     async (ownerSub: string) => {
       hostedLookups.push(ownerSub);
       if (hostedFailure) throw hostedFailure;
-      return hostedConnection;
+      return hostedConnection ? { kind: 'hosted', connection: hostedConnection } : { kind: 'none' };
     }));
 }
 
@@ -124,6 +125,7 @@ beforeEach(async () => {
   staged.publish();
   configureSpecialistContextRegistry(registry);
 
+  let activeProvider = { provider: 'antigravity-cli', model: 'gemini-fixture', apiProvider: null };
   fixture = await startProtectedWorkerFixture(signing => {
     authority = new ApplicationRemoteExecutionService(remoteStore, {
       owner: async () => ({ app: REMOTE_APP, protected: true }),
@@ -138,6 +140,15 @@ beforeEach(async () => {
       tokenIssuer: 'urn:oshal:controller', dispatchAudience: 'urn:oshal:bot-node',
     });
     return authority;
+  }, {
+    directProvider: { provider: 'antigravity-cli', model: 'gemini-fixture' },
+    dispatchConfigRuntime: {
+      getActiveProvider: () => activeProvider,
+      setActiveProvider: (provider, model) => {
+        activeProvider = { provider, model: model ?? activeProvider.model, apiProvider: null };
+        return activeProvider;
+      },
+    },
   });
   configureProtectedResultAccess({
     assertResultAccess: (id, candidate, binding) => authority.assertResultAccess(id, candidate, binding),
@@ -146,7 +157,10 @@ beforeEach(async () => {
     isProtectedAgent: () => true,
   });
   const built = fixture.controller._buildByoLlm.bind(fixture.controller);
-  fixture.controller._buildByoLlm = (connection: unknown) => { builtConnections.push(connection); return built(connection); };
+  fixture.controller._buildByoLlm = (connection: unknown) => {
+    if (connection) builtConnections.push(connection);
+    return built(connection);
+  };
   vi.stubEnv('SWARM_SERVICE_SECRET', String(fixture.env.SWARM_SERVICE_SECRET));
   client = new BotNodeClient(() => fixture.workerUrl, 4000, { env: {},
     recordedDelegationIssuer: fixture.recordedIssuer, remoteExecutionAuthority: authority });
@@ -183,12 +197,32 @@ describe('queued protected dispatch in the supported shape', () => {
     const untrusted = JSON.parse(prompt.match(/<UNTRUSTED_CONTENT>([\s\S]*)<\/UNTRUSTED_CONTENT>/)![1]) as { content: string };
     expect(untrusted.content).toContain('{"open_positions":3}');
   });
+
+  it('runs the configured CLI brain without consulting or carrying the stale hosted connection', async () => {
+    vi.stubEnv('DEMO_MODE', 'true');
+    vi.stubEnv('OSHAL_OPERATOR_SUBS', REMOTE_SUB);
+    const result = await runWithSystemIdentity(() => executeManifestApplicationBot(
+      client, ticket, REMOTE_AGENT,
+      queuedRequest({ providerId: 'openai-codex', model: 'stale-model', providerConfigRequired: true, configVersion: 7 }),
+      taskStore,
+      async (ownerSub: string) => {
+        hostedLookups.push(ownerSub);
+        return { kind: 'cli', providerId: 'antigravity-cli', model: 'gemini-fixture' };
+      },
+    ));
+    expect(result).toMatchObject({ success: true, response: 'Fixture protected answer',
+      provider: 'antigravity-cli', model: 'gemini-fixture' });
+    expect(hostedLookups).toEqual([REMOTE_SUB]);
+    expect(builtConnections).toEqual([]);
+    expect(fixture.state.calls).toHaveLength(1);
+    expect(fixture.state.calls[0].options).toMatchObject({ tools: [], enforceToolBoundary: true });
+  });
 });
 
-describe('queued protected dispatch without a hosted owner connection', () => {
+describe('queued protected dispatch without a usable configured owner brain', () => {
   it('refuses with the exact missing requirement and dispatches nothing', async () => {
     hostedConnection = null;
-    await expect(dispatch()).rejects.toThrow(/no hosted AI connection/i);
+    await expect(dispatch()).rejects.toThrow(/no usable configured AI brain/i);
     expect(hostedLookups).toEqual([REMOTE_SUB]);
     expect(fixture.state.phases).toEqual([]);
     expect(fixture.state.calls).toEqual([]);
@@ -209,9 +243,9 @@ describe('queued protected dispatch without a hosted owner connection', () => {
     expect(fixture.state.calls).toEqual([]);
   });
 
-  it('refuses when no hosted resolver is wired at all', async () => {
+  it('refuses when no configured-brain resolver is wired at all', async () => {
     await expect(runWithSystemIdentity(() => executeManifestApplicationBot(
-      client, ticket, REMOTE_AGENT, queuedRequest(), taskStore))).rejects.toThrow(/hosted-connection resolver/);
+      client, ticket, REMOTE_AGENT, queuedRequest(), taskStore))).rejects.toThrow(/configured-brain resolver/);
     expect(fixture.state.phases).toEqual([]);
     expect(fixture.state.calls).toEqual([]);
   });
@@ -256,7 +290,7 @@ describe('the real queue dispatcher on a protected worker', () => {
       createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() } as unknown as InternalTicket;
   }
 
-  function dispatcherDeps(resolveHostedConnection?: (ownerSub: string) => Promise<typeof HOSTED | null>) {
+  function dispatcherDeps(resolveBrain?: (ownerSub: string) => Promise<QueuedResolvedBrain>) {
     const statuses: Array<{ status: string; metadata: Record<string, unknown> }> = [];
     const messages: Array<Record<string, unknown>> = [];
     const deps = {
@@ -271,13 +305,15 @@ describe('the real queue dispatcher on a protected worker', () => {
       // Unroutable so a regression that fell back to localhost would surface as a connection
       // failure rather than quietly replacing the honest refusal.
       port: '1',
-      resolveHostedConnection,
+      resolveBrain,
     };
     return { deps, statuses, messages };
   }
 
   it('completes a protected ticket through the real worker with push-on-dispatch stamping enabled', async () => {
-    const { deps, statuses, messages } = dispatcherDeps(async ownerSub => { hostedLookups.push(ownerSub); return HOSTED; });
+    const { deps, statuses, messages } = dispatcherDeps(async ownerSub => {
+      hostedLookups.push(ownerSub); return { kind: 'hosted', connection: HOSTED };
+    });
     await dispatchManifestWorkerTicket(queuedTicket(), { ticketType: 'trading-decision', name: 'Trading decision',
       pipeline: 'manifest-worker', workerBot: 'protected-reasoner' } as never, deps as never);
     expect(hostedLookups).toEqual([REMOTE_SUB]);
@@ -287,8 +323,8 @@ describe('the real queue dispatcher on a protected worker', () => {
     expect(messages[0]).toMatchObject({ role: 'assistant', text: 'Fixture protected answer' });
   });
 
-  it('escalates with the exact missing requirement when the owner has no hosted connection', async () => {
-    const { deps, statuses } = dispatcherDeps(async () => null);
+  it('escalates with the exact missing requirement when the owner has no configured brain', async () => {
+    const { deps, statuses } = dispatcherDeps(async () => ({ kind: 'none' }));
     await dispatchManifestWorkerTicket(queuedTicket(), { ticketType: 'trading-decision', name: 'Trading decision',
       pipeline: 'manifest-worker', workerBot: 'protected-reasoner' } as never, deps as never);
     expect(fixture.state.phases).toEqual([]);
@@ -296,7 +332,7 @@ describe('the real queue dispatcher on a protected worker', () => {
     const escalation = statuses.find(entry => entry.status === 'escalated');
     expect(escalation).toBeDefined();
     expect(String(escalation!.metadata.message)).toContain('authorization_queued_protected_shape_required');
-    expect(String(escalation!.metadata.message)).toContain('no hosted AI connection');
+    expect(String(escalation!.metadata.message)).toContain('no usable configured AI brain');
     expect(String(escalation!.metadata.message)).not.toMatch(/ECONNREFUSED|send-message/);
   });
 });

@@ -7,32 +7,30 @@ or execution reference.
 
 ## Supported execution
 
-The supported remote mode is a direct, hosted reasoning request: `direct: true`,
-`agenticMode: false`, and a server-resolved `byoLlmConnection`. Application facts are obtained by
-the existing authorized [specialist context reader](../apps/specialist-context.md) before signing.
-The active `/api/send-message` path can request this mode for a dedicated application bot; its
-existing user-brain resolver supplies the hosted connection. Both the bot permission and any
-specialist read permission must already allow the verified caller.
+The supported remote mode is direct configured reasoning: `direct: true`, `agenticMode: false`,
+and exactly one server-resolved brain shape. A hosted selection carries `byoLlmConnection`; a CLI
+selection carries the authoritative `providerId` and optional model, with
+`providerConfigRequired: true`. Application facts are obtained by the existing authorized
+[specialist context reader](../apps/specialist-context.md) before signing. Both the bot permission
+and any specialist read permission must already allow the verified caller.
 
-Queued manifest-worker dispatch requests the same mode. A queue has no HTTP request of its own to
-resolve a brain from, so the controller resolves the ticket owner's HOSTED connection and builds the
-identical direct, non-agentic body. It is deliberately the hosted resolver, not the full user-brain
-ladder: that ladder answers with a local CLI brain first for a configured operator on a demo box,
-and a CLI brain cannot satisfy this mode. When the owner has no usable hosted connection the
-dispatch is refused before anything is signed, and the refusal names the missing requirement on the
-ticket rather than escalating without one. Connector credentials and deterministic provider intents
-are refused on this path rather than dropped, and the controller's authoritative provider pin is not
-carried: the resolved hosted connection is the request's provider authority.
+Queued manifest-worker dispatch uses the same `resolveUserBrain` configuration ladder as Jarvis.
+A queue has no HTTP request of its own, so it resolves from the durable ticket owner and builds the
+matching direct, non-agentic body. When the owner has no usable configured brain, dispatch refuses
+before anything is signed and records the missing requirement on the ticket. Connector credentials
+and deterministic provider intents are refused rather than dropped. A hosted brain is authoritative
+through its resolved endpoint; a CLI brain is authoritative through its signed provider/model stamp.
 
 Each protected worker run has isolated history. The runtime supplies an empty tool set and
 operation scope list, excludes global project context and layered swarm memory, and rechecks
 permission immediately before inference and before storing or returning the answer. It retains
 the existing per-bot usage and cost path.
 
-Agentic tools, CLI execution, provider intents, connector credentials, raw mesh/batch calls and
-Token Chase replay remain refused for protected applications. General queued agentic work does
-not become supported merely because a ticket has captured user provenance. Enabling those paths
-requires a broker that checks the original user at each actual tool or provider operation.
+Agentic tools, provider intents, connector credentials, raw mesh/batch calls and Token Chase replay
+remain refused for protected applications. A configured CLI brain remains subject to the existing
+demo/operator eligibility checks and final spawn guard; this protocol does not widen who may use a
+CLI. General queued agentic work does not become supported merely because a ticket has captured
+user provenance.
 
 ## Controller and worker protocol
 

@@ -23,6 +23,7 @@
  * 18 | maintainer@emeraldcoastsystemsgroup.com | Use one-execution protected workspaces and empty capabilities, with current authority checks around hosted inference.
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | The post-execution ADR-034 check passes the enforced identity's apiProvider alongside the runtime-reported provider/model, so a dispatch authorized as a switch row's Cline-backed id (gemini) and executed by cline-cli fronting gemini is a match, while the same record against cline-cli fronting anything else is still refused. Codex/claude paths unchanged.
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127 carve extended to gemini-cli and antigravity-cli. Both were in the HarnessType union and in assertAuditedAutonomousHarness's refused set, but NOT in this preflight's set - so the check that runs before a task or workspace exists let them through, and the two Google CLIs were guarded once where codex-cli and claude-code are guarded twice. They are refused here now under the SAME two conditions and no others: a non-operator caller, a non-demo deployment and an identity-less request all keep the existing refusal. The hosted Google ids ('gemini', 'google-gemini') are deliberately left out - they name an HTTP endpoint with no tool loop, and refusing them would break the ordinary hosted lane.
+ * 21 | maintainer@emeraldcoastsystemsgroup.com | Log both sides of an authoritative provider mismatch before refusing it, so configuration drift is diagnosable without weakening the fail-closed check.
  */
 
 /**
@@ -483,6 +484,15 @@ export function createBotNodeExecutionHandler(
           // is the one that ran when the reported runtime is cline-cli.
           apiProvider: enforcedRuntimeIdentity?.apiProvider ?? null,
         })) {
+        logger.warn({
+          carriedProvider: carriedConfig.providerId,
+          carriedModel: carriedConfig.model ?? null,
+          actualProvider,
+          actualModel,
+          activeProvider: enforcedRuntimeIdentity?.provider ?? null,
+          activeModel: enforcedRuntimeIdentity?.model ?? null,
+          activeApiProvider: enforcedRuntimeIdentity?.apiProvider ?? null,
+        }, 'Execution identity differs from the authoritative dispatch record');
         throw new AuthoritativeDispatchConfigError(
           'Execution reported a provider/model different from the authoritative dispatch record',
         );
