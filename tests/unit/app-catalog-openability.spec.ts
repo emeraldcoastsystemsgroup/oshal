@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The regression guard for the applications catalog. It decided openability from a hand-typed WORKING array plus "manifestPath contains deployed-apps", so a store package passed on its path while a CORE manifest could only pass by being typed in — and five shipped apps with real rail surfaces (security-center, workflow-studio, intelligent-processing, person-model, oshal-engineering) rendered a disabled "Coming soon" button in the screen that is supposed to be the inventory of truth. These cases drive the REAL core manifests off disk through the REAL loader, the REAL summary projection and the REAL page decision, so any name list re-introduced between them turns this red; the page-shape cases are what catch a list added straight back into the HTML, which a module-only test would never see.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | An empty ui.dynamic placeholder is not an openable cockpit surface; only a non-empty dynamic declaration counts.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -122,6 +123,7 @@ describe('app catalog openability is derived from the manifest', () => {
     expect(hasCockpitSurface(decl({ ui: { dynamic: { source: 's' } } }))).toBe(true);
     expect(hasCockpitSurface(decl({ kind: 'group', toolbar: [{ app: 'a', surface: 's' }] }))).toBe(true);
     expect(hasCockpitSurface(decl({ ui: { static: [] } }))).toBe(false);
+    expect(hasCockpitSurface(decl({ ui: { dynamic: {} } }))).toBe(false);
     expect(hasCockpitSurface(decl({ kind: 'group', toolbar: [] }))).toBe(false);
     expect(hasCockpitSurface(decl({}))).toBe(false);
     expect(hasCockpitSurface(undefined)).toBe(false);

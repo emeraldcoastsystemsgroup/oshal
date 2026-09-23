@@ -122,6 +122,11 @@ refuses a switch that is not a secret but whose name matches, such as compose's
 `REMOTE_CLIENT_REQUIRE_NODE_TOKEN`. Set a switch like that on the workload that reads it
 (`api.extraEnv` for that one).
 
+The P8 surfaced-package gate is first-class rather than hidden in `extraEnv`:
+`api.conciergeCoverageMode` defaults to `warn` while store manifests are backfilled. Set it to
+`enforce` once every package with `ui.static`, `ui.dynamic`, or a group `toolbar` names a concierge;
+any other value makes manifest reads fail closed.
+
 **Runtime-launched bots do not boot on the default posture. This is a chart 0.5.0 regression.**
 A bot the controller launches at runtime (see [Dynamic bots](#dynamic-bots--apps-bring-their-own))
 is built by `src/features/agent-management/services/kubernetes-bot-launcher.ts`, not by this

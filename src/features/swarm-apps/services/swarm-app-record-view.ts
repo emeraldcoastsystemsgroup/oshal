@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | toSummary now redacts owner identity for a viewer who is neither the owner nor an operator. A public-scoped app keeps its stamped owner_sub, and the listing serialized it to EVERY caller — a guest (mintable with no credentials) read the deployment operator's real OIDC subject off /api/swarm/apps. Redaction is viewer-CONDITIONAL, never unconditional: global search calls the listing with no viewer and compares summary.ownerSub to decide person-scope visibility, so blanking it always would silently hide a user's own apps from their own search.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The summary carries hasSurface, so a listing surface can tell an app that opens into a cockpit from one that genuinely has no screen without re-reading a manifest it is not given. The applications catalog was deciding that from a hand-typed name array, which no core manifest could ever join by shipping a rail; five apps with real surfaces rendered "Coming soon". Derived here beside firstAppIcon because it reads the same manifest.ui block, and a second copy of the rule is how two surfaces start disagreeing about which apps are openable.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The summary carries the bundle's declared connector provider ids, split into the ADR-085 required/optional tiers. The applications catalog listed installed and available packages with no way to show which providers a bundle includes, so it could not distinguish a connected bundle from one waiting on a credential - the whole of the "apps page as a swarm catalog" gap. Read through the SHARED tier contract (@/shared/app-dependencies), which the installer and the loader already use, rather than the raw `dependencies` keys: the flat and tiered forms differ, and a second reader of them is how two surfaces start disagreeing about what a package depends on. Lenient by design (inspect, not read): a stored record whose block is malformed contributes no connectors instead of making the whole listing throw.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Align the canonical cockpit-surface predicate with declared content: ui.dynamic counts only when it is a non-empty object, while a group counts only through a non-empty toolbar. An empty placeholder block is headless and must not trigger P8 concierge coverage.
  */
 
 import { inspectAppDependencies } from '@/shared/app-dependencies';
@@ -75,7 +76,8 @@ export function firstAppIcon(manifest: SwarmApplicationRecord['manifest'] | unde
 export function hasCockpitSurface(manifest: SwarmApplicationRecord['manifest'] | undefined): boolean {
   if (!manifest) return false;
   if (Array.isArray(manifest.ui?.static) && manifest.ui.static.length > 0) return true;
-  if (manifest.ui?.dynamic) return true;
+  const dynamic = manifest.ui?.dynamic;
+  if (dynamic && typeof dynamic === 'object' && !Array.isArray(dynamic) && Object.keys(dynamic).length > 0) return true;
   return manifest.kind === 'group' && Array.isArray(manifest.toolbar) && manifest.toolbar.length > 0;
 }
 

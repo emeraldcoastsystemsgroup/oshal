@@ -27,6 +27,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | looksLikeWorkRequest: the decision-timeout branch treated "the model did not answer in 75s" as "the model is grinding a big build", and filed a ticket titled with the user's own message. A timeout equally means the brain is unreachable, and on the operator box it did - the codex lane was answering `You've hit your usage limit`, so every message timed out and every message was filed: "Hi" three times, all escalated, plus "what is 9 times 9" and "what screen am i on" as build tickets. A work VERB now wins over grammar (a request can wear a question mark), and without one a greeting or a question is reported as an outage instead of opened as a project.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | The completed-task return leg now tells the owner. summarizeComplexTask finished the row and wrote the thread turn and stopped there, so work handed to the swarm - which by definition takes long enough that nobody is watching the thread - finished silently and was found only by going back to look. The tail publishes through publishJarvisTaskCompletion: row, then turn, then a bounded notice over the user's OWN NotificationRouter preference. The notice is last and deadline-bounded so a wedged or unconfigured channel can never cost the user the answer itself.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | runJarvisBot names WHICH rung of the ladder produced the connection it threads (byoLlmResolutionSource, controller-side only): the chokepoint keys the same-endpoint retry and the operator's hot fallback on 'explicit' alone, so a free-tier or operator-key lane Jarvis threads keeps its single attempt and rotates here as before. The turn's result now carries the brainFallback marker so the surface can say a fallback rung answered.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com | Dynamic app discovery resolves the canonical manifest concierge by name among the app's associated agent_ids instead of trusting agent_ids[1]. This makes a missing external chatBot fail closed rather than routing Jarvis to a distinct worker/local bot, while a deterministic lateral ORDER BY handles duplicate agent names.
  *
  * @module jarvis-orchestrator
  */
@@ -503,11 +504,26 @@ export async function loadEffectiveRoutes(ctx: AppContext): Promise<{ routes: Ap
   const have = new Set(routes.map((r) => r.key));
   try {
     const rows = (await ctx.pool.query(
-      `SELECT sa.name, sa.display_name, sa.agent_ids[1] AS agent_id,
+      `SELECT sa.name, sa.display_name, a.agent_id,
               COALESCE(NULLIF(a.computed_selector_descriptor, ''), a.base_selector_descriptor, '') AS selector,
               a.metadata->>'jarvisMode' AS jarvis_mode
        FROM swarm_applications sa
-       LEFT JOIN agents a ON a.agent_id = sa.agent_ids[1]
+       LEFT JOIN LATERAL (
+         SELECT candidate.agent_id, candidate.computed_selector_descriptor,
+                candidate.base_selector_descriptor, candidate.metadata
+         FROM agents candidate
+         WHERE candidate.agent_id = ANY(sa.agent_ids)
+           AND candidate.name = COALESCE(
+             CASE WHEN jsonb_typeof(sa.manifest->'chatBot') = 'string'
+               THEN NULLIF(BTRIM(sa.manifest->>'chatBot'), '') END,
+             CASE WHEN jsonb_typeof(sa.manifest->'workflow'->'workerBot') = 'string'
+               THEN NULLIF(BTRIM(sa.manifest->'workflow'->>'workerBot'), '') END,
+             CASE WHEN jsonb_typeof(sa.manifest->'bots'->0->'name') = 'string'
+               THEN NULLIF(BTRIM(sa.manifest->'bots'->0->>'name'), '') END
+           )
+         ORDER BY candidate.agent_id
+         LIMIT 1
+       ) a ON TRUE
        WHERE sa.status = 'active' AND sa.name <> 'jarvis'`,
     )).rows as Array<{
       name: string; display_name: string; agent_id: string | null;

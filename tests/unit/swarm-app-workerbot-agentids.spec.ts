@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 carve-parity regression: a store-carved app declares NO `bots:` (worker is framework-resident, ADR-093), so swarm_applications.agent_ids was silently empty and every consumer that resolves the app's agent from that column (Jarvis catalog/delegate/handoff, mesh BID_REQUEST, selector composition, competency ranking) skipped the app. SwarmAppRepository.upsert now backfills agent_ids from workflow.workerBot. This locks that behaviour.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | P8 locks canonical concierge ID first for Jarvis whether the chatBot is external or a later declared bot, without dropping a distinct workflow.workerBot association; name resolution is duplicate-row deterministic, first-load non-mislabel and same-name monotone preservation remain guarded.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -15,16 +16,31 @@ import type { SwarmAppManifest } from '@/features/swarm-apps/types';
  * the previous-row agent_ids preserve-read, and captures the INSERT/UPSERT params
  * so the test can assert what agent_ids was persisted.
  */
-function makePool(workerAgentId: string | null, opts?: { resolveThrows?: boolean; previousAgentIds?: string[] }) {
+function makePool(
+  workerAgentId: string | null,
+  opts?: {
+    resolveThrows?: boolean;
+    previousAgentIds?: string[];
+    previousManifest?: SwarmAppManifest;
+    agentIdsByName?: Record<string, string | null>;
+  },
+) {
   const calls: Array<{ sql: string; params: unknown[] }> = [];
   const query = vi.fn(async (sql: string, params: unknown[] = []) => {
     calls.push({ sql, params });
     if (/FROM agents WHERE name/i.test(sql)) {
       if (opts?.resolveThrows) throw new Error('simulated transient pg failure');
-      return { rows: workerAgentId ? [{ agent_id: workerAgentId }] : [] };
+      const resolved = opts?.agentIdsByName
+        ? opts.agentIdsByName[String(params[0])] ?? null
+        : workerAgentId;
+      return { rows: resolved ? [{ agent_id: resolved }] : [] };
     }
-    if (/SELECT agent_ids FROM swarm_applications/i.test(sql)) {
-      return { rows: opts?.previousAgentIds ? [{ agent_ids: opts.previousAgentIds }] : [] };
+    if (/SELECT agent_ids(?:, manifest)? FROM swarm_applications/i.test(sql)) {
+      return {
+        rows: opts?.previousAgentIds
+          ? [{ agent_ids: opts.previousAgentIds, manifest: opts.previousManifest }]
+          : [],
+      };
     }
     // The upsert RETURNING * — return a plausible row using the bound agent_ids ($7).
     return {
@@ -53,6 +69,10 @@ describe('SwarmAppRepository.upsert — carved-app agent_ids backfill (ADR-085/A
 
     // The workerBot name was resolved…
     expect(query).toHaveBeenCalledWith(expect.stringMatching(/FROM agents WHERE name/i), ['movies-concierge']);
+    expect(query).toHaveBeenCalledWith(
+      expect.stringMatching(/WHERE name = \$1 ORDER BY agent_id LIMIT 1/i),
+      ['movies-concierge'],
+    );
     // …and its agentId became the app's agent_ids (so Jarvis/mesh/selector/ranker see it).
     expect(rec.agentIds).toEqual(['b00b0000-0000-0000-0000-000000000001']);
   });
@@ -69,27 +89,172 @@ describe('SwarmAppRepository.upsert — carved-app agent_ids backfill (ADR-085/A
   // mesh fan-out and the Jarvis catalog. A failed resolution must reuse the prior row's ids.
   it('preserves the previous row agent_ids when the workerBot resolution THROWS', async () => {
     const prev = ['b00b0000-0000-0000-0000-000000000001'];
-    const { pool } = makePool(null, { resolveThrows: true, previousAgentIds: prev });
+    const { pool } = makePool(null, { resolveThrows: true, previousAgentIds: prev, previousManifest: CARVED });
     const rec = await new SwarmAppRepository(pool).upsert(CARVED, '/deployed-apps/movies/oshal-app.yaml', []);
     expect(rec.agentIds).toEqual(prev);
   });
 
   it('preserves the previous row agent_ids when the agents row is transiently missing', async () => {
     const prev = ['b00b0000-0000-0000-0000-000000000001'];
-    const { pool } = makePool(null, { previousAgentIds: prev }); // resolution returns no rows
+    const { pool } = makePool(null, { previousAgentIds: prev, previousManifest: CARVED }); // resolution returns no rows
     const rec = await new SwarmAppRepository(pool).upsert(CARVED, '/deployed-apps/movies/oshal-app.yaml', []);
     expect(rec.agentIds).toEqual(prev);
   });
 
-  it('uses the declared bots and does NOT resolve a workerBot when the manifest has bots', async () => {
+  it('uses a declared matching concierge without resolving it again', async () => {
     const withBots = {
       ...CARVED,
-      bots: [{ agentId: 'aaaa0000-0000-0000-0000-000000000001', name: 'x', persona: 'p.yaml' }],
+      bots: [{ agentId: 'aaaa0000-0000-0000-0000-000000000001', name: 'movies-concierge', persona: 'p.yaml' }],
     } as unknown as SwarmAppManifest;
     const { pool, query } = makePool('should-not-be-used');
     const rec = await new SwarmAppRepository(pool).upsert(withBots, '/swarm-apps/x.yaml', []);
 
     expect(query).not.toHaveBeenCalledWith(expect.stringMatching(/FROM agents WHERE name/i), expect.anything());
     expect(rec.agentIds).toEqual(['aaaa0000-0000-0000-0000-000000000001']);
+  });
+
+  it('moves a local chatBot declared at bots[1] into canonical agent_ids[1] position', async () => {
+    const firstId = 'aaaa0000-0000-0000-0000-000000000001';
+    const chatId = 'aaaa0000-0000-0000-0000-000000000002';
+    const manifest = {
+      ...CARVED,
+      workflow: undefined,
+      chatBot: 'second-bot',
+      bots: [
+        { agentId: firstId, name: 'first-bot', persona: 'first.yaml' },
+        { agentId: chatId, name: 'second-bot', persona: 'second.yaml' },
+      ],
+    } as SwarmAppManifest;
+    const { pool } = makePool(null);
+
+    const rec = await new SwarmAppRepository(pool).upsert(manifest, '/swarm-apps/two-bots.yaml', []);
+
+    expect(rec.agentIds).toEqual([chatId, firstId]);
+  });
+
+  it('puts a local chat concierge before its external workflow worker and other local bots', async () => {
+    const otherId = 'aaaa0000-0000-0000-0000-000000000001';
+    const chatId = 'aaaa0000-0000-0000-0000-000000000002';
+    const workerId = 'bbbb0000-0000-0000-0000-000000000001';
+    const manifest = {
+      ...CARVED,
+      chatBot: 'local-chat',
+      workflow: { ...CARVED.workflow!, workerBot: 'external-worker' },
+      bots: [
+        { agentId: otherId, name: 'other-local', persona: 'other.yaml' },
+        { agentId: chatId, name: 'local-chat', persona: 'chat.yaml' },
+      ],
+    } as SwarmAppManifest;
+    const { pool } = makePool(null, { agentIdsByName: { 'external-worker': workerId } });
+
+    const rec = await new SwarmAppRepository(pool).upsert(manifest, '/swarm-apps/local-chat.yaml', []);
+
+    expect(rec.agentIds).toEqual([chatId, workerId, otherId]);
+  });
+
+  it('resolves explicit chatBot first without dropping a distinct workflow.workerBot association', async () => {
+    const manifest = { ...CARVED, chatBot: '  shared-advisor  ' } as SwarmAppManifest;
+    const chatId = 'bbbb0000-0000-0000-0000-000000000001';
+    const workerId = 'cccc0000-0000-0000-0000-000000000001';
+    const { pool, calls } = makePool(null, {
+      agentIdsByName: {
+        'shared-advisor': chatId,
+        'movies-concierge': workerId,
+      },
+    });
+
+    const rec = await new SwarmAppRepository(pool).upsert(manifest, '/deployed-apps/surface/oshal-app.yaml', []);
+
+    expect(calls
+      .filter(({ sql }) => /FROM agents WHERE name/i.test(sql))
+      .map(({ params }) => params[0]))
+      .toEqual(['shared-advisor', 'movies-concierge']);
+    expect(rec.agentIds).toEqual([chatId, workerId]);
+  });
+
+  it('prepends an external chatBot id before declared local bot ids', async () => {
+    const localId = 'aaaa0000-0000-0000-0000-000000000001';
+    const externalId = 'bbbb0000-0000-0000-0000-000000000001';
+    const manifest = {
+      ...CARVED,
+      workflow: { ...CARVED.workflow!, workerBot: 'local-worker' },
+      chatBot: 'shared-advisor',
+      bots: [{ agentId: localId, name: 'local-worker', persona: 'p.yaml' }],
+    } as SwarmAppManifest;
+    const { pool } = makePool(externalId);
+
+    const rec = await new SwarmAppRepository(pool).upsert(manifest, '/deployed-apps/mixed/oshal-app.yaml', []);
+
+    expect(rec.agentIds).toEqual([externalId, localId]);
+  });
+
+  it('keeps local bot ids but no fake external id when an external chatBot misses on first load', async () => {
+    const localId = 'aaaa0000-0000-0000-0000-000000000001';
+    const manifest = {
+      ...CARVED,
+      workflow: { ...CARVED.workflow!, workerBot: 'local-worker' },
+      chatBot: 'shared-advisor',
+      bots: [{ agentId: localId, name: 'local-worker', persona: 'p.yaml' }],
+    } as SwarmAppManifest;
+    const { pool } = makePool(null);
+
+    const rec = await new SwarmAppRepository(pool).upsert(manifest, '/deployed-apps/mixed/oshal-app.yaml', []);
+
+    expect(rec.agentIds).toEqual([localId]);
+  });
+
+  it('preserves only the prior external id when the same chatBot resolution is transiently missing', async () => {
+    const oldLocalId = 'aaaa0000-0000-0000-0000-000000000001';
+    const newLocalId = 'aaaa0000-0000-0000-0000-000000000002';
+    const externalId = 'bbbb0000-0000-0000-0000-000000000001';
+    const prior = {
+      ...CARVED,
+      workflow: { ...CARVED.workflow!, workerBot: 'old-local' },
+      chatBot: 'shared-advisor',
+      bots: [{ agentId: oldLocalId, name: 'old-local', persona: 'old.yaml' }],
+    } as SwarmAppManifest;
+    const current = {
+      ...CARVED,
+      workflow: { ...CARVED.workflow!, workerBot: 'new-local' },
+      chatBot: 'shared-advisor',
+      bots: [{ agentId: newLocalId, name: 'new-local', persona: 'new.yaml' }],
+    } as SwarmAppManifest;
+    const { pool } = makePool(null, {
+      resolveThrows: true,
+      previousAgentIds: [externalId, oldLocalId],
+      previousManifest: prior,
+    });
+
+    const rec = await new SwarmAppRepository(pool).upsert(current, '/deployed-apps/mixed/oshal-app.yaml', []);
+
+    expect(rec.agentIds).toEqual([externalId, newLocalId]);
+  });
+
+  it('does not preserve an old external id after the selected chatBot name changes', async () => {
+    const prior = { ...CARVED, workflow: undefined, chatBot: 'old-advisor' } as SwarmAppManifest;
+    const current = { ...CARVED, workflow: undefined, chatBot: 'new-advisor' } as SwarmAppManifest;
+    const { pool } = makePool(null, {
+      previousAgentIds: ['bbbb0000-0000-0000-0000-000000000001'],
+      previousManifest: prior,
+    });
+
+    const rec = await new SwarmAppRepository(pool).upsert(current, '/deployed-apps/surface/oshal-app.yaml', []);
+
+    expect(rec.agentIds).toEqual([]);
+  });
+
+  it('preserves both a same-name chatBot and distinct worker association on a transient miss', async () => {
+    const chatId = 'bbbb0000-0000-0000-0000-000000000001';
+    const workerId = 'cccc0000-0000-0000-0000-000000000001';
+    const manifest = { ...CARVED, chatBot: 'shared-advisor' } as SwarmAppManifest;
+    const { pool } = makePool(null, {
+      resolveThrows: true,
+      previousAgentIds: [chatId, workerId],
+      previousManifest: manifest,
+    });
+
+    const rec = await new SwarmAppRepository(pool).upsert(manifest, '/deployed-apps/surface/oshal-app.yaml', []);
+
+    expect(rec.agentIds).toEqual([chatId, workerId]);
   });
 });

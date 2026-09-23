@@ -25,6 +25,7 @@
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | Refuse `pipeline: staged` at load (CKR-10 / D2). Its executor was retired for the graph engine, so such a manifest fell through to manifest-worker and ran only workerBot with every authored approval gate dropped and nothing logged - a silently wrong run. Refused with the two pipelines that do work named in the message. Publish is unaffected: the studio compiles its own staged authoring into a graph and never emits this value.
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | readManifest refuses two more silently-degrading workflow shapes (CKR-11 / D4). `pipeline: graph` with no processDefinition has no graph to execute, so every ticket of that type escalates on arrival; and a workflow with no workerBot and no executable graph falls through to the 7-phase 'swarm' decompose pipeline, which is both wrong and expensive. Refused at load rather than at dispatch, because by dispatch a ticket exists and a person is waiting on it. Audited before landing: every workflow in the ten core manifests and all 61 store packages declares a workerBot, and print-ingest was the only manifest in either trunk with the graph-without-definition shape - fixed in the store first. Extracted to a helper and corrected after review: the definition check reads processDefinition.nodeGraph rather than the object's truthiness, because the engine walks nodeGraph and an empty object would have loaded here and escalated at dispatch anyway; and a near-miss pipeline spelling ('graph ', 'Graph') is refused, because this function trims while the router compares exactly, so accepting one would bless a value the router sends to manifest-worker - the very degradation being fixed.
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six, and it is where an installed store package is discovered.
+ * 22 | maintainer@emeraldcoastsystemsgroup.com   | P8 concierge coverage: every manifest read resolves the fail-closed OSHAL_CONCIERGE_COVERAGE_MODE. A package with a real cockpit surface and no canonical concierge emits one stable structured warning in the migration default (`warn`) or fails the load in `enforce`; there is no package-name allowlist.
  */
 
 import { validateBriefingDeclarations } from '@/shared/briefings';
@@ -54,6 +55,12 @@ import { readAppDependencies } from '@/shared/app-dependencies';
 import { validateGroupManifest, validateReadinessDeclarations, validateGuestSeedDeclaration, validateSummaryDeclaration } from './swarm-app-group';
 import { validateAppIntegrations } from './app-integrations';
 import { containsFixtureInterpolation, probeBelongsToRoute, validateScheduleDeclarations } from './manifest-schedule-validation';
+import {
+  CONCIERGE_COVERAGE_WARNING_EVENT,
+  CONCIERGE_COVERAGE_WARNING_MESSAGE,
+  conciergeCoverageProblem,
+  resolveConciergeCoverageMode,
+} from './swarm-app-concierge';
 import {
   SWARM_APP_BOT_HARNESS_TYPES,
   SWARM_APP_BOT_SPECIAL_API_TYPES,
@@ -658,6 +665,9 @@ export function readManifest(manifestPath: string): SwarmAppManifest {
   if (missing.length > 0) {
     throw new Error(`Manifest ${absPath} missing required fields: ${missing.join(', ')}`);
   }
+  // This is a deployment-wide enforcement posture, not a package hint. Resolve it for EVERY
+  // read (including headless manifests) so a typo cannot quietly turn intended enforcement off.
+  const conciergeCoverageMode = resolveConciergeCoverageMode();
   // bots is optional, but if present it must be a non-empty array (a typo'd/empty
   // bots: key is a mistake worth failing on; a deliberately bot-less app omits it).
   if (manifest.bots !== undefined && (!Array.isArray(manifest.bots) || manifest.bots.length === 0)) {
@@ -889,6 +899,23 @@ export function readManifest(manifestPath: string): SwarmAppManifest {
           `the assistant renders inside the cockpit's authenticated origin.`,
       );
     }
+  }
+
+  // P8: anything the cockpit can open needs an accountable conversational entry point. The
+  // rollout begins warn-only while the store is backfilled, then flips to enforce with no
+  // allowlist. `hasCockpitSurface` is the sole surface definition, shared with app listings.
+  const conciergeCoverageError = conciergeCoverageProblem(manifest, absPath);
+  if (conciergeCoverageError) {
+    if (conciergeCoverageMode === 'enforce') throw new Error(conciergeCoverageError);
+    logger.warn(
+      {
+        event: CONCIERGE_COVERAGE_WARNING_EVENT,
+        app: manifest.name,
+        path: absPath,
+        mode: conciergeCoverageMode,
+      },
+      CONCIERGE_COVERAGE_WARNING_MESSAGE,
+    );
   }
 
   // ADR-085 D12: `toolsDir` is DECLARED BUT DEAD — nothing in core consumes it, so a package's

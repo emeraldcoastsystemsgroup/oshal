@@ -5,12 +5,14 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial repository for swarm_applications table
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the installed row's status on every plain manifest reload. The prior one-sided rule preserved operator deactivation but reset an operator-activated opt-in app to the manifest's inactive default on every API boot; explicit build/incident variant manifests retain their override path.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | P8 persists manifest-agent associations in deterministic semantic order: the canonical chat concierge first whether local or external, then a distinct external workflow.workerBot, then remaining declared local bots. Name resolution orders duplicate rows by agent_id. A transient miss preserves only same-name prior external associations. Positional consumers stay aligned with profile synthesis without dropping the independently lifecycle-owned no-bots workflow worker; Jarvis additionally matches the canonical name fail-closed.
  */
 
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import type { GuestTier } from '@/shared/middleware/guest-capability-matrix';
 import type { SwarmApplicationRecord, SwarmAppManifest, SwarmAppScope } from '../types';
+import { manifestConciergeName, manifestExternalAgentNames } from './swarm-app-concierge';
 
 const logger = createChildLogger({ module: 'swarm-app-repository' });
 
@@ -68,6 +70,29 @@ function rowToRecord(row: RowShape): SwarmApplicationRecord {
   };
 }
 
+function declaredAgentIds(manifest: SwarmAppManifest): string[] {
+  return [...new Set((manifest.bots ?? []).flatMap(
+    bot => typeof bot.agentId === 'string' && bot.agentId.trim() ? [bot.agentId.trim()] : [],
+  ))];
+}
+
+function declaredAgentIdForName(manifest: SwarmAppManifest, name: string | undefined): string | undefined {
+  if (!name) return undefined;
+  const match = (manifest.bots ?? []).find(bot =>
+    typeof bot.name === 'string' && bot.name.trim() === name
+      && typeof bot.agentId === 'string' && bot.agentId.trim(),
+  );
+  return match?.agentId?.trim() || undefined;
+}
+
+function previousExternalAssociations(previous: Pick<RowShape, 'agent_ids' | 'manifest'>): Map<string, string> {
+  const names = manifestExternalAgentNames(previous.manifest);
+  const localIds = new Set(declaredAgentIds(previous.manifest));
+  const ids = (previous.agent_ids ?? []).filter(agentId => !localIds.has(agentId));
+  if (names.length !== ids.length) return new Map();
+  return new Map(names.map((name, index) => [name, ids[index]]));
+}
+
 /**
  * @description Postgres-backed repository for the swarm_applications
  * table. Keeps the service layer free of SQL. Callers supply the pool so
@@ -89,41 +114,50 @@ export class SwarmAppRepository {
     toolNames: string[],
     scopeMeta?: SwarmAppScopeMeta,
   ): Promise<SwarmApplicationRecord> {
-    let agentIds = (manifest.bots ?? []).map(b => b.agentId);
-    // ADR-085 carve parity: a store-carved app declares NO `bots:` (its worker is
-    // framework-resident per ADR-093), but the app must still ASSOCIATE with that bot so
-    // every `swarm_applications.agent_ids` consumer keeps working exactly as pre-carve —
-    // Jarvis's dynamic catalog (delegate/handoff + ?app= deep link), mesh BID_REQUEST
-    // fan-out, selector composition, and competency ranking all resolve the app's agent
-    // from this column. Resolve the workflow.workerBot NAME → agentId here. Boot-order
-    // safe: if the worker isn't seeded yet the array stays empty (no worse than before)
-    // and the next reload fills it. Non-carved apps (with `bots:`) skip this untouched.
-    if (agentIds.length === 0 && manifest.workflow?.workerBot) {
+    const localAgentIds = declaredAgentIds(manifest);
+    const conciergeName = manifestConciergeName(manifest);
+    const localConciergeId = declaredAgentIdForName(manifest, conciergeName);
+    const externalNames = manifestExternalAgentNames(manifest);
+    const externalIds = new Map<string, string>();
+
+    // Associations are ordered, but they do not imply lifecycle ownership: explicit chatBot is
+    // the profile concierge; a distinct no-inline workflow worker remains associated after it.
+    for (const name of externalNames) {
       try {
-        const wb = await this.pool.query<{ agent_id: string }>(
-          `SELECT agent_id FROM agents WHERE name = $1 LIMIT 1`, [manifest.workflow.workerBot]);
-        if (wb.rows[0]?.agent_id) agentIds = [wb.rows[0].agent_id];
+        const result = await this.pool.query<{ agent_id: string }>(
+          `SELECT agent_id FROM agents WHERE name = $1 ORDER BY agent_id LIMIT 1`, [name]);
+        if (result.rows[0]?.agent_id) externalIds.set(name, result.rows[0].agent_id);
       } catch (err) {
-        logger.warn({ err, app: manifest.name, workerBot: manifest.workflow.workerBot },
-          'workerBot→agentId resolution failed; preserving any previously stored agent_ids');
-      }
-      // MONOTONE GUARD: never let a failed/unseeded resolution CLOBBER a previously
-      // populated row. Upserting [] here isn't just a stale catalog entry — the same
-      // load pass runs reconcileAgentsTable, which marks any manifestApp-stamped agent
-      // not referenced by an active app's agent_ids as status='inactive', knocking the
-      // framework-resident worker out of mesh bid fan-out and the Jarvis catalog until
-      // a future reload happens to resolve. Reuse the existing row's ids instead; a
-      // first-ever load (no row yet) stays empty exactly as before.
-      if (agentIds.length === 0) {
-        try {
-          const prev = await this.pool.query<{ agent_ids: string[] }>(
-            `SELECT agent_ids FROM swarm_applications WHERE name = $1 LIMIT 1`, [manifest.name]);
-          if (prev.rows[0]?.agent_ids?.length) agentIds = prev.rows[0].agent_ids;
-        } catch (err) {
-          logger.warn({ err, app: manifest.name }, 'agent_ids preserve-read failed; row keeps empty agent_ids this pass');
-        }
+        logger.warn({ err, app: manifest.name, agentName: name },
+          'external manifest agent resolution failed; preserving a matching prior association');
       }
     }
+
+    const unresolved = externalNames.filter(name => !externalIds.has(name));
+    if (unresolved.length > 0) {
+      try {
+        const prev = await this.pool.query<Pick<RowShape, 'agent_ids' | 'manifest'>>(
+          `SELECT agent_ids, manifest FROM swarm_applications WHERE name = $1 LIMIT 1`, [manifest.name]);
+        const preserved = prev.rows[0] ? previousExternalAssociations(prev.rows[0]) : new Map<string, string>();
+        for (const name of unresolved) {
+          const previousId = preserved.get(name);
+          if (previousId) externalIds.set(name, previousId);
+        }
+      } catch (err) {
+        logger.warn({ err, app: manifest.name },
+          'external agent preserve-read failed; row keeps resolved and declared agent_ids');
+      }
+    }
+
+    const conciergeId = localConciergeId
+      ?? (conciergeName ? externalIds.get(conciergeName) : undefined);
+    const agentIds = [...new Set([
+      ...(conciergeId ? [conciergeId] : []),
+      ...externalNames
+        .filter(name => name !== conciergeName)
+        .flatMap(name => externalIds.get(name) ?? []),
+      ...localAgentIds.filter(agentId => agentId !== conciergeId),
+    ])];
     // Scope/owner/tenant are bound NULLABLE: a plain boot reload passes none, so the
     // INSERT falls back to 'public' for brand-new rows and the ON CONFLICT path
     // PRESERVES whatever scope/owner a prior publish stamped (COALESCE($n, existing)).

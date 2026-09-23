@@ -4,9 +4,10 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-141 application groups — the guards. readManifest fails closed on a group that carries code, borrows from a non-member, or names a fix that is not on its toolbar, and on a readiness block that is off-mount, behind a service-only route, or has a bad pointer. The resolvers borrow a member surface by REFERENCE (label/icon/iframeUrl come from the member) and name the member + surface when one is missing. The REAL SwarmAppService (repository doubled) fail-closes activation of a group whose member is inactive, renders a group as dashboard-tile-first + borrowed tiles, and hands the dashboard route a plan whose unavailable steps are never done. The smoke verifier verifies a group through its members and fails it by name without a resolver.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | P8 group concierge binding: a declared metadata-only group.chatBot must equal a required ACTIVE member's canonical concierge. Absence remains loader warn/enforce policy, so warn-mode groups activate while enforce mode refuses them before persistence; unrelated and inactive-member targets still fail closed.
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -29,13 +30,17 @@ function writeManifest(body: string): string {
   writeFileSync(file, body, 'utf8');
   return file;
 }
-afterEach(() => { for (const d of tempDirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+afterEach(() => {
+  vi.unstubAllEnvs();
+  for (const d of tempDirs.splice(0)) rmSync(d, { recursive: true, force: true });
+});
 
 const GROUP_YAML = [
   'name: g',
   'displayName: G',
   'kind: group',
   'suite: ai-knowledge',
+  'chatBot: m1-concierge',
   'dependencies:',
   '  apps: [m1, m2]',
   'toolbar:',
@@ -51,6 +56,7 @@ const MEMBER_YAML = (name: string, surface: string, readiness: string, auth = 'o
   `name: ${name}`,
   `displayName: ${name.toUpperCase()}`,
   'suite: ai-knowledge',
+  `chatBot: ${name}-concierge`,
   'ui:',
   '  static:',
   `    - { toolName: ${surface}, label: Home of ${name}, icon: codicon codicon-home, iframeUrl: /api/${name}/home, section: top }`,
@@ -170,6 +176,31 @@ describe('resolvers — borrow by reference, name what is missing', () => {
     ]);
   });
 
+  it('accepts a group concierge only when a required active member canonically provides it', () => {
+    const members = new Map([
+      ['m1', member('m1', 'm1-home', 'thing')],
+      ['m2', member('m2', 'm2-inbox', 'mail')],
+    ]);
+    expect(() => assertGroupResolvable(group(), members)).not.toThrow();
+
+    const unrelated = { ...group(), chatBot: 'unrelated-global-bot' };
+    expect(() => assertGroupResolvable(unrelated, members)).toThrow(
+      /concierge "unrelated-global-bot" is not the canonical concierge of any required active member.*m1=m1-concierge, m2=m2-concierge/,
+    );
+
+    const noTarget = { ...group(), chatBot: undefined };
+    expect(() => assertGroupResolvable(noTarget, members)).not.toThrow();
+  });
+
+  it('rejects a concierge provided only by an inactive or missing required member', () => {
+    const onlyM1 = new Map([['m1', member('m1', 'm1-home', 'thing')]]);
+    const targetsM2 = { ...group(), chatBot: 'm2-concierge' };
+
+    expect(() => assertGroupResolvable(targetsM2, onlyM1)).toThrow(
+      /concierge "m2-concierge" is not the canonical concierge of any required active member.*m1=m1-concierge/,
+    );
+  });
+
   it('names the member and surface when a reference does not resolve', () => {
     const members = new Map([['m1', member('m1', 'm1-elsewhere', 'thing')]]);
     const { tiles, missing } = resolveGroupToolbar(group(), members);
@@ -222,6 +253,27 @@ const fakePool = { query: async () => ({ rows: [] as unknown[], rowCount: 0 }) }
 const service = (repo: FakeRepo) => new SwarmAppService(fakePool as never, repo as never, { updateAgentStatus: async () => undefined } as never);
 
 describe('SwarmAppService — a group activates only when its members resolve', () => {
+  it('activates a concierge-missing group in warn mode but refuses it in enforce mode', async () => {
+    const groupWithoutConcierge = GROUP_YAML.replace('chatBot: m1-concierge\n', '');
+
+    vi.stubEnv('OSHAL_CONCIERGE_COVERAGE_MODE', 'warn');
+    const warnRepo = new FakeRepo();
+    const warnService = service(warnRepo);
+    await warnService.loadApp(writeManifest(MEMBER_YAML('m1', 'm1-home', 'thing')));
+    await warnService.loadApp(writeManifest(MEMBER_YAML('m2', 'm2-inbox', 'mail')));
+    await expect(warnService.loadApp(writeManifest(groupWithoutConcierge)))
+      .resolves.toMatchObject({ status: 'active' });
+
+    vi.stubEnv('OSHAL_CONCIERGE_COVERAGE_MODE', 'enforce');
+    const enforceRepo = new FakeRepo();
+    const enforceService = service(enforceRepo);
+    await enforceService.loadApp(writeManifest(MEMBER_YAML('m1', 'm1-home', 'thing')));
+    await enforceService.loadApp(writeManifest(MEMBER_YAML('m2', 'm2-inbox', 'mail')));
+    await expect(enforceService.loadApp(writeManifest(groupWithoutConcierge)))
+      .rejects.toThrow(/cockpit surface for app "g" requires a concierge/);
+    expect(await enforceRepo.findByName('g')).toBeNull();
+  });
+
   it('fail-closes to inactive when a member is not active, and activates once it is', async () => {
     const repo = new FakeRepo();
     const svc = service(repo);
@@ -234,6 +286,19 @@ describe('SwarmAppService — a group activates only when its members resolve', 
     await svc.loadApp(writeManifest(MEMBER_YAML('m2', 'm2-inbox', 'mail')));
     const again = await svc.loadApp(writeManifest(GROUP_YAML));
     expect(again.status).toBe('active');
+  });
+
+  it('fail-closes activation when chatBot belongs only to an inactive required member', async () => {
+    const repo = new FakeRepo();
+    const svc = service(repo);
+    await svc.loadApp(writeManifest(MEMBER_YAML('m1', 'm1-home', 'thing')));
+    await svc.loadApp(writeManifest(MEMBER_YAML('m2', 'm2-inbox', 'mail')));
+    await svc.toggleApp('m2', false);
+
+    const targetsInactiveMember = GROUP_YAML.replace('chatBot: m1-concierge', 'chatBot: m2-concierge');
+    await expect(svc.loadApp(writeManifest(targetsInactiveMember)))
+      .rejects.toThrow(/concierge "m2-concierge" is not the canonical concierge of any required active member/);
+    expect((await repo.findByName('g'))?.status).toBe('inactive');
   });
 
   it('renders the group as its setup-dashboard tile first, then the borrowed member surfaces', async () => {

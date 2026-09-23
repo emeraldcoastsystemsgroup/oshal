@@ -45,6 +45,8 @@
  * 39 | maintainer@emeraldcoastsystemsgroup.com | ADR-149 rail discoverability: synthesiseProfile takes an optional per-person discovery port (the ui-profile route binds it to the verified actor) and, when given, hands the static tiles plus every installed record to lockUndiscoverableTiles — a tile under ANOTHER active package's mount that the person cannot discover comes back `locked` (kept in place; the cockpit renders the guest-disabled style with the role-guidance link) instead of a dead frame. No port = the manifest-static rail exactly as before. The logic lives in swarm-app-tile-discoverability.ts; this file is over its size budget.
  * 40 | maintainer@emeraldcoastsystemsgroup.com | ADR-149 landing half: the synthesised defaultView now comes from openableDefaultView, so a locked tile is never the view the cockpit opens on. Locking only the rail button left a launcher whose ribbon.defaultView names another package's surface opening straight onto the kernel's role-guidance 403 inside the frame.
  * 41 | maintainer@emeraldcoastsystemsgroup.com   | Comment correction only. The stages copy said it was "carried into the registry so the staged dispatcher can run the operator-pinned bots in order"; no staged dispatcher exists, and the comment contradicted the developer guide's own statement that no runtime reads the field.
+ * 42 | maintainer@emeraldcoastsystemsgroup.com   | P8 uses the canonical trimmed concierge selector for profile synthesis. An explicit external chatBot is mapped only to a repository id not owned by a declared local bot, so a failed first resolution leaves chatAgent absent instead of silently relabelling the first local bot; a resolved external concierge joins the scoped selector ahead of local bots.
+ * 43 | maintainer@emeraldcoastsystemsgroup.com   | P8 separates agent association from lifecycle ownership: activate/deactivate now touches declared bots plus the legacy workflow.workerBot only when no bots are declared. A borrowed metadata-only chatBot (including group concierges) is never deactivated with the package that references it, while an explicit chatBot distinct from a no-bots workflow worker still leaves that worker lifecycle-owned. All name lookups order duplicate rows by agent_id.
  */
 
 import type { Pool } from 'pg';
@@ -89,6 +91,7 @@ import {
 } from './swarm-app-group';
 import { lockUndiscoverableTiles, openableDefaultView, type RibbonTileDiscovery, type RibbonTileLock } from './swarm-app-tile-discoverability';
 import { readManifest, listManifestFiles, serializeManifest } from './swarm-app-loader';
+import { manifestConciergeName, manifestExternalAgentNames } from './swarm-app-concierge';
 import { firstAppIcon, isVisibleToCaller, maySeeOwnerIdentity, toSummary, type SummaryViewer } from './swarm-app-record-view';
 import {
   interpolate,
@@ -801,29 +804,47 @@ export class SwarmAppService {
       : null;
     const allowPatterns = dynamicPattern ? [dynamicPattern] : [];
 
-    // The app's primary bot — the workflow's workerBot, else the first declared
-    // bot — so the cockpit chat panel can preselect it when this app is focused.
-    // The right-rail chat agent: an explicit manifest.chatBot (an advisor) wins, else the
-    // workflow's worker bot, else the first declared bot.
-    const chatBotName = manifest.chatBot ?? manifest.workflow?.workerBot;
-    const primaryBot = (manifest.bots ?? []).find(b => b.name === chatBotName) ?? (manifest.bots ?? [])[0];
+    // The canonical right-rail concierge: explicit chatBot, then workflow worker, then the first
+    // declared bot. Trimming and precedence live in one helper shared with load-time coverage.
+    const chatBotName = manifestConciergeName(manifest);
+    const declaredBots = manifest.bots ?? [];
+    const primaryBot = declaredBots.find(b => b.name.trim() === chatBotName);
     let chatAgent = primaryBot?.agentId ? { agentId: primaryBot.agentId, name: primaryBot.name } : undefined;
 
-    // Every bot the app declares — the cockpit chat selector renders just these
-    // (the app's own swarm) rather than the whole live fleet.
-    let chatBots = (manifest.bots ?? [])
+    // Every bot the app declares. A resolved external concierge is prepended below.
+    let chatBots = declaredBots
       .filter((b): b is typeof b & { agentId: string } => typeof b.agentId === 'string' && b.agentId.length > 0)
       .map(b => ({ agentId: b.agentId, name: b.name }));
 
-    // ADR-085 carve parity: a store-carved app declares NO `bots:` (its worker is
-    // framework-resident, ADR-093) but still names it via workflow.workerBot, and the
-    // repository backfills record.agentIds from that name at upsert. Without this
-    // fallback the six carved concierges lost cockpit chat-panel preselection and the
-    // app-scoped bot selector — pre-carve, their manifests declared the bot inline and
-    // both fields were populated. Restore exactly that from the backfilled record.
-    if (!chatAgent && chatBotName && record.agentIds.length > 0) {
-      chatAgent = { agentId: record.agentIds[0], name: chatBotName };
-      if (!chatBots.length) chatBots = [chatAgent];
+    // Repository associations are ordered by manifestExternalAgentNames. Use that positional map
+    // only when every expected external association is present; otherwise a missing chatBot could
+    // shift a distinct workflow worker into slot zero. In a partial row, prove the chatBot by name
+    // against agents and require that exact id to be associated with this app. A failed first
+    // resolution therefore leaves chatAgent absent instead of relabelling a worker or local bot.
+    if (!chatAgent && chatBotName) {
+      const declaredIds = new Set(chatBots.map(bot => bot.agentId));
+      const externalNames = manifestExternalAgentNames(manifest);
+      const externalIds = record.agentIds.filter(agentId => !declaredIds.has(agentId));
+      const chatIndex = externalNames.indexOf(chatBotName);
+      let externalAgentId = externalNames.length === externalIds.length && chatIndex >= 0
+        ? externalIds[chatIndex]
+        : undefined;
+      if (!externalAgentId && chatIndex >= 0) {
+        try {
+          const { rows } = await this.pool.query<{ agent_id: string }>(
+            'SELECT agent_id FROM agents WHERE name = $1 ORDER BY agent_id LIMIT 1',
+            [chatBotName],
+          );
+          const candidate = rows[0]?.agent_id;
+          if (candidate && externalIds.includes(candidate)) externalAgentId = candidate;
+        } catch (err) {
+          logger.warn({ err, app: record.name, chatBot: chatBotName }, 'External chatBot lookup failed during profile synthesis');
+        }
+      }
+      if (externalAgentId) {
+        chatAgent = { agentId: externalAgentId, name: chatBotName };
+        chatBots = [chatAgent, ...chatBots];
+      }
     }
 
     // ADR-085 package-bundled skin: when the app ships ui/<theme>.css beside its
@@ -981,7 +1002,7 @@ export class SwarmAppService {
     await upsertManifestBots(this.pool, record.manifest, record.manifestPath, this.runtimeDefaults);
     if (record.manifest.briefings?.length && !this.briefingRegistrar) throw new Error('Briefing registry unavailable');
     await this.briefingRegistrar?.register(record.name, record.version, record.manifest.briefings ?? []);
-    await this.setBotStatuses(record.agentIds, 'active');
+    await this.setBotStatuses(await this.lifecycleAgentIds(record), 'active');
     this.applyGuestTier(record);
     this.applySkillProfiles(record);
     applyArtifactActions(record);
@@ -1233,7 +1254,7 @@ export class SwarmAppService {
     const briefingRetraction = this.briefingRegistrar?.unregister(record.name).catch(err => {
       logger.warn({ err, app: record.name }, 'Briefing source persistence unavailable after local retraction');
     });
-    await this.setBotStatuses(record.agentIds, 'inactive');
+    await this.setBotStatuses(await this.lifecycleAgentIds(record), 'inactive');
     // ADR-085 D4: retract the guest tier — a toggled-off app must not keep granting guests reach
     // into routes its own gate now blocks. Idempotent; the segment falls back to the read-only default.
     for (const seg of this.guestSegmentsFor(record)) unregisterAppGuestTier(seg);
@@ -1328,6 +1349,41 @@ export class SwarmAppService {
         { err: error, app: incoming.name, schedules: retiredIds },
         'Retired manifest schedule teardown failed (non-fatal)',
       );
+    }
+  }
+
+  /**
+   * @description Agent ids whose runtime status this package owns. Durable `agentIds` also carries
+   * borrowed metadata associations (notably an external chatBot), so it is deliberately not a
+   * lifecycle list. Inline bots are always owned. For carve-era manifests with no inline bots,
+   * workflow.workerBot retains the legacy ownership behaviour and is resolved by name so an
+   * explicit, distinct chatBot cannot be mistaken for it by position.
+   */
+  private async lifecycleAgentIds(record: SwarmApplicationRecord): Promise<string[]> {
+    const declared = [...new Set((record.manifest.bots ?? []).flatMap(bot => {
+      const agentId = typeof bot.agentId === 'string' ? bot.agentId.trim() : '';
+      return agentId ? [agentId] : [];
+    }))];
+    if (declared.length > 0) return declared;
+
+    const workerName = typeof record.manifest.workflow?.workerBot === 'string'
+      ? record.manifest.workflow.workerBot.trim()
+      : '';
+    if (!workerName) return [];
+
+    try {
+      const { rows } = await this.pool.query<{ agent_id: string }>(
+        'SELECT agent_id FROM agents WHERE name = $1 ORDER BY agent_id LIMIT 1',
+        [workerName],
+      );
+      const workerId = rows[0]?.agent_id?.trim();
+      return workerId ? [workerId] : [];
+    } catch (err) {
+      logger.error(
+        { err, app: record.name, workerBot: workerName },
+        'Failed to resolve lifecycle-owned workflow worker; borrowed agent associations left untouched',
+      );
+      return [];
     }
   }
 

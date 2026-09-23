@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Export the ADR-149 rail-tile discoverability resolver, its per-person port and the lock shape a synthesised ribbon item may carry.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Export SwarmAppServiceRouteScheduleDeclaration so the ADR-157 activation wiring can narrow a manifest's schedules to the deterministic ones before reading runsAs/requires.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Export the ADR-145 D4 per-name status plan and its D5 jarvis_tasks fallback composer/reader.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com | Export the P8 canonical concierge selector, rollout mode, and coverage contract.
  */
 
 export type {
@@ -69,6 +70,12 @@ export {
   compileWorkflowSpec,
   verifyAppSmokes,
   resolvePackageAuditMode,
+  CONCIERGE_COVERAGE_WARNING_EVENT,
+  CONCIERGE_COVERAGE_WARNING_MESSAGE,
+  manifestConciergeName,
+  manifestExternalAgentNames,
+  resolveConciergeCoverageMode,
+  conciergeCoverageProblem,
   // ADR-085 D11 — tool ownership, derived from the active manifests at query time.
   providedToolNames,
   dependedToolNames,
@@ -91,6 +98,7 @@ export {
   resolveGroupSetup,
   assertGroupResolvable,
 } from './services';
+export type { ConciergeCoverageMode } from './services';
 export type { ResolvedGroupSetupStep, ResolvedGroupToolbar } from './services';
 // ADR-149 — a static tile under ANOTHER package's mount follows that package's discoverability.
 export { lockUndiscoverableTiles, openableDefaultView, mountOwner, packageMounts, tilePathname } from './services';

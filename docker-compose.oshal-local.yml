@@ -39,6 +39,7 @@
 # 32 | maintainer@emeraldcoastsystemsgroup.com | x-bot-env: DB_MAX_CONNECTIONS, so the bot fleet has a DECLARED per-container Postgres ceiling instead of the code default of 5. Unset, the 38 bot-node services here could demand 190 connections from a role capped at 8, and a fleet boot produced FATAL too many connections for role "oshal_bot" in 24 of 36 containers - a pool outage that surfaced as an authorization-shaped refusal. Three per container is 114 for the whole fleet, which fits under the role's ceiling of 120 (docs/governance/app-role-provisioning.sql) and under max_connections=200 beside oshal_app's 24. The controller inherits this anchor but never reads the key: its own ceiling is OSHAL_DB_POOL_MAX. Guard: tests/unit/managed-postgres-pool-budget.spec.ts.
 # 33 | maintainer@emeraldcoastsystemsgroup.com | x-bot-env: RAG_ENGINE, the same pgvector value oshal-api carries as its own literal. The bot-node read-only tool rag_query refuses unless rag_chunks row-level security is what scopes the read, and only the pgvector engine reaches it; with the key on the api alone every bot booted on the chroma default and the tool shipped inert on the deployed box. Anchor rather than per-service so every bot that can be granted the tool gets the engine. Guard: tests/unit/bot-node-read-only-tools.spec.ts (the compose case).
 # 34 | maintainer@emeraldcoastsystemsgroup.com | Antigravity headless account login: every API/bot inheriting x-bot-env uses agy's file-storage mode and the shared .gemini token path, allowing OSHAL Node's authenticated operator push to seed one credential every bot can consume.
+# 35 | maintainer@emeraldcoastsystemsgroup.com | P8: forward OSHAL_CONCIERGE_COVERAGE_MODE to the controller API with the migration-safe warn default. Without the explicit compose mapping, setting enforce in .env changes nothing and surface packages continue to load without an accountable concierge.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -953,6 +954,7 @@ services:
       APP_PACKAGE_DYNAMIC_ROUTES: "1"
       APP_PACKAGE_MIGRATIONS: "1"
       OSHAL_PACKAGE_AUDIT_MODE: ${OSHAL_PACKAGE_AUDIT_MODE:-compatible}
+      OSHAL_CONCIERGE_COVERAGE_MODE: ${OSHAL_CONCIERGE_COVERAGE_MODE:-warn}
       # Maps for the `rides` store package. All three are OPTIONAL and empty by default:
       # the surface's real map is keyless OpenStreetMap over vendored Leaflet, so it works
       # on a fresh clone with no account anywhere. GOOGLE_MAPS_BROWSER_KEY upgrades that
