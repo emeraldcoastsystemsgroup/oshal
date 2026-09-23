@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Proves the bot-node Antigravity runtime without running agy or contacting Google: ADR-127 denial happens before allocation/spawn; the allowed path sends one stream-json user event on stdin (never argv), never adds the dangerous permission bypass, accepts only SUCCESS, and normalizes usage/provider identity.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pin --add-dir to the exact invocation workspace. This is agy's project/permission boundary in headless mode; cwd by itself left ViewFile in request-review and made every persona-context read fail despite the task volume being mounted read-write.
  */
 
 import { EventEmitter } from 'node:events';
@@ -88,9 +89,11 @@ describe('Antigravity bot-node wrapper', () => {
       const invocation = fake.invocation();
       expect(invocation?.command).toBe('fake-agy');
       expect(invocation?.args).toEqual(expect.arrayContaining([
+        '--add-dir', workspace,
         '--input-format', 'stream-json', '--output-format', 'stream-json',
         '--model', 'gemini-3.8-flash-low',
       ]));
+      expect(invocation?.options.cwd).toBe(workspace);
       expect(invocation?.args).not.toContain('--dangerously-skip-permissions');
       expect(invocation?.args).not.toContain('a prompt much safer on stdin');
       expect(JSON.parse(invocation?.stdin.trim() || '{}')).toEqual({
