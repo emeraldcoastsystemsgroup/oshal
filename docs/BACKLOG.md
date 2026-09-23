@@ -655,8 +655,7 @@ including across a directory belonging to a different owner. Full reasoning and 
 
 ### Refusal visibility: the substrate for P1, P3 and P4
 - **Status:** OPEN — actionable
-- **Progress:** P1 shipped live on 2026-09-23; the P3 catalog foundation is live, while its full
-  classification and P4 remain.
+- **Progress:** P1 and P3 shipped live on 2026-09-23. P4 is the remaining closure item.
 
 - **Found 2026-09-14, measured:** **125** distinct refusal reason codes in `src/**` and **zero**
   surfaces that aggregate them. A refusal is a return value and, at best, a log line - not a row,
@@ -675,29 +674,32 @@ including across a directory belonging to a different owner. Full reasoning and 
   `NOSUPERUSER NOBYPASSRLS` role, then proves owner/other/operator HTTP visibility. Live image
   `b89d53d747db` repeated it: migration applied, ENABLE+FORCE RLS, another caller saw 0 rows, the
   owner saw 1, and the authenticated API/dashboard rendered the proof row. This closes Stage 1;
-  it does not claim the two remaining stages.
-- **Remaining - P3 (Stage 3), the multiplier:** enumerate the operator-remediable subset of the 125
-  codes (not all are; some are correct hard denials) and make each name what is unset and what to
-  set, with the setting names in one exported constant so check and message cannot drift. `8ae6a57b`
-  did this for exactly one code and is the pattern.
-- **P3 foundation live (`5b4b7d08`, 2026-09-23):** the shared chokepoint now enriches declared
-  operator-remediable codes from one exported catalog without replacing a more specific remedy.
-  The first reviewed set is deliberately narrow: `authorization_permission_denied` and
-  `authorization_recorded_delegation_required`; exact delegation setting names come from the
-  enforcing policy constants, and the guard fails if a declared member has no remedy or its
-  generated message omits a setting. Hard tenant, management, scope, guest and public-profile
-  denials are explicitly not advertised as bypassable. Live image `694f25136dce` stored and served
-  the permission remedy with `requires: ["metrics.write"]`. The code census now finds 141 matching
-  tokens; classifying the remainder into remediable versus hard/validation denials is still P3 work,
-  so this bullet does not close the stage.
-- **Remaining - P4 (Stage 2 tail):** refused work strands. Observed at `escalated` and at
-  `chat_tasks.status='created'`. Needs a terminal state carrying the reason, or a reaper.
-- **Done when:** a query answers "every refusal in the last 24 h by code, actor, package and
-  target" and the cockpit renders it; the five 09-10 schedule refusals appear in it without a
-  `docker exec`; a guard enumerates the remediable codes and fails when one carries no remedy; and
-  a spec drives a refused dispatch end-to-end and asserts the ticket reaches a terminal state with
-  its reason. Guards must cross the real boundary - a real store under the enforcing role, not a
-  mocked one.
+  P3 has since closed, while P4 remains.
+- **P3 shipped live (`7062f3ad`, PR #798, 2026-09-23):** an AST-derived guard now inventories all
+  **151** refusal-shaped tokens across tracked executable JS/TS-family and inline HTML scripts,
+  rejects new unclassified codes and stale/duplicate entries, and records one of six reviewed
+  dispositions: 8 operator-remediable, 53 hard-security, 20 validation/user-action, 18
+  workflow/domain, 48 infrastructure-undetermined and 4 lexical non-refusals. The eight global
+  remedies use the same exported setting constants as their enforcing checks and lock secret/key
+  deployment topology. Ordinary authorization denials and aliased infrastructure codes carry no
+  global privilege-changing advice. A scheduled permission denial instead supplies evidence-bound
+  advice from its exact activation: full `(issuer, sub)` principal, declared `requires`, package,
+  `/access` control and schedule id. Image `78218144e95d` (commit `7062f3ad2755`) repeated the real
+  protected-dispatch path; authenticated `GET /api/ops/refusals` returned HTTP 200 with the new row,
+  `requires: ["metrics.write"]`, its prepared execution id and exact remedy, while the same code's
+  global remedy remained absent. This closes Stage 3.
+- **Remaining - P4 (next):** refused work still strands. A deterministic manifest-worker refusal
+  is collapsed by the outer catch to `manifest_worker_dispatch_failed` and parks the ticket at the
+  nonterminal `escalated` state; Jarvis calls `ensureSessionTask` before `canReadJarvisSession`, so
+  a denied bookmarked thread can leave `chat_tasks.status='created'`. The smallest safe slice is a
+  typed dispatch-refusal path into `DeadLetterService.quarantineRefusal(...)` that preserves the
+  exact code/message/remedy, writes `oshal_queue_dlq`, and transactionally moves the ticket plus
+  linked task to terminal state. Move the fresh Jarvis access check before task persistence.
+- **Done when:** a real-PostgreSQL spec under the enforcing role drives a protected dispatch to a
+  deterministic refusal and proves the ticket is terminal, the DLQ row preserves the exact refusal,
+  the linked task is terminal, RLS still holds, and an injected mid-transition failure rolls the
+  entire state change back. A denied fresh Jarvis thread must create no `chat_tasks` row. The parent
+  item remains open until those P4 proofs pass.
 
 ### Concierge and tool coverage is not a contract (P8) - and its first done-when was wrong
 - **Status:** OPEN — blocked
