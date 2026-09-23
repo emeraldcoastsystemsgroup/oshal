@@ -5,7 +5,7 @@
 be overwritten. An entry disappears from this file automatically once its backlog heading is gone
 or its body records that it was built.
 
-Counts are generated, never typed: **73 decisions**, **46 live proofs**.
+Counts are generated, never typed: **69 decisions**, **46 live proofs**.
 
 To comment, write under an entry in this file and tell me, or just say the entry name.
 
@@ -13,13 +13,13 @@ To comment, write under an entry in this file and tell me, or just say the entry
 
 ## Right now — 3
 
-Short-lived and blocking today. Source: `docs/backlog/operator-now.json` (as of 2026-09-18).
+Short-lived and blocking today. Source: `docs/backlog/operator-now.json` (as of 2026-09-22).
 
 ### Decide: enable billing on the Google project, or keep the fleet on Claude Code
 
-The provider switch is live and proven (2026-09-18 05:47Z: one write of the fleet-default row, no restart, no deploy, and a real ticket completed on claude-code). It was written to gemini / gemini-3.8-flash first, as you asked, and the node ran Gemini - Google refused with 429 RESOURCE_EXHAUSTED: the GOOGLE_API_KEY in .env is the FREE tier, GenerateRequestsPerDayPerProjectPerModel-FreeTier = 20 requests per day per model, and the day's 20 were spent by tonight's runs. Twenty requests a day cannot carry a fleet. Codex is out until Sep 20 05:15. So the fleet default is claude-code right now (your own suggestion), which spends the Claude subscription.
+The fleet switch was proven on 2026-09-18: a fleet-default write required no restart and a ticket completed on Claude Code after the Google API key exhausted its free-tier quota. The 2026-09-22 direct API probes recorded in docs/BACKLOG.md still identify the key as free-tier: a pro model returned 429 with free-tier limit 0, while newer flash models returned capacity 503. The current fleet row was not readable during this closeout because the local Docker engine was unavailable; do not infer its present value from the September 18 write.
 
-**Do:** Either enable billing on the Google Cloud project that owns the key (the same key then runs paid Gemini 3.8 Flash), or leave it. Flipping the fleet is one write either way: Access Administration → fleet default, or PUT /api/agents/provider-switch/fleet-default {"providerId":"gemini","modelId":"gemini-3.8-flash"}. No deploy, no restart.
+**Do:** Decide whether to enable billing on the Google Cloud project that owns the key. If so, first confirm the project tier and validate a currently available model, then read the current fleet row before changing it in Access Administration. Otherwise keep the existing fleet configuration.
 
 ### The student: open Little Monsters once (signing in was not enough)
 
@@ -35,7 +35,7 @@ A lane's bad redaction printed ALPACA_SECRET, ALPACA_PAPER_SECRET_KEY and ALPACA
 
 ---
 
-## Decisions — 73
+## Decisions — 69
 
 Each of these is blocked on a judgement only you can make. No code is waiting on anything else.
 
@@ -44,8 +44,6 @@ Each of these is blocked on a judgement only you can make. No code is waiting on
 
 - **Animatronic props: the bench, tracking, dynamics and sound (2026-09-14)** *(L, store)*
   For animatronics B2: set up a bench with an ESP32 DevKit, a PCA9685 board, a servo, a 5-6 V supply and an oscilloscope. Flash firmware/esp32-pca9685/animatronics_controller.ino with arduino-cli, then record the scope trace (50 Hz, expected pulse widths), the E/R latch, and outputs going off after 3 s of silence. Agents can build B3, B5 and B6 in the store package meanwhile.
-- **Twelve agent ids are claimed by more than one application (2026-09-14)** *(M, both)*
-  Approve two things. (1) Uninstall or release the loose Workflow Studio artifacts on the box: cluster-probe, durable-probe, smoke-parallel-2, smoke-parallel-flow, smoke-published-flow, test-gate-flow, capability-ideation. Also remove the stale rows issue-rca, incident-remediation and the old /app/swarm-apps/trading.yaml trading row. (2) Re-pin brand-graphics in oshal-applications to a uuid it owns (it currently borrows drone-operator's b00f0000-0000-0000-0000-000000000001) and reinstall it. Also confirm whether the manifestApp arbitration already merged in 36dde7d6 should be recorded as an ADR-149 amendment.
 
 ### Application-package follow-ups
 
@@ -73,8 +71,6 @@ Each of these is blocked on a judgement only you can make. No code is waiting on
 
 ### Connectors, channels, and external systems
 
-- **Alexa-exclusive control path** *(L, core)*
-  Do you own any device that only Alexa can control (not reachable via SmartThings, Matter or Home Assistant)? If not, keep this deferred or retire it. If so, register Login with Amazon and a Smart Home Skill under maintainer@emeraldcoastsystemsgroup.com and take on the Amazon certification review.
 - **Operator credential/configuration follow-ups** *(S, core)*
   Register the 'OSHAL Outlook' Azure app under maintainer@emeraldcoastsystemsgroup.com, put AZURE_EMAIL_APPLICATION_ID, OUTLOOK_CLIENT_VALUE and AZURE_EMAIL_TENANT in .env, reconnect Outlook and send once. Also choose real daily cap amounts (user/app) to set via /api/budgets. After that an agent can prove one budget denial and a 401 on an unauthenticated /api/swarm-execute.
 - **Reading a user's own Drive content — the `drive.file` scope wall** *(M, core)*
@@ -218,12 +214,8 @@ Each of these is blocked on a judgement only you can make. No code is waiting on
 
 - **A protected dispatch refuses on a controller with no delegation signing material (2026-09-15)** *(S, n/a)*
   Generate one Ed25519 JWK keypair. In the host .env set OSHAL_DELEGATION_SIGNING_KID=<kid> and OSHAL_DELEGATION_SIGNING_PRIVATE_KEY=<private JWK> (controller only), and OSHAL_DELEGATION_PUBLIC_KEYS={"<kid>":<public JWK>} (the bot-node *bot-env ring). Deploy with scripts/oshal-deploy.sh, then re-ask the trading question (ticket aaa86e48 shape) and confirm it answers instead of escalating.
-- **A2A gateway productionization and interoperability** *(S, core)*
-  (1) Approve setting A2A_GATEWAY_ENABLED=true on the box. (2) Decide whether to expose /api/a2a and the agent card publicly (TLS tunnel or ingress plus A2A_PUBLIC_BASE_URL) or keep it on localhost only. (3) Consent to the paid run of `npx tsx scripts/a2a-inbound-proof.ts`. (4) Name or provide a second-vendor A2A agent to run the cross-vendor round trip against.
 - **ADR-045 graph-tier residuals** *(S, both)*
   Decide the world-data boundary (docs/architecture/three-orphan-boundary-decisions.md section 1). Option A: promote world-data to a kernel skill, meaning a registry entry, a build-anchor export and 'uses: world-data' in the world manifest (the recommended option). Option B: move the slice into the world package. Once you pick one, an agent can land it and close the entry.
-- **Local-LLM hardware decision** *(n/a, n/a)*
-  Report the GPU model and VRAM in the existing gaming PC(s), then pick a tier: $0/current hardware, a used RTX 3090, a large unified-memory machine, or a later fleet. If you pick hardware, give its OpenAI-compatible LAN endpoint so it can be run against the all-local ticket proof.
 
 ---
 

@@ -4,5 +4,23 @@
     "title": "partner-app-registration.md covers about a third of the wired hub connectors",
     "pr": "688",
     "evidence": "generated block is current (gen-partner-registration reports nothing written); tests/unit/partner-registration-reference.spec.ts 11/11 covers every done-when clause"
+  },
+  {
+    "date": "2026-09-22",
+    "title": "The ONNX runtime installs process-global rethrow handlers that make any stray rejection fatal (2026-09-15)",
+    "pr": "592",
+    "evidence": "Merged 2026-09-16; eight registered unit cases include host crash-guard child and real-image negative/positive controls. The original entry recorded the real image exiting 7 without the strip and 0 with it, with embedding preserved at 384 dimensions."
+  },
+  {
+    "date": "2026-09-22",
+    "title": "A machinery-written `agent_config` row should not outrank a fleet-default write (2026-09-17)",
+    "pr": "633",
+    "evidence": "Merged 2026-09-18; migration 147 documents the 70-row rollout and registered disposable-PostgreSQL and dispatch-stamping tests establish operator row > fleet default > machinery row."
+  },
+  {
+    "date": "2026-09-22",
+    "title": "Nightly tasks still launched from the ADR-115 archive — LAUNCHERS DONE 2026-09-16, one operator action left",
+    "pr": "696",
+    "evidence": "Merged runbook records repointing and successful execution. Read-only Task Scheduler check on 2026-09-22: Claude keepalive ran 22:23:54 with result 0; Signal Labeler ran 16:30:01 with result 0; both actions name C:/Projects/oshal. Evidence-Nightly intentionally remains on the private archive."
   }
 ]

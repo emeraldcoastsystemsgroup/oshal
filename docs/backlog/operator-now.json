@@ -1,11 +1,11 @@
 {
-  "asOf": "2026-09-18",
+  "asOf": "2026-09-22",
   "note": "Hand-maintained. Short-lived items that are blocking right now and are not in the triage ledger. Delete an entry once it is done.",
   "items": [
     {
       "title": "Decide: enable billing on the Google project, or keep the fleet on Claude Code",
-      "why": "The provider switch is live and proven (2026-09-18 05:47Z: one write of the fleet-default row, no restart, no deploy, and a real ticket completed on claude-code). It was written to gemini / gemini-3.8-flash first, as you asked, and the node ran Gemini - Google refused with 429 RESOURCE_EXHAUSTED: the GOOGLE_API_KEY in .env is the FREE tier, GenerateRequestsPerDayPerProjectPerModel-FreeTier = 20 requests per day per model, and the day's 20 were spent by tonight's runs. Twenty requests a day cannot carry a fleet. Codex is out until Sep 20 05:15. So the fleet default is claude-code right now (your own suggestion), which spends the Claude subscription.",
-      "how": "Either enable billing on the Google Cloud project that owns the key (the same key then runs paid Gemini 3.8 Flash), or leave it. Flipping the fleet is one write either way: Access Administration → fleet default, or PUT /api/agents/provider-switch/fleet-default {\"providerId\":\"gemini\",\"modelId\":\"gemini-3.8-flash\"}. No deploy, no restart."
+      "why": "The fleet switch was proven on 2026-09-18: a fleet-default write required no restart and a ticket completed on Claude Code after the Google API key exhausted its free-tier quota. The 2026-09-22 direct API probes recorded in docs/BACKLOG.md still identify the key as free-tier: a pro model returned 429 with free-tier limit 0, while newer flash models returned capacity 503. The current fleet row was not readable during this closeout because the local Docker engine was unavailable; do not infer its present value from the September 18 write.",
+      "how": "Decide whether to enable billing on the Google Cloud project that owns the key. If so, first confirm the project tier and validate a currently available model, then read the current fleet row before changing it in Access Administration. Otherwise keep the existing fleet configuration."
     },
     {
       "title": "The student: open Little Monsters once (signing in was not enough)",
