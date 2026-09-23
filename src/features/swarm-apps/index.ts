@@ -73,7 +73,7 @@ export {
   CONCIERGE_COVERAGE_WARNING_EVENT,
   CONCIERGE_COVERAGE_WARNING_MESSAGE,
   manifestConciergeName,
-  manifestExternalAgentNames,
+  manifestExternalAssociationNames,
   resolveConciergeCoverageMode,
   conciergeCoverageProblem,
   // ADR-085 D11 — tool ownership, derived from the active manifests at query time.

@@ -6,13 +6,14 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial repository for swarm_applications table
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the installed row's status on every plain manifest reload. The prior one-sided rule preserved operator deactivation but reset an operator-activated opt-in app to the manifest's inactive default on every API boot; explicit build/incident variant manifests retain their override path.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | P8 persists manifest-agent associations in deterministic semantic order: the canonical chat concierge first whether local or external, then a distinct external workflow.workerBot, then remaining declared local bots. Name resolution orders duplicate rows by agent_id. A transient miss preserves only same-name prior external associations. Positional consumers stay aligned with profile synthesis without dropping the independently lifecycle-owned no-bots workflow worker; Jarvis additionally matches the canonical name fail-closed.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Do not persist a borrowed metadata-only chatBot in agent_ids. Live warn rollout proved that agent_ids is also an authorization-ownership input: adding person-model's general-bot concierge made the framework bot look multiply package-owned and generic dispatch refused. Declared bots and external workflow workers remain associated; cockpit/Jarvis resolve an external concierge by its canonical name without turning the reference into ownership.
  */
 
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import type { GuestTier } from '@/shared/middleware/guest-capability-matrix';
 import type { SwarmApplicationRecord, SwarmAppManifest, SwarmAppScope } from '../types';
-import { manifestConciergeName, manifestExternalAgentNames } from './swarm-app-concierge';
+import { manifestConciergeName, manifestExternalAssociationNames } from './swarm-app-concierge';
 
 const logger = createChildLogger({ module: 'swarm-app-repository' });
 
@@ -86,11 +87,25 @@ function declaredAgentIdForName(manifest: SwarmAppManifest, name: string | undef
 }
 
 function previousExternalAssociations(previous: Pick<RowShape, 'agent_ids' | 'manifest'>): Map<string, string> {
-  const names = manifestExternalAgentNames(previous.manifest);
+  const names = manifestExternalAssociationNames(previous.manifest);
+  const declaredBots = previous.manifest.bots ?? [];
   const localIds = new Set(declaredAgentIds(previous.manifest));
   const ids = (previous.agent_ids ?? []).filter(agentId => !localIds.has(agentId));
-  if (names.length !== ids.length) return new Map();
-  return new Map(names.map((name, index) => [name, ids[index]]));
+  if (names.length === ids.length) return new Map(names.map((name, index) => [name, ids[index]]));
+
+  // The first warn-mode P8 image briefly persisted external chatBot before the worker. Read that
+  // exact legacy order during the corrective rollout so a transient worker lookup can preserve the
+  // worker while deliberately dropping the borrowed concierge association.
+  const localNames = new Set(declaredBots.flatMap(bot => {
+    const name = typeof bot.name === 'string' ? bot.name.trim() : '';
+    return name ? [name] : [];
+  }));
+  const legacyNames = [...new Set([manifestConciergeName(previous.manifest), ...names].filter(
+    (name): name is string => typeof name === 'string' && !localNames.has(name),
+  ))];
+  if (legacyNames.length !== ids.length) return new Map();
+  const legacy = new Map(legacyNames.map((name, index) => [name, ids[index]]));
+  return new Map(names.flatMap(name => legacy.has(name) ? [[name, legacy.get(name)!]] : []));
 }
 
 /**
@@ -117,11 +132,12 @@ export class SwarmAppRepository {
     const localAgentIds = declaredAgentIds(manifest);
     const conciergeName = manifestConciergeName(manifest);
     const localConciergeId = declaredAgentIdForName(manifest, conciergeName);
-    const externalNames = manifestExternalAgentNames(manifest);
+    const externalNames = manifestExternalAssociationNames(manifest);
     const externalIds = new Map<string, string>();
 
-    // Associations are ordered, but they do not imply lifecycle ownership: explicit chatBot is
-    // the profile concierge; a distinct no-inline workflow worker remains associated after it.
+    // Only executable associations belong here. A borrowed metadata-only chatBot is resolved by
+    // name at the cockpit/Jarvis boundary; persisting it here would also manufacture an execution-
+    // ownership claim for the referencing package. A no-inline workflow worker remains associated.
     for (const name of externalNames) {
       try {
         const result = await this.pool.query<{ agent_id: string }>(
@@ -149,14 +165,10 @@ export class SwarmAppRepository {
       }
     }
 
-    const conciergeId = localConciergeId
-      ?? (conciergeName ? externalIds.get(conciergeName) : undefined);
     const agentIds = [...new Set([
-      ...(conciergeId ? [conciergeId] : []),
-      ...externalNames
-        .filter(name => name !== conciergeName)
-        .flatMap(name => externalIds.get(name) ?? []),
-      ...localAgentIds.filter(agentId => agentId !== conciergeId),
+      ...(localConciergeId ? [localConciergeId] : []),
+      ...externalNames.flatMap(name => externalIds.get(name) ?? []),
+      ...localAgentIds.filter(agentId => agentId !== localConciergeId),
     ])];
     // Scope/owner/tenant are bound NULLABLE: a plain boot reload passes none, so the
     // INSERT falls back to 'public' for brand-new rows and the ON CONFLICT path

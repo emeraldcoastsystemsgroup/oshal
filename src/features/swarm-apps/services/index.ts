@@ -75,7 +75,7 @@ export {
   CONCIERGE_COVERAGE_WARNING_EVENT,
   CONCIERGE_COVERAGE_WARNING_MESSAGE,
   manifestConciergeName,
-  manifestExternalAgentNames,
+  manifestExternalAssociationNames,
   resolveConciergeCoverageMode,
   conciergeCoverageProblem,
 } from './swarm-app-concierge';

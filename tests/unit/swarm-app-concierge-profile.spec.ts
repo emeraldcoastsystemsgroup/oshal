@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | P8 profile regressions: a resolved external chatBot is selected and listed before local bots, while unresolved or partial first loads never relabel a local bot or distinct workflow worker as the external concierge; ambiguous name lookup is duplicate-row deterministic.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Resolve a borrowed concierge directly by canonical agent name without requiring it in record.agentIds. That preserves the cockpit selector while preventing a metadata reference from becoming an application-execution ownership claim.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -41,14 +42,19 @@ const mixedManifest = {
 } as SwarmAppManifest;
 
 describe('SwarmAppService synthesiseProfile concierge mapping', () => {
-  it('maps a proven external chatBot id and prepends it to the app-scoped selector', async () => {
-    const profile = await serviceFor(mixedManifest, [EXTERNAL_ID, LOCAL_ID]).synthesiseProfile('mixed');
+  it('maps an external chatBot without a durable app association and prepends it to the selector', async () => {
+    const query = vi.fn(async () => ({ rows: [{ agent_id: EXTERNAL_ID }] }));
+    const profile = await serviceFor(mixedManifest, [LOCAL_ID], query).synthesiseProfile('mixed');
 
     expect(profile?.chatAgent).toEqual({ agentId: EXTERNAL_ID, name: 'shared-advisor' });
     expect(profile?.chatBots).toEqual([
       { agentId: EXTERNAL_ID, name: 'shared-advisor' },
       { agentId: LOCAL_ID, name: 'local-worker' },
     ]);
+    expect(query).toHaveBeenCalledWith(
+      'SELECT agent_id FROM agents WHERE name = $1 ORDER BY agent_id LIMIT 1',
+      ['shared-advisor'],
+    );
   });
 
   it('leaves chatAgent absent after a first-load resolution miss instead of relabelling a local id', async () => {
@@ -74,7 +80,8 @@ describe('SwarmAppService synthesiseProfile concierge mapping', () => {
       bots: undefined,
       workflow: { name: 'flow', pipeline: 'manifest-worker', workerBot: 'owned-worker' },
     } as SwarmAppManifest;
-    const profile = await serviceFor(manifest, [EXTERNAL_ID, WORKER_ID]).synthesiseProfile('mixed');
+    const query = vi.fn(async () => ({ rows: [{ agent_id: EXTERNAL_ID }] }));
+    const profile = await serviceFor(manifest, [WORKER_ID], query).synthesiseProfile('mixed');
 
     expect(profile?.chatAgent).toEqual({ agentId: EXTERNAL_ID, name: 'shared-advisor' });
     expect(profile?.chatBots).toEqual([{ agentId: EXTERNAL_ID, name: 'shared-advisor' }]);
@@ -95,5 +102,18 @@ describe('SwarmAppService synthesiseProfile concierge mapping', () => {
       'SELECT agent_id FROM agents WHERE name = $1 ORDER BY agent_id LIMIT 1',
       ['shared-advisor'],
     );
+  });
+
+  it('maps a surface-only framework concierge without associating it to the package', async () => {
+    const manifest = {
+      name: 'person-model', displayName: 'Ambient Recall', chatBot: 'general-bot',
+      ui: { static: [{ toolName: 'ambient', label: 'Ambient', icon: 'i', iframeUrl: '/ambient' }] },
+    } as SwarmAppManifest;
+    const query = vi.fn(async () => ({ rows: [{ agent_id: EXTERNAL_ID }] }));
+
+    const profile = await serviceFor(manifest, [], query).synthesiseProfile('person-model');
+
+    expect(profile?.chatAgent).toEqual({ agentId: EXTERNAL_ID, name: 'general-bot' });
+    expect(profile?.chatBots).toEqual([{ agentId: EXTERNAL_ID, name: 'general-bot' }]);
   });
 });

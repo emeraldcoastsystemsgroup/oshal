@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | P8 executable manifest contract: canonical trimmed selector precedence and ordered external associations; warn/enforce behavior for static, non-empty dynamic and group cockpit surfaces; assistant-only/headless/empty UI exclusions; one stable warning per read; fail-closed invalid deployment mode; and the core person-model concierge's real Jarvis reachability.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | A metadata-only external chatBot is not a durable agent association. agent_ids participates in execution ownership, so only an external workflow worker belongs there; cockpit and Jarvis resolve borrowed concierges directly by name.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -29,7 +30,7 @@ import {
   CONCIERGE_COVERAGE_WARNING_EVENT,
   CONCIERGE_COVERAGE_WARNING_MESSAGE,
   manifestConciergeName,
-  manifestExternalAgentNames,
+  manifestExternalAssociationNames,
   readManifest,
   resolveConciergeCoverageMode,
   type SwarmAppManifest,
@@ -103,23 +104,32 @@ describe('canonical manifest concierge selector', () => {
     })).toBeUndefined();
   });
 
-  it('associates an explicit external chatBot before a distinct external workflow worker', () => {
+  it('associates the external workflow worker but not a metadata-only borrowed chatBot', () => {
     const manifest = {
       name: 'a', displayName: 'A', chatBot: ' advisor ',
       workflow: { name: 'w', pipeline: 'manifest-worker', workerBot: ' worker ' },
     } as SwarmAppManifest;
 
-    expect(manifestExternalAgentNames(manifest)).toEqual(['advisor', 'worker']);
+    expect(manifestExternalAssociationNames(manifest)).toEqual(['worker']);
   });
 
-  it('does not duplicate external associations that are backed by declared bots', () => {
+  it('needs no external association when the workflow worker is a declared bot', () => {
     const manifest = {
       name: 'a', displayName: 'A', chatBot: 'advisor',
       workflow: { name: 'w', pipeline: 'manifest-worker', workerBot: 'local-worker' },
       bots: [{ agentId: 'a1', name: 'local-worker', persona: 'p.yaml' }],
     } as SwarmAppManifest;
 
-    expect(manifestExternalAgentNames(manifest)).toEqual(['advisor']);
+    expect(manifestExternalAssociationNames(manifest)).toEqual([]);
+  });
+
+  it('associates chatBot when it is also the executable external workflow worker', () => {
+    const manifest = {
+      name: 'a', displayName: 'A', chatBot: ' advisor ',
+      workflow: { name: 'w', pipeline: 'manifest-worker', workerBot: ' advisor ' },
+    } as SwarmAppManifest;
+
+    expect(manifestExternalAssociationNames(manifest)).toEqual(['advisor']);
   });
 
   it('selects the real person-model general-bot, which the registry admits for Jarvis', () => {
@@ -128,6 +138,7 @@ describe('canonical manifest concierge selector', () => {
     const general = LOCAL_BOT_REGISTRY.find(bot => bot.name === 'general-bot');
 
     expect(manifestConciergeName(manifest)).toBe('general-bot');
+    expect(manifestExternalAssociationNames(manifest)).toEqual([]);
     expect(general, 'general-bot must exist in the default registry').toBeDefined();
     expect(isBotAccessibleTo(general!.agentId, 'jarvis')).toBe(true);
   });

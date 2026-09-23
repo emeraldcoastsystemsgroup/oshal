@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for manifest-declared Jarvis reach mode. Every dynamically discovered app used to be hardcoded mode:'handoff', so an installed app could be correctly selected by the classifier and still never answer — Jarvis could only deep-link to its surface. A manifest may now declare bots[].jarvisMode: delegate, persisted to agents.metadata and read back here. Pins: delegate is honoured, handoff stays the DEFAULT when unset, and an unknown value falls back rather than producing a mode the delegate/handoff branches cannot handle.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard canonical concierge discovery: SQL matches the manifest selector by name among associated agent_ids with deterministic duplicate handling, never blindly routes to agent_ids[1] when an external chatBot is unresolved.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | A metadata-only chatBot is resolved globally by canonical name rather than persisted in agent_ids. The association column also feeds execution ownership, so borrowing a framework/member concierge must not make the referencing app its owner.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -28,13 +29,13 @@ function row(name: string, jarvisMode: string | null) {
 }
 
 describe('Jarvis discovery: a manifest decides how Jarvis reaches the app', () => {
-  it('resolves the canonical manifest concierge among associations instead of trusting array position', async () => {
+  it('resolves the canonical manifest concierge by name without an ownership-bearing association', async () => {
     const query = vi.fn(async () => ({ rows: [] }));
     await loadEffectiveRoutes({ pool: { query } } as never);
     const sql = String(query.mock.calls[0]?.[0] ?? '');
 
     expect(sql).toMatch(/LEFT JOIN LATERAL/i);
-    expect(sql).toMatch(/candidate\.agent_id = ANY\(sa\.agent_ids\)/i);
+    expect(sql).not.toMatch(/candidate\.agent_id = ANY\(sa\.agent_ids\)/i);
     expect(sql).toMatch(/candidate\.name = COALESCE/i);
     expect(sql).toContain("sa.manifest->>'chatBot'");
     expect(sql).toContain("sa.manifest->'workflow'->>'workerBot'");

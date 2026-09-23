@@ -28,6 +28,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com | The completed-task return leg now tells the owner. summarizeComplexTask finished the row and wrote the thread turn and stopped there, so work handed to the swarm - which by definition takes long enough that nobody is watching the thread - finished silently and was found only by going back to look. The tail publishes through publishJarvisTaskCompletion: row, then turn, then a bounded notice over the user's OWN NotificationRouter preference. The notice is last and deadline-bounded so a wedged or unconfigured channel can never cost the user the answer itself.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | runJarvisBot names WHICH rung of the ladder produced the connection it threads (byoLlmResolutionSource, controller-side only): the chokepoint keys the same-endpoint retry and the operator's hot fallback on 'explicit' alone, so a free-tier or operator-key lane Jarvis threads keeps its single attempt and rotates here as before. The turn's result now carries the brainFallback marker so the surface can say a fallback rung answered.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | Dynamic app discovery resolves the canonical manifest concierge by name among the app's associated agent_ids instead of trusting agent_ids[1]. This makes a missing external chatBot fail closed rather than routing Jarvis to a distinct worker/local bot, while a deterministic lateral ORDER BY handles duplicate agent names.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com | Resolve the canonical concierge by name without manufacturing an agent_ids association for a metadata-only chatBot. Live P8 rollout proved agent_ids also feeds execution ownership, so borrowing general-bot for a right rail cannot add the referencing surface as a bot owner. A missing named agent still yields NULL and skips the dynamic route; duplicate names remain deterministic.
  *
  * @module jarvis-orchestrator
  */
@@ -512,8 +513,7 @@ export async function loadEffectiveRoutes(ctx: AppContext): Promise<{ routes: Ap
          SELECT candidate.agent_id, candidate.computed_selector_descriptor,
                 candidate.base_selector_descriptor, candidate.metadata
          FROM agents candidate
-         WHERE candidate.agent_id = ANY(sa.agent_ids)
-           AND candidate.name = COALESCE(
+         WHERE candidate.name = COALESCE(
              CASE WHEN jsonb_typeof(sa.manifest->'chatBot') = 'string'
                THEN NULLIF(BTRIM(sa.manifest->>'chatBot'), '') END,
              CASE WHEN jsonb_typeof(sa.manifest->'workflow'->'workerBot') = 'string'

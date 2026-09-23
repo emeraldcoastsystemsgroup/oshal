@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | P8 concierge coverage contract: one trimmed selector (chatBot -> workflow.workerBot -> first bots[].name), a warn/enforce rollout mode that rejects unknown values, and a pure coverage problem builder shared by the manifest loader and its guards.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Keep metadata-only chatBot references out of durable agent_ids. That column feeds execution-ownership claims as well as discovery, so associating Ambient Recall with the framework general-bot turned a borrowed cockpit concierge into a second package owner and made generic task dispatch fail closed. Only a distinct external workflow worker remains a durable association; profile and Jarvis concierge lookup resolve the canonical name directly.
  */
 
 import type { SwarmAppManifest } from '../types';
@@ -38,23 +39,23 @@ export function manifestConciergeName(
 }
 
 /**
- * @description Names external agent associations in durable order: the canonical concierge first,
- * then a distinct no-inline workflow worker. Declared bots are excluded because their ids already
- * come from bots[].agentId. This is association order, not lifecycle ownership.
+ * @description Names external agents that belong in the durable association column. A no-inline
+ * workflow worker remains associated because dispatch, mesh and ranking consume agent_ids. A
+ * metadata-only chatBot does not: agent_ids also feeds authorization ownership claims, and a
+ * borrowed concierge is not an executable the referencing package owns. Declared bots are
+ * excluded because their ids already come from bots[].agentId.
  * @param manifest - A parsed application manifest.
  * @returns Unique trimmed external agent names in persistence order.
  */
-export function manifestExternalAgentNames(
-  manifest: Pick<SwarmAppManifest, 'chatBot' | 'workflow' | 'bots'>,
+export function manifestExternalAssociationNames(
+  manifest: Pick<SwarmAppManifest, 'workflow' | 'bots'>,
 ): string[] {
   const declaredNames = new Set((manifest.bots ?? []).flatMap(bot => {
     const name = nonBlank(bot.name);
     return name ? [name] : [];
   }));
   const workerName = nonBlank(manifest.workflow?.workerBot);
-  return [...new Set([manifestConciergeName(manifest), workerName].filter(
-    (name): name is string => typeof name === 'string' && !declaredNames.has(name),
-  ))];
+  return workerName && !declaredNames.has(workerName) ? [workerName] : [];
 }
 
 /**

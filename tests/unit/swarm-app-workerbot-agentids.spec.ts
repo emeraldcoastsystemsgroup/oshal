@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 carve-parity regression: a store-carved app declares NO `bots:` (worker is framework-resident, ADR-093), so swarm_applications.agent_ids was silently empty and every consumer that resolves the app's agent from that column (Jarvis catalog/delegate/handoff, mesh BID_REQUEST, selector composition, competency ranking) skipped the app. SwarmAppRepository.upsert now backfills agent_ids from workflow.workerBot. This locks that behaviour.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | P8 locks canonical concierge ID first for Jarvis whether the chatBot is external or a later declared bot, without dropping a distinct workflow.workerBot association; name resolution is duplicate-row deterministic, first-load non-mislabel and same-name monotone preservation remain guarded.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Metadata-only external chatBot references stay out of agent_ids because that association column also feeds execution-ownership claims. Local declared concierges and external workflow workers remain associated; the corrective rollout drops the brief P8 chat association while preserving a distinct worker across transient lookup failure.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -152,7 +153,7 @@ describe('SwarmAppRepository.upsert — carved-app agent_ids backfill (ADR-085/A
     expect(rec.agentIds).toEqual([chatId, workerId, otherId]);
   });
 
-  it('resolves explicit chatBot first without dropping a distinct workflow.workerBot association', async () => {
+  it('associates a distinct external workflow worker without persisting the borrowed chatBot', async () => {
     const manifest = { ...CARVED, chatBot: '  shared-advisor  ' } as SwarmAppManifest;
     const chatId = 'bbbb0000-0000-0000-0000-000000000001';
     const workerId = 'cccc0000-0000-0000-0000-000000000001';
@@ -168,11 +169,11 @@ describe('SwarmAppRepository.upsert — carved-app agent_ids backfill (ADR-085/A
     expect(calls
       .filter(({ sql }) => /FROM agents WHERE name/i.test(sql))
       .map(({ params }) => params[0]))
-      .toEqual(['shared-advisor', 'movies-concierge']);
-    expect(rec.agentIds).toEqual([chatId, workerId]);
+      .toEqual(['movies-concierge']);
+    expect(rec.agentIds).toEqual([workerId]);
   });
 
-  it('prepends an external chatBot id before declared local bot ids', async () => {
+  it('does not persist an external chatBot beside a declared local worker', async () => {
     const localId = 'aaaa0000-0000-0000-0000-000000000001';
     const externalId = 'bbbb0000-0000-0000-0000-000000000001';
     const manifest = {
@@ -185,7 +186,7 @@ describe('SwarmAppRepository.upsert — carved-app agent_ids backfill (ADR-085/A
 
     const rec = await new SwarmAppRepository(pool).upsert(manifest, '/deployed-apps/mixed/oshal-app.yaml', []);
 
-    expect(rec.agentIds).toEqual([externalId, localId]);
+    expect(rec.agentIds).toEqual([localId]);
   });
 
   it('keeps local bot ids but no fake external id when an external chatBot misses on first load', async () => {
@@ -203,7 +204,7 @@ describe('SwarmAppRepository.upsert — carved-app agent_ids backfill (ADR-085/A
     expect(rec.agentIds).toEqual([localId]);
   });
 
-  it('preserves only the prior external id when the same chatBot resolution is transiently missing', async () => {
+  it('drops a prior borrowed chatBot association while retaining the new local worker', async () => {
     const oldLocalId = 'aaaa0000-0000-0000-0000-000000000001';
     const newLocalId = 'aaaa0000-0000-0000-0000-000000000002';
     const externalId = 'bbbb0000-0000-0000-0000-000000000001';
@@ -227,7 +228,7 @@ describe('SwarmAppRepository.upsert — carved-app agent_ids backfill (ADR-085/A
 
     const rec = await new SwarmAppRepository(pool).upsert(current, '/deployed-apps/mixed/oshal-app.yaml', []);
 
-    expect(rec.agentIds).toEqual([externalId, newLocalId]);
+    expect(rec.agentIds).toEqual([newLocalId]);
   });
 
   it('does not preserve an old external id after the selected chatBot name changes', async () => {
@@ -243,7 +244,7 @@ describe('SwarmAppRepository.upsert — carved-app agent_ids backfill (ADR-085/A
     expect(rec.agentIds).toEqual([]);
   });
 
-  it('preserves both a same-name chatBot and distinct worker association on a transient miss', async () => {
+  it('preserves only the worker from the brief chat-first P8 layout on a transient miss', async () => {
     const chatId = 'bbbb0000-0000-0000-0000-000000000001';
     const workerId = 'cccc0000-0000-0000-0000-000000000001';
     const manifest = { ...CARVED, chatBot: 'shared-advisor' } as SwarmAppManifest;
@@ -255,6 +256,20 @@ describe('SwarmAppRepository.upsert — carved-app agent_ids backfill (ADR-085/A
 
     const rec = await new SwarmAppRepository(pool).upsert(manifest, '/deployed-apps/surface/oshal-app.yaml', []);
 
-    expect(rec.agentIds).toEqual([chatId, workerId]);
+    expect(rec.agentIds).toEqual([workerId]);
+  });
+
+  it('does not turn a surface-only framework concierge into an execution-ownership claim', async () => {
+    const personModel = {
+      name: 'person-model', displayName: 'Ambient Recall', status: 'inactive', version: '1.1.1',
+      chatBot: 'general-bot',
+      ui: { static: [{ toolName: 'ambient-recall', label: 'Ambient Recall', icon: 'i', iframeUrl: '/ambient' }] },
+    } as SwarmAppManifest;
+    const { pool, calls } = makePool('a0000000-0000-0000-0000-000000000099');
+
+    const rec = await new SwarmAppRepository(pool).upsert(personModel, '/swarm-apps/person-model.yaml', []);
+
+    expect(calls.filter(({ sql }) => /FROM agents WHERE name/i.test(sql))).toEqual([]);
+    expect(rec.agentIds).toEqual([]);
   });
 });

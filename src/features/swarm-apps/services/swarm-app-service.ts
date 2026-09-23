@@ -47,6 +47,7 @@
  * 41 | maintainer@emeraldcoastsystemsgroup.com   | Comment correction only. The stages copy said it was "carried into the registry so the staged dispatcher can run the operator-pinned bots in order"; no staged dispatcher exists, and the comment contradicted the developer guide's own statement that no runtime reads the field.
  * 42 | maintainer@emeraldcoastsystemsgroup.com   | P8 uses the canonical trimmed concierge selector for profile synthesis. An explicit external chatBot is mapped only to a repository id not owned by a declared local bot, so a failed first resolution leaves chatAgent absent instead of silently relabelling the first local bot; a resolved external concierge joins the scoped selector ahead of local bots.
  * 43 | maintainer@emeraldcoastsystemsgroup.com   | P8 separates agent association from lifecycle ownership: activate/deactivate now touches declared bots plus the legacy workflow.workerBot only when no bots are declared. A borrowed metadata-only chatBot (including group concierges) is never deactivated with the package that references it, while an explicit chatBot distinct from a no-bots workflow worker still leaves that worker lifecycle-owned. All name lookups order duplicate rows by agent_id.
+ * 44 | maintainer@emeraldcoastsystemsgroup.com   | Resolve an external cockpit concierge directly by canonical name instead of requiring a durable agent_ids association. The warn rollout exposed that agent_ids also feeds application-execution ownership, so a metadata reference to general-bot cannot safely live there. The lookup remains deterministic and fail-closed; a miss never relabels a worker or local bot.
  */
 
 import type { Pool } from 'pg';
@@ -91,7 +92,7 @@ import {
 } from './swarm-app-group';
 import { lockUndiscoverableTiles, openableDefaultView, type RibbonTileDiscovery, type RibbonTileLock } from './swarm-app-tile-discoverability';
 import { readManifest, listManifestFiles, serializeManifest } from './swarm-app-loader';
-import { manifestConciergeName, manifestExternalAgentNames } from './swarm-app-concierge';
+import { manifestConciergeName } from './swarm-app-concierge';
 import { firstAppIcon, isVisibleToCaller, maySeeOwnerIdentity, toSummary, type SummaryViewer } from './swarm-app-record-view';
 import {
   interpolate,
@@ -816,34 +817,23 @@ export class SwarmAppService {
       .filter((b): b is typeof b & { agentId: string } => typeof b.agentId === 'string' && b.agentId.length > 0)
       .map(b => ({ agentId: b.agentId, name: b.name }));
 
-    // Repository associations are ordered by manifestExternalAgentNames. Use that positional map
-    // only when every expected external association is present; otherwise a missing chatBot could
-    // shift a distinct workflow worker into slot zero. In a partial row, prove the chatBot by name
-    // against agents and require that exact id to be associated with this app. A failed first
-    // resolution therefore leaves chatAgent absent instead of relabelling a worker or local bot.
+    // A metadata-only chatBot is deliberately not persisted in record.agentIds: that association
+    // column also feeds execution-ownership claims, and borrowing a framework/member concierge is
+    // not ownership. Resolve its canonical name directly and deterministically. A miss leaves the
+    // field absent rather than relabelling a workflow worker or the first local bot.
     if (!chatAgent && chatBotName) {
-      const declaredIds = new Set(chatBots.map(bot => bot.agentId));
-      const externalNames = manifestExternalAgentNames(manifest);
-      const externalIds = record.agentIds.filter(agentId => !declaredIds.has(agentId));
-      const chatIndex = externalNames.indexOf(chatBotName);
-      let externalAgentId = externalNames.length === externalIds.length && chatIndex >= 0
-        ? externalIds[chatIndex]
-        : undefined;
-      if (!externalAgentId && chatIndex >= 0) {
-        try {
-          const { rows } = await this.pool.query<{ agent_id: string }>(
-            'SELECT agent_id FROM agents WHERE name = $1 ORDER BY agent_id LIMIT 1',
-            [chatBotName],
-          );
-          const candidate = rows[0]?.agent_id;
-          if (candidate && externalIds.includes(candidate)) externalAgentId = candidate;
-        } catch (err) {
-          logger.warn({ err, app: record.name, chatBot: chatBotName }, 'External chatBot lookup failed during profile synthesis');
+      try {
+        const { rows } = await this.pool.query<{ agent_id: string }>(
+          'SELECT agent_id FROM agents WHERE name = $1 ORDER BY agent_id LIMIT 1',
+          [chatBotName],
+        );
+        const externalAgentId = rows[0]?.agent_id?.trim();
+        if (externalAgentId) {
+          chatAgent = { agentId: externalAgentId, name: chatBotName };
+          chatBots = [chatAgent, ...chatBots.filter(bot => bot.agentId !== externalAgentId)];
         }
-      }
-      if (externalAgentId) {
-        chatAgent = { agentId: externalAgentId, name: chatBotName };
-        chatBots = [chatAgent, ...chatBots];
+      } catch (err) {
+        logger.warn({ err, app: record.name, chatBot: chatBotName }, 'External chatBot lookup failed during profile synthesis');
       }
     }
 
@@ -1354,8 +1344,8 @@ export class SwarmAppService {
 
   /**
    * @description Agent ids whose runtime status this package owns. Durable `agentIds` also carries
-   * borrowed metadata associations (notably an external chatBot), so it is deliberately not a
-   * lifecycle list. Inline bots are always owned. For carve-era manifests with no inline bots,
+   * legacy borrowed metadata associations, so it is deliberately not a lifecycle list. Inline
+   * bots are always owned. For carve-era manifests with no inline bots,
    * workflow.workerBot retains the legacy ownership behaviour and is resolved by name so an
    * explicit, distinct chatBot cannot be mistaken for it by position.
    */
