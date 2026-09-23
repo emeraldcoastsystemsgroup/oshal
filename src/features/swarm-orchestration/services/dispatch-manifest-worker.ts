@@ -19,6 +19,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Close ADR-034 push-on-dispatch enforcement: authoritative stamping defaults on, carries providerConfigRequired even when the record lookup fails, and retains an explicit off/false/0/no/disabled compatibility rollback.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Prevent authoritative remote dispatch from downgrading to the unstamped localhost path after a bot transport failure; only explicit flag-off compatibility requests may use that fallback.
  * 16 | maintainer@emeraldcoastsystemsgroup.com  | BACKLOG "The `task` call-out can still hand a ticket to a controller-inline bot under signing": the ADR-083 call-out may override the workflow declared worker with any online bidder, and under signed delegation a bidder that owns no dedicated bot-node endpoint had its ticket refused at the TRANSPORT ("Signed HTTP delegation requires a dedicated bot-node endpoint") - the one shape the sibling worker-routing fix does not cover, and the biggest contributor to the 269 escalated "task" rows on the 2026-09-16 box. Live there: 14 of 37 online agents resolve to no endpoint, including two with no registry definition at all (self-healing-bot a0...056, career-hunter cb...0001) that bid on a heartbeat alone. Now an unreachable winner is SET ASIDE for the workflow declared worker (routedBy "workflow-default-call-out-unreachable") and, when that one is unreachable too, the ticket is refused with reason "call_out_worker_has_no_dedicated_endpoint" naming both bots. No refusal is weakened: the dispatch still crosses the signed hop, and the behaviour is inert with signing off. The decision plus the two pure fan-out helpers moved to call-out-endpoint-routing.ts to keep this file under the file-size gate. Guard: tests/unit/task-call-out-endpoint-routing.spec.ts.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com  | Protected dispatch consumes the owner's one configured brain resolver rather than a separate hosted-only resolver, so worker execution and Jarvis cannot disagree on the selected provider.
  */
 
 import * as http from 'node:http';
@@ -42,7 +43,7 @@ import { readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issu
 import {
   executeManifestApplicationBot,
   QueuedProtectedDispatchError,
-  type QueuedHostedConnectionResolver,
+  type QueuedBrainResolver,
 } from './manifest-worker-application-execution';
 import { isApplicationExecutionProtected } from '@/shared/application-authorization-execution';
 import {
@@ -317,15 +318,12 @@ export interface ManifestWorkerDispatchDeps {
    *  target refuses before model/task execution; explicit flag-off restores the legacy rail. */
   runtimeParamsResolver?: RuntimeParamsResolver;
   /**
-   * Resolves the ticket owner's HOSTED reasoning endpoint for a protected application dispatch
-   * (docs/security/remote-application-execution.md "Supported execution"). A queued protected
-   * request has to carry a server-resolved `byoLlmConnection` or the worker denies it; this is the
-   * only way the queue can obtain one, because the queue has no request to resolve a brain from.
-   * It must be the hosted ladder, not the full user-brain ladder: that one answers with a local CLI
-   * brain first for a configured operator on a demo box, and a CLI brain cannot satisfy the worker.
-   * Absent → a protected target refuses naming this wiring; unprotected dispatch is unaffected.
+   * Resolves the ticket owner's configured brain for a protected application dispatch
+   * (docs/security/remote-application-execution.md "Supported execution"). A queue has no HTTP
+   * request from which to resolve the user, so composition supplies the same user-brain ladder as
+   * Jarvis. Absent → a protected target refuses naming this wiring; unprotected work is unchanged.
    */
-  resolveHostedConnection?: QueuedHostedConnectionResolver;
+  resolveBrain?: QueuedBrainResolver;
 }
 
 /**
@@ -866,7 +864,7 @@ export async function dispatchManifestWorkerTicket(
             userSub: ticket.ownerSub ?? undefined,
             principalIssuer: readOwnerPrincipalIssuer(ticket.metadata) ?? undefined,
             ...ownerConfigFields,
-          }, deps.taskStore, deps.resolveHostedConnection);
+          }, deps.taskStore, deps.resolveBrain);
           return {
             owner,
             result,
@@ -956,7 +954,7 @@ export async function dispatchManifestWorkerTicket(
           ...(providerIntent && creds && Object.keys(creds).length > 0 ? { creds } : {}),
           ...(providerIntent ? { providerIntent } : {}),
           ...configFields,
-        }, deps.taskStore, deps.resolveHostedConnection);
+        }, deps.taskStore, deps.resolveBrain);
         botNodeResult = result;
         dispatchResult = {
           success: result.success === true,

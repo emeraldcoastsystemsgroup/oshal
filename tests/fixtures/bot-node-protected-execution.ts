@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Isolate real worker HTTP delegation, signed controller permits and SQLite task reasoning without deployment services.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Allow a fixture to expose a direct configured provider plus the bot-node reconciliation seam, so the provider-stamped protected shape can be exercised without contacting a vendor.
  */
 import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -121,20 +122,26 @@ function realControllerRouter(authority: ApplicationRemoteExecutionAuthority, st
   return app;
 }
 
-function sqliteController(directory: string, state: RemoteFixtureState) {
+interface FixtureDirectProvider { provider: string; model: string }
+
+function sqliteController(directory: string, state: RemoteFixtureState, directProvider?: FixtureDirectProvider) {
   const priorWorkspace = config.filesystem.workspaceDir, priorGitlab = config.gitlab.enabled;
   config.filesystem.workspaceDir = directory; config.gitlab.enabled = false;
   const store = new TaskStore(join(directory, 'tasks.sqlite')); store.init();
   const messages = new MessageStore(store.db); messages.init();
   const controller = Object.create(TaskController.prototype);
-  Object.assign(controller, { taskStore: store, messageStore: messages, activeTasks: new Map(), toolRegistry: new ToolRegistry(), stream: null,
-    llm: null, agenticController: { execute: () => { throw new Error('Agentic execution must remain unreachable'); } } });
-  controller._buildByoLlm = () => ({ generateResponse: async (input: unknown, options: Record<string, unknown>) => {
+  const recordingLlm = (provider: string, model: string) => ({ generateResponse: async (input: unknown, options: Record<string, unknown>) => {
     state.beforeProvider?.();
     state.calls.push({ messages: input, options, identity: getRequestIdentity(), actor: getApplicationAuthorizationActor() });
     await state.afterProvider?.();
-    return { content: 'Fixture protected answer', provider: 'fixture-hosted', model: 'fixture-model' };
+    return { content: 'Fixture protected answer', provider, model };
   } });
+  Object.assign(controller, { taskStore: store, messageStore: messages, activeTasks: new Map(), toolRegistry: new ToolRegistry(), stream: null,
+    llm: directProvider ? recordingLlm(directProvider.provider, directProvider.model) : null,
+    agenticController: { execute: () => { throw new Error('Agentic execution must remain unreachable'); } } });
+  controller._buildByoLlm = (connection: unknown) => connection
+    ? recordingLlm('fixture-hosted', 'fixture-model')
+    : null;
   return { controller, store, messages, close() {
     store.close(); config.filesystem.workspaceDir = priorWorkspace; config.gitlab.enabled = priorGitlab;
   } };
@@ -174,20 +181,30 @@ function workerRouter(env: NodeJS.ProcessEnv, handler: ReturnType<typeof createB
  * @param createAuthority - Optional real controller service constructed with fixture-only signing capabilities.
  * @returns A bounded request fixture with explicit cleanup; keys and providers exist only inside this fixture.
  */
-export async function startProtectedWorkerFixture(createAuthority?: (signing: ReturnType<typeof signingFixture>) => ApplicationRemoteExecutionAuthority) {
+export async function startProtectedWorkerFixture(
+  createAuthority?: (signing: ReturnType<typeof signingFixture>) => ApplicationRemoteExecutionAuthority,
+  options: {
+    directProvider?: FixtureDirectProvider;
+    dispatchConfigRuntime?: {
+      getActiveProvider(): { provider: string; model: string; apiProvider?: string | null };
+      setActiveProvider(provider: string, model?: string): { provider: string; model: string; apiProvider?: string | null };
+    };
+  } = {},
+) {
   const directory = mkdtempSync(join(tmpdir(), 'oshal-remote-worker-'));
   const state: RemoteFixtureState = { allowed: true, owner: REMOTE_APP, phases: [], calls: [] };
   const signing = signingFixture(), records = new Map<string, DispatchRecord>();
   const authority = createAuthority?.(signing);
   const controllerHttp = await listen(authority ? realControllerRouter(authority, state) : controllerRouter(records, state, signing));
   const env = { ...signing.env, SWARM_CONTROLLER_URL: controllerHttp.url };
-  const sqlite = sqliteController(directory, state);
+  const sqlite = sqliteController(directory, state, options.directProvider);
   const pool = { query: async () => {
     await state.duringOwnership?.();
     return { rows: state.owner ? [{ app: state.owner, protected: true }] : [] };
   } } as unknown as Pick<Pool, 'query'>;
   const handler = createBotNodeExecutionHandler({ anyBotTaskController: sqlite.controller,
-    providerName: 'claude-code', modelName: 'unused-cli',
+    providerName: options.directProvider?.provider ?? 'claude-code', modelName: options.directProvider?.model ?? 'unused-cli',
+    dispatchConfigRuntime: options.dispatchConfigRuntime,
     runApplicationExecution: createProtectedBotExecutionBoundary(pool, REMOTE_AGENT, createBotControllerPermitCheck({ env })) });
   const workerHttp = await listen(workerRouter(env, handler));
   const issue = (overrides: Record<string, unknown> = {}) => {

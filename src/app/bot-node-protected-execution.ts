@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Admit protected hosted reasoning through one-time current-policy permits and recheck before releasing output.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Admit either branch of the controller-resolved user brain: a hosted endpoint or a signed authoritative provider/model stamp. The boundary remains vendor-neutral; CLI eligibility is still enforced by the existing demo/operator preflight and final spawn guard, while every protected turn stays direct, non-agentic, tool-less and current-permit checked.
  */
 import type { Pool } from 'pg';
 import type { MeshEnvelope } from '@/features/agent-management';
@@ -36,7 +37,7 @@ export function createProtectedBotExecutionBoundary(pool: Pick<Pool, 'query'> | 
       return execute();
     }
     if (!dispatch || dispatch.claims.azp !== localAgentId || envelope.toAgentId !== localAgentId) deny('authorization_remote_dispatch_required');
-    assertHostedRequest(dispatch, envelope);
+    assertConfiguredReasoningRequest(dispatch, envelope);
     check ??= createBotControllerPermitCheck();
     return executeProtected(app, dispatch, execute, check, async () => {
       if (await readProtectedBotApplication(pool, localAgentId, envelope.toAgentId) !== app) deny('authorization_remote_ownership_changed');
@@ -74,17 +75,35 @@ function assertFresh(permit: RemoteExecutionPermit): void {
   if (Date.parse(permit.expiresAt) <= Date.now()) deny('authorization_remote_permit_expired');
 }
 
-function assertHostedRequest(dispatch: VerifiedRemoteDispatch, envelope: MeshEnvelope): void {
+function assertConfiguredReasoningRequest(dispatch: VerifiedRemoteDispatch, envelope: MeshEnvelope): void {
   const body = dispatch.body, payload = envelope.payload as Record<string, unknown>;
   const hosted = body.byoLlmConnection as Record<string, unknown> | undefined;
-  if (body.direct !== true || body.agenticMode !== false || !hosted || typeof hosted !== 'object'
-    || ['baseUrl','apiKey','model'].some(key => typeof hosted[key] !== 'string' || !(hosted[key] as string).trim())
+  const carriesProviderAuthority = ['providerId', 'model', 'configVersion', 'providerConfigRequired']
+    .some(key => Object.hasOwn(body, key));
+  const hostedShape = Boolean(hosted && typeof hosted === 'object'
+    && !carriesProviderAuthority
+    && ['baseUrl','apiKey','model'].every(key => typeof hosted[key] === 'string' && (hosted[key] as string).trim()));
+  const providerModelValid = !Object.hasOwn(body, 'model')
+    || (typeof body.model === 'string' && body.model.trim().length > 0);
+  const providerVersionValid = !Object.hasOwn(body, 'configVersion')
+    || (typeof body.configVersion === 'number' && Number.isFinite(body.configVersion));
+  const providerShape = !Object.hasOwn(body, 'byoLlmConnection')
+    && typeof body.providerId === 'string' && body.providerId.trim().length > 0
+    && body.providerConfigRequired === true && providerModelValid && providerVersionValid;
+  if (body.direct !== true || body.agenticMode !== false || (hostedShape === providerShape)
     || Object.hasOwn(body, 'creds') || Object.hasOwn(body, 'providerIntent')) deny('authorization_remote_hosted_reasoning_required');
   if (payload?.userSub !== dispatch.claims.sub || payload?.principalIssuer !== dispatch.claims.principal_iss
     || payload.externalId !== dispatch.claims.task_id || payload.workspaceFolderId !== canonicalBotWorkspaceId(body.workspaceFolderId)
     || payload.text !== body.text || payload.direct !== true || payload.agenticMode !== false
     || Object.hasOwn(payload, 'creds') || Object.hasOwn(payload, 'providerIntent')
-    || delegationHostedDigest(payload.byoLlmConnection) !== delegationHostedDigest(hosted)) deny('authorization_remote_envelope_mismatch');
+    || (hostedShape && delegationHostedDigest(payload.byoLlmConnection) !== delegationHostedDigest(hosted))
+    || (providerShape && delegationProviderDigest(payload) !== delegationProviderDigest(body))) deny('authorization_remote_envelope_mismatch');
 }
 
 function delegationHostedDigest(value: unknown): string { return JSON.stringify(value); }
+
+/** Bind the provider authority fields across the signed HTTP body and internal envelope. */
+function delegationProviderDigest(value: Record<string, unknown>): string {
+  return JSON.stringify({ providerId: value.providerId, model: value.model,
+    configVersion: value.configVersion, providerConfigRequired: value.providerConfigRequired });
+}

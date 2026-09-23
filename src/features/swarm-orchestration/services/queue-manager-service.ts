@@ -229,13 +229,11 @@ export interface QueueManagerPipelineDeps {
    */
   runtimeParamsResolver?: import('@/features/agent-management').RuntimeParamsResolver;
   /**
-   * @description Resolves a ticket owner's HOSTED reasoning endpoint for a protected application
-   * dispatch. The protected worker admits only a direct, non-agentic request carrying a
-   * server-resolved `byoLlmConnection`, and a queued dispatch has no HTTP request of its own to
-   * resolve a brain from, so the controller supplies this. Unset → protected targets refuse naming
-   * the missing wiring; every unprotected dispatch is unaffected.
+   * @description Resolves a ticket owner's configured brain for a protected application dispatch.
+   * The controller supplies the same ladder used by Jarvis because a queue has no HTTP request of
+   * its own. Unset → protected targets refuse naming the missing wiring; unprotected work is unchanged.
    */
-  resolveHostedConnection?: import('./dispatch-manifest-worker').ManifestWorkerDispatchDeps['resolveHostedConnection'];
+  resolveBrain?: import('./dispatch-manifest-worker').ManifestWorkerDispatchDeps['resolveBrain'];
 }
 
 /**
@@ -736,9 +734,9 @@ export class QueueManagerService {
       // (default-on OSHAL_PUSH_ON_DISPATCH). An absent resolver becomes an explicit
       // unavailable-authority marker; flag-off is the compatibility rollback.
       runtimeParamsResolver: this.pipelineDeps?.runtimeParamsResolver,
-      // Protected application targets only accept a direct hosted request; this resolver is how a
-      // queued dispatch obtains the ticket owner's hosted endpoint for it.
-      resolveHostedConnection: this.pipelineDeps?.resolveHostedConnection,
+      // Protected application targets accept only direct configured reasoning; this resolver is
+      // how a queued dispatch obtains the same owner-selected brain Jarvis uses.
+      resolveBrain: this.pipelineDeps?.resolveBrain,
     });
   }
 
