@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial repository for swarm_applications table
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the installed row's status on every plain manifest reload. The prior one-sided rule preserved operator deactivation but reset an operator-activated opt-in app to the manifest's inactive default on every API boot; explicit build/incident variant manifests retain their override path.
  */
 
 import type { Pool } from 'pg';
@@ -137,10 +138,9 @@ export class SwarmAppRepository {
     //     intent ALWAYS wins — force the manifest's declared status. This
     //     unblocks variant switching where the prior row's `inactive` was
     //     leftover from a different variant.
-    //  2. Otherwise, preserve operator-applied inactive (the original
-    //     behaviour). Operators who manually deactivate an app from the
-    //     cockpit should not have their decision overwritten by a routine
-    //     reload of the same swarm-apps/ directory.
+    //  2. Otherwise, preserve the installed row's status. The manifest status
+    //     is the default for a NEW row, not authority to undo an operator's
+    //     later activation or deactivation during a routine boot reload.
     const isVariantManifest = /[\\/]swarm-apps-(build|incident)[\\/]/i.test(manifestPath);
     const sql = isVariantManifest
       ? `INSERT INTO swarm_applications
@@ -166,10 +166,7 @@ export class SwarmAppRepository {
            display_name = EXCLUDED.display_name,
            description  = EXCLUDED.description,
            version      = EXCLUDED.version,
-           status       = CASE
-             WHEN swarm_applications.status = 'inactive' THEN swarm_applications.status
-             ELSE EXCLUDED.status
-           END,
+           status       = swarm_applications.status,
            manifest_path = EXCLUDED.manifest_path,
            agent_ids    = EXCLUDED.agent_ids,
            tool_names   = EXCLUDED.tool_names,
