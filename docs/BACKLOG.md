@@ -655,6 +655,7 @@ including across a directory belonging to a different owner. Full reasoning and 
 
 ### Refusal visibility: the substrate for P1, P3 and P4
 - **Status:** OPEN — actionable
+- **Progress:** P1 shipped live on 2026-09-23; P3 and P4 remain.
 
 - **Found 2026-09-14, measured:** **125** distinct refusal reason codes in `src/**` and **zero**
   surfaces that aggregate them. A refusal is a return value and, at best, a log line - not a row,
@@ -664,11 +665,16 @@ including across a directory belonging to a different owner. Full reasoning and 
 - **Closed so far:** P2 (#491, access checks report instead of denying in silence) and the same
   defect family at the bot posture guard (#496). Both keep their fail-closed returns unchanged;
   only the reporting changed.
-- **Remaining - P1 (Stage 1), the blocker:** one durable `refusals` store (code, actor, owning
-  package, target agent/route, prepared execution id, remedy text, timestamp) under the same RLS
-  contract as every other table, one recording chokepoint, and `GET /api/ops/refusals` auth-gated
-  and caller-scoped. Reuse the ADR-125 alert-pipeline shape rather than inventing one - this is
-  exactly that problem one layer up.
+- **P1 shipped live (`efc63d9a`, PR #798, 2026-09-23):** migration 155 adds the durable
+  `oshal_refusals` store (code, actor, package, target, prepared execution id, optional remedy and
+  timestamp) under FORCE owner-or-operator RLS; `@/shared/refusal-events` is the one recording
+  chokepoint; run-time schedule denials record before their activation is suspended; authenticated
+  `GET /api/ops/refusals` is caller-scoped; and the native ops dashboard renders the 24-hour count
+  and rows. The guard drives a real denied schedule through that path against PostgreSQL as a
+  `NOSUPERUSER NOBYPASSRLS` role, then proves owner/other/operator HTTP visibility. Live image
+  `b89d53d747db` repeated it: migration applied, ENABLE+FORCE RLS, another caller saw 0 rows, the
+  owner saw 1, and the authenticated API/dashboard rendered the proof row. This closes Stage 1;
+  it does not claim the two remaining stages.
 - **Remaining - P3 (Stage 3), the multiplier:** enumerate the operator-remediable subset of the 125
   codes (not all are; some are correct hard denials) and make each name what is unset and what to
   set, with the setting names in one exported constant so check and message cannot drift. `8ae6a57b`
