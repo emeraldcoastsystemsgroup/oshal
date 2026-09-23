@@ -13,6 +13,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 — GraphConnector: per-person/per-tenant ArangoDB resolution + lazy provisioning of database + nodes/edges collections; createGraphConnector() env factory.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Data-lifecycle support: personGraphExists() (existence probe WITHOUT provisioning — an export/delete pass must never create an empty graph DB as a side effect) and dropPersonGraph() (drop the person's whole isolated database — the GDPR delete path). Both derive the DB name ONLY from the sub via personDbName, same isolation boundary as getPersonGraph.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Read ARANGO_URL through the shared platform setting key used by refusal remedies.
  *
  * @module graph-connector
  */
@@ -21,6 +22,7 @@ import { createChildLogger } from '@/shared/logger';
 import type { GraphConnectorConfig, GraphHandle } from './graph-types';
 import { personDbName, tenantDbName } from './graph-keys';
 import { ArangoGraphAdapter, NODES, EDGES } from './arango-graph-adapter';
+import { PLATFORM_SETTING_KEYS } from '@/shared/platform-settings';
 
 const logger = createChildLogger({ module: 'graph-connector' });
 
@@ -124,7 +126,7 @@ export class GraphConnector {
  * @returns a connector, or null if the engine isn't configured
  */
 export function createGraphConnector(): GraphConnector | null {
-  const url = process.env.ARANGO_URL;
+  const url = process.env[PLATFORM_SETTING_KEYS.graphUrl];
   if (!url) {
     logger.warn('ARANGO_URL unset — graph connector disabled (no graph engine configured)');
     return null;

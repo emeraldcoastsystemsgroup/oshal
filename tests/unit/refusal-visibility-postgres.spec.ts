@@ -4,6 +4,7 @@
  * SEQ | AUTHOR                                    | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1   | maintainer@emeraldcoastsystemsgroup.com   | Drive a real refused scheduled dispatch through the production chokepoint into PostgreSQL, then prove owner isolation, operator visibility and the authenticated HTTP read under a NOSUPERUSER NOBYPASSRLS role.
+ * 2   | maintainer@emeraldcoastsystemsgroup.com   | Prove the scheduled permission denial stores evidence-bound grant/scope review advice while the same code has no unsafe global remedy.
  */
 
 import { createServer, type Server } from 'node:http';
@@ -152,7 +153,7 @@ describe('P1 refusal visibility — real dispatch, real store, enforced role', (
       target_kind: 'job',
       target: SCHEDULE,
       prepared_execution_id: activation.id,
-      remedy: 'Grant the refusing actor the application permission required by this target, then reactivate the scheduled service and retry.',
+      remedy: `Review ${SERVICE_SUB} under issuer ${APPLICATION_SERVICE_PRINCIPAL_ISSUER}: verify the metrics.write grant and resource scope for ${APP} in /access; correct the assignment if absent or too narrow, then reactivate ${SCHEDULE} and retry.`,
     });
     expect(landed.rows[0].metadata).toEqual({ runsAs: 'system', requires: ['metrics.write'] });
   });

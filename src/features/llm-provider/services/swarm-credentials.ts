@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: resolve Codex OAuth only from the live vendor auth source and fail closed when it is absent; never revive a static config-seed token copy.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Platform-realm siblings getSwarmPlatformApiKey/hasSwarmPlatformApiKey: consumers of platform-only endpoints (the Images API) must never be handed the codex ChatGPT-subscription OAuth token — /v1/images 401s on it (missing scope api.model.images.request, re-verified live 2026-08-21) while plain key-presence reads as configured. Chat-harness resolution (getSwarmApiKey) is unchanged.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | liveCodexAuthExpiry: the hot-fallback readiness probe needs "present AND not expired" for the live Codex login without ever holding the token. Reads the same live auth.json hasLiveCodexAuth reads, decodes the access token's JWT `exp` claim locally (no verification, no network — this is a readiness read, not an authorization) and returns only the expiry instant.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Resolve the live Codex path and OpenRouter environment credential through the shared setting keys used by refusal remedies.
  */
 /**
  * @description The swarm's own provider credentials — one source of truth.
@@ -29,6 +30,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { createChildLogger } from '@/shared/logger';
+import { PLATFORM_SETTING_KEYS } from '@/shared/platform-settings';
 
 const logger = createChildLogger({ module: 'swarm-credentials' });
 
@@ -68,7 +70,7 @@ export function resolveSeedSecretsPath(): string {
  * @returns {string | null} path to the live auth.json, or null when no home dir is resolvable
  */
 export function resolveCodexAuthSourcePath(): string | null {
-  const explicit = (process.env.CODEX_AUTH_SOURCE_PATH || '').trim();
+  const explicit = (process.env[PLATFORM_SETTING_KEYS.codexAuthSourcePath] || '').trim();
   if (explicit) return explicit;
   const homeDir = process.env.HOME || process.env.USERPROFILE;
   if (!homeDir) return null;
@@ -242,8 +244,9 @@ export function getSwarmApiKey(provider: SwarmCredentialProvider): string {
       return pickNamedKey(config, ['anthropicApiKey']) || pickNamedKey(secrets, ['anthropicApiKey'])
         || (process.env.ANTHROPIC_API_KEY || '').trim();
     case 'openrouter':
-      return pickNamedKey(config, ['openRouterApiKey']) || pickNamedKey(secrets, ['openRouterApiKey'])
-        || (process.env.OPENROUTER_API_KEY || '').trim();
+      return pickNamedKey(config, ['openRouterApiKey'])
+        || pickNamedKey(secrets, ['openRouterApiKey'])
+        || (process.env[PLATFORM_SETTING_KEYS.openRouterApiKey] || '').trim();
     default:
       return '';
   }

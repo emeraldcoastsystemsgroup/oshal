@@ -5,12 +5,14 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the long-lived bot-node's Postgres pool no longer becomes null for life when the cold-start race is lost. Measured 2026-09-17: a Docker daemon bounce cold-started every bot beside a cold Postgres, connectPool gave up after 10 attempts x 2 s, ended the pool and returned null, and 28 of 36 bots then served /health 200 without a database until a human restarted them. Here the SAME pool object is kept and handed to the boot path whether or not the first window succeeded (pg connects per checkout, so a pool that failed at second 20 works at second 40), a background probe with capped exponential backoff latches readiness on the first success and resolves whenReady so boot-only database steps can run late, and the status it exposes is what the health route and the refusal code read. One-shot callers (batch, record-cost, finalize-incident) keep connectPool's bounded null-on-exhaustion contract - a Job pod must exit, not wait.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Own the bot pool's connection 'error' events (ownPoolConnectionErrors). Bot nodes run the same crash guards as the api, so a server-terminated checked-out connection was the same silent process exit there.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Read DATABASE_URL through the shared platform setting key used by the refusal remedy catalog.
  */
 import { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { gucEnabled, wrapPoolWithGuc } from '@/shared/services/database/guc-pool';
 import { ownPoolConnectionErrors } from '@/shared/services/database/pool-connection-errors';
 import { postgresApplicationName, resolvePoolMax } from '@/shared/services/database/pool-sizing';
+import { PLATFORM_SETTING_KEYS } from '@/shared/platform-settings';
 
 const logger = createChildLogger({ module: 'bot-node-database-pool' });
 
@@ -66,7 +68,7 @@ function newBotPool(dbUrl: string): Pool {
  * @returns The GUC-wrapped pool, or null when DATABASE_URL is unset or the window was exhausted.
  */
 export async function connectPool(): Promise<Pool | null> {
-  const dbUrl = process.env.DATABASE_URL;
+  const dbUrl = process.env[PLATFORM_SETTING_KEYS.databaseUrl];
   if (!dbUrl) return null;
   const raw = newBotPool(dbUrl);
   const maxAttempts = Math.max(1, positiveNumber(process.env.BOT_DB_CONNECT_ATTEMPTS, 10));
@@ -98,7 +100,7 @@ export async function connectPool(): Promise<Pool | null> {
  * @returns The database handle; `pool` is null only when DATABASE_URL is unset.
  */
 export async function connectRecoverableBotNodeDatabase(): Promise<BotNodeDatabase> {
-  const dbUrl = process.env.DATABASE_URL;
+  const dbUrl = process.env[PLATFORM_SETTING_KEYS.databaseUrl];
   const state: BotNodeDatabaseStatus = { configured: Boolean(dbUrl), ready: false, attempts: 0 };
   const status = (): BotNodeDatabaseStatus => ({ ...state });
   if (!dbUrl) return { pool: null, status, whenReady: new Promise<void>(() => undefined), stop: () => undefined };
