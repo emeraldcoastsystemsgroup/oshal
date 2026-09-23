@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added native ops dashboard browser logic for runtime health, dispatch flow, and operator attention telemetry
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Load, normalize, count and render the authenticated caller's 24-hour refusal ledger.
  */
 
 import { createUiLogger, serializeUiError } from '../shared/ui-debug.js';
@@ -18,6 +19,7 @@ class OpsDashboardApp {
       attentionList: document.getElementById('attentionList'),
       flowGrid: document.getElementById('flowGrid'),
       nodeTableBody: document.getElementById('nodeTableBody'),
+      refusalTableBody: document.getElementById('refusalTableBody'),
       refreshButton: document.getElementById('refreshButton'),
       statusBanner: document.getElementById('statusBanner'),
     };
@@ -48,6 +50,7 @@ class OpsDashboardApp {
       requestJson('/api/mesh/channels'),
       requestJson('/api/qm/activity'),
       requestJson('/api/health-dashboard/registry'),
+      requestJson('/api/ops/refusals?hours=24&limit=100'),
     ];
 
     const results = await Promise.allSettled(requests);
@@ -62,6 +65,7 @@ class OpsDashboardApp {
       ticketCount: this.state.tickets.length,
       workItemCount: this.state.workItems.length,
       runCount: this.state.runs.length,
+      refusalCount: this.state.refusals.length,
     });
   }
 
@@ -70,6 +74,7 @@ class OpsDashboardApp {
     this.elements.flowGrid.innerHTML = renderFlowCards(this.state);
     this.elements.nodeTableBody.innerHTML = renderNodeRows(this.state.nodes);
     this.elements.agentTableBody.innerHTML = renderAgentRows(this.state.activity);
+    this.elements.refusalTableBody.innerHTML = renderRefusalRows(this.state.refusals);
     this.elements.attentionList.innerHTML = renderAttentionItems(this.state);
   }
 
@@ -95,6 +100,7 @@ function createInitialState() {
     },
     nodes: [],
     refreshedAt: '',
+    refusals: [],
     runs: [],
     scheduler: {
       isRunning: false,
@@ -114,6 +120,7 @@ function buildOpsState(results) {
     failedCount: countRejected(results),
     health: settledValue(results[0], createInitialState().health, normalizeHealth),
     nodes: settledValue(results[7], [], normalizeNodes),
+    refusals: settledValue(results[8], [], normalizeRefusals),
     refreshedAt: new Date().toISOString(),
     runs: settledValue(results[4], [], normalizeRuns),
     scheduler: settledValue(results[1], createInitialState().scheduler, normalizeScheduler),
@@ -157,6 +164,20 @@ function normalizeScheduler(payload) {
     pollIntervalMs: numberValue(payload?.pollIntervalMs),
     redisHealthy: payload?.redisHealthy === true,
   };
+}
+
+// Normalize caller-scoped refusal rows from `/api/ops/refusals`.
+function normalizeRefusals(payload) {
+  const refusals = Array.isArray(payload?.refusals) ? payload.refusals : [];
+  return refusals.map((refusal) => ({
+    actorSub: readString(refusal?.actorSub) || 'unknown',
+    code: readString(refusal?.code) || 'unknown_refusal',
+    occurredAt: readString(refusal?.occurredAt),
+    owningPackage: readString(refusal?.owningPackage) || 'platform',
+    remedy: readString(refusal?.remedy),
+    target: readString(refusal?.target) || 'unknown',
+    targetKind: readString(refusal?.targetKind) || 'other',
+  }));
 }
 
 // Normalize ticket payload from `/api/tickets/active`.
@@ -252,6 +273,7 @@ function renderMetrics(state) {
   setText('metricScheduler', state.scheduler.redisHealthy ? 'Ready' : 'Degraded');
   setText('metricTickets', ticketGroups.started);
   setText('metricRuns', activeRuns);
+  setText('metricRefusals', state.refusals.length);
 }
 
 // Render lifecycle cards that summarize operational flow.
@@ -296,6 +318,23 @@ function renderNodeRows(nodes) {
       <td>${renderStatusBadge(node.status)}</td>
       <td>${escapeHtml(node.source)}</td>
       <td>${escapeHtml(buildNodeLinkSummary(node.links))}</td>
+    </tr>
+  `).join('');
+}
+
+// Render durable denials with enough context to answer what refused and what unblocks it.
+function renderRefusalRows(refusals) {
+  if (!refusals.length) {
+    return renderEmptyRow('No refusals are visible to this caller in the last 24 hours.', 6);
+  }
+  return refusals.map((refusal) => `
+    <tr>
+      <td>${escapeHtml(formatDateTime(refusal.occurredAt))}</td>
+      <td><span class="mono">${escapeHtml(refusal.code)}</span></td>
+      <td>${escapeHtml(refusal.actorSub)}</td>
+      <td>${escapeHtml(refusal.owningPackage)}</td>
+      <td><span class="mono">${escapeHtml(`${refusal.targetKind}:${refusal.target}`)}</span></td>
+      <td>${escapeHtml(refusal.remedy || 'No operator remedy declared')}</td>
     </tr>
   `).join('');
 }
@@ -380,6 +419,13 @@ function buildAttentionItems(state) {
 
   if (ticketGroups.started > 0 && state.activity.dispatches.length === 0) {
     items.push({ title: 'Missing Dispatch Coverage', detail: `${ticketGroups.started} started ticket(s) are active but no dispatch records are visible.` });
+  }
+
+  if (state.refusals.length > 0) {
+    items.push({
+      title: 'Recent Refusals',
+      detail: `${state.refusals.length} refusal(s) are visible in the last 24 hours; review the ledger for targets and remedies.`,
+    });
   }
 
   items.push(...buildUncoveredTicketItems(startedTickets, state.activity.dispatches));

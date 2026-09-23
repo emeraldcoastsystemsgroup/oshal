@@ -9,6 +9,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | ADR-157: resolve the activation a due service-route tick runs under, execute it as the application service principal or as the activating person with userSub pinned, skip when nothing is activated, and suspend on a run-time denial. An unprotected application keeps running exactly as before.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Record each run-time schedule denial through the durable refusal chokepoint before suspending the activation.
  *
  * @module manifest-service-route-activation
  */
@@ -22,6 +23,7 @@ import {
   type ApplicationServiceActivation,
 } from '@/features/application-authorization';
 import { createChildLogger } from '@/shared/logger';
+import { recordRefusal } from '@/shared/refusal-events';
 
 const logger = createChildLogger({ module: 'manifest-service-route-activation' });
 
@@ -124,6 +126,16 @@ async function runActivatedTick<T>(
       if (!(error instanceof ApplicationExecutionDeniedError)) throw error;
       logger.warn({ app: activation.app, scheduleId: activation.scheduleId, reason: error.code },
         'Scheduled application service denied at run time — activation suspended until reactivated');
+      await recordRefusal({
+        code: error.code,
+        actorSub: actor.sub,
+        actorIssuer: actor.issuer,
+        owningPackage: activation.app,
+        targetKind: 'job',
+        target: activation.scheduleId,
+        preparedExecutionId: activation.id,
+        metadata: { runsAs: activation.runsAs },
+      });
       await authority.suspend(activation, error.code);
       return { ran: false, reason: 'denied', detail: error.code };
     }

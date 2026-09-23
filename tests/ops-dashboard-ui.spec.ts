@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added Playwright coverage for native ops-dashboard route and cockpit Engineering embed wiring
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Assert the refusal count and recent-denials table are part of the native operations surface.
  */
 
 import { test, expect } from '@playwright/test';
@@ -29,6 +30,7 @@ test.describe('Ops Dashboard — Native Surface', () => {
     await expect(page.locator('[data-testid="ops-node-table"]')).toBeVisible();
     await expect(page.locator('[data-testid="ops-agent-table"]')).toBeVisible();
     await expect(page.locator('[data-testid="ops-attention-list"]')).toBeVisible();
+    await expect(page.locator('[data-testid="ops-refusal-table"]')).toBeVisible();
   });
 
   test('native ops dashboard exposes refresh controls and metric cards', async ({ page }) => {
@@ -38,6 +40,7 @@ test.describe('Ops Dashboard — Native Surface', () => {
     await expect(page.locator('#metricScheduler')).toBeVisible();
     await expect(page.locator('#metricTickets')).toBeVisible();
     await expect(page.locator('#metricRuns')).toBeVisible();
+    await expect(page.locator('#metricRefusals')).toBeVisible();
   });
 
   test('cockpit engineering embeds ops dashboard as native route', async ({ page }) => {

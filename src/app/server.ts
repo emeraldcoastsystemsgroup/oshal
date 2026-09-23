@@ -201,6 +201,7 @@
  * 185 | maintainer@emeraldcoastsystemsgroup.com   | Install the LLM provider switch snapshot (migration 147, "a bot's LLM provider is a row in a table") once the DB bootstrap completes: one awaited read of oshal_bot_provider_switch under the SYSTEM identity, then the periodic refresh. Independent of the autoload chain; a failed read logs and leaves the registry behaviour in place.
  * 186 | maintainer@emeraldcoastsystemsgroup.com   | Mounted /api/jarvis/ambient/test-fixture (requiresAuth + a strict in-router service-secret gate) ahead of the general ambient routers. POST /api/jarvis/ambient/segments refuses speaker ids, so the AI Test Lab could only ever prove the UNATTRIBUTED path; this router seeds one attributed line for a stable per-owner fixture voice so asks, per-person profiles and consent are provable without a microphone.
  * 187 | maintainer@emeraldcoastsystemsgroup.com   | Start the hot-fallback readiness loop beside the llm-default mount (operator decision 2026-09-22): the fleet chain's rungs are probed on an interval so the fallback is ready before it is needed. Unref'd, OSHAL_HOT_FALLBACK_PROBE_INTERVAL_MS=0 disables it.
+ * 188 | maintainer@emeraldcoastsystemsgroup.com   | Wire the durable refusal recorder and authenticated caller-scoped /api/ops/refusals read API for P1 refusal visibility.
  */
 
 require('dotenv').config();
@@ -416,6 +417,9 @@ import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-i
 // Prometheus exposition for the swarm's own container-health rules (ADR-119).
 import { PROMETHEUS_CONTENT_TYPE, renderRuntimeMetrics } from '@/shared/observability';
 import { gucEnabled } from '@/shared/services/database/guc-pool';
+import { PostgresRefusalStore } from '@/features/refusal-visibility';
+import { configureRefusalRecorder } from '@/shared/refusal-events';
+import { createRefusalRoutes } from './routes/refusal-routes';
 
 // OpenAPI spec + the /openapi.json, /api-docs and /docs mount — extracted verbatim to
 // ./server-openapi (1000-line cap decomposition).
@@ -476,6 +480,10 @@ function createApp(): express.Application {
   app.use(internalMeshLimiter);
 
   const ctx = createAppContext();
+  const refusalStore = new PostgresRefusalStore(ctx.pool, waitForBootstrapComplete);
+  configureRefusalRecorder(refusalStore);
+  void refusalStore.ready().catch(error => logger.error({ err: error },
+    'Refusal ledger unavailable at boot; the next record or read retries schema readiness'));
   const manifestServiceScheduleRegistry = new ManifestServiceRouteScheduleRegistry(ctx);
   const scheduleController = createScheduleController(ctx, manifestServiceScheduleRegistry);
 
@@ -1801,6 +1809,7 @@ function createApp(): express.Application {
   if (ctx.pool) {
     const { createOpsPipelineRoutes } = require('./routes/ops-pipeline-routes');
     app.use('/api/ops/alert-pipeline', createOpsPipelineRoutes({ pool: ctx.pool, requiresAuth }));
+    app.use('/api/ops/refusals', createRefusalRoutes(refusalStore, requiresAuth));
   }
 
   // Inbound SMS webhook (Twilio replies) -> POST /api/sms/inbound. Machine-to-machine: mounted
