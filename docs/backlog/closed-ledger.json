@@ -82,5 +82,11 @@
     "title": "Inline chat spend is invisible to windowed budget enforcement",
     "pr": "641,665,666",
     "evidence": "Inline turns append owner-attributed cost events that move the real 24-hour budget window; PostgreSQL RLS guards cross-owner isolation, and the cockpit plus spend API label billed, price-equivalent, and BYO units distinctly."
+  },
+  {
+    "date": "2026-09-23",
+    "title": "A loader stamp pointing at an INACTIVE app fails ownership closed on the ticket list (2026-09-22)",
+    "pr": "798",
+    "evidence": "ADR-149 now separates durable executable ownership from lifecycle state. The real-PostgreSQL suite passed 19/19 under both owner and governed oshal_bot roles, including active-agent/inactive-app and inactive-agent cases while preserving missing/ghost/tool refusals. Preview 354a15829173 deployed 37/37 healthy with API RestartCount 0; operator GET /api/tickets returned HTTP 200 with all 5,117 tickets and the full boot logged zero ambiguous-ownership or ownership-reader errors."
   }
 ]
