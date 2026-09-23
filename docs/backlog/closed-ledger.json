@@ -70,5 +70,17 @@
     "title": "Dev-console `/work` under Linux user-namespace remapping — DONE 2026-09-17",
     "pr": "622,697",
     "evidence": "The sandbox prepares directory/file modes without following symlinks; the real-kernel uid 165536 proof records write/create/exec success, parent/root escape denial, and cleanup, with mutation controls for the old modes."
+  },
+  {
+    "date": "2026-09-23",
+    "title": "Benchmark and cost claims are still un-earned (P5, P6)",
+    "pr": "695",
+    "evidence": "The live n=3 benchmark ran the same free model through vanilla, LangGraph, and OSHAL; the OSHAL leg used the real dispatch and read token/cost accounting from chat_tasks, while the separate generated cost census carries per-ticket n and limits."
+  },
+  {
+    "date": "2026-09-23",
+    "title": "Inline chat spend is invisible to windowed budget enforcement",
+    "pr": "641,665,666",
+    "evidence": "Inline turns append owner-attributed cost events that move the real 24-hour budget window; PostgreSQL RLS guards cross-owner isolation, and the cockpit plus spend API label billed, price-equivalent, and BYO units distinctly."
   }
 ]
