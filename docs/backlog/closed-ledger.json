@@ -88,5 +88,11 @@
     "title": "A loader stamp pointing at an INACTIVE app fails ownership closed on the ticket list (2026-09-22)",
     "pr": "798",
     "evidence": "ADR-149 now separates durable executable ownership from lifecycle state. The real-PostgreSQL suite passed 19/19 under both owner and governed oshal_bot roles, including active-agent/inactive-app and inactive-agent cases while preserving missing/ghost/tool refusals. Preview 354a15829173 deployed 37/37 healthy with API RestartCount 0; operator GET /api/tickets returned HTTP 200 with all 5,117 tickets and the full boot logged zero ambiguous-ownership or ownership-reader errors."
+  },
+  {
+    "date": "2026-09-23",
+    "title": "Boot-time schema bootstraps fail open - and the one I called a functional loss was NOT one",
+    "pr": "530,798",
+    "evidence": "PR #530 moved the CLI-token self-heal's eight DDL statements onto one transaction-scoped advisory-lock client (key 47110008), retained the per-boot RLS/policy re-assert, and made failure reporting re-probe complete columns before choosing unaffected, missing-column, absent, or unverified wording. The focused guards passed 8/8. On preview 354a15829173 the fresh boot logged zero CLI-token bootstrap failures; the API connection was verified as oshal_app NOSUPERUSER NOBYPASSRLS against an ENABLE+FORCE-RLS table, and a fresh PAT minted and authenticated through /whoami at HTTP 200 before revocation."
   }
 ]
