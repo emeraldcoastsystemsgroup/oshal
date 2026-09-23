@@ -94,5 +94,11 @@
     "title": "Boot-time schema bootstraps fail open - and the one I called a functional loss was NOT one",
     "pr": "530,798",
     "evidence": "PR #530 moved the CLI-token self-heal's eight DDL statements onto one transaction-scoped advisory-lock client (key 47110008), retained the per-boot RLS/policy re-assert, and made failure reporting re-probe complete columns before choosing unaffected, missing-column, absent, or unverified wording. The focused guards passed 8/8. On preview 354a15829173 the fresh boot logged zero CLI-token bootstrap failures; the API connection was verified as oshal_app NOSUPERUSER NOBYPASSRLS against an ENABLE+FORCE-RLS table, and a fresh PAT minted and authenticated through /whoami at HTTP 200 before revocation."
+  },
+  {
+    "date": "2026-09-23",
+    "title": "Opt-in apps revert on every api boot, which fails the groups that need them (2026-09-21)",
+    "pr": "798",
+    "evidence": "Commit a14f7b51 preserves the installed row's status on ordinary manifest reload while explicit build/incident variants retain their override. The real-PostgreSQL regression covers operator activation, operator deactivation, and variant override; the focused app suite passed 45/45. Live proof activated print-ingest despite its inactive manifest, deployed/recreated the API, re-read print-ingest as active, and resolved intelligent-career active. The later 354a15829173 deploy repeated the full API boot and remained 37/37 healthy with RestartCount 0."
   }
 ]
