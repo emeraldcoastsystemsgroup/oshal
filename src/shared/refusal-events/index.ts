@@ -4,9 +4,13 @@
  * SEQ | AUTHOR                                    | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1   | maintainer@emeraldcoastsystemsgroup.com   | Add the single process-wide refusal recording chokepoint. Enforcement paths report structured denials here without importing PostgreSQL or weakening the original fail-closed result when persistence is unavailable.
+ * 2   | maintainer@emeraldcoastsystemsgroup.com   | Enrich declared operator-remediable codes from the canonical remedy catalog before persistence while preserving a more specific remedy supplied by the enforcing path.
  */
 
 import { createChildLogger } from '@/shared/logger';
+import { remedyForRefusal } from './remedies';
+
+export * from './remedies';
 
 const logger = createChildLogger({ module: 'refusal-events' });
 
@@ -51,7 +55,8 @@ export async function recordRefusal(input: RefusalEventInput): Promise<boolean> 
     return false;
   }
   try {
-    await current.record(input);
+    const remedy = input.remedy ?? remedyForRefusal(input.code);
+    await current.record(remedy ? { ...input, remedy } : input);
     return true;
   } catch (error) {
     logger.error({ err: error, code: input.code, target: input.target },

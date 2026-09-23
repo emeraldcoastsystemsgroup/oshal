@@ -152,7 +152,9 @@ describe('P1 refusal visibility — real dispatch, real store, enforced role', (
       target_kind: 'job',
       target: SCHEDULE,
       prepared_execution_id: activation.id,
+      remedy: 'Grant the refusing actor the application permission required by this target, then reactivate the scheduled service and retry.',
     });
+    expect(landed.rows[0].metadata).toEqual({ runsAs: 'system', requires: ['metrics.write'] });
   });
 
   it('lets the owner see its row, hides it from another caller, and widens an operator', async () => {
