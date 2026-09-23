@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Bot-node Antigravity wrapper. Uses the vendor's documented stream-json stdin protocol, so prompts never hit Linux MAX_ARG_STRLEN; accepts only a terminal SUCCESS result; refreshes the idle timer on either output stream; and never passes --dangerously-skip-permissions. The ADR-127 boundary is the first executable statement.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Declare the exact per-task working directory through agy's --add-dir flag. Headless agy does not infer the project permission scope from cwd alone: without this flag it soft-denies even read_file on the persona context inside cwd. The task folder is now the CLI workspace boundary, matching the shared-workspace contract without a global allow rule or permission bypass.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Run agy's terminal tools in its vendor sandbox. Request-review cannot prompt in headless mode and soft-denied every command after the workspace read was fixed; --sandbox lets autonomous commands proceed inside the --add-dir task boundary without --dangerously-skip-permissions or a global command(*) grant.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Select agy's accept-edits mode for autonomous task execution. Headless request-review cannot prompt for write_file, so it soft-denied task deliverables after reads and commands were fixed; accept-edits permits edits within the declared task workspace without --dangerously-skip-permissions.
  */
 
 'use strict';
@@ -57,6 +58,7 @@ class AntigravityCLIWrapper {
     fs.mkdirSync(workspaceDir, { recursive: true });
     const idleMs = positiveMs(options.timeout, this.timeoutMs);
     const args = [
+      '--mode', 'accept-edits',
       '--sandbox',
       '--add-dir', workspaceDir,
       '--input-format', 'stream-json',
