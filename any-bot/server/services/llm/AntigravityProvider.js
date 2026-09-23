@@ -4,6 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Bot-node provider for Google's Antigravity CLI, under the same ADR-127 boundary and model-gateway preflight as the other autonomous CLI providers.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Forward the trusted call-time framework-tool bridge binding to the native CLI wrapper.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Advertise explicit support for the execution-bound framework-tool bridge so routers can keep its credential away from unrelated providers.
  */
 
 'use strict';
@@ -19,6 +21,7 @@ function positiveMs(value, fallback) {
 
 class AntigravityProvider {
   constructor(config = {}) {
+    this.supportsFrameworkToolBridge = true;
     this.config = {
       model: config.model || process.env.ANTIGRAVITY_MODEL || 'gemini-3.8-flash-low',
       effort: config.effort || process.env.ANTIGRAVITY_EFFORT || '',
@@ -46,6 +49,7 @@ class AntigravityProvider {
       effort: this.config.effort,
       source: options.source,
       extraEnv: options.extraEnv,
+      toolBridge: options.toolBridge,
     });
     if (!result.success) {
       const error = new Error(`Antigravity CLI error: ${result.stderr || result.text || 'no output'}`);

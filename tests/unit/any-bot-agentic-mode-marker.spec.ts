@@ -203,4 +203,32 @@ describe('configured-provider direct facade', () => {
       .resolves.toMatchObject({ content: 'openai-codex answer', provider: 'openai-codex' });
     expect(calls).toEqual(['antigravity-cli:protected', 'openai-codex:protected']);
   });
+
+  it('keeps the execution-bound tool bridge on explicitly supporting providers only', async () => {
+    let selected = 'antigravity-cli';
+    const bridge = { applicationExecutionToken: 'signed-execution-proof' };
+    const antigravity = {
+      supportsFrameworkToolBridge: true,
+      generateResponse: vi.fn(async () => ({ content: 'agy' })),
+    };
+    const codex = {
+      generateResponse: vi.fn(async () => ({ content: 'codex' })),
+    };
+    const controller = new AgenticController({
+      bedrockProvider: null,
+      clineProvider: null,
+      claudeCodeProvider: null,
+      codexProvider: codex,
+      antigravityProvider: antigravity,
+      getCurrentProvider: () => selected,
+    }, {}, {});
+
+    expect(controller.supportsFrameworkToolBridge).toBe(true);
+    await controller.generateResponse([], { source: 'protected', toolBridge: bridge });
+    expect(antigravity.generateResponse).toHaveBeenCalledWith([], expect.objectContaining({ toolBridge: bridge }));
+
+    selected = 'openai-codex';
+    await controller.generateResponse([], { source: 'protected', toolBridge: bridge });
+    expect(codex.generateResponse).toHaveBeenCalledWith([], { source: 'protected' });
+  });
 });

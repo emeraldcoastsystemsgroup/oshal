@@ -122,7 +122,7 @@ function realControllerRouter(authority: ApplicationRemoteExecutionAuthority, st
   return app;
 }
 
-interface FixtureDirectProvider { provider: string; model: string }
+interface FixtureDirectProvider { provider: string; model: string; supportsFrameworkToolBridge?: boolean }
 
 function sqliteController(directory: string, state: RemoteFixtureState, directProvider?: FixtureDirectProvider) {
   const priorWorkspace = config.filesystem.workspaceDir, priorGitlab = config.gitlab.enabled;
@@ -130,14 +130,18 @@ function sqliteController(directory: string, state: RemoteFixtureState, directPr
   const store = new TaskStore(join(directory, 'tasks.sqlite')); store.init();
   const messages = new MessageStore(store.db); messages.init();
   const controller = Object.create(TaskController.prototype);
-  const recordingLlm = (provider: string, model: string) => ({ generateResponse: async (input: unknown, options: Record<string, unknown>) => {
+  const recordingLlm = (provider: string, model: string, supportsFrameworkToolBridge = false) => ({
+    supportsFrameworkToolBridge,
+    generateResponse: async (input: unknown, options: Record<string, unknown>) => {
     state.beforeProvider?.();
     state.calls.push({ messages: input, options, identity: getRequestIdentity(), actor: getApplicationAuthorizationActor() });
     await state.afterProvider?.();
     return { content: 'Fixture protected answer', provider, model };
   } });
   Object.assign(controller, { taskStore: store, messageStore: messages, activeTasks: new Map(), toolRegistry: new ToolRegistry(), stream: null,
-    llm: directProvider ? recordingLlm(directProvider.provider, directProvider.model) : null,
+    llm: directProvider ? recordingLlm(
+      directProvider.provider, directProvider.model, directProvider.supportsFrameworkToolBridge,
+    ) : null,
     agenticController: { execute: () => { throw new Error('Agentic execution must remain unreachable'); } } });
   controller._buildByoLlm = (connection: unknown) => connection
     ? recordingLlm('fixture-hosted', 'fixture-model')
@@ -185,6 +189,7 @@ export async function startProtectedWorkerFixture(
   createAuthority?: (signing: ReturnType<typeof signingFixture>) => ApplicationRemoteExecutionAuthority,
   options: {
     directProvider?: FixtureDirectProvider;
+    brokeredTools?: string[];
     dispatchConfigRuntime?: {
       getActiveProvider(): { provider: string; model: string; apiProvider?: string | null };
       setActiveProvider(provider: string, model?: string): { provider: string; model: string; apiProvider?: string | null };
@@ -205,6 +210,8 @@ export async function startProtectedWorkerFixture(
   const handler = createBotNodeExecutionHandler({ anyBotTaskController: sqlite.controller,
     providerName: options.directProvider?.provider ?? 'claude-code', modelName: options.directProvider?.model ?? 'unused-cli',
     dispatchConfigRuntime: options.dispatchConfigRuntime,
+    resolveBrokeredPromptAuthorization: async () => ({ allowedTools: options.brokeredTools ?? [],
+      scopes: (options.brokeredTools ?? []).map(name => `tool:${name}`) }),
     runApplicationExecution: createProtectedBotExecutionBoundary(pool, REMOTE_AGENT, createBotControllerPermitCheck({ env })) });
   const workerHttp = await listen(workerRouter(env, handler));
   const issue = (overrides: Record<string, unknown> = {}) => {

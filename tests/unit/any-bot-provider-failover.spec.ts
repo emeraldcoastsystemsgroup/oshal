@@ -73,6 +73,33 @@ describe('any-bot ProviderFailoverProvider', () => {
     expect(fallback.generateResponse).not.toHaveBeenCalled();
   });
 
+  it('exposes the tool bridge only to explicitly supporting failover rungs', async () => {
+    const bridge = { applicationExecutionToken: 'signed-execution-proof' };
+    const unsupportedPrimary = {
+      generateResponse: vi.fn(async () => {
+        throw new Error('provider 429 quota exhausted');
+      }),
+    };
+    const supportedFallback = {
+      supportsFrameworkToolBridge: true,
+      generateResponse: vi.fn(async () => ({ content: 'tool-backed answer' })),
+    };
+    const provider = new ProviderFailoverProvider({
+      primary: unsupportedPrimary,
+      fallback: supportedFallback,
+      primaryName: 'plain-provider',
+      fallbackName: 'antigravity-cli',
+    });
+
+    expect(provider.supportsFrameworkToolBridge).toBe(true);
+    await provider.generateResponse([], { source: 'protected', toolBridge: bridge });
+    expect(unsupportedPrimary.generateResponse).toHaveBeenCalledWith([], { source: 'protected' });
+    expect(supportedFallback.generateResponse).toHaveBeenCalledWith([], {
+      source: 'protected',
+      toolBridge: bridge,
+    });
+  });
+
   it('falls back when the primary returns Codex auth failure text as content', async () => {
     const primary = {
       generateResponse: vi.fn(async () => ({

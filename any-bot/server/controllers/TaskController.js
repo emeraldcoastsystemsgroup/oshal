@@ -21,6 +21,8 @@
  * 16 | maintainer@emeraldcoastsystemsgroup.com  | Revalidate protected remote reasoning before hosted inference and before releasing its response through a trusted function port.
  * 17 | maintainer@emeraldcoastsystemsgroup.com  | The direct path told the model it had N tools and then handed the provider nothing it could act on: tools, enforceToolBoundary and authorizedScopes were passed from here and discarded by generateResponse, so an ask for live information came back as "I cannot report on live data, go to the application". The call now also threads executeTool - the one authorized channel to a registry tool, built by dispatch-tool-executor.js from THIS request's captured capabilities - and passes the normalized scope Set the capture used rather than re-reading the caller's raw field, so a multi-leg tool exchange stays bound to the authority the request started with. No widening: the tool set is still exactly captureDispatchCapabilities' definitions, the approval policy is unchanged, and a tool-less or unauthorized request still executes nothing.
  * 18 | maintainer@emeraldcoastsystemsgroup.com  | Operator decision 2026-09-22: a BYO connection may carry tools, with the per-call boundary enforced. resolveToolLessMarker answered TWO questions off one call - which path the turn takes, and whether the turn may be handed the tools its caller was granted - and its legacy BYO fallback therefore emptied the tool set for every BYO turn, so the default-LLM-is-BYO operator got a Jarvis that was told it had N tools and handed none. processMessage now asks the marker twice: with byoLlm for ROUTING (unchanged - a BYO provider still takes the direct path, because AgenticController.getActiveProvider can only return codex/claude-code/cline/bedrock and processWithAgenticMode takes no provider argument, so an agentic BYO turn would silently run on the bot's own harness instead of the caller's endpoint), and with null for AUTHORITY, which drops only the BYO fallback. Nothing is widened: allowedTools is still exactly what the caller was issued, an explicit toolLess:true (and OSHAL_TOOL_LESS=true) still means no tools, and every call still has to clear the #757 boundary. Guard: tests/unit/byo-connection-declared-tools.spec.ts.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com  | Thread the trusted per-invocation framework-tool bridge binding to direct providers. Native registry capabilities and their executeTool callback stay unchanged; CLI providers that support the bridge may now discover server-side app tools without global preload.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com  | Pass the task's already-validated workspace_dir through the common direct-provider call. CLI wrappers had task-scoping flags but this path omitted the directory, making Antigravity fall back to its shared default workspace instead of the task folder.
  */
 
 /**
@@ -433,7 +435,9 @@ class TaskController {
         { role: 'user', content: userMessage.text },
       ];
 
-      let systemPrompt = `You are an OSHAL agent, a helpful AI coding assistant with full Cline capabilities. You have access to ${availableTools.length} tools including file operations and DevOps CLI tools. The current task is: ${task.text}`;
+      let systemPrompt = options.toolBridge
+        ? `You are an OSHAL agent. Native registry tools are disabled for this protected turn. Framework/application tools authorized for this exact call are exposed through the oshal-tools MCP server; inspect and use those tools when the request requires live application data. The current task is: ${task.text}`
+        : `You are an OSHAL agent, a helpful AI coding assistant with full Cline capabilities. You have access to ${availableTools.length} tools including file operations and DevOps CLI tools. The current task is: ${task.text}`;
 
       if (global.PLANE_CONTEXT && typeof options.assertCurrentAuthorization !== 'function') {
         systemPrompt += global.PLANE_CONTEXT;
@@ -443,6 +447,7 @@ class TaskController {
       if (typeof options.assertCurrentAuthorization === 'function') await options.assertCurrentAuthorization();
       const response = await activeLlm.generateResponse(formattedMessages, {
         systemPrompt: systemPrompt,
+        workspaceDir: task.workspace_dir,
         maxTokens: 4096,
         temperature: 0.7,
         tools: availableTools,
@@ -456,6 +461,9 @@ class TaskController {
         executeTool: createDispatchToolExecutor({
           toolRegistry: this.toolRegistry, dispatchCapabilities, task, taskId, options,
         }),
+        ...(activeLlm.supportsFrameworkToolBridge === true && options.toolBridge
+          ? { toolBridge: options.toolBridge }
+          : {}),
       });
       if (typeof options.assertCurrentAuthorization === 'function') await options.assertCurrentAuthorization();
       const finalText = typeof (response.content || response.text) === 'string'
