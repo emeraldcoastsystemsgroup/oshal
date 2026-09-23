@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Bot-node Antigravity wrapper. Uses the vendor's documented stream-json stdin protocol, so prompts never hit Linux MAX_ARG_STRLEN; accepts only a terminal SUCCESS result; refreshes the idle timer on either output stream; and never passes --dangerously-skip-permissions. The ADR-127 boundary is the first executable statement.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Declare the exact per-task working directory through agy's --add-dir flag. Headless agy does not infer the project permission scope from cwd alone: without this flag it soft-denies even read_file on the persona context inside cwd. The task folder is now the CLI workspace boundary, matching the shared-workspace contract without a global allow rule or permission bypass.
  */
 
 'use strict';
@@ -55,6 +56,7 @@ class AntigravityCLIWrapper {
     fs.mkdirSync(workspaceDir, { recursive: true });
     const idleMs = positiveMs(options.timeout, this.timeoutMs);
     const args = [
+      '--add-dir', workspaceDir,
       '--input-format', 'stream-json',
       '--output-format', 'stream-json',
       '--model', options.model || this.model,
