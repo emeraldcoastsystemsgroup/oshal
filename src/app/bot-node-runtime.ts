@@ -56,7 +56,7 @@ import { applyPulledBotConfigToEnv, runBootConfigBootstrap } from './bot-node-co
 import { UnknownBotNodeProviderError, type ActiveBotNodeProvider } from './bot-node-llm-provider-route';
 import { createClineBackingEnv, resolveBotNodeSwitch } from './bot-node-provider-switch';
 import { ProviderRegistry } from '@/features/llm-provider';
-import { createPromptAuthorizationResolver } from './prompt-authorization-resolver';
+import { createBrokeredPromptAuthorizationResolver, createPromptAuthorizationResolver } from './prompt-authorization-resolver';
 import { connectPool, connectRecoverableBotNodeDatabase, type BotNodeDatabase } from './bot-node-database-pool';
 import { registerBotNodeReadOnlyTools, type ReadOnlyToolRegistration } from './bot-node-read-only-tools';
 import { createGraphConnector } from '@/features/graph';
@@ -163,6 +163,7 @@ export async function createBotNodeRuntime(options: { recoverDatabase?: boolean 
     swarmMemoryService,
     handoverManager: new RALFHandoverManager(),
     resolvePromptAuthorization: createPromptAuthorizationResolver(agentToolRepository),
+    resolveBrokeredPromptAuthorization: createBrokeredPromptAuthorizationResolver(agentToolRepository),
     recordCost: (event: Parameters<typeof costTrackingService.recordCost>[0]) => runWithSystemIdentity(() => costTrackingService.recordCost(event)),
     ticketService,
     // ADR-034 gap-b push-on-dispatch (bot half): the live provider seam so the handler can

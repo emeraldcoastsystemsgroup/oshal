@@ -10,9 +10,10 @@ or execution reference.
 The supported remote mode is direct configured reasoning: `direct: true`, `agenticMode: false`,
 and exactly one server-resolved brain shape. A hosted selection carries `byoLlmConnection`; a CLI
 selection carries the authoritative `providerId` and optional model, with
-`providerConfigRequired: true`. Application facts are obtained by the existing authorized
-[specialist context reader](../apps/specialist-context.md) before signing. Both the bot permission
-and any specialist read permission must already allow the verified caller.
+`providerConfigRequired: true`. Small scalar application facts may be obtained by the existing
+authorized [specialist context reader](../apps/specialist-context.md) before signing. Application
+tools declared `AUTO` for the selected bot are discovered at call time through the controller's
+server-side MCP bridge; neither mechanism globally preloads tools.
 
 Queued manifest-worker dispatch uses the same `resolveUserBrain` configuration ladder as Jarvis.
 A queue has no HTTP request of its own, so it resolves from the durable ticket owner and builds the
@@ -21,13 +22,20 @@ before anything is signed and records the missing requirement on the ticket. Con
 and deterministic provider intents are refused rather than dropped. A hosted brain is authoritative
 through its resolved endpoint; a CLI brain is authoritative through its signed provider/model stamp.
 
-Each protected worker run has isolated history. The runtime supplies an empty tool set and
-operation scope list, excludes global project context and layered swarm memory, and rechecks
-permission immediately before inference and before storing or returning the answer. It retains
-the existing per-bot usage and cost path.
+Each protected worker run has isolated history. The runtime supplies an empty native worker-tool
+set, excludes global project context and layered swarm memory, and rechecks permission immediately
+before inference and before storing or returning the answer. The final prompt authority names only
+the exact non-system `AUTO` tools and scopes resolved for the bot at call time. A CLI that supports
+the bridge receives an invocation-only MCP configuration bound to the exact bot, owner, task and
+original execution. Every bridged call must still be an enabled `AUTO` grant for that bot and
+receives a fresh same-application `action` permit before the existing server-side executor runs it.
+The temporary configuration is removed after the turn. The existing per-bot usage and cost path is
+retained.
 
-Agentic tools, provider intents, connector credentials, raw mesh/batch calls and Token Chase replay
-remain refused for protected applications. A configured CLI brain remains subject to the existing
+The worker's open-ended agentic loop, provider intents, connector credentials, raw mesh/batch calls
+and Token Chase replay remain refused for protected applications. Call-time application tools are
+the bounded exception: they execute through the controller broker, not the worker's native tool
+registry. A configured CLI brain remains subject to the existing
 demo/operator eligibility checks and final spawn guard; this protocol does not widen who may use a
 CLI. General queued agentic work does not become supported merely because a ticket has captured
 user provenance.
@@ -44,7 +52,7 @@ user provenance.
    single-use delegation nonce. Trusted async context carries this proof outside the body.
 4. The worker asks the fixed controller endpoint
    `POST /api/internal/application-executions/revalidate` for `start`, subsequent `work` checks,
-   and `complete`. The controller reevaluates current account/provider, ownership, installation
+   `action` for each bridged tool call, and `complete`. The controller reevaluates current account/provider, ownership, installation
    generation and original grants at every phase. Start is consumed once durably; repeated
    challenges and conflicting concurrent transitions refuse.
 5. Each response is independently signed for the distinct application permit audience and scope,
@@ -54,7 +62,9 @@ user provenance.
    are verified. It replaces any worker-supplied lineage with its own prepared execution ID.
 
 `action` is a closed controller check for a same-application named bot/tool operation. It does not
-install or enable a worker tool executor. Missing keys, unavailable controller/database, stale
+install or enable a worker tool executor: the tool must independently remain an exact enabled
+`AUTO` grant for that bot, and execution stays in the controller's existing audited executor.
+Missing keys, unavailable controller/database, stale
 directory evidence, disabled accounts, any changed original grant set (including broader grants), source replacement and reload
 fail closed. Retained directory timestamps are never refreshed by repeated execution checks.
 

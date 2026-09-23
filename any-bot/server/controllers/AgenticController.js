@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: bind MCP handler attestations to the exact request user, agent, task, tool allowlist, and operation scopes already authorized at dispatch.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Dispatch the fourth native bot runtime, antigravity-cli, through its injected provider without changing existing defaults.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Expose the configured-provider router as a direct generateResponse facade. Protected queued work is deliberately reasoning-only, so TaskController takes its direct path; the bot-node runtime passes this router as that path's LLM, and without the facade every configured CLI brain returned direct_mode_unsupported before reaching its provider. Delegation resolves the live configured provider at call time, preserving one provider-selection path across direct and agentic execution.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com  | Route execution-bound framework-tool bridge credentials only to providers that explicitly support the bridge.
  */
 
 /**
@@ -88,6 +89,9 @@ class AgenticController {
     this.stream = streamController;
     this.taskController = taskController;
     this.maxTurns = 25; // Prevent infinite loops
+    // This controller is a trusted call-time router: it accepts the bridge binding so
+    // TaskController can remain provider-agnostic, then removes it for unsupported providers.
+    this.supportsFrameworkToolBridge = true;
   }
   
   /**
@@ -130,7 +134,11 @@ class AgenticController {
     if (!provider || typeof provider.generateResponse !== 'function') {
       throw new Error(`Configured provider '${this.getCurrentProvider()}' is unavailable for direct inference`);
     }
-    return provider.generateResponse(messages, options);
+    const providerOptions = provider.supportsFrameworkToolBridge === true || !options.toolBridge
+      ? options
+      : { ...options };
+    if (providerOptions !== options) delete providerOptions.toolBridge;
+    return provider.generateResponse(messages, providerOptions);
   }
 
   /**

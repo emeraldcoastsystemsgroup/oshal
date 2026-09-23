@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pin --add-dir to the exact invocation workspace. This is agy's project/permission boundary in headless mode; cwd by itself left ViewFile in request-review and made every persona-context read fail despite the task volume being mounted read-write.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Pin agy's sandbox flag beside the exact task workspace. Headless request-review cannot ask about commands, while --dangerously-skip-permissions would approve tools beyond the task boundary; the vendor sandbox is the autonomous task-scoped rail.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Pin accept-edits mode so headless task bots may write deliverables inside the declared workspace. Request-review cannot prompt for write_file, and the test continues to prohibit the global dangerous permission bypass.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Prove call-time MCP provisioning is invocation-scoped, carries exact controller bindings through environment rather than the prompt, adopts only the existing login files, and removes the temporary Antigravity home.
  */
 
 import { EventEmitter } from 'node:events';
@@ -21,7 +22,8 @@ const AntigravityCLIWrapper = require('../../any-bot/server/services/codebase/An
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const AntigravityProvider = require('../../any-bot/server/services/llm/AntigravityProvider');
 
-const ENV_KEYS = ['DEMO_MODE', 'OSHAL_OPERATOR_SUBS'];
+const ENV_KEYS = ['DEMO_MODE', 'OSHAL_OPERATOR_SUBS', 'SWARM_SERVICE_SECRET', 'ANTIGRAVITY_OAUTH_TOKEN_PATH',
+  'OSHAL_TOOLS_MCP_PATH', 'SWARM_CONTROLLER_URL'];
 let savedEnv: Record<string, string | undefined>;
 
 beforeEach(() => {
@@ -63,6 +65,36 @@ function fakeSpawn(result: object, exitCode = 0) {
 }
 
 describe('Antigravity bot-node wrapper', () => {
+  it('provisions and removes an invocation-only MCP home for protected app tools', () => {
+    const authRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-agy-auth-'));
+    const tokenPath = path.join(authRoot, 'antigravity-oauth-token');
+    fs.writeFileSync(tokenPath, 'fixture-token', 'utf8');
+    fs.writeFileSync(path.join(authRoot, 'installation_id'), 'fixture-installation', 'utf8');
+    process.env.SWARM_SERVICE_SECRET = 'fixture-service-secret';
+    process.env.ANTIGRAVITY_OAUTH_TOKEN_PATH = tokenPath;
+    process.env.OSHAL_TOOLS_MCP_PATH = path.resolve('scripts/oshal-tools-mcp.js');
+    process.env.SWARM_CONTROLLER_URL = 'http://controller.fixture:5000';
+    let scope: { env: NodeJS.ProcessEnv; release(): void } | undefined;
+    try {
+      scope = AntigravityCLIWrapper.provisionToolBridge({ agentId: 'career-bot', taskId: 'task-folder',
+        userSub: 'operator-sub', applicationExecutionId: 'execution-id', applicationExecutionToken: 'signed-token' });
+      const home = String(scope.env.HOME);
+      const config = JSON.parse(fs.readFileSync(path.join(home, '.gemini', 'config', 'mcp_config.json'), 'utf8'));
+      expect(config).toEqual({ mcpServers: { 'oshal-tools': { command: 'node',
+        args: [path.resolve('scripts/oshal-tools-mcp.js')], disabled: false } } });
+      expect(fs.readFileSync(path.join(home, '.gemini', 'antigravity-cli', 'antigravity-oauth-token'), 'utf8')).toBe('fixture-token');
+      expect(scope.env).toMatchObject({ OSHAL_API_BASE: 'http://controller.fixture:5000', OSHAL_AGENT_ID: 'career-bot',
+        OSHAL_TASK_ID: 'task-folder', OSHAL_USER_SUB: 'operator-sub', OSHAL_APPLICATION_EXECUTION_ID: 'execution-id',
+        OSHAL_APPLICATION_EXECUTION_TOKEN: 'signed-token' });
+      scope.release();
+      expect(fs.existsSync(home)).toBe(false);
+      scope = undefined;
+    } finally {
+      scope?.release();
+      fs.rmSync(authRoot, { recursive: true, force: true });
+    }
+  });
+
   it('denies outside the ADR-127 carve before creating a workspace or spawning', async () => {
     delete process.env.DEMO_MODE;
     const workspace = path.join(os.tmpdir(), `oshal-agy-denied-${Date.now()}`, 'workspace');

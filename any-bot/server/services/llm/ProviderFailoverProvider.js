@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added provider stall failover wrapper for bot-node any-bot providers.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Classify SUCCESSFUL primary/fallback responses with the narrow runtime-banner check, not the broad throttle/auth keywords, so a valid answer mentioning 429/quota/unauthorized is no longer treated as a failover-eligible failure.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | A nested chain attributed every recovery to the FIRST rung. An administrator-defined order folds into A->(B->(C)), and the returned providerFailover object literal overwrote the inner wrapper's record carried in by the spread - so when C answered, the record still read "A -> B". That is the number a reader uses to decide which vendor is failing and which to drop. Added `answered` (the provider that actually produced the response) and `chain` (every provider walked, in order); `primary` and `fallback` keep their per-hop meaning.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Keep execution-bound framework-tool bridge credentials on explicitly supporting failover rungs only.
  */
 
 'use strict';
@@ -39,13 +40,17 @@ class ProviderFailoverProvider {
     this.primaryName = config.primaryName || readProviderName(config.primary) || 'primary';
     this.fallbackName = config.fallbackName || readProviderName(config.fallback) || 'fallback';
     this.reason = config.reason || 'provider_runtime_stall';
+    // A wrapper may accept the bridge when at least one rung can use it. generateResponse and
+    // _runFallback still sanitize independently before invoking each concrete provider.
+    this.supportsFrameworkToolBridge = config.primary.supportsFrameworkToolBridge === true
+      || config.fallback.supportsFrameworkToolBridge === true;
     logger.info(`[ProviderFailover] initialized: ${this.primaryName} -> ${this.fallbackName} (${this.reason})`);
   }
 
   async generateResponse(messages, options = {}) {
     let primaryResponse;
     try {
-      primaryResponse = await this.primary.generateResponse(messages, options);
+      primaryResponse = await this.primary.generateResponse(messages, optionsForProvider(this.primary, options));
     } catch (primaryError) {
       if (!isProviderRecoverableRuntimeFailure(primaryError)) {
         throw primaryError;
@@ -72,10 +77,10 @@ class ProviderFailoverProvider {
 
     let fallbackResponse;
     try {
-      fallbackResponse = await this.fallback.generateResponse(messages, {
+      fallbackResponse = await this.fallback.generateResponse(messages, optionsForProvider(this.fallback, {
         ...options,
         source: options.source || 'provider-stall-fallback',
-      });
+      }));
     } catch (fallbackError) {
       throw new Error(
         `Provider failover failed (${this.reason}). ` +
@@ -167,6 +172,13 @@ function readProviderName(provider) {
   }
   if (provider.config && typeof provider.config.provider === 'string') return provider.config.provider;
   return '';
+}
+
+function optionsForProvider(provider, options) {
+  if (!options || !options.toolBridge || provider.supportsFrameworkToolBridge === true) return options;
+  const sanitized = { ...options };
+  delete sanitized.toolBridge;
+  return sanitized;
 }
 
 module.exports = {

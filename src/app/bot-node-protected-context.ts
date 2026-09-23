@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Carry verified remote execution authority outside request payloads and restrict protected work to exact business identity.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Retain the verified dispatch token inside the protected async context so call-time framework tools can prove their original application execution to the controller without accepting a body-supplied credential.
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { RequestHandler } from 'express';
@@ -26,6 +27,8 @@ export interface VerifiedRemoteDispatch {
 export interface ProtectedBotExecution {
   binding: Readonly<RemoteExecutionBinding>;
   workspaceId: string;
+  /** Original controller-signed dispatch token, captured only after HTTP verification. */
+  dispatchToken: string;
   check(): Promise<RemoteExecutionPermit>;
 }
 const dispatches = new AsyncLocalStorage<VerifiedRemoteDispatch>();

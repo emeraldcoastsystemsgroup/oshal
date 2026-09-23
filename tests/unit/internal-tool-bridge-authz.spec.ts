@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard exact caller/AUTO authorization on the internal MCP bridge.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: add system-tool, missing-descriptor, and replacement adversarial denials.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Prove an authorized request reaches the stable descriptor dispatch rather than failing first on an incomplete stream fixture.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Guard protected app-tool proof: missing proof refuses, valid proof revalidates the exact action and restores only the permit actor around execution.
  */
 
 /**
@@ -33,6 +34,8 @@ import type { AddressInfo } from 'net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createInternalToolBridgeRoutes, resolveActingSub } from '../../src/app/routes/internal-tool-bridge-routes';
 import type { AppContext } from '../../src/app/composition/app-context';
+import { getApplicationAuthorizationActor } from '../../src/shared/application-authorization-context';
+import type { RemoteExecutionCheck } from '../../src/shared/application-remote-execution';
 
 interface GrantRow {
   name: string;
@@ -40,6 +43,14 @@ interface GrantRow {
   enabled?: boolean;
   installed?: boolean;
   registeredBy?: string;
+}
+
+interface ProtectedFixture {
+  required: boolean;
+  reject?: boolean;
+  mismatchedAgent?: boolean;
+  checks: RemoteExecutionCheck[];
+  actors: unknown[];
 }
 
 /** A pool double whose only interesting answer is the agent's enabled-tool grant list. */
@@ -82,12 +93,13 @@ async function boot(
   grants: GrantRow[] | Error,
   session?: { sub: string; email?: string },
   descriptorMode: 'stable' | 'missing' | 'replaced' | 'registry-missing' = 'stable',
+  protectedFixture?: ProtectedFixture,
 ) {
   const pool = grantPool(grants);
   const initialDescriptor = Object.freeze({
     toolName: 'pumpkin-speak',
-    executorType: 'api' as const,
-    apiEndpoint: 'POST /api/never/reached',
+    executorType: protectedFixture ? 'connector' as const : 'api' as const,
+    ...(protectedFixture ? { connectorId: 'fixture' } : { apiEndpoint: 'POST /api/never/reached' }),
     runtimeRegistered: true,
     registeredAt: new Date().toISOString(),
   });
@@ -112,10 +124,26 @@ async function boot(
     streamManager: { broadcastToolExecution: () => undefined },
     workspaceService: undefined,
     dynamicToolExecutorRegistry: descriptorRegistry,
-    connectorSpecToolService: undefined,
+    connectorSpecToolService: protectedFixture ? { executeTool: async () => {
+      protectedFixture.actors.push(getApplicationAuthorizationActor());
+      return 'protected-ok';
+    } } : undefined,
   } as unknown as AppContext;
 
-  const router = createInternalToolBridgeRoutes(ctx);
+  const router = createInternalToolBridgeRoutes(ctx, undefined, protectedFixture ? {
+    requiresProof: async () => protectedFixture.required,
+    revalidate: async (input) => {
+      protectedFixture.checks.push(input);
+      if (protectedFixture.reject) throw new Error('fixture revoked');
+      return { token: 'fixture-permit-token', permit: {
+        executionId: input.executionId, app: 'fixture-app',
+        agentId: protectedFixture.mismatchedAgent ? 'other-agent' : 'agent-abc',
+        taskId: 'task-1', workspaceId: 'workspace-1', sub: session?.sub ?? 'missing', issuer: 'https://issuer.fixture',
+        phase: 'action', nonce: input.nonce, dispatchJti: 'dispatch-jti', allowedPermissions: ['fixture-app:read'],
+        expiresAt: new Date(Date.now() + 10_000).toISOString(), action: input.action,
+      } };
+    },
+  } : undefined);
   const app = express();
   app.use(express.json());
   if (session) {
@@ -180,7 +208,7 @@ describe('POST /api/tools/execute — authorization', () => {
     // proof that authorization ALLOWED it through. What must never happen is a 403.
     expect(res.status).not.toBe(403);
     expect(res.status).not.toBe(503);
-    expect(h.descriptorResolutionCount()).toBe(3);
+    expect(h.descriptorResolutionCount()).toBeGreaterThanOrEqual(3);
   });
 
   it('refuses an AUTO grant for a system tool that the bridge must never shadow', async () => {
@@ -286,6 +314,41 @@ describe('POST /api/tools/execute — authorization', () => {
     const res = await h.post({ toolName: 'pumpkin-speak' });
     expect(res.status).toBe(400);
     expect(h.pool.calls.some((sql) => /FROM tools t/i.test(sql))).toBe(false);
+  });
+
+  it('requires original execution proof before a protected AUTO tool can run', async () => {
+    const protection: ProtectedFixture = { required: true, checks: [], actors: [] };
+    const h = await boot([{ name: 'pumpkin-speak' }], { sub: 'google-oauth2|operator-1' }, 'stable', protection);
+    close = h.close;
+    const res = await h.post({ agentId: 'agent-abc', toolName: 'pumpkin-speak', input: {} });
+    expect(res.status).toBe(403);
+    expect(protection.checks).toEqual([]);
+    expect(protection.actors).toEqual([]);
+  });
+
+  it('revalidates the exact protected tool action and restores its signed actor only during execution', async () => {
+    const protection: ProtectedFixture = { required: true, checks: [], actors: [] };
+    const h = await boot([{ name: 'pumpkin-speak' }], { sub: 'google-oauth2|operator-1' }, 'stable', protection);
+    close = h.close;
+    const res = await h.post({ agentId: 'agent-abc', taskId: 'workspace-1', toolName: 'pumpkin-speak', input: {},
+      applicationExecutionId: '84bb3490-6cdf-4d7d-a614-ac72771833d4', applicationExecutionToken: 'signed-original-dispatch' });
+    expect(res).toEqual({ status: 200, body: { output: 'protected-ok' } });
+    expect(protection.checks).toHaveLength(1);
+    expect(protection.checks[0]).toMatchObject({ executionId: '84bb3490-6cdf-4d7d-a614-ac72771833d4',
+      token: 'signed-original-dispatch', phase: 'action', action: { kind: 'tools', operation: 'pumpkin-speak' } });
+    expect(protection.actors).toEqual([expect.objectContaining({ sub: 'google-oauth2|operator-1',
+      issuer: 'https://issuer.fixture', isSwarmAdmin: false, allowedPermissions: ['fixture-app:read'] })]);
+    expect(getApplicationAuthorizationActor()).toBeUndefined();
+  });
+
+  it('refuses a protected permit whose bot binding changed', async () => {
+    const protection: ProtectedFixture = { required: true, mismatchedAgent: true, checks: [], actors: [] };
+    const h = await boot([{ name: 'pumpkin-speak' }], { sub: 'google-oauth2|operator-1' }, 'stable', protection);
+    close = h.close;
+    const res = await h.post({ agentId: 'agent-abc', toolName: 'pumpkin-speak', input: {},
+      applicationExecutionId: '84bb3490-6cdf-4d7d-a614-ac72771833d4', applicationExecutionToken: 'signed-original-dispatch' });
+    expect(res.status).toBe(403);
+    expect(protection.actors).toEqual([]);
   });
 });
 

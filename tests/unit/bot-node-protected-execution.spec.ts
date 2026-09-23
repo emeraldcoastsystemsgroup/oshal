@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise signed protected worker reasoning, current-rights refusal and exact issuer SQLite workspace isolation.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Assert the normalized authorized-scope Set passed to the provider boundary instead of the pre-normalization array shape.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Pin the call-time framework-tool bridge to the verified execution, owner, bot and isolated workspace rather than request-controlled provider options.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -16,18 +17,39 @@ beforeEach(async () => { fixture = await startProtectedWorkerFixture(); });
 afterEach(async () => { await fixture?.close(); });
 
 describe('protected worker HTTP execution', () => {
-  it('runs the actual handler and direct TaskController under exact nonoperator identity with no tools', async () => {
-    const request = fixture.issue();
+  it('runs the actual handler under exact nonoperator identity with no native registry tools and a bound call-time bridge', async () => {
+    await fixture.close();
+    const active = { provider: 'fixture-brokered-cli', model: 'fixture-model', apiProvider: null };
+    fixture = await startProtectedWorkerFixture(undefined, {
+      directProvider: {
+        provider: active.provider, model: active.model, supportsFrameworkToolBridge: true,
+      },
+      brokeredTools: ['career_database'],
+      dispatchConfigRuntime: {
+        getActiveProvider: () => active,
+        setActiveProvider: () => active,
+      },
+    });
+    const request = fixture.issue({ byoLlmConnection: undefined, providerId: active.provider,
+      model: active.model, providerConfigRequired: true, configVersion: 1 });
     const response = await fixture.post(request);
-    expect(await response.json()).toMatchObject({ success: true, response: 'Fixture protected answer',
-      applicationExecutionId: request.body.applicationExecutionId, provider: 'fixture-hosted' });
+    const responseBody = await response.json();
+    expect(responseBody, JSON.stringify(responseBody)).toMatchObject({ success: true, response: 'Fixture protected answer',
+      applicationExecutionId: request.body.applicationExecutionId, provider: 'fixture-brokered-cli' });
     expect(response.status).toBe(200);
     expect(fixture.state.phases[0]).toBe('start');
     expect(fixture.state.phases.at(-1)).toBe('complete');
     expect(fixture.state.calls).toHaveLength(1);
     expect(fixture.state.calls[0]).toMatchObject({ identity: { sub: REMOTE_SUB, principalIssuer: REMOTE_ISSUER, isOperator: false },
       actor: { sub: REMOTE_SUB, issuer: REMOTE_ISSUER, isSwarmAdmin: false, tenantIds: ['fixture-tenant'], allowedPermissions: [`${REMOTE_APP}:read`] },
-      options: { tools: [], authorizedScopes: new Set(), enforceToolBoundary: true } });
+      options: { tools: [], authorizedScopes: new Set(['tool:career_database']), enforceToolBoundary: true } });
+    expect(JSON.stringify(fixture.state.calls[0].messages)).toContain('career_database');
+    expect(fixture.state.calls[0].options.systemPrompt).toContain('oshal-tools MCP server');
+    expect(fixture.state.calls[0].options.toolBridge).toMatchObject({ agentId: REMOTE_AGENT, userSub: REMOTE_SUB,
+      applicationExecutionId: request.body.applicationExecutionId, applicationExecutionToken: request.token,
+      taskId: expect.stringMatching(/^protected-[a-f0-9]{64}$/) });
+    expect(String(fixture.state.calls[0].options.workspaceDir).replace(/\\/g, '/'))
+      .toMatch(/\/protected-[a-f0-9]{64}$/);
     expect(fixture.store.listTasks()).toHaveLength(1);
     expect(fixture.store.listTasks()[0].id).toMatch(/^protected-[a-f0-9]{64}$/);
   });

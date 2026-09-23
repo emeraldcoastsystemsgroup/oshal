@@ -25,6 +25,8 @@
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127 carve extended to gemini-cli and antigravity-cli. Both were in the HarnessType union and in assertAuditedAutonomousHarness's refused set, but NOT in this preflight's set - so the check that runs before a task or workspace exists let them through, and the two Google CLIs were guarded once where codex-cli and claude-code are guarded twice. They are refused here now under the SAME two conditions and no others: a non-operator caller, a non-demo deployment and an identity-less request all keep the existing refusal. The hosted Google ids ('gemini', 'google-gemini') are deliberately left out - they name an HTTP endpoint with no tool loop, and refusing them would break the ordinary hosted lane.
  * 21 | maintainer@emeraldcoastsystemsgroup.com | Log both sides of an authoritative provider mismatch before refusing it, so configuration drift is diagnosable without weakening the fail-closed check.
  * 22 | maintainer@emeraldcoastsystemsgroup.com | Fail closed when TaskController reports an execution failure or produces no readable response. The protected direct path returned {success:false,error:'direct_mode_unsupported'} with no messages, but this bridge ignored the failure bit, relayed success=true with an empty response, and the queue marked Career/stock work complete. Failed or empty inference now reaches the existing ticket escalation path instead of fabricating completion.
+ * 23 | maintainer@emeraldcoastsystemsgroup.com | Provision protected application tools at call time through the existing controller MCP bridge. The bridge binding comes only from the verified protected execution context and carries the exact bot, task, owner and original dispatch proof; provider selection remains configuration-owned.
+ * 24 | maintainer@emeraldcoastsystemsgroup.com | Put the exact AUTO-granted brokered application tool names in protected prompts at call time while keeping the native bot-node registry empty. This prevents the final authority rebind from contradicting the invocation-scoped MCP tool list.
  */
 
 /**
@@ -194,6 +196,8 @@ export interface BotNodeExecutionDeps {
   ticketService?: TicketService;
   /** Server-owned enabled-tool and scope resolver for the final prompt authority block. */
   resolvePromptAuthorization?: PromptAuthorizationResolver;
+  /** Exact app-tool names exposed only through the protected per-call controller broker. */
+  resolveBrokeredPromptAuthorization?: PromptAuthorizationResolver;
   /** The active provider name from the any-bot runtime (e.g. 'cline-cli', 'claude-code') */
   providerName: string;
   /** The active model from the any-bot runtime */
@@ -404,7 +408,7 @@ export function createBotNodeExecutionHandler(
         workloadId: agentId,
         executionScope: protectedExecution ? '' : executionScopeId,
         layers: personaLayers,
-        resolver: protectedExecution ? async () => ({ allowedTools: [], scopes: [] }) : deps.resolvePromptAuthorization,
+        resolver: protectedExecution ? deps.resolveBrokeredPromptAuthorization : deps.resolvePromptAuthorization,
       });
       const skillProfilePattern = typeof payload?.pattern === 'string' ? payload.pattern.trim() : '';
       const assembledPrompt = assemblePromptForAnyBot(
@@ -461,6 +465,13 @@ export function createBotNodeExecutionHandler(
           source: 'swarm-dispatch',
           allowedTools: [...promptAuthority.allowedTools],
           authorizedScopes: [...promptAuthority.scopes],
+          ...(protectedExecution ? { toolBridge: {
+            agentId,
+            taskId: effectiveTaskId,
+            userSub: protectedExecution.binding.sub,
+            applicationExecutionId: protectedExecution.binding.executionId,
+            applicationExecutionToken: protectedExecution.dispatchToken,
+          } } : {}),
           byoLlmConnection, // caller's own endpoint drives inference when present
           // Connector tokens remain in executeProviderIntent's deterministic server-side broker.
           // Passing OSHAL_CRED_* here would expose them to model-readable env/workspace files.

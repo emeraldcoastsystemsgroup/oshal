@@ -21,14 +21,15 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Exclude ASK grants from unattended MCP listing and execution; only exact AUTO grants are executable without a fresh approval decision.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: require immutable request-start executor identity, deny system/unknown descriptors and missing caller context, and revalidate immediately before bridged execution.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Expose caller-scoped authorization reads through the typed handler; keep changes on the interactive rail.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Bind protected application tool calls to the original remote execution. The controller revalidates the exact same-app tool action immediately before execution and restores only the signed business actor for the existing ToolExecutorService policy check.
  */
 
 /**
  * @description
- * Service-secret-gated endpoints that let the Claude Code harness reach a bot's
+ * Service-secret-gated endpoints that let a CLI harness reach a bot's
  * swarm-registered (agent_tools) framework/app tools — which it otherwise cannot,
  * because the CLI harness only sees Bash + static MCP servers, not the OSHAL tool
- * registry. The companion stdio bridge `scripts/oshal-tools-mcp.mjs` calls these:
+ * registry. The companion stdio bridge `scripts/oshal-tools-mcp.js` calls these:
  *
  *   GET  /api/tools/for-agent/:agentId  → the bot's enabled tools (MCP tools/list)
  *   POST /api/tools/execute             → run one tool user-scoped (MCP tools/call)
@@ -38,6 +39,7 @@
  * Mounted under /api/tools behind serviceSecretOr(requiresAuth).
  */
 import { Router, type Request, type Response } from 'express';
+import { randomUUID } from 'node:crypto';
 import type { AppContext } from '@/app/composition/app-context';
 import { AgentToolRepository } from '@/entities/tool';
 import { ToolExecutorService } from '@/features/chat-orchestration';
@@ -49,6 +51,10 @@ import { emitAuditEvent } from '@/features/governance';
 import type { AuthorizationActor } from '@/shared/application-authorization';
 import { AUTHORIZATION_READ_TOOL, isAuthorizationTool } from '@/shared/security/authorization-tool-contract';
 import type { AuthorizationToolRuntime } from '@/app/composition/authorization-tool';
+import { isApplicationExecutionProtected } from '@/shared/application-authorization-execution';
+import { getApplicationRemoteExecutionAuthority, type RemoteExecutionCheck,
+  type SignedRemoteExecutionPermit } from '@/shared/application-remote-execution';
+import { runWithApplicationAuthorizationActor } from '@/shared/application-authorization-context';
 
 const logger = createChildLogger({ module: 'internal-tool-bridge' });
 
@@ -110,7 +116,25 @@ export interface InternalToolAuthorizationOptions {
   resolveActor: (req: Request) => Promise<AuthorizationActor>;
 }
 
-export function createInternalToolBridgeRoutes(ctx: AppContext, authorization?: InternalToolAuthorizationOptions): Router {
+/** Trusted composition seam for protected remote action proof; injectable only for isolated tests. */
+export interface InternalToolProtectionOptions {
+  requiresProof(toolName: string, userSub: string): Promise<boolean>;
+  revalidate(input: RemoteExecutionCheck): Promise<SignedRemoteExecutionPermit>;
+}
+
+function defaultProtection(): InternalToolProtectionOptions {
+  return {
+    requiresProof: (toolName, userSub) => isApplicationExecutionProtected({ kind: 'tools', operation: toolName, userSub }),
+    revalidate: input => {
+      const authority = getApplicationRemoteExecutionAuthority();
+      if (!authority) throw new Error('Protected application execution authority is unavailable');
+      return authority.revalidate(input);
+    },
+  };
+}
+
+export function createInternalToolBridgeRoutes(ctx: AppContext, authorization?: InternalToolAuthorizationOptions,
+  protection: InternalToolProtectionOptions = defaultProtection()): Router {
   const router = Router();
   // Tool execution is always on behalf of a user. The shared secret authenticates the harness;
   // this middleware supplies the separate, least-privilege owner identity for every DB call.
@@ -162,8 +186,9 @@ export function createInternalToolBridgeRoutes(ctx: AppContext, authorization?: 
    * any app had ever registered — including route-backed `api` tools that drive physical devices.
    */
   router.post('/execute', async (req: Request, res: Response): Promise<void> => {
-    const { agentId, toolName, input, taskId } = (req.body || {}) as {
+    const { agentId, toolName, input, taskId, applicationExecutionId, applicationExecutionToken } = (req.body || {}) as {
       agentId?: string; toolName?: string; input?: Record<string, unknown>; taskId?: string;
+      applicationExecutionId?: string; applicationExecutionToken?: string;
     };
     if (!agentId || !toolName) {
       res.status(400).json({ error: 'agentId and toolName are required' });
@@ -214,22 +239,50 @@ export function createInternalToolBridgeRoutes(ctx: AppContext, authorization?: 
       res.status(403).json({ error: `Tool "${toolName}" changed during authorization` });
       return;
     }
+    let protectedActor: AuthorizationActor | undefined;
     try {
-      const output = await executor.executeTool(
-        String(taskId || `mcp-${agentId}`),
-        String(toolName),
-        input && typeof input === 'object' && !Array.isArray(input) ? input : {},
-        String(agentId),
-        userSub,
-        isAuthorizationTool(String(toolName)) && authorization ? {
-          resolveActor: async () => {
-            const actor = await authorization.resolveActor(req);
-            if (actor.sub !== userSub) throw new Error('Authorization caller identity mismatch');
-            return actor;
-          },
-          allowChanges: false,
-        } : undefined,
-      );
+      if (await protection.requiresProof(String(toolName), userSub)) {
+        if (typeof applicationExecutionId !== 'string' || typeof applicationExecutionToken !== 'string') {
+          logger.warn({ agentId, toolName }, 'protected tool bridge refused missing execution proof');
+          void emitToolAudit(ctx.pool, userSub, String(toolName), String(agentId), 'error');
+          res.status(403).json({ error: 'Protected tool execution requires its original application dispatch' });
+          return;
+        }
+        const { permit } = await protection.revalidate({ executionId: applicationExecutionId,
+          token: applicationExecutionToken, phase: 'action', nonce: randomUUID(),
+          action: { kind: 'tools', operation: String(toolName) } });
+        if (permit.agentId !== String(agentId) || permit.sub !== userSub || permit.action?.kind !== 'tools'
+          || permit.action.operation !== String(toolName)) {
+          throw new Error('protected tool execution binding changed');
+        }
+        protectedActor = { sub: permit.sub, issuer: permit.issuer, isActive: true, isSwarmAdmin: false,
+          allowedPermissions: [...permit.allowedPermissions], ...(permit.tenantId ? { tenantIds: [permit.tenantId] } : {}) };
+      }
+    } catch (err) {
+      logger.warn({ err, agentId, toolName }, 'protected tool bridge authorization refused');
+      void emitToolAudit(ctx.pool, userSub, String(toolName), String(agentId), 'error');
+      res.status(403).json({ error: 'Protected tool execution is no longer authorized' });
+      return;
+    }
+    try {
+      const execute = () => executor.executeTool(
+          String(taskId || `mcp-${agentId}`),
+          String(toolName),
+          input && typeof input === 'object' && !Array.isArray(input) ? input : {},
+          String(agentId),
+          userSub,
+          isAuthorizationTool(String(toolName)) && authorization ? {
+            resolveActor: async () => {
+              const actor = await authorization.resolveActor(req);
+              if (actor.sub !== userSub) throw new Error('Authorization caller identity mismatch');
+              return actor;
+            },
+            allowChanges: false,
+          } : undefined,
+        );
+      const output = protectedActor
+        ? await runWithApplicationAuthorizationActor(protectedActor, execute)
+        : await execute();
       void emitToolAudit(ctx.pool, userSub, String(toolName), String(agentId), 'ok');
       res.json({ output });
     } catch (err) {

@@ -4,7 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Admit protected hosted reasoning through one-time current-policy permits and recheck before releasing output.
- * 2 | maintainer@emeraldcoastsystemsgroup.com | Admit either branch of the controller-resolved user brain: a hosted endpoint or a signed authoritative provider/model stamp. The boundary remains vendor-neutral; CLI eligibility is still enforced by the existing demo/operator preflight and final spawn guard, while every protected turn stays direct, non-agentic, tool-less and current-permit checked.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Admit either branch of the controller-resolved user brain: a hosted endpoint or a signed authoritative provider/model stamp. The boundary remains vendor-neutral; CLI eligibility is still enforced by the existing demo/operator preflight and final spawn guard, while every protected turn stays direct, non-agentic, native-registry-tool-less and current-permit checked.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Carry the already-verified original dispatch token in the runtime-only protected context for controller-revalidated, per-call application tools.
  */
 import type { Pool } from 'pg';
 import type { MeshEnvelope } from '@/features/agent-management';
@@ -60,7 +61,7 @@ async function executeProtected(app: string, dispatch: VerifiedRemoteDispatch, e
   };
   const workspaceId = protectedBotWorkspaceId({ principalIssuer: binding.issuer, userSub: binding.sub,
     app, agentId: binding.agentId, tenantId: binding.tenantId, workspaceFolderId: binding.workspaceId, executionId: binding.executionId });
-  return runWithProtectedBotExecution({ binding, workspaceId, check: recheck }, start, async () => {
+  return runWithProtectedBotExecution({ binding, workspaceId, dispatchToken: dispatch.token, check: recheck }, start, async () => {
     await recheck();
     const result = await execute();
     if (!result.success) return result;

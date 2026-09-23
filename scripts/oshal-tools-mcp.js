@@ -2,9 +2,9 @@
 /**
  * OSHAL tools MCP bridge (stdio, dependency-free).
  *
- * Exposes a bot's swarm-registered tools (agent_tools / dynamic registry) to the
- * Claude Code CLI harness, which otherwise only sees Bash + a few static MCP
- * servers and cannot reach framework/app tools like `career_database`.
+ * Exposes a bot's swarm-registered tools (agent_tools / dynamic registry) to CLI
+ * harnesses, which otherwise only see their native tools and cannot reach
+ * framework/app tools like `career_database`.
  *
  * tools/list  -> GET  {OSHAL_API_BASE}/api/tools/for-agent/{OSHAL_AGENT_ID}
  * tools/call  -> POST {OSHAL_API_BASE}/api/tools/execute
@@ -13,12 +13,14 @@
  * and stamp the acting user via x-oshal-user-sub, so execution runs through the
  * SAME server-side tool-executor (user-scoped, audited) the orchestrator uses.
  *
- * Config (passed via the per-task mcp-config "env" block by the Claude Code adapter):
+ * Config (passed per invocation by the CLI harness):
  *   OSHAL_API_BASE       e.g. http://localhost:5000
  *   SWARM_SERVICE_SECRET shared service secret
  *   OSHAL_AGENT_ID       the bot whose tools to expose
  *   OSHAL_USER_SUB       the signed-in user the tools act for
  *   OSHAL_TASK_ID        (optional) task id for executor workspace/cost scoping
+ *   OSHAL_APPLICATION_EXECUTION_ID    protected execution id (when applicable)
+ *   OSHAL_APPLICATION_EXECUTION_TOKEN original signed dispatch proof (when applicable)
  *
  * MCP stdio transport = newline-delimited JSON-RPC 2.0.
  */
@@ -28,6 +30,8 @@ const SECRET = process.env.SWARM_SERVICE_SECRET || '';
 const AGENT_ID = process.env.OSHAL_AGENT_ID || '';
 const USER_SUB = process.env.OSHAL_USER_SUB || '';
 const TASK_ID = process.env.OSHAL_TASK_ID || `mcp-${AGENT_ID}`;
+const APPLICATION_EXECUTION_ID = process.env.OSHAL_APPLICATION_EXECUTION_ID || '';
+const APPLICATION_EXECUTION_TOKEN = process.env.OSHAL_APPLICATION_EXECUTION_TOKEN || '';
 
 function send(msg) {
   process.stdout.write(JSON.stringify(msg) + '\n');
@@ -61,7 +65,15 @@ async function callTool(name, args) {
   const r = await fetch(`${API_BASE}/api/tools/execute`, {
     method: 'POST',
     headers: headers(),
-    body: JSON.stringify({ agentId: AGENT_ID, userSub: USER_SUB, taskId: TASK_ID, toolName: name, input: args || {} }),
+    body: JSON.stringify({
+      agentId: AGENT_ID,
+      userSub: USER_SUB,
+      taskId: TASK_ID,
+      toolName: name,
+      input: args || {},
+      ...(APPLICATION_EXECUTION_ID ? { applicationExecutionId: APPLICATION_EXECUTION_ID } : {}),
+      ...(APPLICATION_EXECUTION_TOKEN ? { applicationExecutionToken: APPLICATION_EXECUTION_TOKEN } : {}),
+    }),
   });
   const text = await r.text();
   if (!r.ok) throw new Error(`execute ${r.status}: ${text.slice(0, 400)}`);
