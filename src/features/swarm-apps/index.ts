@@ -74,6 +74,7 @@ export {
   CONCIERGE_COVERAGE_WARNING_MESSAGE,
   manifestConciergeName,
   manifestExternalAssociationNames,
+  resolveManifestConciergeAgent,
   resolveConciergeCoverageMode,
   conciergeCoverageProblem,
   // ADR-085 D11 — tool ownership, derived from the active manifests at query time.
@@ -98,7 +99,7 @@ export {
   resolveGroupSetup,
   assertGroupResolvable,
 } from './services';
-export type { ConciergeCoverageMode } from './services';
+export type { ConciergeCoverageMode, ManifestConciergeAgent } from './services';
 export type { ResolvedGroupSetupStep, ResolvedGroupToolbar } from './services';
 // ADR-149 — a static tile under ANOTHER package's mount follows that package's discoverability.
 export { lockUndiscoverableTiles, openableDefaultView, mountOwner, packageMounts, tilePathname } from './services';

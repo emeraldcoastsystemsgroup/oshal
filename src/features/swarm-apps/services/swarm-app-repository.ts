@@ -86,16 +86,42 @@ function declaredAgentIdForName(manifest: SwarmAppManifest, name: string | undef
   return match?.agentId?.trim() || undefined;
 }
 
-function previousExternalAssociations(previous: Pick<RowShape, 'agent_ids' | 'manifest'>): Map<string, string> {
+async function previousExternalAssociations(
+  pool: Pick<Pool, 'query'>,
+  previous: Pick<RowShape, 'agent_ids' | 'manifest'>,
+): Promise<Map<string, string>> {
   const names = manifestExternalAssociationNames(previous.manifest);
   const declaredBots = previous.manifest.bots ?? [];
   const localIds = new Set(declaredAgentIds(previous.manifest));
   const ids = (previous.agent_ids ?? []).filter(agentId => !localIds.has(agentId));
-  if (names.length === ids.length) return new Map(names.map((name, index) => [name, ids[index]]));
 
   // The first warn-mode P8 image briefly persisted external chatBot before the worker. Read that
-  // exact legacy order during the corrective rollout so a transient worker lookup can preserve the
-  // worker while deliberately dropping the borrowed concierge association.
+  // exact legacy order during the corrective rollout. A partial one-id row is ambiguous by
+  // position (it may be the chatBot or worker), so first prove each survivor's name from agents.
+  if (names.length > 0 && ids.length > 0) {
+    try {
+      const { rows } = await pool.query<{ agent_id: string; name: string }>(
+        'SELECT agent_id, name FROM agents WHERE agent_id = ANY($1::uuid[]) ORDER BY agent_id',
+        [ids],
+      );
+      const proven = new Map<string, string>();
+      for (const name of names) {
+        const matches = rows.flatMap(row => {
+          const agentId = typeof row.agent_id === 'string' ? row.agent_id.trim() : '';
+          const rowName = typeof row.name === 'string' ? row.name.trim() : '';
+          return agentId && rowName === name ? [agentId] : [];
+        });
+        if (matches.length === 1) proven.set(name, matches[0]);
+      }
+      // A successful lookup is authoritative even when empty: no matching row is negative proof,
+      // not permission to reinterpret a disproven chat id as the worker by its old array position.
+      return proven;
+    } catch (err) {
+      logger.warn({ err, app: previous.manifest.name },
+        'prior external agent identity lookup failed; falling back only when association order is unambiguous');
+    }
+  }
+
   const localNames = new Set(declaredBots.flatMap(bot => {
     const name = typeof bot.name === 'string' ? bot.name.trim() : '';
     return name ? [name] : [];
@@ -103,9 +129,12 @@ function previousExternalAssociations(previous: Pick<RowShape, 'agent_ids' | 'ma
   const legacyNames = [...new Set([manifestConciergeName(previous.manifest), ...names].filter(
     (name): name is string => typeof name === 'string' && !localNames.has(name),
   ))];
-  if (legacyNames.length !== ids.length) return new Map();
-  const legacy = new Map(legacyNames.map((name, index) => [name, ids[index]]));
-  return new Map(names.flatMap(name => legacy.has(name) ? [[name, legacy.get(name)!]] : []));
+  if (legacyNames.length === ids.length) {
+    const legacy = new Map(legacyNames.map((name, index) => [name, ids[index]]));
+    return new Map(names.flatMap(name => legacy.has(name) ? [[name, legacy.get(name)!]] : []));
+  }
+  // A partial legacy row is positionally ambiguous and is dropped rather than mis-owned.
+  return new Map();
 }
 
 /**
@@ -154,7 +183,9 @@ export class SwarmAppRepository {
       try {
         const prev = await this.pool.query<Pick<RowShape, 'agent_ids' | 'manifest'>>(
           `SELECT agent_ids, manifest FROM swarm_applications WHERE name = $1 LIMIT 1`, [manifest.name]);
-        const preserved = prev.rows[0] ? previousExternalAssociations(prev.rows[0]) : new Map<string, string>();
+        const preserved = prev.rows[0]
+          ? await previousExternalAssociations(this.pool, prev.rows[0])
+          : new Map<string, string>();
         for (const name of unresolved) {
           const previousId = preserved.get(name);
           if (previousId) externalIds.set(name, previousId);

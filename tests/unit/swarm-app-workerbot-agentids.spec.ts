@@ -24,6 +24,8 @@ function makePool(
     previousAgentIds?: string[];
     previousManifest?: SwarmAppManifest;
     agentIdsByName?: Record<string, string | null>;
+    agentNamesById?: Record<string, string | null>;
+    identityLookupThrows?: boolean;
   },
 ) {
   const calls: Array<{ sql: string; params: unknown[] }> = [];
@@ -35,6 +37,16 @@ function makePool(
         ? opts.agentIdsByName[String(params[0])] ?? null
         : workerAgentId;
       return { rows: resolved ? [{ agent_id: resolved }] : [] };
+    }
+    if (/FROM agents WHERE agent_id = ANY/i.test(sql)) {
+      if (opts?.identityLookupThrows) throw new Error('simulated identity read failure');
+      const ids = Array.isArray(params[0]) ? params[0].map(String) : [];
+      return {
+        rows: ids.flatMap(agentId => {
+          const name = opts?.agentNamesById?.[agentId] ?? null;
+          return name ? [{ agent_id: agentId, name }] : [];
+        }),
+      };
     }
     if (/SELECT agent_ids(?:, manifest)? FROM swarm_applications/i.test(sql)) {
       return {
@@ -90,14 +102,23 @@ describe('SwarmAppRepository.upsert — carved-app agent_ids backfill (ADR-085/A
   // mesh fan-out and the Jarvis catalog. A failed resolution must reuse the prior row's ids.
   it('preserves the previous row agent_ids when the workerBot resolution THROWS', async () => {
     const prev = ['b00b0000-0000-0000-0000-000000000001'];
-    const { pool } = makePool(null, { resolveThrows: true, previousAgentIds: prev, previousManifest: CARVED });
+    const { pool } = makePool(null, {
+      resolveThrows: true,
+      previousAgentIds: prev,
+      previousManifest: CARVED,
+      agentNamesById: { [prev[0]]: 'movies-concierge' },
+    });
     const rec = await new SwarmAppRepository(pool).upsert(CARVED, '/deployed-apps/movies/oshal-app.yaml', []);
     expect(rec.agentIds).toEqual(prev);
   });
 
   it('preserves the previous row agent_ids when the agents row is transiently missing', async () => {
     const prev = ['b00b0000-0000-0000-0000-000000000001'];
-    const { pool } = makePool(null, { previousAgentIds: prev, previousManifest: CARVED }); // resolution returns no rows
+    const { pool } = makePool(null, {
+      previousAgentIds: prev,
+      previousManifest: CARVED,
+      agentNamesById: { [prev[0]]: 'movies-concierge' },
+    }); // name resolution misses; identity proof preserves the prior row
     const rec = await new SwarmAppRepository(pool).upsert(CARVED, '/deployed-apps/movies/oshal-app.yaml', []);
     expect(rec.agentIds).toEqual(prev);
   });
@@ -252,11 +273,73 @@ describe('SwarmAppRepository.upsert — carved-app agent_ids backfill (ADR-085/A
       resolveThrows: true,
       previousAgentIds: [chatId, workerId],
       previousManifest: manifest,
+      identityLookupThrows: true,
     });
 
     const rec = await new SwarmAppRepository(pool).upsert(manifest, '/deployed-apps/surface/oshal-app.yaml', []);
 
     expect(rec.agentIds).toEqual([workerId]);
+  });
+
+  it('never reinterprets a proven singleton chat id as the distinct external worker', async () => {
+    const chatId = 'bbbb0000-0000-0000-0000-000000000001';
+    const manifest = { ...CARVED, chatBot: 'shared-advisor' } as SwarmAppManifest;
+    const { pool } = makePool(null, {
+      resolveThrows: true,
+      previousAgentIds: [chatId],
+      previousManifest: manifest,
+      agentNamesById: { [chatId]: 'shared-advisor' },
+    });
+
+    const rec = await new SwarmAppRepository(pool).upsert(manifest, '/deployed-apps/surface/oshal-app.yaml', []);
+
+    expect(rec.agentIds).toEqual([]);
+  });
+
+  it('preserves a singleton external worker only when its id-to-name identity is proven', async () => {
+    const workerId = 'cccc0000-0000-0000-0000-000000000001';
+    const manifest = { ...CARVED, chatBot: 'shared-advisor' } as SwarmAppManifest;
+    const { pool } = makePool(null, {
+      resolveThrows: true,
+      previousAgentIds: [workerId],
+      previousManifest: manifest,
+      agentNamesById: { [workerId]: 'movies-concierge' },
+    });
+
+    const rec = await new SwarmAppRepository(pool).upsert(manifest, '/deployed-apps/surface/oshal-app.yaml', []);
+
+    expect(rec.agentIds).toEqual([workerId]);
+  });
+
+  it('drops a missing or renamed prior id instead of falling back after negative identity proof', async () => {
+    const priorId = 'cccc0000-0000-0000-0000-000000000001';
+    const manifest = { ...CARVED, chatBot: 'shared-advisor' } as SwarmAppManifest;
+    const { pool } = makePool(null, {
+      resolveThrows: true,
+      previousAgentIds: [priorId],
+      previousManifest: manifest,
+      agentNamesById: { [priorId]: 'renamed-worker' },
+    });
+
+    const rec = await new SwarmAppRepository(pool).upsert(manifest, '/deployed-apps/surface/oshal-app.yaml', []);
+
+    expect(rec.agentIds).toEqual([]);
+  });
+
+  it('drops duplicate same-name prior ids because neither is a unique worker identity', async () => {
+    const first = 'cccc0000-0000-0000-0000-000000000001';
+    const second = 'cccc0000-0000-0000-0000-000000000002';
+    const manifest = { ...CARVED, chatBot: 'shared-advisor' } as SwarmAppManifest;
+    const { pool } = makePool(null, {
+      resolveThrows: true,
+      previousAgentIds: [first, second],
+      previousManifest: manifest,
+      agentNamesById: { [first]: 'movies-concierge', [second]: 'movies-concierge' },
+    });
+
+    const rec = await new SwarmAppRepository(pool).upsert(manifest, '/deployed-apps/surface/oshal-app.yaml', []);
+
+    expect(rec.agentIds).toEqual([]);
   });
 
   it('does not turn a surface-only framework concierge into an execution-ownership claim', async () => {

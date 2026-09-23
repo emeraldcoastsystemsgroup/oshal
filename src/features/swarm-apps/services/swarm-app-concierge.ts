@@ -5,8 +5,10 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | P8 concierge coverage contract: one trimmed selector (chatBot -> workflow.workerBot -> first bots[].name), a warn/enforce rollout mode that rejects unknown values, and a pure coverage problem builder shared by the manifest loader and its guards.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Keep metadata-only chatBot references out of durable agent_ids. That column feeds execution-ownership claims as well as discovery, so associating Ambient Recall with the framework general-bot turned a borrowed cockpit concierge into a second package owner and made generic task dispatch fail closed. Only a distinct external workflow worker remains a durable association; profile and Jarvis concierge lookup resolve the canonical name directly.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Centralize fail-closed profile identity resolution: declared bots keep their explicit id, workflow fallback stays inside executable associations, and only a distinct metadata-only chatBot may resolve globally when exactly one ACTIVE row carries the name.
  */
 
+import type { Pool } from 'pg';
 import type { SwarmAppManifest } from '../types';
 import { hasCockpitSurface } from './swarm-app-record-view';
 
@@ -56,6 +58,50 @@ export function manifestExternalAssociationNames(
   }));
   const workerName = nonBlank(manifest.workflow?.workerBot);
   return workerName && !declaredNames.has(workerName) ? [workerName] : [];
+}
+
+/** A concierge identity safe to expose in an application-scoped cockpit profile. */
+export interface ManifestConciergeAgent { agentId: string; name: string }
+
+/**
+ * @description Resolve the canonical profile concierge without conflating metadata borrowing with
+ * durable ownership. Declared bots are bound to their manifest id. Workflow fallback is restricted
+ * to associated executable ids. A distinct metadata-only chatBot is the sole global-name case and
+ * succeeds only for one ACTIVE row, so duplicate or inactive names fail closed.
+ */
+export async function resolveManifestConciergeAgent(
+  pool: Pick<Pool, 'query'>,
+  manifest: Pick<SwarmAppManifest, 'chatBot' | 'workflow' | 'bots'>,
+  associatedAgentIds: readonly string[],
+): Promise<ManifestConciergeAgent | undefined> {
+  const name = manifestConciergeName(manifest);
+  if (!name) return undefined;
+  const declared = (manifest.bots ?? []).find(bot => nonBlank(bot.name) === name);
+  const declaredId = nonBlank(declared?.agentId);
+  if (declaredId) return { agentId: declaredId, name };
+
+  const explicit = nonBlank(manifest.chatBot);
+  const worker = nonBlank(manifest.workflow?.workerBot);
+  const metadataOnlyExternal = Boolean(explicit && explicit !== worker && !declared);
+  if (!metadataOnlyExternal && associatedAgentIds.length === 0) return undefined;
+  const { rows } = metadataOnlyExternal
+    ? await pool.query<{ agent_id: string }>(
+      `SELECT agent_id FROM (
+         SELECT agent_id, COUNT(*) OVER () AS candidate_count
+         FROM agents WHERE name = $1 AND status = 'active'
+       ) candidates WHERE candidate_count = 1`,
+      [name],
+    )
+    : await pool.query<{ agent_id: string }>(
+      `SELECT agent_id FROM (
+         SELECT agent_id, COUNT(*) OVER () AS candidate_count
+         FROM agents
+         WHERE name = $1 AND status = 'active' AND agent_id = ANY($2::uuid[])
+       ) candidates WHERE candidate_count = 1`,
+      [name, associatedAgentIds],
+    );
+  const agentId = nonBlank(rows[0]?.agent_id);
+  return agentId ? { agentId, name } : undefined;
 }
 
 /**

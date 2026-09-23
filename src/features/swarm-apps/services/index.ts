@@ -76,10 +76,11 @@ export {
   CONCIERGE_COVERAGE_WARNING_MESSAGE,
   manifestConciergeName,
   manifestExternalAssociationNames,
+  resolveManifestConciergeAgent,
   resolveConciergeCoverageMode,
   conciergeCoverageProblem,
 } from './swarm-app-concierge';
-export type { ConciergeCoverageMode } from './swarm-app-concierge';
+export type { ConciergeCoverageMode, ManifestConciergeAgent } from './swarm-app-concierge';
 export {
   providedToolNames,
   dependedToolNames,

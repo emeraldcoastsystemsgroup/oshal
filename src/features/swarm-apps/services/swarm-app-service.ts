@@ -48,6 +48,7 @@
  * 42 | maintainer@emeraldcoastsystemsgroup.com   | P8 uses the canonical trimmed concierge selector for profile synthesis. An explicit external chatBot is mapped only to a repository id not owned by a declared local bot, so a failed first resolution leaves chatAgent absent instead of silently relabelling the first local bot; a resolved external concierge joins the scoped selector ahead of local bots.
  * 43 | maintainer@emeraldcoastsystemsgroup.com   | P8 separates agent association from lifecycle ownership: activate/deactivate now touches declared bots plus the legacy workflow.workerBot only when no bots are declared. A borrowed metadata-only chatBot (including group concierges) is never deactivated with the package that references it, while an explicit chatBot distinct from a no-bots workflow worker still leaves that worker lifecycle-owned. All name lookups order duplicate rows by agent_id.
  * 44 | maintainer@emeraldcoastsystemsgroup.com   | Resolve an external cockpit concierge directly by canonical name instead of requiring a durable agent_ids association. The warn rollout exposed that agent_ids also feeds application-execution ownership, so a metadata reference to general-bot cannot safely live there. The lookup remains deterministic and fail-closed; a miss never relabels a worker or local bot.
+ * 45 | maintainer@emeraldcoastsystemsgroup.com   | Fail closed on ambiguous or inactive external/fallback concierge names. A workflow fallback resolves only inside the app's executable agent_ids; only a metadata-only external chatBot may resolve globally, and then exactly one ACTIVE row must carry the name. A declared local concierge stays pinned directly to its explicit manifest agentId, so a lower-id namesake cannot shadow it.
  */
 
 import type { Pool } from 'pg';
@@ -92,7 +93,7 @@ import {
 } from './swarm-app-group';
 import { lockUndiscoverableTiles, openableDefaultView, type RibbonTileDiscovery, type RibbonTileLock } from './swarm-app-tile-discoverability';
 import { readManifest, listManifestFiles, serializeManifest } from './swarm-app-loader';
-import { manifestConciergeName } from './swarm-app-concierge';
+import { manifestConciergeName, resolveManifestConciergeAgent } from './swarm-app-concierge';
 import { firstAppIcon, isVisibleToCaller, maySeeOwnerIdentity, toSummary, type SummaryViewer } from './swarm-app-record-view';
 import {
   interpolate,
@@ -807,34 +808,24 @@ export class SwarmAppService {
 
     // The canonical right-rail concierge: explicit chatBot, then workflow worker, then the first
     // declared bot. Trimming and precedence live in one helper shared with load-time coverage.
-    const chatBotName = manifestConciergeName(manifest);
     const declaredBots = manifest.bots ?? [];
-    const primaryBot = declaredBots.find(b => b.name.trim() === chatBotName);
-    let chatAgent = primaryBot?.agentId ? { agentId: primaryBot.agentId, name: primaryBot.name } : undefined;
+    let chatAgent: { agentId: string; name: string } | undefined;
+    try {
+      chatAgent = await resolveManifestConciergeAgent(this.pool, manifest, record.agentIds);
+    } catch (err) {
+      logger.warn(
+        { err, app: record.name, chatBot: manifestConciergeName(manifest) },
+        'External chatBot lookup failed during profile synthesis',
+      );
+    }
 
     // Every bot the app declares. A resolved external concierge is prepended below.
     let chatBots = declaredBots
       .filter((b): b is typeof b & { agentId: string } => typeof b.agentId === 'string' && b.agentId.length > 0)
       .map(b => ({ agentId: b.agentId, name: b.name }));
 
-    // A metadata-only chatBot is deliberately not persisted in record.agentIds: that association
-    // column also feeds execution-ownership claims, and borrowing a framework/member concierge is
-    // not ownership. Resolve its canonical name directly and deterministically. A miss leaves the
-    // field absent rather than relabelling a workflow worker or the first local bot.
-    if (!chatAgent && chatBotName) {
-      try {
-        const { rows } = await this.pool.query<{ agent_id: string }>(
-          'SELECT agent_id FROM agents WHERE name = $1 ORDER BY agent_id LIMIT 1',
-          [chatBotName],
-        );
-        const externalAgentId = rows[0]?.agent_id?.trim();
-        if (externalAgentId) {
-          chatAgent = { agentId: externalAgentId, name: chatBotName };
-          chatBots = [chatAgent, ...chatBots.filter(bot => bot.agentId !== externalAgentId)];
-        }
-      } catch (err) {
-        logger.warn({ err, app: record.name, chatBot: chatBotName }, 'External chatBot lookup failed during profile synthesis');
-      }
+    if (chatAgent && !chatBots.some(bot => bot.agentId === chatAgent.agentId)) {
+      chatBots = [chatAgent, ...chatBots];
     }
 
     // ADR-085 package-bundled skin: when the app ships ui/<theme>.css beside its

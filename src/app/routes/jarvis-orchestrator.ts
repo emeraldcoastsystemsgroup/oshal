@@ -29,6 +29,8 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com | runJarvisBot names WHICH rung of the ladder produced the connection it threads (byoLlmResolutionSource, controller-side only): the chokepoint keys the same-endpoint retry and the operator's hot fallback on 'explicit' alone, so a free-tier or operator-key lane Jarvis threads keeps its single attempt and rotates here as before. The turn's result now carries the brainFallback marker so the surface can say a fallback rung answered.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | Dynamic app discovery resolves the canonical manifest concierge by name among the app's associated agent_ids instead of trusting agent_ids[1]. This makes a missing external chatBot fail closed rather than routing Jarvis to a distinct worker/local bot, while a deterministic lateral ORDER BY handles duplicate agent names.
  * 13 | maintainer@emeraldcoastsystemsgroup.com | Resolve the canonical concierge by name without manufacturing an agent_ids association for a metadata-only chatBot. Live P8 rollout proved agent_ids also feeds execution ownership, so borrowing general-bot for a right rail cannot add the referencing surface as a bot owner. A missing named agent still yields NULL and skips the dynamic route; duplicate names remain deterministic.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com | Fail closed on inactive and duplicate-name concierge rows. A declared bot or workflow fallback must be the sole ACTIVE matching agent inside the app's executable agent_ids; only a metadata-only external chatBot may resolve outside that array, and only when exactly one ACTIVE global row owns the name. This keeps an unrelated lower-id name shadow from replacing a manifest's explicit agent id.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com | A dynamically discovered borrowed-concierge route must be discoverable as BOTH the referencing application and the distinct bot-owning application. Checking only owner('bots', id) let a protected surface inherit a shared concierge owner's grant, leaking its name/deep link and, in delegate mode, execution reach. Curated routes retain their historical owner-or-key rule because their keys need not be registered applications.
  *
  * @module jarvis-orchestrator
  */
@@ -503,6 +505,7 @@ export async function loadEffectiveRoutes(ctx: AppContext): Promise<{ routes: Ap
   // handoff chips never point at it.
   const routes: AppRoute[] = APP_ROUTES.filter((r) => isBotAccessibleTo(r.agentId, 'jarvis'));
   const have = new Set(routes.map((r) => r.key));
+  const dynamicKeys = new Set<string>();
   try {
     const rows = (await ctx.pool.query(
       `SELECT sa.name, sa.display_name, a.agent_id,
@@ -510,16 +513,62 @@ export async function loadEffectiveRoutes(ctx: AppContext): Promise<{ routes: Ap
               a.metadata->>'jarvisMode' AS jarvis_mode
        FROM swarm_applications sa
        LEFT JOIN LATERAL (
-         SELECT candidate.agent_id, candidate.computed_selector_descriptor,
-                candidate.base_selector_descriptor, candidate.metadata
-         FROM agents candidate
-         WHERE candidate.name = COALESCE(
+         SELECT
+           CASE WHEN jsonb_typeof(sa.manifest->'chatBot') = 'string'
+             THEN NULLIF(BTRIM(sa.manifest->>'chatBot'), '') END AS explicit_chat,
+           CASE WHEN jsonb_typeof(sa.manifest->'workflow'->'workerBot') = 'string'
+             THEN NULLIF(BTRIM(sa.manifest->'workflow'->>'workerBot'), '') END AS worker_bot,
+           COALESCE(
              CASE WHEN jsonb_typeof(sa.manifest->'chatBot') = 'string'
                THEN NULLIF(BTRIM(sa.manifest->>'chatBot'), '') END,
              CASE WHEN jsonb_typeof(sa.manifest->'workflow'->'workerBot') = 'string'
                THEN NULLIF(BTRIM(sa.manifest->'workflow'->>'workerBot'), '') END,
              CASE WHEN jsonb_typeof(sa.manifest->'bots'->0->'name') = 'string'
                THEN NULLIF(BTRIM(sa.manifest->'bots'->0->>'name'), '') END
+           ) AS concierge_name
+       ) selected ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT EXISTS (
+           SELECT 1
+           FROM jsonb_array_elements(
+             CASE WHEN jsonb_typeof(sa.manifest->'bots') = 'array'
+               THEN sa.manifest->'bots' ELSE '[]'::jsonb END
+           ) declared_bot
+           WHERE jsonb_typeof(declared_bot->'name') = 'string'
+             AND NULLIF(BTRIM(declared_bot->>'name'), '') = selected.explicit_chat
+         ) AS explicit_chat_is_declared
+       ) binding ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT candidate.agent_id, candidate.computed_selector_descriptor,
+                candidate.base_selector_descriptor, candidate.metadata
+         FROM agents candidate
+         WHERE candidate.status = 'active'
+           AND candidate.name = selected.concierge_name
+           AND (
+             (
+               candidate.agent_id = ANY(sa.agent_ids)
+               AND (
+                 selected.explicit_chat IS NULL
+                 OR selected.explicit_chat = selected.worker_bot
+                 OR binding.explicit_chat_is_declared
+               )
+               AND 1 = (
+                 SELECT COUNT(*) FROM agents associated
+                 WHERE associated.status = 'active'
+                   AND associated.name = selected.concierge_name
+                   AND associated.agent_id = ANY(sa.agent_ids)
+               )
+             )
+             OR (
+               selected.explicit_chat IS NOT NULL
+               AND selected.explicit_chat IS DISTINCT FROM selected.worker_bot
+               AND NOT binding.explicit_chat_is_declared
+               AND 1 = (
+                 SELECT COUNT(*) FROM agents unique_candidate
+                 WHERE unique_candidate.status = 'active'
+                   AND unique_candidate.name = selected.concierge_name
+               )
+             )
            )
          ORDER BY candidate.agent_id
          LIMIT 1
@@ -546,12 +595,21 @@ export async function loadEffectiveRoutes(ctx: AppContext): Promise<{ routes: Ap
         deepLink: `/cockpit/?app=${r.name}`,
       });
       have.add(r.name);
+      dynamicKeys.add(r.name);
     }
   } catch (err) {
     logger.warn({ err }, 'Jarvis dynamic route discovery failed — using curated catalog only');
   }
-  const visibility = ctx.applicationAuthorization ? await Promise.all(routes.map(route =>
-    ctx.applicationAuthorization!.canDiscover(ctx.applicationAuthorization!.owner('bots', route.agentId) ?? route.key))) : routes.map(() => true);
+  const visibility = ctx.applicationAuthorization ? await Promise.all(routes.map(async route => {
+    const botOwner = ctx.applicationAuthorization!.owner('bots', route.agentId);
+    if (!dynamicKeys.has(route.key)) {
+      return ctx.applicationAuthorization!.canDiscover(botOwner ?? route.key);
+    }
+    if (!await ctx.applicationAuthorization!.canDiscover(route.key)) return false;
+    return !botOwner || botOwner === route.key
+      ? true
+      : ctx.applicationAuthorization!.canDiscover(botOwner);
+  })) : routes.map(() => true);
   const visible = routes.filter((_route, index) => visibility[index]);
   return { routes: visible, byKey: new Map(visible.map((r) => [r.key, r])) };
 }
