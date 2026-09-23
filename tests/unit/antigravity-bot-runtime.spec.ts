@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Pin agy's sandbox flag beside the exact task workspace. Headless request-review cannot ask about commands, while --dangerously-skip-permissions would approve tools beyond the task boundary; the vendor sandbox is the autonomous task-scoped rail.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Pin accept-edits mode so headless task bots may write deliverables inside the declared workspace. Request-review cannot prompt for write_file, and the test continues to prohibit the global dangerous permission bypass.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Prove call-time MCP provisioning is invocation-scoped, carries exact controller bindings through environment rather than the prompt, adopts only the existing login files, and removes the temporary Antigravity home.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Pin the invocation-only MCP permission grant required by Antigravity headless mode without allowing arbitrary MCP servers or terminal commands.
  */
 
 import { EventEmitter } from 'node:events';
@@ -82,6 +83,8 @@ describe('Antigravity bot-node wrapper', () => {
       const config = JSON.parse(fs.readFileSync(path.join(home, '.gemini', 'config', 'mcp_config.json'), 'utf8'));
       expect(config).toEqual({ mcpServers: { 'oshal-tools': { command: 'node',
         args: [path.resolve('scripts/oshal-tools-mcp.js')], disabled: false } } });
+      const settings = JSON.parse(fs.readFileSync(path.join(home, '.gemini', 'antigravity-cli', 'settings.json'), 'utf8'));
+      expect(settings).toEqual({ permissions: { allow: ['mcp(oshal-tools/*)'] } });
       expect(fs.readFileSync(path.join(home, '.gemini', 'antigravity-cli', 'antigravity-oauth-token'), 'utf8')).toBe('fixture-token');
       expect(scope.env).toMatchObject({ OSHAL_API_BASE: 'http://controller.fixture:5000', OSHAL_AGENT_ID: 'career-bot',
         OSHAL_TASK_ID: 'task-folder', OSHAL_USER_SUB: 'operator-sub', OSHAL_APPLICATION_EXECUTION_ID: 'execution-id',
