@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | P8 concierge coverage contract: one trimmed selector (chatBot -> workflow.workerBot -> first bots[].name), a warn/enforce rollout mode that rejects unknown values, and a pure coverage problem builder shared by the manifest loader and its guards.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Keep metadata-only chatBot references out of durable agent_ids. That column feeds execution-ownership claims as well as discovery, so associating Ambient Recall with the framework general-bot turned a borrowed cockpit concierge into a second package owner and made generic task dispatch fail closed. Only a distinct external workflow worker remains a durable association; profile and Jarvis concierge lookup resolve the canonical name directly.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Centralize fail-closed profile identity resolution: declared bots keep their explicit id, workflow fallback stays inside executable associations, and only a distinct metadata-only chatBot may resolve globally when exactly one ACTIVE row carries the name.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Complete the P8 rollout by making concierge coverage enforce-by-default. The store corpus is backfilled and live-verified, so an unset mode now refuses a surfaced package without a concierge; `warn` remains an explicit temporary observation/rollback posture and unknown values still fail closed.
  */
 
 import type { Pool } from 'pg';
@@ -105,8 +106,8 @@ export async function resolveManifestConciergeAgent(
 }
 
 /**
- * @description Resolve OSHAL_CONCIERGE_COVERAGE_MODE with the migration-safe warn default while
- * rejecting unknown values. A misspelled enforcement setting must not silently weaken loading.
+ * @description Resolve OSHAL_CONCIERGE_COVERAGE_MODE with the fail-closed enforce default while
+ * retaining warn as an explicit observation posture and rejecting unknown values.
  * @param value - Explicit value or the current process environment value.
  * @returns The normalized coverage mode.
  * @throws When the configured value is neither warn nor enforce.
@@ -114,7 +115,7 @@ export async function resolveManifestConciergeAgent(
 export function resolveConciergeCoverageMode(
   value: unknown = process.env.OSHAL_CONCIERGE_COVERAGE_MODE,
 ): ConciergeCoverageMode {
-  const normalized = String(value ?? '').trim().toLowerCase() || 'warn';
+  const normalized = String(value ?? '').trim().toLowerCase() || 'enforce';
   if (normalized !== 'warn' && normalized !== 'enforce') {
     throw new Error('OSHAL_CONCIERGE_COVERAGE_MODE must be warn or enforce');
   }

@@ -15,6 +15,7 @@
 # 11 | maintainer@emeraldcoastsystemsgroup.com   | The Postgres wait probe can no longer hang the api. It had no connect or query timeout, so on the first live 0.5.0 upgrade — which restarts oshal-db-0 and the api together — the probe opened a connection seconds before the database pod was replaced and then sat on that dead socket for about four minutes, while the retry loop that was meant to cover exactly this never ran. Each attempt is now bounded three ways: pg's connectionTimeoutMillis and query_timeout (5s each), and the image's own timeout(1) at 15s as the outer bound.
 # 12 | maintainer@emeraldcoastsystemsgroup.com   | Pods roll when the shared config they read changes. Found live: `helm upgrade --set infra.arangodb.inCluster=true` put ARANGO_URL back in oshal-shared-env, but nothing in the pod template changed, so the api kept running with ARANGO_URL unset and /api/graph kept answering 503 until a manual restart. checksum/* annotations hash the rendered ConfigMap/Secret templates, so any change to them is a pod-template change.
 # 13 | maintainer@emeraldcoastsystemsgroup.com   | P8 renders api.conciergeCoverageMode as OSHAL_CONCIERGE_COVERAGE_MODE on the controller, giving Kubernetes the same warn-to-enforce rollout control as compose.
+# 14 | maintainer@emeraldcoastsystemsgroup.com   | P8 rollout close-out: the rendered first-class value now inherits Helm's enforce default while preserving an explicit warn override.
 {{- if eq .Values.role "main" }}
 apiVersion: v1
 kind: PersistentVolumeClaim

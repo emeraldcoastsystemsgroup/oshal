@@ -26,6 +26,7 @@
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | readManifest refuses two more silently-degrading workflow shapes (CKR-11 / D4). `pipeline: graph` with no processDefinition has no graph to execute, so every ticket of that type escalates on arrival; and a workflow with no workerBot and no executable graph falls through to the 7-phase 'swarm' decompose pipeline, which is both wrong and expensive. Refused at load rather than at dispatch, because by dispatch a ticket exists and a person is waiting on it. Audited before landing: every workflow in the ten core manifests and all 61 store packages declares a workerBot, and print-ingest was the only manifest in either trunk with the graph-without-definition shape - fixed in the store first. Extracted to a helper and corrected after review: the definition check reads processDefinition.nodeGraph rather than the object's truthiness, because the engine walks nodeGraph and an empty object would have loaded here and escalated at dispatch anyway; and a near-miss pipeline spelling ('graph ', 'Graph') is refused, because this function trims while the router compares exactly, so accepting one would bless a value the router sends to manifest-worker - the very degradation being fixed.
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six, and it is where an installed store package is discovered.
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | P8 concierge coverage: every manifest read resolves the fail-closed OSHAL_CONCIERGE_COVERAGE_MODE. A package with a real cockpit surface and no canonical concierge emits one stable structured warning in the migration default (`warn`) or fails the load in `enforce`; there is no package-name allowlist.
+ * 23 | maintainer@emeraldcoastsystemsgroup.com   | Complete the P8 rollout after the store backfill: surfaced packages without a canonical concierge now fail under the unset `enforce` default; `warn` remains an explicit temporary observation/rollback posture.
  */
 
 import { validateBriefingDeclarations } from '@/shared/briefings';
@@ -902,8 +903,8 @@ export function readManifest(manifestPath: string): SwarmAppManifest {
   }
 
   // P8: anything the cockpit can open needs an accountable conversational entry point. The
-  // rollout begins warn-only while the store is backfilled, then flips to enforce with no
-  // allowlist. `hasCockpitSurface` is the sole surface definition, shared with app listings.
+  // The completed rollout is enforce-by-default with no allowlist; `warn` is an explicit
+  // temporary observation posture. `hasCockpitSurface` is shared with app listings.
   const conciergeCoverageError = conciergeCoverageProblem(manifest, absPath);
   if (conciergeCoverageError) {
     if (conciergeCoverageMode === 'enforce') throw new Error(conciergeCoverageError);

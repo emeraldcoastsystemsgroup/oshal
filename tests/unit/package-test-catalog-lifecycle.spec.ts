@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Verify declarative registration through actual activation and HTTP boundaries without executing package suites.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Keep the surfaced member/group fixtures valid under P8 enforcement by assigning their shared member concierge; Test Lab aggregation remains the behavior under test.
  */
 import express from 'express';
 import type { Server } from 'node:http';
@@ -171,10 +172,12 @@ it('has no orphan cases when a completed package is replaced by a failing activa
 
 it('aggregates a code-free group through member case references without copying cases', async () => {
   const member = packageManifest();
+  member.chatBot = 'catalog-fixture-concierge';
   member.ui = { static: [{ toolName: 'member-home', label: 'Member', icon: 'codicon codicon-home', iframeUrl: '/api/catalog-fixture/home' }] };
   member.readiness = [{ name: 'ready', path: '/api/catalog-fixture/state', readyPointer: '/ready' }];
   await service.loadApp(writeTestPackage(root, member).file);
   const group: SwarmAppManifest = { name: 'group-fixture', displayName: 'Group', version: '1.0.0', status: 'active', suite: 'ai-home', kind: 'group',
+    chatBot: 'catalog-fixture-concierge',
     dependencies: { apps: ['catalog-fixture'] },
     toolbar: [{ app: 'catalog-fixture', surface: 'member-home' }], setup: [{ label: 'Set up member', app: 'catalog-fixture', readiness: 'ready', fix: 'member-home' }] };
   await service.loadApp(writeTestPackage(root, group).file);

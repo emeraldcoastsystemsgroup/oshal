@@ -14,6 +14,7 @@
  * 2026-09-17 00:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin PERSON_MODEL_RELATED_SIMILARITY_FLOOR — the ADR-100 related-hit relevance floor. Unforwarded it runs on its compiled-in default and an operator retuning it for their own corpus is silently ignored.
  * 2026-09-17 00:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin JARVIS_SELECTOR_SHADOW: the shadow step exists so a narrower tool selector can be judged on REAL traffic, and unforwarded it would be armed in .env and measure nothing — the failure would look like the candidate simply never firing.
  * 2026-09-23 00:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin OSHAL_CONCIERGE_COVERAGE_MODE to the controller: an unforwarded enforce setting leaves the P8 manifest gate in its warn default while the operator believes the package corpus is fail-closed.
+ * 2026-09-23 18:45:00 | maintainer@emeraldcoastsystemsgroup.com   | P8 rollout close-out: the gate now defaults to enforce, and forwarding remains necessary so an explicit temporary warn override reaches the controller.
  */
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';

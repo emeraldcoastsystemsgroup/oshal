@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove the Home plan admits an installed application only through current application policy, converging with workspace discovery across grant, revocation and explicit coarse deny.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Pin the guest outcome: a guest session keeps the unprotected framework application and never receives the protected one, even while a current grant on it exists. Red without the degrade - the route answers 401 and Home renders its read-failure copy.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Use the issuer-qualified coarse-access port in the Home and workspace fixture.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Give every surfaced Home fixture a canonical concierge so P8 enforcement does not mask the authorization behavior under test.
  */
 /** Real Express, package loading and authorization; only persistence, identity and coarse access are isolated doubles. */
 import express, { type Request, type RequestHandler } from 'express';
@@ -50,6 +51,7 @@ let records: Map<string, SwarmApplicationRecord>, denyCoarse: Set<string>;
 function manifest(overrides: Partial<SwarmAppManifest> = {}): SwarmAppManifest {
   const name = overrides.name ?? APP;
   return { name, displayName: `Fixture ${name}`, version: '1.0.0', status: 'active', suite: 'ai-home',
+    chatBot: `${name}-concierge`,
     theme: 'workspace', uses: ['application-authorization'],
     access: { supported: ['deny', 'viewer', 'editor', 'admin'], defaultTier: 'admin' },
     authorization: { version: 1, catalog: 'authorization.yaml' },

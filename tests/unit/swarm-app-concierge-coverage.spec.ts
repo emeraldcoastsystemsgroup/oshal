@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | P8 executable manifest contract: canonical trimmed selector precedence and ordered external associations; warn/enforce behavior for static, non-empty dynamic and group cockpit surfaces; assistant-only/headless/empty UI exclusions; one stable warning per read; fail-closed invalid deployment mode; and the core person-model concierge's real Jarvis reachability.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | A metadata-only external chatBot is not a durable agent association. agent_ids participates in execution ownership, so only an external workflow worker belongs there; cockpit and Jarvis resolve borrowed concierges directly by name.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | P8 rollout close-out: pin enforce as the unset/blank default and prove a surfaced manifest is rejected without an explicit mode, while retaining explicit warn-mode observability.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -145,12 +146,21 @@ describe('canonical manifest concierge selector', () => {
 });
 
 describe('readManifest P8 cockpit coverage', () => {
-  it('defaults to warn, normalizes configured values, and fails closed on an invalid mode', () => {
-    expect(resolveConciergeCoverageMode(undefined)).toBe('warn');
+  it('defaults to enforce, normalizes configured values, and fails closed on an invalid mode', () => {
+    expect(resolveConciergeCoverageMode(undefined)).toBe('enforce');
+    expect(resolveConciergeCoverageMode('')).toBe('enforce');
     expect(resolveConciergeCoverageMode(' ENFORCE ')).toBe('enforce');
     expect(() => resolveConciergeCoverageMode('observe')).toThrow(
       'OSHAL_CONCIERGE_COVERAGE_MODE must be warn or enforce',
     );
+  });
+
+  it('rejects a surfaced package when the deployment mode is unset', () => {
+    vi.stubEnv('OSHAL_CONCIERGE_COVERAGE_MODE', '');
+    const file = writeManifest(preamble() + staticSurface);
+
+    expect(() => readManifest(file)).toThrow(/requires a concierge/);
+    expect(logging.warn).not.toHaveBeenCalled();
   });
 
   it('loads in warn mode and emits exactly one stable structured warning per violating read', () => {

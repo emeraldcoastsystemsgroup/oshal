@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Dependency tiers: the shared CLI/runtime contract (required vs optional, the legacy flat form as all-required, every refusal), the real loader failing closed on a malformed block, group members as required apps, optional tools never failing a load, and the real SwarmAppService blocking an uninstall only on REQUIRED dependents while reporting optional ones and deriving the connector allow-list from both tiers.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep the surfaced group fixture valid under P8's enforce-by-default concierge contract so this suite continues to isolate required-versus-optional membership validation.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -95,7 +96,7 @@ describe('the loader and the runtime consumers', () => {
   });
 
   it('takes a group\'s members from its REQUIRED apps; an optional app is not a member', () => {
-    const base = 'name: g\ndisplayName: G\nkind: group\ndependencies:\n  required:\n    apps: [m1]\n  optional:\n    apps: [m2]\n';
+    const base = 'name: g\ndisplayName: G\nkind: group\nchatBot: m1-concierge\ndependencies:\n  required:\n    apps: [m1]\n  optional:\n    apps: [m2]\n';
     expect(readManifest(writeManifest(`${base}toolbar:\n  - { app: m1, surface: m1-home }\n`)).kind).toBe('group');
     expect(() => readManifest(writeManifest(`${base}toolbar:\n  - { app: m2, surface: m2-home }\n`)))
       .toThrow(/toolbar\[0\]\.app "m2" is not a member \(required apps: m1\)/);
