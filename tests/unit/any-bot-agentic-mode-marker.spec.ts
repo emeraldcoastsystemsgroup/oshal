@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the explicit agentic-mode marker (BACKLOG "BYO / free-tier connections bypass the agentic loop"): options.toolLess / OSHAL_TOOL_LESS must drive processMessage routing, with the legacy !byoLlm derivation only when the marker is absent, and the direct path must surface toolLess: true on its response.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Exercise the request-scoped tool-registry contract and prove the tool-less direct path advertises an exact empty capability set.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Prove AgenticController's direct facade resolves the live configured provider on every call. Protected queued reasoning uses TaskController's direct path, so the provider router must itself implement generateResponse instead of being mistaken for an unavailable direct LLM.
  */
 
 import { createRequire } from 'node:module';
@@ -23,6 +24,11 @@ const TaskController = requireModule('../../any-bot/server/controllers/TaskContr
       options?: Record<string, unknown>,
     ): Promise<Record<string, unknown>>;
   };
+};
+const AgenticController = requireModule('../../any-bot/server/controllers/AgenticController.js') as new (
+  providers: Record<string, unknown>, tools: object, stream: object,
+) => {
+  generateResponse(messages: unknown[], options?: Record<string, unknown>): Promise<Record<string, unknown>>;
 };
 
 interface ControllerStub {
@@ -168,5 +174,33 @@ describe('any-bot explicit agentic-mode marker', () => {
       expect(controller.directCalls).toBe(0);
       expect(result).toMatchObject({ path: 'agentic' });
     });
+  });
+});
+
+describe('configured-provider direct facade', () => {
+  it('delegates each direct turn to the provider selected at call time', async () => {
+    const calls: string[] = [];
+    let selected = 'antigravity-cli';
+    const provider = (name: string) => ({
+      generateResponse: async (_messages: unknown[], options: Record<string, unknown>) => {
+        calls.push(`${name}:${String(options.source)}`);
+        return { content: `${name} answer`, provider: name, model: `${name}-model` };
+      },
+    });
+    const controller = new AgenticController({
+      bedrockProvider: null,
+      clineProvider: provider('cline-cli'),
+      claudeCodeProvider: provider('claude-code'),
+      codexProvider: provider('openai-codex'),
+      antigravityProvider: provider('antigravity-cli'),
+      getCurrentProvider: () => selected,
+    }, {}, {});
+
+    await expect(controller.generateResponse([{ role: 'user', content: 'first' }], { source: 'protected' }))
+      .resolves.toMatchObject({ content: 'antigravity-cli answer', provider: 'antigravity-cli' });
+    selected = 'openai-codex';
+    await expect(controller.generateResponse([{ role: 'user', content: 'second' }], { source: 'protected' }))
+      .resolves.toMatchObject({ content: 'openai-codex answer', provider: 'openai-codex' });
+    expect(calls).toEqual(['antigravity-cli:protected', 'openai-codex:protected']);
   });
 });

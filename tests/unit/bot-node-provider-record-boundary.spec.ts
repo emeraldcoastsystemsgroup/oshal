@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pin exact owner preservation and fail-closed malformed-subject handling at the bot-node request boundary.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Align accountability fixtures with the hosted-provider boundary; generic runtime credentials are no longer forwarded without a deterministic provider operation.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Preserve validated authoritative provider-config provenance through the production HTTP response boundary.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Refuse TaskController failures and empty successful results. Neither may cross the bot-node boundary as success=true with an empty response, which previously let the queue close protected Career/stock tickets without an answer.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -15,6 +16,31 @@ import { buildBotNodeHttpResponse } from '../../src/app/bot-node-http-response';
 import { normalizeBotNodeUserSub, sanitizeBotNodeCreds } from '../../src/app/bot-node-request-scope';
 
 describe('bot-node structured provider evidence boundary', () => {
+  it.each([
+    ['reported failure', { success: false, error: 'direct_mode_unsupported', messages: [] }, 'direct_mode_unsupported'],
+    ['empty success', { success: true, messages: [] }, 'Any-bot execution returned no readable output'],
+  ])('fails closed on %s instead of returning an empty successful response', async (_label, processResult, expected) => {
+    const handler = createBotNodeExecutionHandler({
+      anyBotTaskController: {
+        getTask: vi.fn(async () => ({ id: 'ticket-empty' })),
+        createTask: vi.fn(async () => ({ id: 'ticket-empty' })),
+        processMessage: vi.fn(async () => processResult),
+      },
+      providerName: 'test-provider',
+      modelName: 'test-model',
+    });
+
+    const result = await handler({
+      correlationId: 'correlation-empty',
+      fromAgentId: 'swarm-controller',
+      toAgentId: 'general-bot',
+      channel: 'swarm.agent.general-bot',
+      payload: { text: 'Answer this.', direct: true, workspaceTaskId: 'ticket-empty' },
+    });
+
+    expect(result).toEqual({ success: false, error: expected });
+  });
+
   it('forwards owner scoping to the runtime and returns captured records out of band', async () => {
     const providerRecord = {
       schemaVersion: 1,

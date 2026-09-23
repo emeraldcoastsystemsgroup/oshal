@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 audit: revalidate captured handler generations immediately before provider and tool execution.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: bind MCP handler attestations to the exact request user, agent, task, tool allowlist, and operation scopes already authorized at dispatch.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Dispatch the fourth native bot runtime, antigravity-cli, through its injected provider without changing existing defaults.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Expose the configured-provider router as a direct generateResponse facade. Protected queued work is deliberately reasoning-only, so TaskController takes its direct path; the bot-node runtime passes this router as that path's LLM, and without the facade every configured CLI brain returned direct_mode_unsupported before reaching its provider. Delegation resolves the live configured provider at call time, preserving one provider-selection path across direct and agentic execution.
  */
 
 /**
@@ -117,6 +118,19 @@ class AgenticController {
       return this.clineProvider;
     }
     return this.bedrockProvider;
+  }
+
+  /**
+   * Run one direct reasoning turn through the same live provider selection used by the agentic
+   * loop. TaskController uses this facade for reasoning-only calls (notably protected application
+   * execution), so a runtime switch remains authoritative without duplicating provider policy.
+   */
+  async generateResponse(messages, options = {}) {
+    const provider = this.getActiveProvider(options.source);
+    if (!provider || typeof provider.generateResponse !== 'function') {
+      throw new Error(`Configured provider '${this.getCurrentProvider()}' is unavailable for direct inference`);
+    }
+    return provider.generateResponse(messages, options);
   }
 
   /**
