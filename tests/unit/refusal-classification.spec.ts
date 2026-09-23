@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1   | maintainer@emeraldcoastsystemsgroup.com   | Lock every source-derived refusal token to one reviewed Stage 3 disposition and fail for both new unclassified emitters and stale inventory entries.
  * 2   | maintainer@emeraldcoastsystemsgroup.com   | Cover every tracked executable production JS/TS-family source and inline HTML script, including JSX/template literals while excluding in-tree test files and inventory self-seeding.
+ * 3   | maintainer@emeraldcoastsystemsgroup.com   | Inventory literal RefusalError constructor codes independently of the suffix heuristic so a new typed refusal cannot evade disposition review by naming shape.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -29,6 +30,7 @@ const REFUSAL_CODE_PATTERN = /(?<![a-z_])([a-z_]+_(?:required|denied|refused|for
 function sourceRefusalCodeCensus(): {
   codes: Set<string>;
   inlineHtmlCodes: Set<string>;
+  typedRefusalCodes: Set<string>;
   parseDiagnostics: string[];
 } {
   const tracked = execFileSync('git', ['ls-files', 'src/**'], { cwd: ROOT, encoding: 'utf8' })
@@ -38,6 +40,7 @@ function sourceRefusalCodeCensus(): {
     .filter(file => !EXCLUDED_INVENTORY_SOURCES.has(file));
   const codes = new Set<string>();
   const inlineHtmlCodes = new Set<string>();
+  const typedRefusalCodes = new Set<string>();
   const parseDiagnostics: string[] = [];
   const inspectText = (text: string, localCodes?: Set<string>): void => {
     for (const match of text.matchAll(REFUSAL_CODE_PATTERN)) {
@@ -51,6 +54,16 @@ function sourceRefusalCodeCensus(): {
       parseDiagnostics.push(`${file}:${diagnostic.start ?? 0}:${diagnostic.messageText}`);
     }
     const visit = (node: ts.Node): void => {
+      if (ts.isNewExpression(node)
+        && ts.isIdentifier(node.expression)
+        && node.expression.text === 'RefusalError') {
+        const code = node.arguments?.[0];
+        if (code && (ts.isStringLiteral(code) || ts.isNoSubstitutionTemplateLiteral(code))) {
+          typedRefusalCodes.add(code.text);
+          codes.add(code.text);
+          localCodes?.add(code.text);
+        }
+      }
       if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) inspectText(node.text, localCodes);
       else if (ts.isTemplateExpression(node)) {
         inspectText(node.head.text, localCodes);
@@ -76,13 +89,13 @@ function sourceRefusalCodeCensus(): {
       inspectSource(`${file}#inline-${index++}.js`, match[2], inlineHtmlCodes);
     }
   }
-  return { codes, inlineHtmlCodes, parseDiagnostics };
+  return { codes, inlineHtmlCodes, typedRefusalCodes, parseDiagnostics };
 }
 
 const dispositions = Object.keys(REFUSAL_CODES_BY_DISPOSITION).sort() as RefusalDisposition[];
 const classifiedCodes = Object.values(REFUSAL_CODES_BY_DISPOSITION).flat();
 const classified = new Set<string>(classifiedCodes);
-const { codes: census, inlineHtmlCodes, parseDiagnostics } = sourceRefusalCodeCensus();
+const { codes: census, inlineHtmlCodes, typedRefusalCodes, parseDiagnostics } = sourceRefusalCodeCensus();
 
 describe('source-derived refusal disposition inventory', () => {
   it('holds exactly the six reviewed groups and all 151 unique tokens', () => {
@@ -125,6 +138,17 @@ describe('source-derived refusal disposition inventory', () => {
   it('fails when a production code has not been classified', () => {
     const unclassified = [...census].filter(code => !classified.has(code)).sort();
     expect(unclassified, 'classify every new source refusal token').toEqual([]);
+  });
+
+  it('classifies every literal typed refusal even when its name would evade the suffix heuristic', () => {
+    expect([...typedRefusalCodes]).toEqual(expect.arrayContaining([
+      'authorization_recorded_delegation_required',
+      'authorization_remote_dispatch_required',
+      'authorization_result_persistence_required',
+      'protected_result_owner_issuer_required',
+    ]));
+    expect([...typedRefusalCodes].filter(code => !classified.has(code)).sort(),
+      'classify every RefusalError constructor code').toEqual([]);
   });
 
   it('fails when the inventory retains a code no longer present in production source', () => {

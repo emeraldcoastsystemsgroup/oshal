@@ -68,6 +68,7 @@
  * 61 | maintainer@emeraldcoastsystemsgroup.com   | The /api/agents runtime + fleet-default switch mounts move to routes/agent-provider-mount.ts (this file crossed 800 code lines): the runtime routes take the switch seams (resolver, catalog, post-write snapshot refresh) and the fleet-default routes run over a ProviderSwitchStore on the GUC-wrapped pool, so the table's operator-only policy applies to the browser session that writes.
  * 62 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six, and it is the root every TaskFolderService write lands under.
  * 63 | maintainer@emeraldcoastsystemsgroup.com   | Queue workers now resolve the ticket owner's brain through resolveUserBrain, the same configuration ladder Jarvis uses, instead of bypassing the selected provider through a hosted-only resolver.
+ * 64 | maintainer@emeraldcoastsystemsgroup.com   | Treat dead-letter tickets as terminal when stale swarm envelopes are inspected, including immediate deterministic-refusal quarantine.
  */
 
 import type { Pool } from 'pg';
@@ -591,7 +592,7 @@ export function createSwarmExtensionBindings(
           [ticketId],
         );
         const status = result.rows[0]?.status as string | undefined;
-        return status === 'complete' || status === 'escalated';
+        return status === 'complete' || status === 'escalated' || status === 'dead_letter';
       }
     : undefined;
 
@@ -903,12 +904,13 @@ export function createSwarmExtensionBindings(
     queueManagerService.setAutoApplyGate(
       new SelfHealAutoApplyEngine(ticketService, createSelfHealRemediationExecutor()),
     );
-    // Queue DLQ (migration 081): persisted poison-ticket policy. Records failed dispatch
-    // cycles (via the rollback hook) + system escalation cycles (via its own ticketEvents
-    // listener — start() attaches exactly this one instance) and quarantines at
-    // QM_MAX_ATTEMPTS into terminal 'dead_letter'. Fail-open like BudgetService: a null
-    // pool / missing table never quarantines and never bricks dispatch. Operator alerts
-    // fan out on topic 'queue-dlq' through the notification-center router (pool required).
+    // Queue DLQ (migrations 081 and 156): persisted quarantine policy. Records failed
+    // dispatch cycles (via the rollback hook) + system escalation cycles (via its own
+    // ticketEvents listener — start() attaches exactly this one instance), quarantines
+    // exhausted retries at QM_MAX_ATTEMPTS, and terminalizes deterministic dispatch
+    // refusals immediately. Fail-open like BudgetService: a null pool / missing table
+    // never quarantines and never bricks dispatch. Operator alerts fan out on topic
+    // 'queue-dlq' through the notification-center router (pool required).
     const deadLetterService = new DeadLetterService({
       pool,
       ticketService,

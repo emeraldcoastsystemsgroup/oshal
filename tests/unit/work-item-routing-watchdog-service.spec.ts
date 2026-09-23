@@ -88,26 +88,29 @@ describe('WorkItemRoutingWatchdogService ticket write-back', () => {
     );
   });
 
-  it('suppresses routing retry when the owning ticket is already terminal', async () => {
-    process.env.OSHAL_MAX_ROUTING_RETRIES = '2';
-    const repo = new FakeWorkItemRepository();
-    const updateTicketStatus = vi.fn(async () => {});
-    const readTicketStatus = vi.fn(async () => 'complete' as const);
-    repo.add({ externalId: ticketId, status: 'routing_failed', assignedAgentId: 'agent-code' });
+  it.each(['complete', 'dead_letter'] as const)(
+    'suppresses routing retry when the owning ticket is already %s',
+    async (terminalStatus) => {
+      process.env.OSHAL_MAX_ROUTING_RETRIES = '2';
+      const repo = new FakeWorkItemRepository();
+      const updateTicketStatus = vi.fn(async () => {});
+      const readTicketStatus = vi.fn(async () => terminalStatus);
+      repo.add({ externalId: ticketId, status: 'routing_failed', assignedAgentId: 'agent-code' });
 
-    const watchdog = new WorkItemRoutingWatchdogService(repo as never, 1, updateTicketStatus, readTicketStatus);
+      const watchdog = new WorkItemRoutingWatchdogService(repo as never, 1, updateTicketStatus, readTicketStatus);
 
-    await expect(watchdog.retryRoutingFailedItems()).resolves.toBe(0);
+      await expect(watchdog.retryRoutingFailedItems()).resolves.toBe(0);
 
-    expect(repo.items[0]?.status).toBe('routing_failed');
-    expect(repo.items[0]?.metadata).toEqual(expect.objectContaining({
-      routingRetrySuppressed: true,
-      routingRetrySuppressedReason: 'terminal_ticket_status',
-      routingRetrySuppressedTicketStatus: 'complete',
-    }));
-    expect(readTicketStatus).toHaveBeenCalledWith(ticketId);
-    expect(updateTicketStatus).not.toHaveBeenCalled();
-  });
+      expect(repo.items[0]?.status).toBe('routing_failed');
+      expect(repo.items[0]?.metadata).toEqual(expect.objectContaining({
+        routingRetrySuppressed: true,
+        routingRetrySuppressedReason: 'terminal_ticket_status',
+        routingRetrySuppressedTicketStatus: terminalStatus,
+      }));
+      expect(readTicketStatus).toHaveBeenCalledWith(ticketId);
+      expect(updateTicketStatus).not.toHaveBeenCalled();
+    },
+  );
 
   it('escalates the owning ticket when routing retries are exhausted', async () => {
     process.env.OSHAL_MAX_ROUTING_RETRIES = '2';

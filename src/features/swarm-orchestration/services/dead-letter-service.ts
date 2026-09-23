@@ -5,6 +5,9 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial DeadLetterService — persisted poison-ticket policy for the queue manager (migration 081 / oshal_queue_dlq). Records every failed dispatch cycle AND every system escalation cycle per ticket; after QM_MAX_ATTEMPTS (env, default 3) the ticket is quarantined into the terminal 'dead_letter' state with reason metadata, the operator is notified on topic 'queue-dlq', and only an operator requeue (attempts reset, actor recorded) releases it. Covers the BACKLOG "Build phase auto-escalates" loop: N escalation cycles = poison. Fail-open discipline mirrors BudgetService: a missing pool/table never quarantines and never bricks dispatch.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review fix (dead-code guard): handleTicketStatusEvent now counts an escalation cycle ONLY when changedBy === 'system' (the queue-manager auto-loop actor) instead of the old changedBy !== 'user' exclusion — no producer ever emitted 'user', so manual operator escalations (now actor-tagged by the cockpit status routes) and bot self-escalations were being mis-counted and could terminal-quarantine a deliberately-escalated ticket.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | P4 refused-work terminalization: quarantineRefusal commits ticket, linked tasks, status history and the exact refusal envelope to the DLQ in one identity-stamped PostgreSQL transaction; rollback is all-or-nothing and events/alerts fire only after commit.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Preserve quarantined evidence under trailing/concurrent failure signals: failed-cycle upserts no longer update an already-quarantined row, concurrent poison markers are first-writer-only, and repeated deterministic refusal calls do not rewrite or re-notify an existing dead letter.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Remove the remaining split writes: retry-exhaustion quarantine and operator requeue now use TicketService's atomic forward/reverse DLQ transactions, with alerts only for the committed first terminalizer.
  */
 
 import type { TicketService } from '@/features/ticketing';
@@ -57,6 +60,28 @@ export interface FailureCycleVerdict {
   reason?: string;
 }
 
+/** A deterministic refusal that must terminate the dispatch instead of parking it for retry. */
+export interface RefusalQuarantineInput {
+  /** Exact stable refusal token emitted by the enforcing boundary. */
+  code: string;
+  /** Exact human-readable error message emitted with the token. */
+  message: string;
+  /** Reviewed operator remedy when the code has one. */
+  remedy?: string;
+  /** Lifecycle source recorded on the ticket/history row. */
+  source?: string;
+  /** Dispatch routing facts that are safe to persist beside the refusal. */
+  metadata?: Record<string, unknown>;
+}
+
+/** Result of an atomic deterministic-refusal quarantine. */
+export interface RefusalQuarantineVerdict {
+  attempts: number;
+  quarantined: true;
+  transitioned: boolean;
+  reason: string;
+}
+
 /** @description One DLQ entry as returned by the operator listing/requeue surface. */
 export interface DeadLetterEntry {
   ticketId: string;
@@ -65,6 +90,7 @@ export interface DeadLetterEntry {
   lastFailureAt: string | null;
   quarantinedAt: string | null;
   reason: string | null;
+  remedy: string | null;
   requeuedBy: string | null;
   requeuedAt: string | null;
   /** Joined ticket columns (null when the ticket row is gone). */
@@ -96,7 +122,7 @@ export interface DeadLetterServiceDeps {
   /** Postgres for the oshal_queue_dlq table; null runs degraded (never quarantines). */
   pool: DeadLetterPg | null;
   /** Ticket lifecycle gateway — status flips go through the validated transition model. */
-  ticketService: Pick<TicketService, 'getTicket' | 'updateStatus' | 'updateStatusAs'>;
+  ticketService: Pick<TicketService, 'quarantineToDeadLetter' | 'requeueFromDeadLetter'>;
   /** Quarantine alert hook (topic 'queue-dlq'); absent = logged no-op. */
   notify?: DeadLetterNotifier;
   /** Environment bag for QM_MAX_ATTEMPTS; defaults to process.env. */
@@ -105,7 +131,8 @@ export interface DeadLetterServiceDeps {
 
 const LIST_SQL = `
   SELECT d.ticket_id, d.attempts, d.last_error, d.last_failure_at, d.quarantined_at,
-         d.reason, d.requeued_by, d.requeued_at,
+         d.reason, d.remedy,
+         d.requeued_by, d.requeued_at,
          t.title, t.status, t.ticket_type
     FROM oshal_queue_dlq d
     LEFT JOIN tickets t ON t.ticket_id::text = d.ticket_id
@@ -224,15 +251,28 @@ export class DeadLetterService {
            SET attempts = oshal_queue_dlq.attempts + 1,
                last_error = COALESCE($2, oshal_queue_dlq.last_error),
                last_failure_at = NOW(),
+               remedy = NULL,
                updated_at = NOW()
+         WHERE oshal_queue_dlq.quarantined_at IS NULL
          RETURNING attempts, quarantined_at, reason`,
         [ticketId, boundedError],
       );
-      attempts = Number(result.rows[0]?.attempts ?? 0);
-      alreadyQuarantined = result.rows[0]?.quarantined_at != null;
+      let persisted = result.rows[0];
+      if (!persisted) {
+        const existing = await this.deps.pool.query(
+          `SELECT attempts, quarantined_at, reason
+             FROM oshal_queue_dlq
+            WHERE ticket_id = $1`,
+          [ticketId],
+        );
+        persisted = existing.rows[0];
+      }
+      if (!persisted) throw new Error(`DLQ row missing after failed-cycle upsert for ${ticketId}`);
+      attempts = Number(persisted.attempts ?? 0);
+      alreadyQuarantined = persisted.quarantined_at != null;
       if (alreadyQuarantined) {
         // Already parked — don't re-flip status or re-notify on trailing failure signals.
-        return { attempts, quarantined: true, reason: String(result.rows[0]?.reason ?? 'quarantined') };
+        return { attempts, quarantined: true, reason: String(persisted.reason ?? 'quarantined') };
       }
     } catch (err) {
       logger.error({ err, stack: (err as Error).stack, ticketId, kind }, 'recordFailureCycle: DLQ upsert failed — fail-open, no quarantine');
@@ -250,11 +290,55 @@ export class DeadLetterService {
   }
 
   /**
-   * @description Quarantines one ticket: validated status flip to terminal 'dead_letter'
-   * (with reason metadata — the ticket-service backstop guarantees it is never bare), then
-   * marks the DLQ row, then alerts the operator on topic 'queue-dlq'. Ordering matters: if
-   * the status flip fails (e.g. the ticket was cancelled meanwhile) the row is NOT marked
-   * quarantined, so the DLQ view never claims a quarantine that didn't happen.
+   * @description Atomically terminates a deterministic dispatch refusal. One identity-stamped
+   * PostgreSQL client owns the ticket lock, terminal ticket update, every linked nonterminal task,
+   * status history row, and DLQ envelope. A failure in any statement rolls the entire transition
+   * back; the status event and operator notification occur only after COMMIT.
+   * @param ticketId - Ticket whose protected dispatch was refused.
+   * @param refusal - Exact stable code, message, optional reviewed remedy and safe routing facts.
+   * @returns The committed quarantine verdict.
+   * @throws When transaction-capable persistence is unavailable, the ticket is absent/invisible,
+   * or the locked lifecycle state may not transition to dead_letter.
+   */
+  async quarantineRefusal(
+    ticketId: string,
+    refusal: RefusalQuarantineInput,
+  ): Promise<RefusalQuarantineVerdict> {
+    if (!this.deps.pool) throw new Error('refusal quarantine requires PostgreSQL persistence');
+    const code = refusal.code.trim();
+    const message = refusal.message;
+    if (!code || !message.trim()) {
+      throw new Error('refusal quarantine requires an exact code and message');
+    }
+    const source = refusal.source?.trim() || 'dead-letter-service';
+    const attempts = 1;
+    const transitioned = await this.deps.ticketService.quarantineToDeadLetter(ticketId, {
+      reason: code,
+      lastError: message,
+      remedy: refusal.remedy ?? null,
+      attempts,
+    }, {
+      ...(refusal.metadata ?? {}),
+      reason: code,
+      source,
+      message,
+      ...(refusal.remedy ? { remedy: refusal.remedy } : {}),
+      severity: 'high',
+      nextAction: refusal.remedy ? 'apply_refusal_remedy_then_requeue' : 'operator_requeue_or_cancel',
+      failureClass: 'deterministic_refusal',
+    });
+    if (transitioned) {
+      this.fireQuarantineAlert(ticketId, code, attempts, message, refusal.remedy);
+      logger.warn({ ticketId, code, attempts }, 'Deterministic refusal quarantined atomically');
+    }
+    return { attempts, quarantined: true, transitioned, reason: code };
+  }
+
+  /**
+   * @description Atomically quarantines one retry-exhausted ticket: terminal ticket/task/history
+   * state and the existing DLQ attempt row's marker/evidence share the same locked transaction.
+   * A failed transition or marker rolls everything back; only the first committed terminalizer
+   * alerts, so concurrent/trailing signals cannot replace evidence or double-notify.
    * @param ticketId - The poison ticket.
    * @param reason - Machine-readable quarantine reason.
    * @param lastError - The most recent failure detail, for the metadata trail.
@@ -267,32 +351,28 @@ export class DeadLetterService {
     lastError: string | null,
     attempts: number,
   ): Promise<boolean> {
+    let transitioned: boolean;
     try {
-      await this.deps.ticketService.updateStatus(ticketId, 'dead_letter', {
+      transitioned = await this.deps.ticketService.quarantineToDeadLetter(ticketId, {
+        reason,
+        lastError,
+        remedy: null,
+        attempts,
+      }, {
         reason,
         source: 'dead-letter-service',
         attempts,
         maxAttempts: readQmMaxAttempts(this.deps.env),
-        ...(lastError ? { lastError } : {}),
+        ...(lastError ? { lastError, message: lastError } : {}),
       });
     } catch (err) {
       logger.error(
         { err, stack: (err as Error).stack, ticketId, reason, attempts },
-        'Quarantine status flip failed — ticket NOT moved to dead_letter (row left unquarantined for a later cycle)',
+        'Atomic retry-exhaustion quarantine failed — ticket and DLQ marker rolled back for a later cycle',
       );
       return false;
     }
-    try {
-      await this.deps.pool!.query(
-        `UPDATE oshal_queue_dlq
-            SET quarantined_at = NOW(), reason = $2, updated_at = NOW()
-          WHERE ticket_id = $1`,
-        [ticketId, reason],
-      );
-    } catch (err) {
-      // Status already flipped — the ticket IS quarantined; only the row marker failed.
-      logger.error({ err, stack: (err as Error).stack, ticketId }, 'DLQ row quarantine marker write failed (ticket already dead_letter)');
-    }
+    if (!transitioned) return true;
     logger.warn({ ticketId, reason, attempts }, 'Ticket quarantined to dead-letter');
     this.fireQuarantineAlert(ticketId, reason, attempts, lastError);
     return true;
@@ -302,22 +382,29 @@ export class DeadLetterService {
    * @description Fire-and-forget operator alert on topic 'queue-dlq'. An unconfigured or
    * failing notifier is a logged skip — notification never gates or unwinds a quarantine.
    */
-  private fireQuarantineAlert(ticketId: string, reason: string, attempts: number, lastError: string | null): void {
+  private fireQuarantineAlert(
+    ticketId: string,
+    reason: string,
+    attempts: number,
+    lastError: string | null,
+    remedy?: string,
+  ): void {
     const notify = this.deps.notify;
     if (!notify) {
       logger.info({ ticketId, reason }, 'No dead-letter notifier configured — quarantine alert skipped');
       return;
     }
-    void notify('queue-dlq', {
+    void Promise.resolve().then(() => notify('queue-dlq', {
       subject: `OSHAL queue DLQ: ticket ${ticketId} quarantined (${reason})`,
       body: [
         `Ticket ${ticketId} was quarantined to the dead-letter queue after ${attempts} failed cycles.`,
         `Reason: ${reason}`,
         lastError ? `Last error: ${lastError}` : 'Last error: (none recorded)',
+        ...(remedy ? [`Remedy: ${remedy}`] : []),
         `Requeue via POST /api/queue/dlq/${ticketId}/requeue once the cause is fixed.`,
       ].join('\n'),
       shortText: `OSHAL DLQ: ticket ${ticketId} quarantined (${reason}, ${attempts} cycles).`,
-    }).catch((err) => {
+    })).catch((err) => {
       logger.error({ err, stack: (err as Error).stack, ticketId }, 'Dead-letter quarantine alert send failed (non-fatal)');
     });
   }
@@ -344,9 +431,9 @@ export class DeadLetterService {
   }
 
   /**
-   * @description Operator requeue: releases a quarantined ticket back to 'approved' with the
-   * acting operator recorded (actor-aware status history + requeued_by/requeued_at on the DLQ
-   * row) and the attempt counter reset to zero so the circuit breaker starts fresh.
+   * @description Operator requeue: atomically releases a quarantined ticket back to 'approved'
+   * while recording the actor in history and requeued_by/requeued_at, and resetting the DLQ
+   * attempt counter/evidence. A missing quarantined row rolls the ticket transition back.
    * @param ticketId - The quarantined ticket to release.
    * @param requeuedBy - The operator identity (email or sub) performing the release.
    * @returns Result object: ok+entry, or not-found / invalid-state / unavailable.
@@ -359,7 +446,7 @@ export class DeadLetterService {
     let row: Record<string, unknown> | undefined;
     try {
       const result = await this.deps.pool.query(
-        `SELECT ticket_id, attempts, last_error, last_failure_at, quarantined_at, reason, requeued_by, requeued_at
+        `SELECT ticket_id, attempts, last_error, last_failure_at, quarantined_at, reason, remedy, requeued_by, requeued_at
            FROM oshal_queue_dlq WHERE ticket_id = $1`,
         [ticketId],
       );
@@ -373,28 +460,12 @@ export class DeadLetterService {
       return { ok: false, error: 'not-found' };
     }
     try {
-      await this.deps.ticketService.updateStatusAs(ticketId, 'approved', requeuedBy, `Operator ${requeuedBy}`, {
-        reason: 'dlq_requeue',
-        source: 'dead-letter-service',
-        requeuedBy,
+      await this.deps.ticketService.requeueFromDeadLetter(ticketId, requeuedBy, {
         previousAttempts: Number(row.attempts ?? 0),
       });
     } catch (err) {
       logger.error({ err, stack: (err as Error).stack, ticketId, requeuedBy }, 'requeue: status flip to approved failed');
       return { ok: false, error: 'invalid-state' };
-    }
-    try {
-      await this.deps.pool.query(
-        `UPDATE oshal_queue_dlq
-            SET attempts = 0, quarantined_at = NULL, reason = NULL,
-                requeued_by = $2, requeued_at = NOW(), updated_at = NOW()
-          WHERE ticket_id = $1`,
-        [ticketId, requeuedBy],
-      );
-    } catch (err) {
-      // Ticket already released; only the counter reset failed. Loud log so an operator
-      // knows the next failure may quarantine faster than expected.
-      logger.error({ err, stack: (err as Error).stack, ticketId }, 'requeue: DLQ counter reset failed after release (ticket IS approved)');
     }
     logger.info({ ticketId, requeuedBy }, 'Dead-letter ticket requeued to approved by operator');
     return {
@@ -404,6 +475,7 @@ export class DeadLetterService {
         attempts: 0,
         quarantinedAt: null,
         reason: null,
+        remedy: null,
         requeuedBy,
         requeuedAt: new Date().toISOString(),
       },
@@ -424,6 +496,7 @@ function mapDlqRow(row: Record<string, unknown>): DeadLetterEntry {
     lastFailureAt: readNullableStamp(row.last_failure_at),
     quarantinedAt: readNullableStamp(row.quarantined_at),
     reason: readNullableText(row.reason),
+    remedy: readNullableText(row.remedy),
     requeuedBy: readNullableText(row.requeued_by),
     requeuedAt: readNullableStamp(row.requeued_at),
     title: readNullableText(row.title),

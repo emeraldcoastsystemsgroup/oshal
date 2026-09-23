@@ -21,6 +21,11 @@
  * 16 | maintainer@emeraldcoastsystemsgroup.com  | BACKLOG "The `task` call-out can still hand a ticket to a controller-inline bot under signing": the ADR-083 call-out may override the workflow declared worker with any online bidder, and under signed delegation a bidder that owns no dedicated bot-node endpoint had its ticket refused at the TRANSPORT ("Signed HTTP delegation requires a dedicated bot-node endpoint") - the one shape the sibling worker-routing fix does not cover, and the biggest contributor to the 269 escalated "task" rows on the 2026-09-16 box. Live there: 14 of 37 online agents resolve to no endpoint, including two with no registry definition at all (self-healing-bot a0...056, career-hunter cb...0001) that bid on a heartbeat alone. Now an unreachable winner is SET ASIDE for the workflow declared worker (routedBy "workflow-default-call-out-unreachable") and, when that one is unreachable too, the ticket is refused with reason "call_out_worker_has_no_dedicated_endpoint" naming both bots. No refusal is weakened: the dispatch still crosses the signed hop, and the behaviour is inert with signing off. The decision plus the two pure fan-out helpers moved to call-out-endpoint-routing.ts to keep this file under the file-size gate. Guard: tests/unit/task-call-out-endpoint-routing.spec.ts.
  * 17 | maintainer@emeraldcoastsystemsgroup.com  | Protected dispatch consumes the owner's one configured brain resolver rather than a separate hosted-only resolver, so worker execution and Jarvis cannot disagree on the selected provider.
  * 18 | maintainer@emeraldcoastsystemsgroup.com  | Stop treating the noun "application" as its own submit verb. Read-only career questions such as "show application status" now stay on the knowledge-worker rail; structured posting metadata or an actual submit/deploy/apply verb still selects browser submission.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com  | P4 refused-work terminalization: admit only explicit RefusalError instances at the manifest boundary and route them to DeadLetterService.quarantineRefusal, preserving the exact code/message/reviewed remedy without interpreting generic transport text.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com  | Preserve every typed bot-node refusal before compatibility fallback so its exact code and remedy reach terminal quarantine; generic transport failures retain the legacy fallback rail.
+ * 21 | maintainer@emeraldcoastsystemsgroup.com  | Preserve typed refusals across bounded multi-owner fan-out and terminalize an all-refusal outcome with deterministic primary evidence plus exact per-owner facts; mixed failures and partial success retain their existing escalation/customer-action rails.
+ * 22 | maintainer@emeraldcoastsystemsgroup.com  | Classify single-owner signed-delegation and trusted-provider dispatches with no dedicated endpoint as authorization_remote_dispatch_required so the terminal refusal sink preserves them instead of parking them as generic escalations.
+ * 23 | maintainer@emeraldcoastsystemsgroup.com  | Reuse authorization_remote_dispatch_required when an endpoint-less local rail cannot execute protected queued work, keeping every typed refusal inside the reviewed source census.
  */
 
 import * as http from 'node:http';
@@ -41,9 +46,9 @@ import { serviceSecretHeaders, trustedServiceUserHeaders } from '@/shared/middle
 import { isSuperAdminSub } from '@/shared/middleware/superadmin';
 import { resolveSkillProfileByTicketType, composeSkillProfilePrompt } from '@/shared/skill-profiles';
 import { readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
+import { RefusalError } from '@/shared/refusal-events';
 import {
   executeManifestApplicationBot,
-  QueuedProtectedDispatchError,
   type QueuedBrainResolver,
 } from './manifest-worker-application-execution';
 import { isApplicationExecutionProtected } from '@/shared/application-authorization-execution';
@@ -53,6 +58,7 @@ import {
   type TrustedProviderIntent,
 } from '@/app/bot-node-provider-intent';
 import type { WorkflowDefinition } from './dispatch-routing';
+import type { DeadLetterService } from './dead-letter-service';
 import type { TaskCallOutOwner, TaskCallOutResolver } from './task-call-out';
 import {
   CALL_OUT_UNREACHABLE_ROUTED_BY,
@@ -64,6 +70,19 @@ import {
 } from './call-out-endpoint-routing';
 
 const logger = createChildLogger({ module: 'dispatch-manifest-worker' });
+
+/**
+ * @description Narrows an arbitrary dispatch failure to a deliberately emitted deterministic
+ * refusal. Message text is never parsed: generic transport, HTTP and provider errors stay on the
+ * ordinary escalation path even when their text happens to begin with a known refusal code.
+ * @param error - Value caught at the manifest worker boundary.
+ * @returns Exact refusal facts, or null for operational/ambiguous failures.
+ */
+export function deterministicManifestDispatchRefusal(
+  error: unknown,
+): RefusalError | null {
+  return error instanceof RefusalError ? error : null;
+}
 
 /**
  * @description Blank out whitespace-delimited tokens that contain a path separator, so a
@@ -183,6 +202,7 @@ interface FanOutExecutionResult {
   owner: TaskCallOutOwner;
   result?: BotNodeResponse;
   error?: string;
+  refusal?: RefusalError;
 }
 
 function fanOutPrompt(
@@ -269,6 +289,8 @@ export interface ManifestWorkerDispatchDeps {
   botNodeClient?: BotNodeClient;
   /** Persistent terminal-status writer. */
   ticketService: TicketService;
+  /** Atomic terminal sink for deterministic dispatch refusals. */
+  deadLetterService?: Pick<DeadLetterService, 'quarantineRefusal'>;
   /** Shared controller task store. Required to establish the chat_messages FK for remote results. */
   taskStore?: ITaskStore;
   /** Shared controller message store read by Jarvis/cockpit ticket summarization. */
@@ -802,7 +824,8 @@ export async function dispatchManifestWorkerTicket(
 
   const sendViaLocalhost = async (): Promise<ManifestWorkerDispatchResult> => {
     if (await isApplicationExecutionProtected({ kind: 'bots', operation: workerAgentId })) {
-      throw new Error('authorization_protected_queue_requires_signed_remote_execution');
+      throw new RefusalError('authorization_remote_dispatch_required',
+        'protected queued application work requires recorded signed remote execution');
     }
     // Forward the ticket owner so the worker's user-scoped tools (trading, career, gmail) act for
     // the right user instead of failing 401 not_authenticated. Sent over http.request (no default
@@ -874,9 +897,11 @@ export async function dispatchManifestWorkerTicket(
             }),
           };
         } catch (error) {
+          const refusal = deterministicManifestDispatchRefusal(error);
           return {
             owner,
             error: (error instanceof Error ? error.message : String(error)).slice(0, 1000),
+            ...(refusal ? { refusal } : {}),
           };
         }
       }));
@@ -923,6 +948,45 @@ export async function dispatchManifestWorkerTicket(
         return;
       }
 
+      const refused = failed.filter(
+        (execution): execution is FanOutExecutionResult & { refusal: RefusalError } =>
+          execution.refusal instanceof RefusalError,
+      );
+      if (refused.length === failed.length && deps.deadLetterService) {
+        // Promise.all preserves fan-out input order, whose first entry is the validated lead.
+        // That makes the primary refusal stable even when individual workers finish out of order.
+        const primary = refused[0].refusal;
+        const ownerRefusals = refused.slice(0, 3).map((execution) => ({
+          agentId: execution.owner.agentId,
+          agentName: execution.owner.agentName,
+          code: execution.refusal.code,
+          message: execution.refusal.message,
+          ...(execution.refusal.remedy ? { remedy: execution.refusal.remedy } : {}),
+        }));
+        try {
+          await deps.deadLetterService.quarantineRefusal(ticketId, {
+            code: primary.code,
+            message: primary.message,
+            ...(primary.remedy ? { remedy: primary.remedy } : {}),
+            source: 'dispatch-manifest-worker',
+            metadata: {
+              ...outcomeMetadata,
+              ownerRefusals,
+            },
+          });
+          logger.warn(
+            { ticketId, refusalCode: primary.code, ownerRefusals, ...routing },
+            'Every selected multi-owner worker deterministically refused; ticket moved to terminal dead-letter',
+          );
+          return;
+        } catch (quarantineError) {
+          logger.error(
+            { err: quarantineError, ticketId, refusalCode: primary.code, ...routing },
+            'Multi-owner refusal quarantine failed; preserving generic escalation fallback',
+          );
+        }
+      }
+
       await deps.ticketService.updateStatus(ticketId, 'escalated', {
         ...outcomeMetadata,
         reason: 'multi_owner_dispatch_failed',
@@ -963,10 +1027,16 @@ export async function dispatchManifestWorkerTicket(
           error: result.success ? undefined : result.response || 'bot-node returned success=false',
         };
       } catch (botErr) {
-        // A protected-shape refusal already names exactly what the owner is missing. The localhost
-        // leg refuses every protected target with its own generic code, so falling through would
-        // overwrite that reason with one nobody can act on — the blank escalation this fixes.
-        if (botErr instanceof QueuedProtectedDispatchError) {
+        // A deliberate refusal already carries the exact enforcing code and reviewed remedy.
+        // Compatibility fallback is only for operational bot-node unavailability; sending a
+        // refusal through localhost would overwrite its evidence with a different outcome.
+        if (botErr instanceof RefusalError) {
+          throw botErr;
+        }
+        // Protected targets can never use the unsigned localhost rail. Keep operational failures
+        // (for example a transient configured-brain lookup outage) generic instead of replacing
+        // them with the localhost guard's deterministic signed-execution refusal.
+        if (await isApplicationExecutionProtected({ kind: 'bots', operation: workerAgentId })) {
           throw botErr;
         }
         if (authoritativeDispatch || providerIntent || deps.botNodeClient.isDelegationEnforced()) {
@@ -982,10 +1052,16 @@ export async function dispatchManifestWorkerTicket(
       }
     } else {
       if (deps.botNodeClient?.isDelegationEnforced()) {
-        throw new Error('Signed HTTP delegation requires a dedicated bot-node endpoint');
+        throw new RefusalError(
+          'authorization_remote_dispatch_required',
+          'signed HTTP delegation requires a dedicated bot-node endpoint',
+        );
       }
       if (providerIntent) {
-        throw new Error('Trusted provider intent requires a dedicated bot-node endpoint');
+        throw new RefusalError(
+          'authorization_remote_dispatch_required',
+          'trusted provider intent requires a dedicated bot-node endpoint',
+        );
       }
       if (deps.botNodeClient) {
         logger.info(
@@ -1017,6 +1093,28 @@ export async function dispatchManifestWorkerTicket(
       { err: error, ticketId, ...routing },
       'Manifest-worker dispatch failed',
     );
+    const refusal = deterministicManifestDispatchRefusal(error);
+    if (refusal && deps.deadLetterService) {
+      try {
+        await deps.deadLetterService.quarantineRefusal(ticketId, {
+          code: refusal.code,
+          message: refusal.message,
+          ...(refusal.remedy ? { remedy: refusal.remedy } : {}),
+          source: 'dispatch-manifest-worker',
+          metadata: { ...routing },
+        });
+        logger.warn(
+          { ticketId, code: refusal.code, ...routing },
+          'Deterministic manifest-worker refusal moved to terminal dead-letter',
+        );
+        return;
+      } catch (quarantineError) {
+        logger.error(
+          { err: quarantineError, ticketId, refusalCode: refusal.code, ...routing },
+          'Atomic refusal quarantine failed; preserving legacy escalation fallback',
+        );
+      }
+    }
     // Park the ticket at escalated on failure so it stops cycling AND stays
     // visible to an operator instead of silently disappearing.
     try {

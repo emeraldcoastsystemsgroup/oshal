@@ -19,13 +19,18 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | A THIRD route into approval_required, found in review, and two corrections. updateTicket is typed Omit<..., 'status'> and did not exclude it at RUNTIME - PATCH /api/tickets/:id passes req.body straight in, and JSON does not respect an Omit - so a body carrying status wrote it to the store directly, skipping VALID_TRANSITIONS, the status-history record and the reason backstop. A PATCH that sets approval_required this way produced a ticket with no reason and no nextAction, which falsifies the "two routes in" claim the previous entry makes. Dropped and logged rather than rejected: a client echoing a whole ticket back is an ordinary PATCH shape. Also: "two of them need no human" was wrong - planner_returned_no_work resolves to operator_review_plan, because somebody does have to look at the plan. One needs no human, not two. And ADR-031's amendment is headed 2026-07-18; 2026-06-22 is commit 6a376cb6, which is what changed the behaviour.
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | Extracted buildCreationApprovalMetadata. Adding the creation backstop inline took createTicket from 40 to 54 code lines, over the 50-line cap - the rule caught it, a review caught that I had not.
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | CV-2 and CV-3, which are one principle the operator stated: a ticket follows the workflow associated with it, and a workflow and a ticket queue are one to one. CV-2 - createTicket no longer forces a status for any ticket type. It used to rewrite every `incident` whose externalProvider was outside a hardcoded two-name trust list to approval_required, silently overriding the caller; that is a second authority over a question the workflow already answers through autoStart, and it was the highest-volume unnamed route into the status that Change Log 13 set out to close. The cockpit route asks for 'backlog' or 'approved' and its own validStatuses list does not contain approval_required, so the route believed it had created a backlog ticket. Untrusted-source handling belongs in the untrusted source's workflow. TRUSTED_ALERT_PROVIDERS is deleted with it. CV-3 - added ESCALATION_REASONS, the escalated twin of the approval vocabulary, and the escalation backstop now derives its nextAction from it instead of resolving every case to operator_review_required. planner_returned_no_work MOVED from the approval table to this one: its writer escalates now, because a ticket whose planner produced nothing had no exit from a hold. The two tables are deliberately disjoint and a spec pins that - a reason resolving in both would mean two statuses at once, which is the defect CKR-16 is about.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com   | Deterministic refusal quarantine is idempotent: an already-dead-letter ticket returns false before building metadata or writing the store, preserving the first terminal history and exact DLQ envelope.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com   | Resolve a concurrent dead-letter compare-and-set loser as an idempotent no-op only after a typed conflict and a confirming re-read; unrelated persistence errors still propagate.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com   | Add the actor-aware atomic dead-letter requeue gateway so ticket/history release and the quarantined DLQ row reset cannot split.
  */
 
 import {
   applyDerivedQueueMetadata,
+  TicketStatusConflictError,
   type ITicketStore,
   type TicketStatusHistoryRecord,
   type TicketStatusMetadata,
+  type TicketDeadLetterMutation,
   type InternalTicket,
   type CreateInternalTicketInput,
   type TicketTaskLink,
@@ -84,6 +89,21 @@ const VALID_TRANSITIONS: Record<OshalTicketState, Set<OshalTicketState>> = {
   paused: new Set(['approved', 'approval_required', 'backlog', 'escalated', 'cancelled']),
   cancelled: new Set(['backlog']),
 };
+
+/**
+ * @description Answers the canonical ticket transition table without performing persistence.
+ * TicketService uses this against its validated read, then passes that state as an expected-status
+ * compare-and-set. Transactional stores repeat the state check after locking the current row.
+ * @param fromStatus - The currently observed ticket state.
+ * @param toStatus - The requested next state.
+ * @returns True when the transition is a no-op or is admitted by the lifecycle table.
+ */
+export function isTicketStatusTransitionAllowed(
+  fromStatus: OshalTicketState,
+  toStatus: OshalTicketState,
+): boolean {
+  return fromStatus === toStatus || Boolean(VALID_TRANSITIONS[fromStatus]?.has(toStatus));
+}
 
 /**
  * @description Orchestrates ticket lifecycle: creation, state transitions, linking to tasks and workspaces.
@@ -290,7 +310,10 @@ export class TicketService {
 
     const transitionMetadata = buildStatusTransitionMetadata(ticketId, current, newStatus, metadata);
     logger.info({ ticketId, from: current, to: newStatus }, 'Transitioning ticket status');
-    await this.ticketStore.updateStatus(ticketId, newStatus, { metadata: transitionMetadata });
+    await this.ticketStore.updateStatus(ticketId, newStatus, {
+      expectedStatus: current,
+      metadata: transitionMetadata,
+    });
   }
 
   /**
@@ -318,7 +341,104 @@ export class TicketService {
 
     const transitionMetadata = buildStatusTransitionMetadata(ticketId, current, newStatus, metadata, changedBy);
     logger.info({ ticketId, from: current, to: newStatus, changedBy }, 'Transitioning ticket status (actor-aware)');
-    await this.ticketStore.updateStatus(ticketId, newStatus, { changedBy, changedByLabel, metadata: transitionMetadata });
+    await this.ticketStore.updateStatus(ticketId, newStatus, {
+      changedBy,
+      changedByLabel,
+      expectedStatus: current,
+      metadata: transitionMetadata,
+    });
+  }
+
+  /**
+   * @description Commits a dead-letter transition together with its DLQ envelope. Unlike the
+   * ordinary updateStatus API, this method exposes the persistence context needed by the
+   * PostgreSQL store to include the DLQ upsert in the same locked transaction.
+   * @param ticketId - Ticket to terminalize.
+   * @param deadLetter - Exact DLQ reason/message/remedy and attempt count.
+   * @param metadata - Safe lifecycle/routing metadata to persist on ticket and history.
+   */
+  async quarantineToDeadLetter(
+    ticketId: string,
+    deadLetter: TicketDeadLetterMutation,
+    metadata: TicketStatusMetadata = {},
+  ): Promise<boolean> {
+    const ticket = await this.ticketStore.get(ticketId);
+    if (!ticket) throw new Error(`Ticket not found: ${ticketId}`);
+    const current = ticket.status;
+    if (current === 'dead_letter') return false;
+    if (!isTicketStatusTransitionAllowed(current, 'dead_letter')) {
+      throw new Error(`Invalid state transition: ${current} → dead_letter for ticket ${ticketId}`);
+    }
+    const transitionMetadata = buildStatusTransitionMetadata(
+      ticketId,
+      current,
+      'dead_letter',
+      metadata,
+    );
+    logger.info({ ticketId, from: current, reason: deadLetter.reason }, 'Quarantining ticket to dead-letter');
+    try {
+      await this.ticketStore.updateStatus(ticketId, 'dead_letter', {
+        expectedStatus: current,
+        metadata: transitionMetadata,
+        deadLetter,
+      });
+    } catch (error) {
+      if (!(error instanceof TicketStatusConflictError) || error.ticketId !== ticketId) {
+        throw error;
+      }
+      const committed = await this.ticketStore.get(ticketId);
+      if (committed?.status !== 'dead_letter') {
+        throw error;
+      }
+      logger.info(
+        { ticketId, expectedStatus: current, actualStatus: committed.status },
+        'Concurrent dead-letter transition already committed; treating quarantine as idempotent',
+      );
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * @description Atomically releases one dead-letter ticket to approved and resets its
+   * quarantined DLQ row, with the operator recorded on both lifecycle history and DLQ evidence.
+   * @param ticketId - Quarantined ticket to release.
+   * @param requeuedBy - Operator identity recorded as the transition actor.
+   * @param metadata - Additional safe audit metadata, such as the previous attempt count.
+   */
+  async requeueFromDeadLetter(
+    ticketId: string,
+    requeuedBy: string,
+    metadata: TicketStatusMetadata = {},
+  ): Promise<void> {
+    const actor = requeuedBy.trim();
+    if (!actor) throw new Error('Dead-letter requeue requires an operator identity');
+    const ticket = await this.ticketStore.get(ticketId);
+    if (!ticket) throw new Error(`Ticket not found: ${ticketId}`);
+    const current = ticket.status;
+    if (current !== 'dead_letter' || !isTicketStatusTransitionAllowed(current, 'approved')) {
+      throw new Error(`Invalid state transition: ${current} → approved for ticket ${ticketId}`);
+    }
+    const transitionMetadata = buildStatusTransitionMetadata(
+      ticketId,
+      current,
+      'approved',
+      {
+        ...metadata,
+        reason: 'dlq_requeue',
+        source: 'dead-letter-service',
+        requeuedBy: actor,
+      },
+      actor,
+    );
+    logger.info({ ticketId, requeuedBy: actor }, 'Atomically requeueing dead-letter ticket');
+    await this.ticketStore.updateStatus(ticketId, 'approved', {
+      changedBy: actor,
+      changedByLabel: `Operator ${actor}`,
+      expectedStatus: current,
+      metadata: transitionMetadata,
+      deadLetterRequeue: { requeuedBy: actor },
+    });
   }
 
   /**

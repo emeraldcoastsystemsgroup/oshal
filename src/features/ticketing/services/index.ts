@@ -13,7 +13,14 @@ export { PlaneSyncService } from './plane-sync-service';
 export { ResilientTicketStore } from './resilient-ticket-store';
 export { ResilientWorkspaceStore } from './resilient-workspace-store';
 export { TicketProjectAssignmentService } from './ticket-project-assignment-service';
-export { TicketService, APPROVAL_REQUIRED_REASONS, type ApprovalRequiredReason, ESCALATION_REASONS, type EscalationReason } from './ticket-service';
+export {
+  TicketService,
+  isTicketStatusTransitionAllowed,
+  APPROVAL_REQUIRED_REASONS,
+  type ApprovalRequiredReason,
+  ESCALATION_REASONS,
+  type EscalationReason,
+} from './ticket-service';
 export { PostgresQueuedApplicationPrincipalStore, ensureQueuedApplicationPrincipalSchema, QUEUED_APPLICATION_PRINCIPAL_SCHEMA } from './queued-application-principal-store';
 export { PostgresTicketStore } from './ticket-store-postgres';
 export { WorkspaceService } from './workspace-service';

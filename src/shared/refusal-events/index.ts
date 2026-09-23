@@ -6,6 +6,7 @@
  * 1   | maintainer@emeraldcoastsystemsgroup.com   | Add the single process-wide refusal recording chokepoint. Enforcement paths report structured denials here without importing PostgreSQL or weakening the original fail-closed result when persistence is unavailable.
  * 2   | maintainer@emeraldcoastsystemsgroup.com   | Enrich declared operator-remediable codes from the canonical remedy catalog before persistence while preserving a more specific remedy supplied by the enforcing path.
  * 3   | maintainer@emeraldcoastsystemsgroup.com   | Export the source-census-locked Stage 3 refusal disposition inventory.
+ * 4   | maintainer@emeraldcoastsystemsgroup.com   | Export the typed deterministic-refusal error used by orchestration boundaries instead of parsing arbitrary error messages.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -13,6 +14,7 @@ import { remedyForRefusal } from './remedies';
 
 export * from './remedies';
 export * from './classification';
+export * from './error';
 
 const logger = createChildLogger({ module: 'refusal-events' });
 

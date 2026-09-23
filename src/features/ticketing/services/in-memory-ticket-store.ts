@@ -7,11 +7,14 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Queue DLQ: deriveStateFields maps 'dead_letter' → state_group 'escalated' (parity with the Postgres store so MOCK_OIDC flows behave identically).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P1 (ADR-119): added findLatestByMetadataKey (newest match, any status; same-millisecond ties broken by insertion order) — parity with the Postgres consolidation lookup
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | buildTicketRowStatusMetadataPatch always returns a patch now, so the row's transition mirror is merged on every status update instead of being skipped for a metadata-less one
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Honor expected-status compare-and-set writes and fail closed on atomic DLQ contexts, which memory cannot persist, instead of reporting a false successful terminalization.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Reject the reverse atomic DLQ requeue context as well; memory cannot truthfully reset a PostgreSQL quarantine row.
  */
 
 import { randomUUID } from 'crypto';
 import {
   buildTicketRowStatusMetadataPatch,
+  TicketStatusConflictError,
   type ITicketStore,
   type TicketStatusHistoryRecord,
   type TicketStatusMetadata,
@@ -146,9 +149,18 @@ export class InMemoryTicketStore implements ITicketStore {
     status: OshalTicketState,
     context: TicketStatusUpdateContext = {},
   ): Promise<void> {
+    if (context.deadLetter) {
+      throw new Error('InMemoryTicketStore cannot persist an atomic dead-letter mutation');
+    }
+    if (context.deadLetterRequeue) {
+      throw new Error('InMemoryTicketStore cannot persist an atomic dead-letter requeue mutation');
+    }
     const existing = this.tickets.get(ticketId);
     if (!existing) {
       return;
+    }
+    if (context.expectedStatus && existing.status !== context.expectedStatus) {
+      throw new TicketStatusConflictError(ticketId, context.expectedStatus, existing.status);
     }
 
     const previousStatus = existing.status;

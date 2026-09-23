@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from process-lab-service.ts (1000-line cap decomposition): shared Process Lab interfaces and ticket-status classification sets
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Stop Process Lab polling when a deterministic refusal reaches terminal dead-letter, while leaving the build-start classifier unchanged.
  */
 
 import type {
@@ -20,6 +21,7 @@ export const TERMINAL_TICKET_STATUSES = new Set<OshalTicketState>([
   'complete',
   'cancelled',
   'escalated',
+  'dead_letter',
   'customer_action',
 ]);
 

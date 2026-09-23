@@ -50,6 +50,7 @@
  * 45 | maintainer@emeraldcoastsystemsgroup.com   | Thread the ticket owner's hosted-connection resolver into manifest-worker dispatch so a protected application target can be sent in its supported direct/hosted shape instead of being signed, delegated and then denied at the worker.
  * 46 | maintainer@emeraldcoastsystemsgroup.com   | Both approval_required writers here name their reason (CKR-12 / D5): planning_complete when PM planning produced children, planner_returned_no_work when it produced none. Also deletes two comments that stated the opposite of what the code does - 'children will wait for the build gate' and 'children are picked up after build approval'. ADR-031's own amendment stopped children waiting on this state on 2026-06-22 and PARENT_READY_FOR_CHILD_DISPATCH_STATES has included it ever since, so those lines had been misdirecting every reader since then. The parent is parked, not gating, and its nextAction now says so.
  * 47 | maintainer@emeraldcoastsystemsgroup.com   | CV-3: a ticket whose planner returned zero work units escalates instead of parking at approval_required. The park had no automatic exit - the ticket produced nothing and waited indefinitely for a human with no indication anything was wrong - so labelling it (CKR-12) did not move it. The reason planner_returned_no_work moved with the writer, out of APPROVAL_REQUIRED_REASONS and into the new ESCALATION_REASONS, which leaves exactly one approval_required writer in this file.
+ * 48 | maintainer@emeraldcoastsystemsgroup.com   | Thread the queue's DeadLetterService into manifest dispatch so typed deterministic refusals can terminate atomically instead of collapsing to generic escalation.
  */
 
 import type { InternalTicket } from '@/entities/ticket';
@@ -720,6 +721,7 @@ export class QueueManagerService {
       resolveAgentIdByName: this.pipelineDeps?.resolveAgentIdByName,
       botNodeClient: this.pipelineDeps?.botNodeClient,
       ticketService: this.ticketService,
+      deadLetterService: this.deadLetterService,
       taskStore: this.pipelineDeps?.taskStore,
       messageStore: this.pipelineDeps?.messageStore,
       resolveBotCreds: this.pipelineDeps?.resolveBotCreds,

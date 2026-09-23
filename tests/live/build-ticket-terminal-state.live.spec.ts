@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Write-gated live proof for fresh build-ticket terminal state.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Harden polling against transient non-JSON auth/gateway responses so the proof
  *                     |               | records them and keeps waiting for the truthful terminal ticket state.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Recognize dead-letter as a terminal failed outcome and retain its status-history evidence instead of polling until timeout.
  */
 
 /**
@@ -43,7 +44,7 @@ type FetchJsonResult<T> = {
   textStart: string;
 };
 
-const TERMINAL = new Set(['complete', 'escalated']);
+const TERMINAL = new Set(['complete', 'escalated', 'dead_letter']);
 
 test('write-gated: fresh build ticket completes or escalates with useful metadata', async ({
   page,
@@ -126,7 +127,7 @@ test('write-gated: fresh build ticket completes or escalates with useful metadat
 
   expect(TERMINAL.has(finalStatus), `ticket ${ticketId} terminal status`).toBeTruthy();
 
-  if (finalStatus === 'escalated') {
+  if (finalStatus === 'escalated' || finalStatus === 'dead_letter') {
     const historyPoll = await page.evaluate(async ({ id }) => {
       const res = await fetch(`/api/v1/tickets/${encodeURIComponent(id)}/history`, { credentials: 'same-origin' });
       const text = await res.text();
@@ -144,11 +145,11 @@ test('write-gated: fresh build ticket completes or escalates with useful metadat
       body: JSON.stringify(history, null, 2),
       contentType: 'application/json',
     });
-    const escalation = (history.history || []).find((entry) =>
-      String(entry.toStatus || entry.to_status || '').toLowerCase() === 'escalated',
+    const terminalFailure = (history.history || []).find((entry) =>
+      String(entry.toStatus || entry.to_status || '').toLowerCase() === finalStatus,
     );
-    const metadata = escalation?.metadata || latestTicket.metadata || {};
+    const metadata = terminalFailure?.metadata || latestTicket.metadata || {};
     expect(String(metadata.reason || '')).toBeTruthy();
-    expect(String(metadata.source || escalation?.changedBy || escalation?.changed_by || '')).toBeTruthy();
+    expect(String(metadata.source || terminalFailure?.changedBy || terminalFailure?.changed_by || '')).toBeTruthy();
   }
 });

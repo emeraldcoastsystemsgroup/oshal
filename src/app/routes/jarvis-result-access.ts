@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Guard Jarvis cached and durable result sources using exact issuer identity and current protected execution lineage.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Report an access check that could not be DETERMINED instead of silently answering "denied". Every guard here still fails closed  the returns are unchanged  but a thrown store/authority error used to be indistinguishable from a real denial with nothing logged, which is how a Jarvis ownership fault read as an empty history for three days. Each catch now logs at ERROR with the error, its stack and the task it was deciding.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Give the automatic derived-answer path the lineage it was withheld for. recordDerivedJarvisResultLineage re-asserts the owner's current rights on the SOURCE ticket, binds every contributing execution to the conversation and shelf task the summary will be written to, and stamps that lineage on them - so the derived answer answers to exactly the same authority as the work product it came from. canReadDerivedJarvisSources is the re-check the background summarizer runs against the captured actor before it publishes anything. Nothing here widens who may read: the destinations inherit the source's checks, and a caller who cannot read the source records nothing.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Check fresh Jarvis sessions against the protected-result boundary before their task row can be persisted.
  */
 import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '../composition-root';
@@ -19,6 +20,22 @@ const logger = createChildLogger({ module: 'jarvis-result-access' });
 /** @description Durable Jarvis work row with its authoritative result and conversation references. */
 export interface JarvisResultRow {
   id: string; user_sub?: string; principal_issuer?: string | null; ticket_id?: string | null; session_id?: string | null;
+}
+
+/**
+ * @description Check the protected-result boundary against the exact task Jarvis would create,
+ * before session registration can persist a row that the same boundary will immediately refuse.
+ * Durable lineage attached to a caller-selected task id and protected Jarvis ownership are both
+ * evaluated here; ordinary unprotected sessions retain their existing admission path.
+ * @param sub - Authenticated owner the new conversation would be bound to.
+ * @param taskId - Sanitized conversation task id supplied to session registration.
+ * @param agentId - Jarvis agent recorded on the session task.
+ * @param resolveActor - Existing verified request-actor resolver.
+ * @returns Whether the would-be session passes the same protected-result boundary as a stored task.
+ */
+export async function canStartJarvisSession(sub: string, taskId: string, agentId: string,
+  resolveActor: () => Promise<AuthorizationActor>): Promise<boolean> {
+  return canReadProtectedResult({ taskId, ownerSub: sub, agentId }, resolveActor);
 }
 
 /**

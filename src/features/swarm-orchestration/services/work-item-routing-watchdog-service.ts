@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added work-item routing watchdog for stale pending assignments and dispatch circuit-breaker escalation support
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | BF-032: Added retryRoutingFailedItems() — auto-retries routing_failed work items up to MAX_ROUTING_RETRIES with exponential backoff
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Suppress routing retries for terminal dead-letter tickets, including immediate deterministic-refusal quarantine
  */
 
 import type { WorkItemRepository } from '@/entities/work-item';
@@ -21,7 +22,12 @@ const DEFAULT_STALE_THRESHOLD_MINUTES = process.env.NODE_ENV === 'development' ?
 const DEFAULT_MAX_ROUTING_RETRIES = 3;
 const DEFAULT_RETRY_BACKOFF_BASE_MS = 30_000; // 30s, 60s, 120s
 const ROUTING_ACTIVE_STATUSES = new Set(['pending', 'assigned', 'subtask-pending', 'subtask-assigned', 'subtask-executing']);
-const ROUTING_RETRY_TERMINAL_TICKET_STATUSES = new Set<OshalTicketState>(['complete', 'cancelled', 'escalated']);
+const ROUTING_RETRY_TERMINAL_TICKET_STATUSES = new Set<OshalTicketState>([
+  'complete',
+  'cancelled',
+  'escalated',
+  'dead_letter',
+]);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export type RoutingTicketStatusUpdater = (

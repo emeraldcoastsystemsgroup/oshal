@@ -20,6 +20,7 @@ export {
   ResilientWorkspaceStore,
   TicketProjectAssignmentService,
   TicketService,
+  isTicketStatusTransitionAllowed,
   APPROVAL_REQUIRED_REASONS,
   type ApprovalRequiredReason,
   ESCALATION_REASONS,

@@ -88,10 +88,13 @@ export {
 } from './queue-classification';
 
 export {
+  TicketStatusConflictError,
   type ITicketStore,
   type TicketStatusHistoryRecord,
   type TicketStatusMetadata,
   type TicketStatusUpdateContext,
+  type TicketDeadLetterMutation,
+  type TicketDeadLetterRequeueMutation,
 } from './ticket-store';
 
 // FSD deep-import burn-down (2026-07-24): members consumers were reaching via deep paths.

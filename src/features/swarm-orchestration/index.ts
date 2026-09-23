@@ -93,6 +93,8 @@ export {
   type DeadLetterPg,
   type DeadLetterServiceDeps,
   type FailureCycleVerdict,
+  type RefusalQuarantineInput,
+  type RefusalQuarantineVerdict,
   type RequeueResult,
   MultiRoundDispatchService,
   type MultiRoundDispatchDeps,

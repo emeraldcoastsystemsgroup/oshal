@@ -5,9 +5,13 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Process tracker: singleton EventEmitter for ticket status transitions. Bridges the store layer to SSE consumers without coupling them directly.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-045 graph ingestion: added ticket-created and agent-assigned events (emitted by TicketService) so the swarm operational graph can observe the full lifecycle without instrumenting call sites. Payloads are sanitized — ids/title/status only, never descriptions.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Isolate status-change observers so one throw cannot starve later subscribers or escape after the transition has committed.
  */
 
 import { EventEmitter } from 'events';
+import { createChildLogger } from '@/shared/logger';
+
+const logger = createChildLogger({ module: 'TicketEventBus' });
 
 /**
  * @description Payload emitted when a ticket status changes.
@@ -59,7 +63,23 @@ class TicketEventBus extends EventEmitter {
    * @returns Nothing.
    */
   emitStatusChanged(event: TicketStatusChangedEvent): void {
-    this.emit('status-changed', event);
+    // EventEmitter.emit stops fan-out at the first synchronous throw. Status events are emitted
+    // after persistence commits, so each observer is an independent, non-transactional side
+    // effect: one broken subscriber must neither starve later observers nor make the caller
+    // mistake a committed transition for a failed write. rawListeners keeps once() wrappers
+    // intact while returning the same stable listener snapshot that EventEmitter uses.
+    for (const listener of this.rawListeners('status-changed')) {
+      try {
+        const result = listener.call(this, event) as unknown;
+        if (result && typeof (result as PromiseLike<unknown>).then === 'function') {
+          void Promise.resolve(result).catch((error: unknown) => {
+            logger.error({ err: error, ticketId: event.ticketId }, 'Async ticket status observer failed');
+          });
+        }
+      } catch (error) {
+        logger.error({ err: error, ticketId: event.ticketId }, 'Ticket status observer failed');
+      }
+    }
   }
 
   /**

@@ -5,6 +5,8 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove recorded controller signing precedes HTTP dispatch and result authority cannot be supplied by a worker.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Cover the construction shape production actually uses — an endpoint resolver and the controller environment, with no injected issuer — for both outcomes: signing material configured records a real delegation and dispatches; compose-supplied empty keys refuse with a message naming them. The previous cases injected an issuer, so neither the env-derived success nor the live refusal was proven.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Prove an unrecordable protected dispatch exposes the typed refusal contract and canonical operator remedy without weakening the denial.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Preserve explicit controller-side result-persistence refusals through the real protected BotNodeClient path while continuing to sanitize generic remote/result failures.
  */
 import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
@@ -19,6 +21,7 @@ import { runWithApplicationAuthorizationActor } from '@/shared/application-autho
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
 import { runWithRemoteExecutionResults } from '@/shared/remote-execution-results';
 import { configureSpecialistContextRegistry, type SpecialistContextRegistry } from '@/shared/specialist-context';
+import { RefusalError, remedyForRefusal } from '@/shared/refusal-events';
 import { RemoteExecutionFixture } from '../fixtures/application-remote-execution';
 
 const actor = { sub: 'alice', issuer: 'https://controller.fixture.test', isActive: true, isSwarmAdmin: false };
@@ -90,6 +93,40 @@ it('links a protected result to the trusted parent before exposing it to persist
   expect(events.slice(-3)).toEqual(['result-check', 'link', 'persist']);
 });
 
+it.each([
+  [
+    'authorization_result_persistence_required',
+    'protected result lineage requires both an authorized actor and a durable task store',
+  ],
+  [
+    'protected_result_owner_issuer_required',
+    'the linked task owner does not match the authorized result principal',
+  ],
+])('preserves typed result refusal %s through the real protected client path', async (code, detail) => {
+  const refusal = new RefusalError(code, detail);
+  const record = vi.fn(async () => { throw refusal; });
+
+  const caught = await runWithRemoteExecutionResults(
+    { taskId: 'parent-session', record },
+    () => execute(),
+  ).then(() => null, (error: unknown) => error);
+
+  expect(caught).toBe(refusal);
+  expect(caught).toBeInstanceOf(RefusalError);
+  expect(caught).toMatchObject({ code, detail, message: `${code}: ${detail}` });
+  expect(authority.linkResult).toHaveBeenCalledWith(executionId, 'parent-session', actor);
+  expect(record).toHaveBeenCalledWith(executionId);
+});
+
+it('continues to sanitize a generic protected result persistence failure', async () => {
+  const record = vi.fn(async () => { throw new Error('private persistence detail'); });
+
+  await expect(runWithRemoteExecutionResults(
+    { taskId: 'parent-session', record },
+    () => execute(),
+  )).rejects.toThrow(/^authorization_remote_execution_failed$/);
+});
+
 it('does not dispatch when durable binding or recorded signing is unavailable', async () => {
   failBind = true; await expect(execute()).rejects.toThrow('durable unavailable'); expect(received).toEqual([]);
   const client = new BotNodeClient(() => endpoint, 5000, { delegationIssuer: { issue: grant => signer.issue(grant).token }, remoteExecutionAuthority: authority });
@@ -105,12 +142,15 @@ it('records a delegation from controller signing configuration alone, the shape 
   expect(received[0]).toMatchObject({ applicationExecutionId: executionId, userSub: actor.sub });
 });
 
-it('names the unset controller signing configuration when a prepared dispatch cannot be recorded', async () => {
+it('types and names the unset controller signing configuration when a prepared dispatch cannot be recorded', async () => {
   const client = new BotNodeClient(() => endpoint, 5000, { env: unconfiguredEnv, remoteExecutionAuthority: authority });
-  const refusal = await execute(client).then(() => null, (caught: Error) => caught);
+  const refusal = await execute(client).then(() => null, (caught: unknown) => caught);
+  expect(refusal).toBeInstanceOf(RefusalError);
+  if (!(refusal instanceof RefusalError)) throw new Error('expected typed refusal');
   expect(refusal?.message).toMatch(/^authorization_recorded_delegation_required: /);
   expect(refusal?.message).toContain('OSHAL_DELEGATION_SIGNING_KID');
   expect(refusal?.message).toContain('OSHAL_DELEGATION_SIGNING_PRIVATE_KEY');
+  expect(refusal.remedy).toBe(remedyForRefusal('authorization_recorded_delegation_required'));
   expect(received).toEqual([]); expect(authority.bind).not.toHaveBeenCalled();
 });
 
