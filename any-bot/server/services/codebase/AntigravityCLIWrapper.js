@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Run agy's terminal tools in its vendor sandbox. Request-review cannot prompt in headless mode and soft-denied every command after the workspace read was fixed; --sandbox lets autonomous commands proceed inside the --add-dir task boundary without --dangerously-skip-permissions or a global command(*) grant.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Select agy's accept-edits mode for autonomous task execution. Headless request-review cannot prompt for write_file, so it soft-denied task deliverables after reads and commands were fixed; accept-edits permits edits within the declared task workspace without --dangerously-skip-permissions.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Provision the existing oshal-tools MCP bridge in an invocation-only Antigravity HOME. The bridge is bound to the exact bot, protected execution, task and user supplied by the verified worker context; only the OAuth token and installation id are linked from the shared login, and the temporary config is removed after the turn.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Auto-approve only the invocation-local oshal-tools MCP server. Headless mode cannot answer Antigravity's default MCP confirmation; the controller still lists and executes only exact AUTO grants and revalidates protected actions per call.
  */
 
 'use strict';
@@ -73,6 +74,9 @@ function provisionToolBridge(binding) {
     const tokenPath = process.env.ANTIGRAVITY_OAUTH_TOKEN_PATH || '/root/.gemini/antigravity-cli/antigravity-oauth-token';
     linkCredential(tokenPath, path.join(cliRoot, 'antigravity-oauth-token'));
     linkCredential(path.join(path.dirname(tokenPath), 'installation_id'), path.join(cliRoot, 'installation_id'));
+    fs.writeFileSync(path.join(cliRoot, 'settings.json'), JSON.stringify({
+      permissions: { allow: ['mcp(oshal-tools/*)'] },
+    }), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
     fs.writeFileSync(path.join(configRoot, 'mcp_config.json'), JSON.stringify({
       mcpServers: {
         'oshal-tools': { command: 'node', args: [bridgePath], disabled: false },

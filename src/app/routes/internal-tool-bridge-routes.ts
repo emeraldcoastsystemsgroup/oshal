@@ -22,6 +22,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: require immutable request-start executor identity, deny system/unknown descriptors and missing caller context, and revalidate immediately before bridged execution.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Expose caller-scoped authorization reads through the typed handler; keep changes on the interactive rail.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Bind protected application tool calls to the original remote execution. The controller revalidates the exact same-app tool action immediately before execution and restores only the signed business actor for the existing ToolExecutorService policy check.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Keep ordinary app-tool discovery available to a trusted user-scoped harness when interactive authorization identity is unavailable. Authorization-family tools still fail closed and are omitted unless their separate actor discovery succeeds.
  */
 
 /**
@@ -157,11 +158,21 @@ export function createInternalToolBridgeRoutes(ctx: AppContext, authorization?: 
       // execute_command, …) are Claude Code natives or live in the base MCP config;
       // exposing them here would shadow the real ones and the server-side executor
       // can't run them ("Tool 'bash' is not supported by the server-side executor").
-      const discovery = authorization
-        ? await authorization.authorizationTool.discover(await authorization.resolveActor(req)) : [];
-      const appTools = tools.filter((t) => t.registeredBy && t.registeredBy !== 'system'
-        && (!isAuthorizationTool(t.name) || (t.name === AUTHORIZATION_READ_TOOL
-          && discovery.some((entry) => entry.name === t.name))));
+      const appCandidates = tools.filter((tool) => tool.registeredBy && tool.registeredBy !== 'system');
+      let authorizationReadAvailable = false;
+      if (authorization && appCandidates.some((tool) => isAuthorizationTool(tool.name))) {
+        try {
+          const discovery = await authorization.authorizationTool.discover(await authorization.resolveActor(req));
+          authorizationReadAvailable = discovery.some((entry) => entry.name === AUTHORIZATION_READ_TOOL);
+        } catch (err) {
+          // A service-secret harness carries an exact trusted user sub but no browser/OIDC request
+          // identity. That is sufficient for ordinary user-scoped app tools, never for the core
+          // authorization family. Omit that family without hiding unrelated app tools.
+          logger.warn({ err, agentId: req.params.agentId }, 'authorization tool discovery unavailable; omitting reserved tools');
+        }
+      }
+      const appTools = appCandidates.filter((tool) => !isAuthorizationTool(tool.name)
+        || (tool.name === AUTHORIZATION_READ_TOOL && authorizationReadAvailable));
       res.json({
         tools: appTools.map((t) => ({
           name: t.name,

@@ -9,6 +9,7 @@
  *   terminal state. Without this, minting one ticket per posting would kill every ticket but the
  *   first (they'd all 409 while the first is in flight). Also pins: a hard failure still escalates,
  *   an accepted dispatch marks the ticket active + records the browser taskId/postingId.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard read-only career questions containing the noun "application" from being mistaken for browser submission without a submit/deploy/apply verb.
  */
 import { describe, expect, it, vi } from 'vitest';
 import { dispatchManifestWorkerTicket } from '@/features/swarm-orchestration/services/dispatch-manifest-worker';
@@ -39,6 +40,21 @@ function recordingDeps(dispatchResult: Record<string, unknown>) {
 }
 
 describe('durable job-apply queue: dispatcher outcome routing', () => {
+  it('does not send a read-only application-status question to browser submission', async () => {
+    const { deps, calls } = recordingDeps({ handled: true, accepted: true });
+    const ticket = {
+      ...applyTicket(),
+      title: 'Career report',
+      description: 'Show my top job matches with company, score, and application status.',
+      metadata: {},
+    } as never;
+
+    await dispatchManifestWorkerTicket(ticket, WORKFLOW, deps);
+
+    expect((deps as { dispatchJobApplicationTask: ReturnType<typeof vi.fn> }).dispatchJobApplicationTask).not.toHaveBeenCalled();
+    expect(calls.at(-1)?.meta?.reason).toBe('manifest_worker_agent_unresolved');
+  });
+
   it('DEFERS (approved) — not escalates — when the desktop is busy (retryable)', async () => {
     const { deps, calls } = recordingDeps({ handled: true, accepted: false, retryable: true, error: 'a submission is already in progress for this user' });
     await dispatchManifestWorkerTicket(applyTicket(), WORKFLOW, deps);

@@ -15,6 +15,7 @@
  *   the shared exact-request-user bulk gate: absent/false/unavailable settings and identity mismatch
  *   mint zero, explicit true authorizes each bulk ticket, and a single authenticated action may opt in.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Require stale runs to use ambiguity-safe human-review recovery and raw-claim cleanup instead of blindly returning tickets to auto-submit.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Keep the test's prose-routing verb contract aligned with the dispatcher: application is a noun; submit, deploy and apply are actions.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -81,7 +82,7 @@ function ctxWith(overrides: Record<string, unknown>) {
 
 // The apply-intent regex the manifest-worker uses to route a ticket to the browser dispatcher.
 const NOUN = /\b(apply|application|resumes?|job posting|job postings)\b/i;
-const VERB = /\b(submit|deploy|apply|application)\b/i;
+const VERB = /\b(submit|deploy|apply)\b/i;
 
 beforeEach(() => {
   runApplyCliMock.mockReset();

@@ -29,8 +29,10 @@ the exact non-system `AUTO` tools and scopes resolved for the bot at call time. 
 the bridge receives an invocation-only MCP configuration bound to the exact bot, owner, task and
 original execution. Every bridged call must still be an enabled `AUTO` grant for that bot and
 receives a fresh same-application `action` permit before the existing server-side executor runs it.
-The temporary configuration is removed after the turn. The existing per-bot usage and cost path is
-retained.
+The invocation-only Antigravity settings auto-approve `mcp(oshal-tools/*)` because a headless CLI
+cannot answer its default MCP confirmation; they do not approve another MCP server or any terminal
+command. The temporary configuration is removed after the turn. The existing per-bot usage and
+cost path is retained.
 
 The worker's open-ended agentic loop, provider intents, connector credentials, raw mesh/batch calls
 and Token Chase replay remain refused for protected applications. Call-time application tools are

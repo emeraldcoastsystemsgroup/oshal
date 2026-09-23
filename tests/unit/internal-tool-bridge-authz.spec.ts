@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: add system-tool, missing-descriptor, and replacement adversarial denials.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Prove an authorized request reaches the stable descriptor dispatch rather than failing first on an incomplete stream fixture.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Guard protected app-tool proof: missing proof refuses, valid proof revalidates the exact action and restores only the permit actor around execution.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Prove an unavailable interactive authorization actor omits only reserved authorization tools from MCP discovery instead of hiding ordinary app tools from a trusted user-scoped harness.
  */
 
 /**
@@ -32,10 +33,12 @@ import express from 'express';
 import http from 'http';
 import type { AddressInfo } from 'net';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createInternalToolBridgeRoutes, resolveActingSub } from '../../src/app/routes/internal-tool-bridge-routes';
+import { createInternalToolBridgeRoutes, resolveActingSub,
+  type InternalToolAuthorizationOptions } from '../../src/app/routes/internal-tool-bridge-routes';
 import type { AppContext } from '../../src/app/composition/app-context';
 import { getApplicationAuthorizationActor } from '../../src/shared/application-authorization-context';
 import type { RemoteExecutionCheck } from '../../src/shared/application-remote-execution';
+import { AUTHORIZATION_READ_TOOL } from '../../src/shared/security/authorization-tool-contract';
 
 interface GrantRow {
   name: string;
@@ -94,6 +97,7 @@ async function boot(
   session?: { sub: string; email?: string },
   descriptorMode: 'stable' | 'missing' | 'replaced' | 'registry-missing' = 'stable',
   protectedFixture?: ProtectedFixture,
+  authorization?: InternalToolAuthorizationOptions,
 ) {
   const pool = grantPool(grants);
   const initialDescriptor = Object.freeze({
@@ -130,7 +134,7 @@ async function boot(
     } } : undefined,
   } as unknown as AppContext;
 
-  const router = createInternalToolBridgeRoutes(ctx, undefined, protectedFixture ? {
+  const router = createInternalToolBridgeRoutes(ctx, authorization, protectedFixture ? {
     requiresProof: async () => protectedFixture.required,
     revalidate: async (input) => {
       protectedFixture.checks.push(input);
@@ -171,8 +175,34 @@ async function boot(
       });
       return { status: r.status, body: (await r.json()) as Record<string, unknown> };
     },
+    getTools: async (agentId: string) => {
+      const r = await fetch(`http://127.0.0.1:${port}/api/tools/for-agent/${encodeURIComponent(agentId)}`);
+      return { status: r.status, body: (await r.json()) as { tools?: Array<{ name: string }> } };
+    },
   };
 }
+
+describe('GET /api/tools/for-agent/:agentId — discovery isolation', () => {
+  let close: null | (() => Promise<void>) = null;
+  afterEach(async () => { if (close) { await close(); close = null; } });
+
+  it('returns ordinary app tools while omitting reserved tools when interactive actor discovery fails', async () => {
+    const authorization = {
+      authorizationTool: { discover: async () => [{ name: AUTHORIZATION_READ_TOOL }] },
+      resolveActor: async () => { throw new Error('verified interactive identity required'); },
+    } as unknown as InternalToolAuthorizationOptions;
+    const h = await boot([
+      { name: 'career_database' },
+      { name: AUTHORIZATION_READ_TOOL },
+    ], { sub: 'operator-sub' }, 'stable', undefined, authorization);
+    close = h.close;
+
+    const res = await h.getTools('career-bot');
+
+    expect(res.status).toBe(200);
+    expect(res.body.tools?.map((tool) => tool.name)).toEqual(['career_database']);
+  });
+});
 
 describe('POST /api/tools/execute — authorization', () => {
   let close: null | (() => Promise<void>) = null;
