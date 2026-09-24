@@ -31,6 +31,7 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com | Resolve the canonical concierge by name without manufacturing an agent_ids association for a metadata-only chatBot. Live P8 rollout proved agent_ids also feeds execution ownership, so borrowing general-bot for a right rail cannot add the referencing surface as a bot owner. A missing named agent still yields NULL and skips the dynamic route; duplicate names remain deterministic.
  * 14 | maintainer@emeraldcoastsystemsgroup.com | Fail closed on inactive and duplicate-name concierge rows. A declared bot or workflow fallback must be the sole ACTIVE matching agent inside the app's executable agent_ids; only a metadata-only external chatBot may resolve outside that array, and only when exactly one ACTIVE global row owns the name. This keeps an unrelated lower-id name shadow from replacing a manifest's explicit agent id.
  * 15 | maintainer@emeraldcoastsystemsgroup.com | A dynamically discovered borrowed-concierge route must be discoverable as BOTH the referencing application and the distinct bot-owning application. Checking only owner('bots', id) let a protected surface inherit a shared concierge owner's grant, leaking its name/deep link and, in delegate mode, execution reach. Curated routes retain their historical owner-or-key rule because their keys need not be registered applications.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com | Handle unbindable lineage in returnProtectedComplexSummaries: hand off to automatic summarizer when work product is not protected, or write a stated sentence in the thread when protected work product lacks bindable executions.
  *
  * @module jarvis-orchestrator
  */
@@ -40,6 +41,7 @@ import type { AppContext } from '@/app/composition/app-context';
 import { createChildLogger } from '@/shared/logger';
 import { isApplicationExecutionProtected } from '@/shared/application-authorization-execution';
 import type { AuthorizationActor } from '@/shared/application-authorization';
+import { OWNER_PRINCIPAL_ISSUER_METADATA_KEY } from '@/shared/security/owner-principal-issuer';
 import { BotNodeClient, createRegistryEndpointResolver, type BrainFallbackMarker } from '@/features/agent-management';
 import { learnFromExchange, withHavenContext } from '@/features/user-model';
 import {
@@ -1067,21 +1069,77 @@ export async function returnProtectedComplexSummaries(
   resolveActor: () => Promise<AuthorizationActor>,
   fire: typeof summarizeComplexTask = summarizeComplexTask,
 ): Promise<void> {
-  const { recordDerivedJarvisResultLineage } = await import('./jarvis-result-access.js');
+  const { recordDerivedJarvisResultLineage, hasProtectedJarvisSource, isProtectedAgent } = await import('./jarvis-result-access.js');
   for (const t of tasks) {
     if (t.kind !== 'complex' || t.status !== 'done' || t.result || !t.ticketId) continue;
     const sessionId = String(sessions.get(t.id) || '').trim();
     const destinations = [t.id, ...(/^[\w.-]{6,180}$/.test(sessionId) ? [sessionId] : [])];
-    const actor = await recordDerivedJarvisResultLineage(ctx, sub, t.ticketId, destinations, JARVIS_AGENT_ID, resolveActor);
-    if (!actor) continue;
-    const claimed = await ctx.pool.query(
-      `UPDATE jarvis_tasks SET status = 'summarizing', summarize_started_at = NOW()
-        WHERE id = $1 AND user_sub = $2 AND (status <> 'summarizing' OR summarize_started_at IS NULL
-              OR summarize_started_at < NOW() - INTERVAL '3 minutes')
-        RETURNING id`, [t.id, sub]).catch(() => null);
-    if (claimed && claimed.rowCount) void fire(ctx, sub, t.id, t.ticketId, t.title, actor);
-    t.status = 'summarizing';
-    t.result = 'Reading the results…';
+    const lineage = await recordDerivedJarvisResultLineage(ctx, sub, t.ticketId, destinations, JARVIS_AGENT_ID, resolveActor);
+
+    if (lineage.outcome === 'authorized') {
+      const claimed = await ctx.pool.query(
+        `UPDATE jarvis_tasks SET status = 'summarizing', summarize_started_at = NOW()
+          WHERE id = $1 AND user_sub = $2 AND (status <> 'summarizing' OR summarize_started_at IS NULL
+                OR summarize_started_at < NOW() - INTERVAL '3 minutes')
+          RETURNING id`, [t.id, sub]).catch(() => null);
+      if (claimed && claimed.rowCount) void fire(ctx, sub, t.id, t.ticketId, t.title, lineage.actor);
+      t.status = 'summarizing';
+      t.result = 'Reading the results…';
+      continue;
+    }
+
+    if (lineage.outcome === 'unbindable') {
+      if (sessionId && ctx.taskStore && !await ctx.taskStore.get(sessionId)) {
+        await ctx.taskStore.create({
+          taskId: sessionId,
+          agentId: JARVIS_AGENT_ID,
+          title: 'Jarvis session',
+          processingMode: 'agentic',
+          ownerSub: sub,
+          metadata: {
+            origin: 'jarvis-chat',
+            ...(lineage.actor?.issuer ? { [OWNER_PRINCIPAL_ISSUER_METADATA_KEY]: lineage.actor.issuer } : {}),
+          },
+        }).catch(() => null);
+      }
+
+      const sourceTask = await ctx.taskStore?.get(t.ticketId);
+      const isProtectedWorkProduct = await hasProtectedJarvisSource(ctx, [t.ticketId])
+        || Boolean(sourceTask?.agentId && await isProtectedAgent(sourceTask.agentId));
+
+      if (!isProtectedWorkProduct) {
+        // The work product is not protected at all: hand off to the automatic summarizer
+        const claimed = await ctx.pool.query(
+          `UPDATE jarvis_tasks SET status = 'summarizing', summarize_started_at = NOW()
+            WHERE id = $1 AND user_sub = $2 AND (status <> 'summarizing' OR summarize_started_at IS NULL
+                  OR summarize_started_at < NOW() - INTERVAL '3 minutes')
+            RETURNING id`, [t.id, sub]).catch(() => null);
+        if (claimed && claimed.rowCount) void fire(ctx, sub, t.id, t.ticketId, t.title);
+        t.status = 'summarizing';
+        t.result = 'Reading the results…';
+      } else {
+        // Protected work product carrying no bindable executions: write an honest stated sentence in the thread
+        const sentence = 'The task completed, but carries no verifiable execution lineage for this protected result.';
+        const claimed = await ctx.pool.query(
+          `UPDATE jarvis_tasks SET status = 'done', result = $3, finished_at = NOW()
+            WHERE id = $1 AND user_sub = $2 AND (result IS NULL OR result = '')
+            RETURNING id`, [t.id, sub, sentence]).catch(() => null);
+        if (claimed && claimed.rowCount) {
+          if (sessionId) {
+            const { persistJarvisTurn } = await import('./jarvis-task-store.js');
+            await persistJarvisTurn(ctx, sessionId, 'assistant', sentence, {
+              sourceJarvisTaskId: t.id,
+              sourceTicketId: t.ticketId,
+            });
+          }
+          t.status = 'done';
+          t.result = sentence;
+        }
+      }
+      continue;
+    }
+
+    // Denied / unauthorized reader: skip completely (leave refusal path exactly as it is)
   }
 }
 

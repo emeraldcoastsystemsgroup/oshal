@@ -7,13 +7,16 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Report an access check that could not be DETERMINED instead of silently answering "denied". Every guard here still fails closed  the returns are unchanged  but a thrown store/authority error used to be indistinguishable from a real denial with nothing logged, which is how a Jarvis ownership fault read as an empty history for three days. Each catch now logs at ERROR with the error, its stack and the task it was deciding.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Give the automatic derived-answer path the lineage it was withheld for. recordDerivedJarvisResultLineage re-asserts the owner's current rights on the SOURCE ticket, binds every contributing execution to the conversation and shelf task the summary will be written to, and stamps that lineage on them - so the derived answer answers to exactly the same authority as the work product it came from. canReadDerivedJarvisSources is the re-check the background summarizer runs against the captured actor before it publishes anything. Nothing here widens who may read: the destinations inherit the source's checks, and a caller who cannot read the source records nothing.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Check fresh Jarvis sessions against the protected-result boundary before their task row can be persisted.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Distinguish unbindable lineage from access denial in recordDerivedJarvisResultLineage so unbindable results can be handled honestly.
  */
 import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '../composition-root';
 import type { AuthorizationActor } from '@/shared/application-authorization';
-import { canReadProtectedResult, hasProtectedTaskResults, recordDerivedProtectedResult, PROTECTED_RESULT_EXECUTIONS } from '@/shared/protected-results';
+import { canReadProtectedResult, hasProtectedTaskResults, isProtectedAgent, recordDerivedProtectedResult, PROTECTED_RESULT_EXECUTIONS, readProtectedResultExecutions } from '@/shared/protected-results';
 import { persistProtectedResultTask } from './protected-result-persistence';
 import { readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
+
+export { isProtectedAgent };
 
 const logger = createChildLogger({ module: 'jarvis-result-access' });
 
@@ -81,6 +84,15 @@ export async function filterJarvisResultRows<T extends JarvisResultRow>(ctx: App
       let readable = true;
       for (const taskId of new Set([row.id, row.ticket_id, row.session_id].filter((id): id is string => Boolean(id)))) {
         const task = await ctx.taskStore?.get(taskId);
+        if (task) {
+          const executions = readProtectedResultExecutions(task.metadata);
+          const durable = await hasProtectedTaskResults(taskId);
+          if (!executions.length && !durable) {
+            const actor = await resolveActor();
+            if (!actor.isActive || !actor.issuer || actor.sub !== sub) { readable = false; break; }
+            continue;
+          }
+        }
         if (!await canReadProtectedResult(task ?? { taskId, ownerSub: sub }, resolveActor)) { readable = false; break; }
       }
       if (readable) allowed.push(row);
@@ -105,6 +117,7 @@ export async function hasProtectedJarvisSource(ctx: AppContext, taskIds: readonl
       if (await hasProtectedTaskResults(id)) return true;
       const task = await ctx.taskStore?.get(id);
       if (task?.metadata && Object.prototype.hasOwnProperty.call(task.metadata, PROTECTED_RESULT_EXECUTIONS)) return true;
+      if (task?.agentId && await isProtectedAgent(task.agentId)) return true;
     }
     return false;
   } catch (err) {
@@ -140,6 +153,12 @@ export async function canReadDerivedJarvisSources(ctx: AppContext, sub: string, 
   }
 }
 
+/** @description Outcome of attempting to record derived lineage from a protected source task to destination tasks. */
+export type DerivedJarvisLineageResult =
+  | { outcome: 'authorized'; actor: AuthorizationActor }
+  | { outcome: 'denied'; actor: null }
+  | { outcome: 'unbindable'; actor: AuthorizationActor; reason: 'protected_result_lineage_required' };
+
 /**
  * @description Record the lineage the automatic summary path was withheld for: bind the source ticket's
  * protected executions to the exact destinations the derived answer will be written to (the conversation
@@ -152,31 +171,49 @@ export async function canReadDerivedJarvisSources(ctx: AppContext, sub: string, 
  * @param destinationTaskIds - Controller-chosen destinations; never a caller-supplied identifier.
  * @param agentId - Agent recorded on a destination task this path has to create.
  * @param resolveActor - Existing server-owned actor resolver, never caller body identity.
- * @returns The verified actor the derivation is authorized for, or null when it may not be recorded.
+ * @returns The derived lineage outcome: authorized with actor, denied, or unbindable with actor.
  */
 export async function recordDerivedJarvisResultLineage(ctx: AppContext, sub: string, sourceTaskId: string,
   destinationTaskIds: readonly string[], agentId: string,
-  resolveActor: () => Promise<AuthorizationActor>): Promise<AuthorizationActor | null> {
+  resolveActor: () => Promise<AuthorizationActor>): Promise<DerivedJarvisLineageResult> {
   try {
     const actor = await resolveActor();
-    if (!actor?.isActive || !actor.sub || !actor.issuer || actor.sub !== sub) return null;
+    if (!actor?.isActive || !actor.sub || !actor.issuer || actor.sub !== sub) return { outcome: 'denied', actor: null };
     const source = await ctx.taskStore?.get(sourceTaskId);
-    if (!source || source.ownerSub !== sub) return null;
+    if (!source || source.ownerSub !== sub) return { outcome: 'denied', actor: null };
     const storedIssuer = readOwnerPrincipalIssuer(source.metadata);
-    if (storedIssuer ? storedIssuer !== actor.issuer : Boolean(ctx.applicationAuthorization)) return null;
-    if (!await canReadProtectedResult(source, async () => actor)) return null;
+    if (storedIssuer ? storedIssuer !== actor.issuer : Boolean(ctx.applicationAuthorization)) return { outcome: 'denied', actor: null };
+    let executions: string[];
+    try {
+      executions = readProtectedResultExecutions(source.metadata);
+    } catch {
+      return { outcome: 'denied', actor: null };
+    }
+    const durable = await hasProtectedTaskResults(sourceTaskId);
+    if (!executions.length && !durable) {
+      return { outcome: 'unbindable', actor, reason: 'protected_result_lineage_required' };
+    }
+    if (!await canReadProtectedResult(source, async () => actor)) return { outcome: 'denied', actor: null };
     for (const destinationTaskId of new Set(destinationTaskIds.filter(Boolean))) {
       if (destinationTaskId === sourceTaskId) continue;
-      const executions = await recordDerivedProtectedResult(source, destinationTaskId, actor);
+      let executions: string[];
+      try {
+        executions = await recordDerivedProtectedResult(source, destinationTaskId, actor);
+      } catch (err) {
+        if (err instanceof Error && err.message === 'protected_result_lineage_required') {
+          return { outcome: 'unbindable', actor, reason: 'protected_result_lineage_required' };
+        }
+        throw err;
+      }
       for (const executionId of executions) await persistProtectedResultTask(ctx, destinationTaskId, agentId, executionId, actor);
       const destination = await ctx.taskStore?.get(destinationTaskId);
-      if (!destination || !await canReadProtectedResult(destination, async () => actor)) return null;
+      if (!destination || !await canReadProtectedResult(destination, async () => actor)) return { outcome: 'denied', actor: null };
     }
-    return actor;
+    return { outcome: 'authorized', actor };
   } catch (err) {
     // A destination that could not be bound is left unwritten: the answer stays withheld exactly as it was
     // before this path existed. Logged because a silent skip is indistinguishable from a real refusal.
     logger.error({ err, sourceTaskId, destinationTaskIds }, 'jarvis derived lineage not recorded; result withheld');
-    return null;
+    return { outcome: 'denied', actor: null };
   }
 }

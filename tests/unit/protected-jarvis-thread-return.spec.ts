@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove a SUCCESSFUL protected ticket returns its answer to the owner's Jarvis thread exactly once, with recorded lineage, and to nobody else. Crosses both boundaries the defect spans: isolated real PostgreSQL for the durable shelf and conversation, and the real ApplicationRemoteExecutionService installed through configureProtectedResultAccess for the authorization decision. Only the model rail is doubled - no boundary this file makes a claim about is mocked.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove a protected-classified task with no bindable executions returns either an answer (unprotected work product) or a stated sentence (protected work product) to the owner's thread, while an unverified reader produces nothing.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { createProtectedJarvisFixture } from '../fixtures/protected-jarvis-results';
@@ -12,6 +13,7 @@ import { RESULT_AGENT } from '../fixtures/protected-results';
 import { persistProtectedResultTask } from '@/app/routes/protected-result-persistence';
 import { saveTaskPending } from '@/app/routes/jarvis-task-store';
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
+import { OWNER_PRINCIPAL_ISSUER_METADATA_KEY } from '@/shared/security/owner-principal-issuer';
 
 const SUMMARY = 'PRIVATE TRADING SUMMARY 42';
 const WORK_PRODUCT = 'PRIVATE WORK PRODUCT: the book closed the session ahead, carried by the core sleeve.';
@@ -99,3 +101,63 @@ it('never derives or returns the answer for a principal carrying no verified iss
   expect(await thread('pat')).toEqual([]);
   expect(JSON.stringify(await poll('pat'))).not.toContain('PRIVATE');
 });
+
+it('summarizes an unprotected ticket to the thread when classified protected only by its session', async () => {
+  const actor = fixture.actors.alice;
+  const unprotectedWorkId = 'unbound-unprotected-work';
+  const unprotectedTicketId = 'unbound-unprotected-ticket';
+  const deliverable = 'Deliverable from an unprotected team ticket.';
+  await fixture.messages.save({
+    taskId: unprotectedTicketId, role: 'assistant', type: 'completion', text: deliverable,
+    contentBlocks: [], metadata: { source: 'manifest-worker-bot-node', manifestWorkerResult: true },
+  });
+  await runWithRequestIdentity({ sub: actor.sub, principalIssuer: actor.issuer, isOperator: false }, async () => {
+    expect(await saveTaskPending(fixture.pool as never, unprotectedWorkId, actor.sub, SESSION_ID, 'General team task', 'complex', unprotectedTicketId)).toBe(true);
+  });
+  await fixture.pool.query("UPDATE jarvis_tasks SET status='done' WHERE id=$1", [unprotectedWorkId]);
+
+  // PAT-shaped principal polls first: unauthorized reader must neither receive summary nor see work
+  expect(await thread('pat')).toEqual([]);
+  await poll('pat');
+  expect((await fixture.pool.query('SELECT status, result FROM jarvis_tasks WHERE id=$1', [unprotectedWorkId])).rows[0]).toMatchObject({ status: 'done', result: null });
+  expect(await thread('pat')).toEqual([]);
+
+  // Owner polls: since work product is unprotected, automatic summarizer runs and returns answer to thread
+  await poll();
+  await vi.waitFor(async () => expect((await poll()).find(task => task.id === unprotectedWorkId)?.result).toContain(SUMMARY), { timeout: 10_000 });
+  expect((await thread()).some(turn => turn.text.includes(SUMMARY))).toBe(true);
+  expect(await thread('pat')).toEqual([]);
+});
+
+it('writes an honest stated sentence to the thread when a protected ticket has no executions to bind', async () => {
+  const actor = fixture.actors.alice;
+  const noExecWorkId = 'no-exec-work-row';
+  const noExecTicketId = 'no-exec-ticket-row';
+  await fixture.ctx.taskStore.create({
+    taskId: noExecTicketId,
+    agentId: RESULT_AGENT,
+    title: 'Protected task with no executions',
+    processingMode: 'direct',
+    ownerSub: actor.sub,
+    metadata: { [OWNER_PRINCIPAL_ISSUER_METADATA_KEY]: actor.issuer },
+  });
+  await runWithRequestIdentity({ sub: actor.sub, principalIssuer: actor.issuer, isOperator: false }, async () => {
+    expect(await saveTaskPending(fixture.pool as never, noExecWorkId, actor.sub, SESSION_ID, 'Protected query with no executions', 'complex', noExecTicketId)).toBe(true);
+  });
+  await fixture.pool.query("UPDATE jarvis_tasks SET status='done' WHERE id=$1", [noExecWorkId]);
+
+  // PAT-shaped principal polls first: unauthorized reader must neither cause sentence write nor see thread
+  expect(await thread('pat')).toEqual([]);
+  await poll('pat');
+  expect((await fixture.pool.query('SELECT status, result FROM jarvis_tasks WHERE id=$1', [noExecWorkId])).rows[0]).toMatchObject({ status: 'done', result: null });
+  expect(await thread('pat')).toEqual([]);
+
+  // Owner polls: unbindable protected ticket produces the honest stated sentence in thread and on shelf
+  const tasks = await poll();
+  const found = tasks.find(t => t.id === noExecWorkId);
+  expect(found?.status).toBe('done');
+  expect(found?.result).toContain('carries no verifiable execution lineage');
+  expect((await thread()).some(turn => turn.text.includes('carries no verifiable execution lineage'))).toBe(true);
+  expect(await thread('pat')).toEqual([]);
+});
+

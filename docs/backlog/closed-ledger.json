@@ -292,5 +292,11 @@
     "title": "`src/app/server.ts` is past the decomposition threshold: move the post-bootstrap installs out (2026-09-17)",
     "pr": "main",
     "evidence": "Extracted post-bootstrap installs (provider switch snapshot, autoload swarm apps, route audit, wiring audit, seed demo data) into src/app/composition/server-bootstrap-tasks.ts (51 lines) and extracted 14 auxiliary route clusters into src/app/server-auxiliary-routes.ts (320 lines); reduced src/app/server.ts to 781 code lines (under 800 line threshold); guarded by tests/unit/server-decomposition.spec.ts (7/7 pass)."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "A protected Jarvis answer with no bindable lineage leaves the thread silent",
+    "pr": "main",
+    "evidence": "src/app/routes/jarvis-result-access.ts distinguishes unbindable lineage from denial via DerivedJarvisLineageResult; src/app/routes/jarvis-orchestrator.ts returnProtectedComplexSummaries routes unbindable tasks to automatic summarization when work product is not protected, or writes an honest stated sentence to thread and durable task when protected work product lacks bindable executions; guarded by tests/unit/protected-jarvis-thread-return.spec.ts (5/5 pass)."
   }
 ]

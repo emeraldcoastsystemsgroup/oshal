@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Bind persisted protected output to controller-owned execution lineage and current exact-principal result access.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Record derived-result lineage so a protected answer can be published to a second controller-owned destination (a Jarvis conversation) without laundering it: linkResult joins the authority port, and recordDerivedProtectedResult re-asserts the owner's current rights on the SOURCE, links every contributing execution to the destination, then proves the destination now answers to the same executions. Nothing about who may read is relaxed - the destination simply inherits the source's checks.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Export isProtectedAgent helper to detect protected execution status without exposing raw authority setter; assert executions presence before task-result assertion in recordDerivedProtectedResult.
  */
 import type { AuthorizationActor } from '@/shared/application-authorization';
 
@@ -48,6 +49,15 @@ export function configureProtectedResultAccess(value: ProtectedResultAccess | un
  */
 export async function hasProtectedTaskResults(taskId: string): Promise<boolean> {
   return access ? access.hasTaskResults(taskId) : false;
+}
+
+/**
+ * @description Detect whether an agent is protected under current controller execution authority.
+ * @param agentId - Dispatched agent identifier.
+ * @returns Whether the agent's tasks are considered protected.
+ */
+export async function isProtectedAgent(agentId: string): Promise<boolean> {
+  return access ? access.isProtectedAgent(agentId) : false;
 }
 
 /**
@@ -119,12 +129,12 @@ export async function recordDerivedProtectedResult(source: ProtectedResultTask, 
   if (!destinationTaskId || destinationTaskId === source.taskId) throw new Error('protected_result_binding_mismatch');
   if (actor.sub !== source.ownerSub) throw new Error('protected_result_owner_mismatch');
   const executions = readProtectedResultExecutions(source.metadata);
+  if (!executions.length) throw new Error('protected_result_lineage_required');
   // The source must be readable by this exact principal RIGHT NOW, against its own binding, before any
   // part of it is republished. A durable execution the metadata lost still counts, so the task-wide
   // assertion runs too — it is what closes the "lineage append was lost" hole for the derived copy.
   for (const executionId of executions) await authority.assertResultAccess(executionId, actor, { taskId: source.taskId });
   await authority.assertTaskResultAccess(source.taskId, actor);
-  if (!executions.length) throw new Error('protected_result_lineage_required');
   for (const executionId of executions) {
     await authority.linkResult(executionId, destinationTaskId, actor);
     // Prove the link took: a destination that does not yet answer to this execution must not be stamped.
