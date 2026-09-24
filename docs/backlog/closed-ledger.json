@@ -1,5 +1,23 @@
 [
   {
+    "date": "2026-09-24",
+    "title": "Jarvis /ask answers 404 session_not_found in two guards (2026-09-16)",
+    "pr": "d8635e9c",
+    "evidence": "tests/unit/jarvis-ask-session-ownership.spec.ts passes 6/6; session task store double aligns with contract and handles ownership, throwing stores, and read-back validation."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "The task call-out can still hand a ticket to a controller-inline bot under signing",
+    "pr": "599",
+    "evidence": "tests/unit/task-call-out-endpoint-routing.spec.ts passes 6/6; call-out winner with no dedicated endpoint falls back to workflow default worker under signing."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "Signed delegation refuses every ticket whose worker bot runs inline (2026-09-15)",
+    "pr": "599",
+    "evidence": "Met for core ticket types; all 7 route to dedicated nodes under signing per docs/security/http-delegation.md; remainder filed as call-out bidder and build pipeline items."
+  },
+  {
     "date": "2026-09-20",
     "title": "partner-app-registration.md covers about a third of the wired hub connectors",
     "pr": "688",
@@ -180,7 +198,3 @@
     "evidence": "Operator decision 2026-09-21/22: CLOSED — verified live. Keypair configuration (OSHAL_DELEGATION_SIGNING_KID, OSHAL_DELEGATION_SIGNING_PRIVATE_KEY, and bot ring OSHAL_DELEGATION_PUBLIC_KEYS) was verified structurally present and correctly matched. Interactive live protected dispatch from the cockpit proved zero authorization_recorded_delegation_required refusals in 24 hours."
   }
 ]
-
-
-
-
