@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-149 rail discoverability guard. A launcher-shaped app declares tiles whose iframeUrl sits under ANOTHER package's mount; the manifest-static rail rendered them for a person who could not discover the target, and a click opened the kernel's role-guidance 403 inside the frame. These cases run the REAL profile route, the REAL SwarmAppService (repository doubled), the REAL ApplicationAuthorizationRuntime over MemoryAuthorizationStore and real package loading: a non-discoverable target comes back locked in place with the role-guidance link, a granted one keeps its tile, a tile under the app's OWN mount / an unowned path / a mount-prefix lookalike is never touched, a legacy-mode package is always discoverable, an ADR-141 group's borrowed tiles follow their member, no port means the declared rail, and no manifest changes.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The LANDING half of the same rule. Locking the rail button left the synthesised defaultView alone, so an app whose ribbon.defaultView names a tile under another package's mount opened the cockpit straight onto that package's role-guidance 403 inside the frame — the rail showed the tile locked while the content area showed the dead frame. These cases run the same real route/service/runtime stack and assert the landing view: a declared default that is locked falls through to the first openable tile, every static tile locked lands on the first framework view, a grant restores the declared one, an app with no lock anywhere lands exactly where it did before, and an internal call with no port still gets the manifest-static default.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Declare concierges on every surfaced fixture under P8's enforce default; the code-free group borrows its required studio member's concierge so profile semantics remain realistic.
  */
 /** Real Express, package loading, profile synthesis and authorization; only persistence and identity are isolated doubles. */
 import express, { type Request, type RequestHandler } from 'express';
@@ -55,6 +56,7 @@ let records: Map<string, SwarmApplicationRecord>;
 
 function manifest(name: string, tiles: Tile[], protectedPackage: boolean, ribbon?: { defaultView: string }): SwarmAppManifest {
   return { name, displayName: `Fixture ${name}`, version: '1.0.0', status: 'active', suite: 'ai-creative',
+    chatBot: `${name}-concierge`,
     ...(ribbon ? { ribbon } : {}),
     ...(protectedPackage ? { uses: ['application-authorization'], authorization: { version: 1, catalog: 'authorization.yaml' } } : {}),
     access: { supported: ['deny', 'viewer', 'editor', 'admin'], defaultTier: 'admin' },
@@ -76,6 +78,7 @@ async function installFixture() {
   await install(manifest('studio', [tile('studio-home', '/api/studio/app')], true));
   await install(manifest('legacy-tool', [tile('legacy-home', '/api/legacy-tool/ui')], false), 'legacy-tool.yaml');
   await install({ name: 'creative', displayName: 'Creative', kind: 'group', suite: 'ai-creative', status: 'active',
+    chatBot: 'studio-concierge',
     dependencies: { apps: ['studio', 'legacy-tool'] },
     toolbar: [{ app: 'studio', surface: 'studio-home' }, { app: 'legacy-tool', surface: 'legacy-home' }] } as SwarmAppManifest);
 }

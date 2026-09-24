@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Export the ADR-141 application-group validators + resolvers (swarm-app-group.ts).
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Export the ADR-149 rail-tile discoverability resolver and its per-person port (swarm-app-tile-discoverability.ts).
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Export the ADR-145 D4 per-name status plan (app-status-plan.ts) and its D5 jarvis_tasks fallback (app-status-task-fallback.ts), plus humaniseReadinessSlug.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Export the P8 canonical concierge selector, coverage mode, and coverage problem contract.
  */
 
 export { SwarmAppService } from './swarm-app-service';
@@ -70,6 +71,16 @@ export type {
 } from './app-smoke-verifier';
 export { resolvePackageAuditMode } from './package-audit-mode';
 export type { PackageAuditMode } from './package-audit-mode';
+export {
+  CONCIERGE_COVERAGE_WARNING_EVENT,
+  CONCIERGE_COVERAGE_WARNING_MESSAGE,
+  manifestConciergeName,
+  manifestExternalAssociationNames,
+  resolveManifestConciergeAgent,
+  resolveConciergeCoverageMode,
+  conciergeCoverageProblem,
+} from './swarm-app-concierge';
+export type { ConciergeCoverageMode, ManifestConciergeAgent } from './swarm-app-concierge';
 export {
   providedToolNames,
   dependedToolNames,

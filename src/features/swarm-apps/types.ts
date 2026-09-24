@@ -33,6 +33,7 @@
  * 27 | maintainer@emeraldcoastsystemsgroup.com   | Removed `stages` and SwarmAppWorkflowStage (CKR-10 / D2). The staged EXECUTOR was retired in favour of the graph engine, so a hand-authored `pipeline: staged` fell through chooseDispatchPath to manifest-worker and ran only workerBot - dropping every approval gate the author wrote, silently. The field was still typed on both sides and copied by the registry bridge, so the manifest format kept advertising a shape nothing could execute. Live blast radius was zero: no manifest in either repo declared it and Publish structurally cannot emit it - the studio compiles its own staged mode INTO a graph and never touches this type. Deleting rather than restoring an executor, which is what the repair entry recommends: the graph engine supersedes it. A manifest declaring it is now REFUSED by readManifest and pointed at graph.
  * 28 | maintainer@emeraldcoastsystemsgroup.com   | Removed `foundation?: { persona: string }` (CKR-14 / D7). The key was declared here and in five store manifests and read by NOTHING - not either persona parser, not either bot-node provider. Its only other appearance is GROUP_FORBIDDEN_KEYS, which checks for its ABSENCE and is left in place: a group manifest declaring it is still rejected, which costs nothing and keeps group manifests clean. Deleted only AFTER the five store manifests dropped the key and shipped (oshal-applications #240) - core-first would have left the store validating a path field core no longer typed. Existing manifests keep the key harmlessly, as entry 26 records: the loader tolerates unknown keys.
  * 29 | maintainer@emeraldcoastsystemsgroup.com   | SwarmApplicationSummary gained `connectors: {required, optional}` - the provider ids this bundle includes, projected from the ADR-085 dependency tiers. The applications catalog could list installed and available packages but had no way to say which providers a bundle uses or whether they are connected, so it could not tell a connected bundle from one waiting on a credential. Projected here, beside icon/hasSurface, because a second reader of the raw dependencies keys would disagree with the shared tier contract the installer and loader already use.
+ * 30 | maintainer@emeraldcoastsystemsgroup.com   | P8 makes chatBot the explicit metadata-only concierge pointer for surfaced apps and code-less groups. Groups may reference only a required active member's canonical concierge (activation proves it); they still cannot carry executable bots, workflows, or tools.
  */
 
 import type { BriefingDeclaration } from '@/shared/briefings';
@@ -804,8 +805,10 @@ export interface SwarmAppManifest {
   workflow?: SwarmAppWorkflow;
   /** Default recurring jobs ("polls") the loader registers when this app is enabled. */
   schedules?: SwarmAppScheduleDeclaration[];
-  /** Explicit right-rail chat agent (a bot name). Lets an app talk to an ADVISOR bot
-   *  while a different bot is the workflow worker. Defaults to workflow.workerBot. */
+  /** Explicit right-rail concierge (a bot name). Lets an app talk to an ADVISOR while a different
+   *  bot is the workflow worker. Defaults to workflow.workerBot, then bots[0].name. On `kind:
+   *  group` this is metadata only and must name the canonical concierge of a required active
+   *  member; executable bots/workflow/tools remain forbidden on the group itself. */
   chatBot?: string;
   theme?: string;
   sharedCss?: string;

@@ -14,6 +14,8 @@
 # 10 | maintainer@emeraldcoastsystemsgroup.com   | UI profiles reach the api. The config-seed Secret mounted over /app/config-seed hid the image's profiles, so UIProfileService found no profile directory and served its built-in fallback ribbon (no Jarvis, no workspace navigation) — measured on the first Docker Desktop install. A ui-profiles volume now sits at /config-seed/profiles (the service's second candidate): an emptyDir seeded at start from the image's /app/config-seed.dist/profiles (compose's installer copies the same files), or api.uiProfilesConfigMap when the operator supplies profiles.
 # 11 | maintainer@emeraldcoastsystemsgroup.com   | The Postgres wait probe can no longer hang the api. It had no connect or query timeout, so on the first live 0.5.0 upgrade — which restarts oshal-db-0 and the api together — the probe opened a connection seconds before the database pod was replaced and then sat on that dead socket for about four minutes, while the retry loop that was meant to cover exactly this never ran. Each attempt is now bounded three ways: pg's connectionTimeoutMillis and query_timeout (5s each), and the image's own timeout(1) at 15s as the outer bound.
 # 12 | maintainer@emeraldcoastsystemsgroup.com   | Pods roll when the shared config they read changes. Found live: `helm upgrade --set infra.arangodb.inCluster=true` put ARANGO_URL back in oshal-shared-env, but nothing in the pod template changed, so the api kept running with ARANGO_URL unset and /api/graph kept answering 503 until a manual restart. checksum/* annotations hash the rendered ConfigMap/Secret templates, so any change to them is a pod-template change.
+# 13 | maintainer@emeraldcoastsystemsgroup.com   | P8 renders api.conciergeCoverageMode as OSHAL_CONCIERGE_COVERAGE_MODE on the controller, giving Kubernetes the same warn-to-enforce rollout control as compose.
+# 14 | maintainer@emeraldcoastsystemsgroup.com   | P8 rollout close-out: the rendered first-class value now inherits Helm's enforce default while preserving an explicit warn override.
 {{- if eq .Values.role "main" }}
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -172,6 +174,8 @@ spec:
               value: "true"
             - name: ENABLE_AGENT_SCHEDULER
               value: "true"
+            - name: OSHAL_CONCIERGE_COVERAGE_MODE
+              value: {{ .Values.api.conciergeCoverageMode | quote }}
             {{- if .Values.infra.postgres.inCluster }}
             # In-cluster DSNs, from the chart's oshal-db-credentials Secret (passwords:
             # infra.postgres.password / appPassword / botPassword). Explicit entries still

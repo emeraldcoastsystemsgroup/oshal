@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove installed Test Lab registration through real lifecycle and HTTP boundaries with disposable package/persistence fixtures.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Exercise clearable user prerequisites, explicit malformed-token failures and protected Portrait smoke execution.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Prove real caller session plus service authentication reaches enforced package readiness without weakening principal, redirect, mode or credential boundaries.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Keep the surfaced member/group fixture valid under P8's enforce-by-default concierge contract by declaring the same member concierge on both manifests; the test remains about Test Lab coverage inheritance, not legacy concierge warnings.
  */
 
 import express from 'express';
@@ -283,11 +284,13 @@ describe('installed application Test Lab lifecycle over HTTP', () => {
 
   it('keeps undeclared coverage visible and gives groups member case references without duplication', async () => {
     await install({ ...manifest('member'),
+      chatBot: 'member-concierge',
       ui: { static: [{ toolName: 'member-home', label: 'Member', icon: 'codicon codicon-home', iframeUrl: '/api/member/home' }] },
       readiness: [{ name: 'ready', path: '/api/member/state', readyPointer: '/ready' }],
     });
     await install({ ...manifest('no-tests'), smoke: undefined });
     await install({ name: 'group-app', displayName: 'Group', version: '1.0.0', status: 'active', suite: 'ai-home', kind: 'group',
+      chatBot: 'member-concierge',
       dependencies: { apps: ['member'] }, toolbar: [{ app: 'member', surface: 'member-home' }],
       setup: [{ label: 'Member readiness', app: 'member', readiness: 'ready', fix: 'member-home' }],
     });

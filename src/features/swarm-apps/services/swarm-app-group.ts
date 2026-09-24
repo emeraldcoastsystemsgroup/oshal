@@ -7,12 +7,14 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guest-seed contract: validateGuestSeedDeclaration validates the manifest's `guestSeed:` hook fail-closed at load, mirroring readiness but requiring a SERVICE-admitting owner route (service | service-or-oidc) — core, not a browser session, is the caller (it POSTs with the service secret + x-oshal-user-sub = the guest sub). An app that declares a guest seed behind a session-only route would be uncallable by the orchestrator, so that's a load error, not a silent no-op.
  * Home customization | Codex | Validate optional selectable metric catalog pointers under the existing session-owned route contract.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | A group's members are its REQUIRED apps (dependencies.required.apps, or the legacy dependencies.apps), read through the shared dependency contract; optional apps are install-time offers, never members.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | P8 permits metadata-only chatBot on a code-less group so its borrowed cockpit can name an existing member concierge. Executable bots, workflow and tools remain forbidden; when chatBot is declared, activation proves it is the canonical concierge of a required ACTIVE member. Absence remains a loader warn/enforce concern so warn-mode migration does not make activation stricter than loading.
  */
 
 import fs from 'fs';
 import yaml from 'js-yaml';
 import { resolveRouteAuthMode } from '@/shared/route-auth';
 import { readAppDependencies } from '@/shared/app-dependencies';
+import { manifestConciergeName } from './swarm-app-concierge';
 import type {
   SwarmAppGroupSetupStep,
   SwarmAppGroupToolbarEntry,
@@ -32,7 +34,7 @@ const SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const GROUP_FORBIDDEN_KEYS = [
   'bots', 'foundation', 'tools', 'toolsDir', 'routes', 'migrations', 'schedules', 'workflow',
   'ticketType', 'takeout', 'smoke', 'readiness', 'ui', 'skillProfiles', 'uses', 'artifacts',
-  'surface', 'ragCollections', 'chatBot',
+  'surface', 'ragCollections',
 ] as const;
 
 /** Route auth modes that admit a browser session — the only ones a readiness probe may sit behind. */
@@ -416,9 +418,20 @@ export function resolveGroupSetup(group: SwarmAppManifest, members: ReadonlyMap<
  * @throws GroupResolutionError listing every unresolved reference.
  */
 export function assertGroupResolvable(group: SwarmAppManifest, members: ReadonlyMap<string, SwarmAppManifest>): void {
+  const groupConcierge = manifestConciergeName(group);
+  const activeMemberConcierges = [...members.entries()]
+    .map(([name, manifest]) => ({ name, concierge: manifestConciergeName(manifest) }))
+    .filter((entry): entry is { name: string; concierge: string } => Boolean(entry.concierge));
+  const conciergeProblem = !groupConcierge
+    ? null
+    : activeMemberConcierges.some(entry => entry.concierge === groupConcierge)
+      ? null
+      : `concierge "${groupConcierge}" is not the canonical concierge of any required active member `
+        + `(active member concierges: ${activeMemberConcierges.map(entry => `${entry.name}=${entry.concierge}`).join(', ') || '(none)'})`;
   const problems = [
     ...resolveGroupToolbar(group, members).missing.map((m) => `toolbar ${m.app}/${m.surface}: ${m.reason}`),
     ...resolveGroupSetup(group, members).filter((s) => s.unavailable).map((s) => `setup "${s.label}": ${s.unavailable}`),
+    ...(conciergeProblem ? [conciergeProblem] : []),
   ];
   if (problems.length) throw new GroupResolutionError(group.name, problems);
 }

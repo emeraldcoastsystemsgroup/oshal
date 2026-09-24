@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify workspace discovery over real HTTP, installed profile synthesis and current application policy without dispatching package pages.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Use the issuer-qualified coarse visibility port for every workspace request.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Declare canonical concierges on surfaced fixtures under P8 enforcement; the code-free group borrows its required member's concierge so workspace navigation remains the isolated behavior.
  */
 /** Real Express, package loading, profile synthesis and authorization; only persistence, identity and coarse access are isolated doubles. */
 import express, { type Request, type RequestHandler } from 'express';
@@ -52,6 +53,7 @@ let dispatches: number, queries: number;
 function manifest(overrides: Partial<SwarmAppManifest> = {}): SwarmAppManifest {
   const name = overrides.name ?? APP;
   return { name, displayName: `Fixture ${name}`, version: '1.0.0', status: 'active', suite: 'ai-home',
+    bots: [{ agentId: 'd0000000-0000-4000-8000-000000000001', name: `${name}-concierge` }],
     theme: 'workspace', uses: ['application-authorization'],
     access: { supported: ['deny', 'viewer', 'editor', 'admin'], defaultTier: 'admin' },
     authorization: { version: 1, catalog: 'authorization.yaml' },
@@ -71,7 +73,8 @@ async function install(overrides: Partial<SwarmAppManifest> = {}) {
 
 async function installGroup(defaultView?: string) {
   return install({ name: 'navigation-group', kind: 'group', theme: undefined, uses: undefined, routes: undefined,
-    authorization: undefined, ui: undefined, dependencies: { apps: [APP] }, toolbar: [{ app: APP, surface: 'home' }],
+    authorization: undefined, ui: undefined, bots: undefined, chatBot: `${APP}-concierge`,
+    dependencies: { apps: [APP] }, toolbar: [{ app: APP, surface: 'home' }],
     ...(defaultView ? { ribbon: { defaultView } } : {}) });
 }
 

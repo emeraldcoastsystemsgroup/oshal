@@ -14,6 +14,8 @@
 # 10 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — limitRange.enabled (default true, main role): the oshal-container-defaults LimitRange gives botDefaults.resources to any container that sets none, because the runtime bot launcher sets no resources and a ResourceQuota that requires requests would refuse its pods. The rbac comment now says plainly that the missing JWT_SECRET is a 0.5.0 regression for runtime bots on the default posture, names the one-line core fix, and records that such a bot also lacks a securityContext and liveness/startup probes, which no LimitRange can default. Guard: tests/unit/chart-runtime-bot-defaults.spec.ts.
 # 11 | maintainer@emeraldcoastsystemsgroup.com   | api.uiProfilesConfigMap: the cockpit's UI profiles (config-seed/profiles/*.json) now reach the api — seeded from the image by default, or from this ConfigMap.
 # 12 | maintainer@emeraldcoastsystemsgroup.com   | infra.vault.serviceAccount (create: true, name: oshal-vault): Vault's own ServiceAccount. The pod ran as the namespace's `default` ServiceAccount, shared by every infra pod, so RBAC for the Vault Kubernetes secrets engine would have reached all of them. The chart grants it no RBAC; the engine's per-tenant Role is operator config (README "Vault runbook"). Guard: tests/unit/chart-vault-service-account.spec.ts.
+# 13 | maintainer@emeraldcoastsystemsgroup.com   | api.conciergeCoverageMode (warn default): first-class P8 rollout posture rendered on the controller. Operators can flip Helm to enforce after the store backfill without smuggling a documented platform gate through an untyped extraEnv map.
+# 14 | maintainer@emeraldcoastsystemsgroup.com   | Complete the P8 rollout after the store backfill: api.conciergeCoverageMode now defaults to enforce; warn remains an explicit temporary observation/rollback posture.
 #
 # Defaults model the compose stack (docker-compose.oshal-local.yml) with DNS parity:
 # Services are named oshal-redis / oshal-db / oshal-chromadb / oshal-api / oshal-local-api
@@ -262,6 +264,9 @@ infra:
 # ── Swarm controller (main role only) ─────────────────────────────────────────
 api:
   port: 5000
+  # P8 surface-to-concierge manifest contract. The backfilled corpus is enforced by default;
+  # use `warn` only as a temporary observation/rollback posture. Any other value fails closed.
+  conciergeCoverageMode: enforce
   # How the cockpit is reached. ClusterIP = expose via Ingress/APIRule/port-forward.
   # NodePort = the durable ingress-less path (Docker Desktop / kind / k3s single
   # boxes): cockpit at http://localhost:<nodePort> (Docker Desktop) or
