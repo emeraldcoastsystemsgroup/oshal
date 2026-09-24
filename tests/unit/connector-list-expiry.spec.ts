@@ -32,13 +32,14 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial BUG-13 guard: per-connection key-set contract on both the provider entries and the any-llm entry, isConnectionExpired semantics (refreshable / unrefreshable / no-expiry / boundary), the end-to-end derivation through buildConnectorListResponse, and a no-token-material assertion on the whole response.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pin the PROVIDER-level keys too. The per-connection contract left the other half of what Identity Hub reads unguarded: `configured` drives its needs-attention filter and its Ready-to-enable tile, and `tokenFallback` decides whether a card offers "Set up" or "Not configured" - neither was asserted anywhere in this repo (only a Playwright spec touched `configured`, incidentally), so dropping either from the projection went green while a shipped surface silently read undefined. Same failure shape as BUG-13, one layer up.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Add 'expiring' to CONNECTION_KEYS and comprehensive boundary tests for isConnectionExpiring (outside window, inside window, boundary at exactly 14d, already lapsed at now, refreshable grant immunity, null/invalid expiry, and end-to-end derivation).
  * -----------------------------------------------------------------------------
  */
 
 import { describe, expect, it } from 'vitest';
 
 import { buildConnectorListResponse } from '@/app/routes/connector-response-helpers';
-import { isConnectionExpired, type ConnectionRow } from '@/app/routes/connector-tenancy';
+import { isConnectionExpired, isConnectionExpiring, UNRENEWABLE_EXPIRING_WINDOW_MS, type ConnectionRow } from '@/app/routes/connector-tenancy';
 import { ANY_LLM_PROVIDER } from '@/app/routes/byo-llm-routes';
 
 /**
@@ -52,6 +53,7 @@ const CONNECTION_KEYS = [
   'tenantId',     // marks a household (shared) account
   'isDefault',    // the ★ marker and the default-account resolution
   'expired',      // Identity Hub: Need attention tile, needs-attention filter, Reconnect pill, · expired
+  'expiring',     // Identity Hub: Expiring pill, · expiring marker, access review, Jarvis briefing
 ] as const;
 
 /**
@@ -209,3 +211,58 @@ describe('isConnectionExpired — a lapsed grant, not a lapsed access token', ()
     expect(byId.get('lapsed')).toBe(true);
   });
 });
+
+describe('isConnectionExpiring — warning before an unrenewable connection lapses', () => {
+  const DAY = 24 * HOUR;
+  const FOURTEEN_DAYS = 14 * DAY;
+
+  it('exposes UNRENEWABLE_EXPIRING_WINDOW_MS as exactly 14 days', () => {
+    expect(UNRENEWABLE_EXPIRING_WINDOW_MS).toBe(FOURTEEN_DAYS);
+  });
+
+  it('is false when expiry is outside the 14-day window', () => {
+    expect(isConnectionExpiring({ expiry: new Date(NOW + FOURTEEN_DAYS + HOUR), refresh_token: null }, NOW)).toBe(false);
+  });
+
+  it('is true when expiry is within the 14-day window and has no refresh token', () => {
+    expect(isConnectionExpiring({ expiry: new Date(NOW + 7 * DAY), refresh_token: null }, NOW)).toBe(true);
+  });
+
+  it('is true at the exact boundary of the 14-day window', () => {
+    expect(isConnectionExpiring({ expiry: new Date(NOW + FOURTEEN_DAYS), refresh_token: null }, NOW)).toBe(true);
+  });
+
+  it('is false once already lapsed (it is expired, not expiring)', () => {
+    expect(isConnectionExpiring({ expiry: new Date(NOW), refresh_token: null }, NOW)).toBe(false);
+    expect(isConnectionExpiring({ expiry: new Date(NOW - HOUR), refresh_token: null }, NOW)).toBe(false);
+  });
+
+  it('is false for a refreshable connection even within the 14-day window', () => {
+    // Refreshable grants renew themselves silently; alerting the user would be a loud false positive.
+    expect(isConnectionExpiring({ expiry: new Date(NOW + 2 * DAY), refresh_token: 'enc' }, NOW)).toBe(false);
+  });
+
+  it('is false for a connection with no expiry or an unparseable expiry', () => {
+    expect(isConnectionExpiring({ expiry: null, refresh_token: null }, NOW)).toBe(false);
+    expect(isConnectionExpiring({ expiry: new Date('invalid-date'), refresh_token: null }, NOW)).toBe(false);
+  });
+
+  it('derives the expiring flag end-to-end through the list projection', () => {
+    const entries = buildConnectorListResponse([
+      connection({ connection_id: 'expiring-conn', account_key: 'expiring@example.com', expiry: new Date(Date.now() + 5 * DAY), refresh_token: null }),
+      connection({ connection_id: 'safe-future', account_key: 'future@example.com', expiry: new Date(Date.now() + 30 * DAY), refresh_token: null }),
+      connection({ connection_id: 'lapsed-conn', account_key: 'lapsed@example.com', expiry: new Date(Date.now() - HOUR), refresh_token: null }),
+      connection({ connection_id: 'refreshable-conn', account_key: 'refresh@example.com', expiry: new Date(Date.now() + 2 * DAY), refresh_token: 'enc' }),
+    ]);
+    const google = entries.find((entry) => entry.id === 'google') as {
+      connections: Array<{ connectionId: string; expired: boolean; expiring: boolean }>;
+    };
+    const byId = new Map(google.connections.map((c) => [c.connectionId, { expired: c.expired, expiring: c.expiring }]));
+
+    expect(byId.get('expiring-conn')).toEqual({ expired: false, expiring: true });
+    expect(byId.get('safe-future')).toEqual({ expired: false, expiring: false });
+    expect(byId.get('lapsed-conn')).toEqual({ expired: true, expiring: false });
+    expect(byId.get('refreshable-conn')).toEqual({ expired: false, expiring: false });
+  });
+});
+

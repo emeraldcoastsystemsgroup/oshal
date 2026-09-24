@@ -11,6 +11,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted authenticated caller resolution and /list response shaping from connectors-routes.ts without changing response fields or provider configuration rules.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | BUG-13: project a per-connection `expired` boolean (isConnectionExpired) into every /list entry. Identity Hub reads this key in four places - the Need attention tile, the Needs attention filter, the red Reconnect pill and the account marker - and the projection never carried it, so all four read undefined and the hub's whole reason to exist could not fire. Boolean only: the expiry value and the token stay out of the response.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Project per-connection expiring boolean (isConnectionExpiring) into every /list entry so Identity Hub, access reviews and briefings can warn before unrenewable grants lapse.
  * -----------------------------------------------------------------------------
  *
  * @module connector-response-helpers
@@ -22,7 +23,7 @@ import { isPlaidConfigured } from './connector-plaid-link';
 import {
   CONNECTOR_CATEGORY, PLATFORM_DEFAULT_ENV, PROVIDERS, providerCreds,
 } from './connector-provider-registry';
-import { isConnectionExpired, pickConnection, type ConnectionRow } from './connector-tenancy';
+import { isConnectionExpired, isConnectionExpiring, pickConnection, type ConnectionRow } from './connector-tenancy';
 
 /**
  * @description Authenticated connector caller identity resolved from the OIDC session.
@@ -88,6 +89,8 @@ export function buildConnectorListResponse(rows: ConnectionRow[]): Array<Record<
         // (Identity Hub's "Need attention" tile, its Reconnect pill) read this key; before it was
         // emitted they read `undefined` and the signal could never fire (BUG-13).
         expired: isConnectionExpired(connection),
+        // Whether an unrenewable login is on a countdown to silent failure within the 14-day window.
+        expiring: isConnectionExpiring(connection),
       })),
       multiAccount: conns.length > 1,
       defaultConnectionId: pickConnection(conns)?.connection_id ?? null,

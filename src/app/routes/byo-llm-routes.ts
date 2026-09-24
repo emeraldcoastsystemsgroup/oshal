@@ -26,6 +26,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial Bring-Your-Own-LLM connector: POST /save (live chat-completion validation + per-user encrypted store), POST /test (round-trip ping), GET /models (endpoint model list), buildAnyLlmListEntry() for the /list surface, and getUserLlmConnection() resolution seam. Reuses connector-token-crypto + connector-tenancy so disconnect/relabel/default come from the shared rails.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | BUG-13: carry the same per-connection `expired` boolean the other /list entries now carry, so a consumer reading the key does not find it missing on this one entry. Always false in practice - a pasted BYO endpoint key stores no expiry - but the shape is uniform.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Carry the same per-connection `expiring` boolean the other /list entries carry, uniform across the collection.
  * -----------------------------------------------------------------------------
  *
  * @module byo-llm-routes
@@ -38,7 +39,7 @@ import { encryptToken, decryptToken } from './connector-token-crypto';
 import { assertPublicHttpUrl } from '@/shared/security/ssrf-guard';
 import { redactEgress } from '@/features/governance';
 import {
-  accessibleConnections, isConnectionExpired, resolveConnectionRow, upsertConnection,
+  accessibleConnections, isConnectionExpired, isConnectionExpiring, resolveConnectionRow, upsertConnection,
   isTenantMember, ownerSub, type ConnectionRow, type ConnectionSelector,
 } from './connector-tenancy';
 
@@ -160,6 +161,7 @@ export function buildAnyLlmListEntry(rows: ConnectionRow[]): Record<string, unkn
       // pasted, not granted, so it stores no expiry and this is always false — but a consumer
       // that reads `expired` must not find it missing on one entry out of the collection.
       expired: isConnectionExpired(c),
+      expiring: isConnectionExpiring(c),
     })),
     status: conns.length ? 'connected' : 'not_connected',
   };

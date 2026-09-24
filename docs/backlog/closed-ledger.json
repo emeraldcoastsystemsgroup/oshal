@@ -298,5 +298,11 @@
     "title": "A protected Jarvis answer with no bindable lineage leaves the thread silent",
     "pr": "main",
     "evidence": "src/app/routes/jarvis-result-access.ts distinguishes unbindable lineage from denial via DerivedJarvisLineageResult; src/app/routes/jarvis-orchestrator.ts returnProtectedComplexSummaries routes unbindable tasks to automatic summarization when work product is not protected, or writes an honest stated sentence to thread and durable task when protected work product lacks bindable executions; guarded by tests/unit/protected-jarvis-thread-return.spec.ts (5/5 pass)."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "Warn before an unrenewable connection lapses",
+    "pr": "main",
+    "evidence": "src/app/routes/connector-tenancy.ts exports UNRENEWABLE_EXPIRING_WINDOW_MS (14 days) and isConnectionExpiring; projected as expiring boolean in connector lists alongside expired in connector-response-helpers.ts and byo-llm-routes.ts; surfaced in oshal-applications Identity Hub card pill state and account marker, access review advice, and expiring-connections Jarvis briefing source; guarded by tests/unit/connector-list-expiry.spec.ts (20/20 pass) and identity-list-contract.test.js (11/11 pass)."
   }
 ]

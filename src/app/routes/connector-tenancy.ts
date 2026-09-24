@@ -24,6 +24,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Multi-account-per-provider (ADR-113 section 4) made DETERMINISTIC. Resolution used to fall back to the first row of an updated_at DESC list, so with two accounts of one provider and no explicit default "the user's Gmail token" changed identity every time an access token was refreshed. Extracted the rule into the pure, exported pickConnection() — explicit selector, then the marked default, then the only candidate, then a STABLE tiebreak (shared-before-personal, then created_at, then connection_id) — and made upsertConnection seed exactly one is_default per (ownership scope, provider) so the marked-default branch is the normal path. Added created_at to the resolved row, the scope-default seed to the bootstrap (mirroring migration 101), and disconnectConnections() so removing an account re-seeds the scope default instead of leaving the scope defaultless.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | BUG-13: isConnectionExpired() - the single definition of "this login needs re-consent", so the /list projection, the Identity Hub inventory and any future consumer cannot each invent their own. Deliberately NOT `expiry < now`: getValidAccessToken renews silently whenever a refresh token exists, so a lapsed access token on a refreshable grant is the NORMAL steady state (a Google access token lasts an hour), and only a lapsed grant with nothing to renew it is actually broken.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | upsertConnection invalidates the connector-liveness probe cache for the provider it just wrote. The cache memoises the PROVIDER's answer about a grant for 15 minutes; reconnecting replaces the grant, so without this a successful reconnect kept reporting needs_reconnect until the TTL lapsed — from the operator's seat, indistinguishable from the reconnect having failed.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | isConnectionExpiring() and UNRENEWABLE_EXPIRING_WINDOW_MS: 14-day warning window before an unrenewable connection lapses. Emitted alongside expired in connector list projections so surfaces and briefing sources warn before silent failure.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -207,6 +208,31 @@ export function isConnectionExpired(
   if (row.refresh_token) return false;
   const at = new Date(row.expiry as unknown as string).getTime();
   return Number.isFinite(at) && at <= now;
+}
+
+/** 14 days before an unrenewable connection lapses — operator decision 2026-09-22. */
+export const UNRENEWABLE_EXPIRING_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+
+/**
+ * A connection is expiring when its authorization will lapse within the warning window and
+ * cannot renew itself (it holds no refresh token). Once it has already lapsed, it is `expired`
+ * rather than `expiring`. A connection with a refresh token renews silently and is never expiring;
+ * a connection with no expiry (PAT, Slack, Plaid) never lapses on its own.
+ * @param row - a connection row (only `expiry` and the PRESENCE of `refresh_token` are read)
+ * @param now - epoch ms to evaluate against; defaults to the current time
+ * @param windowMs - warning window in ms; defaults to UNRENEWABLE_EXPIRING_WINDOW_MS (14 days)
+ * @returns true when the stored authorization is within windowMs of lapsing without self-renewal
+ */
+export function isConnectionExpiring(
+  row: Pick<ConnectionRow, 'expiry' | 'refresh_token'>,
+  now: number = Date.now(),
+  windowMs: number = UNRENEWABLE_EXPIRING_WINDOW_MS,
+): boolean {
+  if (!row.expiry) return false;
+  if (row.refresh_token) return false;
+  const at = new Date(row.expiry as unknown as string).getTime();
+  if (!Number.isFinite(at)) return false;
+  return at > now && at <= now + windowMs;
 }
 
 /**
