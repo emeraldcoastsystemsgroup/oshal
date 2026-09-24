@@ -100,7 +100,6 @@ ribbon:
     - calendar
     - addressbook
     - dashboard
-    - echo
     - logs
     - operations
   defaultView: workflow-studio
