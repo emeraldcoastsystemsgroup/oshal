@@ -352,5 +352,29 @@
     "title": "Presentron chat and frontend contract",
     "pr": "main",
     "evidence": "Presentron sidecar removed in favor of in-repo PPTX renderer guarded by tests/unit/presentron-in-repo-renderer.spec.ts (6/6 pass); presentations front door walkthrough and destination resolution verified by presentations/tests/presentations-surface-parse.test.js and presentations-destination.test.mjs (13/13 pass)."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "little-monsters looks for its education migration at a core path (2026-09-21)",
+    "pr": "main",
+    "evidence": "Store package little-monsters 1.3.5 (commit ef58e99) in oshal-applications resolves migrations/019-education-platform.sql from package directory with fallback to cwd; guarded by little-monsters test suite (80/80 pass)."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "The calendar package imports a core feature the image never compiles (2026-09-18)",
+    "pr": "main",
+    "evidence": "google-calendar pinned as kernel skill in src/app/composition/kernel-skills.ts and registry.ts; compiled in server graph via personal-graph-ingest; calendar package uses barrel imports only; guarded by tests/unit/kernel-skills.spec.ts (64/64 pass) and calendar tests (26/26 pass)."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "Ambient Recall — relevance floor on \"possibly related\" hits",
+    "pr": "main",
+    "evidence": "src/features/person-model/services/related-relevance.ts scores candidates against query on all-MiniLM-L6-v2 and drops items below similarity floor (PERSON_MODEL_RELATED_SIMILARITY_FLOOR); guarded by tests/unit/person-model-related-relevance.spec.ts (11/11 pass)."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "The durable escalation store only ever sees swarm-run escalations (2026-09-15)",
+    "pr": "main",
+    "evidence": "Accepted in ADR-163 (docs/adr/163-the-canonical-escalation-record.md) establishing ticket_status_history as the canonical escalation record while swarm_escalations is a run-scoped attempt record; cockpit precedence pinned in ticket-view-helpers.js; guarded by tests/unit/escalation-record-canonical-postgres.spec.ts, tests/unit/ticket-escalation-detail.spec.ts, and tests/unit/cockpit-escalation-panel-text.spec.ts (27/27 pass)."
   }
 ]
