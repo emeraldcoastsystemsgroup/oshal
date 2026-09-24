@@ -212,13 +212,12 @@ ui:
       section: top
 
 # Trim the ribbon to the DevOps essentials: the console surface, the ticket queue
-# (remediations), settings, and operations. Hide the rest — especially echo.
+# (remediations), settings, and operations. Hide the rest.
 ribbon:
   hideFrameworkItems:
     - chat
     - calendar
     - addressbook
     - dashboard
-    - echo
     - logs
   defaultView: devops-vault-console

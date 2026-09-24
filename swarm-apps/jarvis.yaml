@@ -78,7 +78,6 @@ ribbon:
     - calendar
     - addressbook
     - dashboard
-    - echo
     - logs
     - operations
   # Jarvis IS the chat surface (the voice/orb assistant page), so the cockpit's
