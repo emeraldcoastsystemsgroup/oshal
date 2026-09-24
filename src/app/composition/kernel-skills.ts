@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Pin authenticated artifact relay and activation-scoped package tools in the executable core build.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Pin @/shared/app-dependencies, the module behind the app-dependencies compatibility floor.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Corrects this file's own contract text, which the same branch falsified. It stated that tsconfig.server.json "excludes src/features/**" and that an explicit include of a feature is "silently a no-op" - both true until that blanket exclude was removed here to carry google-calendar into dist. This file exists to stop exactly that drift, so leaving its explanation describing a build it no longer has would have been the failure it guards against. The re-export is still the durable pin, and the text now says why.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Pin @/features/google-calendar into the build anchor as contracted kernel skill 'google-calendar'.
  */
 
 /**
@@ -108,3 +109,6 @@ export * as specialistContext from '@/shared/specialist-context';
 
 export * as jarvisBriefings from '@/shared/briefings';
 export * as jarvisBriefingTaskStore from '@/app/routes/jarvis-task-store';
+
+// ── google-calendar: OAuth-injected Calendar v3 client ───────────────────────
+export * as googleCalendar from '@/features/google-calendar';

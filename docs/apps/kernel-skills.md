@@ -36,8 +36,14 @@ the carve doesn't prune them out of `dist/` (the google-calendar/notifications b
 | `jarvis-briefings` | `@/shared/briefings` | Registered briefing sources and per-user enable, frequency and voice/bubble/screen delivery preferences. |
 | `media-generation` | `@/features/video-generation`, `@/features/visual-response` | Vendor-abstracted image/video generation. |
 | `payments` | `@/features/payments` | Provider-agnostic money rails: the Stripe `PaymentAdapter` half (finance package) + the Square/PayPal merchant half (payments package). Pinned at the finance carve (ADR-085 Wave 1 #5) — until then it survived in dist only through finance-routes' import. |
+| `spatial-mapping` | `@/features/spatial-mapping` | 3D reconstruction engine and scan store; pinned at spaces carve (ADR-111, ADR-093). |
+| `google-calendar` | `@/features/google-calendar` | OAuth-injected Google Calendar v3 client; calendar store package uses it for event sync. Requires core `>= 2.1.0-beta.1`. |
 
 Source of truth: [`src/shared/kernel-skills/registry.ts`](../../src/shared/kernel-skills/registry.ts).
+
+### Compatibility floor for Google Calendar
+
+The `google-calendar` capability is the compatibility floor for Calendar package event sync. Packages using Google Calendar declare `uses: [google-calendar]`, which requires core `>= 2.1.0-beta.1`. An older core refuses `google-calendar` at manifest load (fail-closed validator), ensuring an incompatible package stays inactive rather than mounting with broken deep service imports.
 
 ## Declaring a skill in your app
 
