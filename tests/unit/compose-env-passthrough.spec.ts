@@ -15,6 +15,7 @@
  * 2026-09-17 00:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin JARVIS_SELECTOR_SHADOW: the shadow step exists so a narrower tool selector can be judged on REAL traffic, and unforwarded it would be armed in .env and measure nothing — the failure would look like the candidate simply never firing.
  * 2026-09-23 00:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin OSHAL_CONCIERGE_COVERAGE_MODE to the controller: an unforwarded enforce setting leaves the P8 manifest gate in its warn default while the operator believes the package corpus is fail-closed.
  * 2026-09-23 18:45:00 | maintainer@emeraldcoastsystemsgroup.com   | P8 rollout close-out: the gate now defaults to enforce, and forwarding remains necessary so an explicit temporary warn override reaches the controller.
+ * 2026-09-24 00:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin OSHAL_ROUTING_URL, OSHAL_GEOCODER_URL, and OSHAL_GEOCODE_CACHE_PATH to oshal-api and rides-bot — operator-owned geocode/routing overrides and durable address cache for rideshare routing.
  */
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
@@ -93,6 +94,13 @@ const REQUIRED_ON_API: ReadonlyArray<{ name: string; readBy: string }> = [
   // 282% CPU while the operator believes they have throttled it.
   { name: 'WORLD_SERIES_READ_CONCURRENCY', readBy: 'world-series-gate seriesReadConcurrency — the process-wide series-read statement cap' },
   { name: 'WORLD_ROLLUP_CONCURRENCY', readBy: 'world-schedule-dispatch featureRollupConcurrency — the per-fire entity fan-out' },
+  // 2026-09-24, rides routing and durable geocoding follow-ups:
+  // OSHAL_ROUTING_URL allows overriding the keyless straight-line estimate with an external routing service (e.g. OSRM).
+  // OSHAL_GEOCODER_URL configures an operator-owned geocoder endpoint.
+  // OSHAL_GEOCODE_CACHE_PATH configures durable persistent geocode cache file across restarts.
+  { name: 'OSHAL_ROUTING_URL', readBy: 'scripts/oshal-uber-rides + rides service routing override' },
+  { name: 'OSHAL_GEOCODER_URL', readBy: 'scripts/oshal-uber-rides + rides geocoding endpoint' },
+  { name: 'OSHAL_GEOCODE_CACHE_PATH', readBy: 'scripts/oshal-uber-rides durable geocode cache path' },
 ];
 
 // This list is CURATED, not exhaustive, and that is a deliberate trade rather than laziness:
@@ -148,4 +156,17 @@ describe('compose forwards every env var the api actually reads', () => {
       expect(sharedAnchor).not.toMatch(new RegExp(`^[ \\t]+${name}:[ \\t]`, 'm'));
     },
   );
+
+  it('declares rides routing and geocoding knobs on rides-bot', () => {
+    const ridesBotStart = compose.indexOf('\n  rides-bot:');
+    expect(ridesBotStart, 'rides-bot service must exist in compose').toBeGreaterThan(-1);
+    const after = compose.slice(ridesBotStart + 1);
+    const nextService = after.slice(1).search(/\n {2}[a-z][a-z0-9-]*:\n/);
+    const ridesBotBlock = nextService === -1 ? after : after.slice(0, nextService + 1);
+
+    for (const name of ['OSHAL_ROUTING_URL', 'OSHAL_GEOCODER_URL', 'OSHAL_GEOCODE_CACHE_PATH']) {
+      const declared = new RegExp(`^\\s*${name}:\\s`, 'm');
+      expect(declared.test(ridesBotBlock), `rides-bot service must forward ${name}`).toBe(true);
+    }
+  });
 });
