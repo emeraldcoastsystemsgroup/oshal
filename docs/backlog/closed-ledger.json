@@ -37,7 +37,7 @@
   },
   {
     "date": "2026-09-22",
-    "title": "Nightly tasks still launched from the ADR-115 archive — LAUNCHERS DONE 2026-09-16, one operator action left",
+    "title": "Nightly tasks still launched from the ADR-115 archive \u2014 LAUNCHERS DONE 2026-09-16, one operator action left",
     "pr": "696",
     "evidence": "Merged runbook records repointing and successful execution. Read-only Task Scheduler check on 2026-09-22: Claude keepalive ran 22:23:54 with result 0; Signal Labeler ran 16:30:01 with result 0; both actions name C:/Projects/oshal. Evidence-Nightly intentionally remains on the private archive."
   },
@@ -73,7 +73,7 @@
   },
   {
     "date": "2026-09-23",
-    "title": "Deploy — the api process exits during the bot-recreate storm",
+    "title": "Deploy \u2014 the api process exits during the bot-recreate storm",
     "pr": "639,669",
     "evidence": "The full deploy recreated the api and 36 bots while the storm probe measured RestartCount 0 to 0 and zero idle-in-transaction log lines in the deployment window."
   },
@@ -85,7 +85,7 @@
   },
   {
     "date": "2026-09-23",
-    "title": "Dev-console `/work` under Linux user-namespace remapping — DONE 2026-09-17",
+    "title": "Dev-console `/work` under Linux user-namespace remapping \u2014 DONE 2026-09-17",
     "pr": "622,697",
     "evidence": "The sandbox prepares directory/file modes without following symlinks; the real-kernel uid 165536 proof records write/create/exec success, parent/root escape denial, and cleanup, with mutation controls for the old modes."
   },
@@ -189,13 +189,13 @@
     "date": "2026-09-24",
     "title": "Flow UI-automation video provider",
     "pr": "n/a",
-    "evidence": "Operator decision 2026-09-21: CLOSED — will not build. Free and paid video paths are already covered by ComfyUI (free/local GPU over HTTP) and Veo (paid API). UI-automation against consumer web UIs would require dedicated fixed-geometry hardware and drift detection, with high maintenance overhead and brittle failure modes. Flow capability gap closed as will not build."
+    "evidence": "Operator decision 2026-09-21: CLOSED \u2014 will not build. Free and paid video paths are already covered by ComfyUI (free/local GPU over HTTP) and Veo (paid API). UI-automation against consumer web UIs would require dedicated fixed-geometry hardware and drift detection, with high maintenance overhead and brittle failure modes. Flow capability gap closed as will not build."
   },
   {
     "date": "2026-09-24",
     "title": "A protected dispatch refuses on a controller with no delegation signing material (2026-09-15)",
     "pr": "n/a",
-    "evidence": "Operator decision 2026-09-21/22: CLOSED — verified live. Keypair configuration (OSHAL_DELEGATION_SIGNING_KID, OSHAL_DELEGATION_SIGNING_PRIVATE_KEY, and bot ring OSHAL_DELEGATION_PUBLIC_KEYS) was verified structurally present and correctly matched. Interactive live protected dispatch from the cockpit proved zero authorization_recorded_delegation_required refusals in 24 hours."
+    "evidence": "Operator decision 2026-09-21/22: CLOSED \u2014 verified live. Keypair configuration (OSHAL_DELEGATION_SIGNING_KID, OSHAL_DELEGATION_SIGNING_PRIVATE_KEY, and bot ring OSHAL_DELEGATION_PUBLIC_KEYS) was verified structurally present and correctly matched. Interactive live protected dispatch from the cockpit proved zero authorization_recorded_delegation_required refusals in 24 hours."
   },
   {
     "date": "2026-09-24",
@@ -217,7 +217,7 @@
   },
   {
     "date": "2026-09-24",
-    "title": "Ambient Recall — attributed ingest fixture for the Test Lab",
+    "title": "Ambient Recall \u2014 attributed ingest fixture for the Test Lab",
     "pr": "728",
     "evidence": "PR #728 implemented POST /api/jarvis/ambient/test-fixture/attributed-line, allowing the Test Lab to seed an attributed line for a stable fixture voice through the trusted audio collaborators (SpeakerProfileStore.identify, recordConsent, appendAttributedSegments, enrichBatch). Gated on requireServiceSecret. Guarded by tests/unit/ambient-test-fixture-routes.spec.ts (9/9 pass) and tests/unit/ambient-test-fixture-postgres.spec.ts (5/5 pass)."
   },
@@ -229,7 +229,7 @@
   },
   {
     "date": "2026-09-24",
-    "title": "Trading — cash settlement: three narrower gaps (ADR-134 D8)",
+    "title": "Trading \u2014 cash settlement: three narrower gaps (ADR-134 D8)",
     "pr": "780",
     "evidence": "PR #780 closed the three narrower cash-settlement gaps: (1) nextSettlementDate now skips exchange holidays via exchangeClosed() and NYSE full-closure calendar, (2) store half labels ledger-derived figure on ticket, (3) discovered_account_type on oshal_trading_books caches venue account type for legacy live books, eliminating redundant venue reads and fail-closed refusals. Guarded by tests/unit/trading-settlement.spec.ts (31/31 pass)."
   },
@@ -304,5 +304,17 @@
     "title": "Warn before an unrenewable connection lapses",
     "pr": "main",
     "evidence": "src/app/routes/connector-tenancy.ts exports UNRENEWABLE_EXPIRING_WINDOW_MS (14 days) and isConnectionExpiring; projected as expiring boolean in connector lists alongside expired in connector-response-helpers.ts and byo-llm-routes.ts; surfaced in oshal-applications Identity Hub card pill state and account marker, access review advice, and expiring-connections Jarvis briefing source; guarded by tests/unit/connector-list-expiry.spec.ts (20/20 pass) and identity-list-contract.test.js (11/11 pass)."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "Identity Hub expiry reporting",
+    "pr": "main",
+    "evidence": "src/app/routes/connector-response-helpers.ts:90 projects expired: isConnectionExpired(connection) into /list response; src/app/routes/byo-llm-routes.ts carries expired boolean; oshal-applications identity/tools/identity.html renders Reconnect pill, \u00b7 expired marker, and Need-attention tile count and filter; guarded by tests/unit/connector-list-expiry.spec.ts pinning CONNECTION_KEYS and PROVIDER_KEYS (20/20 pass) and identity-list-contract.test.js (11/11 pass)."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "The `prop` kind belongs in embodied's vocabulary (2026-09-14)",
+    "pr": "main",
+    "evidence": "embodied/routes/engine/nodes/capability-manifest.js declares KIND_VOCABULARY.prop with senses [channel-state, controller-hello, supply], acts [pose, scenario, look-at, jog, arm, disarm, e-stop], minSafetyClass 1, and disarm in CONFIRM_EXEMPT_ACTS; animatronics/routes/engine/kind.js imports KIND_VOCABULARY.prop and validates rig manifests via embodied validateManifest; guarded by animatronics/tests/engine-kind.test.js and embodied/tests/engine-manifest.test.js (15/15 pass)."
   }
 ]
