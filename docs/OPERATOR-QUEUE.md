@@ -90,8 +90,9 @@ Each of these is blocked on a judgement only you can make. No code is waiting on
   Which FlashForge model do you own, and what is its LAN IP? Finder or Adventurer 3/4 use the TCP 8899 protocol with .gx uploads. An Adventurer 5M or 5M Pro uses HTTP 8898, or Moonraker in open mode. If it is a 5M in Moonraker open mode, can scan-to-print's existing Moonraker adapter be reused?
 - **Camera real-device follow-ups** *(L, both)*
   Which cameras can be used for the proof? The verified-TLS (COHN) path needs a GoPro HERO12 or later. A HERO9 can only do AP mode over plain HTTP, so either supply a HERO12+ or say that HERO9 AP-mode BLE provisioning is an acceptable GoPro proof. The second-brand proof also needs either a Canon body with CCAPI enabled (this requires Canon developer-program approval) or an ONVIF IP camera on the LAN.
-- **DevOps cockpit Phase 2+** *(L, core)*
-  (1) Pick the bidirectional remote-node transport: Headscale overlay, A2A gateway, or HTTPS long-poll/SSE. (2) Approve moving the Phase-5 specialists (CI/CD, infra, k8s) onto deterministic provider intents instead of credential-bearing model tool environments, or record an ADR exception. (3) Provide a NATed test node plus one Vault-brokerable cloud account or Terraform backend for the real read/plan proof. Optionally, split this umbrella into one BACKLOG entry per phase.
+- **DevOps cockpit Phase 2 slice 1: NATed node round trip** *(S, core)*
+  Provide a NATed test node to verify self-registration and round-trip work execution across the Headscale / connection rail. (Later slices — topology discovery, Connect-Vault, Terraform/k8s context discovery, and credential-brokered specialists — moved to `ROADMAP.md`).
+
 - **Drone physical payloads and peer coordination** *(L, both)*
   Is an approved physical MAVLink airframe available — flight controller plus companion computer, with a camera or gimbal, ESCs that report telemetry, and an LED payload? The multi-node self-realign mission needs a second airframe. Please also name the safe test site. Until that hardware exists, only sim-side code can be written.
 - **Headscale as standard practice, so an off-LAN node can actually join** *(S, core)*
