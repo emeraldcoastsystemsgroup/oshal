@@ -96,7 +96,7 @@ export function loadKernelFromBytes(
   origin = '<in-memory>',
 ): Kernel {
   const wasmPath = origin;
-  const module = new WebAssembly.Module(bytes);
+  const module = new WebAssembly.Module(bytes as BufferSource);
   const instance = new WebAssembly.Instance(module, {});
   const ex = instance.exports as unknown as KernelExports;
 

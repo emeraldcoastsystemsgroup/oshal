@@ -71,6 +71,7 @@
     "test:surfaces:docker": "node scripts/validate-app-surfaces-docker.mjs",
     "test:clickthrough:docker": "node scripts/validate-app-clickthrough-docker.mjs",
     "typecheck": "node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit --pretty false && node ./node_modules/typescript/bin/tsc -p tsconfig.server.json --noEmit --pretty false",
+    "typecheck:tests": "node scripts/ci/check-tests-typecheck.mjs",
     "lint": "eslint src tests scripts",
     "lint:strict": "eslint src --max-warnings 0",
     "build:chat": "vite build --config vite.config.ts",
