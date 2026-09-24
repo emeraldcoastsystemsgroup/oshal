@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — extracted the autonomous-path tool-approval decision out of AgenticController (which is at 961 lines) so the one rule that stands between an injected prompt and a shell is directly testable, and so its history is written down. Behaviour is byte-for-byte what AgenticController implemented inline; the only addition is NEVER_AUTO_APPROVE, which is a no-op today and becomes load-bearing the moment someone flips a registry flag.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added cli_yq to NEVER_AUTO_APPROVE, as belt-and-braces ONLY. What refuses an unattended cli_yq call is `requiresApproval: true` on its registration (cliTools.js), set in the same change: all three consumers gate on `requiresApproval === true` before they consult this policy, so for a tool declared false this set is never reached. An earlier draft of this entry claimed the set itself stopped an unattended caller; that was wrong, was proved wrong by driving the real dispatch executor, and is corrected here.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added cli_cline, cli_jq, cli_fzf to NEVER_AUTO_APPROVE as belt-and-braces beside requiresApproval:true in cliTools.js.
  */
 
 /**
@@ -22,7 +23,13 @@
  * autonomous path there is no human to catch it — belt-and-braces against a registry edit, not a
  * substitute for one.
  */
-const NEVER_AUTO_APPROVE = new Set(['execute_command', 'cli_yq']);
+const NEVER_AUTO_APPROVE = new Set([
+  'execute_command',
+  'cli_yq',
+  'cli_cline',
+  'cli_jq',
+  'cli_fzf',
+]);
 
 /**
  * @description Decides whether a tool call may execute without human approval on the autonomous

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — pins that cli_yq never reaches a shell. On 2026-09-22 `cli_yq` was measured as an unapproved arbitrary-command primitive: yqCommand built `yq ${args}` by concatenation and handed it to child_process.exec, and the tool is registered requiresApproval:false and was absent from NEVER_AUTO_APPROVE, so `--version & echo MARKER` returned the marker with no approval requested. These cases run a REAL child process against a real executable on PATH rather than doubling child_process, because the boundary that failed is the spawn itself: a doubled exec would pass against the very code that was broken. The demonstrated payload shape is used verbatim.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The approval cases now drive the real unattended dispatch channel (createDispatchToolExecutor over a real ToolRegistry) and assert ok:false plus an unwritten proof file, with a control tool proving the channel can execute and cli_git proving it can refuse. The first draft asserted shouldAutoApproveTool(...) === false and never called an executor: it went red under mutation while proving nothing about the boundary it named, and adversarial verification showed cli_yq still ran unattended because every consumer gates on `requiresApproval === true` before reading the policy at all. Added the approved-caller case (the gate is not a removal) and the sparse-array hole case.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Extended to cover cli_cline, cli_jq and cli_fzf. All four shell-reaching CLI tools now execute directly with an argument vector, refuse unattended calls, and require approval. Added static guard asserting all registered CLI tools require approval and no tool reaches executeCLI without approval.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as fs from 'fs';
@@ -13,16 +14,22 @@ import * as path from 'path';
 
 /**
  * A scratch directory that doubles as the tool's workspace (executeCLIArgv resolves cwd from
- * config.filesystem.workspaceDir) and as the PATH entry holding the `yq` stand-in.
+ * config.filesystem.workspaceDir) and as the PATH entry holding the tool stand-ins.
  */
-const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-yq-guard-'));
+const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-cli-guard-'));
 
 process.env.WORKSPACE_DIR = stubDir;
 process.env.PATH = `${stubDir}${path.delimiter}${process.env.PATH}`;
 
 // Required after the env is in place: config.js reads WORKSPACE_DIR once, at load.
 const { cliArgsToArgv } = require('../../any-bot/server/services/tools/cli-argv');
-const { yqCommand, registerCLITools } = require('../../any-bot/server/services/tools/cliTools');
+const {
+  yqCommand,
+  clineCommand,
+  jqCommand,
+  fzfCommand,
+  registerCLITools,
+} = require('../../any-bot/server/services/tools/cliTools');
 const { shouldAutoApproveTool, NEVER_AUTO_APPROVE } = require('../../any-bot/server/controllers/tool-approval-policy');
 const { createDispatchToolExecutor } = require('../../any-bot/server/controllers/dispatch-tool-executor');
 const { captureDispatchCapabilities } = require('../../any-bot/server/utils/dispatch-capabilities');
@@ -31,44 +38,43 @@ const ToolRegistry = require('../../any-bot/server/services/ToolRegistry');
 /** The exact payload that returned the marker through the authorized channel on 2026-09-22. */
 const MARKER = 'OSHAL_SHELL_REACHED_WITHOUT_APPROVAL';
 
-/** Recorder script path, used as yq's first argument so the stand-in reports what it received. */
+/** Recorder script path, used as the tool's first argument so the stand-in reports what it received. */
 const recorder = path.join(stubDir, 'recorder.js').replace(/\\/g, '/');
 
 /** Where the recorder writes what it actually got; re-pointed per case. */
-const recordEnv = 'OSHAL_YQ_STUB_RECORD';
+const recordEnv = 'OSHAL_CLI_STUB_RECORD';
 
 /**
- * @description Installs a real executable named `yq` on PATH plus the recorder script it runs.
- * The stand-in IS the node binary, so `yq <recorder.js> …` is a genuine OS-level process launch
+ * @description Installs real executables named `yq`, `cline`, `jq`, `fzf` on PATH plus the recorder script they run.
+ * The stand-ins ARE the node binary, so `<tool> <recorder.js> …` is a genuine OS-level process launch
  * with a genuine argument vector — nothing about child_process is mocked.
  * @returns {void}
  */
-function installStubYq(): void {
-  const stub = path.join(stubDir, process.platform === 'win32' ? 'yq.exe' : 'yq');
-  try {
-    fs.symlinkSync(process.execPath, stub);
-  } catch {
+function installStubs(): void {
+  for (const name of ['yq', 'cline', 'jq', 'fzf']) {
+    const stub = path.join(stubDir, process.platform === 'win32' ? `${name}.exe` : name);
     try {
-      fs.linkSync(process.execPath, stub);
+      fs.symlinkSync(process.execPath, stub);
     } catch {
-      fs.copyFileSync(process.execPath, stub);
+      try {
+        fs.linkSync(process.execPath, stub);
+      } catch {
+        fs.copyFileSync(process.execPath, stub);
+      }
     }
+    if (process.platform !== 'win32') fs.chmodSync(stub, 0o755);
   }
-  if (process.platform !== 'win32') fs.chmodSync(stub, 0o755);
 
   fs.writeFileSync(
     path.join(stubDir, 'recorder.js'),
     [
       'const fs = require("fs");',
       'let stdin = "";',
-      // Only the stdin case drains fd 0. A recorder that always read stdin would hang for the
-      // full test timeout under the old exec form (which leaves the child's stdin open), turning
-      // a clean assertion failure into a timeout and hiding what the guard is actually saying.
-      'if (process.env.OSHAL_YQ_STUB_READ_STDIN === "1") {',
+      'if (process.env.OSHAL_CLI_STUB_READ_STDIN === "1") {',
       '  try { stdin = fs.readFileSync(0, "utf8"); } catch { stdin = ""; }',
       '}',
-      'fs.writeFileSync(process.env.OSHAL_YQ_STUB_RECORD, JSON.stringify({ argv: process.argv.slice(2), stdin }));',
-      'process.stdout.write("YQ_STUB_RAN");',
+      'fs.writeFileSync(process.env.OSHAL_CLI_STUB_RECORD, JSON.stringify({ argv: process.argv.slice(2), stdin }));',
+      'process.stdout.write("CLI_STUB_RAN");',
       '',
     ].join('\n'),
   );
@@ -77,27 +83,26 @@ function installStubYq(): void {
 /**
  * @description Points the recorder at a fresh file and returns a reader for what it captured.
  * @param {string} name - Unique record name for the case.
+ * @param {boolean} [readStdin=false] - Whether the recorder should drain stdin.
  * @returns {() => {argv: string[], stdin: string} | null} Reader; null when nothing was recorded.
  */
 function record(name: string, readStdin = false): () => { argv: string[]; stdin: string } | null {
   const file = path.join(stubDir, `${name}.json`);
   fs.rmSync(file, { force: true });
   process.env[recordEnv] = file;
-  process.env.OSHAL_YQ_STUB_READ_STDIN = readStdin ? '1' : '0';
+  process.env.OSHAL_CLI_STUB_READ_STDIN = readStdin ? '1' : '0';
   return () => (fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null);
 }
 
 beforeAll(() => {
-  installStubYq();
+  installStubs();
 });
 
 afterAll(() => {
-  // Windows holds the copied executable open until every child has exited; a scratch-directory
-  // cleanup failure is not a finding about the tool, so it must not be reported as one.
   try {
     fs.rmSync(stubDir, { recursive: true, force: true });
   } catch {
-    /* best effort — the OS temp directory is swept independently */
+    /* best effort */
   }
 });
 
@@ -117,7 +122,7 @@ describe('cliArgsToArgv — model-supplied text is data, never syntax', () => {
     ]);
   });
 
-  it('keeps a quoted yq expression with spaces as one argument', () => {
+  it('keeps a quoted expression with spaces as one argument', () => {
     expect(cliArgsToArgv(`eval '.items[] | select(.active)' -`, 'yq')).toEqual([
       'eval',
       '.items[] | select(.active)',
@@ -139,7 +144,6 @@ describe('cliArgsToArgv — model-supplied text is data, never syntax', () => {
   });
 
   it('refuses a HOLE in a sparse array instead of spawning the string "undefined"', () => {
-    // Array.prototype.map skips holes, which would have let this through unchecked.
     const sparse = ['eval', , '-'] as unknown as string[];
     expect(() => cliArgsToArgv(sparse, 'yq')).toThrow(/must be a string/);
   });
@@ -147,20 +151,18 @@ describe('cliArgsToArgv — model-supplied text is data, never syntax', () => {
 
 describe('yqCommand — real child process, no shell', () => {
   it('does not execute the injected command, and passes the whole payload as arguments', async () => {
-    const read = record('injection');
+    const read = record('yq-injection');
     const result = await yqCommand({ args: `${recorder} --version & echo ${MARKER}` });
 
-    // If a shell had parsed this, `echo` would have run and the marker would be in the output.
     expect(result.output).not.toContain(MARKER);
-    expect(result.output).toBe('YQ_STUB_RAN');
+    expect(result.output).toBe('CLI_STUB_RAN');
 
-    // …and every token arrived at the process as an ordinary argument.
     expect(read()).not.toBeNull();
     expect(read()!.argv).toEqual(['--version', '&', 'echo', MARKER]);
   });
 
   it('runs a legitimate invocation and pipes YAML through stdin, not through an echo pipe', async () => {
-    const read = record('legit', true);
+    const read = record('yq-legit', true);
     const yaml = "name: alpha\nnote: it's fine\nitems:\n  - active: true\n";
     const result = await yqCommand({
       args: `${recorder} eval '.items[] | select(.active)' -`,
@@ -168,16 +170,15 @@ describe('yqCommand — real child process, no shell', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.output).toBe('YQ_STUB_RAN');
+    expect(result.output).toBe('CLI_STUB_RAN');
 
     const got = read()!;
     expect(got.argv).toEqual(['eval', '.items[] | select(.active)', '-']);
-    // Byte-exact: the old `echo '<yaml>' | yq` form mangled quotes and appended a shell newline.
     expect(got.stdin).toBe(yaml);
   });
 
   it('accepts a caller-supplied argv array unchanged', async () => {
-    const read = record('argv', true);
+    const read = record('yq-argv', true);
     const result = await yqCommand({ argv: [recorder, 'eval', '.a & .b', '-'], input: 'a: 1\n' });
 
     expect(result.success).toBe(true);
@@ -192,18 +193,102 @@ describe('yqCommand — real child process, no shell', () => {
   });
 });
 
+describe('clineCommand — real child process, no shell', () => {
+  it('does not execute the injected command, and passes the whole payload as arguments', async () => {
+    const read = record('cline-injection');
+    const result = await clineCommand({ args: `${recorder} --version & echo ${MARKER}` });
+
+    expect(result.output).not.toContain(MARKER);
+    expect(result.output).toBe('CLI_STUB_RAN');
+
+    expect(read()).not.toBeNull();
+    expect(read()!.argv).toEqual(['--version', '&', 'echo', MARKER]);
+  });
+
+  it('accepts a caller-supplied argv array unchanged', async () => {
+    const read = record('cline-argv');
+    const result = await clineCommand({ argv: [recorder, 'task', 'list', '&'] });
+
+    expect(result.success).toBe(true);
+    expect(result.output).not.toContain(MARKER);
+    expect(read()!.argv).toEqual(['task', 'list', '&']);
+  });
+
+  it('still requires arguments', async () => {
+    await expect(clineCommand({})).rejects.toThrow(/arguments are required/);
+    await expect(clineCommand({ args: '   ' })).rejects.toThrow(/arguments are required/);
+  });
+});
+
+describe('jqCommand — real child process, no shell', () => {
+  it('does not execute the injected command in args, and pipes JSON through stdin', async () => {
+    const read = record('jq-injection', true);
+    const json = '{"name":"test"}\n';
+    const result = await jqCommand({
+      args: `${recorder} '.name & echo ${MARKER}'`,
+      input: json,
+    });
+
+    expect(result.output).not.toContain(MARKER);
+    expect(result.output).toBe('CLI_STUB_RAN');
+
+    const got = read()!;
+    expect(got.argv).toEqual([`.name & echo ${MARKER}`]);
+    expect(got.stdin).toBe(json);
+  });
+
+  it('accepts a caller-supplied argv array and passes arguments verbatim', async () => {
+    const read = record('jq-argv', true);
+    const result = await jqCommand({ argv: [recorder, '.name', '-'], input: '{"name":"alpha"}\n' });
+
+    expect(result.success).toBe(true);
+    expect(result.output).not.toContain(MARKER);
+    expect(read()!.argv).toEqual(['.name', '-']);
+    expect(read()!.stdin).toBe('{"name":"alpha"}\n');
+  });
+
+  it('still requires filter or arguments', async () => {
+    await expect(jqCommand({})).rejects.toThrow(/filter.*required/i);
+    await expect(jqCommand({ filter: '   ' })).rejects.toThrow(/filter.*required/i);
+  });
+});
+
+describe('fzfCommand — real child process, no shell', () => {
+  it('does not execute the injected command in args, and pipes input through stdin', async () => {
+    const read = record('fzf-injection', true);
+    const list = 'apple\nbanana\n';
+    const result = await fzfCommand({ input: list, args: `${recorder} --reverse & echo ${MARKER}` });
+
+    expect(result.output).not.toContain(MARKER);
+    expect(result.output).toBe('CLI_STUB_RAN');
+
+    const got = read()!;
+    expect(got.argv).toEqual(['--reverse', '&', 'echo', MARKER]);
+    expect(got.stdin).toBe(list);
+  });
+
+  it('accepts a caller-supplied argv array unchanged', async () => {
+    const read = record('fzf-argv', true);
+    const result = await fzfCommand({ input: 'item', argv: [recorder, '--multi', '&'] });
+
+    expect(result.success).toBe(true);
+    expect(result.output).not.toContain(MARKER);
+    expect(read()!.argv).toEqual(['--multi', '&']);
+    expect(read()!.stdin).toBe('item');
+  });
+
+  it('still requires input', async () => {
+    await expect(fzfCommand({})).rejects.toThrow(/input is required/);
+  });
+});
+
 /**
- * @description Builds the REAL unattended dispatch channel over the REAL registry. Asking the
- * policy function whether it would auto-approve proves nothing: every consumer refuses with
- * `requiresApproval && !approved`, so a tool declared `requiresApproval: false` is executed
- * without the policy answer ever being read. The refusal has to be observed at the channel.
+ * @description Builds the REAL unattended dispatch channel over the REAL registry.
  * @returns {{executeTool: Function, registry: any}} The dispatch executor and its registry.
  */
 function buildUnattendedDispatch(): { executeTool: Function; registry: any } {
   const registry = new ToolRegistry();
   registerCLITools(registry);
-  // A tool the channel is allowed to run, so a refusal below is about the tool and not a
-  // harness that cannot execute anything.
   registry.register({
     name: 'probe_open',
     description: 'Control: a registered tool that genuinely needs no approval.',
@@ -213,7 +298,7 @@ function buildUnattendedDispatch(): { executeTool: Function; registry: any } {
     requiresApproval: false,
   });
 
-  const names = ['cli_yq', 'cli_git', 'probe_open'];
+  const names = ['cli_yq', 'cli_cline', 'cli_jq', 'cli_fzf', 'cli_git', 'probe_open'];
   const capabilities = captureDispatchCapabilities(
     registry,
     new Set(names),
@@ -223,9 +308,7 @@ function buildUnattendedDispatch(): { executeTool: Function; registry: any } {
     toolRegistry: registry,
     dispatchCapabilities: capabilities,
     task: {},
-    taskId: 'cli-yq-guard',
-    // The literal flags AgentDispatchEngine sends on the unattended ticket path, plus the legacy
-    // key the policy actually reads — the most permissive payload a caller can present.
+    taskId: 'cli-tools-guard',
     options: {
       autoApprove: {
         commandExecution: true,
@@ -239,9 +322,8 @@ function buildUnattendedDispatch(): { executeTool: Function; registry: any } {
   return { executeTool, registry };
 }
 
-describe('cli_yq approval posture — observed at the real dispatch channel', () => {
-  it('refuses cli_yq unattended, and the child never runs', async () => {
-    const read = record('unattended');
+describe('CLI tools approval posture — observed at the real dispatch channel', () => {
+  it('refuses cli_yq, cli_cline, cli_jq, and cli_fzf unattended, and no child runs', async () => {
     const { executeTool } = buildUnattendedDispatch();
 
     // Control: the channel does execute tools, so ok:false below is a refusal, not a broken harness.
@@ -253,36 +335,83 @@ describe('cli_yq approval posture — observed at the real dispatch channel', ()
     expect(git.ok).toBe(false);
     expect(git.error).toMatch(/requires approval/);
 
-    const yq = await executeTool('cli_yq', { args: `${recorder} --version` });
-    // Asserted together so a regression reads as what it is: refused, and nothing spawned.
-    expect({ refused: yq.ok === false, spawned: read() !== null })
-      .toEqual({ refused: true, spawned: false });
-    expect(yq.error).toMatch(/requires approval/);
+    const toolsToTest = [
+      { name: 'cli_yq', payload: { args: `${recorder} --version` } },
+      { name: 'cli_cline', payload: { args: `${recorder} version` } },
+      { name: 'cli_jq', payload: { args: `${recorder} .`, input: '{}' } },
+      { name: 'cli_fzf', payload: { input: 'item', args: `${recorder}` } },
+    ];
+
+    for (const { name, payload } of toolsToTest) {
+      const read = record(`unattended-${name}`);
+      const res = await executeTool(name, payload);
+      expect({ tool: name, refused: res.ok === false, spawned: read() !== null })
+        .toEqual({ tool: name, refused: true, spawned: false });
+      expect(res.error).toMatch(/requires approval/);
+    }
   });
 
-  it('still runs for an approved caller, so the gate is not a removal', async () => {
-    const read = record('approved');
+  it('still runs for an approved caller across all four tools, so the gate is not a removal', async () => {
     const registry = new ToolRegistry();
     registerCLITools(registry);
 
-    const result = await registry.execute(
-      'cli_yq',
-      { args: `${recorder} eval '.name' -` },
-      { approved: true },
+    // cli_yq
+    const readYq = record('approved-yq');
+    const yqRes = await registry.execute('cli_yq', { args: `${recorder} eval '.name' -` }, { approved: true });
+    expect(yqRes.success).toBe(true);
+    expect(readYq()!.argv).toEqual(['eval', '.name', '-']);
+
+    // cli_cline
+    const readCline = record('approved-cline');
+    const clineRes = await registry.execute('cli_cline', { args: `${recorder} version` }, { approved: true });
+    expect(clineRes.success).toBe(true);
+    expect(readCline()!.argv).toEqual(['version']);
+
+    // cli_jq
+    const readJq = record('approved-jq', true);
+    const jqRes = await registry.execute('cli_jq', { argv: [recorder, '.name'], input: '{"name":"ok"}' }, { approved: true });
+    expect(jqRes.success).toBe(true);
+    expect(readJq()!.argv).toEqual(['.name']);
+    expect(readJq()!.stdin).toBe('{"name":"ok"}');
+
+    // cli_fzf
+    const readFzf = record('approved-fzf', true);
+    const fzfRes = await registry.execute('cli_fzf', { input: 'line1', argv: [recorder, '--reverse'] }, { approved: true });
+    expect(fzfRes.success).toBe(true);
+    expect(readFzf()!.argv).toEqual(['--reverse']);
+    expect(readFzf()!.stdin).toBe('line1');
+  });
+
+  it('carries the belt-and-braces policy entry under the names the registry registers', () => {
+    const registry = new ToolRegistry();
+    registerCLITools(registry);
+
+    for (const name of ['cli_yq', 'cli_cline', 'cli_jq', 'cli_fzf']) {
+      const tool = registry.get(name);
+      expect(tool.requiresApproval).toBe(true);
+      expect(NEVER_AUTO_APPROVE.has(tool.name)).toBe(true);
+      expect(shouldAutoApproveTool({ commandExecution: true }, tool.name, false)).toBe(false);
+    }
+  });
+
+  it('static guard: all 16 registered CLI tools carry requiresApproval: true and no tool reaches exec unapproved', () => {
+    const registry = new ToolRegistry();
+    registerCLITools(registry);
+
+    const tools = registry.getAll();
+    expect(tools.length).toBe(16);
+    for (const tool of tools) {
+      expect(tool.requiresApproval).toBe(true);
+    }
+
+    const src = fs.readFileSync(
+      path.join(__dirname, '../../any-bot/server/services/tools/cliTools.js'),
+      'utf8',
     );
-    expect(result.success).toBe(true);
-    expect(read()!.argv).toEqual(['eval', '.name', '-']);
-  });
-
-  it('carries the belt-and-braces policy entry under the name the registry registers', () => {
-    const registry = new ToolRegistry();
-    registerCLITools(registry);
-    const tool = registry.get('cli_yq');
-
-    // The registration flag is the gate; the policy set only stops a future edit flipping it back
-    // from also auto-approving the tool. Both are asserted, neither is described as the other.
-    expect(tool.requiresApproval).toBe(true);
-    expect(NEVER_AUTO_APPROVE.has(tool.name)).toBe(true);
-    expect(shouldAutoApproveTool({ commandExecution: true }, tool.name, false)).toBe(false);
+    expect(src.match(/^\s*requiresApproval:\s*false/m)).toBeNull();
+    expect(src).not.toMatch(/executeCLI\(`cline /);
+    expect(src).not.toMatch(/executeCLI\(`echo.*\| jq /);
+    expect(src).not.toMatch(/executeCLI\(`echo.*\| fzf /);
+    expect(src).not.toMatch(/executeCLI\(`echo.*\| yq /);
   });
 });

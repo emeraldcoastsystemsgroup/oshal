@@ -232,5 +232,11 @@
     "title": "Trading \u2014 cash settlement: three narrower gaps (ADR-134 D8)",
     "pr": "780",
     "evidence": "PR #780 closed the three narrower cash-settlement gaps: (1) nextSettlementDate now skips exchange holidays via exchangeClosed() and NYSE full-closure calendar, (2) store half labels ledger-derived figure on ticket, (3) discovered_account_type on oshal_trading_books caches venue account type for legacy live books, eliminating redundant venue reads and fail-closed refusals. Guarded by tests/unit/trading-settlement.spec.ts (31/31 pass)."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "Three CLI tools reach a shell with model-supplied arguments and require no approval (2026-09-21)",
+    "pr": "817",
+    "evidence": "cli_cline, cli_jq, and cli_fzf now execute via cli-argv.js (cliArgsToArgv + executeCLIArgv) with an argument vector and stdin, avoiding child_process.exec; registered requiresApproval: true and added to NEVER_AUTO_APPROVE in tool-approval-policy.js; tests/unit/cli-yq-argv-not-shell.spec.ts 24/24 passes with live stubs on PATH and static guard asserting all 16 registered CLI tools require approval."
   }
 ]

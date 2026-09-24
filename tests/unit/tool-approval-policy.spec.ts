@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — pins the autonomous-path tool-approval gate (any-bot/server/controllers/tool-approval-policy.js). This is the last deterministic thing standing between an injected ticket/email/web page and a shell on a bot node, and before extraction it was one expression with a flag name that reads like a typo. The load-bearing case is the FIRST test: the literal autoApprove payload AgentDispatchEngine sends on the unattended path must NOT auto-approve execute_command. The second test proves the block survives someone flipping the registry's requiresApproval to false, and the last two pin the current posture so a "cleanup" that switches per-tool keys on shows up as a failing test rather than a silent widening.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added assertions for cli_yq, cli_cline, cli_jq, cli_fzf in NEVER_AUTO_APPROVE.
  */
 import { describe, expect, it } from 'vitest';
 
@@ -27,6 +28,13 @@ describe('autonomous-path tool approval policy', () => {
     // requiresApproval:false is one edit away; NEVER_AUTO_APPROVE is what survives it.
     expect(shouldAutoApproveTool(DISPATCH_AUTO_APPROVE, 'execute_command', false)).toBe(false);
     expect(NEVER_AUTO_APPROVE.has('execute_command')).toBe(true);
+  });
+
+  it('refuses cli_yq, cli_cline, cli_jq, cli_fzf even if their approval flag is ever flipped off', () => {
+    for (const tool of ['cli_yq', 'cli_cline', 'cli_jq', 'cli_fzf']) {
+      expect(shouldAutoApproveTool(DISPATCH_AUTO_APPROVE, tool, false)).toBe(false);
+      expect(NEVER_AUTO_APPROVE.has(tool)).toBe(true);
+    }
   });
 
   it('does not treat the callers per-tool keys as approval (current, deliberate posture)', () => {

@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | yq no longer reaches a shell: yqCommand now goes through cli-argv.js (cliArgsToArgv + executeCLIArgv), which spawns the binary with an argument vector (execFile, shell:false) and writes `input` to the child's stdin, instead of building `echo '<yaml>' | yq <args>` for child_process.exec. Model-supplied text can no longer be command syntax on this tool, and cli_yq advertises a preferred `argv` array so a caller that already has separate arguments never has to round-trip them through a string. Every other executeCLI caller still builds a command string; of those, cli_cline, cli_jq and cli_fzf are the three declared requiresApproval:false.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | cli_yq is registered requiresApproval:true. SEQ 2 closed the shell hole but left the tool unapproved, and adding it to NEVER_AUTO_APPROVE did not refuse it: all three consumers of the approval policy test `requiresApproval && !approved` BEFORE they consult that set (AgenticController.js, dispatch-tool-executor.js, ToolRegistry.execute), so for a tool declared false the refusal branch is never entered and the auto-approve answer is never read. Driving the real unattended dispatch channel proved cli_yq still ran. The registration flag is the gate; the policy entry is belt-and-braces against that flag being flipped back. An approved caller still runs the tool.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | cline, jq and fzf no longer reach a shell: clineCommand, jqCommand and fzfCommand now execute through cli-argv.js (cliArgsToArgv + executeCLIArgv) with an argument vector and stdin instead of command strings handed to child_process.exec, and are registered requiresApproval:true. All CLI tools registered in this file now require approval.
  */
 
 /**
@@ -412,19 +413,34 @@ async function argocdCommand(input) {
 
 /**
  * Cline CLI Tool - Cline agent operations
+ *
+ * Runs `cline` with an argument vector and no shell.
+ *
+ * @param {{args?: string, argv?: string[]}} input - Tool input.
+ * @returns {Promise<{tool: string, command: string, argv: string[], output: string, success: boolean}>}
  */
 async function clineCommand(input) {
-  const { args } = input;
-  if (!args) {
+  const { args, argv: argvInput } = input;
+  const source = Array.isArray(argvInput) ? argvInput : args;
+  if (source === undefined || source === null || source === '') {
     throw new Error('Cline CLI arguments are required');
   }
 
-  logger.info(`Executing cline command: cline ${args}`);
-  const result = await executeCLI(`cline ${args}`, { timeout: 180000 });
-  
+  const argv = cliArgsToArgv(source, 'cline');
+  if (argv.length === 0) {
+    throw new Error('Cline CLI arguments are required');
+  }
+
+  logger.info(`Executing cline with argv: ${JSON.stringify(argv)}`);
+  const result = await executeCLIArgv('cline', argv, {
+    timeout: 180000,
+    cwd: config.filesystem.workspaceDir,
+  });
+
   return {
     tool: 'cline',
-    command: `cline ${args}`,
+    command: `cline ${argv.join(' ')}`,
+    argv,
     output: result.stdout || result.stderr,
     success: true,
   };
@@ -432,25 +448,39 @@ async function clineCommand(input) {
 
 /**
  * JQ Tool - JSON processor
+ *
+ * Runs `jq` with an argument vector and no shell. JSON input is written to jq's stdin.
+ *
+ * @param {{filter?: string, input?: string, argv?: string[], args?: string}} input - Tool input.
+ * @returns {Promise<{tool: string, command: string, argv: string[], output: string, success: boolean}>}
  */
 async function jqCommand(input) {
-  const { filter, input: jsonInput } = input;
-  if (!filter) {
+  const { filter, input: jsonInput, argv: argvInput, args } = input;
+  let argv;
+  if (Array.isArray(argvInput)) {
+    argv = cliArgsToArgv(argvInput, 'jq');
+  } else if (typeof args === 'string' && args.trim().length > 0) {
+    argv = cliArgsToArgv(args, 'jq');
+  } else if (typeof filter === 'string' && filter.trim().length > 0) {
+    argv = [filter];
+  } else {
     throw new Error('JQ filter is required');
   }
 
-  logger.info(`Executing jq command: jq '${filter}'`);
-  
-  // If input is provided, pipe it to jq
-  const cmd = jsonInput 
-    ? `echo '${jsonInput.replace(/'/g, "'\\''")}' | jq '${filter}'`
-    : `jq '${filter}'`;
-  
-  const result = await executeCLI(cmd);
-  
+  if (argv.length === 0) {
+    throw new Error('JQ filter is required');
+  }
+
+  logger.info(`Executing jq with argv: ${JSON.stringify(argv)}`);
+  const result = await executeCLIArgv('jq', argv, {
+    stdin: jsonInput,
+    cwd: config.filesystem.workspaceDir,
+  });
+
   return {
     tool: 'jq',
-    command: `jq '${filter}'`,
+    command: `jq ${argv.join(' ')}`,
+    argv,
     output: result.stdout || result.stderr,
     success: true,
   };
@@ -498,20 +528,31 @@ async function yqCommand(input) {
 
 /**
  * FZF Tool - Fuzzy finder
+ *
+ * Runs `fzf` with an argument vector and no shell. List input is written to fzf's stdin.
+ *
+ * @param {{input: string, args?: string, argv?: string[]}} input - Tool input.
+ * @returns {Promise<{tool: string, command: string, argv: string[], output: string, success: boolean}>}
  */
 async function fzfCommand(input) {
-  const { input: fzfInput, args = '' } = input;
+  const { input: fzfInput, args, argv: argvInput } = input;
   if (!fzfInput) {
     throw new Error('FZF input is required');
   }
 
-  logger.info(`Executing fzf command`);
-  const cmd = `echo '${fzfInput.replace(/'/g, "'\\''")}' | fzf ${args}`;
-  const result = await executeCLI(cmd);
-  
+  const source = Array.isArray(argvInput) ? argvInput : (args || '');
+  const argv = source ? cliArgsToArgv(source, 'fzf') : [];
+
+  logger.info(`Executing fzf with argv: ${JSON.stringify(argv)}`);
+  const result = await executeCLIArgv('fzf', argv, {
+    stdin: fzfInput,
+    cwd: config.filesystem.workspaceDir,
+  });
+
   return {
     tool: 'fzf',
-    command: `fzf ${args}`,
+    command: `fzf ${argv.join(' ')}`,
+    argv,
     output: result.stdout || result.stderr,
     success: true,
   };
@@ -789,12 +830,16 @@ function registerCLITools(registry) {
   // Cline CLI
   registry.register({
     name: 'cli_cline',
-    description: 'Execute cline CLI commands for AI agent operations. Examples: version, task list, logs show',
+    description: 'Execute cline CLI commands for AI agent operations. Provide argv (preferred: one array entry per argument) or args. cline is run directly with these arguments — there is no shell, so shell syntax has no effect.',
     category: 'devops_cli',
     inputSchema: {
       type: 'object',
-      required: ['args'],
       properties: {
+        argv: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Cline arguments, one per array entry — preferred, used verbatim',
+        },
         args: {
           type: 'string',
           description: 'Cline CLI arguments (e.g., "version", "task list", "logs show")',
@@ -802,31 +847,39 @@ function registerCLITools(registry) {
       },
     },
     handler: clineCommand,
-    requiresApproval: false, // Cline operations are safe
+    requiresApproval: true,
     timeout: 180000,
   });
 
   // JQ
   registry.register({
     name: 'cli_jq',
-    description: 'Process JSON data with jq. Provide filter and optionally input JSON string',
+    description: 'Process JSON data with jq. Provide argv (preferred), args, or filter (optionally with input JSON string). jq is run directly with these arguments — there is no shell, so shell syntax has no effect.',
     category: 'devops_cli',
     inputSchema: {
       type: 'object',
-      required: ['filter'],
       properties: {
+        argv: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'JQ arguments, one per array entry — preferred, used verbatim',
+        },
+        args: {
+          type: 'string',
+          description: 'JQ arguments as a single string',
+        },
         filter: {
           type: 'string',
           description: 'JQ filter expression (e.g., ".", ".name", ".items[] | select(.active)")',
         },
         input: {
           type: 'string',
-          description: 'JSON input string to process (optional if using file)',
+          description: 'JSON input string to process, written to jq stdin (optional if using file)',
         },
       },
     },
     handler: jqCommand,
-    requiresApproval: false,
+    requiresApproval: true,
     timeout: 30000,
   });
 
@@ -866,7 +919,7 @@ function registerCLITools(registry) {
   // FZF
   registry.register({
     name: 'cli_fzf',
-    description: 'Interactive fuzzy finder for filtering lists. Provide input list and optional fzf arguments',
+    description: 'Interactive fuzzy finder for filtering lists. Provide input list and optional fzf arguments. fzf is run directly with these arguments — there is no shell, so shell syntax has no effect.',
     category: 'devops_cli',
     inputSchema: {
       type: 'object',
@@ -874,7 +927,12 @@ function registerCLITools(registry) {
       properties: {
         input: {
           type: 'string',
-          description: 'Input list to filter (newline-separated items)',
+          description: 'Input list to filter (newline-separated items), written to fzf stdin',
+        },
+        argv: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'FZF arguments, one per array entry — preferred, used verbatim',
         },
         args: {
           type: 'string',
@@ -883,7 +941,7 @@ function registerCLITools(registry) {
       },
     },
     handler: fzfCommand,
-    requiresApproval: false,
+    requiresApproval: true,
     timeout: 30000,
   });
 
