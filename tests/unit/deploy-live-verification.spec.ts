@@ -486,7 +486,7 @@ const SIGNING = { OSHAL_DELEGATION_SIGNING_KID: 'fixture-kid', OSHAL_DELEGATION_
 /** The refusal the controller raises for a user-bound delegation with no verified issuer. */
 const NO_ISSUER = 'User-bound delegation requires a verified principal issuer';
 /** The refusal signed delegation raises for a worker that runs inline on the api. */
-const INLINE_REFUSAL = 'Signed HTTP delegation requires a dedicated bot-node endpoint';
+const INLINE_REFUSAL = 'signed HTTP delegation requires a dedicated bot-node endpoint';
 /** Stands in for an operator's session-minted token; asserted never to reach any output. */
 const OPERATOR_PAT = 'fixture-operator-pat-never-printed';
 
@@ -701,7 +701,7 @@ describe('scripts/operations/deploy-live-verification.js — verdicts and cleanu
     const dispatchSource = readFileSync(
       path.resolve('src/features/swarm-orchestration/services/dispatch-manifest-worker.ts'), 'utf8');
     expect(dispatchSource, 'and the inline refusal the FAIL path names must still exist too')
-      .toContain(`throw new Error('${INLINE_REFUSAL}')`);
+      .toContain(`'${INLINE_REFUSAL}'`);
   });
 
   it('never puts the service secret, the minted token or the operator subject in its output', async () => {

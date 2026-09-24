@@ -148,22 +148,11 @@ ui:
 
 # No dynamic UI — tickets are their own view, not ribbon icons.
 
-routes:
-  # These routes are already mounted hardcoded in server.ts; the manifest
-  # lists them for export/transfer awareness. Phase-2 work makes them
-  # conditional on app status; today the listing is informational.
-  - module: src/app/routes/task-routes.ts
-    factory: createTaskRoutes
-    mountPath: /api/tasks
-    auth: oidc   # what server.ts ACTUALLY mounts (ADR-085 D2)
-    requiresAuth: true
-    requiresContext: true
-  - module: src/app/routes/workflow-studio-routes.ts
-    factory: createWorkflowStudioRoutes
-    mountPath: /api/workflow-studio
-    auth: oidc   # what server.ts ACTUALLY mounts (ADR-085 D2)
-    requiresAuth: true
-    requiresContext: true
+# Kernel routes (/api/tasks, /api/workflow-studio) are hardcoded in server.ts and
+# owned by the framework. Listing them here caused SwarmAppService to assign route
+# ownership to oshal-engineering, which blocked /api/tasks with 503 when this app
+# was inactive.
+routes: []
 
 ticketType: build
 workflow:
