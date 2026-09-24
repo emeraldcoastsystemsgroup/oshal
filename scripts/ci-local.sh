@@ -35,6 +35,7 @@
 # 28 | maintainer@emeraldcoastsystemsgroup.com   | gate_unit supplies OSHAL_STORE_DIR as well as OSHAL_STORE_REPO. The product-site guard resolves its catalog from STORE_DIR, whose default is a SIBLING of the tree it runs in - and --head mode runs from a git-archive export with no sibling anywhere near it, so eleven cases in site-product-pages.spec.ts it.runIf-SKIPPED in every nightly. One of them is the guard that catches the committed public site drifting away from the manifests, and it had drifted by seven whole apps before anyone looked. Measured both ways on this box: with STORE_DIR unresolvable the file reports "16 passed | 11 skipped", with it resolved "27 passed". A guard that skips in CI is a guard that does not exist.
 # 29 | maintainer@emeraldcoastsystemsgroup.com   | gate_trivy carries its POSTURE in the file instead of in nobody's head. It had been red for 46 consecutive nightly runs on a finding set nobody had read, which is the same as not scanning; the operator's 2026-09-21 decision is a CVE budget, so the comment above the function records what is settled - the floor stays CRITICAL,HIGH with --ignore-unfixed, the gate still fails the run, what cannot be fixed goes in .trivyignore with a reason and an `exp:` no more than 90 days out, and taking the published fix comes before writing a budget line. The expiry claim is measured, not assumed: against aquasec/trivy 0.72.0 on one image and one CVE id, no exp: suppressed it, a future exp: suppressed it, and a past exp: reported it again - so an unrenewed line reddens this gate by itself.
 # 30 | maintainer@emeraldcoastsystemsgroup.com   | Kubernetes gates, of which this file had none (docs/k8/remote-cluster-work-package.md items 7 and 8). Every full run now adds `argo-manifests` (kubeconform -strict over all five ops/deployment/argo/*.yaml, the Argo WorkflowTemplate included, against pinned schemas) and `terraform` (fmt -check -recursive + validate of deploy/terraform) - cluster-free, and red when kubeconform or terraform is missing rather than skipped. New --cluster-gates opts in to `cluster-bot-manifest` (validate-dynamic-bot-manifest.mjs --require-server) and `cluster-tenant-isolation` (verify-tenant-isolation.sh), the first callers either script has had: they need OSHAL_CLUSTER_CONTEXT and a reachable API server and fail closed without one, and without the flag they do not run and the log says so. New --k8s-only runs just these gates, before the lock, the logs and the Docker cleanup. The gate bodies live in scripts/ci/ci-k8s-gates.sh; tests/unit/ci-local-k8s-gates.spec.ts runs them.
+# 31 | maintainer@emeraldcoastsystemsgroup.com   | New `typecheck-tests` gate: typechecks the test tree against tsconfig.tests.json via scripts/ci/check-tests-typecheck.mjs, enforcing that all new or edited tests are typecheck-clean and pre-existing errors remain quarantined with explicit reasons in tests/typecheck-quarantine.json.
 # =============================================================================
 #
 # Usage:  bash scripts/ci-local.sh [--scheduled] [--head] [--skip-e2e] [--skip-image] [--install]
@@ -312,6 +313,7 @@ prepare_head_src() {
 }
 
 gate_typecheck() { (cd "$GATE_SRC" && timeout 1200 npm run typecheck); }
+gate_typecheck_tests() { (cd "$GATE_SRC" && timeout 1200 npm run typecheck:tests); }
 
 # The store's ambient declarations are not evidence of compatibility with this core.
 # Scheduled runs fetch store main fail-closed; interactive runs judge the chosen local ref.
@@ -682,6 +684,7 @@ elif [ "$DO_INSTALL" = "1" ]; then
 fi
 if [ "$NODE_GATES_OK" = "1" ]; then
   run_gate typecheck gate_typecheck
+  run_gate typecheck-tests gate_typecheck_tests
   run_gate store-compatibility gate_store_compatibility
   run_gate unit gate_unit
   run_gate lint gate_lint
