@@ -38,8 +38,8 @@ interface QueryCall { sql: string; params: unknown[] }
 
 /**
  * Postgres double for oshal_queue_dlq. `listRows` seeds every SELECT (both the list read and
- * the requeue's own row lookup); `throwOnSelect` makes the read blow up, which is the ONLY way
- * the service reports 'unavailable' — the post-release UPDATE failing is deliberately non-fatal.
+ * the requeue's own row lookup); `throwOnSelect` makes the read blow up, which is how this
+ * route-level fixture exercises the service's 'unavailable' result.
  */
 function fakePool(opts: {
   listRows?: Array<Record<string, unknown>>;
@@ -65,9 +65,9 @@ function requiresAuthStub(req: Request, res: Response, next: NextFunction): void
 }
 
 /**
- * Build the app under test. `statusFlip` is the TicketService.updateStatusAs double — the real
- * requeue path calls it to move the ticket back to 'approved', and a throw there is exactly what
- * the service maps to 'invalid-state' (HTTP 409).
+ * Build the app under test. `statusFlip` is the TicketService.requeueFromDeadLetter double — the
+ * real path atomically moves the ticket to 'approved' and clears its DLQ marker; a throw there is
+ * exactly what the service maps to 'invalid-state' (HTTP 409).
  */
 function appFor(
   user: Record<string, string> | null,
@@ -80,7 +80,7 @@ function appFor(
     (req as unknown as { oidc: unknown }).oidc = { isAuthenticated: () => Boolean(user), user: user ?? undefined };
     next();
   });
-  const ticketService = { updateStatusAs: vi.fn(statusFlip) } as unknown as TicketService;
+  const ticketService = { requeueFromDeadLetter: vi.fn(statusFlip) } as unknown as TicketService;
   app.use('/api/queue/dlq', createQueueDlqRoutes(requiresAuthStub, { pool, ticketService }));
   return app;
 }

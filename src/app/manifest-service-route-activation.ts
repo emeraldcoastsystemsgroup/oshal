@@ -9,6 +9,9 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | ADR-157: resolve the activation a due service-route tick runs under, execute it as the application service principal or as the activating person with userSub pinned, skip when nothing is activated, and suspend on a run-time denial. An unprotected application keeps running exactly as before.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Record each run-time schedule denial through the durable refusal chokepoint before suspending the activation.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Carry the activation's required permissions into refusal evidence so the canonical permission-denied remedy names an action the operator can resolve against the exact request.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Bind permission-denied advice to the schedule evidence that makes it safe: name the exact actor, declared requirements and Access review path here instead of globally treating every resource-scope denial as a missing grant.
  *
  * @module manifest-service-route-activation
  */
@@ -22,6 +25,8 @@ import {
   type ApplicationServiceActivation,
 } from '@/features/application-authorization';
 import { createChildLogger } from '@/shared/logger';
+import { recordRefusal } from '@/shared/refusal-events';
+import { PLATFORM_CONTROL_KEYS } from '@/shared/platform-settings';
 
 const logger = createChildLogger({ module: 'manifest-service-route-activation' });
 
@@ -76,6 +81,19 @@ function activationActor(activation: ApplicationServiceActivation): Authorizatio
   return { sub: activation.targetSub!, issuer: activation.targetIssuer!, isActive: true, isSwarmAdmin: false, tenantIds };
 }
 
+/** A permission code is globally ambiguous; only this prepared schedule context can name its review. */
+function scheduleRefusalRemedy(
+  activation: ApplicationServiceActivation,
+  actor: AuthorizationActor,
+  code: string,
+): string | undefined {
+  if (code !== 'authorization_permission_denied') return undefined;
+  const required = activation.requires.length > 0
+    ? activation.requires.join(', ')
+    : 'the schedule\'s declared permissions';
+  return `Review ${actor.sub} under issuer ${actor.issuer}: verify the ${required} grant and resource scope for ${activation.app} in ${PLATFORM_CONTROL_KEYS.applicationAccessPath}; correct the assignment if absent or too narrow, then reactivate ${activation.scheduleId} and retry.`;
+}
+
 /**
  * @description Run one due service-route tick under the principal its activation names.
  *
@@ -124,6 +142,17 @@ async function runActivatedTick<T>(
       if (!(error instanceof ApplicationExecutionDeniedError)) throw error;
       logger.warn({ app: activation.app, scheduleId: activation.scheduleId, reason: error.code },
         'Scheduled application service denied at run time — activation suspended until reactivated');
+      await recordRefusal({
+        code: error.code,
+        actorSub: actor.sub,
+        actorIssuer: actor.issuer,
+        owningPackage: activation.app,
+        targetKind: 'job',
+        target: activation.scheduleId,
+        preparedExecutionId: activation.id,
+        remedy: scheduleRefusalRemedy(activation, actor, error.code),
+        metadata: { runsAs: activation.runsAs, requires: [...activation.requires] },
+      });
       await authority.suspend(activation, error.code);
       return { ran: false, reason: 'denied', detail: error.code };
     }

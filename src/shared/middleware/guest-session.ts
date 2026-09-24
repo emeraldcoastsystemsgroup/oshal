@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | createGuestWelcomeMat: pages that opt in (the /applications app-store preview) send an ANONYMOUS visitor to the /guest landing (carrying the deep link via ?next=) instead of straight to Google OAuth, so a shared link lands on "Continue as guest / Sign in" rather than a login wall. Guest mode off, non-GET, or any existing session (guest or real) falls through to requiresAuth unchanged.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Guest cookie writes now validate SESSION_COOKIE_DOMAIN before passing it to Express/cookie. A malformed deployment value no longer turns /api/guest/start into HTTP 500; guest mode logs the bad config and falls back to a host-only cookie.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Stamp verified guest sessions with a dedicated issuer namespace so downstream identity binding cannot collide with an OIDC or local-auth subject that happens to share the same text.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Read the guest signing-secret alternatives through the shared keys used by refusal remedies.
  */
 
 import crypto from 'crypto';
@@ -14,6 +15,7 @@ import type { Request, Response, RequestHandler } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { hasValidServiceSecret } from '@/shared/middleware/authz';
 import { GUEST_PRINCIPAL_ISSUER } from '@/shared/middleware/principal-issuer';
+import { PLATFORM_SETTING_KEYS } from '@/shared/platform-settings';
 
 const logger = createChildLogger({ module: 'guest-session' });
 
@@ -38,7 +40,11 @@ function ttlMs(): number {
  * "guest disabled" — fail closed).
  */
 function signingSecret(): string {
-  return (process.env.SESSION_SECRET || process.env.AUTH_SESSION_SECRET || process.env.KEYCLOAK_CLIENT_SECRET || '').trim();
+  const [sessionSecret, authSessionSecret, keycloakClientSecret] = PLATFORM_SETTING_KEYS.guestSigningSecrets;
+  return (process.env[sessionSecret]
+    || process.env[authSessionSecret]
+    || process.env[keycloakClientSecret]
+    || '').trim();
 }
 
 function sessionCookieDomain(): string | undefined {

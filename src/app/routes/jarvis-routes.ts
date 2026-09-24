@@ -59,6 +59,7 @@
  * 25 | maintainer@emeraldcoastsystemsgroup.com   | A decision timeout no longer files a ticket for a greeting or a question. The branch inferred that a slow turn was a big build and filed the user's own words as the title; with the operator's codex lane out of credits, every message timed out, so "Hi" was filed three times and escalated, alongside "what is 9 times 9" and "what screen am i on". Conversational messages now get the truth - the provider did not respond, nothing was filed - and substantive requests keep the existing hand-off.
  * 27 | maintainer@emeraldcoastsystemsgroup.com   | The ask job result carries brainFallback when the turn was answered by the operator's hot fallback (2026-09-22) so the surface says which rung answered and that the chosen endpoint was unavailable; a fallback that was not ready reaches the job as its own clear error text.
  * 26 | maintainer@emeraldcoastsystemsgroup.com   | A build request is handed to the swarm without a model turn. The decision step was an agentic bot turn raced against a 75s timeout, and on "build me X" the agent ignored the hand-off rule and ground the build inline (8.6 min, 1.87M tokens measured 2026-06-20) while the route, having lost the race, filed the same ask with the swarm - two builds of one request, acknowledged after 75 seconds. detectBuildRequest recognises the imperative deterministically alongside the existing recall/provider/schedule guards, fileBuildHandoff files it, and the turn returns before runJarvisBot is ever called, so there is no losing turn to abandon. The decision-timeout fallback now files through the same claim-guarded path, so a resent ask cannot open a second build.
+ * 28 | maintainer@emeraldcoastsystemsgroup.com   | Preflight protected-result admission before registering a fresh Jarvis session, while retaining the post-write owner/read-back guard.
  */
 
 import { getJarvisBriefingDelivery } from './jarvis-briefing-delivery';
@@ -136,7 +137,7 @@ import { getApplicationAuthorizationActor, runWithApplicationAuthorizationActor 
 import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-issuer';
 import { runWithRemoteExecutionResults } from '@/shared/remote-execution-results';
 import { persistProtectedResultTask } from './protected-result-persistence';
-import { canReadJarvisSession, filterJarvisResultRows, hasProtectedJarvisSource } from './jarvis-result-access';
+import { canReadJarvisSession, canStartJarvisSession, filterJarvisResultRows, hasProtectedJarvisSource } from './jarvis-result-access';
 import { buildBots, buildComms, buildActivity, buildCalendar } from './jarvis-overview';
 import {
   ensureJarvisSchema,
@@ -674,9 +675,10 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
     const rawSession = String(body.sessionId || '').trim();
     const sessionId = /^[\w.-]{6,128}$/.test(rawSession) ? rawSession : `jarvis-${sub}`;
     gcAskJobs();
-    // Register the thread as a chat_task FIRST — the chat-ticket link + saveTurn (chat_messages) both
-    // FK-reference it; without it every persistence write fails (no durable history). Idempotent.
-    const ownsSession = await ensureSessionTask(ctx, sub, issuer, sessionId, message);
+    // Check the would-be task before writing it: a protected-result refusal must not strand a fresh
+    // `created` row. Accepted threads are then registered before their FK-backed persistence writes.
+    const ownsSession = await ensureSessionTask(ctx, sub, issuer, sessionId, message,
+      () => canStartJarvisSession(sub, sessionId, JARVIS_AGENT_ID, () => resultActor(req)));
     const readsSession = ownsSession
       && await canReadJarvisSession(ctx, sub, issuer, sessionId, () => resultActor(req));
     if (!readsSession) {

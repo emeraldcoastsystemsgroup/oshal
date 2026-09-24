@@ -30,6 +30,7 @@
  * 25 | maintainer@emeraldcoastsystemsgroup.com   | Forward the validated app/capability/pattern prompt carrier from /api/swarm-execute into the execution envelope; malformed trusted configuration now fails closed at the HTTP boundary.
  * 26 | maintainer@emeraldcoastsystemsgroup.com | Capture protected execution authority after signed replay verification and refuse unbound Token Chase replay for protected bots.
  * 27 | maintainer@emeraldcoastsystemsgroup.com | A bot that loses the cold-start race to Postgres is no longer pool-less for life while reporting healthy. The runtime is built with recoverDatabase, so the pool survives boot-window exhaustion and recovers in the background; /health and /api/health moved to bot-node-health-routes.ts and answer 503 until a configured database has answered once (the container HEALTHCHECK is curl -f /health); and the boot-only database step - the agent profile seed and the persisted heartbeat role/capabilities - re-runs on the first late connect.
+ * 28 | maintainer@emeraldcoastsystemsgroup.com | Treat dead-letter quarantine as terminal in the bot-node stale-envelope guard so refused work cannot execute after the controller parks it.
  */
 
 /**
@@ -180,7 +181,7 @@ async function start(): Promise<void> {
     ? async (ticketId: string): Promise<boolean> => {
         const result = await pool!.query('SELECT status FROM tickets WHERE ticket_id = $1 LIMIT 1', [ticketId]);
         const status = result.rows[0]?.status as string | undefined;
-        return status === 'complete' || status === 'escalated';
+        return status === 'complete' || status === 'escalated' || status === 'dead_letter';
       }
     : undefined;
 

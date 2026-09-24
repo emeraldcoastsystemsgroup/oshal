@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Regression guard for the branch that answered 404 session_not_found out of POST /api/jarvis/ask with nothing written down. Two other guards sat red on that 404 and neither could say which half of the gate refused, because the route logged nothing and ensureSessionTask called its own failure "non-fatal" while the caller turned it into a hard refusal. These cases drive each shape through the REAL route: the owner is admitted, a foreign-owned session id is refused quietly, a store that cannot hand back an owner-bound task is refused (the 2026-09-11 rule, so restoring the old `!created ||` reading goes red here), a store that THROWS is refused and reported at ERROR, and a session that writes but will not read back is refused as the read-back half. Nothing here weakens a gate - every case asserts the refusal - what it pins is that the refusals stay distinguishable.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Preflight protected-result admission before a fresh Jarvis session is persisted, so a deterministic refusal cannot strand a `chat_tasks.status='created'` row.
  */
 
 import type { AddressInfo } from 'node:net';
@@ -60,6 +61,8 @@ vi.mock('@/shared/logger', async (importOriginal) => {
 });
 
 import { createJarvisRoutes, purgeJarvisAskJobsForOwner } from '@/app/routes/jarvis-routes';
+import { JARVIS_AGENT_ID } from '@/app/routes/jarvis-orchestrator';
+import { configureProtectedResultAccess } from '@/shared/protected-results';
 import {
   createAmnesiacTaskStore,
   createForeignOwnerTaskStore,
@@ -132,12 +135,14 @@ const errors = (): CapturedLog[] => logSink.entries
 
 describe('POST /api/jarvis/ask session ownership gate', () => {
   beforeEach(() => {
+    configureProtectedResultAccess(undefined);
     logSink.entries.length = 0;
     executeBot.mockReset();
     executeBot.mockResolvedValue({ response: 'Hello. What can I help with?' });
   });
 
   afterEach(() => {
+    configureProtectedResultAccess(undefined);
     purgeJarvisAskJobsForOwner(OWNER);
     purgeJarvisAskJobsForOwner(OTHER);
   });
@@ -157,6 +162,25 @@ describe('POST /api/jarvis/ask session ownership gate', () => {
     });
     expect(refusals()).toHaveLength(0);
     expect(errors()).toHaveLength(0);
+  });
+
+  it('does not persist a fresh session that protected-result admission refuses', async () => {
+    configureProtectedResultAccess({
+      assertResultAccess: async () => undefined,
+      assertTaskResultAccess: async () => undefined,
+      hasTaskResults: async () => false,
+      linkResult: async () => undefined,
+      isProtectedAgent: async (agentId) => agentId === JARVIS_AGENT_ID,
+    });
+    const taskStore = createMemoryOnlyTaskStore();
+    const create = vi.spyOn(taskStore, 'create');
+
+    const result = await askWith(taskStore, 'session-gate-protected-fresh');
+
+    expect(result).toEqual({ status: 404, body: { error: 'session_not_found' } });
+    expect(create).not.toHaveBeenCalled();
+    expect(await taskStore.get('session-gate-protected-fresh')).toBeNull();
+    expect(executeBot).not.toHaveBeenCalled();
   });
 
   it('refuses a session id another owner holds, and never reaches the model', async () => {

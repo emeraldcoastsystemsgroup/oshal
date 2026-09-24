@@ -28,6 +28,8 @@
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | Append caller-authorized bounded package facts before signing and recheck bot permission after the read.
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | Say why a protected dispatch cannot be recorded. The recorded issuer is derived from controller signing material, so a controller with none refused every protected package dispatch with the bare code `authorization_recorded_delegation_required` — a queued ticket escalated carrying that string and nothing an operator could act on (ticket aaa86e48 on 2026-09-15). The refusal stays fail-closed and keeps the code as its first token; it now names the unset configuration and logs the agent, package and prepared execution at ERROR.
  * 25 | maintainer@emeraldcoastsystemsgroup.com   | Hot fallback wire fields (operator decision 2026-09-22). BotNodeRequest.byoLlmResolutionSource is CONTROLLER-SIDE metadata naming which rung of the ADR-127 ladder produced a threaded byoLlmConnection — 'explicit' is the one value that earns the same-endpoint retry and, for the operator, the hot fallback; executeBotOrInline strips it before a dispatch leaves the controller. BotNodeResponse.brainFallback is the machine-readable marker a fallback turn carries (provider actually used, the rung, why, how many attempts the chosen endpoint refused) so every surface can say "answered by X — Y was unavailable" instead of passing the switch off as normal.
+ * 26 | maintainer@emeraldcoastsystemsgroup.com   | Emit the unrecordable protected-dispatch denial as a typed RefusalError so callers can preserve its exact code, detail and reviewed remedy without parsing text.
+ * 27 | maintainer@emeraldcoastsystemsgroup.com   | Preserve trusted in-process RefusalError results through protected send sanitization so exact persistence/owner refusals reach the manifest terminal sink; ambiguous remote failures remain generic.
  */
 import { runWithApplicationExecution } from '@/shared/application-authorization-execution';
 import { getApplicationAuthorizationActor } from '@/shared/application-authorization-context';
@@ -68,6 +70,7 @@ import {
 } from '@/shared/services/database/request-identity';
 import type { TrustedProviderIntent } from '@/app/bot-node-provider-intent';
 import type { SkillCapabilityId } from '@/shared/skill-profiles';
+import { RefusalError } from '@/shared/refusal-events';
 
 const logger = createChildLogger({ module: 'bot-node-client' });
 const CONTROLLER_INLINE_CONTAINERS = new Set(['oshal-api', 'oshal-local-api']);
@@ -452,7 +455,7 @@ export class BotNodeClient {
     const reason = this.recordedDelegationUnavailable ?? 'no recorded delegation issuer is available';
     logger.error({ agentId, taskId: request.taskId, app: prepared.binding.app, executionId: prepared.executionId, reason },
       'Protected application dispatch refused: the controller cannot record a delegation');
-    throw new Error(`authorization_recorded_delegation_required: ${reason}`);
+    throw new RefusalError('authorization_recorded_delegation_required', reason);
   }
 
   private async sendAuthorized(agentId: string, url: string, request: BotNodeRequest,
@@ -477,6 +480,10 @@ export class BotNodeClient {
       }
       return result;
     } catch (error) {
+      // Deterministic controller-side refusals (for example, a protected result that cannot be
+      // durably attributed) are already safe, typed policy outcomes. Preserve that contract for
+      // the manifest terminal sink; only ambiguous remote/authority failures are genericized.
+      if (error instanceof RefusalError) throw error;
       if (prepared) throw new Error('authorization_remote_execution_failed');
       if (error instanceof Error && error.name === 'TimeoutError') {
         throw new Error(`Bot node execution timed out after ${this.timeoutMs}ms for agent ${agentId}`);

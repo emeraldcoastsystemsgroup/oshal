@@ -17,6 +17,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Extracted from jarvis-routes.ts (804 code lines, over the 800-line decomposition threshold): threadTicketKey, ensureSessionTask, ensureThreadChatTicket and the durable open-ticket lookup move here unchanged; closeThreadChatTicket wraps the map access POST /thread/close used to do inline.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Stop calling an ensureSessionTask failure non-fatal. It is fatal to the ask: the caller turns the false into 404 session_not_found, so a store that could not answer is refused in exactly the words used for a session somebody else owns. The guard still fails closed - nothing about the decision changes - but the cause is now logged at ERROR, which is the only thing that tells an undetermined check apart from a real denial.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Run fresh-session protected-result admission after proving the id is unused but before creating its task row.
  */
 import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '@/app/composition/app-context';
@@ -52,14 +53,17 @@ export function threadTicketKey(ownerSub: string, sessionId: string): string {
  * @param issuer - The verified principal issuer, or null under legacy compatibility.
  * @param sessionId - The conversation thread id.
  * @param message - The first line becomes the task title.
+ * @param admitFresh - Access decision that must pass before an absent session may be persisted.
  * @returns Whether the caller owns the session task (a foreign or mismatched row yields false).
  */
-export async function ensureSessionTask(ctx: AppContext, sub: string, issuer: string | null, sessionId: string, message: string): Promise<boolean> {
+export async function ensureSessionTask(ctx: AppContext, sub: string, issuer: string | null, sessionId: string, message: string,
+  admitFresh: () => Promise<boolean>): Promise<boolean> {
   try {
     if (await getJarvisBriefingDelivery()?.service.isProducerSession(sessionId)) return false;
     const existing = await ctx.taskStore.get(sessionId);
     if (existing) return existing.ownerSub === sub && (readOwnerPrincipalIssuer(existing.metadata) === issuer
       || !issuer && !ctx.applicationAuthorization);
+    if (!await admitFresh()) return false;
     const created = await ctx.taskStore.create({
       taskId: sessionId,
       title: (message.split('\n')[0] || message).slice(0, 90) || 'Jarvis chat',

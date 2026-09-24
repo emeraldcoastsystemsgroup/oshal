@@ -16,12 +16,14 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com  | SEC-05 closure: require encrypted secret storage before OAuth state, exchange, import, status, or sign-out work so Codex credentials can never fall back to plaintext persistence.
  * 12 | maintainer@emeraldcoastsystemsgroup.com  | SEC-05 closure: replace the non-rotating shared config-seed credential mirror with an explicit owner-only live Codex auth source; platform promotion now fails closed without that controller path.
  * 13 | maintainer@emeraldcoastsystemsgroup.com  | Matched the authorize request to what the Codex CLI (0.153.4) sends alongside the client_id the swarm borrows from it: originator codex_cli_rs instead of cline, the CLI's full scope list, and id_token_add_organizations; made the issuer injectable so the token exchange is tested across a real loopback HTTP seam; the exchange failure log now records status, response headers, transport cause and elapsed ms without the code, verifier or any token. No retry was added.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com  | Read the encryption and live-auth path settings through the shared keys used by refusal remedies.
  */
 
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { createChildLogger } from '@/shared/logger';
+import { PLATFORM_SETTING_KEYS } from '@/shared/platform-settings';
 
 const logger = createChildLogger({ module: 'openai-codex-oauth-service' });
 
@@ -185,7 +187,7 @@ export class OpenAiCodexOAuthService {
    */
   constructor(
     configOutputDir: string = process.env.CONFIG_OUTPUT_DIR || './output',
-    encryptionKey: string | null = process.env.ENCRYPTION_KEY || null,
+    encryptionKey: string | null = process.env[PLATFORM_SETTING_KEYS.encryptionKey] || null,
     options: OpenAiCodexOAuthServiceOptions = {},
   ) {
     this.pendingAuthorizations = new Map<string, PendingAuthorization>();
@@ -1111,7 +1113,7 @@ export class OpenAiCodexOAuthService {
    * @returns Trimmed explicit auth path or null when platform promotion is not configured
    */
   private resolveLiveCodexAuthPath(): string | null {
-    const configured = (process.env.CODEX_AUTH_SOURCE_PATH || '').trim();
+    const configured = (process.env[PLATFORM_SETTING_KEYS.codexAuthSourcePath] || '').trim();
     return configured || null;
   }
 

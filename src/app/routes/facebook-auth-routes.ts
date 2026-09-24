@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Capture + unref the CSRF-state cleanup interval (2026-07-05 leak audit)
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Operator-gate every non-callback surface, bind single-use OAuth state to the exact initiating browser/operator, retire browser password/App-Secret writes and raw Redis token publication, and render fixed escaped callback HTML.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Fail Facebook token persistence closed unless ENCRYPTION_KEY is configured, reject OAuth start before state/provider activity when secure storage is unavailable, and prove the deployment prerequisite in focused tests.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Read ENCRYPTION_KEY through the shared platform setting key used by refusal remedies.
  */
 
 /**
@@ -30,6 +31,7 @@ import crypto from 'crypto';
 import axios from 'axios';
 import { createChildLogger } from '@/shared/logger';
 import { getCaller, requiresOperator } from '@/shared/middleware/authz';
+import { PLATFORM_SETTING_KEYS } from '@/shared/platform-settings';
 
 const logger = createChildLogger({ module: 'facebook-auth-routes' });
 
@@ -166,7 +168,7 @@ function bindingCookieOptions(req: Request): {
 function getConfigManager(): any {
   try {
     const path = require('path');
-    const encryptionKey = process.env.ENCRYPTION_KEY?.trim();
+    const encryptionKey = process.env[PLATFORM_SETTING_KEYS.encryptionKey]?.trim();
     if (!encryptionKey) {
       logger.warn('Facebook credential storage unavailable: ENCRYPTION_KEY is required');
       return null;

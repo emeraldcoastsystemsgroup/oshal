@@ -6,6 +6,9 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Restore immutable queued callers and attach protected fan-out results to their exact parent ticket.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Build the supported direct/hosted request for a queued protected dispatch instead of sending the agentic queue shape the worker denies, and refuse with the exact missing requirement when the ticket owner has no hosted connection.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Resolve queued work through the same configured user-brain ladder as Jarvis. A hosted selection carries its endpoint; a CLI selection carries its provider/model stamp. No vendor is selected here, so protected work can no longer silently replace the configured brain with a stale hosted connection.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Mark deterministic protected-dispatch and result-persistence denials with RefusalError so the manifest boundary can terminalize only deliberate refusals.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Keep configured-brain resolver outages operational: propagate the original lookup error instead of converting transient database or network failures into terminal deterministic refusals.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Reuse the reviewed protected_result_owner_issuer_required code for durable-task principal mismatches so every typed refusal remains covered by the source-locked disposition inventory.
  */
 import type { InternalTicket } from '@/entities/ticket';
 import type { BotNodeClient, BotNodeRequest, BotNodeResponse } from '@/features/agent-management';
@@ -17,6 +20,7 @@ import { runWithRemoteExecutionResults } from '@/shared/remote-execution-results
 import { appendProtectedResultExecution, assertProtectedResultAccess } from '@/shared/protected-results';
 import { OWNER_PRINCIPAL_ISSUER_METADATA_KEY, readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
 import { createChildLogger } from '@/shared/logger';
+import { RefusalError } from '@/shared/refusal-events';
 
 const logger = createChildLogger({ module: 'manifest-worker-application-execution' });
 
@@ -46,11 +50,9 @@ const HOSTED_WIRE_FIELDS = ['baseUrl', 'apiKey', 'model'] as const;
  * missing so the ticket's escalation metadata — and the failure line the thread shows — can quote it
  * instead of escalating blank.
  */
-export class QueuedProtectedDispatchError extends Error {
-  /** Stable machine code; dispatch refuses the localhost fallback on it. */
-  readonly code = 'authorization_queued_protected_shape_required';
+export class QueuedProtectedDispatchError extends RefusalError {
   constructor(public readonly reason: string) {
-    super(`authorization_queued_protected_shape_required: ${reason}`);
+    super('authorization_queued_protected_shape_required', reason);
     this.name = 'QueuedProtectedDispatchError';
   }
 }
@@ -74,7 +76,8 @@ export class QueuedProtectedDispatchError extends Error {
  * @param request - The request the queue built for this worker.
  * @param resolveBrain - The owner's configured-brain resolver, injected by composition.
  * @returns The same work in the supported protected shape.
- * @throws QueuedProtectedDispatchError naming the exact unmet requirement.
+ * @throws QueuedProtectedDispatchError naming an exact unmet requirement, or the original resolver
+ * error when configured-brain lookup itself is unavailable.
  */
 async function supportedProtectedRequest(request: BotNodeRequest,
   resolveBrain?: QueuedBrainResolver): Promise<BotNodeRequest> {
@@ -86,13 +89,7 @@ async function supportedProtectedRequest(request: BotNodeRequest,
   if (!resolveBrain) {
     throw new QueuedProtectedDispatchError('this controller has no configured-brain resolver wired for queued protected dispatch');
   }
-  let brain: QueuedResolvedBrain | null | undefined;
-  try {
-    brain = await resolveBrain(ownerSub);
-  } catch (error) {
-    throw new QueuedProtectedDispatchError(
-      `resolving the ticket owner's configured AI brain failed: ${error instanceof Error ? error.message : String(error)}`);
-  }
+  const brain = await resolveBrain(ownerSub);
   if (brain?.kind === 'cli') {
     const providerId = brain.providerId?.trim();
     if (!providerId) throw new QueuedProtectedDispatchError('the ticket owner\'s configured CLI brain has no provider id');
@@ -119,7 +116,10 @@ async function supportedProtectedRequest(request: BotNodeRequest,
 
 async function recordResult(taskStore: ITaskStore | undefined, ticket: InternalTicket, agentId: string, executionId: string): Promise<void> {
   const actor = getApplicationAuthorizationActor();
-  if (!actor || !taskStore) throw new Error('authorization_result_persistence_required');
+  if (!actor || !taskStore) {
+    throw new RefusalError('authorization_result_persistence_required',
+      'protected result lineage requires both an authorized actor and a durable task store');
+  }
   await assertProtectedResultAccess(executionId, ticket.ticketId, actor);
   let task = await taskStore.get(ticket.ticketId);
   if (!task) {
@@ -128,7 +128,10 @@ async function recordResult(taskStore: ITaskStore | undefined, ticket: InternalT
         metadata: { [OWNER_PRINCIPAL_ISSUER_METADATA_KEY]: actor.issuer } });
     } catch (error) { task = await taskStore.get(ticket.ticketId); if (!task) throw error; }
   }
-  if (task.ownerSub !== actor.sub || readOwnerPrincipalIssuer(task.metadata) !== actor.issuer) throw new Error('authorization_result_owner_mismatch');
+  if (task.ownerSub !== actor.sub || readOwnerPrincipalIssuer(task.metadata) !== actor.issuer) {
+    throw new RefusalError('protected_result_owner_issuer_required',
+      'the linked task owner does not match the authorized result principal');
+  }
   await taskStore.replace({ ...task, metadata: appendProtectedResultExecution(task.metadata, executionId) });
 }
 

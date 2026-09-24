@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Select agy's accept-edits mode for autonomous task execution. Headless request-review cannot prompt for write_file, so it soft-denied task deliverables after reads and commands were fixed; accept-edits permits edits within the declared task workspace without --dangerously-skip-permissions.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Provision the existing oshal-tools MCP bridge in an invocation-only Antigravity HOME. The bridge is bound to the exact bot, protected execution, task and user supplied by the verified worker context; only the OAuth token and installation id are linked from the shared login, and the temporary config is removed after the turn.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Auto-approve only the invocation-local oshal-tools MCP server. Headless mode cannot answer Antigravity's default MCP confirmation; the controller still lists and executes only exact AUTO grants and revalidates protected actions per call.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Give every invocation a private Antigravity HOME and approve terminal commands only there. agy's --sandbox restricts terminal access but does not answer headless confirmations, so command execution was still soft-denied; the ephemeral command(regex:.*) grant now operates only with --sandbox and the exact --add-dir task boundary, never through the persistent host config or --dangerously-skip-permissions.
  */
 
 'use strict';
@@ -46,22 +47,25 @@ function linkCredential(source, destination) {
 
 /** Build one private HOME because agy discovers MCP servers only from ~/.gemini/config. */
 function provisionToolBridge(binding) {
-  if (!binding) return { env: {}, release: () => {} };
-  const agentId = requiredBridgeText(binding.agentId, 'agentId', 512);
-  const taskId = requiredBridgeText(binding.taskId, 'taskId', 512);
-  const userSub = requiredBridgeText(binding.userSub, 'userSub', 2048);
-  const executionId = requiredBridgeText(binding.applicationExecutionId, 'applicationExecutionId', 128);
-  const executionToken = requiredBridgeText(binding.applicationExecutionToken, 'applicationExecutionToken');
-  const secret = requiredBridgeText(process.env.SWARM_SERVICE_SECRET, 'service credential');
-  const bridgePath = process.env.OSHAL_TOOLS_MCP_PATH || DEFAULT_TOOLS_MCP_PATH;
-  if (!path.isAbsolute(bridgePath) || !fs.existsSync(bridgePath)) {
-    throw new Error('Antigravity tool bridge executable is unavailable');
-  }
-  const apiBase = process.env.SWARM_CONTROLLER_URL || process.env.OSHAL_API_BASE || 'http://oshal-api:5000';
-  let parsedBase;
-  try { parsedBase = new URL(apiBase); } catch { throw new Error('Antigravity tool bridge controller URL is invalid'); }
-  if (!['http:', 'https:'].includes(parsedBase.protocol) || parsedBase.username || parsedBase.password) {
-    throw new Error('Antigravity tool bridge controller URL is invalid');
+  let bridge;
+  if (binding) {
+    const agentId = requiredBridgeText(binding.agentId, 'agentId', 512);
+    const taskId = requiredBridgeText(binding.taskId, 'taskId', 512);
+    const userSub = requiredBridgeText(binding.userSub, 'userSub', 2048);
+    const executionId = requiredBridgeText(binding.applicationExecutionId, 'applicationExecutionId', 128);
+    const executionToken = requiredBridgeText(binding.applicationExecutionToken, 'applicationExecutionToken');
+    const secret = requiredBridgeText(process.env.SWARM_SERVICE_SECRET, 'service credential');
+    const bridgePath = process.env.OSHAL_TOOLS_MCP_PATH || DEFAULT_TOOLS_MCP_PATH;
+    if (!path.isAbsolute(bridgePath) || !fs.existsSync(bridgePath)) {
+      throw new Error('Antigravity tool bridge executable is unavailable');
+    }
+    const apiBase = process.env.SWARM_CONTROLLER_URL || process.env.OSHAL_API_BASE || 'http://oshal-api:5000';
+    let parsedBase;
+    try { parsedBase = new URL(apiBase); } catch { throw new Error('Antigravity tool bridge controller URL is invalid'); }
+    if (!['http:', 'https:'].includes(parsedBase.protocol) || parsedBase.username || parsedBase.password) {
+      throw new Error('Antigravity tool bridge controller URL is invalid');
+    }
+    bridge = { agentId, taskId, userSub, executionId, executionToken, secret, bridgePath, apiBase: parsedBase.href.replace(/\/+$/, '') };
   }
 
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-agy-mcp-'));
@@ -75,23 +79,27 @@ function provisionToolBridge(binding) {
     linkCredential(tokenPath, path.join(cliRoot, 'antigravity-oauth-token'));
     linkCredential(path.join(path.dirname(tokenPath), 'installation_id'), path.join(cliRoot, 'installation_id'));
     fs.writeFileSync(path.join(cliRoot, 'settings.json'), JSON.stringify({
-      permissions: { allow: ['mcp(oshal-tools/*)'] },
+      permissions: { allow: ['command(regex:.*)', ...(bridge ? ['mcp(oshal-tools/*)'] : [])] },
     }), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
-    fs.writeFileSync(path.join(configRoot, 'mcp_config.json'), JSON.stringify({
-      mcpServers: {
-        'oshal-tools': { command: 'node', args: [bridgePath], disabled: false },
-      },
-    }), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    if (bridge) {
+      fs.writeFileSync(path.join(configRoot, 'mcp_config.json'), JSON.stringify({
+        mcpServers: {
+          'oshal-tools': { command: 'node', args: [bridge.bridgePath], disabled: false },
+        },
+      }), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    }
     return {
       env: {
         HOME: home,
-        OSHAL_API_BASE: parsedBase.href.replace(/\/+$/, ''),
-        SWARM_SERVICE_SECRET: secret,
-        OSHAL_AGENT_ID: agentId,
-        OSHAL_USER_SUB: userSub,
-        OSHAL_TASK_ID: taskId,
-        OSHAL_APPLICATION_EXECUTION_ID: executionId,
-        OSHAL_APPLICATION_EXECUTION_TOKEN: executionToken,
+        ...(bridge ? {
+          OSHAL_API_BASE: bridge.apiBase,
+          SWARM_SERVICE_SECRET: bridge.secret,
+          OSHAL_AGENT_ID: bridge.agentId,
+          OSHAL_USER_SUB: bridge.userSub,
+          OSHAL_TASK_ID: bridge.taskId,
+          OSHAL_APPLICATION_EXECUTION_ID: bridge.executionId,
+          OSHAL_APPLICATION_EXECUTION_TOKEN: bridge.executionToken,
+        } : {}),
       },
       release: () => {
         if (path.dirname(home) === path.resolve(os.tmpdir()) && path.basename(home).startsWith('oshal-agy-mcp-')) {

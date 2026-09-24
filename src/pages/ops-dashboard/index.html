@@ -5,6 +5,7 @@
   -----------------------------------------------------------------------------
   1 | maintainer@emeraldcoastsystemsgroup.com   | Added OSHAL-native ops dashboard engineering page for real runtime, queue, and incident-flow visibility
   2 | maintainer@emeraldcoastsystemsgroup.com | Follow the shared portal theme live without replacing page content.
+  3 | maintainer@emeraldcoastsystemsgroup.com | Render the caller-scoped 24-hour refusal ledger and its top-line count.
 -->
 <!DOCTYPE html>
 <html lang="en" data-theme="midnight">
@@ -52,9 +53,37 @@
         <span class="metric-label">Active Runs</span>
         <strong id="metricRuns">0</strong>
       </article>
+      <article class="metric-card">
+        <span class="metric-label">Refusals (24h)</span>
+        <strong id="metricRefusals">0</strong>
+      </article>
     </section>
 
     <main class="content-grid">
+      <section class="panel panel-wide">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Refusal Ledger</p>
+            <h2>Recent Denials</h2>
+          </div>
+        </div>
+        <div class="table-shell">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Code</th>
+                <th>Actor</th>
+                <th>Package</th>
+                <th>Target</th>
+                <th>Remedy</th>
+              </tr>
+            </thead>
+            <tbody id="refusalTableBody" data-testid="ops-refusal-table"></tbody>
+          </table>
+        </div>
+      </section>
+
       <section class="panel panel-wide">
         <div class="panel-head">
           <div>

@@ -5,6 +5,8 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Unit coverage for the queue DLQ policy state machine (DeadLetterService over mocked persistence): attempt accumulation, QM_MAX_ATTEMPTS quarantine (default + env override), escalation-cycle counting (system loops count, manual operator escalations don't), operator notification on topic queue-dlq, quarantine idempotence, fail-open without a pool, non-rolled-back quarantine when the status flip fails, and operator requeue (attempts reset + actor recorded). Plus the extended lifecycle model: dead_letter transitions and terminalChildStatusForParentState.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review fix: escalation-count case now drives the real production actors (operator email + bot agentId are both NON-system and must not count) instead of the fabricated changedBy:'user' event no producer ever emits — matching the guard's move to a positive changedBy === 'system' gate.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Pin quarantined evidence immutability: a trailing failure signal preserves the first refusal's attempts, timestamps, exact code/message/remedy and updated_at while producing no second status flip or notification.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Model atomic TicketService quarantine/requeue mutations in the fake boundary and reject any regression to standalone DLQ marker/reset SQL.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -22,8 +24,9 @@ import { InMemoryTicketStore } from '../../src/features/ticketing/services/in-me
 class FakeDlqPool implements DeadLetterPg {
   rows = new Map<string, {
     ticket_id: string; attempts: number; last_error: string | null;
-    quarantined_at: Date | null; reason: string | null;
+    quarantined_at: Date | null; reason: string | null; remedy: string | null;
     requeued_by: string | null; requeued_at: Date | null; last_failure_at: Date | null;
+    updated_at: Date;
   }>();
   failNextQuery = false;
 
@@ -37,31 +40,28 @@ class FakeDlqPool implements DeadLetterPg {
       const existing = this.rows.get(ticketId);
       const lastError = (params[1] as string | null) ?? null;
       if (existing) {
+        if (existing.quarantined_at !== null) return { rows: [] };
         existing.attempts += 1;
         existing.last_error = lastError ?? existing.last_error;
         existing.last_failure_at = new Date();
+        existing.remedy = null;
+        existing.updated_at = new Date();
       } else {
         this.rows.set(ticketId, {
           ticket_id: ticketId, attempts: 1, last_error: lastError,
-          quarantined_at: null, reason: null, requeued_by: null, requeued_at: null,
-          last_failure_at: new Date(),
+          quarantined_at: null, reason: null, remedy: null,
+          requeued_by: null, requeued_at: null,
+          last_failure_at: new Date(), updated_at: new Date(),
         });
       }
       const row = this.rows.get(ticketId)!;
       return { rows: [{ attempts: row.attempts, quarantined_at: row.quarantined_at, reason: row.reason }] };
     }
     if (text.includes('SET quarantined_at = NOW()')) {
-      const row = this.rows.get(ticketId);
-      if (row) { row.quarantined_at = new Date(); row.reason = String(params[1]); }
-      return { rows: [] };
+      throw new Error('split DLQ quarantine marker query is forbidden');
     }
     if (text.includes('SET attempts = 0')) {
-      const row = this.rows.get(ticketId);
-      if (row) {
-        row.attempts = 0; row.quarantined_at = null; row.reason = null;
-        row.requeued_by = String(params[1]); row.requeued_at = new Date();
-      }
-      return { rows: [] };
+      throw new Error('split DLQ requeue reset query is forbidden');
     }
     if (text.includes('LEFT JOIN tickets')) {
       const includeAll = params[0] === true;
@@ -70,7 +70,7 @@ class FakeDlqPool implements DeadLetterPg {
         .map((r) => ({ ...r, title: `Ticket ${r.ticket_id}`, status: 'dead_letter', ticket_type: 'build' }));
       return { rows };
     }
-    if (text.includes('FROM oshal_queue_dlq WHERE ticket_id')) {
+    if (text.includes('FROM oshal_queue_dlq') && text.includes('WHERE ticket_id')) {
       const row = this.rows.get(ticketId);
       return { rows: row ? [{ ...row }] : [] };
     }
@@ -78,12 +78,42 @@ class FakeDlqPool implements DeadLetterPg {
   }
 }
 
-function makeTicketGateway(overrides: Partial<Record<'updateStatus' | 'updateStatusAs', unknown>> = {}) {
+function makeTicketGateway(
+  pool: FakeDlqPool | null = null,
+  overrides: Partial<Record<'quarantineToDeadLetter' | 'requeueFromDeadLetter', unknown>> = {},
+) {
+  const quarantineToDeadLetter = vi.fn(async (
+    ticketId: string,
+    deadLetter: Parameters<TicketService['quarantineToDeadLetter']>[1],
+  ) => {
+    const row = pool?.rows.get(ticketId);
+    if (!row) throw new Error(`atomic DLQ row missing for ${ticketId}`);
+    if (row.quarantined_at !== null) return false;
+    row.attempts = Math.max(1, deadLetter.attempts);
+    row.last_error = deadLetter.lastError;
+    row.quarantined_at = new Date();
+    row.reason = deadLetter.reason;
+    row.remedy = deadLetter.remedy ?? null;
+    row.updated_at = new Date();
+    return true;
+  });
+  const requeueFromDeadLetter = vi.fn(async (ticketId: string, requeuedBy: string) => {
+    const row = pool?.rows.get(ticketId);
+    if (!row || row.quarantined_at === null) throw new Error('Invalid dead-letter requeue state');
+    row.attempts = 0;
+    row.quarantined_at = null;
+    row.reason = null;
+    row.remedy = null;
+    row.requeued_by = requeuedBy;
+    row.requeued_at = new Date();
+    row.updated_at = new Date();
+  });
   return {
-    getTicket: vi.fn(async () => null),
-    updateStatus: (overrides.updateStatus as ReturnType<typeof vi.fn>) ?? vi.fn(async () => undefined),
-    updateStatusAs: (overrides.updateStatusAs as ReturnType<typeof vi.fn>) ?? vi.fn(async () => undefined),
-  } as unknown as Pick<TicketService, 'getTicket' | 'updateStatus' | 'updateStatusAs'>;
+    quarantineToDeadLetter: (overrides.quarantineToDeadLetter as ReturnType<typeof vi.fn>)
+      ?? quarantineToDeadLetter,
+    requeueFromDeadLetter: (overrides.requeueFromDeadLetter as ReturnType<typeof vi.fn>)
+      ?? requeueFromDeadLetter,
+  } as unknown as Pick<TicketService, 'quarantineToDeadLetter' | 'requeueFromDeadLetter'>;
 }
 
 const UUID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
@@ -100,7 +130,7 @@ describe('readQmMaxAttempts', () => {
 describe('DeadLetterService policy state machine', () => {
   it('accumulates attempts and quarantines on the Nth failed dispatch cycle', async () => {
     const pool = new FakeDlqPool();
-    const gateway = makeTicketGateway();
+    const gateway = makeTicketGateway(pool);
     const notify = vi.fn(async () => undefined);
     const svc = new DeadLetterService({ pool, ticketService: gateway, notify, env: {} as NodeJS.ProcessEnv });
 
@@ -110,13 +140,22 @@ describe('DeadLetterService policy state machine', () => {
     expect(third).toEqual({ attempts: 3, quarantined: true, reason: 'max_dispatch_attempts_poison' });
 
     // Terminal status flip carried reason metadata (never a bare flip).
-    expect(gateway.updateStatus).toHaveBeenCalledTimes(1);
-    expect(gateway.updateStatus).toHaveBeenCalledWith(UUID, 'dead_letter', expect.objectContaining({
-      reason: 'max_dispatch_attempts_poison',
-      source: 'dead-letter-service',
-      attempts: 3,
-      lastError: 'boom 3',
-    }));
+    expect(gateway.quarantineToDeadLetter).toHaveBeenCalledTimes(1);
+    expect(gateway.quarantineToDeadLetter).toHaveBeenCalledWith(
+      UUID,
+      {
+        reason: 'max_dispatch_attempts_poison',
+        lastError: 'boom 3',
+        remedy: null,
+        attempts: 3,
+      },
+      expect.objectContaining({
+        reason: 'max_dispatch_attempts_poison',
+        source: 'dead-letter-service',
+        attempts: 3,
+        lastError: 'boom 3',
+      }),
+    );
     // Row is marked quarantined with the reason.
     expect(pool.rows.get(UUID)?.quarantined_at).not.toBeNull();
     expect(pool.rows.get(UUID)?.reason).toBe('max_dispatch_attempts_poison');
@@ -128,17 +167,21 @@ describe('DeadLetterService policy state machine', () => {
 
   it('honors the QM_MAX_ATTEMPTS env override', async () => {
     const pool = new FakeDlqPool();
-    const gateway = makeTicketGateway();
+    const gateway = makeTicketGateway(pool);
     const svc = new DeadLetterService({ pool, ticketService: gateway, env: { QM_MAX_ATTEMPTS: '2' } as NodeJS.ProcessEnv });
 
     expect((await svc.recordFailureCycle(UUID, 'dispatch_failure')).quarantined).toBe(false);
     expect((await svc.recordFailureCycle(UUID, 'dispatch_failure')).quarantined).toBe(true);
-    expect(gateway.updateStatus).toHaveBeenCalledWith(UUID, 'dead_letter', expect.objectContaining({ maxAttempts: 2 }));
+    expect(gateway.quarantineToDeadLetter).toHaveBeenCalledWith(
+      UUID,
+      expect.objectContaining({ reason: 'max_dispatch_attempts_poison', attempts: 2 }),
+      expect.objectContaining({ maxAttempts: 2 }),
+    );
   });
 
   it('counts system escalation cycles (the auto-escalate loop) but never manual operator escalations', async () => {
     const pool = new FakeDlqPool();
-    const gateway = makeTicketGateway();
+    const gateway = makeTicketGateway(pool);
     const notify = vi.fn(async () => undefined);
     const svc = new DeadLetterService({ pool, ticketService: gateway, notify, env: {} as NodeJS.ProcessEnv });
 
@@ -164,21 +207,42 @@ describe('DeadLetterService policy state machine', () => {
     await vi.waitFor(() => expect(pool.rows.get(UUID)?.quarantined_at).not.toBeNull());
 
     expect(pool.rows.get(UUID)?.reason).toBe('escalation_loop_poison');
-    expect(gateway.updateStatus).toHaveBeenCalledWith(UUID, 'dead_letter', expect.objectContaining({ reason: 'escalation_loop_poison' }));
+    expect(gateway.quarantineToDeadLetter).toHaveBeenCalledWith(
+      UUID,
+      expect.objectContaining({ reason: 'escalation_loop_poison' }),
+      expect.objectContaining({ reason: 'escalation_loop_poison' }),
+    );
     expect(notify).toHaveBeenCalledTimes(1);
   });
 
-  it('is idempotent once quarantined — trailing failures neither re-flip status nor re-notify', async () => {
+  it('keeps the first deterministic refusal envelope immutable under a trailing failure cycle', async () => {
     const pool = new FakeDlqPool();
-    const gateway = makeTicketGateway();
+    const gateway = makeTicketGateway(pool);
     const notify = vi.fn(async () => undefined);
     const svc = new DeadLetterService({ pool, ticketService: gateway, notify, env: { QM_MAX_ATTEMPTS: '1' } as NodeJS.ProcessEnv });
+    const firstFailureAt = new Date('2026-09-23T01:02:03.000Z');
+    const firstQuarantinedAt = new Date('2026-09-23T01:02:04.000Z');
+    const firstUpdatedAt = new Date('2026-09-23T01:02:05.000Z');
+    const firstEvidence = {
+      ticket_id: UUID,
+      attempts: 1,
+      last_error: 'authorization_refused: exact first message',
+      last_failure_at: firstFailureAt,
+      quarantined_at: firstQuarantinedAt,
+      reason: 'authorization_refused',
+      remedy: 'Repair authorization, then explicitly requeue.',
+      requeued_by: null,
+      requeued_at: null,
+      updated_at: firstUpdatedAt,
+    };
+    pool.rows.set(UUID, { ...firstEvidence });
 
-    expect((await svc.recordFailureCycle(UUID, 'dispatch_failure')).quarantined).toBe(true);
-    const trailing = await svc.recordFailureCycle(UUID, 'escalation_cycle');
-    expect(trailing.quarantined).toBe(true);
-    expect(gateway.updateStatus).toHaveBeenCalledTimes(1);
-    expect(notify).toHaveBeenCalledTimes(1);
+    const trailing = await svc.recordFailureCycle(UUID, 'escalation_cycle', 'later generic failure');
+
+    expect(trailing).toEqual({ attempts: 1, quarantined: true, reason: 'authorization_refused' });
+    expect(pool.rows.get(UUID)).toEqual(firstEvidence);
+    expect(gateway.quarantineToDeadLetter).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalled();
   });
 
   it('fails open without a pool: never quarantines, never throws', async () => {
@@ -187,7 +251,7 @@ describe('DeadLetterService policy state machine', () => {
     for (let i = 0; i < 10; i++) {
       expect(await svc.recordFailureCycle(UUID, 'dispatch_failure')).toEqual({ attempts: 0, quarantined: false });
     }
-    expect(gateway.updateStatus).not.toHaveBeenCalled();
+    expect(gateway.quarantineToDeadLetter).not.toHaveBeenCalled();
     expect(await svc.listEntries()).toEqual([]);
     expect(await svc.requeue(UUID, 'op@example.com')).toEqual({ ok: false, error: 'unavailable' });
   });
@@ -195,14 +259,14 @@ describe('DeadLetterService policy state machine', () => {
   it('fails open when the DLQ table is missing/unreadable', async () => {
     const pool = new FakeDlqPool();
     pool.failNextQuery = true;
-    const svc = new DeadLetterService({ pool, ticketService: makeTicketGateway(), env: {} as NodeJS.ProcessEnv });
+    const svc = new DeadLetterService({ pool, ticketService: makeTicketGateway(pool), env: {} as NodeJS.ProcessEnv });
     expect(await svc.recordFailureCycle(UUID, 'dispatch_failure')).toEqual({ attempts: 0, quarantined: false });
   });
 
   it('does NOT mark the row quarantined when the terminal status flip fails', async () => {
     const pool = new FakeDlqPool();
     const failingUpdate = vi.fn(async () => { throw new Error('Invalid state transition: cancelled → dead_letter'); });
-    const gateway = makeTicketGateway({ updateStatus: failingUpdate });
+    const gateway = makeTicketGateway(pool, { quarantineToDeadLetter: failingUpdate });
     const notify = vi.fn(async () => undefined);
     const svc = new DeadLetterService({ pool, ticketService: gateway, notify, env: { QM_MAX_ATTEMPTS: '1' } as NodeJS.ProcessEnv });
 
@@ -214,18 +278,17 @@ describe('DeadLetterService policy state machine', () => {
 
   it('requeue releases a quarantined ticket to approved with the actor recorded and attempts reset', async () => {
     const pool = new FakeDlqPool();
-    const gateway = makeTicketGateway();
+    const gateway = makeTicketGateway(pool);
     const svc = new DeadLetterService({ pool, ticketService: gateway, env: { QM_MAX_ATTEMPTS: '1' } as NodeJS.ProcessEnv });
     await svc.recordFailureCycle(UUID, 'dispatch_failure', 'boom');
     expect(pool.rows.get(UUID)?.quarantined_at).not.toBeNull();
 
     const result = await svc.requeue(UUID, 'maintainer@emeraldcoastsystemsgroup.com');
     expect(result.ok).toBe(true);
-    expect(gateway.updateStatusAs).toHaveBeenCalledWith(
-      UUID, 'approved',
+    expect(gateway.requeueFromDeadLetter).toHaveBeenCalledWith(
+      UUID,
       'maintainer@emeraldcoastsystemsgroup.com',
-      expect.stringContaining('maintainer@emeraldcoastsystemsgroup.com'),
-      expect.objectContaining({ reason: 'dlq_requeue', requeuedBy: 'maintainer@emeraldcoastsystemsgroup.com' }),
+      expect.objectContaining({ previousAttempts: 1 }),
     );
     const row = pool.rows.get(UUID)!;
     expect(row.attempts).toBe(0);
@@ -239,7 +302,7 @@ describe('DeadLetterService policy state machine', () => {
 
   it('requeue of an unknown or non-quarantined ticket is not-found; a rejected transition is invalid-state', async () => {
     const pool = new FakeDlqPool();
-    const gateway = makeTicketGateway();
+    const gateway = makeTicketGateway(pool);
     const svc = new DeadLetterService({ pool, ticketService: gateway, env: {} as NodeJS.ProcessEnv });
 
     expect(await svc.requeue(UUID, 'op')).toEqual({ ok: false, error: 'not-found' });
@@ -248,7 +311,9 @@ describe('DeadLetterService policy state machine', () => {
 
     const svc2 = new DeadLetterService({
       pool,
-      ticketService: makeTicketGateway({ updateStatusAs: vi.fn(async () => { throw new Error('Invalid state transition'); }) }),
+      ticketService: makeTicketGateway(pool, {
+        requeueFromDeadLetter: vi.fn(async () => { throw new Error('Invalid state transition'); }),
+      }),
       env: { QM_MAX_ATTEMPTS: '2' } as NodeJS.ProcessEnv,
     });
     await svc2.recordFailureCycle(UUID, 'dispatch_failure'); // attempts=2 → quarantined
@@ -257,10 +322,10 @@ describe('DeadLetterService policy state machine', () => {
 
   it('lists quarantined entries only by default, all rows with includeUnquarantined', async () => {
     const pool = new FakeDlqPool();
-    const svc = new DeadLetterService({ pool, ticketService: makeTicketGateway(), env: { QM_MAX_ATTEMPTS: '1' } as NodeJS.ProcessEnv });
+    const svc = new DeadLetterService({ pool, ticketService: makeTicketGateway(pool), env: { QM_MAX_ATTEMPTS: '1' } as NodeJS.ProcessEnv });
     await svc.recordFailureCycle(UUID, 'dispatch_failure', 'poison'); // quarantines
     const other = '11111111-2222-3333-4444-555555555555';
-    const svcHighCap = new DeadLetterService({ pool, ticketService: makeTicketGateway(), env: { QM_MAX_ATTEMPTS: '99' } as NodeJS.ProcessEnv });
+    const svcHighCap = new DeadLetterService({ pool, ticketService: makeTicketGateway(pool), env: { QM_MAX_ATTEMPTS: '99' } as NodeJS.ProcessEnv });
     await svcHighCap.recordFailureCycle(other, 'dispatch_failure', 'still trying');
 
     const quarantinedOnly = await svc.listEntries();
@@ -273,7 +338,7 @@ describe('DeadLetterService policy state machine', () => {
 
   it('a failing notifier never unwinds or blocks the quarantine', async () => {
     const pool = new FakeDlqPool();
-    const gateway = makeTicketGateway();
+    const gateway = makeTicketGateway(pool);
     const notify = vi.fn(async () => { throw new Error('telegram down'); });
     const svc = new DeadLetterService({ pool, ticketService: gateway, notify, env: { QM_MAX_ATTEMPTS: '1' } as NodeJS.ProcessEnv });
     const verdict = await svc.recordFailureCycle(UUID, 'dispatch_failure');

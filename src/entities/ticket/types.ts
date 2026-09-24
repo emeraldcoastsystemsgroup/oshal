@@ -5,8 +5,9 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added canonical OSHAL ticket workflow, mode, and hierarchy model for swarm and Plane integration
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Session 140: Added paused and cancelled ticket states for operator stop/pause control
- * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added terminal 'dead_letter' state (queue DLQ / poison-ticket quarantine, migration 081). Groups under 'escalated' so existing group-based boards/filters keep working; terminal + requires human review. Reached only via the DeadLetterService after QM_MAX_ATTEMPTS failed dispatch/escalation cycles; leaves only via operator requeue.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added terminal 'dead_letter' state (queue DLQ / poison-ticket quarantine, migration 081). Groups under 'escalated' so existing group-based boards/filters keep working; terminal + requires human review. Leaves only via operator requeue.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Added trusted internal-ticket projection fields to normalized provider work items
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Clarified that dead-letter quarantine covers deterministic dispatch refusals immediately as well as exhausted retry cycles
  */
 
 import { z } from 'zod';
@@ -72,8 +73,8 @@ export const OshalTicketStateSchema = z.enum([
   'customer_action',
   'complete',
   'escalated',
-  // Terminal poison-ticket quarantine (queue DLQ): the ticket exhausted QM_MAX_ATTEMPTS
-  // dispatch/escalation cycles and is parked until an operator requeues or cancels it.
+  // Terminal queue quarantine (DLQ): dispatch is deterministically impossible or the ticket
+  // exhausted QM_MAX_ATTEMPTS cycles, so it is parked until an operator requeues or cancels it.
   // Groups under 'escalated' (see TICKET_STATE_DEFINITIONS) so group-based surfaces
   // need no new bucket.
   'dead_letter',

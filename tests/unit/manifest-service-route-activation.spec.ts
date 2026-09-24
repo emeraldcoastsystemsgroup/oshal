@@ -4,10 +4,11 @@
  * SEQ | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1   | maintainer@emeraldcoastsystemsgroup.com     | ADR-157 S1: prove the runner at the boundary that broke — the real registry dispatching a real compiled package handler through the real execution guard. A protected app with no activation skips at INFO (asserted against the shipped logger's own JSON log file, not a mocked logger) and logs no ERROR; a system activation runs as the service principal; a user activation runs as that person with userSub pinned; a run-time denial suspends the activation instead of failing every cadence.
+ * 2   | maintainer@emeraldcoastsystemsgroup.com     | Read only logger bytes appended by the current case; rereading the full long-running OSHAL log on every poll timed out once the file approached 1 GB.
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, mkdtempSync, openSync, readSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { AppContext } from '@/app/composition/app-context';
@@ -66,7 +67,17 @@ async function logTail(from: number): Promise<string> {
     await new Promise(done => setTimeout(done, 50));
     try {
       const size = statSync(LOG_FILE).size;
-      if (size > from) return readFileSync(LOG_FILE, 'utf8').slice(from);
+      if (size > from) {
+        const length = size - from;
+        const buffer = Buffer.alloc(length);
+        const descriptor = openSync(LOG_FILE, 'r');
+        try {
+          readSync(descriptor, buffer, 0, length, from);
+          return buffer.toString('utf8');
+        } finally {
+          closeSync(descriptor);
+        }
+      }
     } catch { /* the transport has not created it yet */ }
   }
   return '';

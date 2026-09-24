@@ -18,6 +18,7 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | POST /api/config now MERGES partial saves: non-secret settings merge into existing global-config.json and global secrets are preserved across saves (was wholesale-overwrite, which wiped previously-saved provider keys + service configs when saving one provider at a time)
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Restricted global configuration and runtime mutation to exact operators and recursively redacted credential-bearing responses
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: make plaintext migration one-way; the operator endpoint refuses any request to retain secrets.json and always removes it after verified encrypted persistence.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com   | Read ENCRYPTION_KEY through the shared platform setting key used by refusal remedies.
  */
 
 import { Router, Request, Response } from 'express';
@@ -28,6 +29,7 @@ import { createChildLogger } from '@/shared/logger';
 import { ClineRuntimeConfigSyncService } from '@/features/llm-provider/services';
 import { buildConfigOwnershipContract } from './config-ownership-contract';
 import { requiresOperator } from '@/shared/middleware/authz';
+import { PLATFORM_SETTING_KEYS } from '@/shared/platform-settings';
 
 const logger = createChildLogger({ module: 'config-routes' });
 
@@ -208,7 +210,7 @@ function createConfigRoutesContext(): ConfigRoutesContext {
   const configDir = process.env.CONFIG_OUTPUT_DIR || './output';
   const settingsPath = path.join(configDir, 'global-config.json');
   const legacyConfigPath = path.join(configDir, 'llm-config.json');
-  const encryptionKey = process.env.ENCRYPTION_KEY || null;
+  const encryptionKey = process.env[PLATFORM_SETTING_KEYS.encryptionKey] || null;
   const runtimeSyncService = new ClineRuntimeConfigSyncService();
 
   // Lazy-load the CommonJS encrypted config manager

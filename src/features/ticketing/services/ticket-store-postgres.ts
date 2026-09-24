@@ -11,12 +11,16 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Queue DLQ: deriveStateFields maps 'dead_letter' → state_group 'escalated' (would otherwise fall through to 'backlog' and violate the state-group CHECK); linkedChatTaskStatusForTerminalTicket treats dead_letter like escalated (linked chat task → failed).
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P1 (ADR-119): added findLatestByMetadataKey (newest match, any status) — the consolidation stage's open-vs-recurrence decision needs the newest ticket per incident key, not findActiveByMetadataKey's oldest non-cancelled
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | buildTicketRowStatusMetadataPatch always returns a patch now, so the metadata-merging UPDATE is the only one left: the no-metadata variant it guarded is unreachable
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Make status transitions one locked GUC-stamped transaction, including linked terminal tasks, history and optional DLQ evidence; suppress observer throws after COMMIT.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com  | Raise the shared typed status-conflict error when a locked expected-state check loses a race, allowing narrowly idempotent service recovery without message parsing.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com  | Atomically reverse dead-letter quarantine: dead_letter -> approved ticket/history and the required quarantined DLQ row reset now commit or roll back together.
  */
 
 import type { Pool, PoolClient, QueryResult } from 'pg';
 import { randomUUID } from 'crypto';
 import {
   buildTicketRowStatusMetadataPatch,
+  TicketStatusConflictError,
   type ITicketStore,
   type TicketStatusHistoryRecord,
   type TicketStatusMetadata,
@@ -281,6 +285,15 @@ export class PostgresTicketStore implements ITicketStore {
     context: TicketStatusUpdateContext = {},
   ): Promise<void> {
     await this.ensureSchema();
+    if (context.deadLetter && context.deadLetterRequeue) {
+      throw new Error('A ticket status update cannot quarantine and requeue dead-letter state together');
+    }
+    if (context.deadLetter && status !== 'dead_letter') {
+      throw new Error('A DLQ mutation is valid only with ticket status dead_letter');
+    }
+    if (context.deadLetterRequeue && status !== 'approved') {
+      throw new Error('A DLQ requeue mutation is valid only with ticket status approved');
+    }
     const [stateGroup, executionPhase] = deriveStateFields(status);
     const changedBy = context.changedBy ?? 'system';
     const changedByLabel = context.changedByLabel ?? 'System';
@@ -289,15 +302,25 @@ export class PostgresTicketStore implements ITicketStore {
     const ticketMetadataPatch = buildTicketRowStatusMetadataPatch(status, metadata);
     logger.info({ ticketId, status, stateGroup, executionPhase }, 'Updating ticket status');
 
-    // Read-then-write share ONE GUC-bound transaction under RLS so the policy sees the same
-    // identity for both the SELECT and the UPDATE (and they stay atomic).
-    const fromStatus = await this.withRls(async (q) => {
-      const currentResult = await q.query<{ status: string }>(
-        'SELECT status FROM tickets WHERE ticket_id = $1',
+    // A wrapped pool stamps this dedicated client once. Every lifecycle side effect then shares
+    // the same RLS identity and transaction: ticket, linked tasks, history, and an optional DLQ
+    // envelope either all commit or all roll back.
+    const client = await this.pool.connect();
+    let fromStatus: OshalTicketState | null = null;
+    try {
+      await client.query('BEGIN');
+      const currentResult = await client.query<{ status: OshalTicketState }>(
+        'SELECT status FROM tickets WHERE ticket_id = $1 FOR UPDATE',
         [ticketId],
       );
-      const prev = currentResult.rows[0]?.status ?? null;
-      await q.query(
+      fromStatus = currentResult.rows[0]?.status ?? null;
+      if (!fromStatus) {
+        throw new Error(`Ticket not found or not visible: ${ticketId}`);
+      }
+      if (context.expectedStatus && fromStatus !== context.expectedStatus) {
+        throw new TicketStatusConflictError(ticketId, context.expectedStatus, fromStatus);
+      }
+      const ticketResult = await client.query(
         `UPDATE tickets
          SET status = $1,
              state_group = $2,
@@ -307,9 +330,18 @@ export class PostgresTicketStore implements ITicketStore {
          WHERE ticket_id = $5`,
         [status, stateGroup, executionPhase, now, ticketId, JSON.stringify(ticketMetadataPatch)],
       );
+      if (ticketResult.rowCount !== 1) {
+        throw new Error(`Ticket status update affected ${ticketResult.rowCount ?? 0} rows for ${ticketId}`);
+      }
+
       const linkedTaskStatus = linkedChatTaskStatusForTerminalTicket(status);
       if (linkedTaskStatus) {
-        const linkedTaskResult = await q.query(
+        const terminalReason = typeof metadata.reason === 'string' && metadata.reason.trim()
+          ? metadata.reason.trim()
+          : 'linked_ticket_terminal';
+        const terminalMessage = typeof metadata.message === 'string' ? metadata.message : '';
+        const terminalRemedy = typeof metadata.remedy === 'string' ? metadata.remedy : '';
+        const linkedTaskResult = await client.query(
           // $2 (now, an ISO string) is bound once but used as both a timestamptz (updated_at)
           // and text (the jsonb sync marker). Pin it to timestamptz in BOTH spots so Postgres
           // doesn't fail with "inconsistent types deduced for parameter $2 (text vs timestamptz)".
@@ -318,32 +350,88 @@ export class PostgresTicketStore implements ITicketStore {
                updated_at = $2::timestamptz,
                metadata = COALESCE(ct.metadata, '{}'::jsonb) || jsonb_build_object(
                  'ticketTerminalSyncAt', ($2::timestamptz)::text,
-                 'ticketTerminalSyncReason', 'linked_ticket_terminal',
+                 'ticketTerminalSyncReason', $5::text,
                  'ticketTerminalStatus', $3::text,
-                 'ticketTerminalId', $4::text
+                 'ticketTerminalId', $4::text,
+                 'ticketTerminalMessage', $6::text,
+                 'ticketTerminalRemedy', $7::text
                )
            FROM ticket_task_links ttl
            WHERE ttl.task_id = ct.task_id
              AND ttl.ticket_id = $4
-             AND ct.status IN ('created', 'active', 'processing')`,
-          [linkedTaskStatus, now, status, ticketId],
+             AND ct.status IN ('created', 'active', 'processing', 'waiting_for_input', 'paused')`,
+          [linkedTaskStatus, now, status, ticketId, terminalReason, terminalMessage, terminalRemedy],
         );
         if ((linkedTaskResult.rowCount ?? 0) > 0) {
           logger.info(
             { ticketId, ticketStatus: status, taskStatus: linkedTaskStatus, linkedTaskCount: linkedTaskResult.rowCount },
-            'Closed active linked chat tasks for terminal ticket',
+            'Closed nonterminal linked chat tasks for terminal ticket',
           );
         }
       }
-      return prev;
-    });
 
-    await this.recordStatusHistory(ticketId, fromStatus, status, changedBy, changedByLabel, metadata).catch((err) => {
-      logger.warn({ err, ticketId }, 'Failed to record status history — non-fatal');
-    });
+      await client.query(
+        `INSERT INTO ticket_status_history
+           (ticket_id, from_status, to_status, changed_by, changed_by_label, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+        [ticketId, fromStatus, status, changedBy, changedByLabel, JSON.stringify(metadata)],
+      );
+
+      if (context.deadLetter) {
+        const dlq = context.deadLetter;
+        await client.query(
+          `INSERT INTO oshal_queue_dlq (
+             ticket_id, attempts, last_error, last_failure_at, quarantined_at, reason, remedy
+           ) VALUES ($1, $2, $3, NOW(), NOW(), $4, $5)
+           ON CONFLICT (ticket_id) DO UPDATE
+             SET attempts = EXCLUDED.attempts,
+                 last_error = EXCLUDED.last_error,
+                 last_failure_at = EXCLUDED.last_failure_at,
+                 quarantined_at = COALESCE(oshal_queue_dlq.quarantined_at, EXCLUDED.quarantined_at),
+                 reason = EXCLUDED.reason,
+                 remedy = EXCLUDED.remedy,
+                 updated_at = NOW()`,
+          [ticketId, Math.max(1, dlq.attempts), dlq.lastError, dlq.reason, dlq.remedy ?? null],
+        );
+      }
+
+      if (context.deadLetterRequeue) {
+        const reset = await client.query(
+          `UPDATE oshal_queue_dlq
+              SET attempts = 0,
+                  quarantined_at = NULL,
+                  reason = NULL,
+                  remedy = NULL,
+                  requeued_by = $2,
+                  requeued_at = NOW(),
+                  updated_at = NOW()
+            WHERE ticket_id = $1
+              AND quarantined_at IS NOT NULL`,
+          [ticketId, context.deadLetterRequeue.requeuedBy],
+        );
+        if (reset.rowCount !== 1) {
+          throw new Error(`Quarantined DLQ row not found for atomic requeue: ${ticketId}`);
+        }
+      }
+
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch((rollbackError) => {
+        logger.warn({ err: rollbackError, ticketId }, 'Ticket status transaction rollback failed');
+      });
+      throw error;
+    } finally {
+      client.release();
+    }
 
     const timestamp = new Date().toISOString();
-    ticketEvents.emitStatusChanged({ ticketId, fromStatus: fromStatus ?? '', toStatus: status, changedBy, changedByLabel, timestamp });
+    try {
+      ticketEvents.emitStatusChanged({ ticketId, fromStatus: fromStatus ?? '', toStatus: status, changedBy, changedByLabel, timestamp });
+    } catch (error) {
+      // Persistence has committed. A faulty observer must not make callers retry a completed
+      // transition or attempt a conflicting fallback write.
+      logger.error({ err: error, ticketId, status }, 'Ticket status observer failed after committed transition');
+    }
   }
 
   async recordStatusHistory(

@@ -1,9 +1,9 @@
 # Operating fluency — refusal as an event, and a concierge on every surface
 
-> **Status:** Partly built — diagnosis measured 2026-09-14 against the trunk. **Stage 2 / P2 is
-> DONE** (`tests/unit/access-check-undetermined.spec.ts`, proven red against the original defect);
-> every other stage is still proposed. Roadmap stages carry done-when criteria and are intended to
-> be taken one at a time.
+> **Status:** Refusal substrate built — diagnosis measured 2026-09-14 against the trunk. **Stage 1
+> / P1, Stage 2 / P2, Stage 3 / P3 and P4 are DONE.** P8 concierge coverage is next and actionable;
+> the later conversational stage remains proposed. Roadmap stages carry done-when criteria and are
+> intended to be taken one at a time.
 >
 > **Builds on:** [ADR-125](../adr/125-operations-stream-event-to-action-pipeline.md) (alerts got a
 > durable memory), [ADR-122](../adr/122-model-is-untrusted-principal.md) (why the gates exist),
@@ -59,9 +59,10 @@ error"; "an in-process counter that reset with the api"; "the evidence behind a 
 — and concluded that **nothing was replayable** and the endpoint **"answered 200 for work it had
 not durably accepted."**
 
-Refusals are in that pre-ADR-125 state today. A refusal is a return value and a log line at best.
-It is not a row, it is not replayable, it cannot be counted, tuned, or explained, and the operator
-cannot ask "what did the platform decline to do today, and what would unblock it?"
+At diagnosis, refusals were in that pre-ADR-125 state: a return value and a log line at best,
+neither a row nor replayable, countable or explainable. P1 added the durable ledger and read
+surface; P3 added the reviewed remedy contract; P4 now carries deterministic dispatch refusals
+into an atomic terminal dead-letter transition instead of leaving work parked.
 
 ## What "fluent" means
 
@@ -87,25 +88,25 @@ run against real infrastructure; **contract** means a unit or manifest-level ass
 
 | # | claim | proof today | what closes it | done-when |
 |---|---|---|---|---|
-| P1 | A refusal is discoverable without shell access | none — 125 codes, 0 aggregating surfaces | a durable refusal store plus one read surface | a query answers "every refusal in the last 24h, by code, actor, package and target" and the cockpit renders it |
+| P1 **DONE** | A refusal is discoverable without shell access | `oshal_refusals`, authenticated caller-scoped API, native ops dashboard and a real PostgreSQL/RLS boundary spec; repeated live 2026-09-23 | closed in `efc63d9a` / PR #798 | done: a query and the cockpit answer recent refusals by code, full actor, package and target without shell access |
 | P2 **DONE** | An access check reports a fault instead of reporting it as a denial | `tests/unit/access-check-undetermined.spec.ts` — 14 cases, proven red against the original `catch { return false; }` | separate "denied" from "could not determine" and report the latter at ERROR; the fail-closed return stays (see Stage 2 for why propagating would break the stream callback) | a store that throws returns the same fail-closed value as a denial AND logs, while a genuine denial stays quiet; both call sites covered |
-| P3 | A refusal names its remedy | one code (`authorization_recorded_delegation_required`, `8ae6a57b`) | extend the message contract to every code that is operator-remediable | a guard enumerates operator-remediable codes and fails when one carries no remedy text |
-| P4 | Refusals do not strand work | none — observed stranding at `escalated` and at `chat_tasks.status='created'` | a reaper or a terminal state with a reason | a spec drives a refused dispatch end-to-end and asserts the ticket reaches a terminal state carrying the reason |
+| P3 **DONE** | A refusal names its remedy | `7062f3ad`: 151-token executable-source inventory, eight proven global remedies, evidence-bound schedule advice and an authenticated live row on image `78218144e95d` | closed 2026-09-23 | done: the guard rejects unclassified/stale/duplicate codes, locks the remediable set to the catalog and requires every canonical setting in its remedy |
+| P4 **DONE** | Refusals do not strand work | `RefusalError` preserves deterministic dispatch refusals into one atomic dead-letter transition; fresh denied Jarvis sessions persist no task; real-PostgreSQL enforcing-role specs prove exact refusal evidence, terminal ticket/task, RLS and rollback | closed 2026-09-23 in `0c5e00e1` / PR #798; migration 156 live on image `20bcc8ac6496` | done: refused dispatch reaches `dead_letter` with exact reason/remedy and linked task terminal; injected failures roll back all state |
 | P5 | Cheaper per-step routing is real | capture lane built; the cross-framework benchmark does not yet include an oshal leg | wire the oshal leg to a real dispatch and read `chat_tasks` token columns | the benchmark reports oshal alongside the others from measured rows, at stated n |
 | P6 **DONE** | One bot with an embedded gate beats a review pipeline | `$1.30` (n=1) vs `$4.05` (n=7) from real cost rows — one workload, one corpus — beside the generated per-ticket-type census ([cost-per-ticket-type.md](../business/cost-per-ticket-type.md)), which carries an n on every ticket type the cluster has billed | closed 2026-09-17 | done: every surface that states the figures states the n and the limits, held by `tests/unit/cost-claim-carries-its-n.spec.ts`; the census table is rendered from the artifact, never hand-typed |
 | P7 **DONE** | Published claims match the tree | the MCP claim was never on a surface — swept `docs/` + `README.md` 2026-09-15, every hit is a legitimate ADR reference to MCP servers as tools, so there was nothing to retire. The licence claim WAS wrong: `WHY_OSHAL.md` said MIT where `LICENSE` and `package.json` say AGPL-3.0-or-later | correct the licence row; leave MCP alone | corrected 2026-09-15; `grep -rn '\bMIT\b' docs/*.md README.md` returns no oshal licence claim |
-| P8 | Every application has a concierge | 5 of 10 kernel manifests declare one; **26 of 61** store packages declare none, and **36 of 61** expose no tools to Jarvis | load-time manifest validation with a deprecation path — **corrected 2026-09-15**, see note below | a package registering a surface with no concierge fails to LOAD, no allowlist, backfill landed in the store repo — [BACKLOG](../BACKLOG.md) |
+| P8 **NEXT — ACTIONABLE** | Every application has a concierge | 5 of 10 kernel manifests declare one; **26 of 61** store packages declare none, and **36 of 61** expose no tools to Jarvis | load-time manifest validation with a deprecation path — **corrected 2026-09-15**, see note below | a package registering a surface with no concierge fails to LOAD, no allowlist, backfill landed in the store repo — [BACKLOG](../BACKLOG.md) |
 
 ⛔ **P8's done-when as first written was wrong.** It said a repo-separation-style check would fail the package. Repo-separation scans the **core** repo; these packages live in `oshal-applications`, so a core CI gate cannot see them — the enforcement point is load-time validation in `swarm-app-loader.ts`. That makes P8 a **migration, not a gate**: switching it on would refuse 26 currently-working packages, so it needs warn-on-load, a store-side backfill, then fail-closed. Scoped in the BACKLOG entry.
 
-**P1 and P4 are the remaining fluency blockers** (P2, P6 and P7 are closed). P3 is the multiplier. P5 is a marketing debt that does not block operation.
+**The fluency substrate is closed (P1–P4).** P8 is the next actionable operating-fluency item. P5 remains independent marketing debt.
 
 ## Roadmap
 
 Two tracks that converge. Track A is the substrate; Track B is the capability the operator asked
 to expand; the payoff is that B becomes useful only once A exists.
 
-### Stage 1 — A refusal is a row (Track A)
+### Stage 1 — A refusal is a row (Track A) — DONE
 
 Give refusals what ADR-125 gave alerts. Reuse that pipeline's shape rather than inventing one.
 
@@ -114,8 +115,10 @@ Give refusals what ADR-125 gave alerts. Reuse that pipeline's shape rather than 
   as every other table.
 - One choke point that records. Refusals are raised from many places; they should land in one.
 - `GET /api/ops/refusals`, auth-gated and caller-scoped.
-- **Done when:** the box can answer "what refused in the last 24h and why" from a query, and the
-  five known schedule refusals appear in it without anyone running `docker exec`.
+- **Shipped:** migration 155, the shared recording chokepoint, authenticated caller-scoped read API
+  and native ops dashboard. A real denied schedule is persisted and read under enforced RLS.
+- **Done when:** the box can answer "what refused in the last 24h and why" from a query and the
+  cockpit without anyone running `docker exec`. — met 2026-09-23.
 - **Guard:** an integration spec that drives a real refusal through the recording path and reads
   it back from the store as the enforcing role — not a mocked store (integration-boundary
   corollary, CLAUDE.md).
@@ -147,16 +150,37 @@ Give refusals what ADR-125 gave alerts. Reuse that pipeline's shape rather than 
   is the intended contract. Distinguishing infrastructure faults from denials there needs a typed
   error on the authority ports — a separate change.
 
-### Stage 3 — A refusal carries its remedy (Track A)
+### Stage 3 — A refusal carries its remedy (Track A) — DONE
 
-- Enumerate the operator-remediable subset of the 125 codes. Not all are — some are correct hard
-  denials with no operator action.
-- Each remediable code names what is unset and what to set, in the message, with the setting names
-  in one exported constant so the check and the message cannot drift (`8ae6a57b`'s pattern).
-- **Done when:** a guard enumerates the remediable set and fails when a member carries no remedy.
-- **Note:** this is the cheapest high-leverage stage. It is message work over an existing contract.
+- **Shipped (`7062f3ad`):** the executable-source AST census classifies 151 unique tokens into six
+  dispositions. Eight have a universally proven operator action and therefore a global remedy;
+  hard-security, validation, workflow, aliased infrastructure and lexical non-refusal entries do
+  not acquire advice merely because an administrator could weaken or guess around a gate.
+- Canonical setting names are shared with the enforcing checks. The catalog also locks deployment
+  topology: private delegation material stays on the controller, public verification keys stay on
+  bots, and the fleet service secret stays off remote nodes.
+- The globally ambiguous `authorization_permission_denied` has no catalog remedy. The scheduled
+  service path supplies a narrower remedy only because its activation proves the full actor
+  `(issuer, sub)`, declared permissions, package and schedule that the operator must review.
+- **Done when:** a guard enumerates the remediable set and fails when a member carries no remedy. —
+  met by `tests/unit/refusal-classification.spec.ts` and `tests/unit/refusal-remedies.spec.ts`; the
+  production path and authenticated API read were repeated live on 2026-09-23.
 
-### Stage 4 — Concierge coverage becomes a contract (Track B)
+### Refused work reaches a terminal state (Track A) — DONE
+
+- **Shipped (`0c5e00e1`):** typed `RefusalError` values survive dispatch boundaries and feed
+  `DeadLetterService.quarantineRefusal(...)`, preserving exact code, message and remedy.
+- Ticket status, linked nonterminal tasks, lifecycle history and DLQ evidence change in one
+  PostgreSQL transaction. Retry exhaustion and operator requeue use the same atomic boundary;
+  duplicate or concurrent quarantine attempts do not duplicate evidence or alerts.
+- Fresh Jarvis sessions are authorized before task persistence, so a denied session leaves no
+  `chat_tasks` row. Existing sessions keep their established lookup behavior.
+- **Done when:** met by the real-PostgreSQL enforcing-role suite, including RLS, concurrent CAS,
+  missing-row and injected-failure rollback cases, plus the fresh-session Jarvis proof. Migration
+  156 and image `20bcc8ac6496` were live on 2026-09-23 with 37/37 app containers healthy and API
+  `RestartCount=0`.
+
+### Stage 4 — Concierge coverage becomes a contract (Track B) — NEXT / ACTIONABLE
 
 - A package that registers a cockpit surface declares a concierge. Today 26 of 61 do not.
 - Concierge declaration is manifest-level, validated at load, and checked by the same gate family
@@ -164,8 +188,8 @@ Give refusals what ADR-125 gave alerts. Reuse that pipeline's shape rather than 
 - Backfill is per-package work in the store repo and does not touch the core.
 - **Done when:** the coverage gate is green with no allowlist, and a package that registers a
   surface with no concierge fails to load.
-- **Sequencing:** this stage is the one to resist starting first. Without Stages 1–3 it produces
-  concierges that can only apologize.
+- **Sequencing:** Stages 1–3 and P4 are live. Proceed warn-on-load, store-repo backfill, then
+  fail-closed with no allowlist.
 
 ### Stage 5 — The concierge reads the refusal stream (the payoff)
 
@@ -188,17 +212,20 @@ the MIT/AGPL drift in `WHY_OSHAL.md`). None of these block operation; all of the
   is a correctness change in the enforcing direction.
 - **It does not add a second orchestration path.** The recording choke point sits beside the
   existing dispatch, as ADR-125's pipeline sits beside the ticket store.
-- **It does not backfill concierges before the substrate exists.** Stage 4 before Stage 1 is the
-  failure mode this document exists to prevent.
-- **It does not propose a core refactor.** Stages 1–3 are additive; Stage 4 is a manifest contract
-  plus store-repo work; Stage 5 extends an existing context payload.
+- **It did not backfill concierges before the substrate existed.** That prerequisite is now met;
+  Stage 4 can proceed through its warn, backfill and fail-closed migration.
+- **It does not propose a core refactor.** Stages 1–3 and P4 are additive; Stage 4 is a manifest
+  contract plus store-repo work; Stage 5 extends an existing context payload.
 
 ## Reproducing the diagnosis
 
 ```bash
-# 125 refusal reason codes
+# Historical 2026-09-14 TypeScript-only diagnosis: 125 refusal reason codes
 grep -rohE "'[a-z_]+_(required|denied|refused|forbidden|unavailable|not_allowed|blocked)'" \
   src --include=*.ts | sort -u | wc -l
+
+# Current executable-source census and six-way disposition guard (151 tokens)
+npx vitest run tests/unit/refusal-classification.spec.ts
 
 # 45 silent returns from catch
 grep -rnE "catch\s*(\([^)]*\))?\s*\{\s*return (false|null|undefined|\[\]|\{\})" \

@@ -18,6 +18,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — golden scenarios + the
  *            | submit/poll/grade/retry/propose loop + persistence + the headless run endpoint.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Bound headless golden runs to the trusted service user on both the database connection and every ticket/evaluation call; missing machine attribution now fails closed, OIDC runs retain their session owner, and batch polling is owner-scoped.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Recognize dead-letter as a terminal failed outcome so deterministic refusals are graded immediately instead of timing out the run.
  * ---------------------------------------------------------------------------
  * @module test-lab-golden
  */
@@ -36,7 +37,7 @@ import { recordEvalRun, type EvalRun, CostTrackingService } from '@/features/ope
 
 const logger = createChildLogger({ module: 'test-lab-golden' });
 
-const TERMINAL = new Set(['complete', 'cancelled', 'escalated', 'customer_action']);
+const TERMINAL = new Set(['complete', 'cancelled', 'escalated', 'dead_letter', 'customer_action']);
 const MAX_ATTEMPTS = Math.max(1, parseInt(process.env.TEST_LAB_MAX_ATTEMPTS || '2', 10));
 
 /** A golden scenario: a real request + the EXPECTED output it must produce. Exported for unit tests. */

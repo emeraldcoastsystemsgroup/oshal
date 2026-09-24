@@ -192,6 +192,8 @@ export {
   type DeadLetterPg,
   type DeadLetterServiceDeps,
   type FailureCycleVerdict,
+  type RefusalQuarantineInput,
+  type RefusalQuarantineVerdict,
   type RequeueResult,
 } from './dead-letter-service';
 export {

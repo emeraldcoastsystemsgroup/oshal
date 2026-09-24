@@ -4,12 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the node-plane print intake (ADR-135 amendment H). A print service running INSIDE a remote node could not deliver: decideNodeTokenScope confines a node-bound token to /api/remote-clients/<its own clientId>/*, so POST /api/print-ingest/documents was refused 'off-plane'. Rather than widen that scope (which would let any node file as anyone), this adds the intake to the node's OWN plane and does the identity translation there: the node token proves WHICH device, the registry record proves WHOSE device, and the document is filed under that owner. An UNOWNED device is refused — there is no one to file for.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Read SWARM_SERVICE_SECRET through the shared platform setting key used by refusal remedies.
  *
  * @module app/routes/remote-client-print-routes
  */
 
 import type { Request, Response, RequestHandler, Router } from 'express';
 import { createChildLogger } from '@/shared/logger';
+import { PLATFORM_SETTING_KEYS } from '@/shared/platform-settings';
 
 const logger = createChildLogger({ module: 'remote-client-print' });
 
@@ -102,7 +104,7 @@ async function handlePrintDocument(req: Request, res: Response, deps: RemoteClie
     return;
   }
 
-  const secret = String(process.env.SWARM_SERVICE_SECRET || '').trim();
+  const secret = String(process.env[PLATFORM_SETTING_KEYS.serviceSecret] || '').trim();
   if (!secret) {
     logger.error({ clientId }, 'Print intake unavailable: SWARM_SERVICE_SECRET is not configured');
     res.status(503).json({

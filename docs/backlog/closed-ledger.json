@@ -4,5 +4,107 @@
     "title": "partner-app-registration.md covers about a third of the wired hub connectors",
     "pr": "688",
     "evidence": "generated block is current (gen-partner-registration reports nothing written); tests/unit/partner-registration-reference.spec.ts 11/11 covers every done-when clause"
+  },
+  {
+    "date": "2026-09-22",
+    "title": "The ONNX runtime installs process-global rethrow handlers that make any stray rejection fatal (2026-09-15)",
+    "pr": "592",
+    "evidence": "Merged 2026-09-16; eight registered unit cases include host crash-guard child and real-image negative/positive controls. The original entry recorded the real image exiting 7 without the strip and 0 with it, with embedding preserved at 384 dimensions."
+  },
+  {
+    "date": "2026-09-22",
+    "title": "A machinery-written `agent_config` row should not outrank a fleet-default write (2026-09-17)",
+    "pr": "633",
+    "evidence": "Merged 2026-09-18; migration 147 documents the 70-row rollout and registered disposable-PostgreSQL and dispatch-stamping tests establish operator row > fleet default > machinery row."
+  },
+  {
+    "date": "2026-09-22",
+    "title": "Nightly tasks still launched from the ADR-115 archive — LAUNCHERS DONE 2026-09-16, one operator action left",
+    "pr": "696",
+    "evidence": "Merged runbook records repointing and successful execution. Read-only Task Scheduler check on 2026-09-22: Claude keepalive ran 22:23:54 with result 0; Signal Labeler ran 16:30:01 with result 0; both actions name C:/Projects/oshal. Evidence-Nightly intentionally remains on the private archive."
+  },
+  {
+    "date": "2026-09-23",
+    "title": "Native background wake: the microphone-release invariants are unproven",
+    "pr": "638",
+    "evidence": "The documented acceptance command passed 4/4, including the theme-asset failure case; the merged guard proves microphone acquisition and release after speech, timeout, interruption, and page close."
+  },
+  {
+    "date": "2026-09-23",
+    "title": "Jarvis fast-lane: the deterministic shortcut is hardcoded to three intents",
+    "pr": "528,615",
+    "evidence": "The selection benchmark reports recall, false matches and token deltas with a binary regression gate; the merged shadow selector measures candidates while returning the shipped tool block byte-for-byte."
+  },
+  {
+    "date": "2026-09-23",
+    "title": "Data-model explorer: export the view you are looking at",
+    "pr": "558",
+    "evidence": "One shared ER renderer serves docs and the browser, and Mermaid 11 parses the real page exports for table and owner views while rejecting malformed output."
+  },
+  {
+    "date": "2026-09-23",
+    "title": "Lazy-DDL trigger and function guards must converge, not create-once",
+    "pr": "798",
+    "evidence": "On 2026-09-23 the focused convergence and disposable-PostgreSQL parity suites passed 16/16, including pg_get_triggerdef/prosrc equality for every known guard."
+  },
+  {
+    "date": "2026-09-23",
+    "title": "An abort inside the local embedding runtime takes the whole api process down (2026-09-15)",
+    "pr": "640",
+    "evidence": "Merged containment traps the real WASM abort, degrades the embedding service sticky, preserves the process, and records bounded caller/input diagnostics; host and real-image controls passed."
+  },
+  {
+    "date": "2026-09-23",
+    "title": "Deploy — the api process exits during the bot-recreate storm",
+    "pr": "639,669",
+    "evidence": "The full deploy recreated the api and 36 bots while the storm probe measured RestartCount 0 to 0 and zero idle-in-transaction log lines in the deployment window."
+  },
+  {
+    "date": "2026-09-23",
+    "title": "Thirteen trading spec files have never run in any gate (2026-09-16)",
+    "pr": "229 (store)",
+    "evidence": "The store's dedicated trading command runs in both local and hosted gates, fails on zero tests, enforces the DSN refusal, and passed all 17 files / 293 tests after fixing the ten exposed failures."
+  },
+  {
+    "date": "2026-09-23",
+    "title": "Dev-console `/work` under Linux user-namespace remapping — DONE 2026-09-17",
+    "pr": "622,697",
+    "evidence": "The sandbox prepares directory/file modes without following symlinks; the real-kernel uid 165536 proof records write/create/exec success, parent/root escape denial, and cleanup, with mutation controls for the old modes."
+  },
+  {
+    "date": "2026-09-23",
+    "title": "Benchmark and cost claims are still un-earned (P5, P6)",
+    "pr": "695",
+    "evidence": "The live n=3 benchmark ran the same free model through vanilla, LangGraph, and OSHAL; the OSHAL leg used the real dispatch and read token/cost accounting from chat_tasks, while the separate generated cost census carries per-ticket n and limits."
+  },
+  {
+    "date": "2026-09-23",
+    "title": "Inline chat spend is invisible to windowed budget enforcement",
+    "pr": "641,665,666",
+    "evidence": "Inline turns append owner-attributed cost events that move the real 24-hour budget window; PostgreSQL RLS guards cross-owner isolation, and the cockpit plus spend API label billed, price-equivalent, and BYO units distinctly."
+  },
+  {
+    "date": "2026-09-23",
+    "title": "A loader stamp pointing at an INACTIVE app fails ownership closed on the ticket list (2026-09-22)",
+    "pr": "798",
+    "evidence": "ADR-149 now separates durable executable ownership from lifecycle state. The real-PostgreSQL suite passed 19/19 under both owner and governed oshal_bot roles, including active-agent/inactive-app and inactive-agent cases while preserving missing/ghost/tool refusals. Preview 354a15829173 deployed 37/37 healthy with API RestartCount 0; operator GET /api/tickets returned HTTP 200 with all 5,117 tickets and the full boot logged zero ambiguous-ownership or ownership-reader errors."
+  },
+  {
+    "date": "2026-09-23",
+    "title": "Boot-time schema bootstraps fail open - and the one I called a functional loss was NOT one",
+    "pr": "530,798",
+    "evidence": "PR #530 moved the CLI-token self-heal's eight DDL statements onto one transaction-scoped advisory-lock client (key 47110008), retained the per-boot RLS/policy re-assert, and made failure reporting re-probe complete columns before choosing unaffected, missing-column, absent, or unverified wording. The focused guards passed 8/8. On preview 354a15829173 the fresh boot logged zero CLI-token bootstrap failures; the API connection was verified as oshal_app NOSUPERUSER NOBYPASSRLS against an ENABLE+FORCE-RLS table, and a fresh PAT minted and authenticated through /whoami at HTTP 200 before revocation."
+  },
+  {
+    "date": "2026-09-23",
+    "title": "Opt-in apps revert on every api boot, which fails the groups that need them (2026-09-21)",
+    "pr": "798",
+    "evidence": "Commit a14f7b51 preserves the installed row's status on ordinary manifest reload while explicit build/incident variants retain their override. The real-PostgreSQL regression covers operator activation, operator deactivation, and variant override; the focused app suite passed 45/45. Live proof activated print-ingest despite its inactive manifest, deployed/recreated the API, re-read print-ingest as active, and resolved intelligent-career active. The later 354a15829173 deploy repeated the full API boot and remained 37/37 healthy with RestartCount 0."
+  },
+  {
+    "date": "2026-09-23",
+    "title": "Refusal visibility: the substrate for P1, P3 and P4",
+    "pr": "798",
+    "evidence": "P1, P3 and P4 are live. Commit 0c5e00e1 on image 20bcc8ac6496 applies migration 156 and carries typed deterministic refusals into one atomic dead-letter transition with exact code, message and remedy, terminal linked tasks, idempotent evidence and atomic operator requeue. The focused slice passed 22 files / 171 tests; the real-PostgreSQL enforcing-role cases prove RLS and rollback, and denied fresh Jarvis sessions persist no task. Preview deployment finished 37/37 app containers healthy, zero unhealthy, API RestartCount 0, and live Jarvis plus queued-ticket dispatch passed."
   }
 ]

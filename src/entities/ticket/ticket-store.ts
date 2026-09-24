@@ -6,6 +6,9 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial ITicketStore interface for ticket CRUD and linking operations
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Process tracker: added getStatusHistory to interface
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P1 (ADR-119): added findLatestByMetadataKey — the consolidation stage needs the NEWEST ticket for an incident key in ANY status (open ⇒ consolidate the refire onto it; terminal ⇒ open a recurrence-linked successor, FR-C5), which findActiveByMetadataKey (oldest-first, cancelled-only exclusion) cannot answer
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Add expected-state and atomic dead-letter context to status writes so PostgreSQL can commit ticket, task, history and exact refusal evidence together.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Give expected-state compare-and-set failures a shared typed contract so services can distinguish a lost race from unrelated persistence failures without parsing error text.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Add the reverse atomic dead-letter requeue mutation so ticket/history release and DLQ counter/evidence reset share one locked transaction.
  */
 
 import type { OshalTicketState } from './types';
@@ -198,10 +201,51 @@ export interface ITicketStore {
 
 export type TicketStatusMetadata = Record<string, unknown>;
 
+/**
+ * An expected-status compare-and-set lost to another committed transition.
+ * Stores throw this exact type only after reading the current persisted/in-memory status.
+ */
+export class TicketStatusConflictError extends Error {
+  readonly name = 'TicketStatusConflictError';
+
+  constructor(
+    public readonly ticketId: string,
+    public readonly expectedStatus: OshalTicketState,
+    public readonly actualStatus: OshalTicketState,
+  ) {
+    super(
+      `Ticket status changed concurrently: expected ${expectedStatus}, found ${actualStatus} for ${ticketId}`,
+    );
+  }
+}
+
+/**
+ * One DLQ mutation that must commit in the same transaction as a dead_letter status change.
+ * `reason` is the stable machine code; `lastError` is the exact safe human-readable message;
+ * `remedy` is present only when a reviewed operator action exists.
+ */
+export interface TicketDeadLetterMutation {
+  reason: string;
+  lastError: string | null;
+  remedy?: string | null;
+  attempts: number;
+}
+
+/** The operator audit fact persisted while atomically releasing one quarantined DLQ row. */
+export interface TicketDeadLetterRequeueMutation {
+  requeuedBy: string;
+}
+
 export interface TicketStatusUpdateContext {
   changedBy?: string;
   changedByLabel?: string;
   metadata?: TicketStatusMetadata;
+  /** Locked state expected from TicketService's validated read; closes the pre-read race. */
+  expectedStatus?: OshalTicketState;
+  /** Optional DLQ upsert/marker committed with ticket, linked-task and history writes. */
+  deadLetter?: TicketDeadLetterMutation;
+  /** Optional quarantined DLQ reset committed with a dead_letter -> approved transition. */
+  deadLetterRequeue?: TicketDeadLetterRequeueMutation;
 }
 
 /**
