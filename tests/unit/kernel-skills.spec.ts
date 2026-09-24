@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 Wave 1 carve #5 (finance): the contract grows to eleven — 'payments' is pinned as a declared skill because the finance rip removed its last core importer and BOTH the finance and payments store packages resolve @/features/payments from dist. The spec list is the guard that a future "cleanup" of the anchor can't silently unpin it.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Pin authenticated-artifacts and package-tools in the exact declared capability contract.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Pin app-dependencies: the floor a manifest names when it uses dependencies.required/optional, so an older core refuses the package instead of installing it without its required dependencies.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Pin google-calendar: the contracted kernel skill providing @/features/google-calendar.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -92,6 +93,7 @@ describe('kernel-skill contract (ADR-085 Tier-0b / ADR-090 D8)', () => {
         'test-catalog',
         'jarvis-briefings',
         'deck-generation',
+        'google-calendar',
         'graph',
         'media-generation',
         'memory',

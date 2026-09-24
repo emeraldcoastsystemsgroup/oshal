@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 spaces carve: pin 'spatial-mapping' as the 12th kernel skill. Identical situation to payments — the video->3D / import / RF / capture reconstruction engine + owner-scoped scan store stays kernel per ADR-093, but its ONLY core import anchor is spaces-routes.ts, which the spaces surface carve removes. Unlike drone/camera (anchored by their *-node-server.ts), spaces-operator is an INLINE concierge with no dedicated node, so there is no node-server to hold the engine in dist. Without this pin the installed spaces package fails at mount on a pruned dist.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Declare exact-principal artifact relay and in-process package tool compatibility floors.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Declare the app-dependencies compatibility floor: a manifest using dependencies.required/optional names it so an older core refuses the package instead of installing it without its required dependencies.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Contract 'google-calendar' as a kernel skill: OAuth-injected Calendar v3 client pinned into dist so calendar packages resolve @/features/google-calendar without deep service imports.
  */
 
 /**
@@ -36,7 +37,8 @@ export type KernelSkillId =
   | 'jarvis-briefings'
   | 'app-dependencies'
   | 'specialist-context'
-  | 'spatial-mapping';
+  | 'spatial-mapping'
+  | 'google-calendar';
 
 /**
  * @description One importable module behind a skill.
@@ -210,6 +212,14 @@ export const KERNEL_SKILLS: readonly KernelSkillDeclaration[] = [
     why: 'The video->3D / import / sim-drone / RF-overlay reconstruction engine + owner-scoped scan store (ADR-111, ADR-093). Stays kernel while the Spaces SURFACE carves to the store; spaces-routes.ts was its last core import anchor, and — unlike drone/camera, which their *-node-server.ts pins — spaces-operator is an inline concierge with no node-server, so this pin is the only thing keeping it in dist. Same prune class as payments.',
     modules: [
       { specifier: '@/features/spatial-mapping', distFile: 'dist/features/spatial-mapping/index.js' },
+    ],
+  },
+  {
+    id: 'google-calendar',
+    title: 'Google Calendar client',
+    why: 'OAuth-injected Calendar v3 client; calendar store package uses it for syncing events.',
+    modules: [
+      { specifier: '@/features/google-calendar', distFile: 'dist/features/google-calendar/index.js' },
     ],
   },
 ];
