@@ -154,6 +154,18 @@
     "title": "No gate typechecks a test file, so \"typecheck clean\" says nothing about one",
     "pr": "808",
     "evidence": "PR #808 created tsconfig.tests.json with ESNext/bundler resolution and allowJs without widening production tsconfig.json. Fixed root-level module exports in src/features/tool-loader/index.ts and BufferSource cast in native/loader/index.ts. Introduced scripts/ci/check-tests-typecheck.mjs and tests/typecheck-quarantine.json, which records pre-existing test type errors with explicit reasons while blocking any new unquarantined error. Wired into npm run typecheck:tests and scripts/ci-local.sh gate_typecheck_tests. Guarded by tests/unit/test-tree-typecheck-gate.spec.ts (6/6 pass) and verified by mutation testing demonstrating immediate failure on broken specs."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "Data-model explorer: one implementation behind both the docs and the surface",
+    "pr": "727",
+    "evidence": "PR #727 collapsed the catalog SQL, RLS row-scope classifier, and DDL parser into src/features/data-model/ as the single implementation, with scripts/schema-docs/kernel.js providing the unified CommonJS bridge. Copies under scripts/schema-docs/ removed. Guarded by tests/unit/data-model-catalog.spec.ts (15/15 pass, verifying single definition sites and no duplicate copies) and tests/unit/data-model-catalog-postgres.spec.ts (6/6 pass). All 11 test suites in npm run test:data-model (106/106 pass) green."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "Echo pipeline snapshots into the DevOps monitoring / self-healing funnel",
+    "pr": "810",
+    "evidence": "Operator decision 2026-09-22 retired the orphan table echo_pipeline_snapshots and its 168 April 2026 rows, since the April writer was never carried into trunk and lives only in private archive. Migration 157 (scripts/migrations/157-retire-orphan-echo-pipeline-snapshots.sql) drops the table and cleans the reference stack. Guarded by tests/unit/retire-orphan-echo-pipeline-snapshots.spec.ts (3/3 pass) and verified with scripts/generate-schema-docs.js reporting 0 undeclared live tables."
   }
 ]
 
