@@ -166,8 +166,21 @@
     "title": "Echo pipeline snapshots into the DevOps monitoring / self-healing funnel",
     "pr": "810",
     "evidence": "Operator decision 2026-09-22 retired the orphan table echo_pipeline_snapshots and its 168 April 2026 rows, since the April writer was never carried into trunk and lives only in private archive. Migration 157 (scripts/migrations/157-retire-orphan-echo-pipeline-snapshots.sql) drops the table and cleans the reference stack. Guarded by tests/unit/retire-orphan-echo-pipeline-snapshots.spec.ts (3/3 pass) and verified with scripts/generate-schema-docs.js reporting 0 undeclared live tables."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "Flow UI-automation video provider",
+    "pr": "n/a",
+    "evidence": "Operator decision 2026-09-21: CLOSED — will not build. Free and paid video paths are already covered by ComfyUI (free/local GPU over HTTP) and Veo (paid API). UI-automation against consumer web UIs would require dedicated fixed-geometry hardware and drift detection, with high maintenance overhead and brittle failure modes. Flow capability gap closed as will not build."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "A protected dispatch refuses on a controller with no delegation signing material (2026-09-15)",
+    "pr": "n/a",
+    "evidence": "Operator decision 2026-09-21/22: CLOSED — verified live. Keypair configuration (OSHAL_DELEGATION_SIGNING_KID, OSHAL_DELEGATION_SIGNING_PRIVATE_KEY, and bot ring OSHAL_DELEGATION_PUBLIC_KEYS) was verified structurally present and correctly matched. Interactive live protected dispatch from the cockpit proved zero authorization_recorded_delegation_required refusals in 24 hours."
   }
 ]
+
 
 
 
