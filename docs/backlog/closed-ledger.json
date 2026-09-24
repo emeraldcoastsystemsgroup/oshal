@@ -316,5 +316,17 @@
     "title": "The `prop` kind belongs in embodied's vocabulary (2026-09-14)",
     "pr": "main",
     "evidence": "embodied/routes/engine/nodes/capability-manifest.js declares KIND_VOCABULARY.prop with senses [channel-state, controller-hello, supply], acts [pose, scenario, look-at, jog, arm, disarm, e-stop], minSafetyClass 1, and disarm in CONFIRM_EXEMPT_ACTS; animatronics/routes/engine/kind.js imports KIND_VOCABULARY.prop and validates rig manifests via embodied validateManifest; guarded by animatronics/tests/engine-kind.test.js and embodied/tests/engine-manifest.test.js (15/15 pass)."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "LinkedIn store-package publisher",
+    "pr": "main",
+    "evidence": "social/src-routes/social-publish.ts routes LinkedIn post publishing through the kernel declared create-post connector action with schema-validated parameters, caller-scoped fail-closed connector_action_audit attempt rows, and approval confirmation; guarded by social/tests/publish.core.test.js (8/8 pass)."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "Finance workspace navigation",
+    "pr": "main",
+    "evidence": "src/pages/cockpit/js/workspace-navigation.js CURATED list includes 'finance'; config-seed/profiles/oshal-framework.json sets workspace: 'finance'; src/pages/cockpit/js/views/app-home-daily.js maps 'ai-finance' to 'Finance'; guarded by tests/unit/workspace-navigation-model.spec.ts (7/7 pass) and tests/unit/app-home-browser.spec.ts (14/14 pass)."
   }
 ]
