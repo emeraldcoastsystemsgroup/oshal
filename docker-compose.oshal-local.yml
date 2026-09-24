@@ -966,6 +966,9 @@ services:
       GOOGLE_MAPS_BROWSER_KEY: ${GOOGLE_MAPS_BROWSER_KEY:-}
       GOOGLE_MAPS_MAP_ID: ${GOOGLE_MAPS_MAP_ID:-}
       OSHAL_MAP_TILE_URL: ${OSHAL_MAP_TILE_URL:-}
+      OSHAL_ROUTING_URL: ${OSHAL_ROUTING_URL:-}
+      OSHAL_GEOCODER_URL: ${OSHAL_GEOCODER_URL:-}
+      OSHAL_GEOCODE_CACHE_PATH: ${OSHAL_GEOCODE_CACHE_PATH:-}
       # ADR-091: RAG storage/retrieval in Postgres (rag_chunks — pgvector HNSW +
       # tsvector GIN). Default in code is 'chroma'; the local stack opts in. The
       # engine feature-detects (extension + table) and falls back to chroma when
@@ -2378,6 +2381,9 @@ services:
       BOT_UI_LABEL: Rides
       BOT_UI_URL: /cockpit/?app=rides
       BOT_UI_ICON: "codicon codicon-rocket"
+      OSHAL_ROUTING_URL: ${OSHAL_ROUTING_URL:-}
+      OSHAL_GEOCODER_URL: ${OSHAL_GEOCODER_URL:-}
+      OSHAL_GEOCODE_CACHE_PATH: ${OSHAL_GEOCODE_CACHE_PATH:-}
     volumes:
       - oshal_workspace:/app/workspace-shared:rw
       - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
