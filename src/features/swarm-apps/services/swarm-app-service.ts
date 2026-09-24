@@ -49,6 +49,7 @@
  * 43 | maintainer@emeraldcoastsystemsgroup.com   | P8 separates agent association from lifecycle ownership: activate/deactivate now touches declared bots plus the legacy workflow.workerBot only when no bots are declared. A borrowed metadata-only chatBot (including group concierges) is never deactivated with the package that references it, while an explicit chatBot distinct from a no-bots workflow worker still leaves that worker lifecycle-owned. All name lookups order duplicate rows by agent_id.
  * 44 | maintainer@emeraldcoastsystemsgroup.com   | Resolve an external cockpit concierge directly by canonical name instead of requiring a durable agent_ids association. The warn rollout exposed that agent_ids also feeds application-execution ownership, so a metadata reference to general-bot cannot safely live there. The lookup remains deterministic and fail-closed; a miss never relabels a worker or local bot.
  * 45 | maintainer@emeraldcoastsystemsgroup.com   | Fail closed on ambiguous or inactive external/fallback concierge names. A workflow fallback resolves only inside the app's executable agent_ids; only a metadata-only external chatBot may resolve globally, and then exactly one ACTIVE row must carry the name. A declared local concierge stays pinned directly to its explicit manifest agentId, so a lower-id namesake cannot shadow it.
+ * 46 | maintainer@emeraldcoastsystemsgroup.com   | Reconcile a distinct external workflow.workerBot alongside declared bots during activation/deactivation. The prior early return after bots[] left Social active while social-writer stayed inactive after every boot; the canonical external-association selector now adds only the executable worker, never a borrowed metadata-only chatBot.
  */
 
 import type { Pool } from 'pg';
@@ -93,7 +94,11 @@ import {
 } from './swarm-app-group';
 import { lockUndiscoverableTiles, openableDefaultView, type RibbonTileDiscovery, type RibbonTileLock } from './swarm-app-tile-discoverability';
 import { readManifest, listManifestFiles, serializeManifest } from './swarm-app-loader';
-import { manifestConciergeName, resolveManifestConciergeAgent } from './swarm-app-concierge';
+import {
+  manifestConciergeName,
+  manifestExternalAssociationNames,
+  resolveManifestConciergeAgent,
+} from './swarm-app-concierge';
 import { firstAppIcon, isVisibleToCaller, maySeeOwnerIdentity, toSummary, type SummaryViewer } from './swarm-app-record-view';
 import {
   interpolate,
@@ -1335,37 +1340,34 @@ export class SwarmAppService {
 
   /**
    * @description Agent ids whose runtime status this package owns. Durable `agentIds` also carries
-   * legacy borrowed metadata associations, so it is deliberately not a lifecycle list. Inline
-   * bots are always owned. For carve-era manifests with no inline bots,
-   * workflow.workerBot retains the legacy ownership behaviour and is resolved by name so an
-   * explicit, distinct chatBot cannot be mistaken for it by position.
+   * legacy borrowed metadata associations, so it is deliberately not a lifecycle list. Declared
+   * bots are always owned. A distinct external workflow.workerBot retains the legacy ownership
+   * behaviour even when the manifest also declares bots; the canonical external-association
+   * selector excludes borrowed metadata-only chatBot names.
    */
   private async lifecycleAgentIds(record: SwarmApplicationRecord): Promise<string[]> {
-    const declared = [...new Set((record.manifest.bots ?? []).flatMap(bot => {
+    const lifecycleIds = new Set((record.manifest.bots ?? []).flatMap(bot => {
       const agentId = typeof bot.agentId === 'string' ? bot.agentId.trim() : '';
       return agentId ? [agentId] : [];
-    }))];
-    if (declared.length > 0) return declared;
+    }));
 
-    const workerName = typeof record.manifest.workflow?.workerBot === 'string'
-      ? record.manifest.workflow.workerBot.trim()
-      : '';
-    if (!workerName) return [];
-
-    try {
-      const { rows } = await this.pool.query<{ agent_id: string }>(
-        'SELECT agent_id FROM agents WHERE name = $1 ORDER BY agent_id LIMIT 1',
-        [workerName],
-      );
-      const workerId = rows[0]?.agent_id?.trim();
-      return workerId ? [workerId] : [];
-    } catch (err) {
-      logger.error(
-        { err, app: record.name, workerBot: workerName },
-        'Failed to resolve lifecycle-owned workflow worker; borrowed agent associations left untouched',
-      );
-      return [];
+    for (const workerName of manifestExternalAssociationNames(record.manifest)) {
+      try {
+        const { rows } = await this.pool.query<{ agent_id: string }>(
+          'SELECT agent_id FROM agents WHERE name = $1 ORDER BY agent_id LIMIT 1',
+          [workerName],
+        );
+        const workerId = rows[0]?.agent_id?.trim();
+        if (workerId) lifecycleIds.add(workerId);
+      } catch (err) {
+        logger.error(
+          { err, app: record.name, workerBot: workerName },
+          'Failed to resolve lifecycle-owned workflow worker; declared bot statuses still reconciled',
+        );
+      }
     }
+
+    return [...lifecycleIds];
   }
 
   private async setBotStatuses(agentIds: string[], status: 'active' | 'inactive'): Promise<void> {
