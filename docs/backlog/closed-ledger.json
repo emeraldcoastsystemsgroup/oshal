@@ -328,5 +328,17 @@
     "title": "Finance workspace navigation",
     "pr": "main",
     "evidence": "src/pages/cockpit/js/workspace-navigation.js CURATED list includes 'finance'; config-seed/profiles/oshal-framework.json sets workspace: 'finance'; src/pages/cockpit/js/views/app-home-daily.js maps 'ai-finance' to 'Finance'; guarded by tests/unit/workspace-navigation-model.spec.ts (7/7 pass) and tests/unit/app-home-browser.spec.ts (14/14 pass)."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "Fantasy \u2014 the app cannot tell \"not connected\" from \"ESPN unreachable\"",
+    "pr": "main",
+    "evidence": "sports-edge/src-routes/sports-fantasy-espn.ts implements readLeagueSettingsOutcome and opponentOutcomeFor distinguishing transport failures from credential/authorization denials and distinguishing schedule read failures from true byes; sports-edge/tools/sports-edge.html renders distinct copy; docs/guides/fantasy-football.md updated failure table; guarded by sports-edge/tests/sports-fantasy-transport.test.js (5/5 pass)."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "Payroll package backlog handoff",
+    "pr": "main",
+    "evidence": "Handed off payroll queue to oshal-applications payroll/BACKLOG.md with contiguous 1..16 numbering for ADR-123 citations, statuses, and done-when criteria for each unfinished item; linked from payroll/README.md; guarded by payroll/tests/payroll-backlog-queue.test.mjs (7/7 pass)."
   }
 ]
