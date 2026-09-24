@@ -136,6 +136,18 @@
     "title": "Deploy verification cannot clean its Jarvis task while oshal-engineering is inactive",
     "pr": "804",
     "evidence": "PR #804 removed routes declarations from swarm-apps/oshal-engineering.yaml and swarm-apps-build/oshal-engineering.yaml, restoring framework ownership of kernel routes /api/tasks and /api/workflow-studio so SwarmAppService ownerOf returns null instead of claiming ownership under oshal-engineering. When oshal-engineering is inactive, createSwarmAppGateMiddleware allows requests to pass to createTaskRoutes instead of returning HTTP 503 application_inactive. Pinned by tests/unit/deploy-verify-cleanup-route-ownership.spec.ts (4/4 pass) proving DELETE /api/tasks/:taskId succeeds with 204 No Content and leaves chat_tasks and chat_messages absent while foreign user cleanup remains refused. Isolated deploy verify test runner from host .env and updated inline refusal expectation in tests/unit/deploy-live-verification.spec.ts (57/57 pass)."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "Automated post-deploy product proof must remain binary under delegation signing (2026-09-16)",
+    "pr": "798, 804",
+    "evidence": "PR #798 implemented the strict binary exit contract in scripts/lib/deploy-verify.sh and deploy-promoter.ts: with OSHAL_VERIFY_OPERATOR_PAT set, UNVERIFIED is unreachable and product probe failures exit 4 (stackServing: true, needsHands: false). Unproven runs escalate rather than repeating (after 2 consecutive unproven runs, run 3 exits 5). Pinned by tests/unit/deploy-verify-exit-contract.spec.ts (23/23 pass) with docker shadowed, tests/unit/deploy-promoter.spec.ts (20/20 pass), and tests/unit/deploy-live-verification.spec.ts (57/57 pass). PR #804 isolated test runner environment and restored core task route cleanup so verification tasks are cleaned even when oshal-engineering is inactive."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "Concierge and tool coverage is not a contract (P8) - and its first done-when was wrong",
+    "pr": "252 (store), 799",
+    "evidence": "Core PR #799 defaulted load-time concierge coverage mode to 'enforce' (OSHAL_CONCIERGE_COVERAGE_MODE=enforce) in swarm-app-loader.ts, refusing packages that register cockpit surfaces without declaring a concierge. Reconciled lifecycle bot activation so external workflow worker bots activate reliably alongside declared bots. Pinned by tests/unit/swarm-app-concierge-coverage.spec.ts (16/16 pass), tests/unit/swarm-app-concierge-deployment.spec.ts (2/2 pass), and tests/unit/swarm-app-concierge-profile.spec.ts (8/8 pass). Store PR #252 backfilled 13 surfaced packages and instituted scripts/check-concierge-coverage.mjs in store CI, passing 61/61 packages with no allowlist."
   }
 ]
 
