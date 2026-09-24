@@ -7,6 +7,7 @@
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Refuse a test file that can reach the operator's LIVE Postgres by DEFAULT. 23 DB-backed specs ended their DSN expression in a loopback fallback on the stack's published port, which is the real trading database: a bare `npx vitest run tests/unit/trading-*.spec.ts` created and dropped schema and wrote order rows in production. It fired twice on 2026-09-14 from two lanes that had each been told in writing not to touch it — a written brief is not a guard, so this is the guard.
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | Close the half the port rules could not see: the live database named as a HOST or as a fallback CONTAINER rather than addressed by published port. Rules 1 and 2 judge `127.0.0.1:<published>`, so `@oshal-local-db:5432` in a DSN and `process.env.OSHAL_TEST_DB_CONTAINER || 'oshal-local-db'` both passed clean — and the second was live in the tree, sending a spec's `docker exec psql` into the deployment while the DSN beside it pointed at a throwaway. The new rule judges the name only where it IS a database target (DSN host, a `host:`/`host=` field, or an environment fallback), so the alert and topology fixtures that name the same container as a monitoring subject stay green on the rule as written rather than on an allowlist.
 # 3 | maintainer@emeraldcoastsystemsgroup.com  | The vocabulary covers REDIS. It named only the Postgres knobs and containers, so a spec defaulting to `redis://127.0.0.1:${process.env.OSHAL_REDIS_PORT ?? 16379}` passed this gate clean - and on the box it was found on, OSHAL_REDIS_PORT=16379 with that port open and the compose default closed, so the default WAS the operator's live swarm queue. Same defect shape as the Postgres incident this script exists for; only the datastore was different, and a guard that lists its targets by name shrinks every time a new one appears.
+# 4 | maintainer@emeraldcoastsystemsgroup.com  | Refuse `docker exec` targeting oshal-local-db or oshal-local-tsdb in unit specs. The live stack's containers may be reached through docker exec only by reviewed live-stack suites (tests/dynamic-agent-live-e2e.spec.ts, tests/live/); anywhere else in the test tree it is the same write-capable live-database reach the gate was built to stop.
 # =============================================================================
 #
 # WHAT IS REFUSED, and the line it draws:
@@ -28,10 +29,10 @@
 #      monitoring SUBJECT dozens of times over and those are not connections. The distinction is
 #      a property of the shape, not a path on a list.
 #
-#      Not covered, deliberately: `docker exec <container> psql` written as positional argv in a
-#      live-stack e2e. Those files exist to drive the running deployment. What rule 3 catches is
-#      the container-name DEFAULT that fed one of them on a run that had pointed everything else
-#      at a throwaway.
+#   4. `docker exec` reaching into oshal-local-db or oshal-local-tsdb in non-live test files.
+#      `tests/dynamic-agent-live-e2e.spec.ts` legitimately drives the running deployment that way,
+#      but a unit spec in tests/unit/ or src/ has no business running commands directly in the
+#      live database container.
 #
 #   tests/helpers/host-database-url.ts is NOT an exception and is not allowlisted — it passes on
 #   the rules as written. It rewrites a compose-internal DSN onto the published port so a HOST-side
@@ -66,6 +67,9 @@ PORT_KNOB='process\.env\.(OSHAL_PG_PORT|OSHAL_TSDB_PORT|OSHAL_REDIS_PORT)'
 LIVE_DB_HOST='(@|//|host[[:space:]]*[:=][[:space:]]*.?)oshal-local-(db|tsdb|redis)([^A-Za-z0-9-]|$)'
 # The silent-default shape wearing a container name: `process.env.X || 'oshal-local-db'`.
 LIVE_DB_FALLBACK='process\.env\.[A-Za-z_][A-Za-z0-9_]*[[:space:]]*(\|\||\?\?)[[:space:]]*.?oshal-local-(db|tsdb|redis)([^A-Za-z0-9-]|$)'
+# Docker exec against live database containers in test files outside the live stack allowlist.
+LIVE_DB_DOCKER_EXEC='(docker.*exec.*oshal-local-(db|tsdb)|exec.*oshal-local-(db|tsdb))'
+LIVE_STACK_DOCKER_EXEMPT='(^|/)(tests/dynamic-agent-live-e2e\.spec\.ts|tests/live/.*\.ts)$'
 
 TEST_FILES="$(find tests src -type f \( -name '*.spec.ts' -o -name '*.test.ts' \) 2>/dev/null | sort)"
 TREE_FILES="$(find tests -type f -name '*.ts' 2>/dev/null; find src -type f -name '*.test.ts' 2>/dev/null)"
@@ -86,6 +90,12 @@ HOST_HITS="$(printf '%s\n' "$TREE_FILES" | xargs grep -nHE "$LIVE_DB_HOST" 2>/de
 [ -n "$HOST_HITS" ] && HITS="$HITS$HOST_HITS"$'\n'
 FALLBACK_HITS="$(printf '%s\n' "$TREE_FILES" | xargs grep -nHE "$LIVE_DB_FALLBACK" 2>/dev/null)"
 [ -n "$FALLBACK_HITS" ] && HITS="$HITS$FALLBACK_HITS"$'\n'
+DOCKER_FILES="$(printf '%s\n' "$TREE_FILES" | grep -vE "$LIVE_STACK_DOCKER_EXEMPT" || true)"
+DOCKER_HITS=""
+if [ -n "$DOCKER_FILES" ]; then
+  DOCKER_HITS="$(printf '%s\n' "$DOCKER_FILES" | xargs grep -nHE "$LIVE_DB_DOCKER_EXEC" 2>/dev/null || true)"
+fi
+[ -n "$DOCKER_HITS" ] && HITS="$HITS$DOCKER_HITS"$'\n'
 
 FILE_COUNT="$(printf '%s\n' "$TEST_FILES" | sed '/^$/d' | wc -l | tr -d ' ')"
 

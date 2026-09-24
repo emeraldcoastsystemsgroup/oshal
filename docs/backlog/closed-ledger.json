@@ -250,5 +250,23 @@
     "title": "Surface-bridge ops have no success-path log line",
     "pr": "466",
     "evidence": "tests/unit/jarvis-surface-context.spec.ts 25/25 proves emitted-ops turn logs op count, names, and target app at INFO; BUG-18 failure shape (undeclared custom op) is diagnosable from api log alone per 06ea6f59."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "The spec-database gate cannot see the live database reached through `docker exec`",
+    "pr": "main",
+    "evidence": "scripts/ci/check-spec-database-default.sh rule 4 catches docker exec targeting oshal-local-db/tsdb in unit specs under tests/unit/ and src/ while preserving live-stack e2e suites (tests/dynamic-agent-live-e2e.spec.ts, tests/live/); guarded by tests/unit/ci-local-spec-database-default.spec.ts 24/24."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "The ci-local export step after the purge is still unbounded",
+    "pr": "main",
+    "evidence": "scripts/ci/ci-export.sh introduces export_tree watchdog-bounded git archive | tar export with named export: OK|FAIL line; scripts/ci-local.sh exports prepare_head_src and gate_secrets through it; guarded by tests/unit/ci-local-export.spec.ts 6/6 and ci-local-purge.spec.ts 16/16."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "The SEC/CORE/APP hardening-track identifiers have no definition anywhere in the repo",
+    "pr": "main",
+    "evidence": "Closed by operator decision 2026-09-21: tracking scheme is frozen with no new track IDs minted, existing mentions remain historical prose in change logs without parsing/enforcement mechanisms, reporting references BACKLOG entries and ADRs."
   }
 ]

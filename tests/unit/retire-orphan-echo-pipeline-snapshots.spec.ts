@@ -48,7 +48,7 @@ describe('retire orphan echo_pipeline_snapshots (migration 157)', () => {
 
   it('drops echo_pipeline_snapshots idempotently in postgres', async () => {
     const host = process.env.POSTGRES_HOST || '127.0.0.1';
-    const port = Number(process.env.POSTGRES_PORT || 55433);
+    const port = Number(process.env.POSTGRES_PORT || 5432);
     const user = process.env.POSTGRES_USER || 'oshal';
     const password = process.env.POSTGRES_PASSWORD || 'oshal';
     const database = process.env.POSTGRES_DB || 'oshal';

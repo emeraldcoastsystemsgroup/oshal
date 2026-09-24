@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Cover rule 4: refuse live-container execution against the primary database in unit specs. Live-stack suites (tests/dynamic-agent-live-e2e.spec.ts) legitimately drive the deployment; anywhere else in tests/unit/ or src/ it fails the gate.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Cover rule 3, the live databases named rather than addressed: a DSN whose host is the live database container, the same for the timeseries one, and the container-name DEFAULT shape that was live in the tree and that neither port rule could see. Also holds the line the rule must NOT cross — the alert and topology fixtures name that same container as a monitoring subject dozens of times over, and a rule that fired on those would be worked around within a week. Every offending fixture assembles the container name at run time for the same reason the port literals do: this guard has to pass the gate it proves.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard the spec-database-default gate by RUNNING IT — the real script, in Git Bash, against real trees on disk, which is the boundary it acts on. A gate asserted only by reading its source proves nothing about what grep does to a file. Covers both refusals (the live published-port literal in a test file, and a test-tree module reading the published-port knob off the environment even when the literal has been renamed), both allowances that keep the legitimate host-side Playwright helper working, the fail-closed UNCHECKED verdict on a tree with no test files, and the real repository passing. The forbidden port is assembled at run time so this guard is not itself a hit for the gate it proves.
  */
@@ -147,6 +148,20 @@ describe('the spec-database-default gate REFUSES a test file that can reach the 
     expect(verdict.output).toContain('tests/helpers/sneaky-host.ts');
   });
 
+  it('fails when a unit spec reaches oshal-local-db through docker exec', () => {
+    const offending = `const res = execFileSync('docker', ['exec', '${LIVE_DB_CONTAINER}', 'psql', '-c', 'SELECT 1']);\n`;
+    const verdict = judge('docker-exec-db', { 'tests/unit/offender.spec.ts': offending });
+    expect(verdict.status).toBe(1);
+    expect(verdict.output).toContain('tests/unit/offender.spec.ts');
+  });
+
+  it('fails when a unit spec reaches oshal-local-tsdb through docker exec', () => {
+    const offending = `const res = execFileSync('docker', ['exec', '${LIVE_TSDB_CONTAINER}', 'psql', '-c', 'SELECT 1']);\n`;
+    const verdict = judge('docker-exec-tsdb', { 'tests/unit/offender.spec.ts': offending });
+    expect(verdict.status).toBe(1);
+    expect(verdict.output).toContain('tests/unit/offender.spec.ts');
+  });
+
   it('points the reader at the resolver instead of at a way to silence the gate', () => {
     const offending = `const DSN = 'postgresql://oshal:oshal@127.0.0.1:${LIVE_PG}/oshal';\n`;
     const verdict = judge('message', { 'tests/unit/offender.spec.ts': offending });
@@ -207,6 +222,16 @@ describe('the gate ALLOWS the legitimate uses, so it does not have to be worked 
       'tests/unit/user.spec.ts': `const NOT_A_PORT = 1${LIVE_PG}0;\nexport default NOT_A_PORT;\n`,
     });
     expect(verdict.status).toBe(0);
+  });
+
+  it('allows live-stack e2e suites to reach the running deployment via docker exec', () => {
+    const liveSpec = `const res = execFileSync('docker', ['exec', '${LIVE_DB_CONTAINER}', 'psql', '-c', 'SELECT 1']);\n`;
+    const verdict = judge('live-e2e-allowed', {
+      'tests/dynamic-agent-live-e2e.spec.ts': liveSpec,
+      'tests/unit/user.spec.ts': CLEAN_SPEC,
+    });
+    expect(verdict.status).toBe(0);
+    expect(verdict.output).toMatch(/OK/);
   });
 
   it('passes THIS repository — the gate is green on the tree it ships in', () => {
