@@ -37,7 +37,7 @@
   },
   {
     "date": "2026-09-22",
-    "title": "Nightly tasks still launched from the ADR-115 archive — LAUNCHERS DONE 2026-09-16, one operator action left",
+    "title": "Nightly tasks still launched from the ADR-115 archive \u2014 LAUNCHERS DONE 2026-09-16, one operator action left",
     "pr": "696",
     "evidence": "Merged runbook records repointing and successful execution. Read-only Task Scheduler check on 2026-09-22: Claude keepalive ran 22:23:54 with result 0; Signal Labeler ran 16:30:01 with result 0; both actions name C:/Projects/oshal. Evidence-Nightly intentionally remains on the private archive."
   },
@@ -73,7 +73,7 @@
   },
   {
     "date": "2026-09-23",
-    "title": "Deploy — the api process exits during the bot-recreate storm",
+    "title": "Deploy \u2014 the api process exits during the bot-recreate storm",
     "pr": "639,669",
     "evidence": "The full deploy recreated the api and 36 bots while the storm probe measured RestartCount 0 to 0 and zero idle-in-transaction log lines in the deployment window."
   },
@@ -85,7 +85,7 @@
   },
   {
     "date": "2026-09-23",
-    "title": "Dev-console `/work` under Linux user-namespace remapping — DONE 2026-09-17",
+    "title": "Dev-console `/work` under Linux user-namespace remapping \u2014 DONE 2026-09-17",
     "pr": "622,697",
     "evidence": "The sandbox prepares directory/file modes without following symlinks; the real-kernel uid 165536 proof records write/create/exec success, parent/root escape denial, and cleanup, with mutation controls for the old modes."
   },
@@ -189,12 +189,48 @@
     "date": "2026-09-24",
     "title": "Flow UI-automation video provider",
     "pr": "n/a",
-    "evidence": "Operator decision 2026-09-21: CLOSED — will not build. Free and paid video paths are already covered by ComfyUI (free/local GPU over HTTP) and Veo (paid API). UI-automation against consumer web UIs would require dedicated fixed-geometry hardware and drift detection, with high maintenance overhead and brittle failure modes. Flow capability gap closed as will not build."
+    "evidence": "Operator decision 2026-09-21: CLOSED \u2014 will not build. Free and paid video paths are already covered by ComfyUI (free/local GPU over HTTP) and Veo (paid API). UI-automation against consumer web UIs would require dedicated fixed-geometry hardware and drift detection, with high maintenance overhead and brittle failure modes. Flow capability gap closed as will not build."
   },
   {
     "date": "2026-09-24",
     "title": "A protected dispatch refuses on a controller with no delegation signing material (2026-09-15)",
     "pr": "n/a",
-    "evidence": "Operator decision 2026-09-21/22: CLOSED — verified live. Keypair configuration (OSHAL_DELEGATION_SIGNING_KID, OSHAL_DELEGATION_SIGNING_PRIVATE_KEY, and bot ring OSHAL_DELEGATION_PUBLIC_KEYS) was verified structurally present and correctly matched. Interactive live protected dispatch from the cockpit proved zero authorization_recorded_delegation_required refusals in 24 hours."
+    "evidence": "Operator decision 2026-09-21/22: CLOSED \u2014 verified live. Keypair configuration (OSHAL_DELEGATION_SIGNING_KID, OSHAL_DELEGATION_SIGNING_PRIVATE_KEY, and bot ring OSHAL_DELEGATION_PUBLIC_KEYS) was verified structurally present and correctly matched. Interactive live protected dispatch from the cockpit proved zero authorization_recorded_delegation_required refusals in 24 hours."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "The publish gate's attribution wall can be disabled by author, and no case would notice",
+    "pr": "n/a",
+    "evidence": "Guarded by tests/unit/publish-gate.spec.ts (SEQ 9). Added a test asserting that a commit authored by maintainer@emeraldcoastsystemsgroup.com carrying model attribution is refused by check 5b. Verified via mutation testing: inserting an author allowlist ([ \"$(git log -1 --format='%ae' \"$sha\")\" = \"maintainer@emeraldcoastsystemsgroup.com\" ] && continue) fails the spec immediately, while the clean gate passes (46/46 tests pass)."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "Disposable PostgreSQL fixture leaks its data volume on every dispose",
+    "pr": "699",
+    "evidence": "PR #699 added '--volumes' to 'docker rm --force' in tests/helpers/disposable-postgres.ts and tests/helpers/disposable-redis.ts, ensuring anonymous data volumes are removed on container disposal. Guarded by tests/unit/disposable-fixture-volume-residue.spec.ts, which inspects volume mounts on running fixtures and verifies they are absent from docker volume ls after dispose. Documented in docs/runbooks/dev-box-disk-reclamation.md."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "`swarm-cli` zsh completion",
+    "pr": "521",
+    "evidence": "PR #521 verified that the zsh completion script passes zsh -n and tested both sourced (eval \"$(swarm-cli completion zsh)\") and autoloaded (_swarm-cli on $fpath) modes in real interactive zsh. Guarded by tests/unit/swarm-cli-zsh-completion.spec.ts covering top-level commands, token actions, and saved context completion."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "Ambient Recall \u2014 attributed ingest fixture for the Test Lab",
+    "pr": "728",
+    "evidence": "PR #728 implemented POST /api/jarvis/ambient/test-fixture/attributed-line, allowing the Test Lab to seed an attributed line for a stable fixture voice through the trusted audio collaborators (SpeakerProfileStore.identify, recordConsent, appendAttributedSegments, enrichBatch). Gated on requireServiceSecret. Guarded by tests/unit/ambient-test-fixture-routes.spec.ts (9/9 pass) and tests/unit/ambient-test-fixture-postgres.spec.ts (5/5 pass)."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "print-to-rag has no user guide and no page on the site",
+    "pr": "n/a",
+    "evidence": "Commit 2512c20d added docs/guides/printing.md, indexed in docs/guides/README.md, documenting the Print Inbox, node printer and standalone print-to-rag setup, XPS/PDF text handling, and destination permissions. Product page renders at site/oswarm.ai/product/apps/print-ingest/ from status: ready registry entries. Guarded by tests/unit/print-to-rag-docs.spec.ts."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "Trading \u2014 cash settlement: three narrower gaps (ADR-134 D8)",
+    "pr": "780",
+    "evidence": "PR #780 closed the three narrower cash-settlement gaps: (1) nextSettlementDate now skips exchange holidays via exchangeClosed() and NYSE full-closure calendar, (2) store half labels ledger-derived figure on ticket, (3) discovered_account_type on oshal_trading_books caches venue account type for legacy live books, eliminating redundant venue reads and fail-closed refusals. Guarded by tests/unit/trading-settlement.spec.ts (31/31 pass)."
   }
 ]

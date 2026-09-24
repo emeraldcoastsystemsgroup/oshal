@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Guards the model-attribution refusal added to check 5. Every spelling of the co-author trailer, the vendor no-reply address and the tool footer that a session produces goes red and names the commit; a human co-author, the maintainer and prose that merely names the model pass; history the remote already holds is never re-judged. Also pins the PRE-PUSH scope - the ref-update lines git writes to the hook's stdin - including a push BY SHA while HEAD is clean, and drives one case through a real `git push` with the real hook installed, the boundary a direct gate call cannot exercise.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Makes this guard's own verdict trustworthy, which is what the attribution entry was still missing: it passed in isolation and went red in scheduled runs, so it could never be shown green on main. Two causes, both in the harness rather than the gate. The artifacts/ ignore probe swallowed every git failure into `false`, so on 2026-09-15 one environmental git fault printed as four broken ignore rules AND one vacuous pass; it now reads check-ignore's exit status and refuses loudly on anything but 0 or 1. And six cases that spawn bash and git named no timeout, inheriting Vitest's 5s default while their siblings carried 20-30s; the file now raises its own floor, so a case added later inherits headroom instead of the flake.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Correct SEQ 7's cause and answer the ignore question where the gate RUNS. It is not 'one environmental git fault': ci-local.sh exports the unit gate's tree with `git archive | tar -x`, so it has no .git and check-ignore exits 128 there on EVERY scheduled run. Throwing on 128 therefore did not turn that run green, it turned 4 failed + 1 vacuous pass into 5 failed. The probe now seeds a throwaway repository with the committed .gitignore the export does carry, and asks there; identical verdicts for all five paths, and a genuine fault still throws.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Guards against an author allowlist in check 5b. Every real commit is authored as maintainer@emeraldcoastsystemsgroup.com, so skipping on author would disable the attribution wall for all real traffic.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -232,16 +233,19 @@ let changeCounter = 0;
  *
  * @param dir - Fixture repository.
  * @param message - Full commit message.
+ * @param author - Optional commit author email and name override.
  * @returns The new commit's full SHA.
  */
-function commitMessage(dir: string, message: string): string {
+function commitMessage(dir: string, message: string, author?: { email: string; name: string }): string {
   changeCounter += 1;
   const rel = `src/change-${changeCounter}.ts`;
   writeFileSync(join(dir, rel), `export const change = ${changeCounter};\n`, 'utf8');
   git(dir, 'add', '--', rel);
+  const email = author?.email ?? 't@example.com';
+  const name = author?.name ?? 't';
   execFileSync(
     'git',
-    ['-C', dir, '-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-F', '-'],
+    ['-C', dir, '-c', `user.email=${email}`, '-c', `user.name=${name}`, 'commit', '-q', '-F', '-'],
     { input: message, stdio: 'pipe' },
   );
   return revParse(dir, 'HEAD');
@@ -657,6 +661,26 @@ describe('model attribution in commit messages is refused at push time', () => {
     const dir = makeFixture();
     try {
       const sha = commitMessage(dir, message);
+      const r = runGate(dir);
+      expect(r.output).toContain('model attribution in unpublished COMMIT MESSAGE');
+      expect(r.output).toContain(revParse(dir, '--short', sha));
+      expect(r.code).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('FAILS when authored by the maintainer address if the message carries model attribution', () => {
+    // The attribution wall must never allowlist by author: every real commit in this repository is
+    // authored as maintainer@emeraldcoastsystemsgroup.com, so an author check would disarm the gate
+    // for all actual traffic.
+    const dir = makeFixture();
+    try {
+      const sha = commitMessage(
+        dir,
+        `fix: wire the importer\n\nWhy it changed.\n\n${HARNESS_TRAILER}\n`,
+        { email: 'maintainer@emeraldcoastsystemsgroup.com', name: 'oshal maintainers' },
+      );
       const r = runGate(dir);
       expect(r.output).toContain('model attribution in unpublished COMMIT MESSAGE');
       expect(r.output).toContain(revParse(dir, '--short', sha));
