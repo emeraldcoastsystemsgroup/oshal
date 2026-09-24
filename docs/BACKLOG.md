@@ -3208,11 +3208,11 @@ including across a directory belonging to a different owner. Full reasoning and 
 - **Remaining:** generate the Xcode project, sign with a real Apple team/bundle ID, run on LiDAR hardware, and pair/upload PLY plus poses with a scoped token.
 - **Done when:** a captured room imports into the owning user's Spaces surface, invalid/other-user tokens fail, and the first real Xcode build is clean.
 
-### DevOps cockpit Phase 2+
+### DevOps cockpit: NATed node self-registration and round trip (Phase 2 slice 1)
 - **Status:** OPEN — needs operator
-- **Remaining:** discover topology from logged-in CLIs into the graph, add Connect-Vault and live traffic lights, discover/override Terraform and Kubernetes contexts, deploy NAT-friendly/push remote nodes, choose the bidirectional transport, and run specialist tasks with brokered credentials.
-- **Done when:** a NATed node self-registers and round-trips work, topology is queryable/rendered, each connection reports a truthful reasoned state, and a specialist completes a real read/plan with a revoked short-TTL credential while apply/deploy stays human-gated. See [connectivity design](architecture/devops-cockpit-connectivity.md).
-- **Decision (operator, 2026-09-22): FIRST SLICE ONLY.** A NATed node self-registers and round-trips: the one item the rest depends on, and the one the Headscale fail-loud work unblocks. Every other item in this entry (topology discovery into the graph, Connect-Vault and traffic lights, Terraform and Kubernetes context discovery, the bidirectional transport, specialist tasks under brokered short-TTL credentials) moves to `ROADMAP.md` as later slices, each with its own done-when. **Done when** narrowed to the first slice: a NATed node self-registers and a round trip works, recorded in the real-boundary audit.
+- **Remaining:** a NATed test node self-registers with the control plane and a round trip works across the connection rail, unblocked by the Headscale fail-loud work. (Later slices — topology discovery into the graph, Connect-Vault and traffic lights, Terraform and Kubernetes context discovery, bidirectional transport selection, and specialist tasks under short-TTL brokered credentials — moved to ROADMAP.md per operator decision 2026-09-22).
+- **Done when:** a NATed node self-registers and a round trip works, recorded in the real-boundary audit. See [connectivity design](architecture/devops-cockpit-connectivity.md).
+
 
 ### Container-health collection without cAdvisor names
 - **Status:** OPEN — needs live proof
