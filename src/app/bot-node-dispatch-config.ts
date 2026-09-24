@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-034 push-on-dispatch (bot half): parseCarriedDispatchConfig reads the optional providerId/model/configVersion the controller stamped on /api/swarm-execute, and reconcileDispatchProviderConfig compares them against the live active provider — a divergent bot self-corrects via the gap-(a) setActiveProvider seam BEFORE executing, logging the correction. Absent fields = the runtime is never touched (byte-identical legacy dispatch); an unknown/unavailable carried provider FAILS OPEN to the bot's self-resolved provider (a bad record must never block execution).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Retire the fail-open authority path: unavailable switches and post-switch mismatches now refuse execution, and expose a shared exact-match guard for concurrent dispatches.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The provider match goes through dispatchProviderMatches (bot-node-provider-switch.ts): a carried Cline-backed id ('gemini') matches ONLY a cline-cli runtime whose reported apiProvider is that id, so a switch row resolves to a match after reconcile and the post-execution "what ran == what was authorized" check stays exact — it no longer refuses a completed run because the row's spelling differs from the runtime's name, and it still refuses a runtime fronting anything else.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Retain completed work from configured failover (BACKLOG #1660): parse fallbackOrder in parseCarriedDispatchConfig and accept any provider in the configured fallback chain in dispatchConfigMatchesActive.
  */
 
 /**
@@ -44,6 +45,7 @@ export interface CarriedDispatchConfig {
   providerId: string;
   model?: string;
   configVersion?: number;
+  fallbackOrder?: readonly string[] | null;
 }
 
 /** @description The runtime seam the reconciliation drives (bot-node-runtime's live accessors). */
@@ -79,36 +81,49 @@ export class AuthoritativeDispatchConfigError extends Error {
  * opt-in: a missing/blank/non-string providerId yields null — the "absent" legacy path —
  * so a malformed stamp can never half-apply. Model must be a non-empty string and
  * configVersion a finite number to be carried; anything else is dropped field-wise.
- * @param body - The raw request-body slice ({ providerId?, model?, configVersion? }).
+ * @param body - The raw request-body slice ({ providerId?, model?, configVersion?, fallbackOrder? }).
  * @returns The parsed record, or null when no actionable record was carried.
  */
 export function parseCarriedDispatchConfig(
-  body: { providerId?: unknown; model?: unknown; configVersion?: unknown } | undefined,
+  body: { providerId?: unknown; model?: unknown; configVersion?: unknown; fallbackOrder?: unknown; fallbackChain?: unknown } | undefined,
 ): CarriedDispatchConfig | null {
   const providerId = typeof body?.providerId === 'string' ? body.providerId.trim() : '';
   if (!providerId) return null;
   const model = typeof body?.model === 'string' && body.model.trim().length > 0 ? body.model.trim() : undefined;
   const rawVersion = body?.configVersion;
   const configVersion = typeof rawVersion === 'number' && Number.isFinite(rawVersion) ? rawVersion : undefined;
+  const rawFallback = body?.fallbackOrder ?? body?.fallbackChain;
+  const fallbackOrder = Array.isArray(rawFallback)
+    ? (rawFallback as unknown[])
+        .filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+        .map(id => id.trim())
+    : undefined;
   return {
     providerId,
     ...(model !== undefined ? { model } : {}),
     ...(configVersion !== undefined ? { configVersion } : {}),
+    ...(fallbackOrder !== undefined ? { fallbackOrder } : {}),
   };
 }
 
 /**
  * @description Compares a carried authoritative record with a live runtime identity. Provider
  * aliases are normalized exactly as boot configuration is; an omitted model means the provider
- * alone is authoritative, while a supplied model must match exactly.
+ * alone is authoritative, while a supplied model must match exactly. If primary provider does
+ * not match, any provider in fallbackOrder matches.
  */
 export function dispatchConfigMatchesActive(
   carried: CarriedDispatchConfig,
   active: ActiveBotNodeProvider,
 ): boolean {
-  const providerMatches = dispatchProviderMatches(carried.providerId, active);
-  const modelMatches = carried.model === undefined || carried.model === active.model;
-  return providerMatches && modelMatches;
+  const primaryProviderMatches = dispatchProviderMatches(carried.providerId, active);
+  if (primaryProviderMatches) {
+    return carried.model === undefined || carried.model === active.model;
+  }
+  if (carried.fallbackOrder && carried.fallbackOrder.length > 0) {
+    return carried.fallbackOrder.some(fallbackId => dispatchProviderMatches(fallbackId, active));
+  }
+  return false;
 }
 
 /**

@@ -27,6 +27,7 @@
  * 22 | maintainer@emeraldcoastsystemsgroup.com | Fail closed when TaskController reports an execution failure or produces no readable response. The protected direct path returned {success:false,error:'direct_mode_unsupported'} with no messages, but this bridge ignored the failure bit, relayed success=true with an empty response, and the queue marked Career/stock work complete. Failed or empty inference now reaches the existing ticket escalation path instead of fabricating completion.
  * 23 | maintainer@emeraldcoastsystemsgroup.com | Provision protected application tools at call time through the existing controller MCP bridge. The bridge binding comes only from the verified protected execution context and carries the exact bot, task, owner and original dispatch proof; provider selection remains configuration-owned.
  * 24 | maintainer@emeraldcoastsystemsgroup.com | Put the exact AUTO-granted brokered application tool names in protected prompts at call time while keeping the native bot-node registry empty. This prevents the final authority rebind from contradicting the invocation-scoped MCP tool list.
+ * 25 | maintainer@emeraldcoastsystemsgroup.com | Retain completed work from configured failover (BACKLOG #1660): accept completed work from any provider in carriedConfig.fallbackOrder; attribute cost and metrics to the actual executing provider.
  */
 
 /**
@@ -494,6 +495,9 @@ export function createBotNodeExecutionHandler(
       const actualModel = normalizeRuntimeIdentity(runtimeIdentity.model, 256)
         ?? enforcedRuntimeIdentity?.model
         ?? deps.modelName;
+      const actualApiProvider = normalizeRuntimeIdentity((runtimeIdentity as any).apiProvider, 128)
+        ?? enforcedRuntimeIdentity?.apiProvider
+        ?? null;
       if (carriedConfig && !byoLlmConnection
         && !dispatchConfigMatchesActive(carriedConfig, {
           provider: actualProvider,
@@ -501,16 +505,17 @@ export function createBotNodeExecutionHandler(
           // The backing provider is runtime state, not a result field: the Cline wrapper reads
           // CLINE_API_PROVIDER (set by the switch) before every spawn, so the enforced identity
           // is the one that ran when the reported runtime is cline-cli.
-          apiProvider: enforcedRuntimeIdentity?.apiProvider ?? null,
+          apiProvider: actualApiProvider,
         })) {
         logger.warn({
           carriedProvider: carriedConfig.providerId,
           carriedModel: carriedConfig.model ?? null,
+          carriedFallbackOrder: carriedConfig.fallbackOrder ?? null,
           actualProvider,
           actualModel,
           activeProvider: enforcedRuntimeIdentity?.provider ?? null,
           activeModel: enforcedRuntimeIdentity?.model ?? null,
-          activeApiProvider: enforcedRuntimeIdentity?.apiProvider ?? null,
+          activeApiProvider: actualApiProvider,
         }, 'Execution identity differs from the authoritative dispatch record');
         throw new AuthoritativeDispatchConfigError(
           'Execution reported a provider/model different from the authoritative dispatch record',

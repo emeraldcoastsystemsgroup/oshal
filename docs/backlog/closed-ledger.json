@@ -280,5 +280,17 @@
     "title": "k8s runtime-launched bots do not read the chart's `oshal-shared-secret` (chart 0.5.0)",
     "pr": "main",
     "evidence": "src/features/agent-management/services/kubernetes-bot-launcher.ts adds oshal-shared-secret to buildBotDeployment envFrom after oshal-shared-env and before oshal-bot-env; deploy/helm/oshal/templates/NOTES.txt and README.md remove the regression copy-command workaround; guarded by tests/unit/chart-dynamic-bot-env.spec.ts 9/9, tests/unit/dynamic-bot-runtime-launcher.spec.ts 13/13, and chart-runtime-bot-defaults.spec.ts 17/17."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "A failover the record configured must not have its completed work discarded (2026-09-17)",
+    "pr": "main",
+    "evidence": "src/features/agent-management/services/bot-node-client.ts and dispatch-runtime-params.ts thread fallbackOrder through BotNodeRequest and CarriedDispatchConfig; src/app/bot-node-dispatch-config.ts accepts completed work when actual provider/model matches any provider in fallbackOrder; src/app/bot-node-execution-handler.ts retains completed output and cost-attributes to actual provider/model that ran; guarded by tests/unit/dispatch-failover-retention.spec.ts (9/9 pass) and tests/unit/dispatch-config-live-wiring.spec.ts."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "`src/app/server.ts` is past the decomposition threshold: move the post-bootstrap installs out (2026-09-17)",
+    "pr": "main",
+    "evidence": "Extracted post-bootstrap installs (provider switch snapshot, autoload swarm apps, route audit, wiring audit, seed demo data) into src/app/composition/server-bootstrap-tasks.ts (51 lines) and extracted 14 auxiliary route clusters into src/app/server-auxiliary-routes.ts (320 lines); reduced src/app/server.ts to 781 code lines (under 800 line threshold); guarded by tests/unit/server-decomposition.spec.ts (7/7 pass)."
   }
 ]

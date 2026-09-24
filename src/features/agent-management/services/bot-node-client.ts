@@ -30,6 +30,7 @@
  * 25 | maintainer@emeraldcoastsystemsgroup.com   | Hot fallback wire fields (operator decision 2026-09-22). BotNodeRequest.byoLlmResolutionSource is CONTROLLER-SIDE metadata naming which rung of the ADR-127 ladder produced a threaded byoLlmConnection — 'explicit' is the one value that earns the same-endpoint retry and, for the operator, the hot fallback; executeBotOrInline strips it before a dispatch leaves the controller. BotNodeResponse.brainFallback is the machine-readable marker a fallback turn carries (provider actually used, the rung, why, how many attempts the chosen endpoint refused) so every surface can say "answered by X — Y was unavailable" instead of passing the switch off as normal.
  * 26 | maintainer@emeraldcoastsystemsgroup.com   | Emit the unrecordable protected-dispatch denial as a typed RefusalError so callers can preserve its exact code, detail and reviewed remedy without parsing text.
  * 27 | maintainer@emeraldcoastsystemsgroup.com   | Preserve trusted in-process RefusalError results through protected send sanitization so exact persistence/owner refusals reach the manifest terminal sink; ambiguous remote failures remain generic.
+ * 28 | maintainer@emeraldcoastsystemsgroup.com   | Retain completed work from configured failover (BACKLOG #1660): add fallbackOrder to BotNodeRequest so dispatch carries the accepted fallback chain.
  */
 import { runWithApplicationExecution } from '@/shared/application-authorization-execution';
 import { getApplicationAuthorizationActor } from '@/shared/application-authorization-context';
@@ -271,6 +272,8 @@ export interface BotNodeRequest {
    * distinguishes a failed authority lookup from an intentional legacy dispatch.
    */
   providerConfigRequired?: boolean;
+  /** Configured fallback providers accepted when failover executes instead of the primary provider. */
+  fallbackOrder?: readonly string[] | null;
 }
 
 /**

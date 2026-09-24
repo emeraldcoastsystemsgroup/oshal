@@ -183,7 +183,7 @@
  * 162 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 2: pass ctx into createArtifactExchangeRoutes — the kernel built-in destinations (email compose, save to oshal-local) need the pool for connector tokens and storage writes.
  * 163 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 fix (found by stage-3 live verification): /api/files rides serviceSecretOr(requiresAuth) — the artifact-handle relay redeems a files-browser source by re-fetching /api/files/download as the minting caller over the internal rail, and the session-only mount 401'd that fetch, 502-ing every doc-hub "Send to…" dispatch.
  * 164 | maintainer@emeraldcoastsystemsgroup.com   | resolveOpenAiCodexCallbackPort delegates its raw-port read to resolveConfiguredOpenAiCodexCallbackPort (server-auth-helpers seq 4): the compose-forwarded EMPTY OPENAI_CODEX_CALLBACK_PORT parsed to NaN and silently skipped the :1455 codex callback listener, so every cockpit codex login ended at ERR_EMPTY_RESPONSE on localhost:1455. One reader now owns the ""-means-default rule.
- * Home customization | Codex | Mount authenticated Home preference persistence alongside user settings.
+ * 164b | maintainer@emeraldcoastsystemsgroup.com | Mount authenticated Home preference persistence alongside user settings.
  * 165 | maintainer@emeraldcoastsystemsgroup.com | ADR-139 shared artifact picker: source discovery, owner-scoped storage and app visibility.
  * 166 | maintainer@emeraldcoastsystemsgroup.com | Mount browser-bound connector callbacks and caller-scoped installed application tests in the existing Lab.
  * 167 | maintainer@emeraldcoastsystemsgroup.com | Observe verified external principals before authorization so existing provider accounts retain a canonical management inventory.
@@ -202,6 +202,7 @@
  * 186 | maintainer@emeraldcoastsystemsgroup.com   | Mounted /api/jarvis/ambient/test-fixture (requiresAuth + a strict in-router service-secret gate) ahead of the general ambient routers. POST /api/jarvis/ambient/segments refuses speaker ids, so the AI Test Lab could only ever prove the UNATTRIBUTED path; this router seeds one attributed line for a stable per-owner fixture voice so asks, per-person profiles and consent are provable without a microphone.
  * 187 | maintainer@emeraldcoastsystemsgroup.com   | Start the hot-fallback readiness loop beside the llm-default mount (operator decision 2026-09-22): the fleet chain's rungs are probed on an interval so the fallback is ready before it is needed. Unref'd, OSHAL_HOT_FALLBACK_PROBE_INTERVAL_MS=0 disables it.
  * 188 | maintainer@emeraldcoastsystemsgroup.com   | Wire the durable refusal recorder and authenticated caller-scoped /api/ops/refusals read API for P1 refusal visibility.
+ * 189 | maintainer@emeraldcoastsystemsgroup.com   | Server bootstrap decomposition (BACKLOG #1788): extracted post-bootstrap installs (provider-switch snapshot, autoload, wiring audit, demo seeding) to composition/server-bootstrap-tasks.ts, and auxiliary route clusters to server-auxiliary-routes.ts, bringing server.ts under the 800-line decomposition threshold.
  */
 
 require('dotenv').config();
@@ -221,40 +222,16 @@ import { createAuthStateRoutes, mountDemoAuthRoutes } from './routes/auth-state-
 import { createAppContext } from './composition-root';
 import { resolveHostLandingPath } from './host-app-map';
 import { 
-  createTaskRoutes, 
   createMessageRoutes, 
-  createStreamRoutes, 
-  createVoiceRoutes,
   createVisionRoutes,
   createToolRoutes,
   createInternalToolBridgeRoutes,
-  createAgentProfileRoutes,
-  createAgentToolRoutes,
-  createRcaRoutes,
-  createAgentStatusRoutes,
-  createProcessLabRoutes,
-  createWorkflowStudioRoutes,
-  createWorkflowStudioAssistRoutes,
-  createWorkflowRunRoutes,
-  createBatchJobTelemetryRoutes,
-  createOpenAiCodexOAuthRoutes,
-  createClaudeCodeAuthRoutes,
-  createGeminiAuthRoutes,
-  createAntigravityAuthRoutes,
-  createFacebookAuthRoutes,
   createUiProfileRoutes,
   createSwarmAppRoutes,
   createPackagedThemeCssFallback,
   createSwarmPackRoutes,
   createScheduleRoutes,
   createRemoteClientRoutes,
-  createCheckpointRoutes,
-  createTokenChaseRoutes,
-  createOptimizeRoutes,
-  createMemoryRoutes,
-  createHelpRoutes,
-  createCockpitRoutes,
-  createTaskExplorerRoutes,
   registerCockpitStaticRoutes,
   registerUiSurfaceRoutes,
   registerLegacyEngineeringCompatRoutes,
@@ -262,20 +239,11 @@ import {
   createAmbientSpeakerRoutes,
   createAmbientTestFixtureRoutes,
 } from './routes';
-import { createVerificationRoutes } from './routes/verification-routes';
 import { createInstallVerificationRoutes } from './routes/install-verification-routes';
 // Manual auth routes removed — express-openid-connect handles /login, /callback, /logout
-import { createConfigRoutes } from './routes/config-routes';
-import { createProviderRoutes, listConfiguredProviders } from './routes/provider-routes';
+import { listConfiguredProviders } from './routes/provider-routes';
 import { onboardingRequired } from './onboarding-gate';
 import { registerReadinessRoutes } from './routes/readiness-routes';
-import { connectorCallbackAuth, createConnectorsRoutes, createFacebookDataDeletionRoute } from './routes/connectors-routes';
-import { createConnectorLivenessRoutes } from './routes/connector-liveness';
-import { createByoLlmRoutes } from './routes/byo-llm-routes';
-import { createFreeTierRoutes } from './routes/free-tier-routes';
-import { resolveHotFallbackChain } from './routes/byo-hot-fallback';
-import { startFallbackReadinessLoop } from './routes/fallback-rail-readiness';
-import { createLlmPreferenceRoutes } from './routes/llm-preference-routes';
 import { createTvPairingRoutes, createTvTokenAuthMiddleware } from './routes/tv-pairing-routes';
 import { createCliTokenAuthMiddleware, createCliTokenRoutes } from './routes/cli-token-routes';
 import { createArtifactExchangeRoutes } from './routes/artifact-exchange-routes';
@@ -283,13 +251,7 @@ import { createLocalAuthRoutes, isLocalAuthEnabled } from './routes/local-auth-r
 import { createSwarmRolesRoutes, initializeSwarmRoles } from './routes/swarm-roles-routes';
 import { createAppRegistryRoutes, initializeAppRegistries } from './routes/app-registry-routes';
 import { createApplicationAuthMiddlewareSet } from './middleware/application-auth';
-import { createBudgetRoutes } from './routes/budget-routes';
-import { registerA2aGatewayRoutes } from './routes/a2a-routes';
-import { createTraceRoutes } from './routes/trace-routes';
-import { createQueueDlqRoutes } from './routes/queue-dlq-routes';
 import { createJarvisVoiceRoutes } from './routes/jarvis-voice-routes';
-import { createTenantRoutes } from './routes/tenant-routes';
-import { createNotifyRoutes } from './routes/notify-routes';
 import { createPersonModelRoutes } from './routes/person-model-routes';
 import { ensurePersonModelSchema } from '@/features/person-model';
 import { startAmbientEnrichmentRuntime, startPersonModelMaintenanceRuntime } from './ambient-enrichment-runtime';
@@ -299,9 +261,7 @@ import { startApplyReaper, rehydrateApplyInFlight } from './apply-enqueue';
 import { createProfileStudioIngestRoutes } from './routes/profile-studio-ingest-routes';
 import { startGovContractingCron } from './routes/gov-contracting-cron';
 import { registerUpdateRoutes, startUpdateCheckCron } from './routes/update-check-cron';
-import { createSlackRoutes } from './routes/slack-routes';
 import { startFeedsIndexingCron } from './routes/feeds-indexing';
-import { createJudgeRoutes } from './routes/judge-routes';
 import { createConnectorMarketplaceRoutes } from './routes/connector-marketplace-routes';
 import { mountConnectorSpecRoutes } from './routes/connector-spec-routes';
 import { mountConnectorActionRoutes } from './routes/connector-action-routes';
@@ -315,13 +275,9 @@ import { createServiceSmokeFetch, createTestLabWiring } from './composition/test
 import { createTestLabGoldenRoutes } from './routes/test-lab-golden';
 import { createPersonaEvalRoutes } from './routes/persona-eval-routes';
 import { registerEvalWallRoutes } from './routes/eval-wall-routes';
-import { createDevopsRoutes } from './routes/devops-routes';
-import { createForgeRoutes } from './routes/forge-routes';
 import { createFilesRoutes } from './routes/files-routes';
 import { createGraphRoutes } from './routes/graph-routes';
 import { startInboxIngestCron } from './routes/inbox-ingest';
-import { createContentRoutes } from './routes/content-routes';
-import { createLinkedInAssistantRoutes } from './routes/linkedin-assistant-routes';
 // (trading route imports removed: the trading SURFACE carved to the oshal-applications store,
 //  ADR-085 Wave 3 — the ENGINE stays kernel in app/trading-{engine,schema}.ts + the dispatch loops.)
 import { createSecurityRoutes } from './routes/security-routes';
@@ -339,7 +295,6 @@ import { createUserModelRoutes } from './routes/user-model-routes';
 import { createDevConsoleRoutes } from './routes/dev-console-routes';
 import { superAdminEnabled } from '@/shared/middleware/superadmin';
 import { createTakeoutRoutes } from './routes/takeout-routes';
-import { createLogsRoutes } from './routes/logs-routes';
 import { createAuditCaptureMiddleware, requireAdminConsoleAccess } from '@/features/governance';
 import { createGuestSessionInjector, isGuestRequest } from '@/shared/middleware/guest-session';
 import { createGuestGuard } from '@/shared/middleware/guest-guard';
@@ -369,7 +324,6 @@ import { wireCliStoryboardImageExecutor } from './storyboard-cli-image-wiring';
 // server-ui-assets.ts; auth-callback/OIDC-recovery/onboarding helpers to server-auth-helpers.ts.
 import { resolveExistingPath, sendHtmlResponse, readOptionalTextFile, resolveUiAssetPaths, resolveUiSurfacePages } from './server-ui-assets';
 import { DEFAULT_OPENAI_CODEX_CALLBACK_PORT, redirectLegacyAuthRoute, extractQueryString, isLikelyOpenAiCodexCallback, resolveConfiguredOpenAiCodexCallbackPort, isOpenAiCodexCallbackPortRequest, hasAuthCallbackQuery, isOidcStateMismatchError, buildOidcLoginRestartPath, loginRestartPathForCallbackPath, isOnboardingCompleted } from './server-auth-helpers';
-import { auditSwarmBotWiring } from '@/app/extensions/swarm/validate-swarm-wiring';
 import { registerAppBots, unregisterAppBots } from '@/app/extensions/swarm/swarm-bot-registry';
 import { manifestBotDefinition } from '@/app/extensions/swarm/manifest-bot-definition';
 import { seedPersonaAuthorizations } from '@/features/tool-switch';
@@ -378,25 +332,28 @@ import { createSwarmAppGateMiddleware } from './middleware/swarm-app-gate-middle
 import { ManifestRouteMounterImpl } from './composition/manifest-route-mounter';
 import { TakeoutSliceRegistry } from './takeout-slice-registry';
 import { ManifestServiceRouteScheduleRegistry } from './manifest-service-route-schedule';
-import { HARNESS_FACTORIES, installProviderSwitchSnapshot, waitForBootstrapComplete } from './composition';
-import { ProviderSwitchStore } from '@/features/agent-management';
-import { seedDemoData, shouldSeedDemoData } from '@/features/demo-mode';
+import { waitForBootstrapComplete } from './composition';
+import { runServerBootstrapTasks } from './composition/server-bootstrap-tasks';
+import {
+  mountPublicAndLegacyAuthRoutes,
+  mountMainUiDocumentRoutes,
+  mountProvidersAndConnectorsRoutes,
+  mountDevopsAndJudgeRoutes,
+  mountBudgetAndQueueRoutes,
+  mountContentAndAssistantRoutes,
+  mountCoreObservabilityAndVoiceRoutes,
+  mountAgentDirectoryRoutes,
+  mountGovernanceRoutes,
+  mountWorkflowStudioRoutes,
+  mountCoreTicketingRoutes,
+  mountOpsTelemetryRoutes,
+  mountSystemAuxiliaryRoutes,
+} from './server-auxiliary-routes';
 import { createScheduleController } from './schedule-runtime';
-import { registerSwarmExtensionRoutes } from '@/app/extensions';
 import { startSeriesReconciler } from '@/app/series-orchestrator';
 import { startVideoPump } from '@/app/series-pump';
 import { startAmbientReviewRuntime } from './ambient-review-runtime';
-import { createTicketRoutes } from './routes/ticket-routes';
-import { createWorkspaceRoutes } from './routes/workspace-routes';
 import { registerFastIntakeRoutes } from './routes/fast-intake-routes';
-// Governance activation (Phase 0): mount the weak-spot-hardening scaffolding that
-// shipped additive/off-by-default. These surfaces are read-only and gated by
-// requiresAuth; rbacMiddleware inside them is a no-op until OSHAL_RBAC_ENFORCE=true.
-import { registerAuditExportRoutes } from './routes/audit-export-routes';
-import { registerDataLifecycleRoutes } from './routes/data-lifecycle-routes';
-import { createPrivacyRoutes } from './routes/privacy-routes';
-// registerEvalWallRoutes already imported above (line ~146).
-import { registerLlmGovernanceRoutes } from './routes/llm-governance-routes';
 // Trust hardening (additive): rate-limit presets. No-ops unless their env flags are on.
 // internalMeshLimiter closes the no-XFF gap; expensiveOpLimiter caps intake/LLM per-IP.
 // Strict CSP (staged): cspFromEnv() returns the non-blocking report-only policy by default and
@@ -419,7 +376,6 @@ import { PROMETHEUS_CONTENT_TYPE, renderRuntimeMetrics } from '@/shared/observab
 import { gucEnabled } from '@/shared/services/database/guc-pool';
 import { PostgresRefusalStore } from '@/features/refusal-visibility';
 import { configureRefusalRecorder } from '@/shared/refusal-events';
-import { createRefusalRoutes } from './routes/refusal-routes';
 
 // OpenAPI spec + the /openapi.json, /api-docs and /docs mount — extracted verbatim to
 // ./server-openapi (1000-line cap decomposition).
@@ -836,41 +792,7 @@ function createApp(): express.Application {
     getActiveManifests: () => guestSeedRegistry.svc?.getActiveManifests() ?? Promise.resolve([]),
   }));
 
-  // Facebook OAuth callback alias — the FB app registers /auth/facebook/callback;
-  // forward (preserving ?code&state) to the connectors handler that exchanges + stores.
-  app.get('/auth/facebook/callback', (req, res) => {
-    const qs = req.originalUrl.split('?')[1] || '';
-    res.redirect(302, `/api/connect/facebook/callback${qs ? `?${qs}` : ''}`);
-  });
-
-  // Facebook Data Deletion Request callback (Meta requirement) — ungated, FB calls it.
-  const fbDelete = createFacebookDataDeletionRoute(ctx);
-  app.post('/auth/facebook/data-deletion', express.urlencoded({ extended: false }), fbDelete.post);
-  app.get('/auth/facebook/data-deletion', fbDelete.page);
-
-  // Public legal pages (required by Meta + other OAuth providers).
-  app.get('/privacy', (_req, res) => res.sendFile(path.join(apiDir, 'privacy.html')));
-  app.get('/terms', (_req, res) => res.sendFile(path.join(apiDir, 'terms.html')));
-
-  // Public, surface-level technology explainer for the website (ungated marketing page).
-  const serveTechnology = (_req: express.Request, res: express.Response) =>
-    res.sendFile(path.join(apiDir, 'technology.html'));
-  app.get('/technology', serveTechnology);
-  app.get('/how-it-works', serveTechnology);
-
-  // Legacy auth aliases for old UI pages still using /auth/login|logout|callback
-  app.get('/auth/login', (req, res) => redirectLegacyAuthRoute(req, res, '/login'));
-  app.get('/auth/logout', (req, res) => redirectLegacyAuthRoute(req, res, '/logout'));
-  app.get('/auth/callback', (req, res) => {
-    if (isLikelyOpenAiCodexCallback(req)) {
-      const redirectTo = `/api/openai-codex/oauth/callback${extractQueryString(req.originalUrl)}`;
-      logger.info({ legacyPath: req.originalUrl, redirectTo }, 'Routing /auth/callback to OpenAI Codex callback handler');
-      res.redirect(302, redirectTo);
-      return;
-    }
-
-    redirectLegacyAuthRoute(req, res, '/callback');
-  });
+  mountPublicAndLegacyAuthRoutes(app, apiDir, ctx, logger);
 
   // User info endpoint (works in both real and mock OIDC modes)
   app.get('/api/user', requiresAuth, (req, res) => {
@@ -889,39 +811,8 @@ function createApp(): express.Application {
   // Serve static files from src/api directory (public assets only, if needed)
   // app.use(express.static(apiDir)); // Removed: static files are now protected
 
-  // Explicitly protect main UI files
-  app.get('/chat.html', requiresAuth, (req, res) => {
-    logger.info('GET /chat.html (authenticated) - redirecting to /chat');
-    res.redirect(302, '/chat');
-  });
-  
-  // New OSHAL chat page (standalone version with inlined code)
-  app.get('/chat', requiresAuth, surfaceOnboardingGuard, (req, res) => {
-    logger.info('GET /chat (authenticated) - new OSHAL chat UI');
-    sendHtmlResponse(res, chatStandaloneFile, '/chat');
-  });
-  app.use('/chat-assets', requiresAuth, express.static(chatAssetsDir));
-  app.get('/index.html', requiresAuth, (req, res) => {
-    logger.info('GET /index.html (authenticated)');
-    sendHtmlResponse(res, path.join(apiDir, 'index.html'), '/index.html');
-  });
-  app.get('/ui.html', requiresAuth, (req, res) => {
-    logger.info('GET /ui.html (authenticated)');
-    sendHtmlResponse(res, path.join(apiDir, 'ui.html'), '/ui.html');
-  });
-
-  // Operations Stream surfaces, both registered as ribbon tools by the
-  // intelligent-processing manifest. System Health is read-only for any authenticated caller;
-  // Pipeline Admin is operator-only, enforced by every route it calls rather than by this mount —
-  // the page itself renders an honest operator-only panel on a 403.
-  app.get('/system-health', requiresAuth, (req, res) => {
-    logger.info('GET /system-health (authenticated)');
-    sendHtmlResponse(res, path.join(apiDir, 'system-health.html'), '/system-health');
-  });
-  app.get('/alert-pipeline-admin', requiresAuth, (req, res) => {
-    logger.info('GET /alert-pipeline-admin (authenticated)');
-    sendHtmlResponse(res, path.join(apiDir, 'alert-pipeline-admin.html'), '/alert-pipeline-admin');
-  });
+  // Explicitly protect main UI files and operational views
+  mountMainUiDocumentRoutes(app, requiresAuth, surfaceOnboardingGuard, chatStandaloneFile, chatAssetsDir, apiDir, logger);
 
   // Root route - requires auth, then lands on the deployment's home surface.
   // Bare / lands on the plain cockpit (operator decision 2026-07-07): the framework ribbon
@@ -1171,55 +1062,8 @@ function createApp(): express.Application {
     (app as { __nodePoolState?: unknown }).__nodePoolState = nodePoolState;
   }
 
-  // Protected API routes
-  app.use('/api/providers', requiresAuth, createProviderRoutes());
-  // Bring-Your-Own-LLM connector (any API, any LLM) — mounted ahead of the generic
-  // connectors router so /any-llm/{save,test,models} resolve here, not /:provider/*.
-  app.use('/api/connect/any-llm', requiresAuth, createByoLlmRoutes(ctx));
-  // Free-tier LLM connect + rotation (ADR-064) — the user's own free tiers across many
-  // providers, rotated. Mounted ahead of the generic connectors router so /free-tier/*
-  // (and /free-tier/openrouter/oauth/*) resolve here, not /:provider/*.
-  app.use('/api/connect/free-tier', requiresAuth, createFreeTierRoutes(ctx));
-  // Default brain (ADR-127): which connected provider runs THIS caller's work. Owner-scoped —
-  // every handler reads the authenticated sub and never accepts a subject parameter.
-  app.use('/api/settings/llm-default', requiresAuth, createLlmPreferenceRoutes(ctx));
-  // The operator's hot fallback is HOT because its rungs are probed before they are needed: the
-  // loop keeps the token-free readiness of the fleet chain warm (2026-09-22). Unref'd; 0 disables.
-  startFallbackReadinessLoop(() => resolveHotFallbackChain(null).order);
-  // Connectors / Utilities hub — per-user provider authorization (Gmail, etc.)
-  app.use('/api/connect', connectorCallbackAuth(requiresAuth), createConnectorsRoutes(ctx));
-  // Live connection health (INSTALLER-GAPS G14): GET /api/connect/liveness probes whether the
-  // provider will actually HONOR the stored grant (forced refresh / account read, cached ≤15min)
-  // so the Connections screen's "connected" badge stops trusting a bare DB row.
-  app.use('/api/connect', requiresAuth, createConnectorLivenessRoutes(ctx));
-  // Slack personal feed — live read of the caller's own channels/DMs via the 'slack' connector token.
-  app.use('/api/slack', requiresAuth, createSlackRoutes(ctx));
-  // (Feeds app /api/feeds surface carved to the app store, ADR-085 Wave 3 — the packaged
-  //  route mounts on install. The feeds-indexing ENGINE (startFeedsIndexingCron, below),
-  //  the feeds-curator inline node, the /feeds framework page, and the 'slack' connector
-  //  stay framework-resident per ADR-093.)
-  // Tenant (household) management — shared connection ownership (ADR-042).
-  app.use('/api/tenants', requiresAuth, createTenantRoutes(ctx));
-  // (/api/home is no longer hard-mounted: Smart Home carved to the oshal-applications store,
-  //  ADR-085 Wave 2 — the package mounts it, auth: oidc in its manifest. The home-bot node,
-  //  home-data volume, and the scheduler's home-control branch stay core per ADR-093.)
-  app.get('/utilities', requiresAuth, (_req, res) => {
-    sendHtmlResponse(res, path.join(apiDir, 'utilities.html'), '/utilities');
-  });
-  // ADR-064 — "Run for free" walkthrough: connect your own free AI tokens across providers.
-  app.get('/free-models', requiresAuth, (_req, res) => {
-    sendHtmlResponse(res, path.join(apiDir, 'free-models.html'), '/free-models');
-  });
-  app.use('/api/openai-codex/oauth', createOpenAiCodexOAuthRoutes(requiresAuth));
-  app.use('/api/claude-code/auth', createClaudeCodeAuthRoutes(requiresAuth));
-  // Gemini connect-state (Plan E residual) — status-ONLY: the vendor's own CLI login runs
-  // host-side (Connect-AI.bat / `gemini` once); we never broker Google OAuth. The Utilities
-  // tile polls this until the host login's ~/.gemini/oauth_creds.json (mounted ro) appears.
-  app.use('/api/gemini/auth', createGeminiAuthRoutes(requiresAuth));
-  // Antigravity uses the same authenticated operator-push pattern, writing the vendor JSON into
-  // agy's headless file-storage path on the shared .gemini mount.
-  app.use('/api/antigravity/auth', createAntigravityAuthRoutes(requiresAuth));
-  app.use('/api/facebook-auth', createFacebookAuthRoutes(requiresAuth));
+  // Protected API routes & Connectors hub
+  mountProvidersAndConnectorsRoutes(app, ctx, requiresAuth, apiDir);
   // (/api/email is no longer hard-mounted: the Email Summarizer surface carved to the
   //  oshal-applications store, ADR-085 Wave 3 — the installed package's manifest mounts it
   //  (auth: oidc). The comms machinery stays core per ADR-093: the email-bot container +
@@ -1255,13 +1099,11 @@ function createApp(): express.Application {
   //  + social-writer nodes, the inbox-ingest Signals engine (oshal_inbox_messages), the
   //  linkedin/twitter/meta-business connectors, and the kernel-resident LinkedIn AI Content
   //  Assistant at /api/linkedin-assistant (its own no-post gate) stay core per ADR-093.)
-  app.use('/api/devops', requiresAuth, createDevopsRoutes(ctx, apiDir));
-  app.use('/api/forge', requiresAuth, createForgeRoutes(apiDir)); // Bot Forge — front door for agentic swarm injection (codex-packer engine)
+  mountDevopsAndJudgeRoutes(app, ctx, requiresAuth, apiDir);
   // serviceSecretOr: the ADR-139 handle relay redeems a files-browser artifact by re-fetching
   // /api/files/download AS the minting caller over the internal rail — a session-only mount
   // 401s that loopback fetch and every doc-hub "Send to…" dispatch dies as a 502.
   app.use('/api/files', serviceSecretOr(requiresAuth), createFilesRoutes(ctx, apiDir));
-  app.use('/api/judge', requiresAuth, createJudgeRoutes(ctx));  // shared LLM-judge/grading service — quality-judge concierge (a0…0053)
   // /api/storage now mounts from the storage app package (ADR-085 carve; auth: oidc in its manifest).
   // ADR-045 #2 — caller-scoped graph (replaces the retired external graph endpoint). The outer
   // SEC-01 gate keeps OIDC/PAT authoritative, accepts route-bound durable bearer delegation,
@@ -1301,32 +1143,8 @@ function createApp(): express.Application {
   if (isLocalAuthEnabled()) {
     app.use(createLocalAuthRoutes(ctx.pool, { microsoftLogin: microsoftLoginEnabled === true }));
   }
-  // Cost-governance — spend budgets (oshal_budgets) + spend reads. requiresAuth-gated; the
-  // factory scopes cross-user reads/writes to the operator allowlist internally.
-  app.use('/api/budgets', createBudgetRoutes(requiresAuth, { pool: ctx.pool }));
-  // Harvest console — the illustrative site/soil catalogue + one closed-loop simulate call over
-  // the marine and ground slices. Stateless (no pool: the budget is pure arithmetic), but the
-  // factory applies requiresAuth per-route because the integration loop is synchronous on this
-  // process — an anonymous caller could otherwise burn the controller's only thread.
-  // Inbound A2A gateway (BACKLOG Plan F): whole surface 404s unless A2A_GATEWAY_ENABLED=true;
-  // the well-known card is public-by-spec, POST /api/a2a uses per-agent Bearer (A2A-native,
-  // NOT OIDC), /api/a2a/agents is requiresAuth + operator-only. message/send files a REAL
-  // ticket on the ADR-083 call-out rails — the controller never names a bot, never calls an LLM.
-  registerA2aGatewayRoutes(app, requiresAuth, {
-    pool: ctx.pool, ticketService: ctx.ticketService, messageStore: ctx.messageStore,
-  });
-  // Run-trace — read-model that assembles one ticket's execution waterfall (phases -> bot
-  // executions -> per-LLM-call cost) from already-persisted rows. requiresAuth-gated; per-ticket
-  // ownership (owner_sub; operator sees any) is enforced inside TraceService, no existence leak.
-  app.use('/api/trace', createTraceRoutes(requiresAuth, { pool: ctx.pool }));
-  // Queue dead-letter queue — operator list + requeue over oshal_queue_dlq (migration 081).
-  // requiresAuth + requiresOperator inside the factory; the quarantining DeadLetterService
-  // instance lives in the swarm extension — this factory builds a list/requeue-only sibling
-  // over the same DB state.
-  app.use('/api/queue/dlq', createQueueDlqRoutes(requiresAuth, { pool: ctx.pool, ticketService: ctx.ticketService }));
-  // Notification preference center — self-scoped per-topic routing (own Gmail / own Twilio /
-  // Telegram-when-token-lands / none) + quiet hours. Factory applies requiresAuth per-route.
-  app.use('/api/notify', createNotifyRoutes(ctx, requiresAuth));
+  // Cost governance, A2A gateway, run traces, queue DLQ, and notify routes
+  mountBudgetAndQueueRoutes(app, ctx, requiresAuth);
   startInboxIngestCron(ctx); // cron: capture all new mail (timestamped, categorized) into the store
   startFeedsIndexingCron(ctx); // cron: index each connected user's Slack messages into feed_messages
   startGovContractingCron(ctx); // cron: gated daily SAM.gov capture scan + draft enqueue (no-op unless GOVCON_CRON=1)
@@ -1337,10 +1155,7 @@ function createApp(): express.Application {
     loadApp: (manifestPath, scopeMeta) => swarmAppService.loadApp(manifestPath, scopeMeta),
   });
   startUpdateCheckCron(); // cron: daily update check (no DB access, network = 2 anonymous GitHub reads/day)
-  app.use('/api/content', requiresAuth, createContentRoutes(ctx, apiDir));
-  // LinkedIn AI Content Assistant — social north-star: draft on social-writer → quality-judge
-  // score → one refine under SOCIAL_JUDGE_BAR → human approve/publish (ADR-036 accountable bots).
-  app.use('/api/linkedin-assistant', requiresAuth, createLinkedInAssistantRoutes(ctx, apiDir));
+  mountContentAndAssistantRoutes(app, ctx, requiresAuth, apiDir);
   // /api/youtube-kids is no longer hard-mounted: Kid Lens was carved out to the
   // oshal-applications store (ADR-085 Wave 1) — its route dynamic-mounts from the installed
   // package via ManifestRouteMounter when the app is installed + active.
@@ -1553,13 +1368,8 @@ function createApp(): express.Application {
   // Eval Wall (ADR-063 §eval-wall): the green-wall dashboard — success rate, cost, latency,
   // retries, quality, security posture over the persisted eval_runs history. requiresAuth-gated.
   registerEvalWallRoutes(app, ctx, requiresAuth);
-  app.use('/api/config', requiresAuth, createConfigRoutes());
-  app.use('/api/logs', requiresAuth, createLogsRoutes(ctx));
-  registerSwarmExtensionRoutes(app, requiresAuth, ctx.swarm);
-  app.use('/api/tasks', requiresAuth, createTaskRoutes(ctx));
-  app.use('/api/stream', requiresAuth, createStreamRoutes(ctx));
-  // ctx → per-user TTS provider/voice prefs (JVV-012) ride the same auth-gated mount.
-  app.use('/api/voice', requiresAuth, createVoiceRoutes(ctx));
+  // Observability, logging, tasks, streaming, and voice routes
+  mountCoreObservabilityAndVoiceRoutes(app, ctx, requiresAuth);
   // Swarm application REST + UI profile surfaces (gate middleware + instance
   // already set up before the app-owned route mounts).
   // ADR-148 swarm root: roles (root | admin | user) are the operator authority, with the env
@@ -1605,43 +1415,11 @@ function createApp(): express.Application {
   // Hard time cap as a safety valve: on a box where the DB never comes up, the bounded
   // bootstrap wait + autoload retries can hold this window open for minutes — after the cap
   // the fallback answers real 404s regardless, so a broken dependency can't 503 /api forever.
-  let packageRoutesSettled = false;
-  const bootWindowDeadline = Date.now() + Number(process.env.OSHAL_API_BOOT_WINDOW_MS ?? 180_000);
-  // The LLM provider switch rows (migration 147): per-bot row > fleet default > registry literal.
-  // Read once after the bootstrap so the table exists, then refreshed on a timer. Until the first
-  // read lands every bot resolves from the registry literal — the no-row case, unchanged.
-  if (ctx.pool) {
-    const switchPool = ctx.pool;
-    void runWithSystemIdentity(() => waitForBootstrapComplete().then(() => installProviderSwitchSnapshot(
-      new ProviderSwitchStore(switchPool), Object.keys(HARNESS_FACTORIES),
-    ))).catch((err) => {
-      logger.error({ err }, 'Provider switch snapshot could not be installed — bots resolve from the registry literal');
-    });
-  }
-  void runWithSystemIdentity(() => waitForBootstrapComplete().then((migrated) => {
-    if (!migrated) logger.warn('Swarm app auto-load proceeding without confirmed DB bootstrap completion');
-    return swarmAppService.autoLoadAllWithRetry();
-  }).then(async () => {
-    // Package routes are as mounted as they will get: the final /api fallback may now answer
-    // a hard 404 instead of the boot-window 503 (see createApiFallbackHandler below). Flipped
-    // BEFORE the wiring audit + demo seed — those don't mount routes.
-    packageRoutesSettled = true;
-    // Fail-loud guard: a manifest bot with no endpoint-registry entry compiles green but throws at
-    // execute time (the "compiles-but-fails" trap). Audit after load so any gap is screamed at boot.
-    await auditSwarmBotWiring(swarmAppService);
-    // Demo-mode seeding runs AFTER manifests load so per-row dynamic UIs
-    // (class icons) register against the same in-memory tool registry
-    // that the LM manifest just populated.
-    if (shouldSeedDemoData()) {
-      const summary = await seedDemoData(ctx.pool);
-      logger.info({ summary }, 'Demo-mode seed summary');
-    }
-  }).catch(err => {
-    // Fail open to real 404s: autoLoadAllWithRetry has exhausted its retries, so routes that
-    // aren't mounted now are not coming — a permanent 503 here would mask genuine misses.
-    packageRoutesSettled = true;
-    logger.error({ err }, 'Swarm app auto-load failed during boot (non-fatal)');
-  }));
+  const bootstrapTasks = runServerBootstrapTasks({
+    pool: ctx.pool,
+    swarmAppService,
+    logger,
+  });
   app.use('/api/ui', requiresAuth, createUiProfileRoutes(new UIProfileService(), swarmAppService, { runtime: applicationAuthorization.runtime, resolveActor: applicationAuthorization.resolveActor }));
   app.use('/api/ui', requiresAuth, createWorkspaceNavigationRoutes({ apps: swarmAppService,
     runtime: applicationAuthorization.runtime, resolveActor: applicationAuthorization.resolveActor, access: appAccessService }));
@@ -1668,21 +1446,10 @@ function createApp(): express.Application {
   app.use('/api/tools', serviceSecretOr(requiresAuth), createInternalToolBridgeRoutes(ctx, {
     authorizationTool: applicationAuthorization.authorizationTool, resolveActor: applicationAuthorization.resolveActor,
   }));
-  app.use('/api/tools/verify', requiresAuth, createVerificationRoutes(ctx.verificationController));
-  app.use('/api/agents', requiresAuth, createAgentProfileRoutes(ctx.agentProfileController));
-  app.use('/api/agents', requiresAuth, createAgentToolRoutes(ctx.agentToolController));
-  app.use('/api/agents', requiresAuth, createAgentStatusRoutes(ctx.pool));
+  mountAgentDirectoryRoutes(app, ctx, requiresAuth);
 
-  // Governance activation (Phase 0): audit export + posture, eval green-wall, LLM
-  // budget/quota status. All read-only and behind requiresAuth. Controls stay
-  // permissive until their enforce flags are set (OSHAL_RBAC_ENFORCE / OSHAL_LLM_BUDGETS).
-  registerAuditExportRoutes(app, ctx, requiresAuth);
-  // Data lifecycle: per-user export + two-step delete, mounted at /api/me
-  // (segment-bounded — does not shadow /api/memory). Always auth-gated.
-  registerDataLifecycleRoutes(app, ctx, requiresAuth);
-  app.use('/api/privacy', requiresAuth, createPrivacyRoutes(ctx));
-  // registerEvalWallRoutes already mounted above (line ~1095).
-  registerLlmGovernanceRoutes(app, ctx, requiresAuth);
+  // Governance: audit export, data lifecycle, privacy, and LLM governance
+  mountGovernanceRoutes(app, ctx, requiresAuth);
   // NOT wrapped in requiresAuth on purpose: this route has its own fail-closed
   // authorizeRemoteClient gate (valid OIDC session OR REMOTE_CLIENT_SHARED_SECRET
   // bearer). Wrapping it in requiresAuth would reject the bearer path that remote
@@ -1727,20 +1494,8 @@ function createApp(): express.Application {
   // (/api/presentations is no longer mounted: the legacy Presentron HTTP sidecar proxy was
   //  retired — its presentron:8080 backend is gone and the render path moved to the in-repo
   //  deck engine. The packaged AI Office surface owns /api/presentations/sections.)
-  // RCA analysis routes — analysis runs on the rca-specialist bot via ctx
-  // (executeBotOrInline budget gate); honest 501/503 when disabled/unreachable.
-  app.use('/api/rca', requiresAuth, createRcaRoutes(ctx));
-  app.use('/api/process-lab', requiresAuth, createProcessLabRoutes(ctx));
-  app.use('/api/workflow-studio', requiresAuth, createWorkflowStudioRoutes({ pool: ctx.pool }));
-  // Talk-to-build concierge: POST /api/workflow-studio/chat runs the reason-only workflow-assistant
-  // bot (051) via the orchestrator and saves the graph it emits, so the canvas redraws as the
-  // operator describes it. Standard concierge transport (like movies/spotify). See docs/building-a-bot.md.
-  app.use('/api/workflow-studio', requiresAuth, createWorkflowStudioAssistRoutes(ctx));
-  // Run history + run inspector (studio Runs panel): GET /runs (owner-scoped) + GET /runs/:runId.
-  // Read-only view over workflow_runs / workflow_run_steps recorded by the graph dispatch worker.
-  app.use('/api/workflow-studio', requiresAuth, createWorkflowRunRoutes({ pool: ctx.pool }));
-  // Batch Job runtime/resource telemetry: read-only report over oshal_batch_job_runs.
-  app.use('/api/batch-jobs', requiresAuth, createBatchJobTelemetryRoutes({ pool: ctx.pool, apiDir }));
+  // RCA, process-lab, workflow studio, and batch-job telemetry routes
+  mountWorkflowStudioRoutes(app, ctx, requiresAuth, apiDir);
   // (/api/presentations/sections is no longer hard-mounted: AI Office carved to the
   //  oshal-applications store, ADR-085 Wave 2 — the package mounts it, auth: oidc in its
   //  manifest. The legacy Presentron HTTP sidecar proxy at /api/presentations has been
@@ -1761,80 +1516,8 @@ function createApp(): express.Application {
   // /api/lora is no longer hard-mounted: LoRA Studio was carved out to the oshal-applications
   // store (ADR-085 Wave 1) — its split mounts (public self-guarded /api/lora/ingest + oidc
   // /api/lora) dynamic-mount from the installed package via ManifestRouteMounter.
-  app.use('/api/checkpoints', requiresAuth, createCheckpointRoutes(ctx));
-  app.use('/api/optimize', requiresAuth, createOptimizeRoutes(ctx));
-  app.use('/api/token-chase', requiresAuth, createTokenChaseRoutes(apiDir, ctx));
-  app.use('/api/memory', requiresAuth, createMemoryRoutes(ctx));
-  // In-product help: docs/guides rendered for the signed-in user. Auth-gated like every other
-  // surface — the guides describe operator-gated screens, so they are not anonymous-callable.
-  app.use('/api/help', requiresAuth, createHelpRoutes());
-
-  // Internal ticketing system routes
-  app.use('/api/tickets', requiresAuth, createTicketRoutes(ctx));
-  app.use('/api/workspaces', requiresAuth, createWorkspaceRoutes(ctx));
-
-  // Cockpit API routes (projects, tickets, metrics) — mounted first so ticket-store-backed
-  // hierarchy takes priority over the task-explorer fallback
-  const cockpitApiRouter = createCockpitRoutes(ctx);
-  app.use('/api/v1', requiresAuth, cockpitApiRouter);
-
-  const taskExplorerApiRouter = createTaskExplorerRoutes(ctx);
-  app.use('/api/v1', requiresAuth, taskExplorerApiRouter);
-
-  // Intake assistant routes (conversational ticket creation)
-  if (ctx.ticketService) {
-    const { createIntakeAssistantRoutes } = require('./routes/intake-assistant-routes');
-    app.use('/api/v1/intake', requiresAuth, createIntakeAssistantRoutes(ctx.ticketService));
-  }
-
-  // Prometheus Alertmanager webhook -> incident ticket intake (swarm self-healing).
-  // Machine-to-machine: mounted WITHOUT requiresAuth; self-guards via ALERT_WEBHOOK_TOKEN.
-  // ADR-119 P3: the FR-E2 analyst budget gate reads its actuals from the cost ledger via
-  // the pool-backed reader; a pool-less run wires null and the gate passes through.
-  if (ctx.ticketService) {
-    const { createAlertmanagerRoutes } = require('./routes/alertmanager-routes');
-    const { createPoolRcaSpendReader } = require('./routes/alertmanager-rca-spend');
-    app.use('/api/alerts', createAlertmanagerRoutes(ctx.ticketService, {
-      rcaSpend: ctx.pool ? createPoolRcaSpendReader(ctx.pool) : null,
-      // With a pool the webhook LANDS the delivery before anything reads it and answers 202 after
-      // the commit (503 when the landing fails, so the sender retries). Without one it keeps the
-      // in-memory path exactly as before, so a pool-less run is unchanged.
-      pool: ctx.pool ?? null,
-    }));
-  }
-
-  // Operations Stream read + admin surface. Reads are open to any authenticated caller; every
-  // mutating route additionally carries requiresOperator on the route itself, so re-mounting this
-  // line cannot silently widen it.
-  if (ctx.pool) {
-    const { createOpsPipelineRoutes } = require('./routes/ops-pipeline-routes');
-    app.use('/api/ops/alert-pipeline', createOpsPipelineRoutes({ pool: ctx.pool, requiresAuth }));
-    app.use('/api/ops/refusals', createRefusalRoutes(refusalStore, requiresAuth));
-  }
-
-  // Inbound SMS webhook (Twilio replies) -> POST /api/sms/inbound. Machine-to-machine: mounted
-  // WITHOUT requiresAuth; self-guards with the Twilio request signature (X-Twilio-Signature vs
-  // TWILIO_AUTH_TOKEN) and 503s when that token is unset, so it is disabled-by-default and safe to
-  // mount unconditionally, mirroring the Alertmanager + connector-webhook ingresses.
-  // With a pool the sink is CALLER-SCOPED: the sender's number resolves to its linked owner
-  // through channel_links and the message runs on THAT user's accountable bot (an unlinked number
-  // reaches nobody). Without a pool there is no identity store, so it keeps the log-only default.
-  {
-    if (ctx.pool) {
-      const { createWiredSmsInboundRoutes } = require('./routes/sms-inbound-wiring');
-      app.use('/api/sms', createWiredSmsInboundRoutes(ctx));
-    } else {
-      const { createSmsInboundRoutes } = require('./routes/sms-inbound-routes');
-      app.use('/api/sms', createSmsInboundRoutes());
-    }
-  }
-
-  // Personal-Intelligence surface (ADR-058) — the per-user vault. Start-param gated inside the
-  // factory (ENABLE_PERSONAL_INTELLIGENCE); auth-walled so ownerSub comes from the session.
-  {
-    const { createPersonalRoutes } = require('./routes/personal-routes');
-    app.use('/api/personal', requiresAuth, createPersonalRoutes());
-  }
+  mountCoreTicketingRoutes(app, ctx, requiresAuth, apiDir);
+  mountOpsTelemetryRoutes(app, ctx, requiresAuth, refusalStore);
 
   // (/api/world unmounted: World Intelligence carved to the app store, ADR-085 Wave 3 —
   //  the package mounts the same path with the same public/self-guarded posture; the
@@ -1862,21 +1545,7 @@ function createApp(): express.Application {
   // Browser users still go through OIDC; trusted service calls must present SWARM_SERVICE_SECRET.
   app.use('/api', serviceSecretOr(requiresAuth), createMessageRoutes(ctx));
 
-  // ── Onboarding, Config Health, What's New, Swarm Presets ──
-  const { createConfigHealthRoutes } = require('./routes/config-health-routes');
-  const { createOnboardingRoutes } = require('./routes/onboarding-routes');
-  const { createWhatsNewRoutes } = require('./routes/whats-new-routes');
-  const { createSwarmPresetRoutes } = require('./routes/swarm-preset-routes');
-  app.use('/api', requiresAuth, createConfigHealthRoutes(ctx));
-  app.use('/api', requiresAuth, createOnboardingRoutes(ctx));
-  const { createAppHomePreferenceRoutes } = require('./routes/app-home-preferences');
-  app.use('/api/home/preferences', requiresAuth, createAppHomePreferenceRoutes(ctx));
-  app.use('/api', requiresAuth, createWhatsNewRoutes());
-  app.use('/api', requiresAuth, createSwarmPresetRoutes(ctx));
-
-  // ── Haven Home Assistant ──
-  const { createHavenRoutes } = require('./routes/haven-routes');
-  app.use('/api', requiresAuth, createHavenRoutes(ctx));
+  mountSystemAuxiliaryRoutes(app, ctx, requiresAuth);
 
   // The legacy monitoring-platform graph/OpenSearch proxy routes + pipeline snapshotter
   // were archived (that product integration is retired). They were already disabled
@@ -1893,7 +1562,7 @@ function createApp(): express.Application {
   // browser/iframe navigations — so a cockpit surface that loads mid-boot (the 2026-07-24
   // /api/sat/app report) self-heals instead of sitting on a hard 404.
   const { createApiFallbackHandler } = require('./routes/api-fallback');
-  app.use('/api', createApiFallbackHandler(() => packageRoutesSettled || Date.now() >= bootWindowDeadline));
+  app.use('/api', createApiFallbackHandler(bootstrapTasks.isBootWindowSettledOrExpired));
 
   app.use((error: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {
     const oidcLoginRestartBase = loginRestartPathForCallbackPath(req.path);

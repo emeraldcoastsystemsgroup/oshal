@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Extend the spreadable request slice with providerConfigRequired so dispatch chokepoints can distinguish an unavailable authority record from an intentional compatibility-mode request.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Resolve ADR-034 §1a tier 3 (registry apiType) when the per-agent agent_config record carries no providerId. The resolver read ONLY agent_config, but that table is written when something CHANGES a bot's provider — a bot that has always run its registry-declared provider has no row, so the resolver reported "no actionable record" while the registry declared one. Combined with the unconditional providerConfigRequired marker the bot refused before task creation and the ticket escalated: 33 tickets on the operator box carry that message, including a nightly oshal-dev schedule that failed for two weeks, and 13 registry bots with a dedicated bot-node had no row at all. Tier 3 applies ONLY when tier 2 yields nothing, so every bot that resolves today is stamped byte-identically, and an agent neither store declares still resolves to null and keeps the fail-closed refusal.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The switch rows (migration 147, "a bot's LLM provider is a row in a table") are tier 1 of the carried record: an injected resolver answers the bot's own switch row, else the fleet default for a registry LLM bot; only then do tier 2 (agent_config providerId) and tier 3 (registry apiType) apply, byte-identically. A REFUSED switch (an id this build cannot run) is carried as written and logged at ERROR here, so the bot's own switch seam refuses the dispatch with the id in its reason rather than silently running the registry provider.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Retain completed work from configured failover (BACKLOG #1660): carry fallbackOrder from ProviderSwitchRow in DispatchRuntimeParams and resolveDispatchConfigFields.
  */
 
 /**
@@ -51,6 +52,7 @@ export interface DispatchRuntimeParams {
   providerId: string;
   model?: string;
   configVersion?: number;
+  fallbackOrder?: readonly string[] | null;
 }
 
 /**
@@ -62,7 +64,7 @@ export type RuntimeParamsResolver = (agentId: string) => Promise<DispatchRuntime
 /** The spreadable BotNodeRequest slice a resolved record populates. */
 export type DispatchConfigFields = Partial<Pick<
   BotNodeRequest,
-  'providerId' | 'model' | 'configVersion' | 'providerConfigRequired'
+  'providerId' | 'model' | 'configVersion' | 'providerConfigRequired' | 'fallbackOrder'
 >>;
 
 /**
@@ -120,6 +122,7 @@ export function createAgentConfigRuntimeParamsResolver(
         providerId: switched.providerId,
         ...(switched.model ? { model: switched.model } : {}),
         ...(configVersion !== undefined ? { configVersion } : {}),
+        ...(switched.fallbackOrder && switched.fallbackOrder.length > 0 ? { fallbackOrder: switched.fallbackOrder } : {}),
       };
     }
     const recordProviderId = values ? readNonEmptyString(values.providerId) : null;
@@ -146,18 +149,27 @@ export function createAgentConfigRuntimeParamsResolver(
 function readSwitchRow(
   resolver: ProviderSwitchResolver | undefined,
   agentId: string,
-): { providerId: string; model: string | null } | null {
+): { providerId: string; model: string | null; fallbackOrder?: readonly string[] | null } | null {
   if (!resolver) return null;
   const switched = resolver(agentId);
   if (!switched || switched.source === 'registry') return null;
+  const fallbackOrder = switched.row?.fallbackOrder;
   if (!switched.ok) {
     logger.error(
       { agentId, source: switched.source, providerId: switched.providerId, reason: switched.reason },
       'Provider switch row names an id this build cannot run — carrying it so the bot refuses the dispatch by name',
     );
-    return { providerId: switched.providerId, model: readNonEmptyString(switched.row.modelId) };
+    return {
+      providerId: switched.providerId,
+      model: readNonEmptyString(switched.row.modelId),
+      fallbackOrder,
+    };
   }
-  return { providerId: switched.providerId as string, model: switched.modelId };
+  return {
+    providerId: switched.providerId as string,
+    model: switched.modelId,
+    fallbackOrder,
+  };
 }
 
 /**
@@ -208,6 +220,7 @@ export async function resolveDispatchConfigFields(
       providerId: params.providerId,
       ...(params.model ? { model: params.model } : {}),
       ...(params.configVersion !== undefined ? { configVersion: params.configVersion } : {}),
+      ...(params.fallbackOrder && params.fallbackOrder.length > 0 ? { fallbackOrder: params.fallbackOrder } : {}),
     };
   } catch (err) {
     logger.warn(
