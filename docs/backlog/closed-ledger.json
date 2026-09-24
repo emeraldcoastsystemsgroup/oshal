@@ -130,6 +130,12 @@
     "title": "Daily Trade Recap's Home tiles count a table the production path never writes",
     "pr": "248 (store)",
     "evidence": "Daily Trade Recap 1.3.0 landed in store PR #248, updating routes/home-summary.js and src-routes/home-summary.ts to read the actual production pipeline records: closed Eastern sessions without published reports (recaps-missed warning), oshal_trading_strategy_journal kind='report' source='daily-report' (recaps-recorded), oshal_trading_daily_equity (trading-sessions), and tickets at approval_required (recaps-awaiting-review). Unit suite scripts/media-home.test.cjs passed 36/36 and check-catalog verified 61 packages. Deployed to live stack in /app/workspace-shared/deployed-apps/daily-trade-recap (SHA 633fc0f)."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "Deploy verification cannot clean its Jarvis task while oshal-engineering is inactive",
+    "pr": "804",
+    "evidence": "PR #804 removed routes declarations from swarm-apps/oshal-engineering.yaml and swarm-apps-build/oshal-engineering.yaml, restoring framework ownership of kernel routes /api/tasks and /api/workflow-studio so SwarmAppService ownerOf returns null instead of claiming ownership under oshal-engineering. When oshal-engineering is inactive, createSwarmAppGateMiddleware allows requests to pass to createTaskRoutes instead of returning HTTP 503 application_inactive. Pinned by tests/unit/deploy-verify-cleanup-route-ownership.spec.ts (4/4 pass) proving DELETE /api/tasks/:taskId succeeds with 204 No Content and leaves chat_tasks and chat_messages absent while foreign user cleanup remains refused. Isolated deploy verify test runner from host .env and updated inline refusal expectation in tests/unit/deploy-live-verification.spec.ts (57/57 pass)."
   }
 ]
 
