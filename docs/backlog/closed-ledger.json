@@ -124,6 +124,12 @@
     "title": "Arming a second autopilot leg is a deliberate, gated act",
     "pr": "244 (store), 746, 802",
     "evidence": "Core PR #746 added arm_ack_at/arm_ack_by to oshal_trading_books via migration 153 and resolveScheduleBook() hard-skip for unacknowledged non-legacy books, proven in tests/unit/trading-arm-acknowledgement.spec.ts (6/6 pass). Store PR #244 implemented POST /api/trading/accounts/books/:bookId/arm-ack (428 gated), GET /accounts armAckRequired/armAckAt/armAckBy, and the operator-facing confirm UI stating ADR-159 truth. Verified by trading/tests/trading-arm-acknowledgement.spec.ts (12/12 pass) and deployed to live stack as Intelligent Trades 1.20.0 (SHA fa78f27f)."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "Daily Trade Recap's Home tiles count a table the production path never writes",
+    "pr": "248 (store)",
+    "evidence": "Daily Trade Recap 1.3.0 landed in store PR #248, updating routes/home-summary.js and src-routes/home-summary.ts to read the actual production pipeline records: closed Eastern sessions without published reports (recaps-missed warning), oshal_trading_strategy_journal kind='report' source='daily-report' (recaps-recorded), oshal_trading_daily_equity (trading-sessions), and tickets at approval_required (recaps-awaiting-review). Unit suite scripts/media-home.test.cjs passed 36/36 and check-catalog verified 61 packages. Deployed to live stack in /app/workspace-shared/deployed-apps/daily-trade-recap (SHA 633fc0f)."
   }
 ]
 
