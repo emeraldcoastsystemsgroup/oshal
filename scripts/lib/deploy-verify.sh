@@ -150,8 +150,8 @@ oshal_verify_bot_role_grant() {
   local db="${OSHAL_VERIFY_DB_CONTAINER:-oshal-local-db}"
   local db_user="${OSHAL_VERIFY_DB_USER:-oshal}" db_name="${OSHAL_VERIFY_DB_NAME:-oshal}"
   local role="${OSHAL_VERIFY_BOT_ROLE:-oshal_bot}"
-  local helper="${OSHAL_VERIFY_GRANT_FUNCTION:-public.oshal_application_execution_claims(text,text,text,boolean)}"
-  local grant_sql="${OSHAL_VERIFY_GRANT_SQL:-scripts/migrations/142-application-execution-claims-helper.sql}"
+  local helper="${OSHAL_VERIFY_GRANT_FUNCTION:-public.oshal_application_execution_claims(text,text,boolean)}"
+  local grant_sql="${OSHAL_VERIFY_GRANT_SQL:-scripts/migrations/158-narrow-application-execution-claims-helper.sql}"
   local answer
   answer=$(docker exec "$db" psql -U "$db_user" -d "$db_name" -Atc \
     "SELECT has_function_privilege('$role', '$helper', 'EXECUTE')" 2>&1 | tr -d '[:space:]')

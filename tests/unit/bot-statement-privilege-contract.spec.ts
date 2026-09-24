@@ -87,6 +87,7 @@ const fixture = new DisposablePostgres({
     '127-application-authorization.sql',
     '142-application-execution-claims-helper.sql',
     '152-swarm-memory-reader-helper.sql',
+    '158-narrow-application-execution-claims-helper.sql',
   ],
 });
 
@@ -361,8 +362,8 @@ const BOT_STATEMENTS: Array<{ name: string; site: string; sql: string; params: (
   {
     name: 'oshal_application_execution_claims — the ADR-149 posture answer',
     site: 'src/app/application-execution-ownership.ts',
-    sql: 'SELECT app, protected FROM oshal_application_execution_claims($1, $2, $3, $4)',
-    params: () => ['bots', AGENT, null, true],
+    sql: 'SELECT app, protected FROM oshal_application_execution_claims($1, $2, $3)',
+    params: () => ['bots', AGENT, true],
   },
   {
     name: 'persona_layers — global layers',

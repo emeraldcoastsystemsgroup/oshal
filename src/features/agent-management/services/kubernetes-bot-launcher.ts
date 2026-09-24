@@ -152,6 +152,7 @@ export function buildBotDeployment(
               args: ['exec bash /app/scripts/bot-entrypoint.sh'],
               envFrom: [
                 { configMapRef: { name: 'oshal-shared-env' } },
+                { secretRef: { name: 'oshal-shared-secret' } },
                 { secretRef: { name: 'oshal-bot-env', optional: true } },
               ],
               env,

@@ -127,32 +127,6 @@ The P8 surfaced-package gate is first-class rather than hidden in `extraEnv`:
 `ui.dynamic`, or a group `toolbar` names a concierge. Set it to `warn` only for temporary
 observation or rollback; any other value makes manifest reads fail closed.
 
-**Runtime-launched bots do not boot on the default posture. This is a chart 0.5.0 regression.**
-A bot the controller launches at runtime (see [Dynamic bots](#dynamic-bots--apps-bring-their-own))
-is built by `src/features/agent-management/services/kubernetes-bot-launcher.ts`, not by this
-chart. Its `envFrom` names `oshal-shared-env` and `oshal-bot-env` only, so it does not get
-`oshal-shared-secret`: no `JWT_SECRET`, `ARANGO_ROOT_USER` or `ARANGO_ROOT_PASSWORD`. Chart 0.4.0
-kept those keys in `oshal-shared-env`, so such a bot booted. Since 0.5.0 it fails to boot,
-because the ConfigMap sets `NODE_ENV=production` and the bot's config
-(`any-bot/server/utils/config.js`) then throws `JWT_SECRET must be set in production`. That is
-true of every runtime-launched bot with `rbac.botLauncher: true`, the default, until one of two
-things happens. Either the launcher reads `oshal-shared-secret` itself, a one-line core fix (add
-`{ secretRef: { name: 'oshal-shared-secret' } }` to its `envFrom`) awaiting approval in
-[the backlog](../../../docs/BACKLOG.md), or `oshal-bot-env` carries the keys because you copied
-them there. Chart-declared bots are not affected. With `rbac.botLauncher` on, `helm install`
-prints the copy commands:
-
-```bash
-kubectl -n oshal create secret generic oshal-bot-env   # only if it does not exist yet
-kubectl -n oshal patch secret oshal-bot-env --type merge \
-  -p "{\"data\":$(kubectl -n oshal get secret oshal-shared-secret -o jsonpath='{.data}')}"
-```
-
-The copy is a snapshot. Run the patch again after you change `swarm.jwtSecret`,
-`infra.arangodb.rootUser` or `infra.arangodb.rootPassword`. With the default
-`botDefaults.envSecret: oshal-bot-env`, chart-declared bots list `oshal-bot-env` after
-`oshal-shared-secret`, so a stale copy would override the new value for them too.
-
 ## Cockpit UI profiles
 
 The cockpit's layout — Home and Jarvis leading the sidebar, the top workspace navigation, every

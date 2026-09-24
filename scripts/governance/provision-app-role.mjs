@@ -28,6 +28,7 @@ export const EXPECTED_HELPERS = new Set([
   'oshal_owns_task(text)',
   'oshal_owns_ticket(uuid)',
   'oshal_application_execution_claims(text,text,text,boolean)',
+  'oshal_application_execution_claims(text,text,boolean)',
   'oshal_swarm_memory_readable(text[],text)',
 ]);
 /**
@@ -37,7 +38,7 @@ export const EXPECTED_HELPERS = new Set([
 export const BOT_HELPERS = new Set([
   'oshal_owns_task(text)',
   'oshal_owns_ticket(uuid)',
-  'oshal_application_execution_claims(text,text,text,boolean)',
+  'oshal_application_execution_claims(text,text,boolean)',
   'oshal_swarm_memory_readable(text[],text)',
 ]);
 const FINAL_PHASE_BEGIN = '-- OSHAL_FINAL_PHASE_BEGIN';

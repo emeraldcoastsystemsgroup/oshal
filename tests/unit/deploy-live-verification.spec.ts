@@ -73,7 +73,7 @@ describe('scripts/lib/deploy-verify.sh — the three checks a deploy is not fini
     expect(run.stdout).toContain('VERIFY FAIL  bot-role-grant');
     // The remedy has to be runnable as typed, not a pointer to "the migration" - and it has to name
     // a file that exists, which the migration-140 remedy stopped doing when that migration was removed.
-    expect(run.stdout).toContain('docker cp scripts/migrations/142-application-execution-claims-helper.sql');
+    expect(run.stdout).toContain('docker cp scripts/migrations/158-narrow-application-execution-claims-helper.sql');
     expect(run.stdout).toMatch(/psql -U \w+ -d \w+ -f \/tmp\/ownership-helper\.sql/);
     // And it has to say what the next api boot does to it. The grants this replaced were stripped on
     // every boot; this one is converged BACK by the same provisioner, so a grant still missing after a
@@ -86,7 +86,7 @@ describe('scripts/lib/deploy-verify.sh — the three checks a deploy is not fini
   it('asserts the privilege the ADR-149 posture guard actually needs: EXECUTE on the derived helper', () => {
     const run = verify();
     expect(run.calls[0]).toContain(
-      "has_function_privilege('oshal_bot', 'public.oshal_application_execution_claims(text,text,text,boolean)', 'EXECUTE')");
+      "has_function_privilege('oshal_bot', 'public.oshal_application_execution_claims(text,text,boolean)', 'EXECUTE')");
     // The tables behind the helper are withheld from oshal_bot by the governed contract. A check that
     // demanded SELECT on one of them would fail on every correctly provisioned box, forever.
     expect(run.calls[0]).not.toContain('has_table_privilege');

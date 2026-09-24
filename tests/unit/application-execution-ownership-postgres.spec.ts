@@ -44,6 +44,7 @@ async function applyRealSchema(target: Pool): Promise<void> {
     protected BOOLEAN NOT NULL, agent_ids TEXT[] NOT NULL DEFAULT '{}', tool_names TEXT[] NOT NULL DEFAULT '{}')`);
   // The reader resolves claims through the derived helper; apply the real migration, not a copy.
   await target.query(readFileSync(resolve(__dirname, '../../scripts/migrations/142-application-execution-claims-helper.sql'), 'utf8'));
+  await target.query(readFileSync(resolve(__dirname, '../../scripts/migrations/158-narrow-application-execution-claims-helper.sql'), 'utf8'));
 }
 
 /** Stamp agents exactly as `upsertManifestBot` does: one scalar `manifestApp` inside metadata. */
@@ -190,7 +191,9 @@ function governedBotStatements(): string[] {
     /GRANT USAGE ON SCHEMA public TO oshal_app, oshal_bot;/,
     /GRANT SELECT \([^)]*\)\s+ON TABLE public\.agents TO oshal_bot;/,
     /REVOKE EXECUTE ON FUNCTION public\.oshal_application_execution_claims\(text, text, text, boolean\) FROM PUBLIC, oshal_bot;/,
-    /GRANT EXECUTE ON FUNCTION public\.oshal_application_execution_claims\(text, text, text, boolean\) TO oshal_app, oshal_bot;/,
+    /REVOKE EXECUTE ON FUNCTION public\.oshal_application_execution_claims\(text, text, boolean\) FROM PUBLIC, oshal_bot;/,
+    /GRANT EXECUTE ON FUNCTION public\.oshal_application_execution_claims\(text, text, text, boolean\) TO oshal_app;/,
+    /GRANT EXECUTE ON FUNCTION public\.oshal_application_execution_claims\(text, text, boolean\) TO oshal_app, oshal_bot;/,
   ];
   return patterns.map((pattern) => {
     const match = pattern.exec(GOVERNED_SQL);
@@ -237,18 +240,22 @@ describe('the bot node reads ownership as oshal_bot under the governed contract 
   });
 
   it('fails closed when the helper grant is missing - the regression this guards', async () => {
-    await pool.query('REVOKE EXECUTE ON FUNCTION oshal_application_execution_claims(text, text, text, boolean) FROM oshal_bot');
+    await pool.query('REVOKE EXECUTE ON FUNCTION oshal_application_execution_claims(text, text, boolean) FROM oshal_bot');
     try {
       await expect(readApplicationExecutionOwnership(bot, { kind: 'bots', id: JARVIS_AGENT_ID, mode: 'enforce' }))
         .rejects.toBeInstanceOf(ApplicationOwnershipUnavailableError);
       await expect(readProtectedBotApplication(bot, JARVIS_AGENT_ID, JARVIS_AGENT_ID)).rejects.toMatchObject({ code: 'authorization_bot_posture_unavailable' });
     } finally {
-      await pool.query('GRANT EXECUTE ON FUNCTION oshal_application_execution_claims(text, text, text, boolean) TO oshal_bot');
+      await pool.query('GRANT EXECUTE ON FUNCTION oshal_application_execution_claims(text, text, boolean) TO oshal_bot');
     }
   });
 
   it('refuses a malformed question instead of answering "no owner", which would read as unprotected', async () => {
-    await expect(bot.query("SELECT * FROM oshal_application_execution_claims('agents', 'x', NULL, true)")).rejects.toMatchObject({ code: '22023' });
-    await expect(bot.query("SELECT * FROM oshal_application_execution_claims('bots', '', NULL, true)")).rejects.toMatchObject({ code: '22023' });
+    await expect(bot.query("SELECT * FROM oshal_application_execution_claims('agents', 'x', true)")).rejects.toMatchObject({ code: '22023' });
+    await expect(bot.query("SELECT * FROM oshal_application_execution_claims('bots', '', true)")).rejects.toMatchObject({ code: '22023' });
+  });
+
+  it('prevents oshal_bot from executing the 4-argument helper', async () => {
+    await expect(bot.query("SELECT * FROM oshal_application_execution_claims('bots', 'x', NULL, true)")).rejects.toMatchObject({ code: '42501' });
   });
 });

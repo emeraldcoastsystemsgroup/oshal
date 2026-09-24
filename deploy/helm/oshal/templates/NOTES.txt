@@ -43,23 +43,13 @@ with you). Until then the DevOps Vault console answers 503; nothing else waits o
 Runbook: deploy/helm/oshal/README.md ("Vault runbook").
 {{- end }}
 {{- if .Values.rbac.botLauncher }}
-Runtime-launched bots: a regression in chart 0.5.0. On this posture a bot the
-controller launches at runtime (an app that brings its own bot-node) fails to boot
-with "JWT_SECRET must be set in production". It reads oshal-shared-env and the
-optional oshal-bot-env Secret, not oshal-shared-secret, where 0.5.0 moved
-JWT_SECRET. That lasts until the one-line core fix lands (the launcher's envFrom
-gains oshal-shared-secret; awaiting approval in docs/BACKLOG.md) or you copy the
-chart Secret's keys into oshal-bot-env. Copy them now, and again after you change
-swarm.jwtSecret or infra.arangodb.root*:
-  kubectl -n {{ .Release.Namespace }} create secret generic oshal-bot-env   # only if it does not exist yet
-  kubectl -n {{ .Release.Namespace }} patch secret oshal-bot-env --type merge -p "{\"data\":$(kubectl -n {{ .Release.Namespace }} get secret oshal-shared-secret -o jsonpath='{.data}')}"
-Such a bot also sets no securityContext and no liveness or startup probe.
+Runtime-launched bots: such a bot sets no securityContext and no liveness or startup probe.
 {{- if .Values.limitRange.enabled }} Its resources
 come from the oshal-container-defaults LimitRange (botDefaults.resources).
 {{- else }} With
 limitRange.enabled=false it gets no resources either, and runs BestEffort.
 {{- end }}
-Details: deploy/helm/oshal/README.md ("Credentials", "Probes, resources and Pod Security").
+Details: deploy/helm/oshal/README.md ("Probes, resources and Pod Security").
 {{- end }}
 {{- else }}
 

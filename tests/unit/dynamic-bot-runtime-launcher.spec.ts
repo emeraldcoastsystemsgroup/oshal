@@ -114,6 +114,7 @@ describe('kubernetes bot manifest — chart parity', () => {
   it('inherits the same shared env and workspace as a chart-declared bot', () => {
     expect(container.envFrom).toEqual([
       { configMapRef: { name: 'oshal-shared-env' } },
+      { secretRef: { name: 'oshal-shared-secret' } },
       { secretRef: { name: 'oshal-bot-env', optional: true } },
     ]);
     const mounts = container.volumeMounts.map((m: any) => m.mountPath);

@@ -516,14 +516,9 @@ fleets:
 # BOT_DATABASE_URL either way: its app-role bootstrap provisions oshal_bot for the
 # chart-declared bots and refuses to start without it.
 #
-# A bot launched this way reads oshal-shared-env and the optional oshal-bot-env
-# Secret only, not oshal-shared-secret, so without JWT_SECRET it fails to boot.
-# That is a 0.5.0 regression on this default posture: 0.4.0 kept JWT_SECRET in
-# the ConfigMap the launcher reads. Copy the chart Secret's keys into
-# oshal-bot-env; NOTES.txt and the README "Credentials" section print the command.
-# The fix is one line of core (oshal-shared-secret in the launcher's envFrom),
-# awaiting approval in docs/BACKLOG.md. Such a bot also sets no securityContext,
-# liveness or startup probe, or resources; limitRange above supplies resources only.
+# A bot launched this way reads oshal-shared-env, oshal-shared-secret, and the
+# optional oshal-bot-env Secret. Such a bot sets no securityContext, liveness or
+# startup probe, or resources; limitRange above supplies resources only.
 rbac:
   create: true
   serviceAccountName: oshal-api

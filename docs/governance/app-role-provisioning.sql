@@ -454,16 +454,18 @@ RESET ROLE;
 -- which the chat_messages row policy calls for every message a bot reads.
 -- The bot gets those decisions, never the tables behind them -
 -- oshal_swarm_memory in particular stays entirely outside the contract.
--- Every SECURITY DEFINER helper is private by default; the app gets all five.
+-- Every SECURITY DEFINER helper is private by default; the app gets all six.
 REVOKE EXECUTE ON FUNCTION public.oshal_is_tenant_member(text) FROM PUBLIC, oshal_bot;
 REVOKE EXECUTE ON FUNCTION public.oshal_owns_task(text) FROM PUBLIC, oshal_bot;
 REVOKE EXECUTE ON FUNCTION public.oshal_owns_ticket(uuid) FROM PUBLIC, oshal_bot;
 REVOKE EXECUTE ON FUNCTION public.oshal_application_execution_claims(text, text, text, boolean) FROM PUBLIC, oshal_bot;
+REVOKE EXECUTE ON FUNCTION public.oshal_application_execution_claims(text, text, boolean) FROM PUBLIC, oshal_bot;
 REVOKE EXECUTE ON FUNCTION public.oshal_swarm_memory_readable(text[], text) FROM PUBLIC, oshal_bot;
 GRANT EXECUTE ON FUNCTION public.oshal_is_tenant_member(text) TO oshal_app;
 GRANT EXECUTE ON FUNCTION public.oshal_owns_task(text) TO oshal_app, oshal_bot;
 GRANT EXECUTE ON FUNCTION public.oshal_owns_ticket(uuid) TO oshal_app, oshal_bot;
-GRANT EXECUTE ON FUNCTION public.oshal_application_execution_claims(text, text, text, boolean) TO oshal_app, oshal_bot;
+GRANT EXECUTE ON FUNCTION public.oshal_application_execution_claims(text, text, text, boolean) TO oshal_app;
+GRANT EXECUTE ON FUNCTION public.oshal_application_execution_claims(text, text, boolean) TO oshal_app, oshal_bot;
 GRANT EXECUTE ON FUNCTION public.oshal_swarm_memory_readable(text[], text) TO oshal_app, oshal_bot;
 
 COMMIT;

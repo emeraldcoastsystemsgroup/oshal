@@ -228,8 +228,10 @@ describe('PostgreSQL 18 role and ownership contract', () => {
     expect(sql).toContain('GRANT UPDATE (status, assigned_agent_id, execution_output, updated_at)');
     expect(sql).toContain('GRANT USAGE ON SEQUENCE public.oshal_cost_events_id_seq TO oshal_bot');
     expect(sql).toContain('GRANT EXECUTE ON FUNCTION public.oshal_owns_ticket(uuid) TO oshal_app, oshal_bot');
-    expect(sql).toContain('GRANT EXECUTE ON FUNCTION public.oshal_application_execution_claims(text, text, text, boolean) TO oshal_app, oshal_bot');
-    expect(sql).toContain('REVOKE EXECUTE ON FUNCTION public.oshal_application_execution_claims(text, text, text, boolean) FROM PUBLIC, oshal_bot');
+    expect(sql).toContain('GRANT EXECUTE ON FUNCTION public.oshal_application_execution_claims(text, text, boolean) TO oshal_app, oshal_bot');
+    expect(sql).toContain('REVOKE EXECUTE ON FUNCTION public.oshal_application_execution_claims(text, text, boolean) FROM PUBLIC, oshal_bot');
+    expect(sql).toContain('GRANT EXECUTE ON FUNCTION public.oshal_application_execution_claims(text, text, text, boolean) TO oshal_app;');
+    expect(sql).toContain('REVOKE EXECUTE ON FUNCTION public.oshal_application_execution_claims(text, text, text, boolean) FROM PUBLIC, oshal_bot;');
     expect(sql).not.toContain('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.%I TO oshal_bot');
     expect(provision).toContain("has_table_privilege('oshal_bot'");
     expect(provision).toContain("has_column_privilege('oshal_bot'");
@@ -795,7 +797,7 @@ describe.skipIf(!RUN_PG18_INTEGRATION)('real pinned PostgreSQL 18 managed lifecy
           JOIN pg_namespace n ON n.oid = p.pronamespace
          WHERE n.nspname = 'public'
            AND p.proname IN ('oshal_is_tenant_member', 'oshal_owns_task', 'oshal_owns_ticket', 'oshal_application_execution_claims')
-      `)).toBe('4');
+      `)).toBe('5');
     } finally {
       docker(['rm', '-f', sleeper], { timeout: 30_000 });
       fs.rmSync(tempRoot, { recursive: true, force: true });

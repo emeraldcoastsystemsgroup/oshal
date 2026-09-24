@@ -80,10 +80,16 @@ export async function readApplicationExecutionOwnership(pool: Pick<Pool, 'query'
   if (!pool || !input.id || !['bots','tools'].includes(input.kind)) throw new ApplicationOwnershipUnavailableError();
   try {
     // One definition of ownership for the controller and every bot node: the derived helper from
-    // migration 142, which the governed bot contract lets oshal_bot execute without reading the tables.
-    const result = await runWithSystemIdentity(() => pool.query(
-      'SELECT app, protected FROM oshal_application_execution_claims($1, $2, $3, $4)',
-      [input.kind, input.id, input.app ?? null, input.mode !== 'legacy']));
+    // migration 142/158, which the governed bot contract lets oshal_bot execute without reading the tables.
+    // Pick the 3-argument overload when input.app is undefined (the bot-node path, where oshal_bot has
+    // execute only on the 3-arg overload), or the 4-argument overload when input.app is supplied.
+    const result = await runWithSystemIdentity(() => input.app === undefined
+      ? pool.query(
+          'SELECT app, protected FROM oshal_application_execution_claims($1, $2, $3)',
+          [input.kind, input.id, input.mode !== 'legacy'])
+      : pool.query(
+          'SELECT app, protected FROM oshal_application_execution_claims($1, $2, $3, $4)',
+          [input.kind, input.id, input.app, input.mode !== 'legacy']));
     if (!result.rows.length) return undefined;
     const claims = result.rows.map((row: { app?: unknown; protected?: unknown }) => {
       if (typeof row.app !== 'string' || !row.app || typeof row.protected !== 'boolean') throw new Error('Invalid package ownership');
