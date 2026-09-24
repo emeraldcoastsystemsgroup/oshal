@@ -5,6 +5,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Status notation for docs/BACKLOG.md, so an operator opening the file sees how many entries are open, in which state, what is being worked RIGHT NOW, and what closed recently - instead of a 3,500-line file whose size never visibly moves. Every `### ` entry gets one `- **Status:** ...` line directly under its heading, seeded from the 2026-09-15 triage ledger's verdict (title-keyed, as that ledger is) and `untriaged` for anything filed since. The counts block at the top is GENERATED from those lines - never typed, per the anti-drift rule - between markers, with a --check mode so a gate can refuse a drifted header. Closed entries are removed from the queue (the file's own rule) and recorded in the closed ledger the block also renders, so the record of WHAT closed survives the removal. Two weeks of history motivated this: 176 entries were filed and 73 closed and nobody could see either number without git archaeology.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Normalize CRLF line endings in parse() and allow optional \r in STATUS_LINE regex so Windows line endings do not break status detection or produce duplicate status lines.
  */
 'use strict';
 
@@ -41,7 +42,7 @@ const VERDICT_TO_STATUS = {
 
 // The note separator is a middle dot, not an em dash: the vocabulary labels themselves contain
 // ' — ' (OPEN — actionable), so an em-dash separator split every label in two.
-const STATUS_LINE = /^- \*\*Status:\*\* (.+?)(?: · (.*))?$/;
+const STATUS_LINE = /^- \*\*Status:\*\* (.+?)(?: · (.*))?\r?$/;
 
 /**
  * @description Splits the backlog into its preamble and its entries, preserving text exactly.
@@ -49,7 +50,8 @@ const STATUS_LINE = /^- \*\*Status:\*\* (.+?)(?: · (.*))?$/;
  * @returns {{ preamble: string, entries: Array<{ heading: string, body: string[] }> }} Parsed file.
  */
 function parse(text) {
-  const lines = text.split('\n');
+  const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const lines = normalized.split('\n');
   const entries = [];
   let preamble = [];
   let current = null;

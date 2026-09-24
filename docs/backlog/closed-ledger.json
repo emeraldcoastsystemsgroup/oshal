@@ -238,5 +238,17 @@
     "title": "Three CLI tools reach a shell with model-supplied arguments and require no approval (2026-09-21)",
     "pr": "817",
     "evidence": "cli_cline, cli_jq, and cli_fzf now execute via cli-argv.js (cliArgsToArgv + executeCLIArgv) with an argument vector and stdin, avoiding child_process.exec; registered requiresApproval: true and added to NEVER_AUTO_APPROVE in tool-approval-policy.js; tests/unit/cli-yq-argv-not-shell.spec.ts 24/24 passes with live stubs on PATH and static guard asserting all 16 registered CLI tools require approval."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "POST /api/swarm/apps/load and /import carry only the mount-level requiresAuth",
+    "pr": "818",
+    "evidence": "POST /load and POST /import require swarm operator authority; tests/unit/swarm-app-lifecycle-authorization.spec.ts 4/4 proves unauthenticated and non-operator callers receive 403 before any file write or loadApp invocation, operators succeed with 201, and operator privilege revocation immediately refuses subsequent requests."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "Surface-bridge ops have no success-path log line",
+    "pr": "466",
+    "evidence": "tests/unit/jarvis-surface-context.spec.ts 25/25 proves emitted-ops turn logs op count, names, and target app at INFO; BUG-18 failure shape (undeclared custom op) is diagnosable from api log alone per 06ea6f59."
   }
 ]

@@ -23,6 +23,7 @@
  * 17 | maintainer@emeraldcoastsystemsgroup.com  | PUT /:name/access accepts an OPTIONAL userIssuer so an operator-made tier assignment can name the verified identity provider it belongs to (migration 145). Omitting it stores no issuer, which is exactly what this route did before and still resolves only for a canonical local account; it grants nobody anything on its own.
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | Comment correction only. The publish JSDoc said the endpoint has "two emit targets: a single-shot bot (manifest-worker) or an authored multi-bot workflow (staged)". The compiler sets pipeline: 'graph' unconditionally on both emit paths, so neither is an emit target and there are three spec modes, not two. It survived the CV-1 sweep only by phrasing the claim differently from the pattern being grepped.
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six, and it is a path ALLOW-LIST: a frozen root here is a containment boundary computed against a directory the rest of the process does not use. A module-scope const calling the resolver is NOT converged - it freezes the root at import, before any caller can set the environment - so this became a call-time function.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com   | POST /load and POST /import require swarm operator authority; ordinary callers receive 403 before any manifest file is written to disk or loaded.
  */
 
 /** CHANGE LOG 18 | maintainer@emeraldcoastsystemsgroup.com | Resolve and clear exact principals; require current swarm operator authority for package lifecycle changes. */
@@ -418,7 +419,7 @@ export function createSwarmAppRoutes(service: SwarmAppService, appAccess: AppAcc
     }
   });
 
-  router.post('/load', async (req: Request, res: Response) => {
+  router.post('/load', requiresOperator, async (req: Request, res: Response) => {
     try {
       const manifestPath = typeof req.body?.path === 'string' ? req.body.path : null;
       if (!manifestPath) {
@@ -819,17 +820,21 @@ export function createSwarmAppRoutes(service: SwarmAppService, appAccess: AppAcc
     }
   });
 
-  router.post('/import', preserveRequestIdentity(upload.single('manifest')), async (req: Request, res: Response) => {
+  router.post('/import', requiresOperator, preserveRequestIdentity(upload.single('manifest')), async (req: Request, res: Response) => {
     try {
       const file = (req as any).file as { buffer: Buffer; originalname: string } | undefined;
       if (!file) {
         res.status(400).json({ error: 'manifest file is required (field name: manifest)' });
         return;
       }
+      const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+      if (!/\.(ya?ml)$/i.test(safeName)) {
+        res.status(400).json({ error: 'manifest file must be a .yaml/.yml file' });
+        return;
+      }
       // Persist the uploaded YAML into swarm-apps/ so future boots auto-load it
       const destDir = path.resolve(process.cwd(), 'swarm-apps');
       if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
-      const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
       const destPath = path.join(destDir, safeName);
       fs.writeFileSync(destPath, file.buffer);
       logger.info({ destPath, size: file.buffer.length }, 'Imported swarm app manifest written to disk');

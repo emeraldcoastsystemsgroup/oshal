@@ -68,7 +68,7 @@ function recordingPool(): Pool {
         const sql = typeof text === 'string' ? text : String((text as { text?: string })?.text ?? '');
         if (sql.includes('set_config')) {
           stamp = values && values.length >= 2
-            ? { sub: String(values[0]), operator: String(values[1]) }
+            ? { sub: String(values[0]), operator: String(values[values.length - 1]) }
             : {
               sub: /set_config\('oshal\.current_sub',\s*'([^']*)'/.exec(sql)?.[1] ?? '',
               operator: /set_config\('oshal\.is_operator',\s*'([^']*)'/.exec(sql)?.[1] ?? '',
@@ -303,7 +303,7 @@ describe('multipart uploads keep the caller request identity across the parser (
   });
 
   it('POST /api/swarm/apps/import stamps the manifest registration as its importer', async () => {
-    actingSub = OWNER;
+    actingSub = OPERATOR;
     const cwd = vi.spyOn(process, 'cwd').mockReturnValue(scratchRoot); // the route writes <cwd>/swarm-apps/
     try {
       const res = await postChunked('/api/swarm/apps/import', multipartBody({}, {
@@ -313,7 +313,7 @@ describe('multipart uploads keep the caller request identity across the parser (
     } finally {
       cwd.mockRestore();
     }
-    expect(stampFor('swarm-app-import')).toEqual({ sub: OWNER, operator: 'off' });
+    expect(stampFor('swarm-app-import')).toEqual({ sub: OPERATOR, operator: 'on' });
   });
 
   it('POST /api/jarvis/ambient/audio stamps the audio receipt claim as the speaker-data owner', async () => {
