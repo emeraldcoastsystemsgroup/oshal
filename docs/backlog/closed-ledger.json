@@ -520,5 +520,29 @@
     "date": "2026-09-24",
     "pr": "567",
     "evidence": "Shared secret removed from installer in favor of device-bound non-expiring node enrolment tokens minted by POST /api/join/enroll with clientId binding; guarded by tests/unit/node-enrolment-device-binding.spec.ts (11/11 pass)."
+  },
+  {
+    "title": "Workspace isolation: ACCEPTED as a shared read-write mount, and what reopens it (operator, 2026-09-20)",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Accepted as whole-volume shared mount with per-ticket execution controls for single-operator deployment; triggers and boundaries recorded; guarded by tests/unit/compose-workspace-mount-posture.spec.ts (3/3 pass) and tests/unit/workspace-cross-ticket-traversal.spec.ts (5/5 pass)."
+  },
+  {
+    "title": "Nothing publishes the container image, so the default install ships whatever was last pushed by hand",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Option B automated image publish mechanism added to scripts/ci-local.sh (--publish-image) and scripts/ci/publish-image.sh with fail-closed credential and tag ordering; guarded by tests/unit/ci-publish-image.spec.ts (22/22 pass)."
+  },
+  {
+    "title": "k8s runtime-launched bots set no securityContext, liveness or startup probe, or resources (chart 0.5.0)",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Runtime-launched bot deployments aligned with chart 0.5.0 production baseline (seccomp, drop capabilities, probes, and LimitRange defaults); guarded by tests/unit/chart-runtime-bot-defaults.spec.ts (17/17 pass) and dynamic-bot-runtime-launcher.spec.ts (13/13 pass)."
+  },
+  {
+    "title": "DB-backed alert specs borrow the operator's database",
+    "date": "2026-09-24",
+    "pr": "480",
+    "evidence": "Alert test suites isolated to per-run disposable PostgreSQL containers, gate check-alert-residue.sh wired into ci-local.sh, and deployment database verified clean of fixture residue; guarded by tests/unit/alert-incident-cutover.spec.ts (2/2 pass), alert-postgres-isolation.spec.ts (4/4 pass), and ci-local-alert-residue.spec.ts (12/12 pass)."
   }
 ]
