@@ -1,4 +1,11 @@
-/** Isolated, read-only ADR-116 market study. No schedule, database or order access lives here. */
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ | AUTHOR | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Isolate read-only Futures studies with completed-window evidence fingerprints.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Refuse stale source dates before each market's optimizer and retain per-window sample gate evidence.
+ */
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -9,12 +16,14 @@ import {
   type FuturesDataSource, type ContinuousSeries,
 } from '../features/trading';
 import type { FuturesResearchConfig } from './trading-futures-research-dispatch';
+import { assertFuturesSourceFreshness, assessFuturesSample, type FuturesResearchQuality } from './trading-futures-research-quality';
 
 export interface FuturesResearchMarket {
   root: string; bars: number; ltfBars: number; ltfResampledFromMinute: boolean;
   chartAsOf: string; ltfAsOf: string; latestCompleteOosEnd: string; evidenceFingerprint: string;
   outOfSampleTrades: number; outOfSampleNet: number; worstOutOfSampleMaxDD: number;
   report: StagedOptimizerReport;
+  quality?: FuturesResearchQuality;
 }
 
 interface SourcePair { src: FuturesDataSource; probe?: FuturesDataSource }
@@ -75,10 +84,12 @@ export async function executeFuturesStudy(config: FuturesResearchConfig): Promis
   for (const root of config.roots) {
     const { chart, ltf, ltfResampledFromMinute } = await buildSeries(config, root);
     if (!chart.bars.length || !ltf.bars.length) throw new Error(`${root}: chart or higher-timeframe series is empty`);
+    const chartAsOf = lastBarAt(chart), ltfAsOf = lastBarAt(ltf);
+    const freshness = assertFuturesSourceFreshness(config.quality, root, config.end, chartAsOf, ltfAsOf);
     const report = runStagedOptimizer({ chart: chart.bars, ltf: ltf.bars, daily: config.ltfTimeframe === '1Day' ? ltf.bars : [] }, baseConfig(root), { split: config.split, stages: stagesFor(config) });
     if (!report.windows.length) throw new Error(`${root}: archive has no complete out-of-sample window`);
     markets.push({ root, bars: chart.bars.length, ltfBars: ltf.bars.length, ltfResampledFromMinute,
-      chartAsOf: lastBarAt(chart), ltfAsOf: lastBarAt(ltf),
+      chartAsOf, ltfAsOf, quality: assessFuturesSample(config.quality, freshness, report),
       latestCompleteOosEnd: report.windows.at(-1)!.window.oosEnd,
       evidenceFingerprint: evidenceFingerprint(config, root, chart, ltf, report),
       outOfSampleTrades: report.outOfSampleTrades, outOfSampleNet: report.outOfSampleNet, worstOutOfSampleMaxDD: report.worstOutOfSampleMaxDD, report });

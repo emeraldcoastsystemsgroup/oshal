@@ -10,6 +10,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Add the console-owned futures research schedule, bounded stage-grid validation, real archive runner, durable run ledger and review ticket; live execution remains outside this worker.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Expose owner-scoped durable interactive reviews alongside unchanged deterministic study evidence.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Persist configured quality gates and distinguish insufficient OOS samples from passing research evidence.
  */
 
 import { dirname, resolve } from 'node:path';
@@ -25,6 +26,7 @@ import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap, SCHEMA_LOCK_K
 import { futuresResearchWorkerEntry, type FuturesResearchWorkerOutput } from './trading-futures-research-worker';
 import type { FuturesResearchMarket } from './trading-futures-research-study';
 import type { FuturesResearchReview } from './trading-futures-research-review-contract';
+import { normalizeFuturesQuality, type FuturesQualityConfig } from './trading-futures-research-quality';
 
 const logger = createChildLogger({ module: 'trading-futures-research-dispatch' });
 
@@ -45,6 +47,7 @@ export interface FuturesResearchConfig {
   split: { inSampleMonths: number; oosMonths: number; stepMonths: number };
   stageGrids: Partial<Record<OptimizerStageName, Record<string, unknown[]>>>;
   nightlyCron: string;
+  quality: FuturesQualityConfig;
 }
 
 const TIMEFRAMES = new Set<Timeframe>(['5Min', '1Hour', '1Day', '1Week', '3Month']);
@@ -149,6 +152,7 @@ export function normalizeFuturesResearchConfig(raw: unknown): FuturesResearchCon
     split,
     stageGrids,
     nightlyCron: String(input.nightlyCron ?? FUTURES_RESEARCH_CRON_DEFAULT).trim() || FUTURES_RESEARCH_CRON_DEFAULT,
+    quality: normalizeFuturesQuality(input.quality),
   };
 }
 
@@ -212,13 +216,14 @@ export function executeFuturesStudyOffLoop(config: FuturesResearchConfig): Promi
 async function settleFuturesResearch(ctx: AppContext, run: FuturesResearchRun): Promise<void> {
   try {
     const markets = await executeFuturesStudyOffLoop(run.config);
-    const previous = (await ctx.pool.query(`SELECT markets FROM oshal_trading_futures_research_runs WHERE owner_sub=$1 AND schedule_id=$2 AND status='completed' ORDER BY created_at DESC LIMIT 1`, [run.ownerSub, run.scheduleId])).rows[0]?.markets as FuturesResearchMarket[] | undefined;
+    const previous = (await ctx.pool.query(`SELECT markets FROM oshal_trading_futures_research_runs WHERE owner_sub=$1 AND schedule_id=$2 AND status IN ('completed','insufficient_sample') ORDER BY created_at DESC LIMIT 1`, [run.ownerSub, run.scheduleId])).rows[0]?.markets as FuturesResearchMarket[] | undefined;
     const fingerprints = (rows: FuturesResearchMarket[]): string => JSON.stringify(rows.map(({ root, latestCompleteOosEnd, evidenceFingerprint }) => [root, latestCompleteOosEnd, evidenceFingerprint]));
     const unchanged = Array.isArray(previous) && fingerprints(previous) === fingerprints(markets);
-    await ctx.pool.query(`UPDATE oshal_trading_futures_research_runs SET status=$2, markets=$3::jsonb, completed_at=now() WHERE run_id=$1 AND status='running'`, [run.runId, unchanged ? 'unchanged' : 'completed', JSON.stringify(markets)]);
+    const sampleStatus = markets.some(market => market.quality?.sampleStatus === 'insufficient') ? 'insufficient_sample' : 'completed';
+    await ctx.pool.query(`UPDATE oshal_trading_futures_research_runs SET status=$2, markets=$3::jsonb, completed_at=now() WHERE run_id=$1 AND status='running'`, [run.runId, unchanged ? 'unchanged' : sampleStatus, JSON.stringify(markets)]);
     if (unchanged) return;
     try {
-      await ctx.ticketService.createTicket({ title: `Futures research run — ${run.config.roots.join(', ')}`, ticketType: 'trading-decision', ownerSub: run.ownerSub, status: 'complete', description: 'Paper-only bounded futures research. Review the durable run before any paper-book change; live execution remains separately gated.', priority: 'none', labels: ['futures-research'], workspaceId: null, assignedAgentId: null, parentTicketId: null, externalProvider: null, externalId: null, externalUrl: null, metadata: { source: FUTURES_RESEARCH_TASK_PREFIX, runId: run.runId, markets: markets.map(({ root, outOfSampleTrades, outOfSampleNet }) => ({ root, outOfSampleTrades, outOfSampleNet })) } });
+      await ctx.ticketService.createTicket({ title: `Futures research run — ${run.config.roots.join(', ')}`, ticketType: 'trading-decision', ownerSub: run.ownerSub, status: 'complete', description: 'Paper-only bounded futures research. Completion is not sample sufficiency or statistical confidence. Review the durable run before any paper-book change; live execution remains separately gated.', priority: 'none', labels: ['futures-research'], workspaceId: null, assignedAgentId: null, parentTicketId: null, externalProvider: null, externalId: null, externalUrl: null, metadata: { source: FUTURES_RESEARCH_TASK_PREFIX, runId: run.runId, sampleStatus, markets: markets.map(({ root, outOfSampleTrades, outOfSampleNet, quality }) => ({ root, outOfSampleTrades, outOfSampleNet, quality })) } });
     } catch (ticketError) {
       logger.warn({ err: ticketError, runId: run.runId }, 'futures run persisted but review ticket creation failed');
     }
