@@ -424,5 +424,29 @@
     "title": "Cockpit rail: static tiles that target another package must follow that package's discoverability (ADR-149)",
     "pr": "main",
     "evidence": "synthesiseProfile and lockUndiscoverableTiles enforce application-role-required lock panel and role guidance link; openableDefaultView selects first openable tile; guarded by tests/unit/rail-tile-discoverability.spec.ts and tests/unit/cockpit-locked-surface.spec.ts (17/17 pass)."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "Trading watchdog hardening — the rest of the checks (ADR-134 D3.7)",
+    "pr": "main",
+    "evidence": "assessGapPrint trade size and recency corroboration in scripts/lib/trading-watchdog-checks.js; strict broker number parse via toNumber; ledger cover narrowing split into separate 2026-09-21 entry; guarded by tests/unit/trading-watchdog-checks.spec.ts (76/76 pass)."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "Trading — timed orders: the STORE half of the D4 follow-ups (ADR-136 D4)",
+    "pr": "main",
+    "evidence": "trading-events cron leg minute-precision, validateFireAt order validation, extended hours rules, and static NYSE holiday table shipped in trading-dated-orders.ts and trading package 1.10.1; guarded by tests/unit/trading-dated-orders.spec.ts (22/22 pass) and tests/unit/trading-extended-hours-scope.spec.ts (2/2 pass)."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "Trading — market movers: add Alpaca's REST screener as the whole-market source (ADR-143 D5)",
+    "pr": "main",
+    "evidence": "Alpaca REST screener integrated for US-equity market movers report (/api/trading/reports/movers) with fail-soft fallback; guarded by tests/unit/trading-movers-screener.spec.ts (13/13 pass)."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "A calendar-preparation agent: brief me before the meeting (2026-09-14)",
+    "pr": "main",
+    "evidence": "Calendar preparation agent and scheduled meeting briefing implemented; default-OFF consent, provenance citation for claims, caller-scoped user_sub storage, and surface parity; guarded by calendar package test suite calendar/tests/meeting-briefs.core.test.js (26/26 pass)."
   }
 ]
