@@ -808,5 +808,29 @@
     "date": "2026-09-24",
     "pr": "main",
     "evidence": "CI export tree bounds execution and logs per-gate outcome lines, preserving triage evidence across runs without silent hang locks; guarded by ci-local-export.spec.ts (6/6 pass) and ci-gate-streak.spec.ts (23/23 pass)."
+  },
+  {
+    "title": "Trading — earnings-reaction rules: the surface, and the decision to arm one (ADR-136 D5)",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Earnings-reaction rules detect EDGAR 8-K filings, enforce cost-basis isolation, defer orders during venue unavailability, and manage rule arming lifecycles; guarded by trading-earnings-rules.spec.ts (43/43 pass)."
+  },
+  {
+    "title": "IPO event-play design (ADR-142)",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "IPO event play execution monitors SEC EDGAR filings, cancels entries on ring-fenced tickers, manages post-fill exit fences, and places bracket orders; guarded by trading-event-plans.spec.ts (15/15 pass)."
+  },
+  {
+    "title": "The build/swarm pipeline has no signed transport - every work unit rides the Redis mesh",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Signed HTTP delegation dispatches all core manifest-worker ticket types over signed bot node endpoints with replay-bounded tokens, refusing unauthenticated inline paths; guarded by signed-delegation-core-ticket-types.spec.ts (22/22 pass)."
+  },
+  {
+    "title": "Connector marketplace live brokered reads",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Connector read path records caller identity, connector resource, and credential provenance in audit store, enforcing per-user token scoping and RLS isolation; guarded by connector-read-audit-postgres.spec.ts (5/5 pass)."
   }
 ]

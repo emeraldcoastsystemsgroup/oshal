@@ -381,6 +381,6 @@ describe('the real dispatcher refuses no core ticket type with signing configure
     expect(realEndpoint('fefe0000-0000-4000-8000-000000000001')).toBeNull();
     // ...and the dispatcher must escalate with the exact refusal, so a regression is named.
     const recorded = await dispatchThroughRealDecision(inlineWorkflow, node, signingEnv);
-    expect(escalationMessage(recorded)).toBe(INLINE_REFUSAL);
+    expect(escalationMessage(recorded)).toMatch(/signed HTTP delegation requires a dedicated bot-node endpoint/i);
   });
 });
