@@ -616,5 +616,29 @@
     "date": "2026-09-24",
     "pr": "main",
     "evidence": "Scheduled application service routes execute under activated system/user principals, enforce ADR-149 permission boundaries, and manage activation lifecycle; guarded by application-service-activation-postgres.spec.ts (12/12 pass), application-service-activation-routes.spec.ts (11/11 pass), manifest-service-activation-contract.spec.ts (9/9 pass), manifest-service-route-activation.spec.ts (5/5 pass), and manifest-service-route-schedule.spec.ts (14/14 pass)."
+  },
+  {
+    "title": "Configure by package: the plan resolves, the apply is still one change at a time (2026-09-17)",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Package authorization grant planning resolves required dependency application roles, bounds traversal depth, and guides audited grant reviews; guarded by package-grant-plan-routes.spec.ts (5/5 pass), package-grant-browser.spec.ts (8/8 pass), and package-grant-plan-postgres.spec.ts (11/11 pass)."
+  },
+  {
+    "title": "The DB-backed unit specs need a disposable PostgreSQL to run against",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "DB-backed unit specs converged to self-provisioned disposable PostgreSQL containers with credential redaction and volume teardown, enforcing isolation from live stack; guarded by disposable-postgres-roles.spec.ts (5/5 pass), trading-spec-bare-cluster-prerequisites.spec.ts (4/4 pass), ci-local-spec-database-default.spec.ts (24/24 pass), and spec-database-url.spec.ts (18/18 pass)."
+  },
+  {
+    "title": "Jarvis knows the shape of the data he can reach",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Live schema and data-model catalog routes provide dynamic schema inspection, column relationships, and test lab registration without raw database exposure; guarded by data-model-catalog.spec.ts (15/15 pass), data-model-catalog-postgres.spec.ts (6/6 pass), data-model-routes.spec.ts (8/8 pass), data-model-service.spec.ts (8/8 pass), and data-model-export.spec.ts (15/15 pass)."
+  },
+  {
+    "title": "Twilio policy, fallback, and inbound messaging",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Inbound SMS webhooks authenticate Twilio signatures, resolve owner channels, enforce channel operation security, and dispatch to caller-scoped bots; guarded by inbound-sms-webhook.spec.ts (12/12 pass), sms-inbound-dispatch.spec.ts (9/9 pass), and twilio-sms-operation-security.spec.ts (10/10 pass)."
   }
 ]
