@@ -376,5 +376,29 @@
     "title": "The durable escalation store only ever sees swarm-run escalations (2026-09-15)",
     "pr": "main",
     "evidence": "Accepted in ADR-163 (docs/adr/163-the-canonical-escalation-record.md) establishing ticket_status_history as the canonical escalation record while swarm_escalations is a run-scoped attempt record; cockpit precedence pinned in ticket-view-helpers.js; guarded by tests/unit/escalation-record-canonical-postgres.spec.ts, tests/unit/ticket-escalation-detail.spec.ts, and tests/unit/cockpit-escalation-panel-text.spec.ts (27/27 pass)."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "A bot that cannot reach Postgres in its first 20 seconds is pool-less for life, and says it is healthy (2026-09-17)",
+    "pr": "main",
+    "evidence": "Merged in PR #626 (commit 177745ba); background recovery implemented in bot-node-database-pool.ts; /health and /api/health report 503 until pool connects; guarded by tests/unit/bot-node-database-pool-recovery.spec.ts (7/7 pass)."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "Trading DB specs race on schema bootstrap",
+    "pr": "main",
+    "evidence": "Bootstrap race closed via transaction-scoped advisory locks with SCHEMA_LOCK_KEYS.trading in runRuntimeSchemaBootstrap and applyLockedSchema; shared prologue in tests/helpers/trading-spec-schema.ts; guarded by tests/unit/trading-schema-bootstrap-race.spec.ts (2/2 pass) and tests/unit/trading-schema-lock-coverage.spec.ts."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "The nightly trading assessment loses its per-algo record to a market-data rate limit (2026-09-15)",
+    "pr": "main",
+    "evidence": "Merged in PR #723 (commit 57e87692); barsBatch bounded rate limit backoff retry implemented in market-data.ts; assessment step failure isolation in trading-assess-dispatch.ts; guarded by tests/unit/trading-market-data-rate-limit.spec.ts and tests/unit/trading-assess-step-failure.spec.ts."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "Person-model maintenance never runs on a box that restarts daily",
+    "pr": "main",
+    "evidence": "startPersonModelMaintenanceRuntime runs first pass after initial delay plus jitter, forwarded by compose knobs; guarded by tests/unit/person-model-maintenance-runtime.spec.ts (6/6 pass) and tests/unit/compose-env-passthrough.spec.ts."
   }
 ]
