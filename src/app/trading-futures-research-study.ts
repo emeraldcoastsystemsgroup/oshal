@@ -1,6 +1,7 @@
 /** Isolated, read-only ADR-116 market study. No schedule, database or order access lives here. */
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import {
   DEFAULT_OPTIMIZER_STAGES, getFuturesRoot, runStagedOptimizer,
   MockFuturesDataSource, KibotFuturesDataSource, KibotFileDataSource, buildContinuousSeries,
@@ -11,6 +12,7 @@ import type { FuturesResearchConfig } from './trading-futures-research-dispatch'
 
 export interface FuturesResearchMarket {
   root: string; bars: number; ltfBars: number; ltfResampledFromMinute: boolean;
+  chartAsOf: string; ltfAsOf: string; latestCompleteOosEnd: string; evidenceFingerprint: string;
   outOfSampleTrades: number; outOfSampleNet: number; worstOutOfSampleMaxDD: number;
   report: StagedOptimizerReport;
 }
@@ -50,6 +52,24 @@ function stagesFor(config: FuturesResearchConfig): OptimizerStage[] {
   return DEFAULT_OPTIMIZER_STAGES.map((stage) => ({ ...stage, grid: config.stageGrids[stage.name] ?? stage.grid }));
 }
 
+/** Only bars inside a completed OOS horizon count as new research evidence. */
+function evidenceFingerprint(config: FuturesResearchConfig, root: string, chart: ContinuousSeries, ltf: ContinuousSeries, report: StagedOptimizerReport): string {
+  const lastWindow = report.windows.at(-1)!;
+  const end = Date.parse(lastWindow.window.oosEnd);
+  const { end: _end, endMode: _endMode, nightlyCron: _nightlyCron, ...studyDefinition } = config;
+  const hash = createHash('sha256');
+  hash.update(JSON.stringify({ root, studyDefinition, report }));
+  for (const [kind, bars] of [['chart', chart.bars], ['ltf', ltf.bars]] as const) {
+    hash.update(`\n${kind}\n`);
+    for (const bar of bars) if (Date.parse(bar.t) < end) hash.update(`${JSON.stringify(bar)}\n`);
+  }
+  return hash.digest('hex');
+}
+
+function lastBarAt(series: ContinuousSeries): string {
+  return series.bars.reduce((latest, bar) => bar.t > latest ? bar.t : latest, '');
+}
+
 export async function executeFuturesStudy(config: FuturesResearchConfig): Promise<FuturesResearchMarket[]> {
   const markets: FuturesResearchMarket[] = [];
   for (const root of config.roots) {
@@ -57,7 +77,11 @@ export async function executeFuturesStudy(config: FuturesResearchConfig): Promis
     if (!chart.bars.length || !ltf.bars.length) throw new Error(`${root}: chart or higher-timeframe series is empty`);
     const report = runStagedOptimizer({ chart: chart.bars, ltf: ltf.bars, daily: config.ltfTimeframe === '1Day' ? ltf.bars : [] }, baseConfig(root), { split: config.split, stages: stagesFor(config) });
     if (!report.windows.length) throw new Error(`${root}: archive has no complete out-of-sample window`);
-    markets.push({ root, bars: chart.bars.length, ltfBars: ltf.bars.length, ltfResampledFromMinute, outOfSampleTrades: report.outOfSampleTrades, outOfSampleNet: report.outOfSampleNet, worstOutOfSampleMaxDD: report.worstOutOfSampleMaxDD, report });
+    markets.push({ root, bars: chart.bars.length, ltfBars: ltf.bars.length, ltfResampledFromMinute,
+      chartAsOf: lastBarAt(chart), ltfAsOf: lastBarAt(ltf),
+      latestCompleteOosEnd: report.windows.at(-1)!.window.oosEnd,
+      evidenceFingerprint: evidenceFingerprint(config, root, chart, ltf, report),
+      outOfSampleTrades: report.outOfSampleTrades, outOfSampleNet: report.outOfSampleNet, worstOutOfSampleMaxDD: report.worstOutOfSampleMaxDD, report });
   }
   return markets;
 }

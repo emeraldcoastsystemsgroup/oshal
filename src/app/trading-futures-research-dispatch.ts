@@ -206,7 +206,11 @@ export function executeFuturesStudyOffLoop(config: FuturesResearchConfig): Promi
 async function settleFuturesResearch(ctx: AppContext, run: FuturesResearchRun): Promise<void> {
   try {
     const markets = await executeFuturesStudyOffLoop(run.config);
-    await ctx.pool.query(`UPDATE oshal_trading_futures_research_runs SET status='completed', markets=$2::jsonb, completed_at=now() WHERE run_id=$1 AND status='running'`, [run.runId, JSON.stringify(markets)]);
+    const previous = (await ctx.pool.query(`SELECT markets FROM oshal_trading_futures_research_runs WHERE owner_sub=$1 AND schedule_id=$2 AND status='completed' ORDER BY created_at DESC LIMIT 1`, [run.ownerSub, run.scheduleId])).rows[0]?.markets as FuturesResearchMarket[] | undefined;
+    const fingerprints = (rows: FuturesResearchMarket[]): string => JSON.stringify(rows.map(({ root, latestCompleteOosEnd, evidenceFingerprint }) => [root, latestCompleteOosEnd, evidenceFingerprint]));
+    const unchanged = Array.isArray(previous) && fingerprints(previous) === fingerprints(markets);
+    await ctx.pool.query(`UPDATE oshal_trading_futures_research_runs SET status=$2, markets=$3::jsonb, completed_at=now() WHERE run_id=$1 AND status='running'`, [run.runId, unchanged ? 'unchanged' : 'completed', JSON.stringify(markets)]);
+    if (unchanged) return;
     try {
       await ctx.ticketService.createTicket({ title: `Futures research run — ${run.config.roots.join(', ')}`, ticketType: 'trading-decision', ownerSub: run.ownerSub, status: 'complete', description: 'Paper-only bounded futures research. Review the durable run before any paper-book change; live execution remains separately gated.', priority: 'none', labels: ['futures-research'], workspaceId: null, assignedAgentId: null, parentTicketId: null, externalProvider: null, externalId: null, externalUrl: null, metadata: { source: FUTURES_RESEARCH_TASK_PREFIX, runId: run.runId, markets: markets.map(({ root, outOfSampleTrades, outOfSampleNet }) => ({ root, outOfSampleTrades, outOfSampleNet })) } });
     } catch (ticketError) {
