@@ -13,6 +13,9 @@
 # nested train/validate callback and the final review callback using the canonical encoded header.
 # 2026-08-06 | maintainer@emeraldcoastsystemsgroup.com | Keep the fleet secret solely in the edge
 # process environment; nested scripts inherit it without exposing it in argv or task journals.
+# 2026-09-25 | maintainer@emeraldcoastsystemsgroup.com | Carry the originating review ticket through
+# the final callback so a scheduled opt-in loop can be re-armed on the next cadence after the prior
+# dispatch is complete.
 #
 # CHANGE LOG
 # -----------------------------------------------------------------------------
@@ -87,6 +90,7 @@ def build_parser():
     ap.add_argument("--dataset", default="", help="training set (default: this character's curated set)")
     ap.add_argument("--controller", default=os.environ.get("OSHAL_CONTROLLER", ""))
     ap.add_argument("--owner-sub-b64", default=os.environ.get("OSHAL_USER_SUB_B64", ""))
+    ap.add_argument("--review-ticket-id", default="")
     return ap
 
 
@@ -156,6 +160,7 @@ def main():
     if a.controller and secret and a.owner_sub_b64:
         post(a.controller, secret, a.owner_sub_b64,
              {"kind": "review", "character": cfg.subject,
+              "ticket_id": a.review_ticket_id,
               "best_version": best, "overall": best_score, "summary": summary})
 
 
