@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Declare exact-principal artifact relay and in-process package tool compatibility floors.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Declare the app-dependencies compatibility floor: a manifest using dependencies.required/optional names it so an older core refuses the package instead of installing it without its required dependencies.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Contract 'google-calendar' as a kernel skill: OAuth-injected Calendar v3 client pinned into dist so calendar packages resolve @/features/google-calendar without deep service imports.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Declare the bound-workflow-results compatibility floor so older runtimes refuse workflows requiring durable evidence/result bindings.
  */
 
 /**
@@ -38,7 +39,8 @@ export type KernelSkillId =
   | 'app-dependencies'
   | 'specialist-context'
   | 'spatial-mapping'
-  | 'google-calendar';
+  | 'google-calendar'
+  | 'bound-workflow-results';
 
 /**
  * @description One importable module behind a skill.
@@ -86,6 +88,9 @@ export interface KernelSkillDeclaration {
  * docs/apps/kernel-skills.md. The CI guard then enforces it forever.
  */
 export const KERNEL_SKILLS: readonly KernelSkillDeclaration[] = [
+  { id: 'bound-workflow-results', title: 'Bound workflow evidence and results',
+    why: 'The queue validates persisted application evidence before accounted reasoning and fences validated results before ticket completion.',
+    modules: [{ specifier: '@/features/swarm-orchestration', distFile: 'dist/features/swarm-orchestration/index.js' }] },
   { id: 'authenticated-artifacts', title: 'Authenticated artifact relay',
     why: 'Local artifact sources receive the original authenticated caller with current permission and registration checks.',
     modules: [{ specifier: '@/app/routes/artifact-authenticated-relay', distFile: 'dist/app/routes/artifact-authenticated-relay.js' }] },

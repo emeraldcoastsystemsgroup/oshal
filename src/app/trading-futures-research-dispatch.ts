@@ -11,6 +11,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Add the console-owned futures research schedule, bounded stage-grid validation, real archive runner, durable run ledger and review ticket; live execution remains outside this worker.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Expose owner-scoped durable interactive reviews alongside unchanged deterministic study evidence.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Persist configured quality gates and distinguish insufficient OOS samples from passing research evidence.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Queue opted-in new evidence through its dedicated workflow without running inference in the study worker.
  */
 
 import { dirname, resolve } from 'node:path';
@@ -48,6 +49,7 @@ export interface FuturesResearchConfig {
   stageGrids: Partial<Record<OptimizerStageName, Record<string, unknown[]>>>;
   nightlyCron: string;
   quality: FuturesQualityConfig;
+  nightlyReview: boolean;
 }
 
 const TIMEFRAMES = new Set<Timeframe>(['5Min', '1Hour', '1Day', '1Week', '3Month']);
@@ -153,7 +155,15 @@ export function normalizeFuturesResearchConfig(raw: unknown): FuturesResearchCon
     stageGrids,
     nightlyCron: String(input.nightlyCron ?? FUTURES_RESEARCH_CRON_DEFAULT).trim() || FUTURES_RESEARCH_CRON_DEFAULT,
     quality: normalizeFuturesQuality(input.quality),
+    nightlyReview: normalizeNightlyReview(input.nightlyReview),
   };
+}
+
+/** @description Older schedules stay opted out; only an explicit boolean enables review spending. */
+function normalizeNightlyReview(raw: unknown): boolean {
+  if (raw === undefined) return false;
+  if (typeof raw !== 'boolean') throw new TypeError('nightlyReview must be a boolean');
+  return raw;
 }
 
 export function futuresResearchTaskType(sub: string): string { return `${FUTURES_RESEARCH_TASK_PREFIX}:${sub}`; }
@@ -222,6 +232,17 @@ async function settleFuturesResearch(ctx: AppContext, run: FuturesResearchRun): 
     const sampleStatus = markets.some(market => market.quality?.sampleStatus === 'insufficient') ? 'insufficient_sample' : 'completed';
     await ctx.pool.query(`UPDATE oshal_trading_futures_research_runs SET status=$2, markets=$3::jsonb, completed_at=now() WHERE run_id=$1 AND status='running'`, [run.runId, unchanged ? 'unchanged' : sampleStatus, JSON.stringify(markets)]);
     if (unchanged) return;
+    if (run.config.nightlyReview) {
+      try {
+        const { queueFuturesResearchReview } = await import('./trading-futures-research-queue.js');
+        await queueFuturesResearchReview(ctx, run.ownerSub, run.runId);
+      } catch (reviewError) {
+        logger.error({ err: reviewError, runId: run.runId }, 'nightly Futures review admission failed');
+        await ctx.pool.query(`UPDATE oshal_trading_futures_research_runs SET review=$2::jsonb WHERE run_id=$1 AND review IS NULL`,
+          [run.runId, JSON.stringify({ status: 'failed', attemptId: run.runId, requestedAt: new Date().toISOString(), error: 'Nightly review not admitted. Check the package, worker and schedule opt-in; the study is unchanged.' })]);
+      }
+      return;
+    }
     try {
       await ctx.ticketService.createTicket({ title: `Futures research run — ${run.config.roots.join(', ')}`, ticketType: 'trading-decision', ownerSub: run.ownerSub, status: 'complete', description: 'Paper-only bounded futures research. Completion is not sample sufficiency or statistical confidence. Review the durable run before any paper-book change; live execution remains separately gated.', priority: 'none', labels: ['futures-research'], workspaceId: null, assignedAgentId: null, parentTicketId: null, externalProvider: null, externalId: null, externalUrl: null, metadata: { source: FUTURES_RESEARCH_TASK_PREFIX, runId: run.runId, sampleStatus, markets: markets.map(({ root, outOfSampleTrades, outOfSampleNet, quality }) => ({ root, outOfSampleTrades, outOfSampleNet, quality })) } });
     } catch (ticketError) {

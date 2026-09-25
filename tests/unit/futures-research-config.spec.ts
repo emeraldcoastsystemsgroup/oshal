@@ -1,3 +1,10 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ | AUTHOR | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Require an explicit boolean review opt-in and keep it outside deterministic market fingerprints.
+ */
 import { describe, expect, it, vi } from 'vitest';
 import { FUTURES_RESEARCH_CRON_DEFAULT, executeFuturesStudyOffLoop, normalizeFuturesResearchConfig } from '@/app/trading-futures-research-dispatch';
 
@@ -12,6 +19,9 @@ describe('console-configured futures research loop', () => {
     });
     expect(config.roots).toEqual(['ES', 'CL']);
     expect(config.nightlyCron).toBe(FUTURES_RESEARCH_CRON_DEFAULT);
+    expect(config.nightlyReview).toBe(false);
+    expect(normalizeFuturesResearchConfig({ ...config, nightlyReview: true }).nightlyReview).toBe(true);
+    expect(() => normalizeFuturesResearchConfig({ ...config, nightlyReview: 'true' })).toThrow(/boolean/);
     expect(config.split).toEqual({ inSampleMonths: 12, oosMonths: 3, stepMonths: 3 });
     expect(config.stageGrids.Entry?.['entry.ensembleEntryThresholdPct']).toEqual([62, 70]);
     expect(config.endMode).toBe('latest');
@@ -61,7 +71,7 @@ describe('console-configured futures research loop', () => {
     expect(markets[0].chartAsOf).toBeTruthy();
     expect(markets[0].ltfAsOf).toBeTruthy();
     expect(markets[0].evidenceFingerprint).toMatch(/^[a-f0-9]{64}$/);
-    const repeated = await executeFuturesStudyOffLoop(normalizeFuturesResearchConfig({ ...config, end: '2021-05-30T23:59:59Z' }));
+    const repeated = await executeFuturesStudyOffLoop(normalizeFuturesResearchConfig({ ...config, end: '2021-05-30T23:59:59Z', nightlyReview: true }));
     expect(repeated[0].evidenceFingerprint).toBe(markets[0].evidenceFingerprint);
   }, 60_000);
 });

@@ -17,6 +17,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Exported idempotent external-ticket materialization for extension composition
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | FSD deep-import burn-down: re-exported service members consumers were reaching via deep paths (rca-mode, prompt-layer builders, phase/queue/failure/metrics services, trace analyzer, workflow-pipeline registry, comment formatter, TicketTraceReport). All within the barrel's pre-existing service subgraph — no new import cycle.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Exported SEC-05 prompt containment and authority-binding contracts.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com | Export the queued evidence/result contract through the feature boundary.
  */
 
 export { SwarmOrchestrationController } from './controllers';
@@ -149,6 +150,7 @@ export { buildTaskCallOutResolver } from './services/task-call-out';
 export { PostgresSubtaskLifecycleStore } from './services/postgres-subtask-lifecycle-store';
 export { RuntimeTraceAnalyzerService } from './services/runtime-trace-analyzer-service';
 export { WorkflowPipelineRegistry } from './services/workflow-pipeline-registry';
+export { BOUND_WORKFLOW_RESULTS_VERSION, type BindManifestWorker, type ManifestWorkerBinding } from './services/manifest-worker-binding';
 export { CommentFormatter } from './services/comment-formatter';
 export type { TicketTraceReport } from './services';
 

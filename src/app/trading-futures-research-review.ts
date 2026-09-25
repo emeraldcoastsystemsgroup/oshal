@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Accountable interactive Futures review with owner-bound admission, durable failure and fenced retries.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Allow explaining insufficient historical samples without treating them as passing evidence.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Allow an interrupted queued review to be explicitly reclaimed after one hour without accepting its late result.
  */
 import { randomUUID } from 'node:crypto';
 import type { AppContext } from './composition-root';
@@ -45,7 +46,7 @@ async function claimReview(ctx: AppContext, owner: string, runId: string): Promi
   const review: FuturesResearchReview = { status: 'reviewing', attemptId: randomUUID(), requestedAt: new Date().toISOString() };
   const admitted = await ctx.pool.query(`UPDATE oshal_trading_futures_research_runs SET review=$3::jsonb
     WHERE run_id=$1 AND owner_sub=$2 AND (review IS NULL OR review->>'status'='failed'
-      OR (review->>'status'='reviewing' AND (review->>'requestedAt')::timestamptz < now()-interval '1 hour')) RETURNING run_id`,
+      OR (review->>'status' IN ('queued','reviewing') AND (review->>'requestedAt')::timestamptz < now()-interval '1 hour')) RETURNING run_id`,
   [runId, owner, JSON.stringify(review)]);
   if (!admitted.rows.length) {
     // Read again: a concurrent completion may have happened after the first SELECT.

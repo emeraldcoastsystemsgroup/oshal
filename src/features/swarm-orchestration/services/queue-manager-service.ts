@@ -51,6 +51,7 @@
  * 46 | maintainer@emeraldcoastsystemsgroup.com   | Both approval_required writers here name their reason (CKR-12 / D5): planning_complete when PM planning produced children, planner_returned_no_work when it produced none. Also deletes two comments that stated the opposite of what the code does - 'children will wait for the build gate' and 'children are picked up after build approval'. ADR-031's own amendment stopped children waiting on this state on 2026-06-22 and PARENT_READY_FOR_CHILD_DISPATCH_STATES has included it ever since, so those lines had been misdirecting every reader since then. The parent is parked, not gating, and its nextAction now says so.
  * 47 | maintainer@emeraldcoastsystemsgroup.com   | CV-3: a ticket whose planner returned zero work units escalates instead of parking at approval_required. The park had no automatic exit - the ticket produced nothing and waited indefinitely for a human with no indication anything was wrong - so labelling it (CKR-12) did not move it. The reason planner_returned_no_work moved with the writer, out of APPROVAL_REQUIRED_REASONS and into the new ESCALATION_REASONS, which leaves exactly one approval_required writer in this file.
  * 48 | maintainer@emeraldcoastsystemsgroup.com   | Thread the queue's DeadLetterService into manifest dispatch so typed deterministic refusals can terminate atomically instead of collapsing to generic escalation.
+ * 49 | maintainer@emeraldcoastsystemsgroup.com | Pass optional evidence/result binding to the canonical manifest-worker dispatcher.
  */
 
 import type { InternalTicket } from '@/entities/ticket';
@@ -221,6 +222,8 @@ export interface QueueManagerPipelineDeps {
   dispatchExplicitRemoteTask?: import('./dispatch-manifest-worker').ManifestWorkerDispatchDeps['dispatchExplicitRemoteTask'];
   /** Executes a job-application ticket through the browser submission rail. */
   dispatchJobApplicationTask?: import('./dispatch-manifest-worker').ManifestWorkerDispatchDeps['dispatchJobApplicationTask'];
+  /** Domain-owned evidence/result contracts around the ordinary accounted manifest worker. */
+  bindWorker?: import('./manifest-worker-binding').BindManifestWorker;
   /**
    * @description ADR-034 gap-b push-on-dispatch resolver: yields a target agent's
    * authoritative provider/model/configVersion record so manifest-worker + incident
@@ -731,6 +734,7 @@ export class QueueManagerService {
       resolveTaskWorker: this.pipelineDeps?.resolveTaskWorker,
       dispatchExplicitRemoteTask: this.pipelineDeps?.dispatchExplicitRemoteTask,
       dispatchJobApplicationTask: this.pipelineDeps?.dispatchJobApplicationTask,
+      bindWorker: this.pipelineDeps?.bindWorker,
       promoteToSwarm: (t) => this.dispatchTicket(t),
       // ADR-034 gap-b push-on-dispatch: carry the authoritative config record per dispatch
       // (default-on OSHAL_PUSH_ON_DISPATCH). An absent resolver becomes an explicit

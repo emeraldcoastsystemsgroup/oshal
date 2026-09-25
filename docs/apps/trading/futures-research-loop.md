@@ -59,9 +59,39 @@ The operator edits the controls and uses **Save / enable nightly loop** to choos
 Reviewing OOS results to select another grid is exploratory tuning: the reused history is no
 longer an untouched holdout, and none of these reviews are forward predictions.
 
-The research bot is currently **interactive only**. The nightly schedule runs deterministic
-studies; scheduled reasoning still needs a dedicated workflow. No inference has been added to
-the equities decision queue or the scheduler's detached worker.
+## Opt-in scheduled research review
+
+Install the matching framework, Trading package and **Futures Research** companion package. In
+the Bots console, enable `futures-research-worker`. Its optional Compose service has the same name,
+so the console start/stop operation addresses it directly; no environment-file research settings
+or CLI credential mounts are needed. Select a usable hosted provider in Settings → AI Providers.
+The owner's configured brain is resolved for every dispatch; a disabled CLI selection is refused,
+never silently replaced with another provider. Older cores refuse these packages because they
+declare the `bound-workflow-results` compatibility floor.
+
+In Strategies → Tuning, check **Queue research-bot review after new evidence** and Save. This
+`nightlyReview` control defaults to false and explicitly acknowledges provider cost. Installing
+the package does not create a schedule or enroll other users. The deterministic worker persists
+new completed or insufficient-sample evidence, then publishes a ticket of type `futures-research`.
+Unchanged and failed studies do not trigger reasoning. Changing the opt-in alone does not count as
+new market evidence. With opt-in off, the existing completed evidence ticket remains non-executing.
+
+Admission stages the review ticket paused, binds its exact owner/run/attempt/ticket in PostgreSQL,
+then moves it to backlog. The queue uses the companion's tool-less dedicated worker through the
+existing bot client and task/cost rail. Before inference it rechecks operator status, the exact
+owner's active Futures schedule, current opt-in and dedicated workflow registration. Mutable ticket
+descriptions, forged identifiers, provider intents and redirected workers cannot supply evidence
+or authority. A missing endpoint or provider fails visibly without unsigned localhost fallback.
+The equities decision workflow and detached study worker perform no new inference.
+
+Only a strictly validated response for the currently claimed attempt becomes a completed review.
+Replay reuses a completed result without another provider call; invalid, failed or superseded
+attempts cannot overwrite one. The console shows queued/reviewing/completed/failed state and the
+workflow ticket ID. **Review this study** can retry a failed attempt interactively; a queued or
+reviewing attempt can be reclaimed after one hour. Such a retry has a new attempt ID and fences
+the old ticket. Pausing/deleting the schedule or clearing opt-in prevents queued admission at its
+next execution check, but does not cancel provider work already dispatched. No proposal is
+automatically adopted: loading it changes only the form, and explicit Save selects future grids.
 
 ## Verification
 
@@ -70,12 +100,21 @@ the equities decision queue or the scheduler's detached worker.
 - In the applications checkout, `trading/tests/trading-surface-expansion.spec.ts` proves operator-only schedule creation and that the stock-advisor stop leaves Futures intact. The route source and compiled twin are generated together by the canonical store-route builder.
 - `trading/tests/futures-research-review.spec.ts` drives the real router and browser-script handlers with fixture inference: exact principal, refusal states, escaping, proposal staging without writes, and slow-response navigation guards. Run the package suite with its framework alias configured. The Test Lab's **Futures research studies and review** scenario lists the framework guards and honestly reports that the browser step did not execute host tests.
 
+The `futures-research-queue-postgres.spec.ts` suite crosses actual study-worker, PostgreSQL
+ticket/ledger and manifest-dispatch boundaries. It proves explicit opt-in, unchanged-study
+suppression, exact binding, revoked access, retry/replay fencing and no unsigned fallback.
+Schedule lookup and inference transport are explicit fixtures; the existing
+`queued-protected-dispatch.spec.ts` separately exercises signed protected execution. The
+companion's package test drives its compiled readiness route over loopback HTTP; readiness is
+not a running-worker or provider receipt.
+
 Installed acceptance still requires applying both migrations as owner, installing the matching
-Trading package, opening Strategies → Tuning as the operator, running a real-source study, reviewing
-it through a configured hosted provider and checking its cost/task record. Verify the proposal
+Trading and Futures Research packages, enabling the dedicated worker, opening Strategies → Tuning
+as the operator, opting in, running a real-source study, reviewing its dedicated workflow ticket
+through a configured hosted provider and checking its cost/task record. Verify the proposal
 loads without changing the schedule until saved, then observe a real nightly run. These are
 acceptance instructions, not a record that those steps have occurred.
 
 ## Still required before Futures can close
 
-The interactive reviewer does not yet run in a dedicated scheduled research workflow. There is no forward prediction/outcome grading ledger, archive-to-`market_bars` ingestion, installed-console receipt, or nightly observation on the deployed box. Forward grading must bind an issuance timestamp and an actual Futures contract/source; cash-equity prices or retrospectively adjusted continuous-series levels cannot substitute for that contract. The configurable bar-date gate refuses stale input before each market's optimizer, but exchange-session freshness guarantees and proactive stale-source notifications remain open. Unchanged-evidence detection still happens after optimization; a pre-optimizer duplicate skip is not implemented. Paper-book/cockpit acceptance and any eventual live decision remain separate phases; live requires a named operator approval backed by positive research evidence. Keep [Futures extension layer](../../BACKLOG.md) open until its own Done when is met.
+There is no forward prediction/outcome grading ledger, archive-to-`market_bars` ingestion, installed-console receipt, or nightly observation on the deployed box. Forward grading must bind an issuance timestamp and an actual Futures contract/source; cash-equity prices or retrospectively adjusted continuous-series levels cannot substitute for that contract. The configurable bar-date gate refuses stale input before each market's optimizer, but exchange-session freshness guarantees and proactive stale-source notifications remain open. Unchanged-evidence detection still happens after optimization; a pre-optimizer duplicate skip is not implemented. Paper-book/cockpit acceptance and any eventual live decision remain separate phases; live requires a named operator approval backed by positive research evidence. Keep [Futures extension layer](../../BACKLOG.md) open until its own Done when is met.

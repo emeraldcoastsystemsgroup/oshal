@@ -26,11 +26,13 @@
  * 21 | maintainer@emeraldcoastsystemsgroup.com  | Preserve typed refusals across bounded multi-owner fan-out and terminalize an all-refusal outcome with deterministic primary evidence plus exact per-owner facts; mixed failures and partial success retain their existing escalation/customer-action rails.
  * 22 | maintainer@emeraldcoastsystemsgroup.com  | Classify single-owner signed-delegation and trusted-provider dispatches with no dedicated endpoint as authorization_remote_dispatch_required so the terminal refusal sink preserves them instead of parking them as generic escalations.
  * 23 | maintainer@emeraldcoastsystemsgroup.com  | Reuse authorization_remote_dispatch_required when an endpoint-less local rail cannot execute protected queued work, keeping every typed refusal inside the reviewed source census.
+ * 24 | maintainer@emeraldcoastsystemsgroup.com | Apply injected evidence/result bindings around dedicated reason-only execution; bound work never falls back to localhost.
  */
 
 import * as http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import type { InternalTicket } from '@/entities/ticket';
+import type { BindManifestWorker, ManifestWorkerBinding } from './manifest-worker-binding';
 import type { IMessageStore } from '@/entities/message';
 import type { ITaskStore } from '@/entities/task';
 import type { TicketService } from '@/features/ticketing';
@@ -279,6 +281,8 @@ function aggregateFanOutResults(executions: FanOutExecutionResult[]): BotNodeRes
  * need to expose its private state to a free function.
  */
 export interface ManifestWorkerDispatchDeps {
+  /** Exact domain evidence/result binding; transport and cost accounting still belong to this dispatcher. */
+  bindWorker?: BindManifestWorker;
   /** In-flight dispatch tracking — caller's own Set, mutated by this function. */
   activeTicketIds: Set<string>;
   /** Per-ticket dispatch-start timestamps for slot-watchdog accounting. */
@@ -820,9 +824,11 @@ export async function dispatchManifestWorkerTicket(
   // a separate container with no registry); the pattern travels as prompt text — the LLM work still
   // runs on the bot and cost still lands in chat_tasks (no kernel LLM call). No-op when unregistered.
   const summarizeProfile = resolveSkillProfileByTicketType(workflow.ticketType, 'summarize');
-  const text = composeSkillProfilePrompt(baseText, 'summarize', summarizeProfile);
+  let text = composeSkillProfilePrompt(baseText, 'summarize', summarizeProfile);
+  let binding: ManifestWorkerBinding | undefined;
 
   const sendViaLocalhost = async (): Promise<ManifestWorkerDispatchResult> => {
+    if (binding) throw new Error('Bound queued reasoning requires its dedicated bot endpoint');
     if (await isApplicationExecutionProtected({ kind: 'bots', operation: workerAgentId })) {
       throw new RefusalError('authorization_remote_dispatch_required',
         'protected queued application work requires recorded signed remote execution');
@@ -871,6 +877,15 @@ export async function dispatchManifestWorkerTicket(
   };
 
   try {
+    binding = await deps.bindWorker?.(ticket, workflow, workerAgentId);
+    if (binding?.alreadyComplete) {
+      await deps.ticketService.updateStatus(ticketId, 'complete', { source: 'dispatch-manifest-worker', reason: 'bound_result_already_complete' });
+      return;
+    }
+    if (binding) {
+      if (fanOutOwners.length || !deps.botNodeClient?.hasEndpoint(workerAgentId)) throw new Error('Bound queued reasoning requires one dedicated worker endpoint');
+      text = binding.prompt;
+    }
     if (fanOutOwners.length >= 2 && deps.botNodeClient) {
       const fanOutInvocationId = randomUUID();
       const executions = await Promise.all(fanOutOwners.map(async (owner): Promise<FanOutExecutionResult> => {
@@ -1019,6 +1034,7 @@ export async function dispatchManifestWorkerTicket(
           ...(providerIntent && creds && Object.keys(creds).length > 0 ? { creds } : {}),
           ...(providerIntent ? { providerIntent } : {}),
           ...configFields,
+          ...(binding ? { direct: true, agenticMode: false } : {}),
         }, deps.taskStore, deps.resolveBrain);
         botNodeResult = result;
         dispatchResult = {
@@ -1039,7 +1055,7 @@ export async function dispatchManifestWorkerTicket(
         if (await isApplicationExecutionProtected({ kind: 'bots', operation: workerAgentId })) {
           throw botErr;
         }
-        if (authoritativeDispatch || providerIntent || deps.botNodeClient.isDelegationEnforced()) {
+        if (binding || authoritativeDispatch || providerIntent || deps.botNodeClient.isDelegationEnforced()) {
           throw botErr;
         }
         // Fall through to localhost when the bot-node path is unavailable
@@ -1077,6 +1093,7 @@ export async function dispatchManifestWorkerTicket(
     if (botNodeResult) {
       await persistBotNodeResult(ticket, routing, botNodeResult, deps);
     }
+    await binding?.complete(String(dispatchResult.response || ''));
     // Persist terminal status so the queue-manager doesn't re-pick this
     // ticket on every poll cycle. Without this, tickets with status='approved'
     // get re-dispatched forever.
@@ -1089,6 +1106,7 @@ export async function dispatchManifestWorkerTicket(
       'Manifest-worker dispatch complete',
     );
   } catch (error) {
+    await binding?.fail(error).catch(bindingError => logger.error({ err: bindingError, ticketId }, 'Bound worker failure persistence failed'));
     logger.error(
       { err: error, ticketId, ...routing },
       'Manifest-worker dispatch failed',
