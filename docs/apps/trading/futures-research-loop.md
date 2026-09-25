@@ -10,12 +10,46 @@ A trigger admits one `running` row before returning its run ID. Owner migration 
 
 The stage-grid API accepts only the six reviewed configuration axes, with typed/ranged candidate values, at most eight values per axis, at most 64 combinations per stage and at most 512 estimated backtests per study. Overlapping out-of-sample windows, an empty projected window and a mock source outside tests are refused. The run has no order path and cannot arm a paper or live book.
 
+## Interactive research review
+
+On a completed or unchanged run, **Review this study** invokes the package-owned
+`futures-research-analyst` through the existing accounted hosted/BYO bot path. The request is
+operator-only and bound to the persisted run's owner, not body-supplied evidence. The bot has no
+tools or trading authority. Its bounded context includes aggregate results and the latest eight
+windows per root; source paths, user identity and provider errors are excluded. Review output must
+cite every root/fingerprint exactly once and conform to a strict schema. Invented evidence,
+execution/forecast fields, invalid axes and proposals beyond the study budget are rejected.
+
+Owner migration `160-futures-research-review.sql`, applied after 159, adds review state under the
+run table's existing FORCE RLS. Review success or failure never changes the deterministic study
+result. Duplicate clicks reuse a completed review; overlapping requests are refused. A failed
+attempt may be retried, and an interrupted attempt can be reclaimed after one hour. Attempt IDs
+prevent a late response from overwriting a newer attempt. Leaving the page does not cancel an
+accepted review; reopen the run to see its durable state.
+
+The console shows the summary, limitations and next-study rationale. **Load proposed study into
+form** restores the reviewed study envelope plus validated grids without saving or running it.
+The operator edits the controls and uses **Save / enable nightly loop** to choose the next study.
+Reviewing OOS results to select another grid is exploratory tuning: the reused history is no
+longer an untouched holdout, and none of these reviews are forward predictions.
+
+The research bot is currently **interactive only**. The nightly schedule runs deterministic
+studies; scheduled reasoning still needs a dedicated workflow. No inference has been added to
+the equities decision queue or the scheduler's detached worker.
+
 ## Verification
 
-- `npx vitest run --no-file-parallelism tests/unit/futures-research-config.spec.ts tests/unit/futures-research-ledger-postgres.spec.ts tests/unit/futures-optimizer.spec.ts`
-- The private PostgreSQL case applies migration 159 and proves validate-only readiness, one-run admission, owner/RLS isolation, full report persistence and failed-source honesty. The worker case runs synthetic bars; a separate compiled-JavaScript smoke checks the image-style worker entry.
+- `npx vitest run --no-file-parallelism futures-research- tests/unit/futures-optimizer.spec.ts`
+- The private PostgreSQL cases apply migrations 159/160 and prove validate-only readiness, one-run admission, owner/RLS isolation, full report persistence, failed-source honesty, review concurrency, retry fencing and unchanged study evidence. Inference is explicitly doubled in these tests; they are not live provider proof. The worker case runs synthetic bars; a separate compiled-JavaScript smoke checks the image-style worker entry.
 - In the applications checkout, `trading/tests/trading-surface-expansion.spec.ts` proves operator-only schedule creation and that the stock-advisor stop leaves Futures intact. The route source and compiled twin are generated together by the canonical store-route builder.
+- `trading/tests/futures-research-review.spec.ts` drives the real router and browser-script handlers with fixture inference: exact principal, refusal states, escaping, proposal staging without writes, and slow-response navigation guards. Run the package suite with its framework alias configured. The Test Lab's **Futures research studies and review** scenario lists the framework guards and honestly reports that the browser step did not execute host tests.
+
+Installed acceptance still requires applying both migrations as owner, installing the matching
+Trading package, opening Strategies → Tuning as the operator, running a real-source study, reviewing
+it through a configured hosted provider and checking its cost/task record. Verify the proposal
+loads without changing the schedule until saved, then observe a real nightly run. These are
+acceptance instructions, not a record that those steps have occurred.
 
 ## Still required before Futures can close
 
-This is a deterministic study worker, **not yet a research bot** that can inspect results, explain losses or propose the next bounded study. There is no forward prediction/outcome grading ledger, archive-to-`market_bars` ingestion, installed-console receipt, or nightly observation on the deployed box. Source as-of timestamps and `unchanged` status expose stale/duplicate evidence, but there is not yet an explicit freshness SLA, stale-source alert, or pre-optimizer skip. Paper-book/cockpit acceptance and any eventual live decision remain separate phases; live requires a named operator approval backed by positive research evidence. Keep [Futures extension layer](../../BACKLOG.md) open until its own Done when is met.
+The interactive reviewer does not yet run in a dedicated scheduled research workflow. There is no forward prediction/outcome grading ledger, archive-to-`market_bars` ingestion, installed-console receipt, or nightly observation on the deployed box. Forward grading must bind an issuance timestamp and an actual Futures contract/source; cash-equity prices or retrospectively adjusted continuous-series levels cannot substitute for that contract. Source as-of timestamps and `unchanged` status expose stale/duplicate evidence, but there is not yet an explicit freshness SLA, stale-source alert, or pre-optimizer skip. Paper-book/cockpit acceptance and any eventual live decision remain separate phases; live requires a named operator approval backed by positive research evidence. Keep [Futures extension layer](../../BACKLOG.md) open until its own Done when is met.

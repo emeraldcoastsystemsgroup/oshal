@@ -9,6 +9,7 @@
  * CHANGE LOG
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Add the console-owned futures research schedule, bounded stage-grid validation, real archive runner, durable run ledger and review ticket; live execution remains outside this worker.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Expose owner-scoped durable interactive reviews alongside unchanged deterministic study evidence.
  */
 
 import { dirname, resolve } from 'node:path';
@@ -23,6 +24,7 @@ import { createChildLogger } from '@/shared/logger';
 import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap, SCHEMA_LOCK_KEYS } from '@/shared/services/database';
 import { futuresResearchWorkerEntry, type FuturesResearchWorkerOutput } from './trading-futures-research-worker';
 import type { FuturesResearchMarket } from './trading-futures-research-study';
+import type { FuturesResearchReview } from './trading-futures-research-review-contract';
 
 const logger = createChildLogger({ module: 'trading-futures-research-dispatch' });
 
@@ -78,7 +80,8 @@ function normalizeGrid(raw: unknown): Partial<Record<OptimizerStageName, Record<
     const normalized: Record<string, unknown[]> = {};
     let candidates = 1;
     for (const [path, values] of Object.entries(axes as Record<string, unknown>)) {
-      const allowed = GRID_AXES[stage as OptimizerStageName][path];
+      const stageAxes = GRID_AXES[stage as OptimizerStageName];
+      const allowed = Object.prototype.hasOwnProperty.call(stageAxes, path) ? stageAxes[path] : undefined;
       if (!allowed) throw new RangeError(`unsupported futures optimizer axis '${stage}.${path}'`);
       if (!Array.isArray(values) || values.length === 0 || values.length > 8) throw new RangeError(`${stage}.${path} must contain 1-8 candidates`);
       if (!values.every(allowed)) throw new RangeError(`${stage}.${path} contains an invalid candidate`);
@@ -156,19 +159,22 @@ export interface FuturesResearchRun {
   runId: string; ownerSub: string; scheduleId: string; status: string; config: FuturesResearchConfig;
   markets: FuturesResearchMarket[];
   error: string | null; createdAt: string; completedAt: string | null;
+  review?: FuturesResearchReview | null;
 }
 
-async function ensureFuturesResearchTable(pool: AppContext['pool']): Promise<void> {
+/** @description Provision or validate the owner-scoped research ledger. @param pool - Owner-aware application pool. @returns Schema readiness. */
+export async function ensureFuturesResearchTable(pool: AppContext['pool']): Promise<void> {
   await runRuntimeSchemaBootstrap({
     pool, moduleName: 'trading futures research', lockKey: SCHEMA_LOCK_KEYS.trading,
     statements: [`CREATE TABLE IF NOT EXISTS oshal_trading_futures_research_runs (
       run_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), owner_sub TEXT NOT NULL, schedule_id TEXT NOT NULL,
       status TEXT NOT NULL, config JSONB NOT NULL, markets JSONB NOT NULL DEFAULT '[]'::jsonb,
       error TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), completed_at TIMESTAMPTZ
-    )`, `CREATE UNIQUE INDEX IF NOT EXISTS oshal_futures_one_running_run ON oshal_trading_futures_research_runs (status) WHERE status = 'running'`,
+    )`, `ALTER TABLE oshal_trading_futures_research_runs ADD COLUMN IF NOT EXISTS review JSONB`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS oshal_futures_one_running_run ON oshal_trading_futures_research_runs (status) WHERE status = 'running'`,
     `CREATE INDEX IF NOT EXISTS oshal_futures_runs_owner_created ON oshal_trading_futures_research_runs (owner_sub, created_at DESC)`,
     ...buildOwnerRlsPolicyStatements('oshal_trading_futures_research_runs', 'owner_sub')],
-    requirements: [{ table: 'oshal_trading_futures_research_runs', columns: ['run_id', 'owner_sub', 'schedule_id', 'status', 'config', 'markets', 'created_at'] }],
+    requirements: [{ table: 'oshal_trading_futures_research_runs', columns: ['run_id', 'owner_sub', 'schedule_id', 'status', 'config', 'markets', 'created_at', 'review'] }],
   });
 }
 
@@ -249,6 +255,6 @@ export async function dispatchTradingFuturesResearch(ctx: AppContext, schedule: 
 
 export async function listFuturesResearchRuns(pool: AppContext['pool'], ownerSub: string, limit = 10): Promise<FuturesResearchRun[]> {
   await ensureFuturesResearchTable(pool);
-  const rows = (await pool.query(`SELECT run_id, owner_sub, schedule_id, status, config, markets, error, created_at, completed_at FROM oshal_trading_futures_research_runs WHERE owner_sub=$1 ORDER BY created_at DESC LIMIT $2`, [ownerSub, Math.min(50, Math.max(1, limit))])).rows;
-  return rows.map((row) => ({ runId: String(row.run_id), ownerSub: String(row.owner_sub), scheduleId: String(row.schedule_id), status: String(row.status), config: row.config as FuturesResearchConfig, markets: row.markets as FuturesResearchRun['markets'], error: row.error ? String(row.error) : null, createdAt: new Date(row.created_at).toISOString(), completedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null }));
+  const rows = (await pool.query(`SELECT run_id, owner_sub, schedule_id, status, config, markets, error, created_at, completed_at, review FROM oshal_trading_futures_research_runs WHERE owner_sub=$1 ORDER BY created_at DESC LIMIT $2`, [ownerSub, Math.min(50, Math.max(1, limit))])).rows;
+  return rows.map((row) => ({ runId: String(row.run_id), ownerSub: String(row.owner_sub), scheduleId: String(row.schedule_id), status: String(row.status), config: row.config as FuturesResearchConfig, markets: row.markets as FuturesResearchRun['markets'], error: row.error ? String(row.error) : null, createdAt: new Date(row.created_at).toISOString(), completedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null, review: row.review ?? null }));
 }

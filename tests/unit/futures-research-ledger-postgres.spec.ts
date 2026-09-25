@@ -1,4 +1,11 @@
-/** A private PostgreSQL verifies admission, owner scope and durable Futures study settlement. */
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ | AUTHOR | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify real Futures admission, owner scope and durable study settlement.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Apply the review-state migration before validate-only runtime proof.
+ */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -32,6 +39,7 @@ async function settled(owner: string, runId: string): Promise<Awaited<ReturnType
 describe('futures research durable ledger', () => {
   it('the owner migration provisions a forced-RLS ledger for validate-only runtime', async () => {
     await pool.query(readFileSync(resolve('scripts/migrations/159-futures-research-runs.sql'), 'utf8'));
+    await pool.query(readFileSync(resolve('scripts/migrations/160-futures-research-review.sql'), 'utf8'));
     const previous = process.env.OSHAL_SCHEMA_BOOTSTRAP;
     process.env.OSHAL_SCHEMA_BOOTSTRAP = 'validate-only';
     try { expect(await listFuturesResearchRuns(pool as AppContext['pool'], 'owner-a')).toEqual([]); }
