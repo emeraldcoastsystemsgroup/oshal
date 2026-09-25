@@ -179,9 +179,61 @@ Completed reviews are replayed, not refreshed or overwritten: a later run carrie
 The console shows frozen counts, per-cohort details, receipt/context citations, assessment and skip
 reason. This implements the feedback path; it is not a deployed provider or performance receipt.
 
+## Explicit archive import
+
+Trading 1.26.0 adds **Import Futures archives into the shared bar store** in Strategies → Tuning.
+The matching framework declares `futures-archive-import`; owner migration
+`162-futures-archive-imports.sql` requires the existing migration 096 reference store. Apply it
+through the normal owner migration procedure before using a validate-only deployment. This is
+independent of the nightly study and does not save, run or alter its schedule.
+
+Choose roots, an absolute server-visible directory, minimum volume and UTC start/end days in
+the study form, then explicitly confirm the archive clock and select 1Hour and/or 1Day.
+Hourly bars come from `minute/CONTRACT.txt`, daily bars from `daily/CONTRACT.txt`; there is no
+mock/API fallback. Up to eight known roots, ten years, one million output bars and 128 MiB per
+source file are allowed. Parsing uses a separate 1 GiB worker with a ten-minute limit and one
+active preview/import across the database. Interrupted work is recoverable on the next admission
+after twenty minutes; an active transaction retains its row lock. Refresh shows the exact
+owner's latest twenty receipts.
+
+**Preview archive import** writes only an owned preview receipt, never shared bars. It uses the
+existing instrument/front-month model and completeness engine, preserving raw unadjusted OHLCV.
+The selected wall clock is decoded to true UTC bar opens, unlike the encoded wall timestamps in
+the historical study reader. The UTC end day is inclusive; front-month boundaries remain the
+instrument model's UTC boundaries. Daily rows mean local calendar days, not settlement prices.
+Ambiguous/nonexistent DST stamps, duplicate or malformed rows, incorrect file granularity,
+missing whole root/timeframe series and incomplete trailing aggregates are refused or excluded.
+Missing contracts and gaps are visible in the manifest. Counts are session-model evidence, not
+proof of vendor completeness or every underlying minute inside an aggregate.
+
+Inspect the ready receipt, coverage, clock and fingerprint, then type
+`IMPORT SHARED FUTURES BARS` and select **Import this exact preview**. Confirmation is operator-only
+and bound to that owned frozen preview, not subsequent form edits. The worker re-reads the files;
+changed effective bars/configuration refuse the import before writes. All inserts and the completed
+receipt commit in one transaction. Stored OHLCV conflicts or a different source/clock for the
+contract/timeframe roll back every new bar; existing facts and their ingestion timestamps are
+never refreshed. Identical repeated imports report zero inserted and the exact unchanged count.
+The source tag is `kibot-file:utc-v1:<zone>`. Legacy rows with another source tag are deliberately
+not replaced: investigate provenance separately, without deleting shared data to clear this gate.
+Completed confirmations replay their original receipt even if files later change. No provider
+request, paper demo, trading order or automatic nightly archive refresh is part of this operation.
+
+The optional CLI uses the same boundary. For example, a **read-only** preview:
+
+```bash
+npx ts-node -r tsconfig-paths/register --transpile-only scripts/oshal-futures-ingest.ts --source kibot-file --root ES --tf 1Hour --data-dir /data/kibot --source-time-zone America/New_York --start 2025-10-01 --end 2025-10-31
+```
+
+Only after inspection, adding `--store --owner <operator-sub> --fingerprint <preview-sha>` and
+`--confirmation "IMPORT SHARED FUTURES BARS"` requests a durable import into explicitly configured
+`DATABASE_URL`. No missing database, owner, fingerprint or confirmation falls back to memory.
+The mock demo remains in-memory only; `--source mock --store` is always refused. Prefer the console
+for operator work; local examples are not evidence that the installed archives have been imported.
+
 ## Verification
 
-- `npx vitest run --no-file-parallelism futures-research- futures-prediction- futures-review-forward- tests/unit/futures-backtester.spec.ts tests/unit/futures-optimizer.spec.ts`
+- `npx vitest run --no-file-parallelism futures-research- futures-prediction- futures-review-forward- futures-archive- tests/unit/futures-backtester.spec.ts tests/unit/futures-optimizer.spec.ts`
+- The archive suites use disposable files, the actual worker/ingest engine, private PostgreSQL with migrations 096/162 and an enforcing non-superuser role. They prove preview isolation, UTC conversion, strict source refusal, frozen settings, revoked access, owner/one-worker admission, canonical readers, exact repeat idempotence and full rollback after a later-series conflict. The CLI is executed as a child process with a loopback connection trap, proving dry/mock/unconfirmed paths never connect. Trading's `futures-archive-import.spec.ts` exercises the actual mounted routes with a fixture service and real browser-script handlers. These are local boundary proofs, not installed source completeness or import receipts.
 - The forward guards use disposable CSV files, the real locked replay/isolated worker and a private PostgreSQL server with migration 161. They prove no backdating API, repeated-input deduplication, owner/RLS isolation, immutable input/terminal outcomes, explicit clocks, future-only grading, missing/revised data and failed/unchanged-study independence. The database terminal-grade payload is an explicit transport fixture; actual raw-bar grading is exercised separately. Trading's `futures-predictions.spec.ts` tests the real route with a doubled ledger and actual browser-script handlers. These are local boundary proofs, not a deployed forward accuracy receipt.
 - The private PostgreSQL cases apply migrations 159/160 and prove validate-only readiness, one-run admission, owner/RLS isolation, full report persistence, failed-source honesty, review concurrency, retry fencing and unchanged study evidence. An actual stale Kibot file crosses the worker/database boundary and creates a failed row without a completion ticket. `futures-research-quality.spec.ts` verifies refusal before the optimizer and per-window sample floors. Inference is explicitly doubled in these tests; they are not live provider proof. The success-path worker case runs synthetic bars; a separate compiled-JavaScript smoke checks the image-style worker entry.
 - In the applications checkout, `trading/tests/trading-surface-expansion.spec.ts` proves operator-only schedule creation and that the stock-advisor stop leaves Futures intact. The route source and compiled twin are generated together by the canonical store-route builder.
@@ -204,7 +256,7 @@ bounded buckets/cohorts, redaction, canonical hashing, citation rejection, froze
 inconsistent/future-grade refusal. Inference and market outcomes are explicit fixtures; the existing
 raw-file prediction suites are the grading companion, not proof of real market performance.
 
-Installed acceptance still requires applying migrations 159–161 as owner, installing the matching
+Installed acceptance still requires applying migrations 159–162 as owner (162 after 096), installing the matching
 Trading and Futures Research packages, enabling the dedicated worker, opening Strategies → Tuning
 as the operator, opting in, running a real-source study, reviewing its dedicated workflow ticket
 through a configured hosted provider and checking its cost/task record. Verify the proposal
@@ -213,4 +265,4 @@ acceptance instructions, not a record that those steps have occurred.
 
 ## Still required before Futures can close
 
-Archive-to-`market_bars` ingestion, installed-console/provider-cost receipts, a real nightly observation and subsequently matured forward outcomes on the deployed box remain unproven. Exchange-session completeness and proactive stale-source notifications remain open; the forward clock and freshness guards do not assert exchange-session coverage. Unchanged historical evidence is still detected after optimization; a pre-optimizer duplicate skip is not implemented. Outcome feedback now has local owner/RLS and frozen-citation proofs; deployed provider review of matured real outcomes still needs acceptance. Paper-book/cockpit acceptance and any eventual live decision remain separate phases; live requires a named operator approval backed by positive research evidence. Keep [Futures extension layer](../../BACKLOG.md) open until its own Done when is met.
+Archive-to-`market_bars` ingestion now has a console/CLI implementation and private boundary proofs; actual installed ES/CL import and idempotence receipts remain unproven. Installed-console/provider-cost receipts, a real nightly observation and subsequently matured forward outcomes on the deployed box remain unproven. Exchange-session completeness and proactive stale-source notifications remain open; the forward clock and freshness guards do not assert exchange-session coverage. Unchanged historical evidence is still detected after optimization; a pre-optimizer duplicate skip is not implemented. Outcome feedback now has local owner/RLS and frozen-citation proofs; deployed provider review of matured real outcomes still needs acceptance. Paper-book/cockpit acceptance and any eventual live decision remain separate phases; live requires a named operator approval backed by positive research evidence. Keep [Futures extension layer](../../BACKLOG.md) open until its own Done when is met.

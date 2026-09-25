@@ -34,7 +34,7 @@ commands are in the right-hand column so the check can be re-run instead of trus
 | F4 paper broker | `paper-futures-broker-adapter.ts` (129 code lines) | shipped **in-memory**: market/limit fills, shorting, multiplier P&L; `stop`/`stop_limit`/`trailing_stop` are accepted-working and **never trigger**; state resets on restart | header lines 13–15; l.99 |
 | Broker types | `broker-adapter.ts` | `BrokerProviderType` includes `'paper'` and `'tradovate'`; the comment on `'tradovate'` reads "not-yet-wired" and nothing imports a Tradovate client | l.37–38 |
 | Backtest runner | `scripts/oshal-futures-backtest.ts` (189 code lines) | shipped — `--source mock\|kibot\|kibot-file`, `--data-dir` (default `process.env.KIBOT_DATA_DIR ?? 'C:\MarketData\kibot'`), `--start/--end`, `--adjust`, `--stage1`, costs. **Limits:** `entry.generation` is hardcoded `'dynstops'` (l.224); `runFuturesBacktest` is called with three arguments so the regime gate's `dailyBars` is never passed; no config-file input; no machine-readable output | l.95, l.222–229 |
-| Ingest runner | `scripts/oshal-futures-ingest.ts` | shipped — **mock source only** (`new MockFuturesDataSource` l.100), `--store` writes to `market_bars` when `DATABASE_URL` is set | l.26, l.100–107 |
+| Ingest runner | `scripts/oshal-futures-ingest.ts` | real bounded archive preview and explicitly confirmed, atomic import; console uses the same owned boundary. Mock demo remains memory-only | `trading-futures-archive-*`; [current contract](futures-research-loop.md#explicit-archive-import) |
 | Specs | `tests/unit/futures-*.spec.ts` + `paper-futures-broker.spec.ts` | 18 files, 373 `it()` blocks | `grep -c "^\s*it(" tests/unit/futures-*.spec.ts tests/unit/paper-futures-broker.spec.ts` (run 2026-09-06) |
 
 Not present anywhere in `src/` (each grep returned nothing): a Schwab futures data source
@@ -226,38 +226,40 @@ splitter.
 
 **Live risk.** None.
 
-### Phase 3 — Real archives → `market_bars` (core, ~180 lines)
+### Phase 3 — Real archives → `market_bars` (core and Trading console)
 
 **Goal.** Get the on-disk ES/CL bars into Postgres so later phases (paper marks, coverage cards)
 read from the store and not from a laptop path. Independent of Phases 1–2; a prerequisite for 4–5.
 
-**Scope.** `scripts/oshal-futures-ingest.ts` gains `--source mock|kibot-file` and `--data-dir`
-(default `process.env.KIBOT_DATA_DIR ?? 'C:\MarketData\kibot'`), `--start/--end`; `sourceFor()`
-returns `MockFuturesDataSource` or `new KibotFileDataSource({ dir: join(dataDir, tf === '1Day' ?
-'daily' : 'minute') })`; the paper demo stays mock-only (skipped for `kibot-file` — its price box is
-a mock convenience). The existing `ingestFutures({pool})` then writes real bars with
-`source='kibot-file'`. **State plainly in the runner and the doc:** `KibotFileDataSource`'s
-front-month clamp is on, so stored bars per contract are the *front-month window*, and
-`barCoverage(symbol)` reports that window — a coverage card that compares it against a contract's
-whole listed life will misread a healthy contract as mostly missing.
+**Implemented.** Trading 1.26.0 offers operator-owned preview/confirmation controls; the CLI uses
+the same durable service. Explicit directory, source clock and UTC date bounds are required.
+Actual strict files cross the existing ingest/completeness engine off-loop. Imports preserve raw
+dated-contract prices, clamp to modeled front-month windows and store true UTC opens under
+`kibot-file:utc-v1:<zone>`. Missing contracts/gaps remain visible; completeness is not vendor or
+intra-aggregate completeness proof. The exact preview is immutable and re-read before an atomic
+insert-only transaction. Different source/clock or price conflicts roll everything back. Identical
+repeats preserve both prices and ingestion timestamps. Mock data cannot be stored. See the
+[as-built controls and limits](futures-research-loop.md#explicit-archive-import).
 
-**Prerequisites.** `DATABASE_URL` to the live Postgres; the files. Run for ES and CL at `1Hour`
-and `1Day`. No container change — the store schema already self-heals via `ensureBarSchema`.
+**Prerequisites.** Matching core/Trading, owner migration 162 after 096, authorized server-visible
+files and a confirmed archive clock. Validate-only deployments do not self-migrate. Installed
+operator acceptance should cover ES and CL at 1Hour and 1Day; automated guards use only private
+disposable PostgreSQL and never a deployment DSN.
 
 **Done when.** `select symbol, timeframe, count(*) from market_bars group by 1,2` shows ES and CL
 at both timeframes; `barCoverage` for `ESZ25`/`1Hour` matches the file's front-month window; a
 second run changes no counts.
 
-**Guard.** `tests/unit/futures-bar-store-ingest.spec.ts` against the REAL Postgres at
-`127.0.0.1:55433`, `--no-file-parallelism`, fail-loud when the stack is down: write a
-Kibot-shaped temp file → `ingestFutures({pool})` → `readBars`/`barCoverage`/`latestClose` return the
-same bars; second run idempotent. **Isolation is part of the guard** because `market_bars` is a
-shared table with an open RLS policy and no `user_sub`: the spec uses a synthetic symbol and a
-unique `source` tag, deletes its own rows in `afterAll`, and asserts the row count for real symbols
-is unchanged before and after. Boundary: `market_bars` persistence. Add the row to
-[the real-boundary audit](../../governance/real-boundary-regression-audit.md).
+**Guard.** `futures-archive-source.spec.ts`, `futures-archive-import-postgres.spec.ts` and
+`futures-archive-cli.spec.ts` exercise actual files, workers, PostgreSQL transactions, enforcing
+RLS and canonical `readBars`/`barCoverage`/`latestClose`. They cover repeat idempotence, source drift,
+clock/row refusal and rollback of earlier inserts after a later conflict. Trading's actual mounted
+route and browser-handler tests use a service fixture. The Test Lab and
+[real-boundary audit](../../governance/real-boundary-regression-audit.md) register these companions.
+Local fixtures do not satisfy the installed-data Done when; that receipt remains outstanding.
 
-**Live risk.** None — the table is reference data; no order path reads it today.
+**Live risk.** No order or provider path. Confirmed imports add shared reference data used across
+owners; preview does not. Existing reference rows are never replaced by this workflow.
 
 ### Phase 4 — Durable paper book with stop triggers and roll closure (core, ~550 lines) — **operator approval required before starting**
 

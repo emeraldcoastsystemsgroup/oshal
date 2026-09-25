@@ -1,10 +1,7 @@
 /**
- * Futures ingest + paper-broker demo (ADR-116) — proves the futures extension end-to-end with NO
- * external dependencies: mock data source → contract enumeration → completeness validation → (optional)
- * bar store → paper futures order with real multiplier-scaled P&L.
- *
- * This is the "all the way through with mock data" the operator asked for: replace the friend's
- * Kibot-desktop + NinjaTrader + FlaUI stack with an oshal-native run you can execute on a laptop.
+ * Futures archive preview/import and isolated mock paper-broker demo (ADR-116).
+ * Real files use bounded UTC conversion, completeness evidence and an explicitly confirmed
+ * atomic database import. The separate mock path never writes shared reference data.
  *
  * Usage: npx ts-node -r tsconfig-paths/register --transpile-only scripts/oshal-futures-ingest.ts [flags]
  *   --root <ES|NQ|YM|RTY|MES|MNQ|...>   root to ingest (default ES)
@@ -12,14 +9,22 @@
  *   --months <n>                       months of history back from today (default 6)
  *   --drop <0..1>                      mock drop rate to simulate incomplete downloads (default 0.01)
  *   --passes <n>                       re-fetch passes per contract, the patch loop (default 2)
- *   --store                            also persist to Postgres if DATABASE_URL is set
+ *   --source <mock|kibot-file>          default mock; real files preview without writes
+ *   --data-dir <absolute-path>          server archive root containing daily/ and minute/
+ *   --source-time-zone <zone>           UTC, America/New_York or America/Chicago; required for files
+ *   --start/--end <YYYY-MM-DD>           UTC date window; required for files
+ *   --store --owner <operator-sub>      confirm a real-file preview into DATABASE_URL
+ *   --fingerprint <preview-sha>         exact fingerprint from the prior read-only preview
+ *   --confirmation "IMPORT SHARED FUTURES BARS"  acknowledge shared reference writes
  *
- * Store is OPTIONAL — without --store (or without DATABASE_URL) the run is fully in-memory. Exit codes:
+ * Mock data never enters the shared store. Real imports fail without an explicit owner, confirmation,
+ * preview fingerprint and DATABASE_URL. The paper demo is mock-only. Exit codes:
  * 0 = ok · 2 = could not run.
  *
  * CHANGE LOG
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — mock ingest of a root over a date range with completeness report + a paper futures order demo (buy/partial-close, positions, account P&L). Optional Postgres store behind --store.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Wire real archive previews and exact confirmed imports through the console's durable boundary; forbid mock writes and silent in-memory fallback.
  */
 import 'dotenv/config';
 import {
@@ -27,23 +32,42 @@ import {
   type FuturesContract, type Timeframe,
 } from '@/features/trading';
 import { ingestFutures, type IngestReport } from '../src/app/trading-futures-ingest';
+import { normalizeFuturesArchiveConfig, FUTURES_ARCHIVE_CONFIRM } from '../src/app/trading-futures-archive-config';
+import { executeFuturesArchiveOffLoop } from '../src/app/trading-futures-archive-worker';
+import { previewFuturesArchive, confirmFuturesArchive, listFuturesArchiveImports, type FuturesArchiveImport } from '../src/app/trading-futures-archive-import';
+import type { Pool } from 'pg';
 
-interface Args { root: string; tf: Timeframe; months: number; drop: number; passes: number; store: boolean }
+interface Args {
+  root: string; tf: Timeframe; months: number; drop: number; passes: number; store: boolean; source: string;
+  dataDir: string; sourceTimeZone: string; start: string; end: string; owner: string; fingerprint: string; confirmation: string;
+}
 
 /** Parse the CLI flags with defaults. */
 function parseArgs(argv: string[]): Args {
+  const known = new Set(['--root','--tf','--months','--drop','--passes','--store','--source','--data-dir','--source-time-zone','--start','--end','--owner','--fingerprint','--confirmation']);
+  for (let i = 0; i < argv.length; i++) {
+    if (!known.has(argv[i])) throw new Error('Unknown ingest flag');
+    if (argv[i] !== '--store' && (!argv[++i] || argv[i].startsWith('--'))) throw new Error('Missing ingest flag value');
+  }
   const get = (flag: string, def: string): string => {
     const i = argv.indexOf(flag);
     return i >= 0 && argv[i + 1] ? argv[i + 1] : def;
   };
-  return {
+  const args = {
     root: get('--root', 'ES').toUpperCase(),
     tf: get('--tf', '1Hour') as Timeframe,
     months: Number(get('--months', '6')),
     drop: Number(get('--drop', '0.01')),
     passes: Number(get('--passes', '2')),
     store: argv.includes('--store'),
+    source: get('--source', 'mock'), dataDir: get('--data-dir', ''), sourceTimeZone: get('--source-time-zone', ''),
+    start: get('--start', ''), end: get('--end', ''), owner: get('--owner', ''), fingerprint: get('--fingerprint', ''), confirmation: get('--confirmation', ''),
   };
+  if (!['mock','kibot-file'].includes(args.source) || !['5Min','1Hour','1Day'].includes(args.tf)
+    || !Number.isInteger(args.months) || args.months < 1 || args.months > 120 || !Number.isInteger(args.passes) || args.passes < 1 || args.passes > 3
+    || !Number.isFinite(args.drop) || args.drop < 0 || args.drop > 1) throw new Error('Invalid bounded ingest arguments');
+  if (args.source === 'mock' && args.store) throw new Error('Mock data cannot be stored in shared market_bars');
+  return args;
 }
 
 /** Print the per-contract completeness table + totals. */
@@ -95,25 +119,48 @@ function order(symbol: string, side: 'buy' | 'sell', qty: number, tag: string) {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
+  if (args.source === 'kibot-file') { await realArchive(args); return; }
   const end = new Date();
   const start = new Date(end.getTime() - args.months * 30 * 86_400_000);
   const source = new MockFuturesDataSource({ dropRate: args.drop });
   console.log(`Ingesting ${args.root} ${args.tf} from ${start.toISOString().slice(0, 10)} to ${end.toISOString().slice(0, 10)} (drop=${args.drop}, passes=${args.passes})…`);
 
-  let pool: import('pg').Pool | undefined;
-  if (args.store && process.env.DATABASE_URL) {
-    const { Pool } = await import('pg');
-    pool = new Pool({ connectionString: process.env.DATABASE_URL });
-    console.log('store: persisting to market_bars via DATABASE_URL');
-  } else if (args.store) {
-    console.log('store: --store given but DATABASE_URL unset — running in-memory');
-  }
-
-  const report = await ingestFutures({ root: args.root, start, end, timeframe: args.tf, source, pool, maxPasses: args.passes });
+  const report = await ingestFutures({ root: args.root, start, end, timeframe: args.tf, source, maxPasses: args.passes });
   printReport(report);
   await paperDemo(args.root, args.tf, source, end);
-  await pool?.end();
   console.log('\nRESULT ' + JSON.stringify({ root: report.root, totalBars: report.totalBars, incomplete: report.incomplete.length }));
+}
+
+async function waitForArchive(pool: Pool, owner: string, id: string): Promise<FuturesArchiveImport> {
+  const deadline = Date.now() + 20 * 60_000;
+  while (Date.now() < deadline) {
+    const job = (await listFuturesArchiveImports(pool, owner)).find(row => row.importId === id);
+    if (job?.status === 'failed') throw new Error(job.error ?? 'Archive job failed');
+    if (job && ['ready','completed'].includes(job.status)) return job;
+    await new Promise(resolveWait => setTimeout(resolveWait, 250));
+  }
+  throw new Error('Archive job still active; inspect its durable console receipt before retrying');
+}
+
+async function realArchive(args: Args): Promise<void> {
+  const config = normalizeFuturesArchiveConfig({ roots: [args.root], timeframes: [args.tf], dataDir: args.dataDir,
+    sourceTimeZone: args.sourceTimeZone, start: args.start, end: args.end });
+  if (!args.store) {
+    const { plan } = await executeFuturesArchiveOffLoop(config, false);
+    console.log('READ-ONLY PREVIEW: UTC bar opens, unadjusted front-month windows, no paper demo or database writes.');
+    console.log('RESULT ' + JSON.stringify(plan)); return;
+  }
+  if (!process.env.DATABASE_URL || !args.owner || args.confirmation !== FUTURES_ARCHIVE_CONFIRM || !/^[a-f0-9]{64}$/.test(args.fingerprint)) {
+    throw new Error('Real imports require DATABASE_URL, --owner, exact --confirmation and the prior --fingerprint; no fallback');
+  }
+  const { Pool: DatabasePool } = await import('pg');
+  const pool = new DatabasePool({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 5000 });
+  try {
+    const preview = await waitForArchive(pool, args.owner, (await previewFuturesArchive(pool, args.owner, config)).importId);
+    await confirmFuturesArchive(pool, args.owner, preview.importId, { confirmation: args.confirmation, fingerprint: args.fingerprint });
+    const imported = await waitForArchive(pool, args.owner, preview.importId);
+    console.log('RESULT ' + JSON.stringify(imported));
+  } finally { await pool.end(); }
 }
 
 main().catch((err) => { console.error('futures-ingest failed:', err); process.exit(2); });

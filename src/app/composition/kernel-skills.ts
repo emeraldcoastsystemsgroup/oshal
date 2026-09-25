@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Pin @/features/google-calendar into the build anchor as contracted kernel skill 'google-calendar'.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Pin the versioned bound-workflow-results contract into the executable build.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Pin the Futures forward receipt ledger and its bounded worker into the runtime build.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Pin confirmed Futures archive import and worker boundaries into deployable artifacts.
  */
 
 /**
@@ -64,6 +65,7 @@ export * as notifications from '@/features/notifications';
 // ── rag: Chroma abstraction + BM25 fallback ──────────────────────────────────
 export * as rag from '@/features/rag';
 export * as futuresForwardReceipts from '@/app/trading-futures-prediction-ledger';
+export * as futuresArchiveImport from '@/app/trading-futures-archive-import';
 
 // ── storage: Dropbox / GitHub / local storage targets (ADR-041) ──────────────
 // Already inside an include root (src/app/**); re-exported so the contract is uniform and the
