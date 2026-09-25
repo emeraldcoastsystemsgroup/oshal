@@ -276,14 +276,18 @@ text-only.
 
 ### JVV-007 — portable renderer across OSHAL surfaces
 
-**Status: registry foundation implemented; surface adoption open (2026-07-11).** The shared DOM-free
+**Status: registry foundation implemented; Jarvis adapter shipped, broader surface adoption open
+(2026-09-25).** The shared DOM-free
 registry normalizes exact bounded keys, rejects duplicates and wildcard/path-like identifiers,
 validates blocks, filters per-surface capabilities, preserves source order across async rendering,
 isolates component failures, supports cancellation, and returns safe fallback descriptors. It does
-not construct DOM or interpret arbitrary component names.
+not construct DOM or interpret arbitrary component names. Jarvis now prefers the generated shared
+bundle for typed blocks in live, durable and resumed answers, while its established escaped prose
+renderer remains in place for ordinary answers and as the unavailable-bundle fallback; a real
+browser guard exercises a bounded `oshal:doc` block.
 
-Next, adapt Jarvis to consume the registry, then add one cockpit concierge, Electron/native shell,
-and TV fallback consumer. Define end-to-end capability negotiation so a TV can request a simpler
+Next, remove the floating diagram dependency from Jarvis, then add one cockpit concierge,
+Electron/native shell, and TV fallback consumer. Define end-to-end capability negotiation so a TV can request a simpler
 artifact without changing the authoritative answer or its provenance.
 
 As part of the Jarvis adapter, remove the current floating `mermaid@11` jsDelivr module import. Serve

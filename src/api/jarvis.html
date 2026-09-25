@@ -21,6 +21,7 @@
   4 | maintainer@emeraldcoastsystemsgroup.com | A failed ask carrying code NO_HOSTED_BRAIN (no AI engine connected) is spoken as the server's actionable sentence instead of "Sorry, that didn't work"; askFailureLines decides both lines, every other failure keeps its message and the apology.
   6 | maintainer@emeraldcoastsystemsgroup.com | A fallback turn says so (2026-09-22): when the ask result carries brainFallback, one attribution line is rendered beneath the answer — "answered by X (hot fallback); Y was unavailable after N attempts" — on both the live and the durable result paths, so the switch is never passed off as a normal turn.
   5 | maintainer@emeraldcoastsystemsgroup.com | Load and mount the Manage Voices → Ambient Recall bridge: every voice row in the Voice & Speakers panel opens that voice's profile page.
+  7 | maintainer@emeraldcoastsystemsgroup.com | Prefer the shared response-renderer bundle for live, durable and resumed answers with the existing escaped renderer retained as the unavailable-bundle fallback.
 -->
 <html lang="en" data-theme="midnight">
 <head>
@@ -954,6 +955,10 @@ async function loadActivity(){
 /* ================= DOM + state ================= */
 const scroll=$('scroll'), statusEl=$('status'), youEl=$('you'), aiEl=$('ai'), bubbleEl=document.querySelector('.bubble');
 const micBtn=$('mic'), micLabel=$('miclabel');
+// Prefer the same DOM-free response contract as the chat surface. The dynamic import is
+// deliberately best-effort: a missing browser bundle must leave Jarvis on its existing escaped
+// renderer, never strand an answer or turn a deployment asset into a hard dependency.
+const sharedResponseRendererReady = import('/dist/response-renderer.js').catch(() => null);
 function setStatus(s,err){ statusEl.textContent=s; statusEl.classList.toggle('err',!!err); }
 function setMode(m){ mode=m; window.JarvisDashboard?.setMode(m); }
 let centerCopyVersion=0;
@@ -1044,6 +1049,21 @@ function renderMarkdown(md) {
   }
   closeList();
   return html;
+}
+/** @description Render typed untrusted blocks through the shared contract while retaining the
+ * established GFM-like prose renderer for ordinary answers. If the bundle is absent, unavailable
+ * or rejects the typed reply, the legacy safe renderer remains the visible availability path. */
+async function renderJarvisResponse(text) {
+  const source = String(text || '');
+  if (!/```\s*oshal:[^\n`]*/i.test(source)) return renderMarkdown(text);
+  try {
+    const renderer = await sharedResponseRendererReady;
+    if (renderer && typeof renderer.renderResponseHtml === 'function') {
+      const result = await renderer.renderResponseHtml(source);
+      if (result && result.html) return result.html;
+    }
+  } catch (_) { /* the legacy escaped renderer remains the safe availability path */ }
+  return renderMarkdown(text);
 }
 async function renderMermaidIn(container) {
   const nodes = [...container.querySelectorAll('.mermaid:not([data-rendered])')];
@@ -1545,7 +1565,7 @@ async function handleInput(text) {
         try { window.__surfaceProducer.emitOps(d.surfaceOps); }
         catch (_) { /* a surface that went away must never break the answer */ }
       }
-      let html = renderMarkdown(d.answer || '(no answer)');
+      let html = await renderJarvisResponse(d.answer || '(no answer)');
       if (d.handoffs && d.handoffs.length) html += chipsHtml(d.handoffs);
       html += visualReplayHtml(d.visual);
       html += brainFallbackHtml(d.brainFallback);
@@ -1969,7 +1989,7 @@ async function openJob(jobId) {
     }
     if (d.status === 'error') { addConvo(assistantLabel(), 'bot', `<span class="err">${esc(d.error || 'failed')}</span>`); scrollToConvo(); return; }
     if (d.status !== 'done') { setStatus('still working on that one…'); return; }
-    let html = renderMarkdown(d.answer);
+    let html = await renderJarvisResponse(d.answer);
     if (d.handoffs && d.handoffs.length) html += chipsHtml(d.handoffs);
     html += visualReplayHtml(d.visual);
     html += brainFallbackHtml(d.brainFallback);
@@ -2052,7 +2072,7 @@ async function resumeThread(tid) {
         prevKey = key;
         const html = role === 'user'
           ? `<div>${esc(text)}</div>`
-          : renderMarkdown(text) + visualReplayHtml(mm.visual) + workspaceChipHtml(mm.sourceTicketId);
+          : await renderJarvisResponse(text) + visualReplayHtml(mm.visual) + workspaceChipHtml(mm.sourceTicketId);
         const bx = addConvo(role === 'user' ? 'You' : assistantLabel(), role, html);
         if (role === 'bot' && bx) { wireChips(bx); wireWorkspaceChips(bx); renderMermaidIn(bx); }
       }

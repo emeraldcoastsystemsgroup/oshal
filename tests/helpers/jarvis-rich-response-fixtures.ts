@@ -11,12 +11,15 @@
 // surface files at import time; putting it in the shared barrel would make every spec that
 // imports './helpers' for an unrelated origin helper pay those reads and fail if the surface
 // files move. The four jarvis-rich-response specs import this path directly.
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { type Page, type Route } from '@playwright/test';
 
 const ROOT = path.resolve(__dirname, '../..');
 const HTML = readFileSync(path.join(ROOT, 'src/api/jarvis.html'), 'utf8');
+const RESPONSE_RENDERER_BUNDLE_PATH = path.join(ROOT, 'src/api/dist/response-renderer.js');
+const RESPONSE_RENDERER_BUNDLE = existsSync(RESPONSE_RENDERER_BUNDLE_PATH)
+  ? readFileSync(RESPONSE_RENDERER_BUNDLE_PATH, 'utf8') : null;
 const STAGE_JS = readFileSync(path.join(ROOT, 'src/api/jarvis-stage.js'), 'utf8');
 const STAGE_CSS = readFileSync(path.join(ROOT, 'src/api/jarvis-stage.css'), 'utf8');
 const AMBIENT_CORE_JS = readFileSync(path.join(ROOT, 'src/api/jarvis-ambient-core.js'), 'utf8');
@@ -126,6 +129,20 @@ export async function fulfillJarvis(route: Route): Promise<void> {
   if (pathName === '/api/swarm/work-items') return json(route, { workItems: [] });
   if (url.hostname === 'cdn.jsdelivr.net') return route.fulfill({ contentType: 'application/javascript', body: 'export default null;' });
   return route.fulfill({ status: 404, body: '' });
+}
+
+/**
+ * @description Variant used only by the shared-renderer acceptance guard. Keeping the generated
+ * bundle opt-in preserves the existing Jarvis tests' deliberate unavailable-bundle fallback cases.
+ * @param route - The Playwright route.
+ * @returns Promise resolving once the route is fulfilled.
+ */
+export async function fulfillJarvisWithResponseRenderer(route: Route): Promise<void> {
+  const url = new URL(route.request().url());
+  if (url.pathname === '/dist/response-renderer.js' && RESPONSE_RENDERER_BUNDLE !== null) {
+    return route.fulfill({ contentType: 'application/javascript', body: RESPONSE_RENDERER_BUNDLE });
+  }
+  return fulfillJarvis(route);
 }
 
 /**
