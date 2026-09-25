@@ -13,6 +13,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Persist configured quality gates and distinguish insufficient OOS samples from passing research evidence.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Queue opted-in new evidence through its dedicated workflow without running inference in the study worker.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Normalize forward opt-in and settle its isolated receipt cycle independently of historical study status.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Settle forward outcomes before scheduled review admission so new grades can inform unchanged historical studies.
  */
 
 import { dirname, resolve } from 'node:path';
@@ -228,6 +229,14 @@ export function executeFuturesStudyOffLoop(config: FuturesResearchConfig): Promi
   });
 }
 
+async function settleForwardCycle(ctx: AppContext, run: FuturesResearchRun): Promise<void> {
+  if (!run.config.predictions?.enabled) return;
+  try {
+    const { runFuturesPredictionCycle } = await import('./trading-futures-prediction-ledger.js');
+    await runFuturesPredictionCycle(ctx, run);
+  } catch (error) { logger.error({ err: error, runId: run.runId }, 'Futures forward cycle failed outside its receipt boundary'); }
+}
+
 async function settleFuturesResearch(ctx: AppContext, run: FuturesResearchRun): Promise<void> {
   try {
     const markets = await executeFuturesStudyOffLoop(run.config);
@@ -237,7 +246,7 @@ async function settleFuturesResearch(ctx: AppContext, run: FuturesResearchRun): 
     const unchanged = Array.isArray(previous) && fingerprints(previous) === fingerprints(markets);
     const sampleStatus = markets.some(market => market.quality?.sampleStatus === 'insufficient') ? 'insufficient_sample' : 'completed';
     await ctx.pool.query(`UPDATE oshal_trading_futures_research_runs SET status=$2, markets=$3::jsonb, completed_at=now() WHERE run_id=$1 AND status='running'`, [run.runId, unchanged ? 'unchanged' : sampleStatus, JSON.stringify(markets)]);
-    if (unchanged) return;
+    await settleForwardCycle(ctx, run);
     if (run.config.nightlyReview) {
       try {
         const { queueFuturesResearchReview } = await import('./trading-futures-research-queue.js');
@@ -249,6 +258,7 @@ async function settleFuturesResearch(ctx: AppContext, run: FuturesResearchRun): 
       }
       return;
     }
+    if (unchanged) return;
     try {
       await ctx.ticketService.createTicket({ title: `Futures research run — ${run.config.roots.join(', ')}`, ticketType: 'trading-decision', ownerSub: run.ownerSub, status: 'complete', description: 'Paper-only bounded futures research. Completion is not sample sufficiency or statistical confidence. Review the durable run before any paper-book change; live execution remains separately gated.', priority: 'none', labels: ['futures-research'], workspaceId: null, assignedAgentId: null, parentTicketId: null, externalProvider: null, externalId: null, externalUrl: null, metadata: { source: FUTURES_RESEARCH_TASK_PREFIX, runId: run.runId, sampleStatus, markets: markets.map(({ root, outOfSampleTrades, outOfSampleNet, quality }) => ({ root, outOfSampleTrades, outOfSampleNet, quality })) } });
     } catch (ticketError) {
@@ -258,11 +268,7 @@ async function settleFuturesResearch(ctx: AppContext, run: FuturesResearchRun): 
     const message = error instanceof Error ? error.message : String(error);
     logger.error({ err: error, runId: run.runId }, 'futures research run failed');
     await ctx.pool.query(`UPDATE oshal_trading_futures_research_runs SET status='failed', error=$2, completed_at=now() WHERE run_id=$1 AND status='running'`, [run.runId, message]);
-  } finally {
-    if (run.config.predictions?.enabled) {
-      const { runFuturesPredictionCycle } = await import('./trading-futures-prediction-ledger.js');
-      await runFuturesPredictionCycle(ctx, run);
-    }
+    await settleForwardCycle(ctx, { ...run, markets: [] });
   }
 }
 

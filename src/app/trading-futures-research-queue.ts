@@ -4,8 +4,10 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Admit explicitly opted-in Futures reviews to their own durable workflow without performing inference in the study worker.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Serialize cross-run admission by historical and settled forward evidence; persist duplicate skips without provider spending.
  */
 import { randomUUID } from 'node:crypto';
+import type { PoolClient } from 'pg';
 import type { AppContext } from './composition-root';
 import { WorkflowPipelineRegistry } from '@/features/swarm-orchestration';
 import { isOperatorIdentity } from '@/shared/middleware/authz';
@@ -14,6 +16,7 @@ import { getActiveRegistry } from './extensions/swarm/swarm-bot-registry';
 import { getTradingScheduleService } from './trading-schedule-dispatch';
 import { ensureFuturesResearchTable, futuresResearchTaskType, type FuturesResearchRun } from './trading-futures-research-dispatch';
 import type { FuturesResearchReview } from './trading-futures-research-review-contract';
+import { captureFuturesForwardContext, futuresReviewEvidenceKey } from './trading-futures-review-forward-context';
 
 const logger = createChildLogger({ module: 'futures-research-queue' });
 
@@ -67,7 +70,7 @@ export async function settleFuturesQueuedReview(pool: AppContext['pool'], run: F
 async function publishReviewTicket(ctx: FuturesQueueContext, run: FuturesResearchRun, review: FuturesResearchReview): Promise<void> {
   const ticket = await ctx.ticketService.createTicket({ title: `Futures study review — ${run.config.roots.join(', ')}`,
     ticketType: FUTURES_REVIEW_WORKFLOW, status: 'paused', ownerSub: run.ownerSub,
-    description: 'Review the bound historical study. Evidence is resolved from the owner-scoped ledger at execution; no order or schedule-edit authority.',
+    description: 'Review the bound historical study and frozen forward context. Evidence is resolved from the owner-scoped ledger; no order or schedule-edit authority.',
     priority: 'none', labels: ['futures-research'], workspaceId: null, assignedAgentId: null, parentTicketId: null,
     externalProvider: null, externalId: null, externalUrl: null,
     metadata: { source: FUTURES_REVIEW_WORKFLOW, runId: run.runId, reviewAttemptId: review.attemptId } });
@@ -79,15 +82,42 @@ async function publishReviewTicket(ctx: FuturesQueueContext, run: FuturesResearc
   await ctx.ticketService.updateStatus(ticket.ticketId, 'backlog', { source: FUTURES_REVIEW_WORKFLOW });
 }
 
+async function saveReviewAdmission(client: PoolClient, run: FuturesResearchRun, review: FuturesResearchReview): Promise<FuturesResearchReview> {
+  const current = (await client.query(`SELECT review FROM oshal_trading_futures_research_runs WHERE run_id=$1 AND owner_sub=$2 FOR UPDATE`, [run.runId, run.ownerSub])).rows[0];
+  if (!current) throw new Error('Owned Futures study disappeared before review admission');
+  if (current.review && current.review.status !== 'failed') return current.review;
+  const duplicate = await client.query(`SELECT run_id FROM oshal_trading_futures_research_runs
+    WHERE owner_sub=$1 AND schedule_id=$2 AND run_id<>$3 AND review->>'evidenceKey'=$4
+      AND review->>'status' IN ('queued','reviewing','completed') LIMIT 1`, [run.ownerSub, run.scheduleId, run.runId, review.evidenceKey]);
+  const admitted: FuturesResearchReview = duplicate.rows.length ? { ...review, status: 'skipped',
+    skipReason: 'Historical and settled forward evidence already has a queued or completed review. No provider request was made.' } : review;
+  await client.query(`UPDATE oshal_trading_futures_research_runs SET review=$3::jsonb WHERE run_id=$1 AND owner_sub=$2`, [run.runId, run.ownerSub, JSON.stringify(admitted)]);
+  return admitted;
+}
+
+async function admitReview(ctx: FuturesQueueContext, run: FuturesResearchRun, review: FuturesResearchReview): Promise<FuturesResearchReview> {
+  const client = await ctx.pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1),hashtext($2))', [`futures-review:${run.ownerSub}`, run.scheduleId]);
+    const admitted = await saveReviewAdmission(client, run, review);
+    await client.query('COMMIT');
+    return admitted;
+  } catch (error) { await client.query('ROLLBACK'); throw error; }
+  finally { client.release(); }
+}
+
 /** @description Queue a new opted-in review or return its existing state; failed publication stays visible and retryable. */
 export async function queueFuturesResearchReview(ctx: FuturesQueueContext, owner: string, runId: string): Promise<FuturesResearchReview> {
   await ensureFuturesResearchTable(ctx.pool);
   const run = await readFuturesQueueRun(ctx.pool, owner, runId);
   await assertFuturesReviewOptIn(run);
-  const review: FuturesResearchReview = { status: 'queued', attemptId: randomUUID(), requestedAt: new Date().toISOString() };
-  const admitted = await ctx.pool.query(`UPDATE oshal_trading_futures_research_runs SET review=$3::jsonb
-    WHERE run_id=$1 AND owner_sub=$2 AND (review IS NULL OR review->>'status'='failed') RETURNING run_id`, [runId, owner, JSON.stringify(review)]);
-  if (!admitted.rows.length) return (await readFuturesQueueRun(ctx.pool, owner, runId)).review!;
+  if (run.review && run.review.status !== 'failed') return run.review;
+  const forwardContext = await captureFuturesForwardContext(ctx.pool, run);
+  const candidate: FuturesResearchReview = { status: 'queued', attemptId: randomUUID(), requestedAt: new Date().toISOString(),
+    forwardContext, evidenceKey: futuresReviewEvidenceKey(run, forwardContext) };
+  const review = await admitReview(ctx, run, candidate);
+  if (review.attemptId !== candidate.attemptId || review.status !== 'queued') return review;
   try { await publishReviewTicket(ctx, run, review); }
   catch (error) {
     logger.error({ err: error, runId, ticketId: review.ticketId }, 'Futures review ticket publication failed');

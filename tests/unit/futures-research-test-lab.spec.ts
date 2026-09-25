@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Include the real-source quality gate regression suite.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Discover the queued-review PostgreSQL suite.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Keep both forward evidence suites discoverable through the existing Futures scenario.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Discover the real frozen-context and outcome-feedback boundary suite.
  */
 import { existsSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
@@ -16,7 +17,7 @@ describe('Futures Test Lab registration', () => {
   it('registers the actual unit and database suites without claiming browser execution', async () => {
     const scenario = FUTURES_RESEARCH_SCENARIOS[0];
     expect(SCENARIOS.filter(item => item.id === scenario.id)).toEqual([scenario]);
-    expect(scenario.regressionTests).toHaveLength(9);
+    expect(scenario.regressionTests).toHaveLength(10);
     for (const test of scenario.regressionTests!) expect(existsSync(test.path), test.path).toBe(true);
     const result = await scenario.steps[0].run('', {});
     expect(result.state).toBe('degraded');

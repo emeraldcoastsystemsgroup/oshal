@@ -6,7 +6,7 @@ The ADR-116 Phase 2 ES/CL out-of-sample result was negative. That is a block on 
 
 The Trading console's Strategies → Tuning panel stores one owner-scoped `trading-futures-research:<sub>` schedule. The operator chooses roots, supported chart/higher timeframes, Kibot file or API source, a container-visible data directory, roll adjustment, volume floor, start date, end policy, walk-forward split, stage grids and a UTC cron. The default `latest` policy resolves the end to the previous completed UTC day on **each** run; `fixed` preserves an explicit historical end. The resolved end is recorded with the run for reproducibility. The route is operator-gated for create, run, pause, resume and delete. Stopping the stock advisor does not stop Futures.
 
-A trigger admits one `running` row before returning its run ID. Owner migration `159-futures-research-runs.sql` provisions the table for validate-only production bootstrap, including FORCE RLS and app-role grants. A unique PostgreSQL index allows one active study across the box. The study loads continuous archives and runs the six locked-winner stages in a worker thread with a 1 GiB old-generation heap cap and a 30-minute wall-clock limit. The API event loop remains available. A completed row holds the exact normalized configuration, archive bar counts, chart/higher-timeframe source as-of timestamps, minute-resample flag, latest complete OOS end, each window's locked stage winners and out-of-sample results. The worker hashes the study definition, input bars inside the completed OOS horizon and report into a per-market evidence fingerprint. If the latest completed run for the same owner/schedule has the same root/end/fingerprint set, the new run is marked `unchanged` and no duplicate review ticket is created. Runs after a changed study definition or revised completed-window bars remain new evidence. This comparison happens after the bounded study, so it prevents false new-evidence claims but does not save optimizer compute. Failure writes a failed row and reason; an interrupted row older than 45 minutes is marked failed on the next admission. The console displays running/completed/unchanged/failed states and expandable evidence. A review ticket is attempted after durable new completion; ticket failure is logged without inventing a second failed study.
+A trigger admits one `running` row before returning its run ID. Owner migration `159-futures-research-runs.sql` provisions the table for validate-only production bootstrap, including FORCE RLS and app-role grants. A unique PostgreSQL index allows one active study across the box. The study loads continuous archives and runs the six locked-winner stages in a worker thread with a 1 GiB old-generation heap cap and a 30-minute wall-clock limit. The API event loop remains available. A completed row holds the exact normalized configuration, archive bar counts, chart/higher-timeframe source as-of timestamps, minute-resample flag, latest complete OOS end, each window's locked stage winners and out-of-sample results. The worker hashes the study definition, input bars inside the completed OOS horizon and report into a per-market evidence fingerprint. If the latest completed run for the same owner/schedule has the same root/end/fingerprint set, the new run is marked `unchanged`. Review admission separately compares historical and settled forward evidence, so a newly matured outcome can justify review without a new OOS result. Runs after a changed study definition or revised completed-window bars remain new evidence. This comparison happens after the bounded study, so it prevents false new-evidence claims but does not save optimizer compute. Failure writes a failed row and reason; an interrupted row older than 45 minutes is marked failed on the next admission. The console displays running/completed/unchanged/failed states and expandable evidence. An opted-in review ticket is attempted after durable completion and forward settlement when its combined evidence is new; ticket failure is logged without inventing a second failed study.
 
 The stage-grid API accepts only the six reviewed configuration axes, with typed/ranged candidate values, at most eight values per axis, at most 64 combinations per stage and at most 512 estimated backtests per study. Overlapping out-of-sample windows, an empty projected window and a mock source outside tests are refused. The run has no order path and cannot arm a paper or live book.
 
@@ -72,9 +72,13 @@ declare the `bound-workflow-results` compatibility floor.
 In Strategies → Tuning, check **Queue research-bot review after new evidence** and Save. This
 `nightlyReview` control defaults to false and explicitly acknowledges provider cost. Installing
 the package does not create a schedule or enroll other users. The deterministic worker persists
-new completed or insufficient-sample evidence, then publishes a ticket of type `futures-research`.
-Unchanged and failed studies do not trigger reasoning. Changing the opt-in alone does not count as
-new market evidence. With opt-in off, the existing completed evidence ticket remains non-executing.
+completed or insufficient-sample evidence, settles the enabled forward cycle, then admits a ticket
+of type `futures-research` when historical or settled forward evidence has changed. An unchanged
+historical study can therefore receive a new review after an outcome matures. Identical settled
+evidence is recorded as `skipped`, without a ticket or provider call; fresh pending calls alone do
+not trigger spending. Failed historical studies do not trigger reasoning. With opt-in off, the
+existing completed evidence ticket remains non-executing. Turning opt-in on admits the next
+successful study only if that schedule has no queued/reviewing/completed review of the same evidence.
 
 Admission stages the review ticket paused, binds its exact owner/run/attempt/ticket in PostgreSQL,
 then moves it to backlog. The queue uses the companion's tool-less dedicated worker through the
@@ -86,7 +90,7 @@ The equities decision workflow and detached study worker perform no new inferenc
 
 Only a strictly validated response for the currently claimed attempt becomes a completed review.
 Replay reuses a completed result without another provider call; invalid, failed or superseded
-attempts cannot overwrite one. The console shows queued/reviewing/completed/failed state and the
+attempts cannot overwrite one. The console shows queued/reviewing/completed/failed/skipped state and the
 workflow ticket ID. **Review this study** can retry a failed attempt interactively; a queued or
 reviewing attempt can be reclaimed after one hour. Such a retry has a new attempt ID and fences
 the old ticket. Pausing/deleting the schedule or clearing opt-in prevents queued admission at its
@@ -141,25 +145,64 @@ before and after work. Pause, stop or disabling forward calls prevents later cyc
 already committed evidence remains. A newly enabled loop can grade its owner's older pending
 receipts using each receipt's frozen contract, archive and target settings, even after a schedule
 was replaced; another owner's receipts never enter the worker. Forward cycle failures are shown
-separately and cannot turn a completed historical study into a failure. The scheduled reviewer
-currently receives historical study evidence, **not these forward outcomes**; automated
-outcome-based proposal feedback remains to be connected and proven.
+separately and cannot turn a completed historical study into a failure. The forward cycle settles
+before scheduled review admission; a failed study may still grade old calls, but those grades
+enter a review on a subsequent successful historical run.
+
+## Frozen forward feedback
+
+Trading 1.25.0 and Futures Research 1.1.0 display and interpret forward feedback with the matching
+framework implementation. Interactive and scheduled review admission freeze the exact owner's
+latest **25 graded and 25 other** receipts for the study's configured roots, across that owner's
+schedules. The separate buckets keep pending calls from crowding out graded history. One SQL
+snapshot provides the sample and total available counts, so truncation is explicit. Counts and
+cohort denominators summarize only supplied receipts, not the owner's entire ledger. Cohorts
+separate contract, model, study fingerprint and horizon; no pooled strategy-accuracy claim follows.
+Calls can have overlapping horizons and are not independent trials. Flat and unscored outcomes
+are not wins. Signed ticks are directional reference-to-future changes, not executable P&L or
+calibrated probabilities. Forward observations remain separate from historical OOS.
+
+The context excludes paths, raw source errors, credentials and owner/schedule identifiers. It
+contains safe receipt IDs, immutable evidence fingerprints and observed outcomes, with a canonical
+context fingerprint. The reviewer must cite that exact fingerprint whenever receipts exist;
+missing or wrong citations fail the attempt. Invalid or future-dated graded evidence is refused
+before inference. Missing migration 161 is explicitly unassessed; an empty available ledger and
+an old review with no forward context are distinguished in the console, never represented as
+zero predictive success. Proposals remain limited to bounded stage grids and require explicit Save.
+Outcome-informed tuning consumes that holdout and needs new untouched evidence before promotion.
+
+Nightly admission serializes each owner/schedule in PostgreSQL and compares historical fingerprints
+plus settled forward evidence. Pending/check-clock changes do not produce a new spending key.
+Failed attempts may be retried; a duplicate skip may be reviewed by an explicit console request.
+Queued and completed reviews retain their original context even after later outcomes arrive.
+Completed reviews are replayed, not refreshed or overwritten: a later run carries later evidence.
+The console shows frozen counts, per-cohort details, receipt/context citations, assessment and skip
+reason. This implements the feedback path; it is not a deployed provider or performance receipt.
 
 ## Verification
 
-- `npx vitest run --no-file-parallelism futures-research- futures-prediction- tests/unit/futures-backtester.spec.ts tests/unit/futures-optimizer.spec.ts`
+- `npx vitest run --no-file-parallelism futures-research- futures-prediction- futures-review-forward- tests/unit/futures-backtester.spec.ts tests/unit/futures-optimizer.spec.ts`
 - The forward guards use disposable CSV files, the real locked replay/isolated worker and a private PostgreSQL server with migration 161. They prove no backdating API, repeated-input deduplication, owner/RLS isolation, immutable input/terminal outcomes, explicit clocks, future-only grading, missing/revised data and failed/unchanged-study independence. The database terminal-grade payload is an explicit transport fixture; actual raw-bar grading is exercised separately. Trading's `futures-predictions.spec.ts` tests the real route with a doubled ledger and actual browser-script handlers. These are local boundary proofs, not a deployed forward accuracy receipt.
 - The private PostgreSQL cases apply migrations 159/160 and prove validate-only readiness, one-run admission, owner/RLS isolation, full report persistence, failed-source honesty, review concurrency, retry fencing and unchanged study evidence. An actual stale Kibot file crosses the worker/database boundary and creates a failed row without a completion ticket. `futures-research-quality.spec.ts` verifies refusal before the optimizer and per-window sample floors. Inference is explicitly doubled in these tests; they are not live provider proof. The success-path worker case runs synthetic bars; a separate compiled-JavaScript smoke checks the image-style worker entry.
 - In the applications checkout, `trading/tests/trading-surface-expansion.spec.ts` proves operator-only schedule creation and that the stock-advisor stop leaves Futures intact. The route source and compiled twin are generated together by the canonical store-route builder.
 - `trading/tests/futures-research-review.spec.ts` drives the real router and browser-script handlers with fixture inference: exact principal, refusal states, escaping, proposal staging without writes, and slow-response navigation guards. Run the package suite with its framework alias configured. The Test Lab's **Futures research studies and review** scenario lists the framework guards and honestly reports that the browser step did not execute host tests.
 
 The `futures-research-queue-postgres.spec.ts` suite crosses actual study-worker, PostgreSQL
-ticket/ledger and manifest-dispatch boundaries. It proves explicit opt-in, unchanged-study
-suppression, exact binding, revoked access, retry/replay fencing and no unsigned fallback.
+ticket/ledger and manifest-dispatch boundaries. It proves explicit opt-in, concurrent cross-run
+deduplication, newly settled outcome admission despite unchanged history, exact frozen binding,
+revoked access, retry/replay fencing and no unsigned fallback.
 Schedule lookup and inference transport are explicit fixtures; the existing
 `queued-protected-dispatch.spec.ts` separately exercises signed protected execution. The
 companion's package test drives its compiled readiness route over loopback HTTP; readiness is
 not a running-worker or provider receipt.
+An actual file-backed study worker also proves forward settlement precedes unchanged-study
+review admission; only that case's second forward cycle supplies a synthetic grade transition.
+
+`futures-review-forward-context-postgres.spec.ts` crosses the real projection SQL, JSONB storage,
+immutable ledger, review admission and non-superuser RLS boundary. Synthetic dated receipts prove
+bounded buckets/cohorts, redaction, canonical hashing, citation rejection, frozen replay and
+inconsistent/future-grade refusal. Inference and market outcomes are explicit fixtures; the existing
+raw-file prediction suites are the grading companion, not proof of real market performance.
 
 Installed acceptance still requires applying migrations 159–161 as owner, installing the matching
 Trading and Futures Research packages, enabling the dedicated worker, opening Strategies → Tuning
@@ -170,4 +213,4 @@ acceptance instructions, not a record that those steps have occurred.
 
 ## Still required before Futures can close
 
-Archive-to-`market_bars` ingestion, installed-console/provider-cost receipts, a real nightly observation and subsequently matured forward outcomes on the deployed box remain unproven. Exchange-session completeness and proactive stale-source notifications remain open; the forward clock and freshness guards do not assert exchange-session coverage. Unchanged historical evidence is still detected after optimization; a pre-optimizer duplicate skip is not implemented. Connect the research reviewer to owned forward outcomes without silently adopting its proposals. Paper-book/cockpit acceptance and any eventual live decision remain separate phases; live requires a named operator approval backed by positive research evidence. Keep [Futures extension layer](../../BACKLOG.md) open until its own Done when is met.
+Archive-to-`market_bars` ingestion, installed-console/provider-cost receipts, a real nightly observation and subsequently matured forward outcomes on the deployed box remain unproven. Exchange-session completeness and proactive stale-source notifications remain open; the forward clock and freshness guards do not assert exchange-session coverage. Unchanged historical evidence is still detected after optimization; a pre-optimizer duplicate skip is not implemented. Outcome feedback now has local owner/RLS and frozen-citation proofs; deployed provider review of matured real outcomes still needs acceptance. Paper-book/cockpit acceptance and any eventual live decision remain separate phases; live requires a named operator approval backed by positive research evidence. Keep [Futures extension layer](../../BACKLOG.md) open until its own Done when is met.
