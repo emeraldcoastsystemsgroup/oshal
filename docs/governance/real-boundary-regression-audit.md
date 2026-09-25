@@ -397,3 +397,17 @@ Trading tests exercise the actual route and browser-script form, including regis
 refusal, opt-in round-trip and queued-state escaping. The companion package tests its compiled
 readiness router over actual loopback HTTP. These guards do not claim an installed worker,
 provider-cost receipt, real nightly observation or forward prediction/paper acceptance.
+
+## Futures forward receipts (2026-09-25)
+
+`futures-prediction-evidence.spec.ts` reads disposable CSV files through the production parser,
+resampler, explicit timezone decoder and actual locked strategy replay; no indicator or grade
+engine is doubled. `futures-prediction-ledger-postgres.spec.ts` uses a private PostgreSQL server,
+migration 161, a non-superuser RLS role and the actual off-loop prediction worker. Schedule
+lookup is a fixture; terminal-grade persistence uses an explicit payload fixture while the
+separate evidence suite proves grading against actual files. These checks cover database-clock
+issuance, repeated-input deduplication, immutable inputs/final outcomes and exact owner scope.
+The store `futures-predictions.spec.ts` drives the actual route with a doubled ledger and executes
+real browser-script controls/rendering/navigation guards. Installed console/provider/nightly,
+market completeness, matured real forward outcomes, reviewer feedback and paper-book acceptance
+remain outstanding. No performance or backlog-closure claim follows from these tests.

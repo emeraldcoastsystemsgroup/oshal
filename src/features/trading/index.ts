@@ -19,6 +19,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Export the NYSE full-closure calendar (nyse-holidays): the static 2026/2027 table, nyseHolidayOn() with the additive TRADING_MARKET_HOLIDAYS override, and the horizon constants the refresh-guard spec reads — consumed by the kernel's validateFireAt so a timed order on an exchange holiday is refused by name at scheduling time (ADR-136 D4 follow-up).
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Export the ADR-143 D5 REST screener (alpaca-screener): screenerMovers / screenerMostActives over the owned key, the SCREENER_LABEL the surface prints verbatim, moversMinPrice() and the board/row/filter types. Fail-soft by contract — every failure answers null so the movers report falls back to its bounded board instead of blanking.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Export the ADR-116 Phase 1 walk-forward evidence rail (futures-walk-forward): walkForwardWindows/walkForward for the project's first out-of-sample futures measurement at frozen constants, scoreBacktest, and the shared experiment plumbing mergeBacktestConfig / patchFromDottedKey / expandGrid / resolveFitness that the backtest and sweep runners both consume.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | Export the detached Futures replay observation contract.
  *
  * @module trading
  */
@@ -147,7 +148,7 @@ export {
   FITNESS_FUNCTIONS, MIN_TRADES_GATE_SENTINEL, fitnessNames,
 } from './services/futures-fitness';
 // ADR-116 intraday backtester — bar-walk simulator with NT8 fill semantics + multi-market overlay.
-export type { BacktestTrade, EquityPoint, BacktestResult, BacktestInstrument, BacktestCosts, BacktestConfig, IndicatorConfig, OverlayPoint } from './services/futures-backtester';
+export type { BacktestTrade, EquityPoint, BacktestResult, BacktestInstrument, BacktestCosts, BacktestConfig, IndicatorConfig, OverlayPoint, FuturesReplayObservation } from './services/futures-backtester';
 export { runFuturesBacktest, maxDrawdownOf, overlayEquityCurves } from './services/futures-backtester';
 export type { KibotFileOptions } from './services/futures-data-source';
 export { KibotFileDataSource, resampleBars } from './services/futures-data-source';

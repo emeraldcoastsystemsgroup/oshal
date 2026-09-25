@@ -12,6 +12,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Expose owner-scoped durable interactive reviews alongside unchanged deterministic study evidence.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Persist configured quality gates and distinguish insufficient OOS samples from passing research evidence.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Queue opted-in new evidence through its dedicated workflow without running inference in the study worker.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Normalize forward opt-in and settle its isolated receipt cycle independently of historical study status.
  */
 
 import { dirname, resolve } from 'node:path';
@@ -28,6 +29,7 @@ import { futuresResearchWorkerEntry, type FuturesResearchWorkerOutput } from './
 import type { FuturesResearchMarket } from './trading-futures-research-study';
 import type { FuturesResearchReview } from './trading-futures-research-review-contract';
 import { normalizeFuturesQuality, type FuturesQualityConfig } from './trading-futures-research-quality';
+import { normalizeFuturesPredictions, type FuturesPredictionConfig } from './trading-futures-prediction-config';
 
 const logger = createChildLogger({ module: 'trading-futures-research-dispatch' });
 
@@ -50,6 +52,7 @@ export interface FuturesResearchConfig {
   nightlyCron: string;
   quality: FuturesQualityConfig;
   nightlyReview: boolean;
+  predictions?: FuturesPredictionConfig;
 }
 
 const TIMEFRAMES = new Set<Timeframe>(['5Min', '1Hour', '1Day', '1Week', '3Month']);
@@ -156,6 +159,7 @@ export function normalizeFuturesResearchConfig(raw: unknown): FuturesResearchCon
     nightlyCron: String(input.nightlyCron ?? FUTURES_RESEARCH_CRON_DEFAULT).trim() || FUTURES_RESEARCH_CRON_DEFAULT,
     quality: normalizeFuturesQuality(input.quality),
     nightlyReview: normalizeNightlyReview(input.nightlyReview),
+    predictions: normalizeFuturesPredictions(input.predictions, { roots, source, timeframe, ltfTimeframe }),
   };
 }
 
@@ -174,6 +178,7 @@ export interface FuturesResearchRun {
   markets: FuturesResearchMarket[];
   error: string | null; createdAt: string; completedAt: string | null;
   review?: FuturesResearchReview | null;
+  predictionCycle?: { status: string; inserted?: number; checked?: number; error?: string; completedAt: string } | null;
 }
 
 /** @description Provision or validate the owner-scoped research ledger. @param pool - Owner-aware application pool. @returns Schema readiness. */
@@ -226,6 +231,7 @@ export function executeFuturesStudyOffLoop(config: FuturesResearchConfig): Promi
 async function settleFuturesResearch(ctx: AppContext, run: FuturesResearchRun): Promise<void> {
   try {
     const markets = await executeFuturesStudyOffLoop(run.config);
+    run.markets = markets;
     const previous = (await ctx.pool.query(`SELECT markets FROM oshal_trading_futures_research_runs WHERE owner_sub=$1 AND schedule_id=$2 AND status IN ('completed','insufficient_sample') ORDER BY created_at DESC LIMIT 1`, [run.ownerSub, run.scheduleId])).rows[0]?.markets as FuturesResearchMarket[] | undefined;
     const fingerprints = (rows: FuturesResearchMarket[]): string => JSON.stringify(rows.map(({ root, latestCompleteOosEnd, evidenceFingerprint }) => [root, latestCompleteOosEnd, evidenceFingerprint]));
     const unchanged = Array.isArray(previous) && fingerprints(previous) === fingerprints(markets);
@@ -252,6 +258,11 @@ async function settleFuturesResearch(ctx: AppContext, run: FuturesResearchRun): 
     const message = error instanceof Error ? error.message : String(error);
     logger.error({ err: error, runId: run.runId }, 'futures research run failed');
     await ctx.pool.query(`UPDATE oshal_trading_futures_research_runs SET status='failed', error=$2, completed_at=now() WHERE run_id=$1 AND status='running'`, [run.runId, message]);
+  } finally {
+    if (run.config.predictions?.enabled) {
+      const { runFuturesPredictionCycle } = await import('./trading-futures-prediction-ledger.js');
+      await runFuturesPredictionCycle(ctx, run);
+    }
   }
 }
 
@@ -281,6 +292,6 @@ export async function dispatchTradingFuturesResearch(ctx: AppContext, schedule: 
 
 export async function listFuturesResearchRuns(pool: AppContext['pool'], ownerSub: string, limit = 10): Promise<FuturesResearchRun[]> {
   await ensureFuturesResearchTable(pool);
-  const rows = (await pool.query(`SELECT run_id, owner_sub, schedule_id, status, config, markets, error, created_at, completed_at, review FROM oshal_trading_futures_research_runs WHERE owner_sub=$1 ORDER BY created_at DESC LIMIT $2`, [ownerSub, Math.min(50, Math.max(1, limit))])).rows;
-  return rows.map((row) => ({ runId: String(row.run_id), ownerSub: String(row.owner_sub), scheduleId: String(row.schedule_id), status: String(row.status), config: row.config as FuturesResearchConfig, markets: row.markets as FuturesResearchRun['markets'], error: row.error ? String(row.error) : null, createdAt: new Date(row.created_at).toISOString(), completedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null, review: row.review ?? null }));
+  const rows = (await pool.query(`SELECT *, to_jsonb(oshal_trading_futures_research_runs)->'prediction_cycle' AS forward_cycle FROM oshal_trading_futures_research_runs WHERE owner_sub=$1 ORDER BY created_at DESC LIMIT $2`, [ownerSub, Math.min(50, Math.max(1, limit))])).rows;
+  return rows.map((row) => ({ runId: String(row.run_id), ownerSub: String(row.owner_sub), scheduleId: String(row.schedule_id), status: String(row.status), config: row.config as FuturesResearchConfig, markets: row.markets as FuturesResearchRun['markets'], error: row.error ? String(row.error) : null, createdAt: new Date(row.created_at).toISOString(), completedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null, review: row.review ?? null, predictionCycle: row.forward_cycle ?? null }));
 }

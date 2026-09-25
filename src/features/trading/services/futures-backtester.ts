@@ -58,6 +58,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — intraday bar-walk backtester for the ADR-116 strategy port: indicator precompute, entry-evaluator/stop-engine wiring, NT8 fill semantics (next-bar-open entries, intrabar stop triggers with gap fills, next-bar market exits), stage-1 timed-exit mode, per-trade MFE/MAE in currency+percent, equity curve, summary stats, and multi-market overlay.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Three modelling gaps the "Known limits" list owed (BACKLOG rows 402/414/415): the Export generation's Target-1 partial scale-out with its post-target MFE stop move (partials book as their own blotter row, limit fills take gap improvement and pay no slippage, stop-before-target on a both-touched bar); the margin model (fundable-size cap, maintenance margin calls liquidating at the next open, always-on notional/leverage from the real contract specs); and the R10 daily-ADX regime gate wired with the same no-look-ahead discipline as the LTF index, fail-closed when enabled without a daily series.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Expose detached per-bar observations before terminal liquidation without changing fills or strategy state.
  *
  * @module futures-backtester
  */
@@ -69,7 +70,7 @@ import { chandelierBands, superTrendM11, parabolicSar } from './futures-trail-st
 import { laguerreOscillator, laguerreFilter, mfi, adaptiveLaguerreFilter } from './futures-entry-indicators';
 import { macdWave, dmiWave, ehlersInstTrendWave, laguerreWaveStops, WavePattern } from './futures-wave-tracking';
 import {
-  createFuturesEntryEvaluator, type EntryEvaluatorConfig, type LtfSnapshot, type ChartIndicatorSnapshot,
+  createFuturesEntryEvaluator, type EntryEvaluatorConfig, type LtfSnapshot, type ChartIndicatorSnapshot, type EntryDecision,
 } from './futures-entry-evaluator';
 import { createEnsembleConfirmation, type EnsembleConfirmation } from './futures-entry-ensemble';
 import {
@@ -84,6 +85,15 @@ import {
   MARGIN_MODEL_DEFAULTS, type MarginModelConfig,
 } from './futures-margin';
 import { buildDailyRegimeGate, type RegimeGateConfig } from './futures-regime-gate';
+
+/** Detached per-bar research observation, before the synthetic EndOfData liquidation. */
+export interface FuturesReplayObservation {
+  barIndex: number;
+  decision: EntryDecision;
+  /** Replay-implied bias, not an executable order or a prediction of profitability. */
+  bias: 'long' | 'short' | null;
+  regimeAllowed: boolean;
+}
 
 /** One completed trade, with everything the fitness functions and a trade blotter need. */
 export interface BacktestTrade {
@@ -414,9 +424,10 @@ interface OpenTrade {
  * @param config - Instrument, entry/stop configuration, costs, and stage-1 timed-exit mode.
  * @param dailyBars - Ascending DAILY bars for the R10 regime gate. Required only when
  *   `config.regimeGate.enabled` is set; the gate blocks every bar without them.
+ * @param observe - Optional detached completed-bar observation, before forced terminal liquidation.
  * @returns Trades, equity curve, and summary statistics.
  */
-export function runFuturesBacktest(chartBars: FuturesBar[], ltfBars: FuturesBar[], config: BacktestConfig, dailyBars: FuturesBar[] = []): BacktestResult {
+export function runFuturesBacktest(chartBars: FuturesBar[], ltfBars: FuturesBar[], config: BacktestConfig, dailyBars: FuturesBar[] = [], observe?: (reading: FuturesReplayObservation) => void): BacktestResult {
   const ind = { ...DEFAULT_INDICATORS, ...config.indicators };
   const { multiplier, tickSize, symbol } = config.instrument;
   const slip = (config.costs?.slippageTicks ?? 0) * tickSize;
@@ -630,6 +641,7 @@ export function runFuturesBacktest(chartBars: FuturesBar[], ltfBars: FuturesBar[
   }
 
   for (let i = 0; i < chartBars.length; i++) {
+    let observed: EntryDecision | null = null;
     const bar = chartBars[i];
 
     // 1. A market exit ordered last bar fills at THIS bar's open (gaps included).
@@ -761,6 +773,7 @@ export function runFuturesBacktest(chartBars: FuturesBar[], ltfBars: FuturesBar[
         estimatedStopLong: estimateStop(i, 'long'),
         estimatedStopShort: estimateStop(i, 'short'),
       });
+      observed = decision;
       if (decision.signal && decision.quantity >= 1 && i + 1 < chartBars.length) {
         if (!regime.allowed[i]) {
           // The R10 gate stands aside: the signal existed and was refused, which is a different
@@ -806,9 +819,15 @@ export function runFuturesBacktest(chartBars: FuturesBar[], ltfBars: FuturesBar[
       // flattens at market. It overrides a Strangle exit ordered this same bar — both fill at the
       // next open, so P&L is identical and his code attributes the exit to the ensemble (it checks
       // the ensemble first and returns before touching stop management).
+      observed = held;
       if (open.ensembleConf && held.ensemble) {
         if (open.ensembleConf.onBar(held.ensemble.score).exit) open.pendingMarketExit = 'EnsembleExit';
       }
+    }
+    if (observe && observed) {
+      observe(structuredClone({ barIndex: i, decision: observed, regimeAllowed: regime.allowed[i],
+        bias: open ? (open.pendingMarketExit ? null : open.direction)
+          : (regime.allowed[i] && observed.quantity >= 1 ? observed.signal : null) }));
     }
   }
 
