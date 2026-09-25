@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Coverage for the UI-entered-key gap: every persisted provider API key (not just Anthropic) must reach Cline data/secrets.json so the CLI actually authenticates with the chosen provider
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: invert the retired key-copy expectation and prove persisted provider credentials stay in encrypted server storage while Cline files are non-secret, plan-only tombstones.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Keep the persisted-provider contract independent of the model-less Playwright server posture; noop is a runtime test provider, not a Cline catalog selection.
  */
 
 import { expect, test } from '@playwright/test';
@@ -51,6 +52,10 @@ test('persisted provider keys stay out of Cline runtime files', async () => {
     },
     { actModeApiProvider: 'openai', actModeApiModelId: 'gpt-4o', mode: 'act' },
   );
+  const priorForceProvider = process.env.FORCE_LLM_PROVIDER;
+  const priorForceModel = process.env.FORCE_LLM_MODEL;
+  delete process.env.FORCE_LLM_PROVIDER;
+  delete process.env.FORCE_LLM_MODEL;
   try {
     h.service.syncFromPersistedConfig('gpt-4o');
     const clineSecrets = h.readJson(path.join('data', 'secrets.json'));
@@ -68,6 +73,10 @@ test('persisted provider keys stay out of Cline runtime files', async () => {
     expect(fs.existsSync(path.join(h.outputDir, 'secrets.enc.json'))).toBe(true);
     expect(fs.existsSync(path.join(h.outputDir, 'secrets.json'))).toBe(false);
   } finally {
+    if (priorForceProvider === undefined) delete process.env.FORCE_LLM_PROVIDER;
+    else process.env.FORCE_LLM_PROVIDER = priorForceProvider;
+    if (priorForceModel === undefined) delete process.env.FORCE_LLM_MODEL;
+    else process.env.FORCE_LLM_MODEL = priorForceModel;
     fs.rmSync(h.base, { recursive: true, force: true });
   }
 });

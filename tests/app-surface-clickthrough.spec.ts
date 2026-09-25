@@ -10,6 +10,7 @@
  *                     |               | re-fixtured smoke-storage → smoke-workflow-studio
  *                     |               | (kernel-resident, D5) — storage carved to the app
  *                     |               | store (ADR-085 Wave 2).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Make the connector clickthrough honor per-user storage: the mock identity has no real accounts, so prove an honest empty result rather than borrowing another user's GitHub connection.
  */
 
 import { test, expect, type Page } from '@playwright/test';
@@ -49,13 +50,16 @@ test.describe('priority app click-through polish', () => {
     });
   });
 
-  test('utilities connector hub searches and summarizes available accounts', async ({ page }) => {
+  test('utilities connector hub searches and preserves per-user account isolation', async ({ page }) => {
     await page.goto('/utilities');
 
     await expect(page.locator('#connectorSummary .summary-tile')).toHaveCount(4, { timeout: 30_000 });
     await expect(page.locator('#list')).not.toContainText(/Could not load connectors/i);
     await page.locator('#connectorSearch').fill('github');
-    await expect(page.locator('#list')).toContainText(/GitHub|github/i, { timeout: 10_000 });
+    // MOCK_OIDC authenticates as mock-user-001, which deliberately has no stored connector
+    // accounts. Do not leak or borrow the operator's real Gmail-backed GitHub connection into
+    // a shared CI browser session; the signed-in operator acceptance is a separate live proof.
+    await expect(page.locator('#list')).toContainText(/No connectors match/i, { timeout: 10_000 });
     await page.locator('#connectorSearch').fill('zzzz-no-real-connector');
     await expect(page.locator('#list')).toContainText(/No connectors match/i, { timeout: 10_000 });
   });
