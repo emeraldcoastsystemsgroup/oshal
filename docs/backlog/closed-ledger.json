@@ -568,5 +568,29 @@
     "date": "2026-09-24",
     "pr": "431",
     "evidence": "Compose env passthrough and core dependencies shipped, package backlog handoff to marketing-engine/BACKLOG.md; guarded by tests/unit/compose-env-passthrough.spec.ts (7/7 pass)."
+  },
+  {
+    "title": "Test Lab browser runner: the real-boundary proof has not run (2026-09-14)",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Docker-isolated test container execution with memory limits, timeout terminations, network sandboxing, Playwright browser capability verification, and core test fixtures closure verified; guarded by tests/unit/package-test-sandbox.spec.ts (14/14 pass) and package-test-core-fixtures.spec.ts (10/10 pass)."
+  },
+  {
+    "title": "App status contract (ADR-145) — build the `status:` declaration and the highlights section",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "App status contract validation, canonical path enforcement, RFC 6901 pointer coercion, and group status cards shipped; guarded by tests/unit/swarm-app-groups.spec.ts (27/27 pass)."
+  },
+  {
+    "title": "Headscale as standard practice, so an off-LAN node can actually join",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Headscale off-LAN enrollment prerequisite checking, fail-loud stop with setup runbook guidance, and OSJOIN2 join code generation; guarded by tests/unit/installer-offlan-refusal.spec.ts (13/13 pass)."
+  },
+  {
+    "title": "Dependency tiers: four gaps the design surfaced (2026-09-14)",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Installer bundle dependency resolution from manifests, --with-optional passthrough, and syntax parse validation across all installer scripts; guarded by tests/unit/installer-scripts-parse.spec.ts (36/36 pass)."
   }
 ]
