@@ -14,6 +14,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Add the bluesky (identifier + app-password paste, bespoke createSession validation) and resend (API-key paste, GENERIC_VERIFY) token connectors for the marketing engine's outbound rails (ADR-133), categorized social/email.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | RingCentral OAuth entry (screen-pop spec): PKCE S256 + Basic token auth over the GENERIC exchange/refresh paths; scopes deliberately EMPTY because a RingCentral app's permissions are fixed at registration and unrequested scope= values fail the authorize call. Creds RINGCENTRAL_CLIENT_ID/SECRET; server host env-selectable for the devtest sandbox; category communication.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Add the 'espn-fantasy' connector (category 'media') for the Sports Edge Fantasy tab: two-value paste of the SWID + espn_s2 cookies, stored "SWID:espn_s2". ESPN publishes NO OAuth for fantasy, so the only credential that exists is a pair of ACCOUNT SESSION cookies — unscoped, with no per-app revocation — which is why the entry says so at the point someone would otherwise assume it is an API key. The PUBLIC half of the fantasy API (the full player universe including ESPN's own projections) needs no credential; this connector exists solely for a private league, which answers 401 without it.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Add explicit chat:write and files:write defaults for the approval-gated Office Slack upload leg; existing connections must reconnect to receive the expanded consent.
  * -----------------------------------------------------------------------------
  *
  * @module connector-provider-registry
@@ -208,8 +209,9 @@ export const PROVIDERS: Record<string, ProviderDef> = {
     tokenUrl: 'https://slack.com/api/oauth.v2.access',
     // USER-token scopes (sent as `user_scope` in /start — see the slack block there) so the
     // connection reads the user's OWN channels, DMs, and group DMs (the personal feed), not a
-    // bot's. Add chat:write via SLACK_SCOPES to also post as the user.
-    scopes: (process.env.SLACK_SCOPES || 'channels:history,groups:history,im:history,mpim:history,channels:read,groups:read,im:read,mpim:read,users:read')
+    // bot's. The write scopes are explicit because Office delivery uploads as the caller;
+    // existing connections must reconnect after this default changes.
+    scopes: (process.env.SLACK_SCOPES || 'channels:history,groups:history,im:history,mpim:history,channels:read,groups:read,im:read,mpim:read,users:read,chat:write,files:write')
       .split(/[\s,]+/).map((s) => s.trim()).filter(Boolean),
     authParams: {},
     flavor: 'slack',
