@@ -121,6 +121,18 @@ stop. The result keeps live execution behind a later evidence and operator gate 
 continues with a console-configured research loop, a futures research bot, nightly permutation runs,
 and a prediction ledger. Durable paper and cockpit work remain separately gated phases.
 
+## Amendment 2026-09-24 — bounded console study checkpoint
+
+The first forward slice makes the deterministic six-stage study configurable in Trading →
+Strategies → Tuning. It adds an operator-gated schedule, an off-event-loop worker and an
+owner-scoped PostgreSQL run ledger with full per-window evidence. The schedule is separate from
+the stock advisor, so stopping one cannot silently stop the other. A run records completion or
+failure; a negative result remains a valid research observation and cannot arm any order path.
+See the [as-built research-loop checkpoint](../apps/trading/futures-research-loop.md) for exact
+controls, bounds, tests and remaining acceptance. The research bot, forward prediction grading,
+source-freshness and duplicate-study policy, installed nightly receipt and paper phase are **not delivered by this slice**;
+ADR-116 and the Futures backlog outcome remain open.
+
 ## References
 
 ADR-045 (extension-layer pattern), ADR-052 (BrokerAdapter/execution), ADR-092 (Strategy Lab),
