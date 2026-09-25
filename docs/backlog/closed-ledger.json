@@ -592,5 +592,29 @@
     "date": "2026-09-24",
     "pr": "main",
     "evidence": "Installer bundle dependency resolution from manifests, --with-optional passthrough, and syntax parse validation across all installer scripts; guarded by tests/unit/installer-scripts-parse.spec.ts (36/36 pass)."
+  },
+  {
+    "title": "Application test cases register with AI Test Lab during installation",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Application test cases register with AI Test Lab during installation with lifecycle reconciliation, versioned catalog discovery, and sealed execution; guarded by package-test-catalog.spec.ts (7/7 pass), package-test-catalog-lifecycle.spec.ts (9/9 pass), and installed-app-test-lab.spec.ts (23/23 pass)."
+  },
+  {
+    "title": "A BYO connection makes Jarvis tool-less, which is why it defers instead of answering",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "BYO and hosted provider connections offer captured caller-authorized tool sets, enforce boundary containment and authorization scopes, and retry same-endpoint failures; guarded by byo-connection-declared-tools.spec.ts (8/8 pass), byo-same-endpoint-retry.spec.ts (27/27 pass), and byo-hot-fallback.spec.ts (24/24 pass)."
+  },
+  {
+    "title": "BYO/free-tier tool-capable turns",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "BYO and platform-free turns participate in accountable agentic loop with caller identity, authorization interceptors, and cost tracking; guarded by byo-tool-capable-turn-postgres.spec.ts (5/5 pass) and byo-connection-declared-tools.spec.ts (8/8 pass)."
+  },
+  {
+    "title": "Every deterministic service-route schedule on this box is refused under ADR-149 enforce (2026-09-14)",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Scheduled application service routes execute under activated system/user principals, enforce ADR-149 permission boundaries, and manage activation lifecycle; guarded by application-service-activation-postgres.spec.ts (12/12 pass), application-service-activation-routes.spec.ts (11/11 pass), manifest-service-activation-contract.spec.ts (9/9 pass), manifest-service-route-activation.spec.ts (5/5 pass), and manifest-service-route-schedule.spec.ts (14/14 pass)."
   }
 ]
