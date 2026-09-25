@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | AI Test Lab registration for the data-model explorer. The live step reads GET /api/admin/data-model with the initiating operator's cookie and checks the snapshot's shape (core node present, every relation carries owners and a row-access state, integration edges name known owners). Read-only: it never rebuilds the cache or touches a store.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Carry the view-export guard in the card's regression set, so the Mermaid/SVG/JSON export is covered by the same suite the card names.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Carry the schema-drift guard in the card's regression set: the digest, the classifier that keeps a normal change quiet, and the refusals.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Register isolated internal-producer and real PostgreSQL policy-drop guards; the live snapshot step does not assert automatic alarm or ticket acceptance.
  */
 
 import type { Scenario, StepResult } from './test-lab-scenarios';
@@ -55,8 +56,10 @@ export const DATA_MODEL_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/data-model-page-model.spec.ts' },
     { level: 'unit', path: 'tests/unit/data-model-export.spec.ts' },
     { level: 'unit', path: 'tests/unit/data-model-drift.spec.ts' },
+    { level: 'unit', path: 'tests/unit/internal-alert-producer.spec.ts' },
     { level: 'unit', path: 'tests/unit/data-model-test-lab-registration.spec.ts' },
     { level: 'integration', path: 'tests/unit/data-model-catalog-postgres.spec.ts' },
+    { level: 'integration', path: 'tests/unit/data-model-alert-postgres.spec.ts' },
     { level: 'integration', path: 'tests/unit/data-model-routes.spec.ts' },
     { level: 'browser', path: 'tests/unit/data-model-explorer-browser.spec.ts' },
   ],

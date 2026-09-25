@@ -5,10 +5,12 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Operations Stream landing stage: the verbatim envelope write, the pure per-alert normalizer (target ladder, severity ordinal, promoted labels, timestamp sanity floor), the SKIP LOCKED pending-event claim, and the decide/fail/deadletter transitions. One transaction per delivery so an envelope and its events are either both durable or neither is.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | BUG-20: the withPendingEvents contract states what actually holds - the handler's pool writes commit on their own and are made idempotent per event - replacing a deadlock rationale that could not occur.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Land normalized internal events without webhook envelopes; producer receipts prevent duplicate occurrences across retries, replicas and retention.
  */
 
 import type { Pool, PoolClient } from 'pg';
 import { createChildLogger } from '@/shared/logger';
+import { withInternalEventReceipt, type InternalEventInput, type InternalEventResult } from './internal-event-receipt';
 import {
   PIPELINE_OWNER_SUB,
   SEVERITY_RANK,
@@ -512,7 +514,7 @@ function envelopeParams(input: LandEnvelopeInput, alertCount: number): unknown[]
 
 /** Bind list for the event insert, in `INSERT_EVENT_SQL` order. */
 function eventParams(
-  envelopeId: string,
+  envelopeId: string | null,
   receivedAt: Date,
   source: AlertSource,
   normalized: NormalizedAlertInput,
@@ -551,6 +553,20 @@ function eventParams(
  */
 export class EnvelopeStore {
   constructor(private readonly pool: Pool) {}
+
+  /**
+   * @description Accept a normalized internal occurrence without fabricating an Alertmanager
+   * delivery, signature or receiver. The normal pending-event pipeline consumes the landed row.
+   * @param input - Stable occurrence key and normalized producer event; no external request body.
+   * @returns Whether a row was created and the original event id (null after event retention).
+   */
+  async landInternalEvent(input: InternalEventInput): Promise<InternalEventResult> {
+    return withInternalEventReceipt(this.pool, input, async (client, validated) => {
+      const params = eventParams(null, new Date(), validated.source, validated.event, {});
+      const stored = await client.query(INSERT_EVENT_SQL, params);
+      return stored.rows[0].event_id as string;
+    });
+  }
 
   /**
    * @description Stores one webhook delivery and expands it into normalized events inside a

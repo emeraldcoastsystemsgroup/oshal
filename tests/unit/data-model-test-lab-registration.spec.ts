@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Test Lab registration guard for the data-model explorer: the card is in SCENARIOS, its regression suites exist and are exactly the suites `npm run test:data-model` runs, and its live step - driven over real HTTP against the real route and operator gate - passes for an operator, degrades (not fails) for a non-operator, and fails a snapshot whose shape is wrong.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Include the dedicated internal-producer command in the exact suite-registration guard.
  */
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -45,14 +46,15 @@ beforeAll(async () => {
 afterAll(async () => { vi.unstubAllEnvs(); await new Promise((r) => server.close(r)); });
 
 describe('data-model Test Lab registration', () => {
-  it('is registered, and its suites exist and match the local command exactly', () => {
+  it('is registered, and its suites exist and match the documented local commands exactly', () => {
     const scripts = JSON.parse(readFileSync('package.json', 'utf8')).scripts;
+    const commands = `${scripts['test:data-model']}\n${readFileSync('scripts/test-schema-alert-producer.cjs', 'utf8')}`;
     for (const scenario of DATA_MODEL_SCENARIOS) {
       expect(SCENARIOS.find((item) => item.id === scenario.id)).toBe(scenario);
       const paths = scenario.regressionTests!.map((t) => t.path);
       expect(new Set(paths).size).toBe(paths.length);
       for (const path of paths) expect(existsSync(resolve(path)), path).toBe(true);
-      expect(new Set(scripts['test:data-model'].match(/tests\/unit\/[a-z0-9-]+\.spec\.ts/g))).toEqual(new Set(paths));
+      expect(new Set(commands.match(/tests\/unit\/[a-z0-9-]+\.spec\.ts/g))).toEqual(new Set(paths));
     }
   });
 
