@@ -85,6 +85,7 @@
  * 33 | maintainer@emeraldcoastsystemsgroup.com   | Registered the 'vendor-login-seeding' scenario (test-lab-vendor-login-scenarios.ts): the closed door on all three vendor auth mounts - an anonymous caller reaching import, sign-out or the connect-state probe - with the guards that ship with the rail attached as regressionTests, including the Google half added 2026-09-22. The OPEN door is deliberately not a Lab step: it needs the operator's own browser login, and the Lab must never attempt one.
  * 34 | maintainer@emeraldcoastsystemsgroup.com   | Attached the executability guards to 'vendor-login-seeding': cli-brain-executability (an option is offered, accepted on PUT and resolved on exactly the conditions a bot node can run it) and antigravity-cli-availability (whether this node could load `agy` at all). Registered against that scenario because seeding a credential and then offering a brain nothing executes is one rail with a hole in it, not two features - the operator followed the push instructions exactly and every turn afterwards was refused by name.
  * 35 | maintainer@emeraldcoastsystemsgroup.com   | Registered the storyboard image-rail card (STORYBOARD_SCENARIOS): a read-only readback of which rail renders storyboard stills plus the free ComfyUI GPU rail's own health probe, and the four storyboard guards attached as regressionTests. The comfyui rail stopped being a throw and became a real submit/poll/fetch provider; its guard, and the three that already shipped beside it, were registered nowhere - a test file on disk is not Test Lab registration. No generating step on purpose: one still on a paid rail is real money per lab run.
+ * 36 | maintainer@emeraldcoastsystemsgroup.com | Register bounded Futures research and review guards with explicit local-runner and live-proof limits.
  * @module test-lab-scenarios
  */
 
@@ -97,6 +98,7 @@ import { VENDOR_LOGIN_SCENARIOS } from './test-lab-vendor-login-scenarios';
 import { APP_REGISTRY_SCENARIOS } from './test-lab-app-registry-scenarios';
 import { AUTHORIZATION_SCENARIOS } from './test-lab-authorization-scenarios';
 import { AUTONOMOUS_SCENARIOS } from './test-lab-autonomous-scenarios';
+import { FUTURES_RESEARCH_SCENARIOS } from './test-lab-futures-scenarios';
 import { AMBIENT_SCENARIOS } from './test-lab-ambient-scenarios';
 import { DATA_MODEL_SCENARIOS } from './test-lab-data-model-scenarios';
 import { NOTIFICATION_SCENARIOS } from './test-lab-notification-scenarios';
@@ -262,6 +264,7 @@ export const SCENARIOS: Scenario[] = [
   ...APP_REGISTRY_SCENARIOS,
   ...AUTHORIZATION_SCENARIOS,
   ...AUTONOMOUS_SCENARIOS,
+  ...FUTURES_RESEARCH_SCENARIOS,
   ...AMBIENT_SCENARIOS,
   ...DATA_MODEL_SCENARIOS,
   ...NOTIFICATION_SCENARIOS,

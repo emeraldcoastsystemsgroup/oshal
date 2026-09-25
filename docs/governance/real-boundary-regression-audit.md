@@ -367,6 +367,17 @@ guard renders the REAL chart with the helm binary. It reaches no API server.
 4. When a scoped mock remains, link its real companion here. When the companion closes, move the
    completion narrative to durable evidence and remove the item from the active queue.
 
+## Futures research review (2026-09-25)
+
+`tests/unit/futures-research-review-postgres.spec.ts` runs migrations 159/160 against disposable
+PostgreSQL and exercises admission, idempotency, failure/retry, stale-attempt fencing, unchanged
+study evidence and FORCE RLS through the enforcing application role. Inference and registry/provider
+resolution are explicit fixtures; the test proves request binding to the shared bot rail, not a
+live provider turn. `futures-research-ledger-postgres.spec.ts` supplies the real worker/study
+companion. The store's `trading/tests/futures-research-review.spec.ts` runs the actual route and
+browser-script handlers with a doubled review service. Installed package dispatch, cost receipt,
+browser acceptance and nightly observation remain unproven; no Futures closure is claimed.
+
 ## Google sign-in push rail (2026-09-22)
 
 | Boundary audited | Mock/stub disposition | Required real companion | Status |
