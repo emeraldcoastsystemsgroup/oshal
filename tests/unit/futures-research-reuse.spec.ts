@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove real-file rereads, exact-input optimizer skips, and invalidation without mocking study computation.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep source-alert controls outside exact experiment keys.
  */
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -44,7 +45,7 @@ afterEach(() => { optimizer?.mockRestore(); if (dir) rmSync(dir, { recursive: tr
 
 describe('pre-optimizer Futures reuse through actual archives', () => {
   it('skips the real optimizer and refreshes source counts/dates on a longer incomplete tail', async () => {
-    const result = await executeFuturesStudy({ ...config, end: '2021-05-31T23:59:59Z', nightlyReview: true, nightlyCron: '0 3 * * *' }, reuse);
+    const result = await executeFuturesStudy({ ...config, end: '2021-05-31T23:59:59Z', nightlyReview: true, sourceAlerts: true, nightlyCron: '0 3 * * *' }, reuse);
     expect(optimizer).not.toHaveBeenCalled();
     expect(result[0].computation).toMatchObject({ status: 'reused', reusedFromRunId: 'prior-owned-run', reportFingerprint: first[0].computation!.reportFingerprint });
     expect(result[0].evidenceFingerprint).toBe(first[0].evidenceFingerprint);

@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Discover the real frozen-context and outcome-feedback boundary suite.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Discover both real-file and private-database archive import suites.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Discover the pre-optimizer reuse boundary suite.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Discover the source-alert worker and owner-routing suite.
  */
 import { existsSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
@@ -19,7 +20,7 @@ describe('Futures Test Lab registration', () => {
   it('registers the actual unit and database suites without claiming browser execution', async () => {
     const scenario = FUTURES_RESEARCH_SCENARIOS[0];
     expect(SCENARIOS.filter(item => item.id === scenario.id)).toEqual([scenario]);
-    expect(scenario.regressionTests).toHaveLength(14);
+    expect(scenario.regressionTests).toHaveLength(15);
     for (const test of scenario.regressionTests!) expect(existsSync(test.path), test.path).toBe(true);
     const result = await scenario.steps[0].run('', {});
     expect(result.state).toBe('degraded');

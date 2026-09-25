@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Apply the review-state migration before validate-only runtime proof.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Persist insufficient sample evidence and stale-file worker failures without fabricating study results.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Prove JSONB report reuse across real workers while preserving exact owner/schedule scope.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Apply the owned source-alert column before validate-only runtime proof.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -43,6 +44,7 @@ describe('futures research durable ledger', () => {
   it('the owner migration provisions a forced-RLS ledger for validate-only runtime', async () => {
     await pool.query(readFileSync(resolve('scripts/migrations/159-futures-research-runs.sql'), 'utf8'));
     await pool.query(readFileSync(resolve('scripts/migrations/160-futures-research-review.sql'), 'utf8'));
+    await pool.query(readFileSync(resolve('scripts/migrations/163-futures-source-alerts.sql'), 'utf8'));
     const previous = process.env.OSHAL_SCHEMA_BOOTSTRAP;
     process.env.OSHAL_SCHEMA_BOOTSTRAP = 'validate-only';
     try { expect(await listFuturesResearchRuns(pool as AppContext['pool'], 'owner-a')).toEqual([]); }

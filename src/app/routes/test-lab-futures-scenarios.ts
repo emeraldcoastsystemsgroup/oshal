@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Register frozen forward-context/RLS guards and settled-evidence admission without claiming provider acceptance.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Register real archive/worker/transaction/RLS import proofs, distinct from installed-data acceptance.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Register real-source pre-optimizer reuse and invalidation guards.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Register owned source-alert claims, real routing and uncertain-delivery guards with fixture transports.
  */
 import type { Scenario } from './test-lab-scenarios';
 
@@ -22,6 +23,7 @@ export const FUTURES_RESEARCH_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/futures-research-quality.spec.ts' },
     { level: 'integration', path: 'tests/unit/futures-research-reuse.spec.ts' },
     { level: 'integration', path: 'tests/unit/futures-research-ledger-postgres.spec.ts' },
+    { level: 'integration', path: 'tests/unit/futures-research-source-alerts-postgres.spec.ts' },
     { level: 'unit', path: 'tests/unit/futures-research-review.spec.ts' },
     { level: 'integration', path: 'tests/unit/futures-research-review-postgres.spec.ts' },
     { level: 'integration', path: 'tests/unit/futures-research-queue-postgres.spec.ts' },

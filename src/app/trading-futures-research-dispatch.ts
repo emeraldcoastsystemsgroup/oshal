@@ -15,6 +15,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Normalize forward opt-in and settle its isolated receipt cycle independently of historical study status.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Settle forward outcomes before scheduled review admission so new grades can inform unchanged historical studies.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Select owned prior evidence before the worker and fence optimizer reuse to this API generation.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Persist classified source failures and opt-in notification receipts independently of forward settlement.
  */
 
 import { dirname, resolve } from 'node:path';
@@ -34,6 +35,8 @@ import type { FuturesResearchMarket } from './trading-futures-research-study';
 import type { FuturesResearchReview } from './trading-futures-research-review-contract';
 import { normalizeFuturesQuality, type FuturesQualityConfig } from './trading-futures-research-quality';
 import { normalizeFuturesPredictions, type FuturesPredictionConfig } from './trading-futures-prediction-config';
+import { FuturesSourceError } from './trading-futures-source-error';
+import { notifyFuturesSourceFailure, type FuturesSourceAlert } from './trading-futures-source-alert';
 
 const logger = createChildLogger({ module: 'trading-futures-research-dispatch' });
 // Supported code reloads/deployments restart the API. Never reuse a report across that boundary.
@@ -58,6 +61,7 @@ export interface FuturesResearchConfig {
   nightlyCron: string;
   quality: FuturesQualityConfig;
   nightlyReview: boolean;
+  sourceAlerts?: boolean;
   predictions?: FuturesPredictionConfig;
 }
 
@@ -165,6 +169,7 @@ export function normalizeFuturesResearchConfig(raw: unknown): FuturesResearchCon
     nightlyCron: String(input.nightlyCron ?? FUTURES_RESEARCH_CRON_DEFAULT).trim() || FUTURES_RESEARCH_CRON_DEFAULT,
     quality: normalizeFuturesQuality(input.quality),
     nightlyReview: normalizeNightlyReview(input.nightlyReview),
+    sourceAlerts: normalizeSourceAlerts(input.sourceAlerts),
     predictions: normalizeFuturesPredictions(input.predictions, { roots, source, timeframe, ltfTimeframe }),
   };
 }
@@ -176,6 +181,13 @@ function normalizeNightlyReview(raw: unknown): boolean {
   return raw;
 }
 
+/** @description No legacy schedule can opt into outward source alerts implicitly. */
+function normalizeSourceAlerts(raw: unknown): boolean {
+  if (raw === undefined) return false;
+  if (typeof raw !== 'boolean') throw new TypeError('sourceAlerts must be a boolean');
+  return raw;
+}
+
 export function futuresResearchTaskType(sub: string): string { return `${FUTURES_RESEARCH_TASK_PREFIX}:${sub}`; }
 export function isFuturesResearchSchedule(taskType: string): boolean { return taskType.startsWith(`${FUTURES_RESEARCH_TASK_PREFIX}:`); }
 
@@ -184,6 +196,7 @@ export interface FuturesResearchRun {
   markets: FuturesResearchMarket[];
   error: string | null; createdAt: string; completedAt: string | null;
   review?: FuturesResearchReview | null;
+  sourceAlert?: FuturesSourceAlert | null;
   predictionCycle?: { status: string; inserted?: number; checked?: number; error?: string; completedAt: string } | null;
 }
 
@@ -196,10 +209,11 @@ export async function ensureFuturesResearchTable(pool: AppContext['pool']): Prom
       status TEXT NOT NULL, config JSONB NOT NULL, markets JSONB NOT NULL DEFAULT '[]'::jsonb,
       error TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), completed_at TIMESTAMPTZ
     )`, `ALTER TABLE oshal_trading_futures_research_runs ADD COLUMN IF NOT EXISTS review JSONB`,
+    `ALTER TABLE oshal_trading_futures_research_runs ADD COLUMN IF NOT EXISTS source_alert JSONB`,
     `CREATE UNIQUE INDEX IF NOT EXISTS oshal_futures_one_running_run ON oshal_trading_futures_research_runs (status) WHERE status = 'running'`,
     `CREATE INDEX IF NOT EXISTS oshal_futures_runs_owner_created ON oshal_trading_futures_research_runs (owner_sub, created_at DESC)`,
     ...buildOwnerRlsPolicyStatements('oshal_trading_futures_research_runs', 'owner_sub')],
-    requirements: [{ table: 'oshal_trading_futures_research_runs', columns: ['run_id', 'owner_sub', 'schedule_id', 'status', 'config', 'markets', 'created_at', 'review'] }],
+    requirements: [{ table: 'oshal_trading_futures_research_runs', columns: ['run_id', 'owner_sub', 'schedule_id', 'status', 'config', 'markets', 'created_at', 'review', 'source_alert'] }],
   });
 }
 
@@ -231,7 +245,10 @@ export function executeFuturesStudyOffLoop(config: FuturesResearchConfig, previo
       void worker.terminate();
     };
     const timer = setTimeout(() => finish(() => rejectStudy(new Error('futures research worker exceeded 30 minutes'))), 30 * 60_000);
-    worker.once('message', (message: FuturesResearchWorkerOutput) => finish(() => resolveStudy(message.markets)));
+    worker.once('message', (message: FuturesResearchWorkerOutput) => finish(() => {
+      if ('markets' in message) resolveStudy(message.markets);
+      else rejectStudy(message.error.sourceIssue ? new FuturesSourceError(message.error.message, message.error.sourceIssue) : new Error(message.error.message));
+    }));
     worker.once('error', (error) => finish(() => rejectStudy(error)));
     worker.once('exit', (code) => finish(() => rejectStudy(new Error(`futures research worker exited ${code} before a result`))));
   });
@@ -274,11 +291,22 @@ async function settleFuturesResearch(ctx: AppContext, run: FuturesResearchRun): 
       logger.warn({ err: ticketError, runId: run.runId }, 'futures run persisted but review ticket creation failed');
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logger.error({ err: error, runId: run.runId }, 'futures research run failed');
-    await ctx.pool.query(`UPDATE oshal_trading_futures_research_runs SET status='failed', error=$2, completed_at=now() WHERE run_id=$1 AND status='running'`, [run.runId, message]);
-    await settleForwardCycle(ctx, { ...run, markets: [] });
+    await failFuturesResearch(ctx, run, error);
   }
+}
+
+async function failFuturesResearch(ctx: AppContext, run: FuturesResearchRun, error: unknown): Promise<void> {
+  const message = error instanceof Error ? error.message : String(error);
+  const sourceAlert: FuturesSourceAlert | null = error instanceof FuturesSourceError
+    ? { issue: error.issue, status: run.config.sourceAlerts === true ? 'ready' : 'disabled' } : null;
+  logger.error({ err: error, runId: run.runId }, 'futures research run failed');
+  const failed = await ctx.pool.query(`UPDATE oshal_trading_futures_research_runs
+    SET status='failed', error=$2, source_alert=$3::jsonb, completed_at=now()
+    WHERE run_id=$1 AND owner_sub=$4 AND status='running' RETURNING run_id`,
+  [run.runId, message, JSON.stringify(sourceAlert), run.ownerSub]);
+  if (!failed.rowCount) return;
+  await Promise.all([settleForwardCycle(ctx, { ...run, markets: [] }),
+    sourceAlert ? notifyFuturesSourceFailure(ctx, run.ownerSub, run.runId) : Promise.resolve()]);
 }
 
 /** Admit one durable run and return immediately; worker settlement is visible through the console ledger. */
@@ -308,5 +336,5 @@ export async function dispatchTradingFuturesResearch(ctx: AppContext, schedule: 
 export async function listFuturesResearchRuns(pool: AppContext['pool'], ownerSub: string, limit = 10): Promise<FuturesResearchRun[]> {
   await ensureFuturesResearchTable(pool);
   const rows = (await pool.query(`SELECT *, to_jsonb(oshal_trading_futures_research_runs)->'prediction_cycle' AS forward_cycle FROM oshal_trading_futures_research_runs WHERE owner_sub=$1 ORDER BY created_at DESC LIMIT $2`, [ownerSub, Math.min(50, Math.max(1, limit))])).rows;
-  return rows.map((row) => ({ runId: String(row.run_id), ownerSub: String(row.owner_sub), scheduleId: String(row.schedule_id), status: String(row.status), config: row.config as FuturesResearchConfig, markets: row.markets as FuturesResearchRun['markets'], error: row.error ? String(row.error) : null, createdAt: new Date(row.created_at).toISOString(), completedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null, review: row.review ?? null, predictionCycle: row.forward_cycle ?? null }));
+  return rows.map((row) => ({ runId: String(row.run_id), ownerSub: String(row.owner_sub), scheduleId: String(row.schedule_id), status: String(row.status), config: row.config as FuturesResearchConfig, markets: row.markets as FuturesResearchRun['markets'], error: row.error ? String(row.error) : null, createdAt: new Date(row.created_at).toISOString(), completedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null, review: row.review ?? null, predictionCycle: row.forward_cycle ?? null, sourceAlert: row.source_alert ?? null }));
 }

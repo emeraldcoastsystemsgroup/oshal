@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Exclude the operational review opt-in from market-evidence fingerprints.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Exclude forward operational controls from historical evidence fingerprints.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Reuse exact owned inputs before optimization after source freshness; canonicalize stored report evidence.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Classify missing/empty sources for owner notification without hiding unexpected worker errors.
  */
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -19,6 +20,7 @@ import {
   type FuturesDataSource, type ContinuousSeries,
 } from '../features/trading';
 import type { FuturesResearchConfig } from './trading-futures-research-dispatch';
+import { FuturesSourceError } from './trading-futures-source-error';
 import { assertFuturesSourceFreshness, assessFuturesSample, type FuturesResearchQuality } from './trading-futures-research-quality';
 import { fingerprintFuturesEvidence } from './trading-futures-prediction-evidence';
 import { futuresStudyDefinition, futuresStudyInputFingerprint, reusableFuturesReport, type FuturesStudyComputation, type FuturesStudyReuse } from './trading-futures-research-reuse';
@@ -45,7 +47,7 @@ function sourceFor(config: FuturesResearchConfig, tf: Timeframe, forceMinute = f
 
 async function buildSeries(config: FuturesResearchConfig, root: string): Promise<{ chart: ContinuousSeries; ltf: ContinuousSeries; ltfResampledFromMinute: boolean }> {
   const pair = sourceFor(config, config.timeframe); const ltfPair = sourceFor(config, config.ltfTimeframe);
-  if (!pair.src.configured()) throw new Error(`source '${config.source}' is not configured`);
+  if (!pair.src.configured()) throw new FuturesSourceError(`source '${config.source}' is not configured`, { code: 'unconfigured', root });
   const start = new Date(config.start); const end = new Date(config.end);
   const chart = await buildContinuousSeries(pair.src, root, config.timeframe, start, end, { adjust: config.adjust, basisProbe: pair.probe });
   let ltf = await buildContinuousSeries(ltfPair.src, root, config.ltfTimeframe, start, end, { adjust: config.adjust, basisProbe: ltfPair.probe });
@@ -92,7 +94,7 @@ export async function executeFuturesStudy(config: FuturesResearchConfig, reuse: 
   const markets: FuturesResearchMarket[] = [];
   for (const root of config.roots) {
     const { chart, ltf, ltfResampledFromMinute } = await buildSeries(config, root);
-    if (!chart.bars.length || !ltf.bars.length) throw new Error(`${root}: chart or higher-timeframe series is empty`);
+    if (!chart.bars.length || !ltf.bars.length) throw new FuturesSourceError(`${root}: chart or higher-timeframe series is empty`, { code: 'empty', root });
     const chartAsOf = lastBarAt(chart), ltfAsOf = lastBarAt(ltf);
     const freshness = assertFuturesSourceFreshness(config.quality, root, config.end, chartAsOf, ltfAsOf);
     const windows = walkForwardWindows(chart.bars, config.split);

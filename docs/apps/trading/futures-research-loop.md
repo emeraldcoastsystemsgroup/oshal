@@ -255,6 +255,37 @@ Only after inspection, adding `--store --owner <operator-sub> --fingerprint <pre
 The mock demo remains in-memory only; `--source mock --store` is always refused. Prefer the console
 for operator work; local examples are not evidence that the installed archives have been imported.
 
+## Source-failure notifications
+
+Trading 1.28.0 and owner migration `163-futures-source-alerts.sql` add a default-off `sourceAlerts`
+checkbox to Tuning. An explicit save opts into one notification attempt per failed stale, empty
+or unconfigured source run, including **Run once**. Older schedules stay opted out; only a boolean
+is accepted. The operational setting does not change the study or reuse fingerprints. Unexpected
+worker/optimizer errors and insufficient or negative samples are not classified as source alerts.
+
+The worker passes typed source evidence to the parent, which persists it with the failed study.
+An atomic exact-owner/run claim, additionally guarded by the persisted opt-in and forced RLS,
+precedes any outward request. Delivery uses the existing per-user NotificationRouter topic
+`futures-source`, then the user's default routing if no topic preference exists. Configure the
+channel, destination and quiet hours in Notifications. No deployment-global operator recipient is
+used. Messages contain the root, source dates/lags and run ID, not archive paths or provider errors.
+
+The run shows disabled, ready, claimed, delivered, skipped, failed or unknown, actual channel and
+fallback channel when applicable, and timestamps. Mutes, quiet hours and unavailable channels
+produce a skipped receipt, not delivery. Build/send wait is bounded to twenty seconds; an already
+started transport cannot be cancelled, so a timeout is unknown. A router that finishes building
+after the deadline does not start a send. Provider exceptions and interrupted outcome writes remain
+uncertain. Claims are never automatically retried, even after restart; ready rows interrupted before
+claiming also have no background recovery. Skipped messages are not deferred to the end of quiet
+hours. Each new failed run has a new attempt, not cross-run incident suppression. This is bounded
+per-run delivery, not a guaranteed-delivery outbox. Forward settlement remains independent and no
+notification changes the failed study into success, weakens freshness or authorizes a trade.
+
+For installed acceptance, first choose the owned Notifications routing and enable the checkbox
+explicitly, then run a known stale source study and inspect its failed run, delivery receipt and
+actual destination. Repeat with muted/quiet routing and confirm a skipped receipt without a
+message. Those outward sends require the operator's opt-in; deployment alone does not enable them.
+
 ## Verification
 
 - `npx vitest run --no-file-parallelism futures-research- futures-prediction- futures-review-forward- futures-archive- tests/unit/futures-backtester.spec.ts tests/unit/futures-optimizer.spec.ts`
@@ -286,7 +317,14 @@ bounded buckets/cohorts, redaction, canonical hashing, citation rejection, froze
 inconsistent/future-grade refusal. Inference and market outcomes are explicit fixtures; the existing
 raw-file prediction suites are the grading companion, not proof of real market performance.
 
-Installed acceptance still requires applying migrations 159–162 as owner (162 after 096), installing the matching
+`futures-research-source-alerts-postgres.spec.ts` applies migration 163 and uses real archive workers,
+private PostgreSQL claims/RLS and the real preference router with fixture-only senders. It exercises
+concurrent claim exclusion, opt-out, stale evidence, quiet/muted/unavailable routing, fallback,
+timeout and outcome-write uncertainty. Trading's actual script handlers round-trip the opt-in and
+escape every receipt state without writing a schedule or pretending delivery. Neither suite sends
+a real notification. Migration 163 is also required by the validate-only research ledger guard.
+
+Installed acceptance still requires applying migrations 159–163 as owner (162 after 096), installing the matching
 Trading and Futures Research packages, enabling the dedicated worker, opening Strategies → Tuning
 as the operator, opting in, running a real-source study, reviewing its dedicated workflow ticket
 through a configured hosted provider and checking its cost/task record. Verify the proposal
@@ -295,4 +333,4 @@ acceptance instructions, not a record that those steps have occurred.
 
 ## Still required before Futures can close
 
-Archive-to-`market_bars` ingestion now has a console/CLI implementation and private boundary proofs; actual installed ES/CL import and idempotence receipts remain unproven. Installed-console/provider-cost receipts, a real nightly observation and subsequently matured forward outcomes on the deployed box remain unproven. Exchange-session completeness and proactive stale-source notifications remain open; the forward clock and freshness guards do not assert exchange-session coverage. Pre-optimizer duplicate reuse has real-file and private-worker/JSONB proofs, not an installed nightly receipt. Outcome feedback now has local owner/RLS and frozen-citation proofs; deployed provider review of matured real outcomes still needs acceptance. Paper-book/cockpit acceptance and any eventual live decision remain separate phases; live requires a named operator approval backed by positive research evidence. Keep [Futures extension layer](../../BACKLOG.md) open until its own Done when is met.
+Archive-to-`market_bars` ingestion now has a console/CLI implementation and private boundary proofs; actual installed ES/CL import and idempotence receipts remain unproven. Installed-console/provider-cost receipts, a real nightly observation and subsequently matured forward outcomes on the deployed box remain unproven. Exchange-session completeness remains open; the forward clock and freshness guards do not assert exchange-session coverage. Proactive source notifications have local real-worker/owner-routing proofs, not installed channel-delivery acceptance. Pre-optimizer duplicate reuse has real-file and private-worker/JSONB proofs, not an installed nightly receipt. Outcome feedback now has local owner/RLS and frozen-citation proofs; deployed provider review of matured real outcomes still needs acceptance. Paper-book/cockpit acceptance and any eventual live decision remain separate phases; live requires a named operator approval backed by positive research evidence. Keep [Futures extension layer](../../BACKLOG.md) open until its own Done when is met.
