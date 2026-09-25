@@ -4,8 +4,10 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Enforce declared bar-date freshness and per-window sample floors without claiming statistical or trading eligibility.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Classify stale-source refusals for owned notification receipts.
  */
 import type { StagedOptimizerReport } from '@/features/trading';
+import { FuturesSourceError } from './trading-futures-source-error';
 
 /** @description Operator-selected research thresholds, not a live-trading permission. */
 export interface FuturesQualityConfig { maxSourceLagDays: number; minOosTradesPerWindow: number }
@@ -56,10 +58,12 @@ export function assertFuturesSourceFreshness(quality: FuturesQualityConfig, root
   const chartLagDays = (day - calendarDay(chartAsOf)) / 86_400_000;
   const ltfLagDays = (day - calendarDay(ltfAsOf)) / 86_400_000;
   if (chartLagDays < 0 || ltfLagDays < 0) throw new Error(`${root}: source bar date is beyond the study end`);
+  const freshness: FuturesSourceFreshness = { referenceDate: end.slice(0, 10), timestampBasis: 'bar-start-calendar-date', chartLagDays, ltfLagDays, maxSourceLagDays: quality.maxSourceLagDays };
   if (Math.max(chartLagDays, ltfLagDays) > quality.maxSourceLagDays) {
-    throw new Error(`${root}: stale Futures source; chart ${chartAsOf.slice(0, 10)} (${chartLagDays} days), higher timeframe ${ltfAsOf.slice(0, 10)} (${ltfLagDays} days), study end ${end.slice(0, 10)}, maximum bar-date lag ${quality.maxSourceLagDays} days. Refresh the archive or review the console's end/timeframe/lag settings. Optimizer not run for this market.`);
+    throw new FuturesSourceError(`${root}: stale Futures source; chart ${chartAsOf.slice(0, 10)} (${chartLagDays} days), higher timeframe ${ltfAsOf.slice(0, 10)} (${ltfLagDays} days), study end ${end.slice(0, 10)}, maximum bar-date lag ${quality.maxSourceLagDays} days. Refresh the archive or review the console's end/timeframe/lag settings. Optimizer not run for this market.`,
+      { code: 'stale', root, chartDate: chartAsOf.slice(0, 10), ltfDate: ltfAsOf.slice(0, 10), freshness });
   }
-  return { referenceDate: end.slice(0, 10), timestampBasis: 'bar-start-calendar-date', chartLagDays, ltfLagDays, maxSourceLagDays: quality.maxSourceLagDays };
+  return freshness;
 }
 
 /** @description Evaluate all completed OOS windows, never just their aggregate. @param policy - Console sample floor. @param freshness - Source gate receipt. @param report - Deterministic optimizer evidence. @returns Explicit sample sufficiency, not profit or promotion authority. */

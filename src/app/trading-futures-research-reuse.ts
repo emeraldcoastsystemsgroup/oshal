@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Match exact completed-window inputs before optimization; retain auditable, process-fenced report reuse.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep source notification opt-in outside historical evidence fingerprints.
  */
 import { createHash } from 'node:crypto';
 import type { BacktestConfig, FuturesBar, OptimizerStage, StagedOptimizerReport, WalkForwardWindow } from '../features/trading';
@@ -29,7 +30,7 @@ export interface FuturesStudyReuse {
  * @param config - Normalized run settings. @returns The reproducible study definition.
  */
 export function futuresStudyDefinition(config: FuturesResearchConfig): object {
-  const { end: _end, endMode: _endMode, nightlyCron: _cron, nightlyReview: _review, predictions: _predictions, ...definition } = config;
+  const { end: _end, endMode: _endMode, nightlyCron: _cron, nightlyReview: _review, predictions: _predictions, sourceAlerts: _alerts, ...definition } = config;
   return definition;
 }
 

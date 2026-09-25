@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove real worker receipts, database issuance, immutable outcomes and non-superuser owner isolation on private PostgreSQL.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Reproduce persisted JSONB key order before verifying current-setting equivalence.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Apply source-alert schema and prove an unsettled notification cannot stall the real forward cycle.
  */
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, appendFileSync, rmSync } from 'node:fs';
@@ -20,10 +21,11 @@ import { listFuturesPredictions, persistFuturesPredictionDrafts, readFuturesPred
 import { fingerprintFuturesEvidence, gradeFuturesPrediction } from '@/app/trading-futures-prediction-evidence';
 import { DisposablePostgres } from '../helpers/disposable-postgres';
 
-const ports = vi.hoisted(() => ({ schedule: vi.fn() }));
+const ports = vi.hoisted(() => ({ schedule: vi.fn(), notify: vi.fn() }));
 vi.mock('@/app/trading-schedule-dispatch', () => ({ getTradingScheduleService: () => ({ getSchedule: ports.schedule }) }));
+vi.mock('@/app/routes/notify-routes', () => ({ buildNotificationRouter: () => ({ notify: ports.notify }) }));
 const fixture = new DisposablePostgres({ purpose: 'futures-predictions', roles: ['oshal_app'],
-  migrations: ['159-futures-research-runs.sql', '160-futures-research-review.sql', '161-futures-predictions.sql'] });
+  migrations: ['159-futures-research-runs.sql', '160-futures-research-review.sql', '161-futures-predictions.sql', '163-futures-source-alerts.sql'] });
 let pool: Pool;
 const dir = mkdtempSync(join(tmpdir(), 'futures-forward-pg-'));
 const owner = 'forward-owner';
@@ -126,13 +128,20 @@ describe('actual private PostgreSQL forward ledger and isolated worker', () => {
   it('settles the actual failed-study dispatcher into an independent forward receipt', async () => {
     const scheduleId = randomUUID();
     ports.schedule.mockResolvedValue({ id: scheduleId, ownerSub: owner, taskType: `trading-futures-research:${owner}`, status: 'active', taskData: { futures: config } });
-    const current = await runFuturesResearch({ pool } as AppContext, owner, scheduleId, config);
-    await vi.waitFor(async () => {
-      const row = (await pool.query('SELECT status,prediction_cycle FROM oshal_trading_futures_research_runs WHERE run_id=$1', [current.runId])).rows[0];
-      expect(row.status).toBe('failed');
-      expect(row.prediction_cycle?.status).toBe('completed');
-    }, { timeout: 30_000 });
-    expect((await ownRows(current))[0]).toMatchObject({ status: 'withheld', snapshot: null });
+    let release!: () => void;
+    ports.notify.mockImplementation(() => new Promise(resolve => { release = () => resolve({ delivered: false, channel: 'none', skipped: true, reason: 'channel-none' }); }));
+    const current = await runFuturesResearch({ pool } as AppContext, owner, scheduleId, { ...config, sourceAlerts: true });
+    try {
+      await vi.waitFor(async () => {
+        const row = (await pool.query('SELECT status,prediction_cycle,source_alert FROM oshal_trading_futures_research_runs WHERE run_id=$1', [current.runId])).rows[0];
+        expect(row.status).toBe('failed');
+        expect(row.prediction_cycle?.status).toBe('completed');
+        expect(row.source_alert?.status).toBe('claimed');
+      }, { timeout: 15_000 });
+      expect(ports.notify).toHaveBeenCalledTimes(1);
+      expect((await ownRows(current))[0]).toMatchObject({ status: 'withheld', snapshot: null });
+    } finally { release?.(); }
+    await vi.waitFor(async () => expect((await pool.query('SELECT source_alert FROM oshal_trading_futures_research_runs WHERE run_id=$1', [current.runId])).rows[0].source_alert.status).toBe('skipped'));
   }, 45_000);
   it('rechecks revocation after the real worker finishes, before any new receipt is persisted', async () => {
     const current = await run();
