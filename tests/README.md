@@ -104,6 +104,12 @@ are temporary directories, a disposable database and fixture store ports; no dep
 graph, vector or cache store is read. The **Data model explorer** Lab card links these suites; its
 live step only reads the current snapshot.
 
+`node scripts/test-schema-alert-producer.cjs` runs the additional producer suites on that same Lab
+card: normalized-input refusals and an actual policy removal in disposable PostgreSQL through the
+schema classifier to one durable pending event. It also checks concurrency, restart, failed-write
+rollback, retention and non-bypass-role RLS. It does not run a live detector, create a production
+ticket or prove the explorer diff panel.
+
 The autonomous backlog suites have matching Lab registrations and local commands:
 
 | Command | Coverage |

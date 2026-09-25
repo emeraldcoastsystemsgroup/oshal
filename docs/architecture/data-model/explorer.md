@@ -85,6 +85,27 @@ memory:
 A deployment that has not applied migration 139 gets `{ available: false }` with a reason naming
 the migration, not a 500 - the explorer keeps rendering.
 
+### Internal alarm producer boundary
+
+`src/app/data-model-alert.ts` converts only a settled, unexplained diff into a normalized
+`schema-drift` event. It includes every changed relation and its before/after state, never policy
+expressions. The occurrence key covers the database, baseline fingerprint and capture time, and
+current fingerprint. A later scan timestamp alone does not create a new occurrence. Constructing
+the event neither captures a baseline nor writes an alert.
+
+`EnvelopeStore.landInternalEvent()` accepts that normalized event directly, without an Alertmanager
+body, receiver or signature claim. Migration 164 adds `oshal_alert_producer_receipt`: the receipt
+and pending event commit together; concurrent and restarted producers return the existing receipt.
+Reusing a key with different content fails explicitly. Receipts survive event retention, returning
+`eventId: null` for an already-delivered, expired event rather than recreating it. Do not purge
+receipts while a producer can replay those keys. Both tables retain the pipeline owner/operator
+RLS boundary. Missing migration 164 fails the write; there is no in-memory fallback.
+
+**This boundary is not yet an automatic alarm.** No detector timer calls it, and the receiver's
+internal-source claim/ticket handling and explorer diff panel still need wiring. The isolated
+policy-drop proof stops at one durable pending event, not a ticket or live deployment acceptance.
+The schema-drift backlog item remains open.
+
 ## How a snapshot is built
 
 ```mermaid
@@ -157,6 +178,7 @@ layer fills in. That is what makes every store doubleable in tests.
 
 ```bash
 npm run test:data-model     # 11 spec files; needs Docker (disposable Postgres), Playwright Chromium and mermaid installed
+node scripts/test-schema-alert-producer.cjs  # normalized producer + disposable policy-drop/durable receipt proofs
 ```
 
 | Spec | Proves |
@@ -167,6 +189,8 @@ npm run test:data-model     # 11 spec files; needs Docker (disposable Postgres),
 | `data-model-service.spec.ts` | cache/TTL/in-flight sharing, degraded stores, key masking |
 | `data-model-page-model.spec.ts` | graphs, neighbourhood, search, URL state, deterministic layout |
 | `data-model-drift.spec.ts` | the digest carries structure and no data; all five drift states; the four refusals; the store's degrade-by-name; a read never captures |
+| `internal-alert-producer.spec.ts` | bounded normalized input, detached maps/dates and refusal before a database connection |
+| `data-model-alert-postgres.spec.ts` | actual policy removal to one pending event, parallel/restarted producers, rollback/retry, retention, migration replay and enforcing-role RLS; not ticket/browser acceptance |
 | `data-model-export.spec.ts` | the Mermaid block byte-identical to the generator, naming exactly the relations drawn; the owner flowchart; scoped JSON; the standalone SVG document; filenames; every refusal |
 | `data-model-catalog-postgres.spec.ts` | a real catalog read from a disposable PostgreSQL 16 container |
 | `data-model-routes.spec.ts` | the real operator gate over real HTTP (401 / 403 / 200 / 503 / 500) |
