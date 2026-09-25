@@ -179,6 +179,20 @@ silently) when the directory is absent, following the `mkdtemp` pattern of
 
 ### Phase 2 — Staged optimizer inside the walk-forward (core, ~600 lines) → **the evidence gate**
 
+**Status (2026-09-24): Phase 2 delivered; research rail remains open.** The six-stage optimizer and
+real-archive runner are shipped in `futures-optimizer.ts` and `scripts/oshal-futures-optimize.ts`.
+The dated ES/CL result is [`futures-phase2-oos-2026-09-24.json`](./futures-phase2-oos-2026-09-24.json).
+
+| Root | Bars | OOS trades | OOS net | Worst OOS drawdown |
+|---|---:|---:|---:|---:|
+| ES | 29,207 hourly | 31 | -$3,052.50 | $2,997.50 |
+| CL | 29,559 hourly | 74 | -$2,272.26 | $1,990.00 |
+
+The gate is negative on both archived roots. This blocks live promotion for now; it does not end
+the futures program. Phase 3 archive ingestion, the console-configured research loop, the futures
+research bot, nightly permutations, and the prediction ledger remain open. Phase 4 paper and Phase
+5 cockpit work stay separately sequenced and require an operator decision after further evidence.
+
 **Goal.** Run the trader's six-stage locked-winner protocol (Entry → StopLoss → Trail → Targets →
 EmergencyExit → Sizing, each stage scored by its own fitness from `futures-fitness.ts`) *inside*
 the Phase 1 walk-forward, so the winner of each IS window is judged only on the OOS window that
@@ -199,9 +213,10 @@ Runtime budget: ADR-121 measured roughly 10 s per five-year ES minute series in 
 runs for hours. Coarse grids, series built once, checkpoints. The ADR-121 WASM kernel is an
 optional accelerator and is **not** in scope.
 
-**Done when.** `futures-backtester.md` has an "Optimizer + walk-forward (OOS)" section with the
-IS-vs-OOS table per market, per-stage winners, degradation ratio, trade counts, and command lines;
-and ADR-116 carries an amendment stating the **evidence gate** (§3 below) and which way it fell.
+**Done when.** `futures-backtester.md` has the optimizer/OOS result and command line, the dated JSON
+artifact records every per-window stage winner and final OOS run, and ADR-116 carries an amendment
+stating the **evidence gate** (§3 below) and which way it fell. **Phase 2 delivered 2026-09-24; the
+overall Futures extension remains open for the research and console phases below.**
 
 **Guard.** `tests/unit/futures-optimizer.spec.ts` — stage N+1's base equals stage N's locked
 winner; under-min-trades windows return the sentinel, never a number; degradation arithmetic;

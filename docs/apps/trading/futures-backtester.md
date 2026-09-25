@@ -412,11 +412,15 @@ Three readings, all in-sample:
   backtest can hold a position a real account could not fund.
 - **Single position at a time, per market** (`EntriesPerDirection = 1` in the source). No
   pyramiding, no scale-outs — his Target-1 partial is not yet modeled.
-- **The walk-forward driver exists; the staged optimizer does not.** `--walk-forward` runs FROZEN
-  constants over rolling in-sample/out-of-sample windows (numbers above). What is still missing is
-  the six-stage locked-winner optimizer running INSIDE those windows — Phase 2 in
-  [futures-phasing.md](./futures-phasing.md), and the point at which an optimized constant set could
-  be judged on bars it did not choose. Until then, every "winner" in the sweep tables is in-sample.
+- **The staged optimizer now runs inside the walk-forward.** The six-stage locked-winner protocol
+  (Entry → StopLoss → Trail → Targets → EmergencyExit → Sizing) ranks only in-sample candidates,
+  carries each winner into the next stage, and evaluates the final locked config once on unseen
+  out-of-sample bars. The reproducible ES/CL real-archive result is in
+  [`futures-phase2-oos-2026-09-24.json`](./futures-phase2-oos-2026-09-24.json); the CLI is
+  `npx tsx scripts/oshal-futures-optimize.ts --tf 1Hour --ltf 1Day`. Both markets fell negative
+  out of sample, so the evidence gate does **not** permit live promotion. Futures research remains
+  active: the console-configured loop, research bot, nightly permutations, and prediction ledger are
+  the next work on this rail.
 - **Walk-forward windows are sliced cold.** Indicators restart inside each window, so the first
   ~100 chart bars of each half are warmup rather than tradable. Identical treatment either side, but
   it depresses out-of-sample trade counts relative to a continuously-run book.
@@ -465,10 +469,9 @@ future data, not contributors to these numbers.
 
 ## Next
 
-The walk-forward driver is built (above). Next is the staged optimizer — Entry → StopLoss → Trail →
-Targets → EmergencyExit → Sizing, prior-stage winners locked, each scored by its own fitness above —
-running INSIDE those windows, which is Phase 2 and the ADR-116 evidence gate: it is where "no edge
-at defaults" either turns into per-market constants that survive unseen bars, or is confirmed, and
-confirming it closes the live items as "do not build live". Then the `futures_backtest` tool on the
-trading-analyst bot, so the source trader can iterate parameters conversationally. Scope, sizes and
-done-whens: [futures-phasing.md](./futures-phasing.md); status: the BACKLOG futures section.
+Phase 2 is complete and the evidence gate fell negative: ES and CL do not show a surviving
+out-of-sample edge under the reviewed protocol. That blocks an unreviewed live promotion, but it
+does not close Futures. The next rail is a console-configured futures research loop: a futures
+research bot, nightly permutation/tuning runs, and a prediction ledger whose results can be reviewed
+before any later paper or live decision. Scope and phase-level done-whens remain in
+[futures-phasing.md](./futures-phasing.md).

@@ -61,6 +61,10 @@ import {
   Permission,
   ROLE_PERMISSIONS,
 } from '@/features/governance';
+import {
+  auditExportIntegrityHeaders,
+  buildAuditExportArtifact,
+} from '@/features/governance/audit/audit-export-integrity';
 import { cspMode } from '@/features/security';
 import { envelopeDekFailureMode } from '@/app/routes/connector-token-crypto';
 import { isMockOidcEnabled } from '@/shared/middleware/principal-issuer';
@@ -394,13 +398,13 @@ async function lastEvalPassRate(pool: AppContext['pool']): Promise<number | null
   return null;
 }
 
-function toCsv(rows: AuditRow[]): string {
+function toCsv(rows: AuditRow[], integrity: ReturnType<typeof buildAuditExportArtifact>['integrity']): string {
   const headers = ['audit_id', 'actor_sub', 'action', 'resource_type', 'resource_id', 'decision', 'metadata', 'created_at'];
   const esc = (v: unknown): string => {
     const s = v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v);
     return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   };
-  const lines = [headers.join(',')];
+  const lines = [...auditExportIntegrityHeaders(integrity), headers.join(',')];
   for (const row of rows) {
     lines.push(headers.map((h) => esc((row as unknown as Record<string, unknown>)[h])).join(','));
   }
@@ -434,6 +438,15 @@ export function createAuditExportRouter(ctx: AppContext, requiresAuth?: RequestH
       };
       const rows = await queryAuditEvents(ctx.pool, filter);
       const format = String(q.format || 'json').toLowerCase();
+      if (format !== 'json' && format !== 'csv') {
+        res.status(400).json({ error: 'format must be json or csv' });
+        return;
+      }
+      const artifact = buildAuditExportArtifact(rows, process.env.OSHAL_AUDIT_EXPORT_KEY);
+      res.setHeader('X-OSHAL-Audit-Chain-Algorithm', artifact.integrity.algorithm);
+      res.setHeader('X-OSHAL-Audit-Chain-Count', String(artifact.integrity.count));
+      res.setHeader('X-OSHAL-Audit-Chain-Head', artifact.integrity.head);
+      if (artifact.integrity.signature) res.setHeader('X-OSHAL-Audit-Chain-Signature', artifact.integrity.signature);
       // Self-audit: reading/exporting the audit trail is itself a sensitive access.
       // Fire-and-forget (non-throwing) so it never delays or breaks the export.
       void emitAuditEvent(ctx.pool, {
@@ -447,10 +460,10 @@ export function createAuditExportRouter(ctx: AppContext, requiresAuth?: RequestH
       if (format === 'csv') {
         res.setHeader('Content-Type', 'text/csv; charset=utf-8');
         res.setHeader('Content-Disposition', 'attachment; filename="access-audit-export.csv"');
-        res.send(toCsv(rows));
+        res.send(toCsv(rows, artifact.integrity));
         return;
       }
-      res.json({ count: rows.length, events: rows });
+      res.json({ count: rows.length, events: rows, integrity: artifact.integrity });
     } catch (err) {
       logger.error({ err }, 'audit export failed');
       res.status(500).json({ error: (err as Error).message });

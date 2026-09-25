@@ -880,5 +880,11 @@
     "date": "2026-09-24",
     "pr": "main",
     "evidence": "Bot tool provisioning and runtime attestation enforce exact AUTO authorization grants, bind read-only question tools to caller identity and RLS ownership in PostgreSQL, and prohibit unreviewed shell commands; guarded by authorization-tool.spec.ts (22/22 pass), authorization-tool-policy.spec.ts (17/17 pass), app-tool-ownership.spec.ts (7/7 pass), bot-node-read-only-tools-owner-scope-postgres.spec.ts (20/20 pass), and attribution-scrub-tooling.spec.ts (2/2 pass)."
+  },
+  {
+    "title": "Guide bots that operate their apps",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "The presentations deck-builder guide drives the editor through a signed-in /guide route with whitelisted, bounded set_title, set_outline, update_slide, add_slide, and set_theme actions; invalid or anonymous requests are refused. Guarded by presentations-guide.test.mjs (2/2 pass) in the installed presentations package and the deployed persona/registration guards (17/17 pass)."
   }
 ]

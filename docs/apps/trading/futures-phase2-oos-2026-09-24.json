@@ -1,0 +1,3922 @@
+{
+  "source": "kibot-file",
+  "roots": [
+    "ES",
+    "CL"
+  ],
+  "tf": "1Hour",
+  "ltf": "1Day",
+  "start": "2021-01-01T00:00:00.000Z",
+  "end": "2025-12-31T23:59:59.000Z",
+  "split": {
+    "inSampleMonths": 24,
+    "oosMonths": 6,
+    "stepMonths": 6
+  },
+  "markets": [
+    {
+      "root": "ES",
+      "bars": 29207,
+      "ltfBars": 1255,
+      "report": {
+        "split": {
+          "inSampleMonths": 24,
+          "oosMonths": 6,
+          "stepMonths": 6
+        },
+        "windows": [
+          {
+            "window": {
+              "index": 0,
+              "isStart": "2021-01-01T00:00:00.000Z",
+              "isEnd": "2023-01-01T00:00:00.000Z",
+              "oosStart": "2023-01-01T00:00:00.000Z",
+              "oosEnd": "2023-07-01T00:00:00.000Z"
+            },
+            "stages": [
+              {
+                "name": "Entry",
+                "fitness": "entry-logic",
+                "candidateCount": 3,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2
+                  },
+                  "stops": {
+                    "useStrangleTrail": true
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "entry": {
+                    "ensembleEntryThresholdPct": 70
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "inSampleScore": 67.9321615227726,
+                "inSampleTrades": 47,
+                "inSampleNet": 3892.5
+              },
+              {
+                "name": "StopLoss",
+                "fitness": "stop-loss-mae",
+                "candidateCount": 3,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "stops": {
+                    "initialStopAtrMultiple": 4
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "inSampleScore": -108.34375,
+                "inSampleTrades": 40,
+                "inSampleNet": 2732.5
+              },
+              {
+                "name": "Trail",
+                "fitness": "trailing-stop",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "stops": {
+                    "stopBufferMode": "ticks"
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "inSampleScore": -29.80273625843114,
+                "inSampleTrades": 40,
+                "inSampleNet": 2732.5
+              },
+              {
+                "name": "Targets",
+                "fitness": "target-order",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "targets": {
+                    "useTargets": false
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": false
+                  }
+                },
+                "inSampleScore": 48.21859118324144,
+                "inSampleTrades": 40,
+                "inSampleNet": 2732.5
+              },
+              {
+                "name": "EmergencyExit",
+                "fitness": "emergency-exit",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": false
+                  }
+                },
+                "winnerPatch": {
+                  "stops": {
+                    "useStrangleTrail": false
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": false,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": false
+                  }
+                },
+                "inSampleScore": -2223,
+                "inSampleTrades": 40,
+                "inSampleNet": 2732.5
+              },
+              {
+                "name": "Sizing",
+                "fitness": "position-sizing",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": false,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": false
+                  }
+                },
+                "winnerPatch": {
+                  "entry": {
+                    "riskPerTradePercent": 1
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 1,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": false,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": false
+                  }
+                },
+                "inSampleScore": 0.4,
+                "inSampleTrades": 1,
+                "inSampleNet": 307.5
+              }
+            ],
+            "finalConfig": {
+              "instrument": {
+                "symbol": "ES",
+                "multiplier": 50,
+                "tickSize": 0.25
+              },
+              "entry": {
+                "generation": "ensemble",
+                "riskPerTradePercent": 1,
+                "ensembleEntryThresholdPct": 70
+              },
+              "stops": {
+                "useStrangleTrail": false,
+                "initialStopAtrMultiple": 4,
+                "stopBufferMode": "ticks"
+              },
+              "costs": {
+                "slippageTicks": 1,
+                "commissionPerContract": 2.5
+              },
+              "startingEquity": 100000,
+              "targets": {
+                "useTargets": false
+              }
+            },
+            "outOfSampleTrades": 0,
+            "outOfSampleNet": 0,
+            "outOfSampleMaxDD": 0
+          },
+          {
+            "window": {
+              "index": 1,
+              "isStart": "2021-07-01T00:00:00.000Z",
+              "isEnd": "2023-07-01T00:00:00.000Z",
+              "oosStart": "2023-07-01T00:00:00.000Z",
+              "oosEnd": "2024-01-01T00:00:00.000Z"
+            },
+            "stages": [
+              {
+                "name": "Entry",
+                "fitness": "entry-logic",
+                "candidateCount": 3,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2
+                  },
+                  "stops": {
+                    "useStrangleTrail": true
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "entry": {
+                    "ensembleEntryThresholdPct": 78
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 78
+                  },
+                  "stops": {
+                    "useStrangleTrail": true
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "inSampleScore": 11.204119307917058,
+                "inSampleTrades": 12,
+                "inSampleNet": 152.5
+              },
+              {
+                "name": "StopLoss",
+                "fitness": "stop-loss-mae",
+                "candidateCount": 3,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 78
+                  },
+                  "stops": {
+                    "useStrangleTrail": true
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "stops": {
+                    "initialStopAtrMultiple": 3
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 78
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 3
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "inSampleScore": -153.64583333333334,
+                "inSampleTrades": 12,
+                "inSampleNet": 152.5
+              },
+              {
+                "name": "Trail",
+                "fitness": "trailing-stop",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 78
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 3
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "stops": {
+                    "stopBufferMode": "ticks"
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 78
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 3,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "inSampleScore": -42.429582587028605,
+                "inSampleTrades": 12,
+                "inSampleNet": 152.5
+              },
+              {
+                "name": "Targets",
+                "fitness": "target-order",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 78
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 3,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 78
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 3,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "inSampleScore": 15.27013805632411,
+                "inSampleTrades": 12,
+                "inSampleNet": 236.4190274818975
+              },
+              {
+                "name": "EmergencyExit",
+                "fitness": "emergency-exit",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 78
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 3,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "winnerPatch": {
+                  "stops": {
+                    "useStrangleTrail": false
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 78
+                  },
+                  "stops": {
+                    "useStrangleTrail": false,
+                    "initialStopAtrMultiple": 3,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "inSampleScore": -1655.5,
+                "inSampleTrades": 12,
+                "inSampleNet": 236.4190274818975
+              },
+              {
+                "name": "Sizing",
+                "fitness": "position-sizing",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 78
+                  },
+                  "stops": {
+                    "useStrangleTrail": false,
+                    "initialStopAtrMultiple": 3,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "winnerPatch": {
+                  "entry": {
+                    "riskPerTradePercent": 2
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 78
+                  },
+                  "stops": {
+                    "useStrangleTrail": false,
+                    "initialStopAtrMultiple": 3,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "inSampleScore": -627.9729896895211,
+                "inSampleTrades": 12,
+                "inSampleNet": 236.4190274818975
+              }
+            ],
+            "finalConfig": {
+              "instrument": {
+                "symbol": "ES",
+                "multiplier": 50,
+                "tickSize": 0.25
+              },
+              "entry": {
+                "generation": "ensemble",
+                "riskPerTradePercent": 2,
+                "ensembleEntryThresholdPct": 78
+              },
+              "stops": {
+                "useStrangleTrail": false,
+                "initialStopAtrMultiple": 3,
+                "stopBufferMode": "ticks"
+              },
+              "costs": {
+                "slippageTicks": 1,
+                "commissionPerContract": 2.5
+              },
+              "startingEquity": 100000,
+              "targets": {
+                "useTargets": true
+              }
+            },
+            "outOfSampleTrades": 6,
+            "outOfSampleNet": -1515,
+            "outOfSampleMaxDD": 2050
+          },
+          {
+            "window": {
+              "index": 2,
+              "isStart": "2022-01-01T00:00:00.000Z",
+              "isEnd": "2024-01-01T00:00:00.000Z",
+              "oosStart": "2024-01-01T00:00:00.000Z",
+              "oosEnd": "2024-07-01T00:00:00.000Z"
+            },
+            "stages": [
+              {
+                "name": "Entry",
+                "fitness": "entry-logic",
+                "candidateCount": 3,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2
+                  },
+                  "stops": {
+                    "useStrangleTrail": true
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "entry": {
+                    "ensembleEntryThresholdPct": 62
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "inSampleScore": -5.125263761010738,
+                "inSampleTrades": 51,
+                "inSampleNet": -415.14785666848184
+              },
+              {
+                "name": "StopLoss",
+                "fitness": "stop-loss-mae",
+                "candidateCount": 3,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "stops": {
+                    "initialStopAtrMultiple": 4
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "inSampleScore": -207.4404761904762,
+                "inSampleTrades": 42,
+                "inSampleNet": -310
+              },
+              {
+                "name": "Trail",
+                "fitness": "trailing-stop",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "stops": {
+                    "stopBufferMode": "ticks"
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "inSampleScore": -79.60813966178736,
+                "inSampleTrades": 42,
+                "inSampleNet": -310
+              },
+              {
+                "name": "Targets",
+                "fitness": "target-order",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "inSampleScore": -0.7425706712245754,
+                "inSampleTrades": 42,
+                "inSampleNet": -10.69438262339645
+              },
+              {
+                "name": "EmergencyExit",
+                "fitness": "emergency-exit",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "winnerPatch": {
+                  "stops": {
+                    "useStrangleTrail": false
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": false,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "inSampleScore": -3209.25,
+                "inSampleTrades": 42,
+                "inSampleNet": -10.69438262339645
+              },
+              {
+                "name": "Sizing",
+                "fitness": "position-sizing",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": false,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "winnerPatch": {
+                  "entry": {
+                    "riskPerTradePercent": 2
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": false,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "inSampleScore": -1516.5218440941003,
+                "inSampleTrades": 42,
+                "inSampleNet": -10.69438262339645
+              }
+            ],
+            "finalConfig": {
+              "instrument": {
+                "symbol": "ES",
+                "multiplier": 50,
+                "tickSize": 0.25
+              },
+              "entry": {
+                "generation": "ensemble",
+                "riskPerTradePercent": 2,
+                "ensembleEntryThresholdPct": 62
+              },
+              "stops": {
+                "useStrangleTrail": false,
+                "initialStopAtrMultiple": 4,
+                "stopBufferMode": "ticks"
+              },
+              "costs": {
+                "slippageTicks": 1,
+                "commissionPerContract": 2.5
+              },
+              "startingEquity": 100000,
+              "targets": {
+                "useTargets": true
+              }
+            },
+            "outOfSampleTrades": 13,
+            "outOfSampleNet": 1460,
+            "outOfSampleMaxDD": 1020
+          },
+          {
+            "window": {
+              "index": 3,
+              "isStart": "2022-07-01T00:00:00.000Z",
+              "isEnd": "2024-07-01T00:00:00.000Z",
+              "oosStart": "2024-07-01T00:00:00.000Z",
+              "oosEnd": "2025-01-01T00:00:00.000Z"
+            },
+            "stages": [
+              {
+                "name": "Entry",
+                "fitness": "entry-logic",
+                "candidateCount": 3,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2
+                  },
+                  "stops": {
+                    "useStrangleTrail": true
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "entry": {
+                    "ensembleEntryThresholdPct": 62
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "inSampleScore": 21.475415081750956,
+                "inSampleTrades": 72,
+                "inSampleNet": 1792.3521433315182
+              },
+              {
+                "name": "StopLoss",
+                "fitness": "stop-loss-mae",
+                "candidateCount": 3,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "stops": {
+                    "initialStopAtrMultiple": 4
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "inSampleScore": -175.76923076923077,
+                "inSampleTrades": 65,
+                "inSampleNet": 2175
+              },
+              {
+                "name": "Trail",
+                "fitness": "trailing-stop",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "stops": {
+                    "stopBufferMode": "ticks"
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "inSampleScore": -64.44608595753263,
+                "inSampleTrades": 65,
+                "inSampleNet": 2175
+              },
+              {
+                "name": "Targets",
+                "fitness": "target-order",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "inSampleScore": 26.092973940253064,
+                "inSampleTrades": 65,
+                "inSampleNet": 2474.3056173766035
+              },
+              {
+                "name": "EmergencyExit",
+                "fitness": "emergency-exit",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "winnerPatch": {
+                  "stops": {
+                    "useStrangleTrail": false
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": false,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "inSampleScore": -3153,
+                "inSampleTrades": 65,
+                "inSampleNet": 2474.3056173766035
+              },
+              {
+                "name": "Sizing",
+                "fitness": "position-sizing",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": false,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "winnerPatch": {
+                  "entry": {
+                    "riskPerTradePercent": 2
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": false,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "inSampleScore": -1512.864158163269,
+                "inSampleTrades": 65,
+                "inSampleNet": 2474.3056173766035
+              }
+            ],
+            "finalConfig": {
+              "instrument": {
+                "symbol": "ES",
+                "multiplier": 50,
+                "tickSize": 0.25
+              },
+              "entry": {
+                "generation": "ensemble",
+                "riskPerTradePercent": 2,
+                "ensembleEntryThresholdPct": 62
+              },
+              "stops": {
+                "useStrangleTrail": false,
+                "initialStopAtrMultiple": 4,
+                "stopBufferMode": "ticks"
+              },
+              "costs": {
+                "slippageTicks": 1,
+                "commissionPerContract": 2.5
+              },
+              "startingEquity": 100000,
+              "targets": {
+                "useTargets": true
+              }
+            },
+            "outOfSampleTrades": 12,
+            "outOfSampleNet": -2997.5,
+            "outOfSampleMaxDD": 2997.5
+          },
+          {
+            "window": {
+              "index": 4,
+              "isStart": "2023-01-01T00:00:00.000Z",
+              "isEnd": "2025-01-01T00:00:00.000Z",
+              "oosStart": "2025-01-01T00:00:00.000Z",
+              "oosEnd": "2025-07-01T00:00:00.000Z"
+            },
+            "stages": [
+              {
+                "name": "Entry",
+                "fitness": "entry-logic",
+                "candidateCount": 3,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2
+                  },
+                  "stops": {
+                    "useStrangleTrail": true
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "entry": {
+                    "ensembleEntryThresholdPct": 62
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "inSampleScore": 4.705967778106706,
+                "inSampleTrades": 92,
+                "inSampleNet": 369.85214333151816
+              },
+              {
+                "name": "StopLoss",
+                "fitness": "stop-loss-mae",
+                "candidateCount": 3,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "stops": {
+                    "initialStopAtrMultiple": 4
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "inSampleScore": -191.46323529411765,
+                "inSampleTrades": 85,
+                "inSampleNet": 1982.5
+              },
+              {
+                "name": "Trail",
+                "fitness": "trailing-stop",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "stops": {
+                    "stopBufferMode": "ticks"
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "inSampleScore": -68.98199732151761,
+                "inSampleTrades": 85,
+                "inSampleNet": 1982.5
+              },
+              {
+                "name": "Targets",
+                "fitness": "target-order",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "targets": {
+                    "useTargets": false
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": false
+                  }
+                },
+                "inSampleScore": 15.116809266842612,
+                "inSampleTrades": 85,
+                "inSampleNet": 1982.5
+              },
+              {
+                "name": "EmergencyExit",
+                "fitness": "emergency-exit",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": false
+                  }
+                },
+                "winnerPatch": {
+                  "stops": {
+                    "useStrangleTrail": false
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": false,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": false
+                  }
+                },
+                "inSampleScore": -4064.125,
+                "inSampleTrades": 85,
+                "inSampleNet": 1982.5
+              },
+              {
+                "name": "Sizing",
+                "fitness": "position-sizing",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": false,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": false
+                  }
+                },
+                "winnerPatch": {
+                  "entry": {
+                    "riskPerTradePercent": 1
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "ES",
+                    "multiplier": 50,
+                    "tickSize": 0.25
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 1,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": false,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": false
+                  }
+                },
+                "inSampleScore": 0.4,
+                "inSampleTrades": 1,
+                "inSampleNet": 1532.5
+              }
+            ],
+            "finalConfig": {
+              "instrument": {
+                "symbol": "ES",
+                "multiplier": 50,
+                "tickSize": 0.25
+              },
+              "entry": {
+                "generation": "ensemble",
+                "riskPerTradePercent": 1,
+                "ensembleEntryThresholdPct": 62
+              },
+              "stops": {
+                "useStrangleTrail": false,
+                "initialStopAtrMultiple": 4,
+                "stopBufferMode": "ticks"
+              },
+              "costs": {
+                "slippageTicks": 1,
+                "commissionPerContract": 2.5
+              },
+              "startingEquity": 100000,
+              "targets": {
+                "useTargets": false
+              }
+            },
+            "outOfSampleTrades": 0,
+            "outOfSampleNet": 0,
+            "outOfSampleMaxDD": 0
+          }
+        ],
+        "outOfSampleTrades": 31,
+        "outOfSampleNet": -3052.5,
+        "worstOutOfSampleMaxDD": 2997.5
+      }
+    },
+    {
+      "root": "CL",
+      "bars": 29559,
+      "ltfBars": 1254,
+      "report": {
+        "split": {
+          "inSampleMonths": 24,
+          "oosMonths": 6,
+          "stepMonths": 6
+        },
+        "windows": [
+          {
+            "window": {
+              "index": 0,
+              "isStart": "2021-01-01T00:00:00.000Z",
+              "isEnd": "2023-01-01T00:00:00.000Z",
+              "oosStart": "2023-01-01T00:00:00.000Z",
+              "oosEnd": "2023-07-01T00:00:00.000Z"
+            },
+            "stages": [
+              {
+                "name": "Entry",
+                "fitness": "entry-logic",
+                "candidateCount": 3,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2
+                  },
+                  "stops": {
+                    "useStrangleTrail": true
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "entry": {
+                    "ensembleEntryThresholdPct": 78
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 78
+                  },
+                  "stops": {
+                    "useStrangleTrail": true
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "inSampleScore": 5.872293312803933,
+                "inSampleTrades": 16,
+                "inSampleNet": 85.0000000000586
+              },
+              {
+                "name": "StopLoss",
+                "fitness": "stop-loss-mae",
+                "candidateCount": 3,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 78
+                  },
+                  "stops": {
+                    "useStrangleTrail": true
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "stops": {
+                    "initialStopAtrMultiple": 3
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 78
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 3
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "inSampleScore": -320.3437499999977,
+                "inSampleTrades": 16,
+                "inSampleNet": 85.0000000000586
+              },
+              {
+                "name": "Trail",
+                "fitness": "trailing-stop",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 78
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 3
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "stops": {
+                    "stopBufferMode": "atr-percent"
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 78
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 3,
+                    "stopBufferMode": "atr-percent"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "inSampleScore": -83.07980709398893,
+                "inSampleTrades": 16,
+                "inSampleNet": 87.75281332789672
+              },
+              {
+                "name": "Targets",
+                "fitness": "target-order",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 78
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 3,
+                    "stopBufferMode": "atr-percent"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 78
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 3,
+                    "stopBufferMode": "atr-percent"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "inSampleScore": 8.004578370257745,
+                "inSampleTrades": 16,
+                "inSampleNet": 257.75281332790536
+              },
+              {
+                "name": "EmergencyExit",
+                "fitness": "emergency-exit",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 78
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 3,
+                    "stopBufferMode": "atr-percent"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "winnerPatch": {
+                  "stops": {
+                    "useStrangleTrail": false
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 78
+                  },
+                  "stops": {
+                    "useStrangleTrail": false,
+                    "initialStopAtrMultiple": 3,
+                    "stopBufferMode": "atr-percent"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "inSampleScore": -3538.3460613410034,
+                "inSampleTrades": 16,
+                "inSampleNet": 257.75281332790536
+              },
+              {
+                "name": "Sizing",
+                "fitness": "position-sizing",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 78
+                  },
+                  "stops": {
+                    "useStrangleTrail": false,
+                    "initialStopAtrMultiple": 3,
+                    "stopBufferMode": "atr-percent"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "winnerPatch": {
+                  "entry": {
+                    "riskPerTradePercent": 1
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 1,
+                    "ensembleEntryThresholdPct": 78
+                  },
+                  "stops": {
+                    "useStrangleTrail": false,
+                    "initialStopAtrMultiple": 3,
+                    "stopBufferMode": "atr-percent"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "inSampleScore": -186.37499999997647,
+                "inSampleTrades": 1,
+                "inSampleNet": -14.99999999999801
+              }
+            ],
+            "finalConfig": {
+              "instrument": {
+                "symbol": "CL",
+                "multiplier": 1000,
+                "tickSize": 0.01
+              },
+              "entry": {
+                "generation": "ensemble",
+                "riskPerTradePercent": 1,
+                "ensembleEntryThresholdPct": 78
+              },
+              "stops": {
+                "useStrangleTrail": false,
+                "initialStopAtrMultiple": 3,
+                "stopBufferMode": "atr-percent"
+              },
+              "costs": {
+                "slippageTicks": 1,
+                "commissionPerContract": 2.5
+              },
+              "startingEquity": 100000,
+              "targets": {
+                "useTargets": true
+              }
+            },
+            "outOfSampleTrades": 0,
+            "outOfSampleNet": 0,
+            "outOfSampleMaxDD": 0
+          },
+          {
+            "window": {
+              "index": 1,
+              "isStart": "2021-07-01T00:00:00.000Z",
+              "isEnd": "2023-07-01T00:00:00.000Z",
+              "oosStart": "2023-07-01T00:00:00.000Z",
+              "oosEnd": "2024-01-01T00:00:00.000Z"
+            },
+            "stages": [
+              {
+                "name": "Entry",
+                "fitness": "entry-logic",
+                "candidateCount": 3,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2
+                  },
+                  "stops": {
+                    "useStrangleTrail": true
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "entry": {
+                    "ensembleEntryThresholdPct": 62
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "inSampleScore": -13.943207046807146,
+                "inSampleTrades": 37,
+                "inSampleNet": -704.9999999999071
+              },
+              {
+                "name": "StopLoss",
+                "fitness": "stop-loss-mae",
+                "candidateCount": 3,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "stops": {
+                    "initialStopAtrMultiple": 3
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 3
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "inSampleScore": -209.5270270270251,
+                "inSampleTrades": 37,
+                "inSampleNet": -704.9999999999071
+              },
+              {
+                "name": "Trail",
+                "fitness": "trailing-stop",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 3
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "stops": {
+                    "stopBufferMode": "ticks"
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 3,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "inSampleScore": -92.5170389951409,
+                "inSampleTrades": 37,
+                "inSampleNet": -704.9999999999071
+              },
+              {
+                "name": "Targets",
+                "fitness": "target-order",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 3,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "targets": {
+                    "useTargets": false
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 3,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": false
+                  }
+                },
+                "inSampleScore": -15.824312408444994,
+                "inSampleTrades": 37,
+                "inSampleNet": -704.9999999999071
+              },
+              {
+                "name": "EmergencyExit",
+                "fitness": "emergency-exit",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 3,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": false
+                  }
+                },
+                "winnerPatch": {
+                  "stops": {
+                    "useStrangleTrail": false
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": false,
+                    "initialStopAtrMultiple": 3,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": false
+                  }
+                },
+                "inSampleScore": -3032.1999999999566,
+                "inSampleTrades": 37,
+                "inSampleNet": -704.9999999999071
+              },
+              {
+                "name": "Sizing",
+                "fitness": "position-sizing",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": false,
+                    "initialStopAtrMultiple": 3,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": false
+                  }
+                },
+                "winnerPatch": {
+                  "entry": {
+                    "riskPerTradePercent": 2
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 62
+                  },
+                  "stops": {
+                    "useStrangleTrail": false,
+                    "initialStopAtrMultiple": 3,
+                    "stopBufferMode": "ticks"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": false
+                  }
+                },
+                "inSampleScore": -1145.1342442755547,
+                "inSampleTrades": 37,
+                "inSampleNet": -704.9999999999071
+              }
+            ],
+            "finalConfig": {
+              "instrument": {
+                "symbol": "CL",
+                "multiplier": 1000,
+                "tickSize": 0.01
+              },
+              "entry": {
+                "generation": "ensemble",
+                "riskPerTradePercent": 2,
+                "ensembleEntryThresholdPct": 62
+              },
+              "stops": {
+                "useStrangleTrail": false,
+                "initialStopAtrMultiple": 3,
+                "stopBufferMode": "ticks"
+              },
+              "costs": {
+                "slippageTicks": 1,
+                "commissionPerContract": 2.5
+              },
+              "startingEquity": 100000,
+              "targets": {
+                "useTargets": false
+              }
+            },
+            "outOfSampleTrades": 20,
+            "outOfSampleNet": -440.00000000019514,
+            "outOfSampleMaxDD": 1990.0000000001019
+          },
+          {
+            "window": {
+              "index": 2,
+              "isStart": "2022-01-01T00:00:00.000Z",
+              "isEnd": "2024-01-01T00:00:00.000Z",
+              "oosStart": "2024-01-01T00:00:00.000Z",
+              "oosEnd": "2024-07-01T00:00:00.000Z"
+            },
+            "stages": [
+              {
+                "name": "Entry",
+                "fitness": "entry-logic",
+                "candidateCount": 3,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2
+                  },
+                  "stops": {
+                    "useStrangleTrail": true
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "entry": {
+                    "ensembleEntryThresholdPct": 70
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "inSampleScore": -41.64739055581898,
+                "inSampleTrades": 31,
+                "inSampleNet": -1662.195840583407
+              },
+              {
+                "name": "StopLoss",
+                "fitness": "stop-loss-mae",
+                "candidateCount": 3,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "stops": {
+                    "initialStopAtrMultiple": 4
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "inSampleScore": -248.40740740740998,
+                "inSampleTrades": 27,
+                "inSampleNet": -345.0000000002068
+              },
+              {
+                "name": "Trail",
+                "fitness": "trailing-stop",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "stops": {
+                    "stopBufferMode": "atr-percent"
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "atr-percent"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "inSampleScore": -84.86373373424465,
+                "inSampleTrades": 27,
+                "inSampleNet": -155.00000000020907
+              },
+              {
+                "name": "Targets",
+                "fitness": "target-order",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "atr-percent"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "targets": {
+                    "useTargets": false
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "atr-percent"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": false
+                  }
+                },
+                "inSampleScore": -5.600622823043095,
+                "inSampleTrades": 27,
+                "inSampleNet": -155.00000000020907
+              },
+              {
+                "name": "EmergencyExit",
+                "fitness": "emergency-exit",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "atr-percent"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": false
+                  }
+                },
+                "winnerPatch": {
+                  "stops": {
+                    "useStrangleTrail": false
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": false,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "atr-percent"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": false
+                  }
+                },
+                "inSampleScore": -2998.0000000000405,
+                "inSampleTrades": 27,
+                "inSampleNet": -155.00000000020907
+              },
+              {
+                "name": "Sizing",
+                "fitness": "position-sizing",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": false,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "atr-percent"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": false
+                  }
+                },
+                "winnerPatch": {
+                  "entry": {
+                    "riskPerTradePercent": 2
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": false,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "atr-percent"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": false
+                  }
+                },
+                "inSampleScore": -1128.620886637989,
+                "inSampleTrades": 27,
+                "inSampleNet": -155.00000000020907
+              }
+            ],
+            "finalConfig": {
+              "instrument": {
+                "symbol": "CL",
+                "multiplier": 1000,
+                "tickSize": 0.01
+              },
+              "entry": {
+                "generation": "ensemble",
+                "riskPerTradePercent": 2,
+                "ensembleEntryThresholdPct": 70
+              },
+              "stops": {
+                "useStrangleTrail": false,
+                "initialStopAtrMultiple": 4,
+                "stopBufferMode": "atr-percent"
+              },
+              "costs": {
+                "slippageTicks": 1,
+                "commissionPerContract": 2.5
+              },
+              "startingEquity": 100000,
+              "targets": {
+                "useTargets": false
+              }
+            },
+            "outOfSampleTrades": 26,
+            "outOfSampleNet": -1092.256120705476,
+            "outOfSampleMaxDD": 1980.000000000029
+          },
+          {
+            "window": {
+              "index": 3,
+              "isStart": "2022-07-01T00:00:00.000Z",
+              "isEnd": "2024-07-01T00:00:00.000Z",
+              "oosStart": "2024-07-01T00:00:00.000Z",
+              "oosEnd": "2025-01-01T00:00:00.000Z"
+            },
+            "stages": [
+              {
+                "name": "Entry",
+                "fitness": "entry-logic",
+                "candidateCount": 3,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2
+                  },
+                  "stops": {
+                    "useStrangleTrail": true
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "entry": {
+                    "ensembleEntryThresholdPct": 70
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "inSampleScore": -30.44259465937674,
+                "inSampleTrades": 59,
+                "inSampleNet": -2344.451961288933
+              },
+              {
+                "name": "StopLoss",
+                "fitness": "stop-loss-mae",
+                "candidateCount": 3,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "stops": {
+                    "initialStopAtrMultiple": 4
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "inSampleScore": -256.9903820301102,
+                "inSampleTrades": 56,
+                "inSampleNet": -1602.256120705717
+              },
+              {
+                "name": "Trail",
+                "fitness": "trailing-stop",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "stops": {
+                    "stopBufferMode": "atr-percent"
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "atr-percent"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "inSampleScore": -82.3740454957622,
+                "inSampleTrades": 56,
+                "inSampleNet": -1412.2561207057192
+              },
+              {
+                "name": "Targets",
+                "fitness": "target-order",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "atr-percent"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "atr-percent"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "inSampleScore": -15.298019860013447,
+                "inSampleTrades": 57,
+                "inSampleNet": -1148.124065381257
+              },
+              {
+                "name": "EmergencyExit",
+                "fitness": "emergency-exit",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "atr-percent"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "winnerPatch": {
+                  "stops": {
+                    "useStrangleTrail": false
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": false,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "atr-percent"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "inSampleScore": -3103.00000000002,
+                "inSampleTrades": 57,
+                "inSampleNet": -1148.124065381257
+              },
+              {
+                "name": "Sizing",
+                "fitness": "position-sizing",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": false,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "atr-percent"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "winnerPatch": {
+                  "entry": {
+                    "riskPerTradePercent": 2
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": false,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "atr-percent"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "inSampleScore": -1190.3741748039365,
+                "inSampleTrades": 57,
+                "inSampleNet": -1148.124065381257
+              }
+            ],
+            "finalConfig": {
+              "instrument": {
+                "symbol": "CL",
+                "multiplier": 1000,
+                "tickSize": 0.01
+              },
+              "entry": {
+                "generation": "ensemble",
+                "riskPerTradePercent": 2,
+                "ensembleEntryThresholdPct": 70
+              },
+              "stops": {
+                "useStrangleTrail": false,
+                "initialStopAtrMultiple": 4,
+                "stopBufferMode": "atr-percent"
+              },
+              "costs": {
+                "slippageTicks": 1,
+                "commissionPerContract": 2.5
+              },
+              "startingEquity": 100000,
+              "targets": {
+                "useTargets": true
+              }
+            },
+            "outOfSampleTrades": 12,
+            "outOfSampleNet": -1920.0000000000277,
+            "outOfSampleMaxDD": 1985.0000000000146
+          },
+          {
+            "window": {
+              "index": 4,
+              "isStart": "2023-01-01T00:00:00.000Z",
+              "isEnd": "2025-01-01T00:00:00.000Z",
+              "oosStart": "2025-01-01T00:00:00.000Z",
+              "oosEnd": "2025-07-01T00:00:00.000Z"
+            },
+            "stages": [
+              {
+                "name": "Entry",
+                "fitness": "entry-logic",
+                "candidateCount": 3,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2
+                  },
+                  "stops": {
+                    "useStrangleTrail": true
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "entry": {
+                    "ensembleEntryThresholdPct": 70
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "inSampleScore": -40.53420842929547,
+                "inSampleTrades": 78,
+                "inSampleNet": -4084.4519612891368
+              },
+              {
+                "name": "StopLoss",
+                "fitness": "stop-loss-mae",
+                "candidateCount": 3,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "stops": {
+                    "initialStopAtrMultiple": 4
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "inSampleScore": -233.00815662795964,
+                "inSampleTrades": 77,
+                "inSampleNet": -3387.256120705845
+              },
+              {
+                "name": "Trail",
+                "fitness": "trailing-stop",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "stops": {
+                    "stopBufferMode": "atr-percent"
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "atr-percent"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "inSampleScore": -83.60803824538701,
+                "inSampleTrades": 77,
+                "inSampleNet": -3197.256120705847
+              },
+              {
+                "name": "Targets",
+                "fitness": "target-order",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "atr-percent"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000
+                },
+                "winnerPatch": {
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "atr-percent"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "inSampleScore": -27.666298234822282,
+                "inSampleTrades": 78,
+                "inSampleNet": -2933.1240653813848
+              },
+              {
+                "name": "EmergencyExit",
+                "fitness": "emergency-exit",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": true,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "atr-percent"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "winnerPatch": {
+                  "stops": {
+                    "useStrangleTrail": false
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": false,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "atr-percent"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "inSampleScore": -3919.8541001388176,
+                "inSampleTrades": 78,
+                "inSampleNet": -2933.1240653813848
+              },
+              {
+                "name": "Sizing",
+                "fitness": "position-sizing",
+                "candidateCount": 2,
+                "baseConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": false,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "atr-percent"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "winnerPatch": {
+                  "entry": {
+                    "riskPerTradePercent": 2
+                  }
+                },
+                "winnerConfig": {
+                  "instrument": {
+                    "symbol": "CL",
+                    "multiplier": 1000,
+                    "tickSize": 0.01
+                  },
+                  "entry": {
+                    "generation": "ensemble",
+                    "riskPerTradePercent": 2,
+                    "ensembleEntryThresholdPct": 70
+                  },
+                  "stops": {
+                    "useStrangleTrail": false,
+                    "initialStopAtrMultiple": 4,
+                    "stopBufferMode": "atr-percent"
+                  },
+                  "costs": {
+                    "slippageTicks": 1,
+                    "commissionPerContract": 2.5
+                  },
+                  "startingEquity": 100000,
+                  "targets": {
+                    "useTargets": true
+                  }
+                },
+                "inSampleScore": -2139.2072177530213,
+                "inSampleTrades": 78,
+                "inSampleNet": -2933.1240653813848
+              }
+            ],
+            "finalConfig": {
+              "instrument": {
+                "symbol": "CL",
+                "multiplier": 1000,
+                "tickSize": 0.01
+              },
+              "entry": {
+                "generation": "ensemble",
+                "riskPerTradePercent": 2,
+                "ensembleEntryThresholdPct": 70
+              },
+              "stops": {
+                "useStrangleTrail": false,
+                "initialStopAtrMultiple": 4,
+                "stopBufferMode": "atr-percent"
+              },
+              "costs": {
+                "slippageTicks": 1,
+                "commissionPerContract": 2.5
+              },
+              "startingEquity": 100000,
+              "targets": {
+                "useTargets": true
+              }
+            },
+            "outOfSampleTrades": 16,
+            "outOfSampleNet": 1180.0000000000268,
+            "outOfSampleMaxDD": 1694.9999999999563
+          }
+        ],
+        "outOfSampleTrades": 74,
+        "outOfSampleNet": -2272.256120705672,
+        "worstOutOfSampleMaxDD": 1990.0000000001019
+      }
+    }
+  ]
+}

@@ -164,3 +164,9 @@ export {
   walkForwardWindows, walkForward, scoreBacktest, mergeBacktestConfig, patchFromDottedKey,
   expandGrid, resolveFitness,
 } from './services/futures-walk-forward';
+// ADR-116 Phase 2 — staged locked-winner optimizer inside the walk-forward evidence rail.
+export type {
+  OptimizerStageName, OptimizerStage, LockedStageEvidence, StagedWindowEvidence,
+  StagedOptimizerReport, StagedOptimizerOptions,
+} from './services/futures-optimizer';
+export { runStagedOptimizer, DEFAULT_OPTIMIZER_STAGES } from './services/futures-optimizer';

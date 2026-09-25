@@ -105,6 +105,22 @@ Measured effect of his answers (in-sample, un-optimized, hourly bars) is in
 [docs/apps/trading/futures-backtester.md](../apps/trading/futures-backtester.md#what-his-answers-did-to-the-numbers).
 The remaining open input is no longer the strategy — it is **his optimized per-market constants**.
 
+## Amendment 2026-09-24 — Phase 2 evidence gate fell negative
+
+The six-stage locked-winner optimizer now runs inside rolling 24-month in-sample / 6-month
+out-of-sample windows, with each stage scored only on its in-sample bars and the final locked
+configuration evaluated once on unseen bars. The real Kibot archive run used the `ensemble`
+generation so the entry-threshold sweep was live, `1Hour` chart bars, `1Day` trend bars, Panama
+continuous series, one tick of slippage, and $2.50 per-contract commission. The complete report is
+[`futures-phase2-oos-2026-09-24.json`](../apps/trading/futures-phase2-oos-2026-09-24.json).
+
+The gate fell negative on both available roots: ES produced 31 OOS trades and **-$3,052.50** net
+with $2,997.50 worst-window drawdown; CL produced 74 OOS trades and **-$2,272.26** net with
+$1,990.00 worst-window drawdown. This is not a live promotion signal, but it is also not a Futures
+stop. The result keeps live execution behind a later evidence and operator gate while the program
+continues with a console-configured research loop, a futures research bot, nightly permutation runs,
+and a prediction ledger. Durable paper and cockpit work remain separately gated phases.
+
 ## References
 
 ADR-045 (extension-layer pattern), ADR-052 (BrokerAdapter/execution), ADR-092 (Strategy Lab),
