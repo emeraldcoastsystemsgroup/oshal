@@ -448,5 +448,29 @@
     "title": "A calendar-preparation agent: brief me before the meeting (2026-09-14)",
     "pr": "main",
     "evidence": "Calendar preparation agent and scheduled meeting briefing implemented; default-OFF consent, provenance citation for claims, caller-scoped user_sub storage, and surface parity; guarded by calendar package test suite calendar/tests/meeting-briefs.core.test.js (26/26 pass)."
+  },
+  {
+    "title": "Manifest bots get an ADR-034 authoritative record at load",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Clean-database manifest loader seeds authoritative persona and deployment defaults in database while preserving operator customizations; verified by tests/unit/manifest-bot-authority.spec.ts, manifest-bot-runtime-defaults.spec.ts, manifest-bot-runtime.spec.ts, and manifest-node-bot-dispatch.spec.ts (37/37 pass)."
+  },
+  {
+    "title": "Top-level workspaces for complete applications",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Top-level themed workspace switcher with direct application routes, quiet More menu, preserved sidebar navigation, and session recovery delivered; guarded by tests/unit/workspace-navigation-routes.spec.ts (28/28 pass), workspace-navigation-model.spec.ts (7/7 pass), and applications-directory-navigation.spec.ts (8/8 pass)."
+  },
+  {
+    "title": "ADR-139 — adopt artifact source tags",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Artifact exchange protocol, source tagging, Blob and owner-scoped URL minting, and relay redemption verified across services; guarded by tests/unit/artifact-exchange.spec.ts (13/13 pass), artifact-mint-bytes-route.spec.ts (6/6 pass), files-service-rail.spec.ts (3/3 pass), and artifact-redeem-relay.spec.ts (4/4 pass)."
+  },
+  {
+    "title": "Chat-to-surface bridge",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Bidirectional chat-to-surface bridge with fail-closed validation, HTML-stripping, app/op isolation, and conversational roundtrip verified in live browser; guarded by tests/unit/surface-bridge-contract.spec.ts, surface-bridge-relay.spec.ts, surface-directives.spec.ts, surface-bridge-forge-e2e.spec.ts, and surface-bridge-roundtrip-browser.spec.ts (65/65 pass)."
   }
 ]
