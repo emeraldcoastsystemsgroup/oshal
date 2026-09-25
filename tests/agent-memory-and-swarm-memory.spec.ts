@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added tests for AgentMemoryService and SwarmMemoryService
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Supply the required owner subject in every completed-work fixture after durable memory became owner-scoped.
  */
 
 import { test, expect } from '@playwright/test';
@@ -31,6 +32,7 @@ interface FetchCall {
 // ─── ChromaDB mock state ───────────────────────────────────────────────
 
 const CHROMA_URL = 'http://chromadb.test';
+const MEMORY_OWNER_SUB = 'auth0|playwright-memory-owner';
 
 /** In-memory ChromaDB mock: stores documents per collection */
 const mockCollections = new Map<string, {
@@ -312,6 +314,7 @@ test.describe('SwarmMemoryService', () => {
   test('extractAndStore() stores learnings from completed work', async () => {
     const stored = await swarmMemory.extractAndStore({
       workItemId: 'wi-001',
+      ownerSub: MEMORY_OWNER_SUB,
       title: 'Implement user authentication',
       agentId: 'code-developer',
       executionOutput: '## What Worked\n- JWT tokens with RS256 signing\n- Redis session store\n\n## Challenges\n- CORS configuration was tricky\n\n## Key Learnings\n- Always set SameSite=Strict on auth cookies',
@@ -338,6 +341,7 @@ test.describe('SwarmMemoryService', () => {
   test('extractAndStore() is idempotent — skips duplicate work items', async () => {
     const first = await swarmMemory.extractAndStore({
       workItemId: 'wi-002',
+      ownerSub: MEMORY_OWNER_SUB,
       title: 'Setup CI pipeline',
       agentId: 'devops-bot',
       executionOutput: 'Pipeline configured with GitHub Actions',
@@ -345,6 +349,7 @@ test.describe('SwarmMemoryService', () => {
 
     const second = await swarmMemory.extractAndStore({
       workItemId: 'wi-002',
+      ownerSub: MEMORY_OWNER_SUB,
       title: 'Setup CI pipeline',
       agentId: 'devops-bot',
       executionOutput: 'Pipeline configured with GitHub Actions',
@@ -360,6 +365,7 @@ test.describe('SwarmMemoryService', () => {
   test('extractAndStore() handles unstructured output as fallback', async () => {
     const stored = await swarmMemory.extractAndStore({
       workItemId: 'wi-003',
+      ownerSub: MEMORY_OWNER_SUB,
       title: 'Fix login bug',
       agentId: 'code-developer',
       executionOutput: 'Fixed the null pointer exception in the login handler by adding a guard clause for undefined session tokens.',
@@ -376,6 +382,7 @@ test.describe('SwarmMemoryService', () => {
   test('queryRelevant() finds relevant past experiences', async () => {
     await swarmMemory.extractAndStore({
       workItemId: 'wi-010',
+      ownerSub: MEMORY_OWNER_SUB,
       title: 'Setup PostgreSQL database migrations',
       agentId: 'code-developer',
       executionOutput: '## Key Learnings\n- Use numbered migration files\n- Always include rollback scripts\n- Test migrations on a fresh database',
@@ -383,12 +390,15 @@ test.describe('SwarmMemoryService', () => {
 
     await swarmMemory.extractAndStore({
       workItemId: 'wi-011',
+      ownerSub: MEMORY_OWNER_SUB,
       title: 'Configure Kubernetes ingress',
       agentId: 'devops-bot',
       executionOutput: '## Key Learnings\n- Use nginx ingress controller\n- Set rate limiting annotations',
     });
 
-    const results = await swarmMemory.queryRelevant('database migration', 3);
+    const results = await swarmMemory.queryRelevant('database migration', 3, {
+      userSub: MEMORY_OWNER_SUB,
+    });
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].text).toContain('migration');
   });
@@ -396,6 +406,7 @@ test.describe('SwarmMemoryService', () => {
   test('queryRelevantContext() returns formatted prompt block', async () => {
     await swarmMemory.extractAndStore({
       workItemId: 'wi-020',
+      ownerSub: MEMORY_OWNER_SUB,
       title: 'Build REST API for user management',
       agentId: 'code-developer',
       executionOutput: '## Key Learnings\n- Use Zod for request validation\n- Return 409 for duplicate entries',
@@ -404,6 +415,8 @@ test.describe('SwarmMemoryService', () => {
     const context = await swarmMemory.queryRelevantContext(
       'Create REST API for project management',
       'Need CRUD endpoints for projects with validation',
+      3,
+      { userSub: MEMORY_OWNER_SUB },
     );
 
     expect(context.hasContent).toBe(true);
@@ -432,6 +445,7 @@ test.describe('SwarmMemoryService', () => {
   test('stores metadata including verification failures and escalations', async () => {
     await swarmMemory.extractAndStore({
       workItemId: 'wi-030',
+      ownerSub: MEMORY_OWNER_SUB,
       title: 'Complex data pipeline',
       agentId: 'code-developer',
       executionOutput: 'Implemented ETL pipeline',
@@ -477,6 +491,7 @@ test.describe('AgentMemoryService + SwarmMemoryService integration', () => {
     await agentMemory.remember('code-developer', 'Agent-specific memory about coding patterns');
     await swarmMemory.extractAndStore({
       workItemId: 'wi-100',
+      ownerSub: MEMORY_OWNER_SUB,
       title: 'Shared learning about deployment',
       agentId: 'code-developer',
       executionOutput: 'Deployment went smoothly with blue-green strategy',
@@ -510,6 +525,7 @@ test.describe('AgentMemoryService + SwarmMemoryService integration', () => {
     // 3. After task completion, store learning in shared swarm memory
     const stored = await swarmMemory.extractAndStore({
       workItemId: 'wi-200',
+      ownerSub: MEMORY_OWNER_SUB,
       title: 'Scale web tier to handle Black Friday traffic',
       agentId,
       executionOutput: '## What Worked\n- HPA with custom metrics\n- Pod disruption budgets prevented cascading failures\n\n## Key Learnings\n- Pre-scale 2 hours before expected peak',
@@ -522,6 +538,8 @@ test.describe('AgentMemoryService + SwarmMemoryService integration', () => {
     const context = await swarmMemory.queryRelevantContext(
       'Scale API tier for holiday traffic',
       'Need to prepare infrastructure for expected 10x traffic spike',
+      3,
+      { userSub: MEMORY_OWNER_SUB },
     );
     expect(context.hasContent).toBe(true);
     expect(context.promptBlock.toLowerCase()).toContain('scale');

@@ -16,6 +16,7 @@
 # 9 | maintainer@emeraldcoastsystemsgroup.com   | SEC-06: make npm audit blocking, pin the post-incident Trivy action/version, and scan both full history and the checked-out tree with digest-pinned gitleaks.
 # 10 | maintainer@emeraldcoastsystemsgroup.com  | Run the two-user and privacy live proofs in hosted CI by enabling the mock-header identity gate; CI-mode specs fail instead of skip when this explicit test-only switch is absent.
 # 11 | maintainer@emeraldcoastsystemsgroup.com  | Classify the runner-local Compose smoke as ephemeral image/build validation: it is always torn down, changes no durable target, and is not a deployment job.
+# 12 | maintainer@emeraldcoastsystemsgroup.com  | Make the mock e2e posture explicit: the noop lane declares the model-less test deployment and the stable mock subject is the operator for operator-gated browser proofs; production never inherits either setting.
 # =============================================================================
 
 name: CI
@@ -195,6 +196,8 @@ jobs:
           REDIS_URL: redis://localhost:6379
           RUN_MIGRATIONS: "true"
           FORCE_LLM_PROVIDER: noop
+          OSHAL_NO_AI: "true"
+          OSHAL_OPERATOR_SUBS: mock-user-001
           # Boot the webServer on 3456 (not the mock-default 4458): ~18 e2e specs hardcode
           # http://localhost:3456, so on 4458 they hit CONNECTION_REFUSED. 4458 exists only to
           # avoid clashing with the operator's live runtime on 3456 — irrelevant in CI. Aligning

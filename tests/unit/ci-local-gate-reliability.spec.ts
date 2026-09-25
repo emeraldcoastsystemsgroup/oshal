@@ -80,5 +80,7 @@ describe('hosted CI own-data evidence identity gate', () => {
     expect(workflow).toMatch(/MOCK_OIDC:\s*["']?true["']?/);
     expect(workflow).toMatch(/MOCK_OIDC_ALLOW_HEADER:\s*["']?true["']?/);
     expect(workflow).toContain('DATABASE_URL: postgresql://oshal:oshal@localhost:5432/oshal');
+    expect(workflow).toMatch(/OSHAL_NO_AI:\s*["']?true["']?/);
+    expect(workflow).toMatch(/OSHAL_OPERATOR_SUBS:\s*mock-user-001/);
   });
 });

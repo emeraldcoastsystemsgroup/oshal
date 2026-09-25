@@ -1,5 +1,6 @@
 # CI e2e GREEN SET (the green ratchet). Files here have EVERY test passing under the
-# CI e2e env (Postgres+Redis, PLAYWRIGHT_PORT=3456, FORCE_LLM_PROVIDER=noop, MOCK_OIDC).
+# CI e2e env (Postgres+Redis, PLAYWRIGHT_PORT=3456, FORCE_LLM_PROVIDER=noop,
+# OSHAL_NO_AI=true, OSHAL_OPERATOR_SUBS=mock-user-001, MOCK_OIDC).
 # Categorized 2026-07-06: 66 green / 87 red (913 pass / 527 fail across the full suite).
 # Run via: npm run test:e2e:green. Add specs here only once they pass; never remove to hide a
 # regression. Full-suite normalization tracked in docs/BACKLOG.md.
