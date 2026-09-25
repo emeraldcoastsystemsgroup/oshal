@@ -429,3 +429,19 @@ display, missing/empty/legacy distinctions, explicit skipped-review spending and
 The queue suite's file-backed worker case proves settlement-before-review ordering on an unchanged
 study; its second forward cycle explicitly supplies a fixture grade rather than a real future bar.
 Installed provider-cost, real nightly/matured-outcome and paper acceptance remain unproven.
+
+## Futures archive imports (2026-09-25)
+
+`futures-archive-source.spec.ts` uses actual temporary dated-contract files, the strict parser,
+UTC clock conversion and ingest/completeness engine. `futures-archive-import-postgres.spec.ts`
+adds real workers and private PostgreSQL migrations 096/162, including an enforcing application
+RLS role. Preview writes no shared bars; immutable owned plans, current operator checks and exact
+fingerprints protect confirmation. Source drift refuses before inserts; a conflict in a later
+series rolls back earlier inserts, and repeats preserve all existing rows and ingestion times.
+Actual canonical readers verify the persisted UTC opens and OHLCV. No source, worker or SQL seam
+is doubled; the market rows are synthetic fixtures, not production acceptance. The CLI child-process
+guard uses a loopback connection trap to prove read-only and rejected writes never connect.
+Trading's `futures-archive-import.spec.ts` drives actual mounted routes with a fixture service and
+executes the real browser handlers, including typed confirmation, exact frozen citation and late
+navigation fences. Installed ES/CL import/coverage/repeat receipts, current vendor completeness,
+provider/nightly evidence and paper acceptance remain owed. No deployment or backlog closure follows.

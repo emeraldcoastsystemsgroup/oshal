@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Contract 'google-calendar' as a kernel skill: OAuth-injected Calendar v3 client pinned into dist so calendar packages resolve @/features/google-calendar without deep service imports.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Declare the bound-workflow-results compatibility floor so older runtimes refuse workflows requiring durable evidence/result bindings.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Declare the immutable Futures forward receipt compatibility floor for matching console packages.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Declare confirmed archive imports so older cores refuse console packages without the shared-write approval boundary.
  */
 
 /**
@@ -42,7 +43,8 @@ export type KernelSkillId =
   | 'spatial-mapping'
   | 'google-calendar'
   | 'bound-workflow-results'
-  | 'futures-forward-receipts';
+  | 'futures-forward-receipts'
+  | 'futures-archive-import';
 
 /**
  * @description One importable module behind a skill.
@@ -90,6 +92,9 @@ export interface KernelSkillDeclaration {
  * docs/apps/kernel-skills.md. The CI guard then enforces it forever.
  */
 export const KERNEL_SKILLS: readonly KernelSkillDeclaration[] = [
+  { id: 'futures-archive-import', title: 'Confirmed Futures archive imports',
+    why: 'Owner-bound content previews and explicit operator confirmation precede atomic shared reference writes.',
+    modules: [{ specifier: '@/app/trading-futures-archive-import', distFile: 'dist/app/trading-futures-archive-import.js' }] },
   { id: 'futures-forward-receipts', title: 'Futures forward research receipts',
     why: 'The locked replay engine owns immutable issuance and same-contract outcome grading; the package supplies only caller-scoped controls and views.',
     modules: [{ specifier: '@/app/trading-futures-prediction-ledger', distFile: 'dist/app/trading-futures-prediction-ledger.js' }] },

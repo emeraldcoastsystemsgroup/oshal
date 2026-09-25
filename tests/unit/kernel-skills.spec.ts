@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Pin google-calendar: the contracted kernel skill providing @/features/google-calendar.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Pin the bound-workflow-results capability and its executable build anchor.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Pin the forward-receipt capability required by the matching Futures console.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Pin the explicit archive-import approval capability and build anchor.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -92,6 +93,7 @@ describe('kernel-skill contract (ADR-085 Tier-0b / ADR-090 D8)', () => {
         'authenticated-artifacts',
         'bound-workflow-results',
         'futures-forward-receipts',
+        'futures-archive-import',
         'package-tools',
         'specialist-context',
         'test-catalog',

@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Read bounded raw dated-contract archives with explicit clocks and closed-bucket evidence.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Share the strict bounded archive reader with confirmed reference-data imports without changing prediction limits.
  */
 import { openSync, fstatSync, readFileSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
@@ -22,7 +23,10 @@ export interface FuturesPredictionSource {
 /** @description Raw archive fields plus their separately decoded true UTC bucket close. */
 export interface FuturesClosedBar { bar: FuturesBar; closedAt: string }
 
-function rawArchive(file: string): FuturesBar[] {
+/** @description Parse a bounded dated-contract archive without dropping malformed rows or duplicate timestamps.
+ * @param file - Operator-selected archive file. @returns Strictly validated raw wall-stamped bars.
+ */
+export function readStrictFuturesArchive(file: string): FuturesBar[] {
   const fd = openSync(file, 'r');
   try {
     const stat = fstatSync(fd);
@@ -54,7 +58,7 @@ export function readFuturesClosedBars(source: FuturesPredictionSource, timeframe
   // Daily exports have a distinct meaning; do not silently fall back to another file after issuance.
   const daily = timeframe === '1Day';
   const file = join(source.dataDir, daily ? 'daily' : 'minute', `${source.contract}.txt`);
-  const all = rawArchive(file);
+  const all = readStrictFuturesArchive(file);
   if (daily ? all.some(bar => !bar.t.endsWith('T00:00:00.000Z')) : all.every(bar => bar.t.endsWith('T00:00:00.000Z'))) {
     throw new Error('Futures archive granularity does not match its configured directory');
   }
