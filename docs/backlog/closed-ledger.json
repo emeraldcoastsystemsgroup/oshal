@@ -760,5 +760,29 @@
     "date": "2026-09-24",
     "pr": "main",
     "evidence": "Host-side real-database spec execution runs cleanly against ephemeral/containerized PostgreSQL instances without wedged port publishing collisions or live-stack pollution; guarded by person-model-parity-postgres.spec.ts (9/9 pass) and ci-local-spec-database-default.spec.ts (24/24 pass)."
+  },
+  {
+    "title": "App Loader — the ADR-147 decisions that did not ship",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Multi-registry App Loader refuses private IP hostnames, pins validated DNS resolutions, and resolves dependencies across approved registries; guarded by app-registry-dns-fence.spec.ts (16/16 pass), app-dependencies-loader-browser.spec.ts (9/9 pass), and multi-store-routes-browser.spec.ts (9/9 pass)."
+  },
+  {
+    "title": "Video Studio storyboards on the demo codex-cli rail",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Video Studio carries series owner identity into storyboard image provider resolution on the demo codex-cli rail, preventing carve-hint failures; guarded by series-storyboard-owner-sub.spec.ts (3/3 pass)."
+  },
+  {
+    "title": "An open maker-reference library the engineering bots can cite (2026-09-14)",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Open maker-reference library provides structured catalogue schema, command-driven rebuilds, reuse license derivation, and persona evaluation citation assertions; guarded by maker-reference-library.spec.ts (18/18 pass)."
+  },
+  {
+    "title": "LoRA per-character generalization",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "LoRA training pipelines generalize per-character configuration, routing dataset folders and identity prompts dynamically without hardcoded constants; guarded by lora-per-character-generalization.spec.ts (7/7 pass)."
   }
 ]

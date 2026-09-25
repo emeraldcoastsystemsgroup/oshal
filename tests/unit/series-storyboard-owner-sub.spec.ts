@@ -123,7 +123,7 @@ interface EpisodeRow { episode_id: string; ordinal: number; status: string; scen
 function makePool(series: SeriesRow, episode: EpisodeRow): Pool {
   const query = async (text: string, params: unknown[] = []): Promise<{ rows: unknown[]; rowCount: number }> => {
     const sql = text.replace(/\s+/g, ' ').trim();
-    if (/SELECT status, user_sub, ticket_id FROM video_series/.test(sql)) {
+    if (/SELECT status, user_sub, ticket_id.* FROM video_series/.test(sql)) {
       return { rows: params[0] === SERIES_ID ? [series] : [], rowCount: 1 };
     }
     if (/SELECT episode_id, ordinal, status FROM video_episodes/.test(sql)) {
