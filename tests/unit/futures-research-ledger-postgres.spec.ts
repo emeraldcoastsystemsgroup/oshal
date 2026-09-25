@@ -5,10 +5,12 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify real Futures admission, owner scope and durable study settlement.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Apply the review-state migration before validate-only runtime proof.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Persist insufficient sample evidence and stale-file worker failures without fabricating study results.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { resolve, join } from 'node:path';
+import { tmpdir } from 'node:os';
 import type { Pool } from 'pg';
 import type { AppContext } from '@/app/composition-root';
 import { listFuturesResearchRuns, runFuturesResearch } from '@/app/trading-futures-research-dispatch';
@@ -58,12 +60,17 @@ describe('futures research durable ledger', () => {
     expect(started.status).toBe('running');
     await expect(runFuturesResearch(ctx, 'owner-b', 'schedule-b', config)).rejects.toMatchObject({ code: '23505' });
     const finished = await settled('owner-a', started.runId);
-    expect(finished.status).toBe('completed');
+    expect(finished.status).toBe('insufficient_sample');
+    expect(finished.markets[0].quality?.sampleStatus).toBe('insufficient');
+    expect(finished.markets[0].quality?.lowTradeWindows.length).toBeGreaterThan(0);
     expect(finished.completedAt).not.toBeNull();
     expect(finished.markets[0].report.windows.length).toBeGreaterThan(0);
     expect(finished.markets[0].evidenceFingerprint).toMatch(/^[a-f0-9]{64}$/);
     expect((await listFuturesResearchRuns(pool as AppContext['pool'], 'owner-b'))).toEqual([]);
     expect(createTicket).toHaveBeenCalledTimes(1);
+    expect(createTicket).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({
+      sampleStatus: 'insufficient_sample', markets: expect.arrayContaining([expect.objectContaining({ quality: finished.markets[0].quality })]),
+    }) }));
     const repeat = await runFuturesResearch(ctx, 'owner-a', 'schedule-a', { ...config, end: '2021-05-30T23:59:59Z' });
     const unchanged = await settled('owner-a', repeat.runId);
     expect(unchanged.status).toBe('unchanged');
@@ -71,7 +78,7 @@ describe('futures research durable ledger', () => {
     expect(createTicket).toHaveBeenCalledTimes(1);
     const changed = await runFuturesResearch(ctx, 'owner-a', 'schedule-a', { ...config, stageGrids: { ...config.stageGrids, Entry: { 'entry.ensembleEntryThresholdPct': [62] } } });
     const newEvidence = await settled('owner-a', changed.runId);
-    expect(newEvidence.status).toBe('completed');
+    expect(newEvidence.status).toBe('insufficient_sample');
     expect(newEvidence.markets[0].evidenceFingerprint).not.toBe(finished.markets[0].evidenceFingerprint);
     expect(createTicket).toHaveBeenCalledTimes(2);
     await pool.query('GRANT SELECT ON oshal_trading_futures_research_runs TO oshal_app');
@@ -96,5 +103,22 @@ describe('futures research durable ledger', () => {
     expect(finished.markets).toEqual([]);
     expect(finished.error).toMatch(/empty|configured|no.*file/i);
     expect(createTicket).not.toHaveBeenCalled();
+  }, 180_000);
+
+  it('retains a stale-file refusal across the real worker and database without a completion ticket', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'futures-stale-ledger-'));
+    const createTicket = vi.fn(async () => ({}));
+    const ctx = { pool, ticketService: { createTicket } } as unknown as AppContext;
+    try {
+      mkdirSync(join(dir, 'minute'));
+      writeFileSync(join(dir, 'minute', 'ESH21.txt'), '01/04/2021,10:00,3700,3701,3699,3700,900\n');
+      const started = await runFuturesResearch(ctx, 'owner-a', 'schedule-a', { ...config, source: 'kibot-file', dataDir: dir });
+      const failed = await settled('owner-a', started.runId);
+      expect(failed.status).toBe('failed');
+      expect(failed.error).toMatch(/stale Futures source.*2021-01-04.*Optimizer not run/);
+      expect(failed.markets).toEqual([]);
+      expect(failed.config.quality).toEqual({ maxSourceLagDays: 7, minOosTradesPerWindow: 10 });
+      expect(createTicket).not.toHaveBeenCalled();
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   }, 180_000);
 });

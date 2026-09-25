@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise bounded, evidence-linked Futures review contracts with explicit historical fixtures.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep unassessed quality explicit and refuse proposals that change operator-owned gates.
  */
 import { describe, expect, it } from 'vitest';
 import { futuresReviewPrompt, parseFuturesReview } from '@/app/trading-futures-research-review-contract';
@@ -30,6 +31,8 @@ describe('Futures review contract', () => {
     const prompt = futuresReviewPrompt(run);
     expect(prompt).toContain('"outOfSampleNet":-100');
     expect(prompt).toContain('NOT forward predictions');
+    expect(prompt).toContain('"quality":null');
+    expect(prompt).toContain('unassessed, never a pass');
     for (const secret of [run.ownerSub, run.scheduleId, config.dataDir, run.error!]) expect(prompt).not.toContain(secret);
   });
   it('accepts a bounded hypothesis and preserves unspecified stages', () => {
@@ -44,6 +47,7 @@ describe('Futures review contract', () => {
   it('refuses authority widening, invalid types, prototype axes, oversized and unchanged grids', () => {
     expect(() => parseFuturesReview(JSON.stringify({ ...output, orders: [] }), run)).toThrow();
     expect(() => parseFuturesReview(JSON.stringify({ ...output, nextStudy: { ...output.nextStudy, source: 'other' } }), run)).toThrow();
+    expect(() => parseFuturesReview(JSON.stringify({ ...output, nextStudy: { ...output.nextStudy, quality: { minOosTradesPerWindow: 1 } } }), run)).toThrow();
     for (const stageGrids of [{}, config.stageGrids, { Entry: { '__proto__.admin': [true] } }, { Entry: { constructor: [70] } },
       { Sizing: { 'entry.riskPerTradePercent': [6] } }, { Targets: { 'targets.useTargets': ['true'] } },
       { Entry: { 'entry.ensembleEntryThresholdPct': Array.from({ length: 9 }, () => 70) } }]) {

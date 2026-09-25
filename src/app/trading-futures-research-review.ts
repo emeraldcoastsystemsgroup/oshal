@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Accountable interactive Futures review with owner-bound admission, durable failure and fenced retries.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Allow explaining insufficient historical samples without treating them as passing evidence.
  */
 import { randomUUID } from 'node:crypto';
 import type { AppContext } from './composition-root';
@@ -40,7 +41,7 @@ async function claimReview(ctx: AppContext, owner: string, runId: string): Promi
   await ensureFuturesResearchTable(ctx.pool);
   const row = (await ctx.pool.query(`SELECT * FROM oshal_trading_futures_research_runs WHERE run_id=$1 AND owner_sub=$2`, [runId, owner])).rows[0];
   if (!row) throw Object.assign(new Error('futures_run_not_found'), { statusCode: 404 });
-  if (!['completed', 'unchanged'].includes(row.status) || !row.markets?.length) throw Object.assign(new Error('futures_run_has_no_completed_evidence'), { statusCode: 409 });
+  if (!['completed', 'unchanged', 'insufficient_sample'].includes(row.status) || !row.markets?.length) throw Object.assign(new Error('futures_run_has_no_completed_evidence'), { statusCode: 409 });
   const review: FuturesResearchReview = { status: 'reviewing', attemptId: randomUUID(), requestedAt: new Date().toISOString() };
   const admitted = await ctx.pool.query(`UPDATE oshal_trading_futures_research_runs SET review=$3::jsonb
     WHERE run_id=$1 AND owner_sub=$2 AND (review IS NULL OR review->>'status'='failed'

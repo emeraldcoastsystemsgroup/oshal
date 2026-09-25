@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Bound Futures review context and validate evidence-linked research proposals without trading authority.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Include declared freshness/sample gates and every deficient window in review context; proposals cannot lower those gates.
  */
 import { z } from 'zod';
 import { normalizeFuturesResearchConfig, type FuturesResearchRun } from './trading-futures-research-dispatch';
@@ -38,12 +39,13 @@ export interface FuturesResearchReview {
  * @returns Bounded reason-only request with a strict output contract.
  */
 export function futuresReviewPrompt(run: FuturesResearchRun): string {
-  const { roots, timeframe, ltfTimeframe, source, adjust, minVolume, start, end, split, stageGrids } = run.config;
+  const { roots, timeframe, ltfTimeframe, source, adjust, minVolume, start, end, split, stageGrids, quality } = run.config;
   const markets = run.markets.map((m) => ({
     root: m.root, evidenceFingerprint: m.evidenceFingerprint,
     chartAsOf: m.chartAsOf, ltfAsOf: m.ltfAsOf, latestCompleteOosEnd: m.latestCompleteOosEnd,
     outOfSampleTrades: m.outOfSampleTrades, outOfSampleNet: m.outOfSampleNet,
     worstOutOfSampleMaxDD: m.worstOutOfSampleMaxDD,
+    quality: m.quality ?? null,
     totalWindows: m.report.windows.length,
     recentWindows: m.report.windows.slice(-8).map((w) => ({
       window: w.window, outOfSampleTrades: w.outOfSampleTrades, outOfSampleNet: w.outOfSampleNet,
@@ -56,12 +58,13 @@ export function futuresReviewPrompt(run: FuturesResearchRun): string {
     'Review the supplied Futures study as research only. No tools, fetching, orders or strategy promotion.',
     'Negative or empty evidence is not success. These are historical backtests, NOT forward predictions or live performance.',
     'Repeated use of OOS results to choose a grid is exploratory tuning; it needs a new untouched holdout before promotion.',
+    'Report all configured sample-gate failures. Meeting a trade-count floor is not statistical confidence. A null quality receipt is unassessed, never a pass. Proposals cannot change these operator-owned thresholds.',
     'Context contains at most the last eight windows per market; totalWindows states the full count. Do not invent missing facts.',
     'Return ONLY JSON: {"summary":"...","limitations":["..."],"evidence":[{"root":"...","fingerprint":"exact supplied fingerprint"}],"nextStudy":null OR {"rationale":"...","stageGrids":{...}}}. Cite every root exactly once.',
     'nextStudy may change stageGrids only. Include only axes to replace; omitted stages retain the current study grid.',
     'Allowed axes: Entry.entry.ensembleEntryThresholdPct integer 1..100; StopLoss.stops.initialStopAtrMultiple number >0..10; Trail.stops.stopBufferMode ticks|atr-percent; Targets.targets.useTargets boolean; EmergencyExit.stops.useStrangleTrail boolean; Sizing.entry.riskPerTradePercent number >0..5.',
     'At most 8 values per axis, 64 candidates per stage, 512 estimated backtests total. No forecast, direction, target price or order fields.',
-    JSON.stringify({ study: { roots, timeframe, ltfTimeframe, source, adjust, minVolume, start, end, split, stageGrids }, markets }),
+    JSON.stringify({ study: { roots, timeframe, ltfTimeframe, source, adjust, minVolume, start, end, split, stageGrids, quality }, markets }),
   ].join('\n');
 }
 

@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove review admission, retries, immutable evidence and FORCE RLS on private PostgreSQL; inference is an explicit fixture.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Allow explanation of insufficient samples without changing their recorded status.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -72,6 +73,11 @@ describe('Futures review real ledger with fixture inference', () => {
     const completed = await reviewFuturesResearchRun(ctx, owner, id, async () => valid);
     expect(completed.status).toBe('completed');
     expect(completed.attemptId).not.toBe(failed.attemptId);
+  });
+  it('can review insufficient samples without upgrading their study status', async () => {
+    const id = await insert('insufficient_sample');
+    expect((await reviewFuturesResearchRun(ctx, owner, id, async () => valid)).status).toBe('completed');
+    expect((await pool.query('SELECT status FROM oshal_trading_futures_research_runs WHERE run_id=$1', [id])).rows[0].status).toBe('insufficient_sample');
   });
   it('blocks overlapping calls and fences a late reply after an interrupted attempt is reclaimed', async () => {
     const id = await insert();
