@@ -886,5 +886,11 @@
     "date": "2026-09-24",
     "pr": "main",
     "evidence": "The presentations deck-builder guide drives the editor through a signed-in /guide route with whitelisted, bounded set_title, set_outline, update_slide, add_slide, and set_theme actions; invalid or anonymous requests are refused. Guarded by presentations-guide.test.mjs (2/2 pass) in the installed presentations package and the deployed persona/registration guards (17/17 pass)."
+  },
+  {
+    "title": "Data-model explorer: schema drift as an alarm, not a page someone remembers to open",
+    "date": "2026-09-25",
+    "pr": "826",
+    "evidence": "PRs #825 and #826 implement native durable schema events, periodic shared comparison, dedicated rule admission, one approval-held ticket and linked Operations Stream incident, and the same explorer before/after diff. node scripts/test-schema-alert-producer.cjs: 45 passing, including actual scratch-table policy removal in disposable PostgreSQL through the running timer/sweep and real TicketService/HTTP/Chromium; unchanged/repeated scans and intake recovery produce no duplicate. Full explorer suite: 106 passing; supplemental alert/migration/registration/style regressions: 62 passing. Owner/operator refusals, explicit reviewed-fingerprint baseline capture, partial-catalog refusal and unchanged webhook replay defaults are covered. Test Lab references and explorer guide updated. Fixtures substitute identity, clock, inventory and migration count; no live production policy mutation or provider action is claimed."
   }
 ]
