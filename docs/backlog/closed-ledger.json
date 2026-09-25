@@ -712,5 +712,29 @@
     "date": "2026-09-24",
     "pr": "main",
     "evidence": "Cockpit engineering screens normalized across task explorer, queue health, metrics isolation, locked surface fallback, and tool sandboxing; guarded by cockpit-tool-surfaces.spec.ts (54/54 pass), cockpit-locked-surface.spec.ts (5/5 pass), and cockpit-surface-sandbox.spec.ts (3/3 pass)."
+  },
+  {
+    "title": "Remote-client full-suite flake",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Remote client router graph hoist in beforeAll eliminates timeout flake, bounding dynamic import overhead under parallel sweeps; guarded by 11 remote-client-*.spec.ts files (106/106 pass)."
+  },
+  {
+    "title": "Workflow Studio draft execution and branching",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Workflow Studio executes unpublished drafts and compiled pipelines through shared runtime with run history and triggers; guarded by workflow-publish-compiler.spec.ts (16/16 pass), workflow-publish-pipeline.spec.ts (18/18 pass), workflow-run-history.spec.ts (12/12 pass), workflow-run-routes.spec.ts (11/11 pass), and workflow-authoring-e2e.spec.ts (1/1 pass)."
+  },
+  {
+    "title": "Agentic workflow authoring and streamed canvas events",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Cockpit and assist parser stream valid workflow graph events into canvas representations and compile runnable definitions; guarded by workflow-studio-assist-parser.spec.ts (3/3 pass), workflow-studio-surface.spec.ts (2/2 pass), and workflow-authoring-e2e.spec.ts (1/1 pass)."
+  },
+  {
+    "title": "ADR-087 access-role deferred layers",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Manifest bot access roles enforce caller and visibility boundaries, reject unknown roles, and ensure restriction precedence; guarded by manifest-bot-access-roles.spec.ts (11/11 pass)."
   }
 ]
