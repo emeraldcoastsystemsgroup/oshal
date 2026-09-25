@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Isolate read-only Futures studies with completed-window evidence fingerprints.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Refuse stale source dates before each market's optimizer and retain per-window sample gate evidence.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Exclude the operational review opt-in from market-evidence fingerprints.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Exclude forward operational controls from historical evidence fingerprints.
  */
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -66,7 +67,7 @@ function stagesFor(config: FuturesResearchConfig): OptimizerStage[] {
 function evidenceFingerprint(config: FuturesResearchConfig, root: string, chart: ContinuousSeries, ltf: ContinuousSeries, report: StagedOptimizerReport): string {
   const lastWindow = report.windows.at(-1)!;
   const end = Date.parse(lastWindow.window.oosEnd);
-  const { end: _end, endMode: _endMode, nightlyCron: _nightlyCron, nightlyReview: _nightlyReview, ...studyDefinition } = config;
+  const { end: _end, endMode: _endMode, nightlyCron: _nightlyCron, nightlyReview: _nightlyReview, predictions: _predictions, ...studyDefinition } = config;
   const hash = createHash('sha256');
   hash.update(JSON.stringify({ root, studyDefinition, report }));
   for (const [kind, bars] of [['chart', chart.bars], ['ltf', ltf.bars]] as const) {

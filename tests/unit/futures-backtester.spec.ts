@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — guards for the ADR-116 backtester: NT8 fill semantics (next-bar-open entries priced off the signal bar, intrabar stop triggers, gap-through fills at the open, next-bar market exits), stage-1 timed-exit mode, slippage/commission attribution, MFE/MAE in currency+percent, equity curve + drawdown, compounding, and the multi-market overlay's step-forward arithmetic.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guards for the ensemble generation's confirmation exit: it fires under strict strength floors and never under disabled ones, fills at the next bar's open, is suppressed in stage-1 timed mode, never appears for the other generations, and the entry threshold is monotonically selective.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | De-vacuated the Strangle close-breach guard (BACKLOG, reviewer-flagged 2026-07-28): the old test filtered the rally fixture for exitName 'Strangle' and looped over an ALWAYS-EMPTY array — on that tape the latched level is enforced as a resting stop and every exit is the intrabar 'StrangleStop'. The new climb→fade→creep fixture makes the gate latch on a bar whose close is already beyond the tracked level, forcing the close-breach market exit, and the test now ASSERTS the path fires: ≥ 1 'Strangle' exit, next-bar-open fill, slippage paid.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Prove a mutating observation consumer cannot change replay output.
  */
 import { describe, it, expect } from 'vitest';
 import { runFuturesBacktest, overlayEquityCurves, maxDrawdownOf } from '../../src/features/trading';
@@ -76,6 +77,22 @@ function runWithTrades(bars: FuturesBar[], config: BacktestConfig): BacktestResu
 
 describe('backtester — NT8 fill semantics', () => {
   const bars = series(rallyPath());
+
+  it('observes detached decisions before terminal liquidation without changing replay', () => {
+    const config = cfg();
+    const baseline = runWithTrades(bars, config);
+    const observations: Array<{ index: number; bias: string | null }> = [];
+    const observed = runFuturesBacktest(bars, [], config, [], (reading) => {
+      observations.push({ index: reading.barIndex, bias: reading.bias });
+      reading.decision.signal = null;
+      reading.decision.reasons.push('observer mutation');
+      if (reading.decision.ensemble) reading.decision.ensemble.score = -999;
+    });
+    expect(observed).toEqual(baseline);
+    expect(observations).toHaveLength(bars.length);
+    expect(observations.at(-1)?.index).toBe(bars.length - 1);
+    expect(observations.some(reading => reading.bias === 'long')).toBe(true);
+  });
 
   it('fills the entry at the NEXT bar\'s open, one bar after the signal', () => {
     const r = runWithTrades(bars, cfg());

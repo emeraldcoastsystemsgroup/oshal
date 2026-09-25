@@ -93,9 +93,60 @@ the old ticket. Pausing/deleting the schedule or clearing opt-in prevents queued
 next execution check, but does not cancel provider work already dispatched. No proposal is
 automatically adopted: loading it changes only the form, and explicit Save selects future grids.
 
+## Forward calls and later outcomes
+
+Trading 1.24.0 adds a separate, default-off **Forward research calls** section in Tuning.
+The framework `futures-forward-receipts` compatibility floor and owner migration
+`161-futures-predictions.sql` are required. The console configures a dated contract for each
+root, the explicitly confirmed archive wall-clock zone, horizon (1–168 hours), source age
+(1–168 hours), target tolerance (1–168 hours) and chart history (64–4096 bars). Higher-timeframe
+and optional daily-regime histories are capped at 512 bars. File-backed 5Min, 1Hour and 1Day
+data are supported. Minute files are `minute/CONTRACT.txt`; daily files are
+`daily/CONTRACT.txt`. There is no fallback, rollover or equity-quote substitution. Confirm that
+the archive stamps bar opens; daily rows mean local calendar-day buckets, **not exchange
+settlement**. Unsupported or ambiguous DST wall stamps are refused, not guessed. Contract
+liquidity and renewal remain operator responsibilities.
+
+`locked-strategy-bias-v1` replays the most recent completed OOS window's locked strategy on
+that explicit contract's **unadjusted** completed bars. The existing backtester supplies a
+detached observation before its synthetic end-of-data liquidation; an active held bias or
+admissible final signal yields long/short, and no bias yields an abstention. This is a bounded
+research model, not an executable order, calibrated probability, positive-expectancy claim or
+continuation of an actual account position. Negative OOS does not suppress research calls.
+Warmup, insufficient history, stale inputs, malformed/duplicate bars and missing files produce
+visible `withheld` receipts instead of fabricated predictions. A trailing aggregate is excluded
+unless raw source timestamps establish its completion.
+
+The receipt freezes strategy, source/clock, contract, chart/higher/daily input arrays, reference
+close, observation, study fingerprint and target settings. PostgreSQL assigns actual issuance;
+there is no backdating input. Identical snapshots deduplicate within the owner/schedule/contract.
+The horizon starts at issuance, not at a historical bar date. Grading uses the first completed
+same-contract raw close at or after that target within the configured tolerance. It records
+directional price change and signed ticks from the last known reference close, **not trade P&L**.
+Missing/revised reference evidence and missing target bars are unscored. Late-arriving bars
+whose event time falls inside the target window can resolve an unavailable outcome. A graded
+result cannot be silently rewritten; flat changes are not wins and abstentions do not enter
+accuracy scoring. The receipt list is capped at 50 summaries; full frozen arrays are fetched
+only when the owner selects **Inspect frozen replay inputs**.
+
+Each opted-in run settles its forward cycle after the historical worker, including unchanged
+and failed studies. A failed study can still grade prior calls and records withheld new calls.
+At most 25 pending/unavailable receipts from that same owner are checked per cycle,
+oldest check first. One cross-process advisory worker slot defers overlapping cycles visibly.
+A separate worker has a 512 MiB heap and five-minute timeout; source files
+are limited to 128 MiB. Current owner/operator, active schedule and forward settings are checked
+before and after work. Pause, stop or disabling forward calls prevents later cycle admission;
+already committed evidence remains. A newly enabled loop can grade its owner's older pending
+receipts using each receipt's frozen contract, archive and target settings, even after a schedule
+was replaced; another owner's receipts never enter the worker. Forward cycle failures are shown
+separately and cannot turn a completed historical study into a failure. The scheduled reviewer
+currently receives historical study evidence, **not these forward outcomes**; automated
+outcome-based proposal feedback remains to be connected and proven.
+
 ## Verification
 
-- `npx vitest run --no-file-parallelism futures-research- tests/unit/futures-optimizer.spec.ts`
+- `npx vitest run --no-file-parallelism futures-research- futures-prediction- tests/unit/futures-backtester.spec.ts tests/unit/futures-optimizer.spec.ts`
+- The forward guards use disposable CSV files, the real locked replay/isolated worker and a private PostgreSQL server with migration 161. They prove no backdating API, repeated-input deduplication, owner/RLS isolation, immutable input/terminal outcomes, explicit clocks, future-only grading, missing/revised data and failed/unchanged-study independence. The database terminal-grade payload is an explicit transport fixture; actual raw-bar grading is exercised separately. Trading's `futures-predictions.spec.ts` tests the real route with a doubled ledger and actual browser-script handlers. These are local boundary proofs, not a deployed forward accuracy receipt.
 - The private PostgreSQL cases apply migrations 159/160 and prove validate-only readiness, one-run admission, owner/RLS isolation, full report persistence, failed-source honesty, review concurrency, retry fencing and unchanged study evidence. An actual stale Kibot file crosses the worker/database boundary and creates a failed row without a completion ticket. `futures-research-quality.spec.ts` verifies refusal before the optimizer and per-window sample floors. Inference is explicitly doubled in these tests; they are not live provider proof. The success-path worker case runs synthetic bars; a separate compiled-JavaScript smoke checks the image-style worker entry.
 - In the applications checkout, `trading/tests/trading-surface-expansion.spec.ts` proves operator-only schedule creation and that the stock-advisor stop leaves Futures intact. The route source and compiled twin are generated together by the canonical store-route builder.
 - `trading/tests/futures-research-review.spec.ts` drives the real router and browser-script handlers with fixture inference: exact principal, refusal states, escaping, proposal staging without writes, and slow-response navigation guards. Run the package suite with its framework alias configured. The Test Lab's **Futures research studies and review** scenario lists the framework guards and honestly reports that the browser step did not execute host tests.
@@ -108,7 +159,7 @@ Schedule lookup and inference transport are explicit fixtures; the existing
 companion's package test drives its compiled readiness route over loopback HTTP; readiness is
 not a running-worker or provider receipt.
 
-Installed acceptance still requires applying both migrations as owner, installing the matching
+Installed acceptance still requires applying migrations 159–161 as owner, installing the matching
 Trading and Futures Research packages, enabling the dedicated worker, opening Strategies → Tuning
 as the operator, opting in, running a real-source study, reviewing its dedicated workflow ticket
 through a configured hosted provider and checking its cost/task record. Verify the proposal
@@ -117,4 +168,4 @@ acceptance instructions, not a record that those steps have occurred.
 
 ## Still required before Futures can close
 
-There is no forward prediction/outcome grading ledger, archive-to-`market_bars` ingestion, installed-console receipt, or nightly observation on the deployed box. Forward grading must bind an issuance timestamp and an actual Futures contract/source; cash-equity prices or retrospectively adjusted continuous-series levels cannot substitute for that contract. The configurable bar-date gate refuses stale input before each market's optimizer, but exchange-session freshness guarantees and proactive stale-source notifications remain open. Unchanged-evidence detection still happens after optimization; a pre-optimizer duplicate skip is not implemented. Paper-book/cockpit acceptance and any eventual live decision remain separate phases; live requires a named operator approval backed by positive research evidence. Keep [Futures extension layer](../../BACKLOG.md) open until its own Done when is met.
+Archive-to-`market_bars` ingestion, installed-console/provider-cost receipts, a real nightly observation and subsequently matured forward outcomes on the deployed box remain unproven. Exchange-session completeness and proactive stale-source notifications remain open; the forward clock and freshness guards do not assert exchange-session coverage. Unchanged historical evidence is still detected after optimization; a pre-optimizer duplicate skip is not implemented. Connect the research reviewer to owned forward outcomes without silently adopting its proposals. Paper-book/cockpit acceptance and any eventual live decision remain separate phases; live requires a named operator approval backed by positive research evidence. Keep [Futures extension layer](../../BACKLOG.md) open until its own Done when is met.

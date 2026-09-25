@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register isolated Futures study/review proof without claiming live nightly or provider acceptance.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Register source-age and per-window sample guards, including real archive refusal before optimization.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Register durable queued-review guards without claiming installed provider or nightly proof.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Register real archive and private PostgreSQL forward receipt guards without deployed acceptance claims.
  */
 import type { Scenario } from './test-lab-scenarios';
 
@@ -20,10 +21,12 @@ export const FUTURES_RESEARCH_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/futures-research-review.spec.ts' },
     { level: 'integration', path: 'tests/unit/futures-research-review-postgres.spec.ts' },
     { level: 'integration', path: 'tests/unit/futures-research-queue-postgres.spec.ts' },
+    { level: 'integration', path: 'tests/unit/futures-prediction-evidence.spec.ts' },
+    { level: 'integration', path: 'tests/unit/futures-prediction-ledger-postgres.spec.ts' },
     { level: 'unit', path: 'tests/unit/futures-research-test-lab.spec.ts' },
   ],
   steps: [{ id: 'isolated', app: 'intelligent-trades', label: 'Isolated research regression runner', run: async () => ({
     app: 'intelligent-trades', label: 'Isolated research regression runner', state: 'degraded',
-    detail: 'No tests ran from this browser step. Run npx vitest run --no-file-parallelism futures-research- from the framework checkout with Docker available. Follow docs/apps/trading/futures-research-loop.md for console acceptance; no live provider or nightly completion is claimed.',
+    detail: 'No tests ran from this browser step. Run npx vitest run --no-file-parallelism futures-research- futures-prediction- from the framework checkout with Docker available. Follow docs/apps/trading/futures-research-loop.md for console acceptance; no live provider or nightly completion is claimed.',
   }) }],
 }];
