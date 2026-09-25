@@ -688,5 +688,29 @@
     "date": "2026-09-24",
     "pr": "main",
     "evidence": "Application ticket queues enforce app/workflow isolation, immutable ticket ownership, typed dispatch contracts, and execution principal boundary; guarded by ticket-isolation-routes.spec.ts (10/10 pass) and protected-ticket-routes.spec.ts (4/4 pass)."
+  },
+  {
+    "title": "Inline controller bot isolation",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Controller-resident inline bots restricted to shell-free tool execution, scrubbed environment inheritance, explicit budget entitlements, and offline isolation; guarded by inline-bot-no-shell.spec.ts (15/15 pass) and inline-bot-entitlement.spec.ts (5/5 pass)."
+  },
+  {
+    "title": "Queue-dispatched concierge answers carry the app's data context",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Authorized scalar facts injected before signed dispatch, enforcing tenant and subject boundary isolation without handing model visible credentials; guarded by specialist-context.spec.ts (18/18 pass) and specialist-context-dispatch.spec.ts (13/13 pass)."
+  },
+  {
+    "title": "Embedded LLM tools as a formal tier",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Provider-native embedded tools integrated beside framework and harness tiers with per-agent authorization policies and audit trace attribution; guarded by embedded-tool-tier.spec.ts (18/18 pass)."
+  },
+  {
+    "title": "OSHAL engineering-screen normalization",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Cockpit engineering screens normalized across task explorer, queue health, metrics isolation, locked surface fallback, and tool sandboxing; guarded by cockpit-tool-surfaces.spec.ts (54/54 pass), cockpit-locked-surface.spec.ts (5/5 pass), and cockpit-surface-sandbox.spec.ts (3/3 pass)."
   }
 ]
