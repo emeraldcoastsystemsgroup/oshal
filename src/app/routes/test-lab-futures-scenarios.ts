@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register isolated Futures study/review proof without claiming live nightly or provider acceptance.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Register source-age and per-window sample guards, including real archive refusal before optimization.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Register durable queued-review guards without claiming installed provider or nightly proof.
  */
 import type { Scenario } from './test-lab-scenarios';
 
@@ -18,6 +19,7 @@ export const FUTURES_RESEARCH_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/futures-research-ledger-postgres.spec.ts' },
     { level: 'unit', path: 'tests/unit/futures-research-review.spec.ts' },
     { level: 'integration', path: 'tests/unit/futures-research-review-postgres.spec.ts' },
+    { level: 'integration', path: 'tests/unit/futures-research-queue-postgres.spec.ts' },
     { level: 'unit', path: 'tests/unit/futures-research-test-lab.spec.ts' },
   ],
   steps: [{ id: 'isolated', app: 'intelligent-trades', label: 'Isolated research regression runner', run: async () => ({

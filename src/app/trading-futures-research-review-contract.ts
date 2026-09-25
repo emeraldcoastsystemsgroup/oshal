@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Bound Futures review context and validate evidence-linked research proposals without trading authority.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Include declared freshness/sample gates and every deficient window in review context; proposals cannot lower those gates.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Represent queued reviews and their bound workflow tickets alongside interactive attempts.
  */
 import { z } from 'zod';
 import { normalizeFuturesResearchConfig, type FuturesResearchRun } from './trading-futures-research-dispatch';
@@ -25,9 +26,10 @@ export type FuturesResearchReviewResult = z.infer<typeof reviewSchema>;
 
 /** @description Owner-scoped persisted review state; attempt IDs fence late replies. */
 export interface FuturesResearchReview {
-  status: 'reviewing' | 'completed' | 'failed';
+  status: 'queued' | 'reviewing' | 'completed' | 'failed';
   attemptId: string;
   requestedAt: string;
+  ticketId?: string;
   completedAt?: string;
   result?: FuturesResearchReviewResult;
   error?: string;

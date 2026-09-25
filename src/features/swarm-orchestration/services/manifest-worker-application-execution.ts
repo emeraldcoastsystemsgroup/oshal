@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Mark deterministic protected-dispatch and result-persistence denials with RefusalError so the manifest boundary can terminalize only deliberate refusals.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Keep configured-brain resolver outages operational: propagate the original lookup error instead of converting transient database or network failures into terminal deterministic refusals.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Reuse the reviewed protected_result_owner_issuer_required code for durable-task principal mismatches so every typed refusal remains covered by the source-locked disposition inventory.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Bound reason-only workflows resolve the owner's configured brain even when application signing is not enabled.
  */
 import type { InternalTicket } from '@/entities/ticket';
 import type { BotNodeClient, BotNodeRequest, BotNodeResponse } from '@/features/agent-management';
@@ -144,7 +145,8 @@ async function recordResult(taskStore: ITaskStore | undefined, ticket: InternalT
 export async function executeManifestApplicationBot(client: BotNodeClient, ticket: InternalTicket, agentId: string,
   request: BotNodeRequest, taskStore?: ITaskStore, resolveBrain?: QueuedBrainResolver): Promise<BotNodeResponse> {
   const protectedTarget = await isApplicationExecutionProtected({ kind: 'bots', operation: agentId });
-  const dispatched = protectedTarget ? await supportedProtectedRequest(request, resolveBrain) : request;
+  const reasonOnly = request.direct === true && request.agenticMode === false;
+  const dispatched = protectedTarget || reasonOnly ? await supportedProtectedRequest(request, resolveBrain) : request;
   if (protectedTarget) {
     logger.info({ agentId, ticketId: ticket.ticketId,
       provider: dispatched.providerId ?? (dispatched.byoLlmConnection ? 'hosted' : null),

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Activation guard for the chat↔surface bridge on its second kernel adopter (the Forge / codex-packer): the manifest declares a surface.ops allow-list drawn only from the closed vocabulary, the REAL relay gate carries every declared op and refuses the ones the Forge cannot honor (set_field / navigate), one realistic packer reply is parsed identically by the server and the chat-rail client with the fence stripped from the bubble, forge.html actually marks up a host for every declared outbound op and binds the client to the MANIFEST name, and the shared client applies each declared op to a Forge-shaped DOM while an undeclared op is ignored (never thrown). Mirrors surface-bridge-workflow-studio-e2e.spec.ts.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Validate manifest operations with the canonical type guard before passing them to the real relay.
  */
 
 import { readFileSync } from 'node:fs';
@@ -17,7 +18,7 @@ import {
   SURFACE_BRIDGE_VERSION,
   resolveRelayTarget,
 } from '../../src/features/surface-bridge';
-import { isSurfaceBridgeOp } from '../../src/shared/surface-bridge-ops';
+import { isSurfaceBridgeOp, type SurfaceBridgeOpName } from '../../src/shared/surface-bridge-ops';
 // The browser client under test — plain ESM imported directly (vitest transforms it), the same way
 // surface-bridge-relay.spec.ts drives it with a fake DOM in the node environment.
 import { createSurfaceBridgeClient } from '../../src/shared/ui/js/surface-bridge-client.js';
@@ -46,11 +47,13 @@ const REPLY = [
 ].join('\n');
 
 /** The manifest surface.ops allow-list the cockpit relay enforces for the Forge. */
-function forgeAllowList(): string[] {
+function forgeAllowList(): SurfaceBridgeOpName[] {
   const manifest = loadYaml(
     readFileSync(resolve(process.cwd(), 'swarm-apps/codex-packer.yaml'), 'utf8'),
   ) as { surface?: { ops?: string[] } };
-  return manifest.surface?.ops ?? [];
+  const ops = manifest.surface?.ops ?? [];
+  if (!ops.every(isSurfaceBridgeOp)) throw new Error('Forge declares an unknown surface operation');
+  return ops;
 }
 
 function forgeHtml(): string {

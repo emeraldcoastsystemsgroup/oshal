@@ -69,11 +69,13 @@
  * 62 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six, and it is the root every TaskFolderService write lands under.
  * 63 | maintainer@emeraldcoastsystemsgroup.com   | Queue workers now resolve the ticket owner's brain through resolveUserBrain, the same configuration ladder Jarvis uses, instead of bypassing the selected provider through a hosted-only resolver.
  * 64 | maintainer@emeraldcoastsystemsgroup.com   | Treat dead-letter tickets as terminal when stale swarm envelopes are inspected, including immediate deterministic-refusal quarantine.
+ * 65 | maintainer@emeraldcoastsystemsgroup.com | Inject exact Futures evidence/result binding into the existing queued worker transport.
  */
 
 import type { Pool } from 'pg';
 import type { Application, RequestHandler } from 'express';
 import { createChildLogger } from '@/shared/logger';
+import { bindFuturesResearchWorker } from '@/app/trading-futures-research-workflow';
 import { serviceSecretHeaders, serviceSecretOr } from '@/shared/middleware/authz';
 import { AgentProfileRepository } from '@/entities/agent';
 import { AgentToolRepository, ToolRepository } from '@/entities/tool';
@@ -823,6 +825,7 @@ export function createSwarmExtensionBindings(
           ? async (ownerSub: string) => resolveUserBrain(pool, ownerSub)
           : undefined,
         workflowRunRecorder,
+        bindWorker: pool ? bindFuturesResearchWorker(pool) : undefined,
         resolveAgentIdByName: agentProfileRepository
           ? async (name: string) => {
               const agents = await agentProfileRepository.listAgents();

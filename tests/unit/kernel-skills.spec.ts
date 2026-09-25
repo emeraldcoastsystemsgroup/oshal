@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Pin authenticated-artifacts and package-tools in the exact declared capability contract.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Pin app-dependencies: the floor a manifest names when it uses dependencies.required/optional, so an older core refuses the package instead of installing it without its required dependencies.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Pin google-calendar: the contracted kernel skill providing @/features/google-calendar.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Pin the bound-workflow-results capability and its executable build anchor.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -88,6 +89,7 @@ describe('kernel-skill contract (ADR-085 Tier-0b / ADR-090 D8)', () => {
         'app-dependencies',
         'application-authorization',
         'authenticated-artifacts',
+        'bound-workflow-results',
         'package-tools',
         'specialist-context',
         'test-catalog',
