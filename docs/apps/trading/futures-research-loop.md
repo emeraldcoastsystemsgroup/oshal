@@ -2,6 +2,12 @@
 
 The ADR-116 Phase 2 ES/CL out-of-sample result was negative. That is a block on live promotion, not an instruction to stop studying Futures. This checkpoint adds an operator-configurable, paper-only permutation schedule; it does **not** close the Futures backlog outcome.
 
+The current source/package path also includes the registered research-review workflow, frozen
+owner-scoped forward prediction receipts, source-alert receipts and explicit archive import. A
+negative study remains a durable observation and does not suppress later bounded research calls;
+installed provider review, a real nightly/matured-outcome receipt and the separate paper/cockpit
+phase are still required before this item can be closed.
+
 ## Current path
 
 The Trading console's Strategies → Tuning panel stores one owner-scoped `trading-futures-research:<sub>` schedule. The operator chooses roots, supported chart/higher timeframes, Kibot file or API source, a container-visible data directory, roll adjustment, volume floor, start date, end policy, walk-forward split, stage grids and a UTC cron. The default `latest` policy resolves the end to the previous completed UTC day on **each** run; `fixed` preserves an explicit historical end. The resolved end is recorded with the run for reproducibility. The route is operator-gated for create, run, pause, resume and delete. Stopping the stock advisor does not stop Futures.

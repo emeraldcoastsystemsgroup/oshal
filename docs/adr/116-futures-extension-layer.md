@@ -129,9 +129,13 @@ owner-scoped PostgreSQL run ledger with full per-window evidence. The schedule i
 the stock advisor, so stopping one cannot silently stop the other. A run records completion or
 failure; a negative result remains a valid research observation and cannot arm any order path.
 See the [as-built research-loop checkpoint](../apps/trading/futures-research-loop.md) for exact
-controls, bounds, tests and remaining acceptance. The research bot, forward prediction grading,
-source-freshness and duplicate-study policy, installed nightly receipt and paper phase are **not delivered by this slice**;
-ADR-116 and the Futures backlog outcome remain open.
+controls, bounds, tests and remaining acceptance. Later source slices now add the registered
+research-review workflow, owner-scoped forward prediction receipts, source-alert receipts and
+explicit archive import into the shared bar store. The Trading console exposes those controls,
+including the nightly permutation cadence, review opt-in, prediction settings and pause/resume
+lifecycle. These are still source/package capabilities: the installed-provider review, a real
+nightly run with matured outcomes, and the separate durable paper/cockpit phase remain acceptance
+requirements. ADR-116 and the Futures backlog outcome remain open.
 
 ## References
 
