@@ -10,15 +10,41 @@ A trigger admits one `running` row before returning its run ID. Owner migration 
 
 The stage-grid API accepts only the six reviewed configuration axes, with typed/ranged candidate values, at most eight values per axis, at most 64 combinations per stage and at most 512 estimated backtests per study. Overlapping out-of-sample windows, an empty projected window and a mock source outside tests are refused. The run has no order path and cannot arm a paper or live book.
 
+## Console quality gates
+
+The operator configures `quality.maxSourceLagDays` (integer 1–366, default 7) and
+`quality.minOosTradesPerWindow` (integer 1–100,000, default 10) alongside the study. Older saved
+schedules adopt these defaults on their next admission. Zero does not disable a gate. Before
+optimizing **each market**, the worker compares its last chart and higher-timeframe bar-start
+calendar dates with the resolved study end. Excess lag fails the durable run with the actual
+source dates, lag, limit and refresh instructions; no result or completion ticket is fabricated.
+Earlier markets may already have computed when a later market fails, but no partial study is
+published as complete.
+
+This is a **bar-date gate**, not a real-time quote-age or exchange-session SLA. Kibot timestamps
+encode exchange-local wall time in UTC fields, and bars are stamped at their start. Coarse
+timeframes may need a larger explicitly chosen limit. A fixed historical study compares with
+its historical end, not today's clock; `latest` advances the reference date on each admission.
+
+Every completed OOS window must meet the configured trade-count floor. One deficient window,
+including zero trades, makes the run `insufficient_sample`; aggregate counts cannot hide it.
+The console, review context and completion-ticket metadata retain the thresholds and deficient
+windows. Such a run can still be reviewed and used to propose follow-up research without changing
+its sample status. Repeated deficient evidence is `unchanged`, still carrying its insufficient
+quality receipt and creating no duplicate ticket. Meeting the count floor is **not statistical
+confidence, profit, an untouched holdout or promotion permission**. Historical runs without a
+quality receipt are shown as unassessed, never backfilled as passing.
+
 ## Interactive research review
 
-On a completed or unchanged run, **Review this study** invokes the package-owned
+On a completed, insufficient-sample or unchanged run, **Review this study** invokes the package-owned
 `futures-research-analyst` through the existing accounted hosted/BYO bot path. The request is
 operator-only and bound to the persisted run's owner, not body-supplied evidence. The bot has no
 tools or trading authority. Its bounded context includes aggregate results and the latest eight
 windows per root; source paths, user identity and provider errors are excluded. Review output must
 cite every root/fingerprint exactly once and conform to a strict schema. Invented evidence,
-execution/forecast fields, invalid axes and proposals beyond the study budget are rejected.
+execution/forecast fields, changes to operator-owned quality thresholds, invalid axes and proposals
+beyond the study budget are rejected.
 
 Owner migration `160-futures-research-review.sql`, applied after 159, adds review state under the
 run table's existing FORCE RLS. Review success or failure never changes the deterministic study
@@ -40,7 +66,7 @@ the equities decision queue or the scheduler's detached worker.
 ## Verification
 
 - `npx vitest run --no-file-parallelism futures-research- tests/unit/futures-optimizer.spec.ts`
-- The private PostgreSQL cases apply migrations 159/160 and prove validate-only readiness, one-run admission, owner/RLS isolation, full report persistence, failed-source honesty, review concurrency, retry fencing and unchanged study evidence. Inference is explicitly doubled in these tests; they are not live provider proof. The worker case runs synthetic bars; a separate compiled-JavaScript smoke checks the image-style worker entry.
+- The private PostgreSQL cases apply migrations 159/160 and prove validate-only readiness, one-run admission, owner/RLS isolation, full report persistence, failed-source honesty, review concurrency, retry fencing and unchanged study evidence. An actual stale Kibot file crosses the worker/database boundary and creates a failed row without a completion ticket. `futures-research-quality.spec.ts` verifies refusal before the optimizer and per-window sample floors. Inference is explicitly doubled in these tests; they are not live provider proof. The success-path worker case runs synthetic bars; a separate compiled-JavaScript smoke checks the image-style worker entry.
 - In the applications checkout, `trading/tests/trading-surface-expansion.spec.ts` proves operator-only schedule creation and that the stock-advisor stop leaves Futures intact. The route source and compiled twin are generated together by the canonical store-route builder.
 - `trading/tests/futures-research-review.spec.ts` drives the real router and browser-script handlers with fixture inference: exact principal, refusal states, escaping, proposal staging without writes, and slow-response navigation guards. Run the package suite with its framework alias configured. The Test Lab's **Futures research studies and review** scenario lists the framework guards and honestly reports that the browser step did not execute host tests.
 
@@ -52,4 +78,4 @@ acceptance instructions, not a record that those steps have occurred.
 
 ## Still required before Futures can close
 
-The interactive reviewer does not yet run in a dedicated scheduled research workflow. There is no forward prediction/outcome grading ledger, archive-to-`market_bars` ingestion, installed-console receipt, or nightly observation on the deployed box. Forward grading must bind an issuance timestamp and an actual Futures contract/source; cash-equity prices or retrospectively adjusted continuous-series levels cannot substitute for that contract. Source as-of timestamps and `unchanged` status expose stale/duplicate evidence, but there is not yet an explicit freshness SLA, stale-source alert, or pre-optimizer skip. Paper-book/cockpit acceptance and any eventual live decision remain separate phases; live requires a named operator approval backed by positive research evidence. Keep [Futures extension layer](../../BACKLOG.md) open until its own Done when is met.
+The interactive reviewer does not yet run in a dedicated scheduled research workflow. There is no forward prediction/outcome grading ledger, archive-to-`market_bars` ingestion, installed-console receipt, or nightly observation on the deployed box. Forward grading must bind an issuance timestamp and an actual Futures contract/source; cash-equity prices or retrospectively adjusted continuous-series levels cannot substitute for that contract. The configurable bar-date gate refuses stale input before each market's optimizer, but exchange-session freshness guarantees and proactive stale-source notifications remain open. Unchanged-evidence detection still happens after optimization; a pre-optimizer duplicate skip is not implemented. Paper-book/cockpit acceptance and any eventual live decision remain separate phases; live requires a named operator approval backed by positive research evidence. Keep [Futures extension layer](../../BACKLOG.md) open until its own Done when is met.
