@@ -544,5 +544,29 @@
     "date": "2026-09-24",
     "pr": "480",
     "evidence": "Alert test suites isolated to per-run disposable PostgreSQL containers, gate check-alert-residue.sh wired into ci-local.sh, and deployment database verified clean of fixture residue; guarded by tests/unit/alert-incident-cutover.spec.ts (2/2 pass), alert-postgres-isolation.spec.ts (4/4 pass), and ci-local-alert-residue.spec.ts (12/12 pass)."
+  },
+  {
+    "title": "Gemini reaches the swarm as a FREE-TIER API key, and there is no rail to seed the operator's own login (2026-09-22)",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "CLI brain executability gating, operator login seeding, and fallback ladder down to hosted lane verified; guarded by tests/unit/cli-brain-executability.spec.ts (16/16 pass)."
+  },
+  {
+    "title": "Codex swarm-side OAuth — the token exchange fails at the last step (2026-09-08)",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "OAuth token exchange error handling, connection termination recording without verifier leakage, credential isolation across users, and push-to-swarm fallback verified; guarded by tests/unit/openai-codex-credential-isolation.spec.ts (8/8 pass)."
+  },
+  {
+    "title": "The Cline fallback brain could not start: a glibc executable on a musl base (2026-09-17)",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Cline binary version pinning, confined gcompat loader stub, entrypoint probe check, and backing provider model propagation delivered; guarded by tests/unit/cline-entrypoint-probe.spec.ts (12/12 pass) and cline-provider-fallback-model.spec.ts (5/5 pass)."
+  },
+  {
+    "title": "Marketing suite — core dependencies (package work is in the store)",
+    "date": "2026-09-24",
+    "pr": "431",
+    "evidence": "Compose env passthrough and core dependencies shipped, package backlog handoff to marketing-engine/BACKLOG.md; guarded by tests/unit/compose-env-passthrough.spec.ts (7/7 pass)."
   }
 ]
