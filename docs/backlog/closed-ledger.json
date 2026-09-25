@@ -472,5 +472,29 @@
     "date": "2026-09-24",
     "pr": "main",
     "evidence": "Bidirectional chat-to-surface bridge with fail-closed validation, HTML-stripping, app/op isolation, and conversational roundtrip verified in live browser; guarded by tests/unit/surface-bridge-contract.spec.ts, surface-bridge-relay.spec.ts, surface-directives.spec.ts, surface-bridge-forge-e2e.spec.ts, and surface-bridge-roundtrip-browser.spec.ts (65/65 pass)."
+  },
+  {
+    "title": "Spaces: the PLY→splat converter runs on the api's event loop and a large import can take the box down (2026-09-14)",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "PLY conversion moved to isolated worker thread under resourceLimits and memory cap with failure containment and streaming byte limit gate; guarded by tests/unit/spatial-import-event-loop.spec.ts (1/1 pass), tests/unit/spatial-import-worker.spec.ts (10/10 pass), and spaces/tests/ply-import-off-loop.core.test.js (3/3 pass)."
+  },
+  {
+    "title": "The nightly trade recap has failed at the render-node lease since 2026-08-06",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Native argument passing and quoting escaped across Windows PowerShell 5.1/7.3 boundary and market session guard runs before lease acquisition; guarded by tests/unit/recap-node-lease-arguments.spec.ts (5/5 pass)."
+  },
+  {
+    "title": "Trading — the engine manages positions it did not buy (ADR-159, 2026-09-15)",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Engine accounts for cost basis from its own fills, classifies external positions as unmanaged/monitored, withholds unmanaged rotation/trim/top-up and reserves capital; guarded by tests/unit/trading-unmanaged-positions.spec.ts (24/24 pass), trading-engine-cost-basis-postgres.spec.ts (8/8 pass), and trading-unmanaged-entry-paths.spec.ts (8/8 pass)."
+  },
+  {
+    "title": "Free ComfyUI storyboard provider",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Local ComfyUI storyboard provider with workflow injection, slot substitution, anchor upload deduplication, non-transient timeout handling, and image verification delivered; guarded by tests/unit/storyboard-comfyui-provider.spec.ts (28/28 pass)."
   }
 ]
