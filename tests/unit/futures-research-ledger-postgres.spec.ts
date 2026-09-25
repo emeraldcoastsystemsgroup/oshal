@@ -53,8 +53,19 @@ describe('futures research durable ledger', () => {
     expect(finished.status).toBe('completed');
     expect(finished.completedAt).not.toBeNull();
     expect(finished.markets[0].report.windows.length).toBeGreaterThan(0);
+    expect(finished.markets[0].evidenceFingerprint).toMatch(/^[a-f0-9]{64}$/);
     expect((await listFuturesResearchRuns(pool as AppContext['pool'], 'owner-b'))).toEqual([]);
     expect(createTicket).toHaveBeenCalledTimes(1);
+    const repeat = await runFuturesResearch(ctx, 'owner-a', 'schedule-a', { ...config, end: '2021-05-30T23:59:59Z' });
+    const unchanged = await settled('owner-a', repeat.runId);
+    expect(unchanged.status).toBe('unchanged');
+    expect(unchanged.markets[0].evidenceFingerprint).toBe(finished.markets[0].evidenceFingerprint);
+    expect(createTicket).toHaveBeenCalledTimes(1);
+    const changed = await runFuturesResearch(ctx, 'owner-a', 'schedule-a', { ...config, stageGrids: { ...config.stageGrids, Entry: { 'entry.ensembleEntryThresholdPct': [62] } } });
+    const newEvidence = await settled('owner-a', changed.runId);
+    expect(newEvidence.status).toBe('completed');
+    expect(newEvidence.markets[0].evidenceFingerprint).not.toBe(finished.markets[0].evidenceFingerprint);
+    expect(createTicket).toHaveBeenCalledTimes(2);
     await pool.query('GRANT SELECT ON oshal_trading_futures_research_runs TO oshal_app');
     const enforcing = await database.rolePool('oshal_app').connect();
     try {

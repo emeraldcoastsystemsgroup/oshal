@@ -57,5 +57,11 @@ describe('console-configured futures research loop', () => {
     expect(markets).toHaveLength(1);
     expect(markets[0].report.windows.length).toBeGreaterThan(0);
     expect(markets[0].report.windows[0].stages).toHaveLength(6);
+    expect(markets[0].latestCompleteOosEnd).toBe(markets[0].report.windows.at(-1)?.window.oosEnd);
+    expect(markets[0].chartAsOf).toBeTruthy();
+    expect(markets[0].ltfAsOf).toBeTruthy();
+    expect(markets[0].evidenceFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    const repeated = await executeFuturesStudyOffLoop(normalizeFuturesResearchConfig({ ...config, end: '2021-05-30T23:59:59Z' }));
+    expect(repeated[0].evidenceFingerprint).toBe(markets[0].evidenceFingerprint);
   }, 60_000);
 });
