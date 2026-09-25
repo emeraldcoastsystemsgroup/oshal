@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Allow independently owned receivers to omit the background sweep while preserving the controller default and request drains.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | BUG-19: the ticket link no longer discards `updateIncident`'s null. When a concurrent pump's refire moved the revision between consolidation and the link, the patch matched nothing, the event was already decided, and the incident stayed unlinked forever with nothing logged. linkIncidentTicket re-reads the row and re-applies the patch under withRevisionRetry, and logs at ERROR with the incident id and revision when the budget runs out. Guard: tests/unit/alert-incident-ticket-link.spec.ts.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | BUG-20: working a landed event is an idempotent consumer. It reads what the event already applied, replays a recorded intake decision instead of triaging again (so a re-drain neither opens nor bubbles a ticket a second time), and consolidates, upserts the member and appends the dispatch row only for effects not yet recorded, each recording itself atomically with its write. A claim that rolls back after these pool writes and re-drains the event changes nothing twice.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | Consume native schema events without webhook reinterpretation; retain rule identity and retry incomplete incident writes.
  */
 
 /**
@@ -95,6 +96,7 @@ import {
   type RcaSpendReader,
 } from '@/features/alert-triage';
 import { TicketTypeSchema } from '@/entities/ticket';
+import { intakeSchemaDrift, schemaDriftIdentity, SCHEMA_DRIFT_SOURCE } from './schema-drift-intake';
 
 const logger = createChildLogger({ module: 'alertmanager-routes' });
 
@@ -695,6 +697,7 @@ export function createAlertmanagerRoutes(ticketService: TicketService, options: 
    */
   const resolveEventIdentity = (event: AlertEventRow): { dedupKey: string; identitySource: string } | null => {
     if (!hasUsableIdentity(event)) return null;
+    if (event.source === SCHEMA_DRIFT_SOURCE) return schemaDriftIdentity(event, deploymentId);
     return {
       identitySource: renderIdentitySource(event, DEFAULT_IDENTITY_FIELDS),
       dedupKey: renderDedupKey(event, DEFAULT_IDENTITY_FIELDS, deploymentId),
@@ -772,6 +775,7 @@ export function createAlertmanagerRoutes(ticketService: TicketService, options: 
         { err, eventId: event.eventId, dedupKey: identity.dedupKey },
         'Incident row write failed — the ticket stands and the event is still decided',
       );
+      if (event.source === SCHEMA_DRIFT_SOURCE) throw err;
       return null;
     }
   };
@@ -785,7 +789,10 @@ export function createAlertmanagerRoutes(ticketService: TicketService, options: 
    * @returns The decision.
    */
   const intakeOnce = async (event: AlertEventRow): Promise<IntakeDecision> => {
-    const decided = await intakeAlert(toWireAlert(event), emptyTally());
+    const decided = event.source === SCHEMA_DRIFT_SOURCE && options.pool
+      ? await runWithRequestIdentity({ sub: ALERT_INTAKE_OWNER_SUB, isOperator: false },
+        () => intakeSchemaDrift(options.pool!, ticketService, event, ticketType))
+      : await intakeAlert(toWireAlert(event), emptyTally());
     if (options.pool) await recordEffect(options.pool, event.eventId, 'intake', ALERT_INTAKE_OWNER_SUB, { ...decided });
     return decided;
   };
@@ -803,6 +810,7 @@ export function createAlertmanagerRoutes(ticketService: TicketService, options: 
         decided.decision,
         {
           unclaimedReason: decided.unclaimedReason ?? null,
+          claimedByRule: decided.claimRuleId ?? null,
           incidentId,
           dedupKey: identity?.dedupKey ?? null,
           identitySource: identity?.identitySource ?? null,

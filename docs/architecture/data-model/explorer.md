@@ -101,10 +101,39 @@ Reusing a key with different content fails explicitly. Receipts survive event re
 receipts while a producer can replay those keys. Both tables retain the pipeline owner/operator
 RLS boundary. Missing migration 164 fails the write; there is no in-memory fallback.
 
-**This boundary is not yet an automatic alarm.** No detector timer calls it, and the receiver's
-internal-source claim/ticket handling and explorer diff panel still need wiring. The isolated
-policy-drop proof stops at one durable pending event, not a ticket or live deployment acceptance.
-The schema-drift backlog item remains open.
+The server shares its comparison service with a **one-minute detector**. It refreshes the catalog,
+never overlaps a slow scan, and stops on server shutdown. A first run with no baseline waits for
+an operator to record one; periodic reads never silently acknowledge changes. Missing history,
+failed configured catalogs (including a small missing TimescaleDB catalog), invalid/partial
+digests and failed publication remain visible as unavailable, rather than successful checks.
+
+Migration 165 seeds the dedicated `schema-drift` admission rule without resetting an existing
+operator edit. The normal pending-event sweep reads that rule for native schema events and uses
+the standard ticket service's unique external-provider/id claim. The ticket's source is
+`schema-drift`, not Prometheus. Each digest transition creates one ticket held at
+`approval_required`; a workflow's backlog auto-start cannot dispatch it. The rule's enable flag
+and predicate control admission. This lane's occurrence identity and manual-only posture are
+fixed: editing the rule's generic intake/autonomy fields does not authorize remediation.
+The same event is linked to its Operations Stream incident and dispatch receipt. Replay's
+incident-only consumer excludes this lane before claiming rows, leaving ticket creation to the
+normal receiver. Failed incident linkage leaves the event retryable with prior effects retained.
+
+The explorer's **What changed since baseline** panel reads the same comparison and displays
+relation, change kind, before and after as text, alongside the detector's latest check status.
+**Record reviewed baseline** requires confirmation and sends the displayed fingerprint to
+`POST /api/admin/data-model/drift/baseline`. A schema change since review returns 409 instead of
+acknowledging unseen changes. Capturing an already-seen shape updates its JSON timestamp and
+migration metadata, not only the history row's sort timestamp. Existing tickets are not closed
+by acknowledgement. The existing explicit `GET /drift?capture=1` contract remains available.
+
+After a migrated change, review and record the new shape before monitoring later unexplained
+changes: the existing classifier labels comparisons against the older migration count
+`explained`. The panel states this requirement; it does not silently advance that baseline.
+
+The isolated acceptance suite exercises a real PostgreSQL policy drop, the periodic detector,
+the real ticket service and pending sweep, and the exact explorer diff in Chromium. This is
+disposable-system acceptance, not a claim that a production policy was removed or a live ticket
+was generated.
 
 ## How a snapshot is built
 
@@ -178,7 +207,7 @@ layer fills in. That is what makes every store doubleable in tests.
 
 ```bash
 npm run test:data-model     # 11 spec files; needs Docker (disposable Postgres), Playwright Chromium and mermaid installed
-node scripts/test-schema-alert-producer.cjs  # normalized producer + disposable policy-drop/durable receipt proofs
+node scripts/test-schema-alert-producer.cjs  # producer, detector and disposable policy-drop-to-ticket/browser proofs
 ```
 
 | Spec | Proves |
@@ -191,6 +220,8 @@ node scripts/test-schema-alert-producer.cjs  # normalized producer + disposable 
 | `data-model-drift.spec.ts` | the digest carries structure and no data; all five drift states; the four refusals; the store's degrade-by-name; a read never captures |
 | `internal-alert-producer.spec.ts` | bounded normalized input, detached maps/dates and refusal before a database connection |
 | `data-model-alert-postgres.spec.ts` | actual policy removal to one pending event, parallel/restarted producers, rollback/retry, retention, migration replay and enforcing-role RLS; not ticket/browser acceptance |
+| `schema-drift-monitor.spec.ts` | timer non-overlap, shutdown, unchanged/migrated/settling/unavailable silence, publication retry and incomplete-catalog refusal |
+| `schema-drift-runtime-browser.spec.ts` | actual policy drop through periodic detector and real PostgreSQL ticket service to the same Chromium diff; repeated scan, manual-only rule handling, replay exclusion, confirmation/stale capture, recapture and auth/RLS boundaries |
 | `data-model-export.spec.ts` | the Mermaid block byte-identical to the generator, naming exactly the relations drawn; the owner flowchart; scoped JSON; the standalone SVG document; filenames; every refusal |
 | `data-model-catalog-postgres.spec.ts` | a real catalog read from a disposable PostgreSQL 16 container |
 | `data-model-routes.spec.ts` | the real operator gate over real HTTP (401 / 403 / 200 / 503 / 500) |

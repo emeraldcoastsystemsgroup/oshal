@@ -203,6 +203,7 @@
  * 187 | maintainer@emeraldcoastsystemsgroup.com   | Start the hot-fallback readiness loop beside the llm-default mount (operator decision 2026-09-22): the fleet chain's rungs are probed on an interval so the fallback is ready before it is needed. Unref'd, OSHAL_HOT_FALLBACK_PROBE_INTERVAL_MS=0 disables it.
  * 188 | maintainer@emeraldcoastsystemsgroup.com   | Wire the durable refusal recorder and authenticated caller-scoped /api/ops/refusals read API for P1 refusal visibility.
  * 189 | maintainer@emeraldcoastsystemsgroup.com   | Server bootstrap decomposition (BACKLOG #1788): extracted post-bootstrap installs (provider-switch snapshot, autoload, wiring audit, demo seeding) to composition/server-bootstrap-tasks.ts, and auxiliary route clusters to server-auxiliary-routes.ts, bringing server.ts under the 800-line decomposition threshold.
+ * 190 | maintainer@emeraldcoastsystemsgroup.com | Share the explorer service with the periodic schema detector and its shutdown lifecycle.
  */
 
 require('dotenv').config();
@@ -284,6 +285,7 @@ import { createSecurityRoutes } from './routes/security-routes';
 import { createDataModelRoutes } from './routes/data-model-routes';
 import { createDataModelPorts } from './data-model-ports';
 import { createDataModelService } from '@/features/data-model';
+import { startSchemaDriftMonitor } from './schema-drift-runtime';
 import { createJoinRoutes } from './routes/join-routes';
 import { createJarvisRoutes } from './routes/jarvis-routes';
 import { createJarvisPackageToolService } from './composition/jarvis-package-tool-wiring';
@@ -1202,8 +1204,9 @@ function createApp(): express.Application {
   // RLS row scope, the objects shared across apps, the app integration map and the non-Postgres
   // store inventories. Read-only, but the payload names every installed app's tables and policies,
   // so the whole mount is operator-only - same gate, same reason as /api/security above.
-  app.use('/api/admin/data-model', requiresAuth, requiresOperator, createDataModelRoutes(createDataModelService(
-    createDataModelPorts({ pool: ctx.pool, apps: () => swarmAppService }))));
+  const dataModelService = createDataModelService(createDataModelPorts({ pool: ctx.pool, apps: () => swarmAppService }));
+  const schemaMonitor = startSchemaDriftMonitor(ctx.pool, dataModelService);
+  app.use('/api/admin/data-model', requiresAuth, requiresOperator, createDataModelRoutes(dataModelService, schemaMonitor));
   // Add a computer — mints a join code (OSJOIN1.*) so another machine can attach as a worker
   // node long after the installer printed the original one. OPERATOR-ONLY: a join code embeds
   // REMOTE_CLIENT_SHARED_SECRET in plaintext and anyone holding it can register a node that

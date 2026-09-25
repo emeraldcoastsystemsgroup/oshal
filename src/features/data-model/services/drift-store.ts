@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Durable memory for the schema digest: read the latest digest for a database, record a new one, and read the recent history. Two things are deliberate. (1) The store answers `unavailable` rather than throwing when migration 139 has not been applied, because the explorer must keep rendering on a deployment that has not taken the table - a drift panel that 500s is worse than one that says why it is empty. (2) A recorded digest carries the migration count with it, so the differ can tell a migrated change from an unexplained one without re-reading the ledger.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Refresh the stored JSON and migration metadata together with capture time when acknowledging a previously seen shape.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -107,7 +108,9 @@ export function createDriftStore(db: DigestQueryable): DriftStore {
       await run(
         `INSERT INTO ${DIGEST_TABLE} (database, captured_at, digest_version, fingerprint, relation_count, migration_count, digest)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
-         ON CONFLICT (database, fingerprint) DO UPDATE SET captured_at = EXCLUDED.captured_at`,
+         ON CONFLICT (database, fingerprint) DO UPDATE SET captured_at = EXCLUDED.captured_at,
+           digest_version = EXCLUDED.digest_version, relation_count = EXCLUDED.relation_count,
+           migration_count = EXCLUDED.migration_count, digest = EXCLUDED.digest`,
         [digest.database, digest.capturedAt, digest.digestVersion, digest.fingerprint, digest.relations.length, digest.migrationCount, JSON.stringify(digest)],
       );
       logger.info({ database: digest.database, fingerprint: digest.fingerprint.slice(0, 12), relations: digest.relations.length }, 'data-model drift: digest recorded');

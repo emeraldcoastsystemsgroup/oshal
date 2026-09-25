@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The Operations Stream operator API (/api/ops/alert-pipeline): live scrape + firing state traced through the pipeline, the funnel and its trend, incident read models, the autonomy ladder, and the operator-gated surfaces — transactional claim-rule reconcile with save-time validation, rule/identity preview, the topology mirror, the intake gap, the deadletter and a bounded replay. Reads are requiresAuth; anything that mutates state or exposes routing internals additionally chains requiresOperator ON THE ROUTE, so a re-mount cannot drop the gate.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | BUG-20: the replay claim stage consolidates through consolidateLanded, so an event whose claim rolled back after its incident and member writes committed is not counted a second time when it is drained again.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Keep native schema events on the ticket-producing receiver, excluding their lane before replay queue limits and locks.
  */
 
 /**
@@ -76,6 +77,7 @@ import {
   type ClaimRuleDraft,
   type MatchableEvent,
 } from './ops-pipeline-rule-validation';
+import { SCHEMA_DRIFT_SOURCE } from './schema-drift-intake';
 
 const logger = createChildLogger({ module: 'ops-pipeline-routes' });
 
@@ -620,7 +622,8 @@ async function claimOneEvent(
  */
 async function claimPendingEvents(ctx: OpsPipelineContext, limit: number): Promise<number> {
   if (limit <= 0) return 0;
-  const rules = await loadClaimRules(ctx.pool);
+  // The dedicated internal lane must not turn an otherwise unconfigured webhook lane into deny-all.
+  const rules = (await loadClaimRules(ctx.pool)).filter((rule) => rule.ruleId !== SCHEMA_DRIFT_SOURCE);
   const deploymentId = resolveDeploymentId();
   let claimed = 0;
   await ctx.envelopes.withPendingEvents(limit, async (events, executor) => {
@@ -633,7 +636,7 @@ async function claimPendingEvents(ctx: OpsPipelineContext, limit: number): Promi
         await ctx.envelopes.failEvent(event.eventId, error, executor);
       }
     }
-  });
+  }, [SCHEMA_DRIFT_SOURCE]);
   return claimed;
 }
 
