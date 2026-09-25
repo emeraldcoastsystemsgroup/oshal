@@ -14,10 +14,13 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Queue opted-in new evidence through its dedicated workflow without running inference in the study worker.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Normalize forward opt-in and settle its isolated receipt cycle independently of historical study status.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Settle forward outcomes before scheduled review admission so new grades can inform unchanged historical studies.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Select owned prior evidence before the worker and fence optimizer reuse to this API generation.
  */
 
 import { dirname, resolve } from 'node:path';
 import { Worker } from 'node:worker_threads';
+import { randomUUID } from 'node:crypto';
+import type { FuturesStudyReuse } from './trading-futures-research-reuse';
 import type { AppContext } from './composition-root';
 import type { ScheduleDispatchResult, ScheduleRecord } from '@/features/scheduling';
 import {
@@ -33,6 +36,8 @@ import { normalizeFuturesQuality, type FuturesQualityConfig } from './trading-fu
 import { normalizeFuturesPredictions, type FuturesPredictionConfig } from './trading-futures-prediction-config';
 
 const logger = createChildLogger({ module: 'trading-futures-research-dispatch' });
+// Supported code reloads/deployments restart the API. Never reuse a report across that boundary.
+const studyGeneration = randomUUID();
 
 export const FUTURES_RESEARCH_CRON_DEFAULT = '0 2 * * *';
 export const FUTURES_RESEARCH_TASK_PREFIX = 'trading-futures-research';
@@ -198,8 +203,11 @@ export async function ensureFuturesResearchTable(pool: AppContext['pool']): Prom
   });
 }
 
-/** Isolated worker with a bounded heap and wall clock; a hung optimizer cannot block API requests. */
-export function executeFuturesStudyOffLoop(config: FuturesResearchConfig): Promise<FuturesResearchMarket[]> {
+/** @description Isolate computation and exact-input reuse with bounded heap/time; never block the API optimizer loop.
+ * @param config - Normalized study settings. @param previous - Server-selected owned ledger candidate.
+ * @returns Current market evidence and computation receipts.
+ */
+export function executeFuturesStudyOffLoop(config: FuturesResearchConfig, previous?: FuturesStudyReuse['previous']): Promise<FuturesResearchMarket[]> {
   return new Promise((resolveStudy, rejectStudy) => {
     const entry = futuresResearchWorkerEntry;
     const preload = entry.endsWith('.ts') ? require.resolve('tsx/cjs') : null;
@@ -211,7 +219,7 @@ export function executeFuturesStudyOffLoop(config: FuturesResearchConfig): Promi
     ].join('\n');
     const worker = new Worker(bootstrap, {
       eval: true,
-      workerData: { config, entry, preload, root: resolve(dirname(entry), '..') },
+      workerData: { config, reuse: { generation: studyGeneration, previous }, entry, preload, root: resolve(dirname(entry), '..') },
       resourceLimits: { maxOldGenerationSizeMb: 1024 },
     });
     let settled = false;
@@ -239,9 +247,10 @@ async function settleForwardCycle(ctx: AppContext, run: FuturesResearchRun): Pro
 
 async function settleFuturesResearch(ctx: AppContext, run: FuturesResearchRun): Promise<void> {
   try {
-    const markets = await executeFuturesStudyOffLoop(run.config);
+    const prior = (await ctx.pool.query(`SELECT run_id, markets FROM oshal_trading_futures_research_runs WHERE owner_sub=$1 AND schedule_id=$2 AND status IN ('completed','insufficient_sample','unchanged') ORDER BY created_at DESC LIMIT 1`, [run.ownerSub, run.scheduleId])).rows[0];
+    const previous = Array.isArray(prior?.markets) ? prior.markets as FuturesResearchMarket[] : undefined;
+    const markets = await executeFuturesStudyOffLoop(run.config, previous ? { runId: String(prior.run_id), markets: previous } : undefined);
     run.markets = markets;
-    const previous = (await ctx.pool.query(`SELECT markets FROM oshal_trading_futures_research_runs WHERE owner_sub=$1 AND schedule_id=$2 AND status IN ('completed','insufficient_sample') ORDER BY created_at DESC LIMIT 1`, [run.ownerSub, run.scheduleId])).rows[0]?.markets as FuturesResearchMarket[] | undefined;
     const fingerprints = (rows: FuturesResearchMarket[]): string => JSON.stringify(rows.map(({ root, latestCompleteOosEnd, evidenceFingerprint }) => [root, latestCompleteOosEnd, evidenceFingerprint]));
     const unchanged = Array.isArray(previous) && fingerprints(previous) === fingerprints(markets);
     const sampleStatus = markets.some(market => market.quality?.sampleStatus === 'insufficient') ? 'insufficient_sample' : 'completed';

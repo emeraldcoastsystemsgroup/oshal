@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise real ticket/ledger admission and dispatch fencing on private PostgreSQL; inference and schedule lookup are explicit fixtures.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove cross-run settled-evidence deduplication and frozen forward citations with isolated schedules.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Prove real optimizer reuse still settles forward outcomes before new review admission.
  */
 import { randomUUID } from 'node:crypto';
 import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -277,6 +278,7 @@ describe('Futures queued workflow with real admission and fixture inference', ()
       await vi.waitFor(async () => expect((await read(repeated.runId)).review?.ticketId).toBeTruthy(), { timeout: 30_000 });
       const row = await read(repeated.runId);
       expect(row.status).toBe('unchanged');
+      expect(row.markets[0].computation).toMatchObject({ status: 'reused', reusedFromRunId: first.runId });
       expect(cycle).toHaveBeenCalledTimes(1);
       expect(row.review.evidenceKey).not.toBe((await read(first.runId)).review.evidenceKey);
       expect(row.review.forwardContext.receipts).toContainEqual(expect.objectContaining({ predictionId: receipt, status: 'graded' }));
