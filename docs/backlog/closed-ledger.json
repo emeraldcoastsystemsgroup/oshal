@@ -496,5 +496,29 @@
     "date": "2026-09-24",
     "pr": "main",
     "evidence": "Local ComfyUI storyboard provider with workflow injection, slot substitution, anchor upload deduplication, non-transient timeout handling, and image verification delivered; guarded by tests/unit/storyboard-comfyui-provider.spec.ts (28/28 pass)."
+  },
+  {
+    "title": "World Intelligence: the market-hours pulse saturates the series store (2026-09-14)",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Process-wide bounded read gate (WORLD_SERIES_READ_CONCURRENCY=4), in-flight read coalescing, daily rollup optimization, and window duration warnings shipped; guarded by tests/unit/world-series-read-gate.spec.ts (10/10 pass)."
+  },
+  {
+    "title": "Deploy modes — `codebase` vs `codeless` development posture (ADR-137 amendment A)",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "OSHAL_DEV_POSTURE resolves codebase|codeless with codeless default failing closed on self-modification rails with named reasons and external defect filing; guarded by tests/unit/deploy-mode.spec.ts (13/13 pass)."
+  },
+  {
+    "title": "A bot's LLM provider is a row in a table, not a literal in the registry (operator, 2026-09-17)",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Per-bot and fleet-default provider switch rows in oshal_bot_provider_switch take precedence over registry literals with Cline and direct API support, runtime stamping, and cockpit controls; guarded by full provider switch suite (141/141 pass across 12 files)."
+  },
+  {
+    "title": "Node enrolment is the blocker for every remote-node capability",
+    "date": "2026-09-24",
+    "pr": "567",
+    "evidence": "Shared secret removed from installer in favor of device-bound non-expiring node enrolment tokens minted by POST /api/join/enroll with clientId binding; guarded by tests/unit/node-enrolment-device-binding.spec.ts (11/11 pass)."
   }
 ]
