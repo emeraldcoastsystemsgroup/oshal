@@ -784,5 +784,29 @@
     "date": "2026-09-24",
     "pr": "main",
     "evidence": "LoRA training pipelines generalize per-character configuration, routing dataset folders and identity prompts dynamically without hardcoded constants; guarded by lora-per-character-generalization.spec.ts (7/7 pass)."
+  },
+  {
+    "title": "LoRA automated curation judge",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Automated curation judge filters off-identity and deformed candidate images before training while preserving human review and overrides; guarded by lora-curation-judge.spec.ts (12/12 pass)."
+  },
+  {
+    "title": "Real-boundary regression doctrine",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Integration-boundary doctrine and audit validation enforce real database stores, secret scanning, aliased package module resolution, and mutation testing; guarded by real-boundary-doctrine.spec.ts (10/10 pass)."
+  },
+  {
+    "title": "Nightly gate has a twelve-night failure streak",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Local CI gate streak detection tracks per-gate failures and passes, alerts on newly failing gates, and handles deduplication and skip logic; guarded by ci-gate-streak.spec.ts (23/23 pass)."
+  },
+  {
+    "title": "`unit` and `e2e-green` have been red for 46 nights and have never been triaged",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "CI export tree bounds execution and logs per-gate outcome lines, preserving triage evidence across runs without silent hang locks; guarded by ci-local-export.spec.ts (6/6 pass) and ci-gate-streak.spec.ts (23/23 pass)."
   }
 ]
