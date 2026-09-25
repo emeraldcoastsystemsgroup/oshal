@@ -140,6 +140,23 @@ DELETE /api/trading/autopilot     # stop all legs
 | `TRADING_ALGO_QTY` | 1 | fixed qty for the deterministic algo path |
 | `TRADING_LIVE_ENABLED` | off | the (separately-gated) live book |
 
+### Display-only market stream (ADR-143)
+
+The optional Alpaca IEX websocket is kernel-owned and display-only. It never supplies order prices,
+never reaches the browser directly, and stays disabled unless the operator explicitly arms it. There
+must be only one client using the paper key's venue websocket connection. The store surface receives
+only an owner-authenticated, allowlisted relay after the kernel phase is deployed.
+
+| Var | Default | Effect |
+|---|---|---|
+| `TRADING_STREAM_ENABLED` | `false` | Open the kernel IEX stream; default-off |
+| `ALPACA_STREAM_URL` | `wss://stream.data.alpaca.markets/v2/iex` | Venue endpoint; paid SIP is a separate operator decision |
+| `TRADING_STREAM_MAX_SYMBOLS` | `30` | Subscription cap; ticket-first symbols are retained |
+| `TRADING_STREAM_STALE_SEC` | `60` | Display staleness threshold carried to the surface |
+| `TRADING_STREAM_RECONNECT_MS` / `_MAX_MS` | `1000` / `30000` | Bounded reconnect backoff |
+| `TRADING_STREAM_AUTH_COOLDOWN_MS` | `300000` | Cooldown after entitlement/auth refusal |
+| `TRADING_STREAM_IDLE_CLOSE_SEC` | `120` | Close the shared venue socket after the final listener leaves |
+
 ## Limits / roadmap
 
 - **CEO / X-timeline signals** — the rail is built ([oshal-x-read.js](../../../scripts/oshal-x-read.js) reads

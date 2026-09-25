@@ -56,6 +56,9 @@ export type { MarketDataSource } from './services/market-data-source';
 export { getMarketData } from './services/market-data-source';
 export { SchwabMarketData } from './services/schwab-market-data';
 export { brokerProviderFor, resolveSchwabToken } from './services/broker-provider';
+// ADR-143 Phase 1 — display-only Alpaca IEX stream; credentials remain kernel-internal.
+export type { MarketPrint, MarketStreamState, MarketStreamStatus } from './services/market-data-stream';
+export { subscribeMarketPrints, marketStreamStatus, planSubscription } from './services/market-data-stream';
 
 // Fundamentals (SEC EDGAR, keyless) for the research brain's analyst.
 export type { Fundamentals } from './services/fundamentals';

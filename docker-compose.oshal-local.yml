@@ -38,7 +38,8 @@
 # 31 | maintainer@emeraldcoastsystemsgroup.com | The api boot no longer swallows a failed migration, a failed core-RLS enforce or a failed app-role provision. All three discarded their exit status — the migration runner's .catch() logged one line and let the boot continue, and the two governance scripts were followed by `|| echo '... (non-fatal)'` — so the api came up reporting healthy on a half-applied schema or an unprovisioned bot role, which is the same "reported success when it did nothing" shape as migration 099's swallowed GRANTs. Compose was the only one of the three deployment paths that did this: deploy/helm/oshal/templates/api.yaml:113-116 already exits 1 on each, and scripts/governance/bootstrap-managed-postgres.mjs fails the managed one-shot on each. This converges compose onto them. Guard: tests/unit/bot-role-grant-fail-loud-postgres.spec.ts.
 # 32 | maintainer@emeraldcoastsystemsgroup.com | x-bot-env: DB_MAX_CONNECTIONS, so the bot fleet has a DECLARED per-container Postgres ceiling instead of the code default of 5. Unset, the 38 bot-node services here could demand 190 connections from a role capped at 8, and a fleet boot produced FATAL too many connections for role "oshal_bot" in 24 of 36 containers - a pool outage that surfaced as an authorization-shaped refusal. Three per container is 114 for the whole fleet, which fits under the role's ceiling of 120 (docs/governance/app-role-provisioning.sql) and under max_connections=200 beside oshal_app's 24. The controller inherits this anchor but never reads the key: its own ceiling is OSHAL_DB_POOL_MAX. Guard: tests/unit/managed-postgres-pool-budget.spec.ts.
 # 33 | maintainer@emeraldcoastsystemsgroup.com | x-bot-env: RAG_ENGINE, the same pgvector value oshal-api carries as its own literal. The bot-node read-only tool rag_query refuses unless rag_chunks row-level security is what scopes the read, and only the pgvector engine reaches it; with the key on the api alone every bot booted on the chroma default and the tool shipped inert on the deployed box. Anchor rather than per-service so every bot that can be granted the tool gets the engine. Guard: tests/unit/bot-node-read-only-tools.spec.ts (the compose case).
-# 34 | maintainer@emeraldcoastsystemsgroup.com | Antigravity headless account login: every API/bot inheriting x-bot-env uses agy's file-storage mode and the shared .gemini token path, allowing OSHAL Node's authenticated operator push to seed one credential every bot can consume.
+  # 34 | maintainer@emeraldcoastsystemsgroup.com | Antigravity headless account login: every API/bot inheriting x-bot-env uses agy's file-storage mode and the shared .gemini token path, allowing OSHAL Node's authenticated operator push to seed one credential every bot can consume.
+  # 35 | maintainer@emeraldcoastsystemsgroup.com | ADR-143 display-only Alpaca IEX stream controls. The venue socket stays kernel-owned and default-off; compose must carry the same per-call knobs into the api without exposing credentials to a store package or browser.
 # 35 | maintainer@emeraldcoastsystemsgroup.com | P8: forward OSHAL_CONCIERGE_COVERAGE_MODE to the controller API with the migration-safe warn default. Without the explicit compose mapping, setting enforce in .env changes nothing and surface packages continue to load without an accountable concierge.
 # 36 | maintainer@emeraldcoastsystemsgroup.com | Complete the P8 rollout after the store backfill: the controller now defaults OSHAL_CONCIERGE_COVERAGE_MODE to fail-closed enforce; warn remains an explicit temporary observation/rollback override.
 # 37 | maintainer@emeraldcoastsystemsgroup.com | Add an optional dedicated Futures research worker with package-owned persona and no CLI credential mounts.
@@ -571,6 +572,14 @@ x-bot-env: &bot-env
   # Max age of the trade print that may set an ext-hours limit (sec, default 120). The guard that
   # ended the 2026-07-08 MRNA cancel/re-place loop (434 dead orders/day -> 1).
   TRADING_EXT_QUOTE_MAX_AGE_SEC: ${TRADING_EXT_QUOTE_MAX_AGE_SEC:-}
+  TRADING_STREAM_ENABLED: ${TRADING_STREAM_ENABLED:-false}
+  ALPACA_STREAM_URL: ${ALPACA_STREAM_URL:-}
+  TRADING_STREAM_MAX_SYMBOLS: ${TRADING_STREAM_MAX_SYMBOLS:-}
+  TRADING_STREAM_STALE_SEC: ${TRADING_STREAM_STALE_SEC:-}
+  TRADING_STREAM_RECONNECT_MS: ${TRADING_STREAM_RECONNECT_MS:-}
+  TRADING_STREAM_RECONNECT_MAX_MS: ${TRADING_STREAM_RECONNECT_MAX_MS:-}
+  TRADING_STREAM_AUTH_COOLDOWN_MS: ${TRADING_STREAM_AUTH_COOLDOWN_MS:-}
+  TRADING_STREAM_IDLE_CLOSE_SEC: ${TRADING_STREAM_IDLE_CLOSE_SEC:-}
   # New entries placed per 5-min fire (default 8). Lower it if Schwab 429s the burst; the rest
   # retry next fire. Per-order API cost is minimized by the cross-order account-hash cache.
   TRADING_MAX_ORDERS_PER_RUN: ${TRADING_MAX_ORDERS_PER_RUN:-}

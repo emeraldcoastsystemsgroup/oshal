@@ -1,8 +1,8 @@
 # ADR-143 — Market-data stream: the real-time source, entitlement/staleness guards, and the poll → stream relay
 
-**Status:** Accepted — decision recorded 2026-09-06. **Nothing is built in this pass** (docs only): the
-Buy ticket still polls `GET /api/trading/quote` every 5 s. The implementation is a later wave; its
-files, sizes and guard specs are named in D9 so the wave is a build, not a design.
+**Status:** Phase 1 shipped — decision recorded 2026-09-06; kernel source and local protocol guards
+landed 2026-09-25. Phase 2 remains a later store wave: the Buy ticket still polls `GET
+/api/trading/quote` every 5 s until the authenticated relay is deployed and observed.
 
 **Date:** 2026-09-06
 
@@ -435,10 +435,11 @@ from the stream in v1 (D7).
 
 ## Status / open items
 
-Decision recorded 2026-09-06; **no code shipped in this pass** — the ticket polls exactly as before.
-Open for the implementing wave: Phase 1 and Phase 2 of D9 with their named guard specs; the operator
-decision to arm `TRADING_STREAM_ENABLED` (requires that nothing else streams with the paper key — the
-code base has no other consumer; external tools on the same key are the operator's knowledge); the
-D5 screener source behind the movers report; the deferred Schwab streamer (D6, BACKLOG). Purchase
-triggers are named in D1 — none is met today (`TRADING_EXTENDED_HOURS=false` since 2026-07-12; no
-intraday strategy armed; the order path does not read the stream).
+Decision recorded 2026-09-06; **Phase 1 shipped 2026-09-25** — the kernel exposes a default-off,
+credential-free status/print contract and is covered by a real local WebSocket protocol guard. The
+ticket still polls exactly as before until Phase 2 lands. Open: Phase 2 of D9 with its named store
+guard, the operator decision to arm `TRADING_STREAM_ENABLED` (requires that nothing else streams with
+the paper key), a dated deployed regular-hours observation, the D5 screener source behind the movers
+report, and the deferred Schwab streamer (D6, BACKLOG). Purchase triggers are named in D1 — none is
+met today (`TRADING_EXTENDED_HOURS=false` since 2026-07-12; no intraday strategy armed; the order path
+does not read the stream).

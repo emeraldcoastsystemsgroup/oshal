@@ -367,6 +367,13 @@ guard renders the REAL chart with the helm binary. It reaches no API server.
 4. When a scoped mock remains, link its real companion here. When the companion closes, move the
    completion narrative to durable evidence and remove the item from the active queue.
 
+## ADR-143 venue data-stream relay (2026-09-25)
+
+| Boundary audited | Mock/stub disposition | Required real companion | Status |
+|---|---|---|---|
+| `tests/unit/trading-market-data-stream.spec.ts` (Alpaca IEX websocket → kernel subscriber, reconnect/entitlement handling and normalized print) | No venue double: a real local `WebSocketServer` speaks the Alpaca frame shape and records auth, subscribe, reconnect and unsubscribe messages. Credentials are spec-only env values and the status/print snapshots are checked for absence of those values. The external Alpaca service and real account entitlement are outside this guard by design. | Phase 3: after deployment, the operator arms `TRADING_STREAM_ENABLED` only after confirming no other client uses the paper key, then records a regular-hours paper-ticket print observation and one api-restart reconnect. | Kernel guard green 2026-09-25 (7 stream cases); live venue observation owed. |
+| `tests/unit/compose-trading-stream-gate.spec.ts` (compose → api environment passthrough and default-off code read) | Static compose/configuration guard only; no container or socket is started. | `docker compose config` on the deployed stack and an in-container env probe after the operator chooses to arm the feature. | Guard green 2026-09-25; installed companion owed. |
+
 ## Futures research review (2026-09-25)
 
 `tests/unit/futures-research-review-postgres.spec.ts` runs migrations 159/160 against disposable

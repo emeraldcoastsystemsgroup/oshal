@@ -99,6 +99,14 @@ function keys(): { id: string; secret: string } {
   };
 }
 
+/**
+ * @description Kernel-internal Alpaca data credentials for the venue stream. This is deliberately
+ * not exported from the trading barrel: store packages and browser surfaces must never receive a
+ * venue key. The stream module is the only sibling that may use this seam.
+ * @returns The same precedence-resolved credentials used by the REST data rail.
+ */
+export function alpacaDataCredentials(): { id: string; secret: string } { return keys(); }
+
 /** True when Alpaca data credentials are present. */
 export function marketDataConfigured(): boolean { const k = keys(); return Boolean(k.id && k.secret); }
 
