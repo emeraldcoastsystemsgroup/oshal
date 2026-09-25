@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2: real PostgreSQL proof for FORCE RLS, exact owner reads, operator-only assignments, explicit deny, defaults, clearing, and a NOSUPERUSER/NOBYPASSRLS runtime role.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Resolve compose-internal admin/probe database values through the published host port for host-side Playwright runs, matching the managed webServer's database resolution instead of attempting DNS for `oshal-db`.
  */
 
 import { expect, test } from '@playwright/test';
@@ -13,14 +14,14 @@ import { Pool } from 'pg';
 import { AppAccessService, type SwarmAppAccessDeclaration } from '@/features/swarm-apps';
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
 import { wrapPoolWithGuc } from '@/shared/services/database/guc-pool';
+import { hostReachableDatabaseUrl } from './helpers/host-database-url';
 
-const ADMIN_URL = process.env.OSHAL_RLS_ADMIN_DATABASE_URL
+const ADMIN_URL = hostReachableDatabaseUrl(process.env.OSHAL_RLS_ADMIN_DATABASE_URL
   ?? process.env.BOOTSTRAP_DATABASE_URL
-  ?? process.env.DATABASE_URL
-  ?? '';
-const PROBE_URL = process.env.OSHAL_RLS_PROBE_DATABASE_URL
+  ?? process.env.DATABASE_URL) ?? '';
+const PROBE_URL = hostReachableDatabaseUrl(process.env.OSHAL_RLS_PROBE_DATABASE_URL
   ?? process.env.BOT_DATABASE_URL
-  ?? '';
+  ) ?? '';
 const PROBE_ROLE = process.env.OSHAL_RLS_TEST_ROLE || 'oshal_bot';
 const RUN = randomBytes(6).toString('hex');
 const SCHEMA = `oshal_app_access_${RUN}`;

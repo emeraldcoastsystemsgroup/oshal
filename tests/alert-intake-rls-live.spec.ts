@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The guard the ADR-119 ladder shipped without. Every P1–P4 spec stubs the ticket gateway, so all 32 stayed green while the intake could not write a single row on a live box — "new row violates row-level security policy for table tickets". This one drives the REAL Alertmanager router over a REAL PostgresTicketStore on a REAL RLS-enforcing `tickets` table, connected as the K5 least-privilege NOBYPASSRLS role, and pins BOTH halves of the fix independently (the connection GUC and the row's owner_sub) so removing either goes red.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Resolve compose-internal DATABASE_URL values through the published host port for host-side Playwright runs, matching the managed webServer's database resolution instead of attempting DNS for `oshal-db`.
  */
 
 /**
@@ -36,8 +37,9 @@ import { ALERT_INTAKE_OWNER_SUB } from '@/features/alert-triage';
 import { PostgresTicketStore, TicketService } from '@/features/ticketing';
 import { wrapPoolWithGuc } from '@/shared/services/database/guc-pool';
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
+import { hostReachableDatabaseUrl } from './helpers/host-database-url';
 
-const DB_URL = process.env.DATABASE_URL ?? '';
+const DB_URL = hostReachableDatabaseUrl(process.env.DATABASE_URL) ?? '';
 
 /**
  * The role the intake's connection runs as. `oshal_bot` is the K5 least-privilege role
