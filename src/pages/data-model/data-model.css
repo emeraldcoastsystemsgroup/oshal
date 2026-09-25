@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Data-model explorer layout and graph styling on the shared portal theme variables (surface-themes.css), with per-link-kind edge colours matched by the legend swatches.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export menu styling: the dropdown reuses the search results panel, with a selectable preview block for the Mermaid text when the clipboard is unavailable.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Bound the schema diff panel and distinguish drift and unavailable states using the portal theme.
  */
 
 :root {
@@ -55,6 +56,13 @@ select, input[type="search"] { background: var(--dm-panel-2); border: 1px solid 
 #exportNote { margin: 4px 8px; font-size: 12px; }
 .status-banner { margin: 0; padding: 8px 12px; border-radius: 8px; background: var(--dm-panel); border: 1px solid var(--dm-line); }
 .status-banner[data-tone="error"] { border-color: var(--dm-danger); }
+.dm-drift { flex: 0 0 auto; max-height: 40vh; overflow: auto; padding: 8px 12px; border: 1px solid var(--dm-line); border-radius: 8px; background: var(--dm-panel); }
+.dm-drift[data-state="drift"], .dm-drift[data-state="unavailable"] { border-color: var(--dm-warn); }
+.dm-drift summary { cursor: pointer; }
+.dm-drift-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.dm-drift table { width: 100%; text-align: left; border-collapse: collapse; margin-top: 10px; }
+.dm-drift td, .dm-drift th { padding: 6px; border-bottom: 1px solid var(--dm-line); overflow-wrap: anywhere; }
+.dm-drift button:disabled { opacity: .6; cursor: default; }
 
 .dm-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--dm-line); }
 .dm-tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 8px 12px; }

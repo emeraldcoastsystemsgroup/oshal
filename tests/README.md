@@ -107,8 +107,11 @@ live step only reads the current snapshot.
 `node scripts/test-schema-alert-producer.cjs` runs the additional producer suites on that same Lab
 card: normalized-input refusals and an actual policy removal in disposable PostgreSQL through the
 schema classifier to one durable pending event. It also checks concurrency, restart, failed-write
-rollback, retention and non-bypass-role RLS. It does not run a live detector, create a production
-ticket or prove the explorer diff panel.
+rollback, retention and non-bypass-role RLS. The command also exercises detector cadence, shutdown
+and retry, plus the real pending sweep and PostgreSQL ticket service to an approval-held ticket
+and the same explorer diff in Chromium. Session identity, accelerated cadence/clock, empty app
+inventory and fixed migration count are explicit fixture ports. No production policy, ticket,
+provider or notification is touched.
 
 The autonomous backlog suites have matching Lab registrations and local commands:
 

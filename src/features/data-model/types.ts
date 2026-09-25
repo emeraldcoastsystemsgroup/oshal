@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Data-model explorer types: catalog relations (tables/views with columns, keys, RLS policies), declaration sites that attribute a relation to its owner (core or an installed app), the assembled explorer snapshot (owned tables, shared objects, app integration edges) and the non-Postgres store inventories.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Two ports for schema-drift history (ADR-119/125 backlog item): a queryable for the digest table and the app_migrations count that tells a migrated change from an unexplained one. Both optional, so a deployment without the migration keeps rendering.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Carry optional catalog-read warnings so incomplete explorer snapshots cannot generate or acknowledge alarms.
  */
 
 import type { DigestQueryable } from './services/drift-store';
@@ -138,6 +139,8 @@ export interface DeclaredRelation extends RelationInfo {
 
 /** The explorer's main payload: every Postgres relation, its owners, and how apps connect. */
 export interface DataModelSnapshot {
+  /** A partial optional catalog may render, but it must never produce or acknowledge drift. */
+  catalogWarnings?: string[];
   generatedAt: string;
   database: string;
   tables: ModelRelation[];

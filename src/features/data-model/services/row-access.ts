@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | RLS row-scope classification for the data-model explorer, read from each table's REAL policy expressions (pg_policies USING / WITH CHECK): owner column, helper function, parent table, unrestricted, or operator-only. Same rules as the schema-docs generator (scripts/schema-docs/row-access.js); tests/unit/data-model-catalog.spec.ts holds the two to identical answers.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | There is no second copy to hold identical any more: the generator's CommonJS classifier is deleted and scripts/schema-docs/render.js and pages.js read this file through scripts/schema-docs/kernel.js. Change a rule here and the committed pages change with the surface; tests/unit/data-model-catalog.spec.ts fails if a copy reappears, and tests/unit/data-model-catalog-postgres.spec.ts fails if the generator stops reading this one.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Classify disabled RLS as off even when PostgreSQL retains its FORCE flag, so disabling protection produces real drift.
  */
 
 import type { PolicyInfo, RelationInfo, RowAccessSummary } from '../types';
@@ -40,7 +41,7 @@ export function classifyPolicy(policy: PolicyInfo): { scopes: string[]; owners: 
  */
 export function summarizeRowAccess(rel: Pick<RelationInfo, 'rls' | 'forced' | 'policies' | 'source'>): RowAccessSummary {
   if (rel.source === 'parsed') return { state: 'n/a', scopes: [], ownerColumns: [] };
-  const state = rel.forced ? 'forced' : rel.rls ? 'enabled' : 'off';
+  const state = !rel.rls ? 'off' : rel.forced ? 'forced' : 'enabled';
   const scopes = new Set<string>();
   const owners = new Set<string>();
   for (const p of rel.policies) {

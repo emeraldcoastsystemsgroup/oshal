@@ -5,11 +5,13 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Data-model explorer API. GET / returns the snapshot (every Postgres table and view with columns, keys and RLS row scope; owners; shared objects; the app integration map); GET /stores returns the ArangoDB / ChromaDB / Redis inventories. Read-only. Mounted in server.ts behind requiresAuth + requiresOperator: the payload names every installed app's tables and policies, which is operator knowledge.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | GET /drift: the schema-digest comparison - what moved since the stored baseline, and whether that difference is an alarm or an explained/settling/first-run reading. `?capture=1` is the only thing that advances the baseline, so an operator opening the page never silently acknowledges a change. It answers 200 with `available:false` and a named reason when migration 139 is not applied, and 409 (never 500) when the current catalog read is partial - a failed read must not look like a dropped schema.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Expose detector status and confirmed, fingerprint-checked baseline recording behind the existing operator mount.
  */
 
 import express, { type Request, type Response, type Router } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { DATA_MODEL_NO_DATABASE, SCHEMA_DIGEST_INVALID, SCHEMA_DIGEST_PARTIAL, type DataModelService } from '@/features/data-model';
+import type { SchemaDriftMonitor } from '../schema-drift-runtime';
 
 const logger = createChildLogger({ module: 'data-model-routes' });
 
@@ -44,17 +46,24 @@ async function answer(req: Request, res: Response, label: string, read: (refresh
  * @param req - request (`?capture=1` records the baseline, `?refresh=1` rebuilds the snapshot)
  * @param res - response
  * @param service - the data-model service
+ * @param monitor - Optional read-only detector status.
  * @returns nothing; writes the response
  */
-async function answerDrift(req: Request, res: Response, service: DataModelService): Promise<void> {
+async function answerDrift(req: Request, res: Response, service: DataModelService, monitor?: SchemaDriftMonitor | null): Promise<void> {
   const started = Date.now();
-  const capture = req.query.capture === '1' || req.query.capture === 'true';
-  const refresh = req.query.refresh === '1' || req.query.refresh === 'true';
-  logger.info({ route: 'GET /api/admin/data-model/drift', capture, refresh }, 'data-model drift: start');
+  const route = `${req.method} /api/admin/data-model/drift${req.method === 'POST' ? '/baseline' : ''}`;
+  const capture = req.method === 'POST' || req.query.capture === '1' || req.query.capture === 'true';
+  const refresh = req.method === 'POST' || req.query.refresh === '1' || req.query.refresh === 'true';
+  const expectedFingerprint = req.method === 'POST' ? req.body?.fingerprint : undefined;
+  if (req.method === 'POST' && (req.body?.confirmed !== true || typeof expectedFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(expectedFingerprint))) {
+    res.status(400).json({ error: 'Confirm the reviewed schema fingerprint before recording a baseline.' });
+    return;
+  }
+  logger.info({ route, capture, refresh }, 'data-model drift: start');
   try {
-    const outcome = await service.drift({ capture, refresh });
-    res.json(outcome);
-    logger.info({ route: 'GET /api/admin/data-model/drift', state: outcome.report?.state ?? 'unavailable', alarm: outcome.report?.alarm ?? false, ms: Date.now() - started }, 'data-model drift: done');
+    const outcome = await service.drift({ capture, refresh, ...(expectedFingerprint ? { expectedFingerprint } : {}) });
+    res.json({ ...outcome, captureSupported: true, monitor: monitor?.status() ?? null });
+    logger.info({ route, state: outcome.report?.state ?? 'unavailable', alarm: outcome.report?.alarm ?? false, ms: Date.now() - started }, 'data-model drift: done');
   } catch (err) {
     const code = (err as { code?: string } | null)?.code;
     logger.error({ err, code, ms: Date.now() - started }, 'data-model drift: failed');
@@ -73,12 +82,14 @@ async function answerDrift(req: Request, res: Response, service: DataModelServic
 /**
  * @description Build the explorer router. Mount it behind requiresAuth + requiresOperator.
  * @param service - the data-model service
- * @returns an Express router with GET /, GET /stores and GET /drift
+ * @param monitor - Optional detector whose status accompanies comparison reads.
+ * @returns Snapshot/store/drift reads and confirmed reviewed-baseline recording.
  */
-export function createDataModelRoutes(service: DataModelService): Router {
+export function createDataModelRoutes(service: DataModelService, monitor?: SchemaDriftMonitor | null): Router {
   const router = express.Router();
   router.get('/', (req, res) => answer(req, res, 'GET /api/admin/data-model', (refresh) => service.snapshot(refresh)));
   router.get('/stores', (req, res) => answer(req, res, 'GET /api/admin/data-model/stores', (refresh) => service.stores(refresh)));
-  router.get('/drift', (req, res) => answerDrift(req, res, service));
+  router.get('/drift', (req, res) => answerDrift(req, res, service, monitor));
+  router.post('/drift/baseline', express.json({ limit: '2kb' }), (req, res) => answerDrift(req, res, service, monitor));
   return router;
 }

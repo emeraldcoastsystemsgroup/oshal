@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Data-model explorer service: assembles the snapshot (Postgres catalogs, declaration scan of core + every installed package, ownership, integration map) and the non-relational store inventories, each cached for a TTL with concurrent callers sharing one in-flight build. Every input arrives through DataModelPorts, so the slice imports no other feature and every store can be doubled in tests.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | drift(): reduce the snapshot to a structure-only digest, compare it against the stored baseline, and optionally record it. Reading NEVER moves the baseline - an operator opening the page must not silently acknowledge a change - so advancing it is an explicit capture. A deployment without migration 139 gets an `unavailable` report naming the migration rather than a 500.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Expose the exact compared baseline, refuse incomplete optional catalogs and reject stale reviewed-fingerprint captures.
  */
 
 import { promises as fs } from 'fs';
@@ -14,7 +15,7 @@ import { CORE_SOURCE_DIRS, scanDeclarations, type ScanRoot } from './declaration
 import { attributeOwnership, databaseLinks } from './ownership';
 import { buildIntegrationMap } from './integration-map';
 import { createDriftStore, type DriftStore } from './drift-store';
-import { buildDigest, diffDigests, type DriftReport, type SchemaDigest } from './schema-digest';
+import { buildDigest, diffDigests, digestError, SCHEMA_DIGEST_PARTIAL, SCHEMA_DIGEST_INVALID, type DriftReport, type SchemaDigest } from './schema-digest';
 import {
   CORE_OWNER,
   type AppRecordLite, type CatalogSnapshot, type DataModelPorts, type DataModelSnapshot, type StoreInventory,
@@ -33,6 +34,8 @@ export interface DataModelService {
 
 /** How a drift read is taken. `capture` is the only thing that advances the baseline. */
 export interface DriftOptions {
+  /** Refuse acknowledgement when the schema changed after the operator reviewed the diff. */
+  expectedFingerprint?: string;
   /** Rebuild the snapshot before digesting it, instead of reading the TTL cache. */
   refresh?: boolean;
   /** Record this digest as the new baseline. Off by default: a page load must not acknowledge. */
@@ -41,6 +44,8 @@ export interface DriftOptions {
 
 /** A drift report, or the one sentence explaining why no comparison was possible. */
 export interface DriftOutcome {
+  /** Exact baseline compared; internal detector uses it without a second racing read. */
+  baseline?: SchemaDigest | null;
   available: boolean;
   /** Present when `available`; the classification and the named changes. */
   report: DriftReport | null;
@@ -99,13 +104,14 @@ export async function scanRoots(repoRoot: string, apps: AppRecordLite[]): Promis
  * @param ports - injected ports
  * @returns catalogs, platform first
  */
-async function readCatalogs(ports: DataModelPorts): Promise<CatalogSnapshot[]> {
+async function readCatalogs(ports: DataModelPorts, warnings: string[]): Promise<CatalogSnapshot[]> {
   const catalogs = [await ports.readPlatformCatalog()];
   if (!ports.readTimeseriesCatalog) return catalogs;
   try {
     const ts = await ports.readTimeseriesCatalog();
     if (ts) catalogs.push(ts);
   } catch (err) {
+    warnings.push('The configured time-series catalog could not be read.');
     logger.error({ err }, 'data-model: time-series catalog read failed; snapshot continues without it');
   }
   return catalogs;
@@ -118,7 +124,8 @@ async function readCatalogs(ports: DataModelPorts): Promise<CatalogSnapshot[]> {
  */
 export async function buildSnapshot(ports: DataModelPorts): Promise<DataModelSnapshot> {
   const started = Date.now();
-  const [catalogs, apps] = await Promise.all([readCatalogs(ports), ports.listApps()]);
+  const catalogWarnings: string[] = [];
+  const [catalogs, apps] = await Promise.all([readCatalogs(ports, catalogWarnings), ports.listApps()]);
   const { sites, filesRead } = await scanDeclarations(await scanRoots(ports.repoRoot, apps));
   const own = attributeOwnership(catalogs, sites);
   const { apps: appNodes, integrations } = buildIntegrationMap(apps, own, databaseLinks(own.tables));
@@ -126,6 +133,7 @@ export async function buildSnapshot(ports: DataModelPorts): Promise<DataModelSna
   return {
     generatedAt: new Date().toISOString(), database: catalogs[0].database, tables: own.tables, views: own.views,
     apps: appNodes, integrations, unowned: own.unowned, declaredAbsent: own.declaredAbsent, sqlite: own.sqlite,
+    ...(catalogWarnings.length ? { catalogWarnings } : {}),
   };
 }
 
@@ -223,18 +231,23 @@ export function createDataModelService(ports: DataModelPorts, opts: { ttlMs?: nu
     const store = await openDriftStore(ports);
     const none = (reason: string, digest: SchemaDigest | null = null): DriftOutcome => ({ available: false, report: null, digest, unavailableReason: reason, captured: false });
     if (!store) return none('This process has no digest store, so schema drift has no baseline to compare against.');
-    const current = buildDigest(await snapshot(opts.refresh ?? false), await readMigrationCount(ports));
+    const reading = await snapshot(opts.refresh ?? false);
+    if (reading.catalogWarnings?.length) throw digestError(SCHEMA_DIGEST_PARTIAL, reading.catalogWarnings.join(' '));
+    const current = buildDigest(reading, await readMigrationCount(ports));
     const previous = await store.latest(current.database);
     const missing = store.unavailableReason();
     if (missing) return none(missing, current);
     const report = diffDigests(previous, current, { nowMs: now() });
     let captured = false;
     if (opts.capture) {
+      if (opts.expectedFingerprint && opts.expectedFingerprint !== current.fingerprint) {
+        throw digestError(SCHEMA_DIGEST_INVALID, 'The schema changed since this diff was reviewed. Refresh before acknowledging.');
+      }
       await store.record(current);
       captured = store.unavailableReason() === null;
     }
     logger.info({ state: report.state, alarm: report.alarm, changes: report.changes.length, captured }, 'data-model drift: compared');
-    return { available: true, report, digest: current, unavailableReason: '', captured };
+    return { available: true, report, digest: current, baseline: previous, unavailableReason: '', captured };
   }
 
   return {

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Data-model explorer page orchestration: loads the operator-only snapshot, drives the four views (apps & integrations, tables, shared objects, other stores), search, filters and the detail panel, and keeps the URL (?view=&app=&table=&focus=&depth=&q=) authoritative so any view is bookmarkable. Re-lays out the graph only when its scope changes; a selection change is a highlight, not a redraw.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export the view on screen - Mermaid, SVG or scoped JSON - from the snapshot already in the page, so a scope can reach an ADR or a PR without a screenshot and without a second server call. A refusal names its reason instead of writing an unusable file.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Load the operator schema diff alongside the explorer without acknowledging changes on page reads.
  */
 
 import { indexSnapshot, appGraph, tableGraph, parseViewState, serializeViewState, searchModel, ownerLabel, CORE_OWNER } from './model-index.js';
@@ -13,6 +14,7 @@ import { layoutGraph } from './layout.js';
 import { createGraphView } from './graph-view.js';
 import { renderDetail, h } from './detail-panel.js';
 import { renderSharedList, renderStores } from './lists-view.js';
+import { createDriftPanel } from './drift-panel.js';
 import { createUiLogger, serializeUiError } from '../../shared/ui-debug.js';
 
 const logger = createUiLogger('data-model');
@@ -203,6 +205,7 @@ async function load(refresh) {
   if (!storesRes.ok) logger.warn('data-model store inventory request failed', { status: storesRes.status });
   app.stores = storesRes.ok ? await storesRes.json() : [{ store: 'cache', engine: 'Store inventory', status: 'unreachable', detail: failureText(storesRes.status) }];
   if (app.state.view === 'stores') render();
+  await driftPanel.load(refresh);
 }
 
 /**
@@ -304,6 +307,7 @@ function wireControls() {
 }
 
 app.view = createGraphView(els.svg, graphHandlers);
+const driftPanel = createDriftPanel(document.getElementById('schemaDrift'));
 wireControls();
 wireExport();
 load(false).catch((err) => { logger.error('data-model bootstrap failed', { error: serializeUiError(err) }); setBanner(`The data model could not be read: ${err.message}`, 'error'); });

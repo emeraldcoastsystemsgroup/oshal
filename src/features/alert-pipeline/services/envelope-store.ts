@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Operations Stream landing stage: the verbatim envelope write, the pure per-alert normalizer (target ladder, severity ordinal, promoted labels, timestamp sanity floor), the SKIP LOCKED pending-event claim, and the decide/fail/deadletter transitions. One transaction per delivery so an envelope and its events are either both durable or neither is.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | BUG-20: the withPendingEvents contract states what actually holds - the handler's pool writes commit on their own and are made idempotent per event - replacing a deadlock rationale that could not occur.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Land normalized internal events without webhook envelopes; producer receipts prevent duplicate occurrences across retries, replicas and retention.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Allow consumers to exclude owned source lanes before claiming pending rows.
  */
 
 import type { Pool, PoolClient } from 'pg';
@@ -256,6 +257,7 @@ const INSERT_EVENT_SQL = `
 const SELECT_PENDING_SQL = `
   SELECT * FROM oshal_alert_event
    WHERE claim_decision = 'pending'
+     AND NOT (source = ANY($2::text[]))
    ORDER BY received_at
      FOR NO KEY UPDATE SKIP LOCKED
    LIMIT $1`;
@@ -634,17 +636,19 @@ export class EnvelopeStore {
    * transaction waits on it. Two claims still exclude each other, so no event is worked twice at once.
    * @param limit - Maximum events to claim; clamped to a sane batch.
    * @param handler - Work to run over the claimed events, on the claiming connection.
+   * @param excludeSources - Lanes owned by a different consumer; excluded before LIMIT/locking.
    * @returns How many events were claimed and handed to the handler.
    */
   async withPendingEvents(
     limit: number,
     handler: (events: AlertEventRow[], executor: Queryable) => Promise<void>,
+    excludeSources: readonly string[] = [],
   ): Promise<number> {
     const batch = Math.min(MAX_CLAIM_BATCH, Math.max(1, Math.floor(Number(limit) || 1)));
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      const claimed = await client.query(SELECT_PENDING_SQL, [batch]);
+      const claimed = await client.query(SELECT_PENDING_SQL, [batch, [...excludeSources]]);
       const events = (claimed.rows as AlertEventDbRow[]).map(mapAlertEventRow);
       if (events.length > 0) {
         await handler(events, client);
