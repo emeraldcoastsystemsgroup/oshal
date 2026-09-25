@@ -1,6 +1,7 @@
 /**
  * CHANGE LOG
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Chromium exercises the shared dispatcher against real handle/registry routes. Authentication and a confirmation-gated destination are explicit fixtures.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Verify an open destination receives both the owner-bound handle and the selected accepting action id.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import express from 'express';
@@ -60,6 +61,7 @@ describe('live browser artifact handoff', () => {
     await page.waitForURL('**/cockpit/?**');
     expect(new URL(page.url()).searchParams.get('artifact')).toBe(ref);
     expect(new URL(page.url()).searchParams.get('app')).toBe('dispatch-proof');
+    expect(new URL(page.url()).searchParams.get('artifactAction')).toBe('open');
     await page.close();
   });
   it('opens email compose without sending and never retries a 428 with confirmation', async () => {

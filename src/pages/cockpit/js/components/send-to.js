@@ -5,6 +5,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 1: the ONE shared "Send to…" component every surface loads (served at /api/artifacts/send-to.js). window.oshalSendTo(meta, anchorEl) fetches the caller-scoped menu for the artifact's MIME type, mints an owner-bound handle on pick, then dispatches: open mode navigates the TOP window to /cockpit/?app=<name>&artifact=<ref> (the shell forwards the ref to the surface iframe — D4a), post mode POSTs {ref} to the destination's own auth-gated endpoint and shows the outcome inline. Self-contained styling; Esc/outside-click dismiss; no framework dependencies so any classic-script surface can use it.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the selected accepting action id on open-mode navigation so one app can offer distinct receiving surfaces without weakening the owner-bound handle.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 2 (Amendment B): overlay dispatch — a kernel-registered action carrying `overlay` opens that page in an in-place iframe modal with the ref (no navigation, the source surface keeps its state). First user: the "Email it…" compose built-in.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Amendment D (mint-with-bytes): a surface whose artifact has no byte-serving URL can now send it anyway — pass a Blob as meta.blob, or tag the element with data-artifact-blob="<blob: or data: URL>" instead of data-artifact-source. The component fetches that URL in the page (blob:/data: ONLY — an http URL there would launder an arbitrary cross-surface fetch into an artifact) and mints over POST /handles/upload. Everything downstream — the menu, every dispatch mode, every destination — is unchanged, because a handle is a handle.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Amendment C: the STANDARD UX TAG. A surface declares an artifact by tagging its element (data-artifact-source + data-artifact-type [+ -name, + -ui]) and including this script once; the component auto-wires every tagged element — an injected 📤 chip (default) AND right-click — via a MutationObserver, so dynamically rendered lists are covered and HOW the affordance looks is a decision made HERE, centrally, changeable later without touching any surface. data-artifact-ui="context" opts out of the chip. The programmatic window.oshalSendTo(meta, anchorEl) API is unchanged.
@@ -125,7 +126,7 @@
       if (action.mode === 'open') {
         // D4a: navigate the SHELL, not this iframe — the cockpit forwards artifact= to the
         // destination surface. Same-origin, so window.top is reachable.
-        var target = '/cockpit/?app=' + encodeURIComponent(action.app) + '&artifact=' + encodeURIComponent(ref);
+        var target = '/cockpit/?app=' + encodeURIComponent(action.app) + '&artifact=' + encodeURIComponent(ref) + '&artifactAction=' + encodeURIComponent(action.id);
         try { (window.top || window).location.href = target; }
         catch (e) { window.location.href = target; }
         return;

@@ -393,8 +393,10 @@ export class CockpitViewController {
       // a "Send to…" open-mode dispatch (/cockpit/?app=<name>&artifact=art_…) lands with the ref
       // in the surface's OWN URL. Shape-checked so an arbitrary query value cannot ride through.
       const artifactRef = new URLSearchParams(window.location.search).get('artifact');
+      const artifactAction = new URLSearchParams(window.location.search).get('artifactAction');
       if (artifactRef && /^art_[A-Za-z0-9_-]{8,64}$/.test(artifactRef)) {
         bustedUrl += '&artifact=' + encodeURIComponent(artifactRef);
+        if (artifactAction && /^[a-z0-9][a-z0-9-]{0,40}$/.test(artifactAction)) bustedUrl += '&artifactAction=' + encodeURIComponent(artifactAction);
       }
       // A one-shot query an embedded surface attached to its app-navigate (already sanitized by
       // the ribbon): opens the tile's OWN surface on a purpose, e.g. kind=docx&starter=resume.
