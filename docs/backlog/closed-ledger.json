@@ -736,5 +736,29 @@
     "date": "2026-09-24",
     "pr": "main",
     "evidence": "Manifest bot access roles enforce caller and visibility boundaries, reject unknown roles, and ensure restriction precedence; guarded by manifest-bot-access-roles.spec.ts (11/11 pass)."
+  },
+  {
+    "title": "Video Series intro and season assembly",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Conductor season assembly orchestrates multi-episode series stitching, enforces ordinal episode ordering, and validates duration thresholds; guarded by series-season-assembly.spec.ts (13/13 pass)."
+  },
+  {
+    "title": "Web-control enforcement rollout",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Web hardening policy parses directive maps, enforces script/object/base-uri constraints, handles report-only and strict kill switches, and preserves raw bodies for webhook HMAC verification; guarded by web-hardening-csp-body.spec.ts (18/18 pass) and global-rate-limit-skip.spec.ts (3/3 pass)."
+  },
+  {
+    "title": "The armed book's stop-loss measures against the venue's adjusted cost basis (2026-09-13)",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Trading engine attaches own entry cost basis to positions, isolates unmanaged outside shares from order decisions, and prices live sells against book fills; guarded by trading-unmanaged-positions.spec.ts (24/24 pass) and trading-engine-cost-basis-postgres.spec.ts (8/8 pass)."
+  },
+  {
+    "title": "Real-Postgres specs cannot run from this host while Docker port publishing is wedged",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Host-side real-database spec execution runs cleanly against ephemeral/containerized PostgreSQL instances without wedged port publishing collisions or live-stack pollution; guarded by person-model-parity-postgres.spec.ts (9/9 pass) and ci-local-spec-database-default.spec.ts (24/24 pass)."
   }
 ]
