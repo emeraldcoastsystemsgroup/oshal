@@ -664,5 +664,29 @@
     "date": "2026-09-24",
     "pr": "main",
     "evidence": "Chat channel adapter core binds Telegram and external messaging channels, enforces owner identity mapping, tiers notification fallbacks, and registers test lab suites; guarded by chat-channels-telegram.spec.ts (6/6 pass), notify-channel-tier.spec.ts (9/9 pass), and test-lab-channel-registration.spec.ts (4/4 pass)."
+  },
+  {
+    "title": "Jarvis and a compact daily dashboard",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Compact daily dashboard integrates assistant composer, update grouping, source briefings, responsive layouts, and palette inheritance without draft loss; guarded by jarvis-dashboard-browser.spec.ts (19/19 pass) and jarvis-briefing-preferences.spec.ts (22/22 pass)."
+  },
+  {
+    "title": "Jarvis hand-off experience",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Swarm build hand-off acknowledges build requests directly without extraneous model turns, reuses idempotent claims, and dispatches bounded email completion notifications; guarded by jarvis-build-handoff.spec.ts (31/31 pass) and jarvis-task-complete-notify.spec.ts (7/7 pass)."
+  },
+  {
+    "title": "Apps page as a swarm catalog",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Applications page renders as a structured swarm catalog distinguishing bundle installation, provider readiness, credential requirements, and openability; guarded by app-catalog-connector-readiness.spec.ts (17/17 pass) and app-catalog-connectors-browser.spec.ts (5/5 pass)."
+  },
+  {
+    "title": "Queue dashboards per-app isolation",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Application ticket queues enforce app/workflow isolation, immutable ticket ownership, typed dispatch contracts, and execution principal boundary; guarded by ticket-isolation-routes.spec.ts (10/10 pass) and protected-ticket-routes.spec.ts (4/4 pass)."
   }
 ]
