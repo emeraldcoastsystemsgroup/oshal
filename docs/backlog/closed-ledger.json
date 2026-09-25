@@ -892,5 +892,11 @@
     "date": "2026-09-25",
     "pr": "826",
     "evidence": "PRs #825 and #826 implement native durable schema events, periodic shared comparison, dedicated rule admission, one approval-held ticket and linked Operations Stream incident, and the same explorer before/after diff. node scripts/test-schema-alert-producer.cjs: 45 passing, including actual scratch-table policy removal in disposable PostgreSQL through the running timer/sweep and real TicketService/HTTP/Chromium; unchanged/repeated scans and intake recovery produce no duplicate. Full explorer suite: 106 passing; supplemental alert/migration/registration/style regressions: 62 passing. Owner/operator refusals, explicit reviewed-fingerprint baseline capture, partial-catalog refusal and unchanged webhook replay defaults are covered. Test Lab references and explorer guide updated. Fixtures substitute identity, clock, inventory and migration count; no live production policy mutation or provider action is claimed."
+  },
+  {
+    "title": "LoRA gallery image hosting",
+    "date": "2026-09-25",
+    "pr": "828",
+    "evidence": "Store PR #247 and core PR #828: bounded PNG/JPEG thumbnails are owner-hosted, tied to the current scorecard cell and a fixed 30-day model lifetime, and cascade with model deletion; missing/expired cells never use external URLs. Seven actual disposable PostgreSQL/HTTP/Chromium tests prove decoded cell pixels, second-owner and anonymous refusal, expiry, deletion, late callbacks and scorecard changes. Package suite: 32 passing; combined framework-coupled Vitest: 51; shipping validator/Pillow upload proof: 4. Fixture identity, GPU dispatch and runtime bootstrap seams are explicit; no real GPU training is claimed. LoRA 1.2.0 from merged store 4576bd020de35fc97bec85f6975a2c5d62fae29d installed and hot-loaded; served studio and installed route/schema bytes match Git, database forced RLS and model cascade verified. Three current Test Lab cases registered; installed verification reports pending (browser-session smoke and separately executed suites), not a live suite pass. GPU end-to-end and autonomous overnight scheduling remain separate open items."
   }
 ]
