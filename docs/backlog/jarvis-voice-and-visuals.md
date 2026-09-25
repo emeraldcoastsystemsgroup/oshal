@@ -257,7 +257,9 @@ pixel cap, metadata-stripping PNG transcode, hash provenance, owner-scoped persi
 table/text fallback. The client still loads only its authenticated same-origin SVG.
 
 Still generalize the receipt policy beyond the Walmart catalog and add allowlisted `map`,
-`document/download`, standalone trusted `image`, and confirmation-form contracts. A model URL remains
+`document/download`, standalone trusted `image`, and confirmation-form contracts. The shared
+response renderer now has a bounded display-only `oshal:doc` viewer; this does not establish
+trusted artifact provenance or receipt persistence. A model URL remains
 untrusted and can never enter the receipt path. Add an explicitly sandboxed `html-preview` contract only for inert,
 sanitized content rendered in a nested iframe with a restrictive CSP; never accept arbitrary active
 model-authored HTML/JavaScript in the application document.

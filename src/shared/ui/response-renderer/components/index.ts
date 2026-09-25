@@ -2,7 +2,7 @@
  * Response Renderer — concrete components barrel.
  *
  * The shipped component set (markdown / code / mermaid / oshal:chart / oshal:table / oshal:map /
- * oshal:gallery / oshal:download), the standard registry factory, and the renderResponseHtml
+ * oshal:gallery / oshal:download / oshal:doc), the standard registry factory, and the renderResponseHtml
  * one-call pipeline. Import through `@/shared/ui/response-renderer` — never deep.
  *
  * CHANGE LOG
@@ -11,6 +11,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial barrel for the concrete response-renderer components.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export the oshal:map / oshal:gallery / oshal:download components and their normalize/render helpers + safeUrl allowlist.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Export the bounded oshal:doc component and its normalize/render helpers.
  *
  * @module shared/ui/response-renderer/components
  */
@@ -30,6 +31,8 @@ export { galleryComponent, normalizeGalleryData, renderGalleryHtml } from './gal
 export type { GalleryItem, GallerySpec } from './gallery-component';
 export { downloadComponent, normalizeDownloadData, renderDownloadHtml } from './download-component';
 export type { DownloadFile, DownloadSpec } from './download-component';
+export { docComponent, normalizeDocData, renderDocHtml } from './doc-component';
+export type { DocSection, DocSpec } from './doc-component';
 export {
   createStandardResponseRegistry,
   renderFallbackHtml,

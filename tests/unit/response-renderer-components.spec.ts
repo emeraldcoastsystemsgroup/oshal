@@ -5,11 +5,13 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Concrete component set: proves the standard registry registration, per-component output shapes (markdown/code/mermaid data-mermaid fallback/oshal:chart SVG/oshal:table), golden-ish chart geometry for a known input, fail-closed chart/table normalization, the renderResponseHtml end-to-end pipeline with visible fallbacks, and that <script>/attribute-breakout payloads never land unescaped in any component's output.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Update the standard-registry key-set assertion for the added oshal:map/oshal:gallery/oshal:download kinds (their own coverage lives in response-renderer-media-kinds.spec.ts).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Add oshal:doc registration, bounded display-only normalization, end-to-end rendering and hostile-input coverage.
  */
 
 import { describe, expect, it } from 'vitest';
 import {
   createStandardResponseRegistry,
+  normalizeDocData,
   normalizeChartData,
   normalizeTableData,
   renderChartSvg,
@@ -17,6 +19,7 @@ import {
   renderMarkdownText,
   renderResponseHtml,
   renderTableHtml,
+  renderDocHtml,
   safeLanguageToken,
   type ChartSpec,
 } from '../../src/shared/ui/response-renderer';
@@ -30,6 +33,7 @@ describe('standard response registry — registration', () => {
     expect(registry.keys()).toEqual([
       'markdown', 'code', 'mermaid',
       'oshal:chart', 'oshal:table', 'oshal:map', 'oshal:gallery', 'oshal:download',
+      'oshal:doc',
     ]);
     expect(registry.has('OSHAL:Chart')).toBe(true);
     expect(registry.has('artifact:image')).toBe(false); // surface-owned, deliberately unregistered
@@ -40,6 +44,50 @@ describe('standard response registry — registration', () => {
     const second = createStandardResponseRegistry();
     second.register('oshal:custom', { render: () => 'x' });
     expect(first.has('oshal:custom')).toBe(false);
+  });
+});
+
+describe('oshal:doc — bounded display-only document', () => {
+  it('normalizes sections and renders escaped title, headings and paragraphs', () => {
+    const spec = normalizeDocData({
+      title: 'Research note',
+      sections: [{ heading: 'Summary', paragraphs: ['First paragraph', 'Second paragraph'] }],
+    });
+    expect(spec).toEqual({
+      title: 'Research note',
+      sections: [{ heading: 'Summary', paragraphs: ['First paragraph', 'Second paragraph'] }],
+    });
+    expect(renderDocHtml(spec!)).toContain(
+      '<article class="rr-block rr-doc"><h3 class="rr-doc-title">Research note</h3>',
+    );
+    expect(renderDocHtml(spec!)).toContain('<h4>Summary</h4><p>First paragraph</p>');
+    expect(renderDocHtml(spec!)).not.toMatch(/\b(?:href|src|action|onclick)=/i);
+  });
+
+  it('fails closed on malformed sections and bounds retained text', () => {
+    expect(normalizeDocData(null)).toBeNull();
+    expect(normalizeDocData({ sections: [] })).toBeNull();
+    expect(normalizeDocData({ sections: [{ paragraphs: [] }] })).toBeNull();
+    expect(normalizeDocData({ sections: [{ paragraphs: ['ok', 1] }] })).toBeNull();
+    const spec = normalizeDocData({
+      title: 't'.repeat(200),
+      sections: [{ heading: 'h'.repeat(200), paragraphs: ['p'.repeat(4_000)] }],
+    });
+    expect(spec?.title).toHaveLength(160);
+    expect(spec?.sections[0].heading).toHaveLength(160);
+    expect(spec?.sections[0].paragraphs[0]).toHaveLength(2_000);
+  });
+
+  it('escapes hostile text and keeps it inert through the full response pipeline', async () => {
+    const payload = '<script>alert(1)</script><img src=x onerror=alert(2)>';
+    const { html } = await renderResponseHtml(`${FENCE}oshal:doc\n${JSON.stringify({
+      title: payload,
+      sections: [{ heading: payload, paragraphs: [payload] }],
+    })}\n${FENCE}`);
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(html).not.toContain('<script');
+    expect(html).not.toContain('<img');
+    expect(html).not.toMatch(/<[^>]*\b(?:href|src|action|onerror|onclick)=/i);
   });
 });
 

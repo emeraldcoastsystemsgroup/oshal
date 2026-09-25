@@ -2,7 +2,7 @@
  * Response Renderer — standard component set + one-call HTML pipeline.
  *
  * `createStandardResponseRegistry()` wires the concrete components this slice ships (markdown,
- * code, mermaid, oshal:chart, oshal:table, oshal:map, oshal:gallery, oshal:download) into one
+ * code, mermaid, oshal:chart, oshal:table, oshal:map, oshal:gallery, oshal:download, oshal:doc) into one
  * exact-key registry, and
  * `renderResponseHtml()` is the whole segment→dispatch→compose pipeline as a single call a
  * surface makes: parseResponse → renderBlocks → join, with a sanitized plain-text fallback for
@@ -17,6 +17,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — standard registry (markdown/code/mermaid/oshal:chart/oshal:table) + renderResponseHtml pipeline with sanitized fallbacks.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Register the oshal:map / oshal:gallery / oshal:download typed-block components so the standard registry covers the operator north-star kinds beyond chart+table.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Register the bounded oshal:doc display-only component.
  *
  * @module shared/ui/response-renderer/components/standard-registry
  */
@@ -26,6 +27,7 @@ import { hasRichBlocks, parseResponse } from '../parse-response';
 import type { RenderableResponseBlock, ResponseRenderOptions } from '../types';
 import { chartComponent } from './chart-component';
 import { codeComponent } from './code-component';
+import { docComponent } from './doc-component';
 import { downloadComponent } from './download-component';
 import { galleryComponent } from './gallery-component';
 import { mapComponent } from './map-component';
@@ -48,7 +50,8 @@ export function createStandardResponseRegistry(): ResponseComponentRegistry<void
     .register('oshal:table', tableComponent)
     .register('oshal:map', mapComponent)
     .register('oshal:gallery', galleryComponent)
-    .register('oshal:download', downloadComponent);
+    .register('oshal:download', downloadComponent)
+    .register('oshal:doc', docComponent);
 }
 
 /**
