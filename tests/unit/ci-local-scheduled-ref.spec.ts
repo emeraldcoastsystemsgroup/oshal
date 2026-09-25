@@ -151,7 +151,8 @@ describe('scheduled Local CI immutable source selection', () => {
 
   it('threads SOURCE_SHA through every archive/build and reports the same identity', () => {
     expect(CI_SOURCE).not.toMatch(/git archive HEAD/);
-    expect(CI_SOURCE.match(/git archive "\$SOURCE_SHA"/g)).toHaveLength(3);
+    const archiveOrExport = (CI_SOURCE.match(/git archive "\$SOURCE_SHA"/g) || []).length + (CI_SOURCE.match(/export_tree "\$REPO_DIR" "\$SOURCE_SHA"/g) || []).length;
+    expect(archiveOrExport).toBe(3);
     expect(CI_SOURCE).toContain('archive-ref=$SOURCE_REF sha=$SOURCE_SHORT_SHA posture=$SOURCE_POSTURE');
     expect(CI_SOURCE).toContain('(source $SOURCE_REF $SOURCE_SHORT_SHA; posture=$SOURCE_POSTURE)');
   });

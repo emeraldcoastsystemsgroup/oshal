@@ -856,5 +856,29 @@
     "date": "2026-09-24",
     "pr": "main",
     "evidence": "Kalshi trading platform manages paper and live book execution, gates live order submission behind double opt-in controls, calculates bankroll curves, and validates arbitrage bounds; guarded by compose-kalshi-live-gate.spec.ts (4/4 pass), kalshi-report.spec.ts (9/9 pass), kalshi-orders.spec.ts (8/8 pass), and kalshi-arbitrage.spec.ts (10/10 pass)."
+  },
+  {
+    "title": "Shared response-renderer completion",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Response renderer registry and parsing engine provide safe document and workbook generation across PPTX, DOCX, and XLSX formats with theme cascades, typed component trees, and streaming telemetry; guarded by response-renderer-components.spec.ts (18/18 pass), response-renderer-media-kinds.spec.ts (10/10 pass), response-renderer-parse.spec.ts (10/10 pass), response-renderer-registry.spec.ts (9/9 pass), docx-renderer.spec.ts (10/10 pass), xlsx-renderer.spec.ts (8/8 pass), and presentron-in-repo-renderer.spec.ts (6/6 pass)."
+  },
+  {
+    "title": "Six host scheduled tasks predate the platform scheduler and should move into it",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Host scheduled task launchers self-locate across repo roots, migrate internal domain jobs into the platform scheduler while preserving host-level watchers, and enforce immutable git archive ref pinning; guarded by scheduled-task-launchers-self-locating.spec.ts (36/36 pass), schedule-controller-system-boundary.spec.ts (14/14 pass), and ci-local-scheduled-ref.spec.ts (5/5 pass)."
+  },
+  {
+    "title": "LinkedIn Content Assistant queue workflow",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "LinkedIn Content Assistant manages queue-backed draft lifecycle with approval state transitions, LLM judge-bar scoring and single-pass refinement, and confirmation-gated publishing with clean refusal paths; guarded by linkedin-assistant.spec.ts (17/17 pass)."
+  },
+  {
+    "title": "Reviewed non-NONE tool provisioning and attestation",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Bot tool provisioning and runtime attestation enforce exact AUTO authorization grants, bind read-only question tools to caller identity and RLS ownership in PostgreSQL, and prohibit unreviewed shell commands; guarded by authorization-tool.spec.ts (22/22 pass), authorization-tool-policy.spec.ts (17/17 pass), app-tool-ownership.spec.ts (7/7 pass), bot-node-read-only-tools-owner-scope-postgres.spec.ts (20/20 pass), and attribution-scrub-tooling.spec.ts (2/2 pass)."
   }
 ]
