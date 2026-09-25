@@ -400,5 +400,29 @@
     "title": "Person-model maintenance never runs on a box that restarts daily",
     "pr": "main",
     "evidence": "startPersonModelMaintenanceRuntime runs first pass after initial delay plus jitter, forwarded by compose knobs; guarded by tests/unit/person-model-maintenance-runtime.spec.ts (6/6 pass) and tests/unit/compose-env-passthrough.spec.ts."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "Circuit Lab (store package `circuit-lab`, ADR-154)",
+    "pr": "main",
+    "evidence": "Delivered local electromechanical lab (ngspice, schematic/breadboard canvas, parts catalog, CAD Studio handoff) under ADR-154; package backlog handoff to oshal-applications circuit-lab/BACKLOG.md; guarded by circuit-lab test suites (153/153 pass)."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "Drone relay chains (store package `drone-relay`, ADR-155)",
+    "pr": "main",
+    "evidence": "Delivered relay chain design, link budgets, planner, deterministic simulation, and expansion under ADR-155; package backlog handoff to oshal-applications drone-relay/BACKLOG.md; guarded by drone-relay test suites (153/153 pass)."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "Sat-ops forced-conjugate referee evidence",
+    "pr": "main",
+    "evidence": "Replayed NASA 42 capture comparing native and forced-conjugate quaternion conventions; MEKF acceptance, rejection, reinitialization, and attitude verified identical; guarded by tests/unit/sat-ops-nasa42-forced-conjugate-referee.spec.ts (3/3 pass)."
+  },
+  {
+    "date": "2026-09-24",
+    "title": "Cockpit rail: static tiles that target another package must follow that package's discoverability (ADR-149)",
+    "pr": "main",
+    "evidence": "synthesiseProfile and lockUndiscoverableTiles enforce application-role-required lock panel and role guidance link; openableDefaultView selects first openable tile; guarded by tests/unit/rail-tile-discoverability.spec.ts and tests/unit/cockpit-locked-surface.spec.ts (17/17 pass)."
   }
 ]
