@@ -119,7 +119,9 @@ unless raw source timestamps establish its completion.
 
 The receipt freezes strategy, source/clock, contract, chart/higher/daily input arrays, reference
 close, observation, study fingerprint and target settings. PostgreSQL assigns actual issuance;
-there is no backdating input. Identical snapshots deduplicate within the owner/schedule/contract.
+there is no backdating input, and a database constraint rejects a reference close after issuance.
+Canonical object-key hashing survives JSONB storage and permits fingerprint reproduction from
+the fetched frozen inputs. Identical snapshots deduplicate within the owner/schedule/contract.
 The horizon starts at issuance, not at a historical bar date. Grading uses the first completed
 same-contract raw close at or after that target within the configured tolerance. It records
 directional price change and signed ticks from the last known reference close, **not trade P&L**.
