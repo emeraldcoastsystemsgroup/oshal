@@ -7,18 +7,21 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Refuse stale source dates before each market's optimizer and retain per-window sample gate evidence.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Exclude the operational review opt-in from market-evidence fingerprints.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Exclude forward operational controls from historical evidence fingerprints.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Reuse exact owned inputs before optimization after source freshness; canonicalize stored report evidence.
  */
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
-  DEFAULT_OPTIMIZER_STAGES, getFuturesRoot, runStagedOptimizer,
+  DEFAULT_OPTIMIZER_STAGES, getFuturesRoot, runStagedOptimizer, walkForwardWindows,
   MockFuturesDataSource, KibotFuturesDataSource, KibotFileDataSource, buildContinuousSeries,
   type BacktestConfig, type OptimizerStage, type StagedOptimizerReport, type Timeframe,
   type FuturesDataSource, type ContinuousSeries,
 } from '../features/trading';
 import type { FuturesResearchConfig } from './trading-futures-research-dispatch';
 import { assertFuturesSourceFreshness, assessFuturesSample, type FuturesResearchQuality } from './trading-futures-research-quality';
+import { fingerprintFuturesEvidence } from './trading-futures-prediction-evidence';
+import { futuresStudyDefinition, futuresStudyInputFingerprint, reusableFuturesReport, type FuturesStudyComputation, type FuturesStudyReuse } from './trading-futures-research-reuse';
 
 export interface FuturesResearchMarket {
   root: string; bars: number; ltfBars: number; ltfResampledFromMinute: boolean;
@@ -26,6 +29,7 @@ export interface FuturesResearchMarket {
   outOfSampleTrades: number; outOfSampleNet: number; worstOutOfSampleMaxDD: number;
   report: StagedOptimizerReport;
   quality?: FuturesResearchQuality;
+  computation?: FuturesStudyComputation;
 }
 
 interface SourcePair { src: FuturesDataSource; probe?: FuturesDataSource }
@@ -67,9 +71,8 @@ function stagesFor(config: FuturesResearchConfig): OptimizerStage[] {
 function evidenceFingerprint(config: FuturesResearchConfig, root: string, chart: ContinuousSeries, ltf: ContinuousSeries, report: StagedOptimizerReport): string {
   const lastWindow = report.windows.at(-1)!;
   const end = Date.parse(lastWindow.window.oosEnd);
-  const { end: _end, endMode: _endMode, nightlyCron: _nightlyCron, nightlyReview: _nightlyReview, predictions: _predictions, ...studyDefinition } = config;
   const hash = createHash('sha256');
-  hash.update(JSON.stringify({ root, studyDefinition, report }));
+  hash.update(fingerprintFuturesEvidence({ root, studyDefinition: futuresStudyDefinition(config), report }));
   for (const [kind, bars] of [['chart', chart.bars], ['ltf', ltf.bars]] as const) {
     hash.update(`\n${kind}\n`);
     for (const bar of bars) if (Date.parse(bar.t) < end) hash.update(`${JSON.stringify(bar)}\n`);
@@ -81,17 +84,26 @@ function lastBarAt(series: ContinuousSeries): string {
   return series.bars.reduce((latest, bar) => bar.t > latest ? bar.t : latest, '');
 }
 
-export async function executeFuturesStudy(config: FuturesResearchConfig): Promise<FuturesResearchMarket[]> {
+/** @description Reread and gate sources before computing or reusing owned historical evidence.
+ * @param config - Normalized bounded study. @param reuse - Internal process-fenced ledger context.
+ * @returns Markets with current source assessment and explicit computation receipts.
+ */
+export async function executeFuturesStudy(config: FuturesResearchConfig, reuse: FuturesStudyReuse = { generation: randomUUID() }): Promise<FuturesResearchMarket[]> {
   const markets: FuturesResearchMarket[] = [];
   for (const root of config.roots) {
     const { chart, ltf, ltfResampledFromMinute } = await buildSeries(config, root);
     if (!chart.bars.length || !ltf.bars.length) throw new Error(`${root}: chart or higher-timeframe series is empty`);
     const chartAsOf = lastBarAt(chart), ltfAsOf = lastBarAt(ltf);
     const freshness = assertFuturesSourceFreshness(config.quality, root, config.end, chartAsOf, ltfAsOf);
-    const report = runStagedOptimizer({ chart: chart.bars, ltf: ltf.bars, daily: config.ltfTimeframe === '1Day' ? ltf.bars : [] }, baseConfig(root), { split: config.split, stages: stagesFor(config) });
-    if (!report.windows.length) throw new Error(`${root}: archive has no complete out-of-sample window`);
+    const windows = walkForwardWindows(chart.bars, config.split);
+    if (!windows.length) throw new Error(`${root}: archive has no complete out-of-sample window`);
+    const base = baseConfig(root), stages = stagesFor(config);
+    const inputFingerprint = futuresStudyInputFingerprint({ generation: reuse.generation, config, root, base, stages, windows, chart: chart.bars, ltf: ltf.bars, ltfResampledFromMinute });
+    const prior = reusableFuturesReport(reuse, root, inputFingerprint, windows);
+    const report = prior?.report ?? runStagedOptimizer({ chart: chart.bars, ltf: ltf.bars, daily: config.ltfTimeframe === '1Day' ? ltf.bars : [] }, base, { split: config.split, stages });
+    const computation: FuturesStudyComputation = { status: prior ? 'reused' : 'computed', inputFingerprint, reportFingerprint: fingerprintFuturesEvidence(report), ...(prior ? { reusedFromRunId: prior.runId } : {}) };
     markets.push({ root, bars: chart.bars.length, ltfBars: ltf.bars.length, ltfResampledFromMinute,
-      chartAsOf, ltfAsOf, quality: assessFuturesSample(config.quality, freshness, report),
+      chartAsOf, ltfAsOf, computation, quality: assessFuturesSample(config.quality, freshness, report),
       latestCompleteOosEnd: report.windows.at(-1)!.window.oosEnd,
       evidenceFingerprint: evidenceFingerprint(config, root, chart, ltf, report),
       outOfSampleTrades: report.outOfSampleTrades, outOfSampleNet: report.outOfSampleNet, worstOutOfSampleMaxDD: report.worstOutOfSampleMaxDD, report });

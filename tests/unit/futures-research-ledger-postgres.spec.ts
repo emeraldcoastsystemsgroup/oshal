@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify real Futures admission, owner scope and durable study settlement.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Apply the review-state migration before validate-only runtime proof.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Persist insufficient sample evidence and stale-file worker failures without fabricating study results.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Prove JSONB report reuse across real workers while preserving exact owner/schedule scope.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -66,6 +67,7 @@ describe('futures research durable ledger', () => {
     expect(finished.completedAt).not.toBeNull();
     expect(finished.markets[0].report.windows.length).toBeGreaterThan(0);
     expect(finished.markets[0].evidenceFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(finished.markets[0].computation?.status).toBe('computed');
     expect((await listFuturesResearchRuns(pool as AppContext['pool'], 'owner-b'))).toEqual([]);
     expect(createTicket).toHaveBeenCalledTimes(1);
     expect(createTicket).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({
@@ -75,11 +77,13 @@ describe('futures research durable ledger', () => {
     const unchanged = await settled('owner-a', repeat.runId);
     expect(unchanged.status).toBe('unchanged');
     expect(unchanged.markets[0].evidenceFingerprint).toBe(finished.markets[0].evidenceFingerprint);
+    expect(unchanged.markets[0].computation).toMatchObject({ status: 'reused', reusedFromRunId: started.runId });
     expect(createTicket).toHaveBeenCalledTimes(1);
     const changed = await runFuturesResearch(ctx, 'owner-a', 'schedule-a', { ...config, stageGrids: { ...config.stageGrids, Entry: { 'entry.ensembleEntryThresholdPct': [62] } } });
     const newEvidence = await settled('owner-a', changed.runId);
     expect(newEvidence.status).toBe('insufficient_sample');
     expect(newEvidence.markets[0].evidenceFingerprint).not.toBe(finished.markets[0].evidenceFingerprint);
+    expect(newEvidence.markets[0].computation?.status).toBe('computed');
     expect(createTicket).toHaveBeenCalledTimes(2);
     await pool.query('GRANT SELECT ON oshal_trading_futures_research_runs TO oshal_app');
     const enforcing = await database.rolePool('oshal_app').connect();
@@ -92,6 +96,32 @@ describe('futures research durable ledger', () => {
       await identity('owner-a');
       expect((await enforcing.query('SELECT run_id FROM oshal_trading_futures_research_runs')).rows.map((row) => String(row.run_id))).toContain(started.runId);
     } finally { enforcing.release(); }
+  }, 180_000);
+
+  it('never reuses another owner or schedule, and ignores caller-supplied cache fields', async () => {
+    const ctx = { pool, ticketService: { createTicket: vi.fn(async () => ({})) } } as unknown as AppContext;
+    const previous = (await listFuturesResearchRuns(pool as AppContext['pool'], 'owner-a'))[0];
+    for (const [owner, schedule] of [['owner-b', 'schedule-a'], ['owner-a', 'schedule-other']]) {
+      const started = await runFuturesResearch(ctx, owner, schedule, { ...previous.config, previous, generation: 'caller-value' });
+      const finished = await settled(owner, started.runId);
+      expect(finished.markets[0].computation?.status).toBe('computed');
+      expect(finished.markets[0].computation?.reusedFromRunId).toBeUndefined();
+    }
+  }, 180_000);
+
+  it('reuses the latest unchanged receipt repeatedly without another completion ticket', async () => {
+    const createTicket = vi.fn(async () => ({}));
+    const ctx = { pool, ticketService: { createTicket } } as unknown as AppContext;
+    let prior: string | undefined;
+    for (let i = 0; i < 3; i++) {
+      const started = await runFuturesResearch(ctx, 'owner-a', 'schedule-chain', config);
+      const finished = await settled('owner-a', started.runId);
+      expect(finished.markets[0].computation?.status).toBe(i ? 'reused' : 'computed');
+      expect(finished.markets[0].computation?.reusedFromRunId).toBe(prior);
+      expect(finished.status).toBe(i ? 'unchanged' : 'insufficient_sample');
+      prior = started.runId;
+    }
+    expect(createTicket).toHaveBeenCalledTimes(1);
   }, 180_000);
 
   it('records missing-data failure without fabricating an OOS result', async () => {
