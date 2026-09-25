@@ -832,5 +832,29 @@
     "date": "2026-09-24",
     "pr": "main",
     "evidence": "Connector read path records caller identity, connector resource, and credential provenance in audit store, enforcing per-user token scoping and RLS isolation; guarded by connector-read-audit-postgres.spec.ts (5/5 pass)."
+  },
+  {
+    "title": "The watchdog's live books decide cover from the ledger, while the paper book asks the venue (2026-09-21)",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Trading watchdog validates live book protective coverage against broker venues, scopes checks by bleed books, handles per-book deadline budgets, and detects unconfirmed orders; guarded by trading-watchdog-checks.spec.ts (76/76 pass) and trading-watchdog-corroboration.spec.ts (19/19 pass)."
+  },
+  {
+    "title": "Joke-shorts pump deferred work",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Joke-shorts pump coordinates episode delivery notifications, respects channel transports, avoids collision between pump runs, and reports honest media URLs; guarded by video-pump-delivery-notify.spec.ts (22/22 pass) and video-pump.spec.ts (32/32 pass)."
+  },
+  {
+    "title": "Kalshi: market signals and world news as pre-registered strategies",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Kalshi forward test strategy registers contrarian weather signals at zero stake, computes pricing from opposite ask quotes, and executes from local checkout; guarded by kalshi-contrarian-forward.spec.ts (7/7 pass)."
+  },
+  {
+    "title": "Kalshi books and execution like the stock side (paper/real × manual/auto)",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Kalshi trading platform manages paper and live book execution, gates live order submission behind double opt-in controls, calculates bankroll curves, and validates arbitrage bounds; guarded by compose-kalshi-live-gate.spec.ts (4/4 pass), kalshi-report.spec.ts (9/9 pass), kalshi-orders.spec.ts (8/8 pass), and kalshi-arbitrage.spec.ts (10/10 pass)."
   }
 ]
