@@ -640,5 +640,29 @@
     "date": "2026-09-24",
     "pr": "main",
     "evidence": "Inbound SMS webhooks authenticate Twilio signatures, resolve owner channels, enforce channel operation security, and dispatch to caller-scoped bots; guarded by inbound-sms-webhook.spec.ts (12/12 pass), sms-inbound-dispatch.spec.ts (9/9 pass), and twilio-sms-operation-security.spec.ts (10/10 pass)."
+  },
+  {
+    "title": "Complete and cancel nightly backup checks safely",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Diagnostic backup and restore proofs reject partial output, respect deployment lock contention, yield on blocking sessions, and sweep scratch resources; guarded by backup-restore-proof.spec.ts (7/7 pass)."
+  },
+  {
+    "title": "Surface theming — visual spot check across themes",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Core and application surfaces verified across daylight and midnight palettes with readable contrast and painted border geometry; guarded by surface-theme-contrast-browser.spec.ts (21/21 pass) and core-surface-theme-browser.spec.ts (110/110 pass)."
+  },
+  {
+    "title": "Per-app workspace consolidation",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Consolidated per-app workspace layout provides unified header, responsive drawer, contextual sub-navigation, and persistent palette controls; guarded by workspace-navigation-browser.spec.ts (44/44 pass) and workspace-navigation-contextual-browser.spec.ts (30/30 pass)."
+  },
+  {
+    "title": "Chat-channel adapter core",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Chat channel adapter core binds Telegram and external messaging channels, enforces owner identity mapping, tiers notification fallbacks, and registers test lab suites; guarded by chat-channels-telegram.spec.ts (6/6 pass), notify-channel-tier.spec.ts (9/9 pass), and test-lab-channel-registration.spec.ts (4/4 pass)."
   }
 ]
