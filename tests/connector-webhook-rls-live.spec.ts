@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The live half of the machine-write identity fix for the ADR-065 connector webhook ingress. The unit gate (tests/unit/machine-write-identity.spec.ts) proves the ingress STAMPS the synthetic sub; only a real INSERT as a NOBYPASSRLS role against a real enforce-stage policy proves Postgres AGREES. Modelled directly on tests/alert-intake-rls-live.spec.ts, because the reason that spec exists — every stubbed guard stayed green while the write was impossible — applies verbatim here.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Resolve compose-internal DATABASE_URL values through the shared published host port for host-side Playwright runs, so this live proof reaches the same database as the managed test server instead of failing DNS on `oshal-db`.
  */
 
 /**
@@ -44,8 +45,9 @@ import {
 import { PostgresTicketStore, TicketService } from '@/features/ticketing';
 import { wrapPoolWithGuc } from '@/shared/services/database/guc-pool';
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
+import { hostReachableDatabaseUrl } from './helpers/host-database-url';
 
-const DB_URL = process.env.DATABASE_URL ?? '';
+const DB_URL = hostReachableDatabaseUrl(process.env.DATABASE_URL) ?? '';
 
 /**
  * The role the ingress's connection runs as. `oshal_bot` is the K5 least-privilege role
