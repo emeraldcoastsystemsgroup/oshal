@@ -4,9 +4,12 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise real ticket/ledger admission and dispatch fencing on private PostgreSQL; inference and schedule lookup are explicit fixtures.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove cross-run settled-evidence deduplication and frozen forward citations with isolated schedules.
  */
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Pool } from 'pg';
 import type { AppContext } from '@/app/composition-root';
@@ -21,13 +24,15 @@ import { normalizeFuturesResearchConfig, futuresResearchTaskType, runFuturesRese
 import { FUTURES_REVIEW_WORKER, queueFuturesResearchReview, type FuturesQueueContext } from '@/app/trading-futures-research-queue';
 import { bindFuturesResearchWorker } from '@/app/trading-futures-research-workflow';
 import { reviewFuturesResearchRun } from '@/app/trading-futures-research-review';
+import * as forwardLedger from '@/app/trading-futures-prediction-ledger';
 import { DisposablePostgres } from '../helpers/disposable-postgres';
+import { insertForwardReceipt, settleForwardReceipt, replyWithForwardContext } from '../helpers/futures-review-fixtures';
 
 const ports = vi.hoisted(() => ({ registry: vi.fn(), schedule: vi.fn() }));
 vi.mock('@/app/extensions/swarm/swarm-bot-registry', () => ({ getActiveRegistry: ports.registry }));
 vi.mock('@/app/trading-schedule-dispatch', () => ({ getTradingScheduleService: () => ({ getSchedule: ports.schedule }) }));
 const fixture = new DisposablePostgres({ purpose: 'futures-queued-review',
-  migrations: ['001-multi-agent-foundation.sql', '005-conversation-history-and-usage.sql', '159-futures-research-runs.sql', '160-futures-research-review.sql'] });
+  migrations: ['001-multi-agent-foundation.sql', '005-conversation-history-and-usage.sql', '159-futures-research-runs.sql', '160-futures-research-review.sql', '161-futures-predictions.sql'] });
 const owner = 'queued-futures-owner';
 const workflow = { ticketType: 'futures-research', name: 'Futures Research Review', pipeline: 'manifest-worker', workerBot: 'futures-research-worker', autoStart: true };
 const config = normalizeFuturesResearchConfig({ source: 'mock', roots: ['ES'], start: '2021-01-01', endMode: 'fixed', end: '2021-05-31', nightlyReview: true,
@@ -50,7 +55,7 @@ beforeEach(() => {
   process.env.OSHAL_OPERATOR_SUBS = owner;
   registry.registerFromApp('futures-research', workflow);
   ports.registry.mockReturnValue([{ agentId: FUTURES_REVIEW_WORKER, name: 'futures-research-worker', container: 'futures-research-worker' }]);
-  ports.schedule.mockResolvedValue({ id: 'fixture', ownerSub: owner, taskType: futuresResearchTaskType(owner), status: 'active', taskData: { futures: config } });
+  ports.schedule.mockReset().mockResolvedValue({ id: 'fixture', ownerSub: owner, taskType: futuresResearchTaskType(owner), status: 'active', taskData: { futures: config } });
 });
 afterAll(async () => {
   if (oldOperators === undefined) delete process.env.OSHAL_OPERATOR_SUBS; else process.env.OSHAL_OPERATOR_SUBS = oldOperators;
@@ -58,10 +63,10 @@ afterAll(async () => {
   await fixture.stop();
   vi.unstubAllEnvs();
 });
-async function insert(status = 'insufficient_sample'): Promise<string> {
+async function insert(status = 'insufficient_sample', scheduleId: string = randomUUID()): Promise<string> {
   const id = randomUUID();
   await pool.query(`INSERT INTO oshal_trading_futures_research_runs(run_id,owner_sub,schedule_id,status,config,markets,completed_at)
-    VALUES($1,$2,'fixture',$3,$4::jsonb,$5::jsonb,now())`, [id, owner, status, JSON.stringify(config), JSON.stringify(markets)]);
+    VALUES($1,$2,$6,$3,$4::jsonb,$5::jsonb,now())`, [id, owner, status, JSON.stringify(config), JSON.stringify(markets), scheduleId]);
   return id;
 }
 async function read(id: string) {
@@ -82,7 +87,7 @@ describe('Futures queued workflow with real admission and fixture inference', ()
     expect((await read(first.runId)).review.status).toBe('queued');
     const repeated = await runFuturesResearch(ctx as AppContext, owner, 'nightly-fixture', study);
     await vi.waitFor(async () => expect((await read(repeated.runId)).status).toBe('unchanged'), { timeout: 30_000 });
-    expect((await read(repeated.runId)).review).toBeNull();
+    await vi.waitFor(async () => expect((await read(repeated.runId)).review?.status).toBe('skipped'), { timeout: 30_000 });
     expect((await pool.query("SELECT ticket_id FROM tickets WHERE metadata->>'runId'=$1", [repeated.runId])).rows).toEqual([]);
   }, 60_000);
   it('publishes exactly one durable bound ticket under concurrent admission', async () => {
@@ -200,4 +205,81 @@ describe('Futures queued workflow with real admission and fixture inference', ()
     expect(service).toContain('deployed-apps/futures-research/personas/futures-research-worker.yaml');
     expect(service).not.toMatch(/\.claude|\.codex|cli-auth|config-seed/);
   });
+  it('serializes different runs of one schedule before admitting identical evidence', async () => {
+    const scheduleId = randomUUID(), ids = await Promise.all([insert('completed', scheduleId), insert('unchanged', scheduleId)]);
+    const reviews = await Promise.all(ids.map(id => queueFuturesResearchReview(ctx, owner, id)));
+    expect(reviews.map(review => review.status).sort()).toEqual(['queued', 'skipped']);
+    expect(reviews[0].evidenceKey).toBe(reviews[1].evidenceKey);
+    expect((await pool.query("SELECT ticket_id FROM tickets WHERE metadata->>'runId'=ANY($1::text[])", [ids])).rows).toHaveLength(1);
+    const skipped = reviews.find(review => review.status === 'skipped')!;
+    expect(skipped.ticketId).toBeUndefined();
+    expect(skipped.skipReason).toContain('No provider request');
+  });
+  it('reviews newly settled outcomes despite unchanged history, never fresh pending calls alone', async () => {
+    const scheduleId = randomUUID(), firstId = await insert('completed', scheduleId);
+    const first = await queueFuturesResearchReview(ctx, owner, firstId);
+    const receipt = await insertForwardReceipt(pool, { owner });
+    const repeatedId = await insert('unchanged', scheduleId);
+    const skipped = await queueFuturesResearchReview(ctx, owner, repeatedId);
+    expect(skipped.status).toBe('skipped');
+    expect(skipped.evidenceKey).toBe(first.evidenceKey);
+    expect(skipped.forwardContext?.counts.pending).toBe(1);
+    await settleForwardReceipt(pool, receipt, 4);
+    const maturedId = await insert('unchanged', scheduleId);
+    const matured = await queueFuturesResearchReview(ctx, owner, maturedId);
+    expect(matured.status).toBe('queued');
+    expect(matured.evidenceKey).not.toBe(first.evidenceKey);
+    expect(matured.forwardContext?.counts).toMatchObject({ graded: 1, matched: 1, pending: 0 });
+    // The execution binding must use the admission snapshot, not a later ledger read.
+    await insertForwardReceipt(pool, { owner, status: 'graded', ticks: -4 });
+    const ticket = (await ctx.ticketService.getTicket(matured.ticketId!))!;
+    const binding = (await bindFuturesResearchWorker(pool)(ticket, workflow, FUTURES_REVIEW_WORKER))!;
+    const promptContext = JSON.parse(binding.prompt.split('\n').at(-1)!).forwardContext;
+    expect(promptContext).toEqual(matured.forwardContext);
+    await expect(binding.complete(valid)).rejects.toThrow(/frozen forward/);
+    await binding.complete(replyWithForwardContext(binding.prompt));
+    expect((await read(maturedId)).review).toMatchObject({ status: 'completed', forwardContext: matured.forwardContext });
+    const latestId = await insert('unchanged', scheduleId);
+    const latest = await queueFuturesResearchReview(ctx, owner, latestId);
+    const latestTicket = (await ctx.ticketService.getTicket(latest.ticketId!))!;
+    const latestBinding = (await bindFuturesResearchWorker(pool)(latestTicket, workflow, FUTURES_REVIEW_WORKER))!;
+    await latestBinding.complete(replyWithForwardContext(latestBinding.prompt));
+    expect((await queueFuturesResearchReview(ctx, owner, await insert('unchanged', scheduleId))).status).toBe('skipped');
+    // An explicit console request can still review a skipped run; it does not edit a completed review.
+    const reviewer = vi.fn(async (_ctx, _owner, _attempt, prompt: string) => replyWithForwardContext(prompt));
+    const explicit = await reviewFuturesResearchRun(ctx as AppContext, owner, repeatedId, reviewer);
+    expect(explicit.status).toBe('completed');
+    expect(explicit.forwardContext?.counts.graded).toBe(2);
+    expect(reviewer).toHaveBeenCalledTimes(1);
+  });
+  it('settles the forward cycle before admitting a review from the real unchanged-study dispatcher', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'futures-review-order-')), scheduleId = randomUUID();
+    let cycle: ReturnType<typeof vi.spyOn> | undefined;
+    try {
+      mkdirSync(join(directory, 'daily'));
+      const lines = Array.from({ length: 151 }, (_, i) => {
+        const date = new Date(Date.UTC(2021, 0, 1 + i));
+        return `${date.getUTCMonth() + 1}/${date.getUTCDate()}/2021,3700,3701,3699,3700,900`;
+      }).join('\n');
+      for (const contract of ['ESH21', 'ESM21']) writeFileSync(join(directory, 'daily', `${contract}.txt`), lines);
+      const study = { ...config, source: 'kibot-file', dataDir: directory, timeframe: '1Day', ltfTimeframe: '1Day',
+        predictions: { enabled: true, contracts: { ES: 'ESZ26' }, sourceTimeZone: 'UTC' } };
+      const normalized = normalizeFuturesResearchConfig(study);
+      ports.schedule.mockResolvedValue({ id: scheduleId, ownerSub: owner, taskType: futuresResearchTaskType(owner), status: 'active', taskData: { futures: normalized } });
+      const first = await runFuturesResearch(ctx as AppContext, owner, scheduleId, study);
+      await vi.waitFor(async () => expect((await read(first.runId)).review?.ticketId).toBeTruthy(), { timeout: 30_000 });
+      const receipt = await insertForwardReceipt(pool, { owner });
+      // Only the second cycle's market outcome is a fixture; study worker, admission and stores remain real.
+      cycle = vi.spyOn(forwardLedger, 'runFuturesPredictionCycle').mockImplementationOnce(async () => {
+        await settleForwardReceipt(pool, receipt, -4);
+      });
+      const repeated = await runFuturesResearch(ctx as AppContext, owner, scheduleId, study);
+      await vi.waitFor(async () => expect((await read(repeated.runId)).review?.ticketId).toBeTruthy(), { timeout: 30_000 });
+      const row = await read(repeated.runId);
+      expect(row.status).toBe('unchanged');
+      expect(cycle).toHaveBeenCalledTimes(1);
+      expect(row.review.evidenceKey).not.toBe((await read(first.runId)).review.evidenceKey);
+      expect(row.review.forwardContext.receipts).toContainEqual(expect.objectContaining({ predictionId: receipt, status: 'graded' }));
+    } finally { cycle?.mockRestore(); rmSync(directory, { recursive: true, force: true }); }
+  }, 60_000);
 });

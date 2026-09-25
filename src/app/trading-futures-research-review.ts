@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Accountable interactive Futures review with owner-bound admission, durable failure and fenced retries.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Allow explaining insufficient historical samples without treating them as passing evidence.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Allow an interrupted queued review to be explicitly reclaimed after one hour without accepting its late result.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Freeze exact-owner forward context before inference while replaying completed reviews without refreshing their evidence.
  */
 import { randomUUID } from 'node:crypto';
 import type { AppContext } from './composition-root';
@@ -17,6 +18,7 @@ import { executeBotOrInline } from './routes/inline-bot-execution';
 import { resolveUserLlmConnection } from './routes/free-tier-rotation';
 import { ensureFuturesResearchTable, type FuturesResearchRun } from './trading-futures-research-dispatch';
 import { futuresReviewPrompt, parseFuturesReview, type FuturesResearchReview } from './trading-futures-research-review-contract';
+import { captureFuturesForwardContext, futuresReviewEvidenceKey } from './trading-futures-review-forward-context';
 
 const logger = createChildLogger({ module: 'trading-futures-research-review' });
 const botClient = new BotNodeClient(createRegistryEndpointResolver());
@@ -43,9 +45,12 @@ async function claimReview(ctx: AppContext, owner: string, runId: string): Promi
   const row = (await ctx.pool.query(`SELECT * FROM oshal_trading_futures_research_runs WHERE run_id=$1 AND owner_sub=$2`, [runId, owner])).rows[0];
   if (!row) throw Object.assign(new Error('futures_run_not_found'), { statusCode: 404 });
   if (!['completed', 'unchanged', 'insufficient_sample'].includes(row.status) || !row.markets?.length) throw Object.assign(new Error('futures_run_has_no_completed_evidence'), { statusCode: 409 });
-  const review: FuturesResearchReview = { status: 'reviewing', attemptId: randomUUID(), requestedAt: new Date().toISOString() };
+  if (row.review?.status === 'completed') return { run: rowToRun(row), review: row.review };
+  const run = rowToRun(row), forwardContext = await captureFuturesForwardContext(ctx.pool, run);
+  const review: FuturesResearchReview = { status: 'reviewing', attemptId: randomUUID(), requestedAt: new Date().toISOString(),
+    forwardContext, evidenceKey: futuresReviewEvidenceKey(run, forwardContext) };
   const admitted = await ctx.pool.query(`UPDATE oshal_trading_futures_research_runs SET review=$3::jsonb
-    WHERE run_id=$1 AND owner_sub=$2 AND (review IS NULL OR review->>'status'='failed'
+    WHERE run_id=$1 AND owner_sub=$2 AND (review IS NULL OR review->>'status' IN ('failed','skipped')
       OR (review->>'status' IN ('queued','reviewing') AND (review->>'requestedAt')::timestamptz < now()-interval '1 hour')) RETURNING run_id`,
   [runId, owner, JSON.stringify(review)]);
   if (!admitted.rows.length) {
@@ -54,7 +59,7 @@ async function claimReview(ctx: AppContext, owner: string, runId: string): Promi
     if (current?.status === 'completed') return { run: rowToRun(row), review: current };
     throw Object.assign(new Error('futures_review_already_active'), { statusCode: 409 });
   }
-  return { run: rowToRun(row), review };
+  return { run: { ...run, review }, review };
 }
 
 function rowToRun(row: Record<string, any>): FuturesResearchRun {

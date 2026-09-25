@@ -390,7 +390,7 @@ browser acceptance and nightly observation remain unproven; no Futures closure i
 `tests/unit/futures-research-queue-postgres.spec.ts` runs the real study worker, actual
 PostgreSQL ticket and review stores, admission SQL and manifest dispatcher. Schedule lookup,
 active bot registry and inference endpoint are explicit fixtures. The suite proves new-evidence
-admission, no review for unchanged studies, current opt-in/operator checks, exact owner/run/ticket/
+admission, no duplicate review for unchanged historical and settled forward evidence, current opt-in/operator checks, exact owner/run/ticket/
 attempt fencing, publication failures, strict results, completed replay and no unsigned fallback.
 Existing `queued-protected-dispatch.spec.ts` supplies the real signed/protected transport companion.
 Trading tests exercise the actual route and browser-script form, including registered-package
@@ -413,3 +413,19 @@ The store `futures-predictions.spec.ts` drives the actual route with a doubled l
 real browser-script controls/rendering/navigation guards. Installed console/provider/nightly,
 market completeness, matured real forward outcomes, reviewer feedback and paper-book acceptance
 remain outstanding. No performance or backlog-closure claim follows from these tests.
+
+## Futures outcome-informed reviews (2026-09-25)
+
+`futures-review-forward-context-postgres.spec.ts` uses migrations 159–161 in private PostgreSQL
+and its non-superuser RLS role. It exercises actual safe projection SQL, independent bounded
+graded/ungraded samples, cohort counts, JSONB-stable fingerprints, exact owner/root filtering,
+future/inconsistent-grade refusal, strict citations and completed replay. Dated market receipts
+and inference are explicitly synthetic; no production backdating input or live provider is used.
+The raw-file/replay guards above remain the real grading companion. The queued-review suite also
+crosses the owner/schedule advisory lock with simultaneous different runs, proves pending-only
+deduplication and newly settled outcome admission, and completes from the frozen admission snapshot
+after the ledger changes. Trading's actual browser-script tests verify escaped cohort/citation
+display, missing/empty/legacy distinctions, explicit skipped-review spending and unapplied proposals.
+The queue suite's file-backed worker case proves settlement-before-review ordering on an unchanged
+study; its second forward cycle explicitly supplies a fixture grade rather than a real future bar.
+Installed provider-cost, real nightly/matured-outcome and paper acceptance remain unproven.

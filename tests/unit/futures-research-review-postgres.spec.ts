@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove review admission, retries, immutable evidence and FORCE RLS on private PostgreSQL; inference is an explicit fixture.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Allow explanation of insufficient samples without changing their recorded status.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Preserve historical-only review compatibility with explicit missing-forward-schema evidence.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -59,6 +60,7 @@ describe('Futures review real ledger with fixture inference', () => {
     const id = await insert(), reviewer = vi.fn(async () => valid);
     const result = await reviewFuturesResearchRun(ctx, owner, id, reviewer);
     expect(result.status).toBe('completed');
+    expect(result.forwardContext).toMatchObject({ availability: 'schema_missing', receipts: [], available: { graded: 0, other: 0 } });
     expect(await reviewFuturesResearchRun(ctx, owner, id, reviewer)).toEqual(result);
     expect(reviewer).toHaveBeenCalledTimes(1);
     const row = (await listFuturesResearchRuns(ctx.pool, owner)).find(run => run.runId === id)!;
