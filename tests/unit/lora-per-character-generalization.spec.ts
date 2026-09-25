@@ -275,6 +275,39 @@ describe('LoRA box scripts generalize to a newly created character', () => {
     }
   }, RUN_TIMEOUT_MS);
 
+  it('returns the originating review ticket in the final owner-authenticated callback', () => {
+    const work = mkdtempSync(join(tmpdir(), 'lora-review-ticket-'));
+    const r = drive([
+      'import importlib.util, json, sys, os',
+      'spec = importlib.util.spec_from_file_location("loop", sys.argv[1])',
+      'm = importlib.util.module_from_spec(spec)',
+      'spec.loader.exec_module(m)',
+      'm.sh = lambda script, args: 0',
+      'm.scorecard = lambda cfg, version: {"overall": 0.5, "weak_cells": []}',
+      'm.post = lambda controller, secret, owner, payload: print(json.dumps(payload))',
+      'os.environ["SWARM_SERVICE_SECRET"] = "fixture-secret"',
+      'sys.argv = ["overnight-loop.py"] + json.loads(sys.argv[2])',
+      'm.main()',
+    ], [join(EDGE_DIR, 'overnight-loop.py'), JSON.stringify([
+      '--character', MINE.subject,
+      '--trigger', MINE.trigger,
+      '--hero', MINE.hero,
+      '--ident', MINE.ident,
+      '--negative', MINE.negative,
+      '--identity-structure', MINE.identityStructure,
+      '--identity-violation', MINE.identityViolation,
+      '--box-root', work,
+      '--start-version', '1',
+      '--max-hours', '0.0001',
+      '--controller', 'http://controller.test',
+      '--owner-sub-b64', 'owner-a',
+      '--review-ticket-id', 'ticket-123',
+    ])]);
+
+    expect(r.status, `overnight callback driver failed: ${r.stderr}`).toBe(0);
+    expect(lastJson<{ ticket_id: string }>(r.stdout).ticket_id).toBe('ticket-123');
+  }, RUN_TIMEOUT_MS);
+
   it('refuses to curate when no character and no pool were named', () => {
     // The manual curation tool used to default the pool, the hero and the glob to one character.
     // With that gone the only safe default is none: refuse rather than curate somebody else's data.
