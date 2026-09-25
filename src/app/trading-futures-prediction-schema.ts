@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Bootstrap or validate immutable owner-scoped Futures prediction receipts.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Mirror the database-clock reference constraint from migration 161.
  */
 import type { AppContext } from './composition-root';
 import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap, SCHEMA_LOCK_KEYS } from '@/shared/services/database';
@@ -16,6 +17,7 @@ const statements = [
   snapshot JSONB, reason TEXT, outcome JSONB,
   issued_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(), checked_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
   CHECK ((status='withheld') = (snapshot IS NULL)),
+  CHECK (snapshot IS NULL OR (snapshot#>>'{reference,closedAt}')::timestamptz <= issued_at),
   UNIQUE(owner_sub, schedule_id, contract, fingerprint)
 )`,
   `CREATE INDEX IF NOT EXISTS oshal_futures_predictions_owner ON oshal_trading_futures_predictions(owner_sub, issued_at DESC)`,

@@ -3,6 +3,7 @@
 -- SEQ | AUTHOR | DESCRIPTION
 -- -----------------------------------------------------------------------------
 -- 1 | maintainer@emeraldcoastsystemsgroup.com | Preserve owner-scoped forward calls and terminal outcomes independently of historical studies.
+-- 2 | maintainer@emeraldcoastsystemsgroup.com | Reject a reference bucket that closes after actual database issuance.
 CREATE TABLE IF NOT EXISTS oshal_trading_futures_predictions (
   prediction_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), owner_sub TEXT NOT NULL,
   schedule_id TEXT NOT NULL, run_id UUID NOT NULL, root TEXT NOT NULL, contract TEXT NOT NULL,
@@ -10,6 +11,7 @@ CREATE TABLE IF NOT EXISTS oshal_trading_futures_predictions (
   snapshot JSONB, reason TEXT, outcome JSONB,
   issued_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(), checked_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
   CHECK ((status='withheld') = (snapshot IS NULL)),
+  CHECK (snapshot IS NULL OR (snapshot#>>'{reference,closedAt}')::timestamptz <= issued_at),
   UNIQUE(owner_sub, schedule_id, contract, fingerprint)
 );
 

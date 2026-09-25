@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Freeze locked-strategy forward bias and grade only later raw same-contract evidence.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Canonicalize object keys so stored JSONB inputs reproduce fingerprints and reference comparisons.
  */
 import { createHash } from 'node:crypto';
 import { getFuturesRoot, runFuturesBacktest, type BacktestConfig, type FuturesBar, type FuturesReplayObservation } from '@/features/trading';
@@ -47,7 +48,15 @@ export interface FuturesPredictionOutcome {
   signedTicks?: number;
   correct?: boolean | null;
 }
-function hash(value: unknown): string { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, item]) => [key, canonical(item)]));
+  return value;
+}
+/** @description Reproduce an input fingerprint before or after JSONB serialization; array order remains evidence.
+ * @param value - Frozen JSON research evidence. @returns SHA-256 over canonical object-key ordering.
+ */
+export function fingerprintFuturesEvidence(value: unknown): string { return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex'); }
 
 function snapshotFor(config: FuturesResearchConfig, market: FuturesResearchMarket, asOf: number): FuturesPredictionSnapshot {
   const options = config.predictions!;
@@ -86,12 +95,12 @@ export function buildFuturesPredictionDrafts(config: FuturesResearchConfig, mark
       const market = markets.find(candidate => candidate.root === root);
       if (!market) throw new Error('No completed locked study for this root');
       const snapshot = snapshotFor(config, market, asOf);
-      return { root, contract, snapshot, fingerprint: hash(snapshot), status: snapshot.observation.bias ? 'pending' : 'abstained',
+      return { root, contract, snapshot, fingerprint: fingerprintFuturesEvidence(snapshot), status: snapshot.observation.bias ? 'pending' : 'abstained',
         reason: snapshot.observation.bias ? null : 'Locked replay has no directional bias; excluded from accuracy scoring' };
     } catch (error) {
       // Keep local paths and filesystem error details out of user-visible receipts.
       const reason = error instanceof Error && !('code' in error) ? error.message : 'Configured contract archive could not be read';
-      return { root, contract, status: 'withheld', snapshot: null, fingerprint: hash({ root, contract, config: config.predictions, reason }), reason };
+      return { root, contract, status: 'withheld', snapshot: null, fingerprint: fingerprintFuturesEvidence({ root, contract, config: config.predictions, reason }), reason };
     }
   });
 }
@@ -109,7 +118,7 @@ export function gradeFuturesPrediction(snapshot: FuturesPredictionSnapshot, issu
     const bars = readFuturesClosedBars(snapshot.source, snapshot.source.timeframe,
       Math.min(now, target + snapshot.gradingToleranceHours * 3_600_000), snapshot.reference.bar.t);
     const reference = bars.find(row => row.bar.t === snapshot.reference.bar.t);
-    if (!reference || hash(reference) !== hash(snapshot.reference)) throw new Error('Frozen reference bar is missing or revised; outcome is not scored');
+    if (!reference || fingerprintFuturesEvidence(reference) !== fingerprintFuturesEvidence(snapshot.reference)) throw new Error('Frozen reference bar is missing or revised; outcome is not scored');
     const bar = bars.find(row => Date.parse(row.closedAt) >= target && Date.parse(row.closedAt) <= target + snapshot.gradingToleranceHours * 3_600_000);
     if (!bar) return { status: now > target + snapshot.gradingToleranceHours * 3_600_000 ? 'unavailable' : 'pending', reason: 'No completed same-contract bar in the target tolerance window' };
     const priceChange = bar.bar.c - snapshot.reference.bar.c;

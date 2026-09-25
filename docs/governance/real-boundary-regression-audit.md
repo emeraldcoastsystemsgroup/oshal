@@ -404,8 +404,10 @@ provider-cost receipt, real nightly observation or forward prediction/paper acce
 resampler, explicit timezone decoder and actual locked strategy replay; no indicator or grade
 engine is doubled. `futures-prediction-ledger-postgres.spec.ts` uses a private PostgreSQL server,
 migration 161, a non-superuser RLS role and the actual off-loop prediction worker. Schedule
-lookup is a fixture; terminal-grade persistence uses an explicit payload fixture while the
-separate evidence suite proves grading against actual files. These checks cover database-clock
+lookup is a fixture; one terminal-grade persistence case uses an explicit payload fixture.
+Another case loads the actual JSONB snapshot, reproduces its canonical fingerprint, appends
+synthetic later bars and advances only the pure grader's clock before saving its real outcome.
+The separate evidence suite supplies wider raw-file grading cases. These checks cover database-clock
 issuance, repeated-input deduplication, immutable inputs/final outcomes and exact owner scope.
 The store `futures-predictions.spec.ts` drives the actual route with a doubled ledger and executes
 real browser-script controls/rendering/navigation guards. Installed console/provider/nightly,

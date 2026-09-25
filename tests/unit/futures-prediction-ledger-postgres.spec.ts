@@ -4,9 +4,10 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove real worker receipts, database issuance, immutable outcomes and non-superuser owner isolation on private PostgreSQL.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Reproduce persisted JSONB key order before verifying current-setting equivalence.
  */
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, appendFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { Pool } from 'pg';
@@ -15,7 +16,8 @@ import type { AppContext } from '@/app/composition-root';
 import { normalizeFuturesResearchConfig, runFuturesResearch, type FuturesResearchRun } from '@/app/trading-futures-research-dispatch';
 import { ensureFuturesPredictions } from '@/app/trading-futures-prediction-schema';
 import { executeFuturesPredictionsOffLoop } from '@/app/trading-futures-prediction-worker';
-import { listFuturesPredictions, persistFuturesPredictionDrafts, runFuturesPredictionCycle, settleFuturesPrediction } from '@/app/trading-futures-prediction-ledger';
+import { listFuturesPredictions, persistFuturesPredictionDrafts, readFuturesPredictionSnapshot, runFuturesPredictionCycle, settleFuturesPrediction } from '@/app/trading-futures-prediction-ledger';
+import { fingerprintFuturesEvidence, gradeFuturesPrediction } from '@/app/trading-futures-prediction-evidence';
 import { DisposablePostgres } from '../helpers/disposable-postgres';
 
 const ports = vi.hoisted(() => ({ schedule: vi.fn() }));
@@ -81,6 +83,9 @@ describe('actual private PostgreSQL forward ledger and isolated worker', () => {
     }
     expect(await persistFuturesPredictionDrafts(pool, { ...current, ownerSub: 'intruder' }, work.drafts)).toBe(0);
     expect(await listFuturesPredictions(pool, 'intruder')).toEqual([]);
+    const future = structuredClone(work.drafts[0]);
+    future.snapshot!.reference.closedAt = new Date(Date.now() + 3_600_000).toISOString();
+    await expect(persistFuturesPredictionDrafts(pool, current, [future])).rejects.toMatchObject({ code: '23514' });
   });
   it('fences late outcomes and enforces RLS with a non-superuser application role', async () => {
     const current = await run(); authorize(current);
@@ -147,5 +152,35 @@ describe('actual private PostgreSQL forward ledger and isolated worker', () => {
     } finally { await lock.query("SELECT pg_advisory_unlock(hashtext('oshal:futures-prediction-worker'))"); lock.release(); }
     await runFuturesPredictionCycle({ pool } as AppContext, current);
     expect(await ownRows(current)).toHaveLength(1);
+  });
+  it('recognizes unchanged settings after PostgreSQL JSONB reorders their object keys', async () => {
+    const current = await run();
+    const stored = (await pool.query('SELECT config FROM oshal_trading_futures_research_runs WHERE run_id=$1', [current.runId])).rows[0].config;
+    expect(JSON.stringify(stored.predictions)).not.toBe(JSON.stringify(config.predictions));
+    ports.schedule.mockResolvedValue({ ownerSub: owner, taskType: `trading-futures-research:${owner}`, status: 'active', taskData: { futures: stored } });
+    await runFuturesPredictionCycle({ pool } as AppContext, current);
+    expect(await ownRows(current)).toHaveLength(1);
+  });
+  it('reproduces the persisted fingerprint and grades later file evidence after a real JSONB round trip', async () => {
+    const current = await run(); authorize(current);
+    await runFuturesPredictionCycle({ pool } as AppContext, current);
+    const receipt = (await ownRows(current))[0];
+    const snapshot = (await readFuturesPredictionSnapshot(pool, owner, receipt.predictionId))!;
+    expect(await readFuturesPredictionSnapshot(pool, 'intruder', receipt.predictionId)).toBeNull();
+    expect(fingerprintFuturesEvidence(snapshot)).toBe(receipt.fingerprint);
+    const file = join(dir, 'minute', 'ESZ26.txt'), original = readFileSync(file, 'utf8');
+    const end = Math.floor(Date.parse(receipt.issuedAt) / 3_600_000) * 3_600_000;
+    const future = Array.from({ length: 8 }, (_, i) => {
+      const n = Math.floor(i / 2), d = new Date(end + n * 3_600_000 + (i % 2 ? 59 * 60_000 : 0)), c = 5600 + n * 2;
+      return `${d.getUTCMonth()+1}/${d.getUTCDate()}/${d.getUTCFullYear()},${d.getUTCHours()}:${String(d.getUTCMinutes()).padStart(2,'0')},${c-1},${c+2},${c-2},${c},1000`;
+    });
+    try {
+      appendFileSync(file, '\n' + future.join('\n'));
+      // Advance only the pure grader's observation clock over synthetic future file rows, never database issuance.
+      const outcome = gradeFuturesPrediction(snapshot, receipt.issuedAt, end + 4 * 3_600_000);
+      expect(outcome).toMatchObject({ status: 'graded', correct: true });
+      expect(await settleFuturesPrediction(pool, owner, receipt.predictionId, outcome)).toBe(true);
+      expect((await ownRows(current))[0].outcome).toEqual(outcome);
+    } finally { writeFileSync(file, original); }
   });
 });

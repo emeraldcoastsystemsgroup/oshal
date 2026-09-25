@@ -4,7 +4,9 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Persist actual issuance, owner-qualified evidence, idempotent grades and visible independent cycle failures.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Compare persisted console settings structurally so JSONB key ordering cannot silently suppress opted-in cycles.
  */
+import { isDeepStrictEqual } from 'node:util';
 import type { AppContext } from './composition-root';
 import { isOperatorIdentity } from '@/shared/middleware/authz';
 import { getTradingScheduleService } from './trading-schedule-dispatch';
@@ -78,7 +80,7 @@ async function stillOptedIn(run: FuturesResearchRun): Promise<boolean> {
   const current = schedule?.taskData?.futures as FuturesResearchRun['config'] | undefined;
   return schedule?.ownerSub === run.ownerSub && schedule.taskType === futuresResearchTaskType(run.ownerSub)
     && schedule.status === 'active' && current?.predictions?.enabled === true
-    && JSON.stringify(current.predictions) === JSON.stringify(run.config.predictions)
+    && isDeepStrictEqual(current.predictions, run.config.predictions)
     && ['dataDir','source','timeframe','ltfTimeframe','minVolume'].every(key => current[key as keyof typeof current] === run.config[key as keyof typeof current]);
 }
 
