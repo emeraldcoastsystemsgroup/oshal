@@ -4,12 +4,13 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Real-boundary guard for the validation thumbnails the GPU box copies to the controller. Runs the REAL scripts/comfyui-edge/validate-lora.py main() with ComfyUI and CLIP stubbed out, against a real loopback HTTP listener, and inspects the requests the LoRA Studio's ingest mount would actually receive - method, path, query, both guard headers, media type and body bytes. The defect being closed was that a scorecard cell carried only a box-local filename and so had no fetchable image at all, so the assertion has to be on what left the box, not on a helper in isolation. Fails loudly (never skips) when Python or Pillow is missing, since a skipped guard is no guard.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Match the configured-character generator signature, confine validation output to the fixture, and prove thumbnail filenames match the exact scorecard cells.
  */
 
 import { describe, expect, it, beforeAll, afterAll } from 'vitest';
 import { spawn, spawnSync } from 'child_process';
 import { createServer, type Server } from 'http';
-import { mkdtempSync, writeFileSync } from 'fs';
+import { mkdtempSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 
@@ -86,10 +87,10 @@ function driverSource(): string {
     'from PIL import Image',
     'module.OUT = work',
     'module.INP = work',
-    'module.DEST = os.path.join(work, "validate-out")',
     'module.VAL_CELLS = module.VAL_CELLS[:2]',
     'renders = []',
-    'def fake_gen_cell(lora_name, prompt, seed, prefix):',
+    'def fake_gen_cell(config, lora_name, prompt, seed, prefix):',
+    '    assert config.subject == "demo"',
     '    name = prefix + "_00001_.png"',
     '    noise = [Image.effect_noise((1024, 1024), 160) for _ in range(3)]',
     '    Image.merge("RGB", noise).save(os.path.join(work, name))',
@@ -102,7 +103,7 @@ function driverSource(): string {
     'module.Clip = OfflineClip',
     'sys.argv = ["validate-lora.py", "--character", "demo", "--version", "1",',
     '            "--lora-name", "demo.safetensors", "--controller", controller,',
-    '            "--owner-sub-b64", owner]',
+    '            "--owner-sub-b64", owner, "--box-root", work]',
     'module.main()',
     'print(json.dumps({"cells": len(renders),',
     '                  "renderBytes": os.path.getsize(os.path.join(work, renders[0]))}))',
@@ -114,6 +115,7 @@ describe('LoRA validation thumbnails reach the controller', () => {
   let server: Server;
   let origin = '';
   let result: DriverResult;
+  let work: string;
 
   beforeAll(async () => {
     server = createServer((req, res) => {
@@ -140,7 +142,7 @@ describe('LoRA validation thumbnails reach the controller', () => {
       });
     });
 
-    const work = mkdtempSync(join(tmpdir(), 'lora-thumb-guard-'));
+    work = mkdtempSync(join(tmpdir(), 'lora-thumb-guard-'));
     const driver = join(work, 'drive_validate_lora.py');
     writeFileSync(driver, driverSource(), 'utf8');
     // Asynchronous on purpose: spawnSync blocks this process's event loop, so the listener above
@@ -167,6 +169,7 @@ describe('LoRA validation thumbnails reach the controller', () => {
 
   afterAll(async () => {
     if (server) await new Promise<void>((done) => server.close(() => done()));
+    if (work) rmSync(work, { recursive: true, force: true });
   });
 
   /**
@@ -197,6 +200,7 @@ describe('LoRA validation thumbnails reach the controller', () => {
       expect(url.searchParams.get('version')).toBe('1');
       expect(url.searchParams.get('cell')).toBe(String(index));
       expect(url.searchParams.get('filename')).toBe(`val_demo_v1_0${index}_00001_.png`);
+      expect(url.searchParams.get('filename')).toBe(JSON.parse(scorecard[0].body.toString('utf8')).cells[index].image);
     }
   });
 
