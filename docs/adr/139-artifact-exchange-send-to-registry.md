@@ -51,6 +51,19 @@ decision times out; a focused owner-bound HTTP guard proves no action or backgro
 That fallback does not establish live model semantics or the confirmation-gated handoff. Retest
 those after the database and provider path are healthy before closing Stage 4b.
 
+A second owner-signed-in retry after the restore-smoke locks cleared returned an answer, but it
+named LinkedIn, Meta Business and Google Gmail/Drive as supposedly permissioned image destinations.
+Those are connector claims, not entries in the selected image's live artifact-action menu; the
+answer also generated an unnecessary visual. The user had explicitly asked for choices only and
+the browser cleared the selected handle before any action could dispatch, so no file was sent.
+This is another **RED** semantic acceptance. Read-only destination inquiries now take a narrow
+deterministic path through the already owner-filtered, MIME-compatible action list: exact menu
+labels, an explicit warning that compatibility does not grant permission, no model call, no visual,
+no background work and no artifact action. An owner-bound HTTP guard checks that path. Explicit
+handoff requests still use the model proposal and destination confirmation rails. The source fix
+is not an installed acceptance until deployed and checked on the owner session; Stage 4b remains
+open pending that check and a confirmation-gated handoff to a safe destination.
+
 Destination manifests may add `keywords` (up to 16 nonempty strings, each at most 60 characters)
 and `useWhen` (a nonempty single line, at most 300 characters) under each `artifacts.accepts` entry:
 

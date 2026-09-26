@@ -128,7 +128,10 @@ import { detectBuildRequest, fileBuildHandoff } from './jarvis-build-handoff';
 import { visualSpecForDirectRequest } from './jarvis-visuals';
 import { visibleArtifactActions } from './artifact-action-visibility';
 import type { PickerVisibleApps } from './artifact-picker-routes';
-import { resolveJarvisArtifact, buildArtifactRoutingPrompt, resolveJarvisArtifactAnswer, type JarvisArtifactAction } from './jarvis-artifact-routing';
+import {
+  resolveJarvisArtifact, buildArtifactRoutingPrompt, resolveJarvisArtifactAnswer,
+  isArtifactDestinationInquiry, describeArtifactDestinations, type JarvisArtifactAction,
+} from './jarvis-artifact-routing';
 import { assembleJarvisBotMessage, withImageDeliverableContract } from './jarvis-tool-catalog';
 import { buildToolsBlockWithShadow } from './jarvis-selector-shadow';
 import { createJarvisPackageToolRoutes } from './jarvis-package-tool-routes';
@@ -748,12 +751,13 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
       && !providerClarification && !scheduleIntent)
       ? detectBuildRequest(message)
       : null;
+    const artifactDestinationInquiry = !!artifactSelection && isArtifactDestinationInquiry(message);
     // Prepend the auto tool-feed (what Jarvis can actually DO) + the user's recent tasks/results only
     // when a direct model decision is still needed; the deterministic provider path needs neither.
     let botMessage = message;
     let offeredPackageTools: JarvisPackageToolDiscovery[] = [];
     try {
-      if (!providerBoundIntent && !buildRequest) {
+      if (!providerBoundIntent && !buildRequest && !artifactDestinationInquiry) {
         const authorizationActor = getApplicationAuthorizationActor();
         const authorizationTools = ctx.authorizationTool && authorizationActor
           ? await ctx.authorizationTool.discover(authorizationActor, true) : [];
@@ -794,6 +798,18 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
       await persistProtectedResultTask(ctx, sessionId, JARVIS_AGENT_ID, executionId, await resultActor(req));
     } }, async () => {
       try {
+        if (artifactDestinationInquiry && artifactSelection) {
+          const answer = describeArtifactDestinations(artifactSelection, artifactActions);
+          await persistJarvisTurn(ctx, sessionId, 'assistant', answer);
+          await markJarvisSessionTaskStatus(ctx, sessionId, 'active');
+          const j = askJobs.get(jobId);
+          askJobs.set(jobId, {
+            sub, issuer, label, taskId: sessionId, kind: 'chat', status: 'done',
+            createdAt: j?.createdAt ?? Date.now(), finishedAt: Date.now(),
+            result: { answer, routed: [], handoffs: [], dispatched: [] },
+          });
+          return;
+        }
         if (doRecall && recallIntent) {
           // Deterministic transcript read — the count/quotes come straight from the owner's store.
           let answer: string;

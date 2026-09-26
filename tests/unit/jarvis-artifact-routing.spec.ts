@@ -4,6 +4,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Partial-mock the database barrel instead of listing its exports. createPersistenceActivation arrived in the barrel and both in-memory stores call it, so this file's mock threw on construction and the suite was red on main with nobody acting on it.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Correct a stale assumption about the session-ownership gate, which is why the HTTP case answered 404 session_not_found. Its task-store double returned undefined from create() and null from get() forever - enough while ensureSessionTask read `return !created || created.ownerSub === sub`, and not enough after the 2026-09-11 hardening made a store that cannot hand back an owner-bound task a refusal. The case now runs against the REAL InMemoryTaskStore with Postgres configuration withheld, so it exercises the shipped create/read-back contract instead of a fixture's idea of it. No assertion is relaxed; updateStatus is observed with a spy over the real method.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Keep an owner-visible, no-dispatch destination list when the selected-file model decision times out; an imperative selected-file ask must not become a background ticket.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Return registry-derived labels for a read-only destination question without invoking the model or claiming connector permissions.
  */
 import type { AddressInfo } from 'node:net';
 import express, { type Request, type RequestHandler } from 'express';
@@ -31,7 +32,7 @@ import { mintArtifactHandle, registerAppArtifactActions, unregisterAppArtifactAc
 import { visibleArtifactActions } from '@/app/routes/artifact-action-visibility';
 import { buildArtifactToolGuidance } from '@/app/routes/jarvis-tool-catalog';
 import * as toolCatalog from '@/app/routes/jarvis-tool-catalog';
-import { buildArtifactRoutingPrompt, resolveJarvisArtifact, resolveJarvisArtifactAnswer } from '@/app/routes/jarvis-artifact-routing';
+import { buildArtifactRoutingPrompt, resolveJarvisArtifact, resolveJarvisArtifactAnswer, isArtifactDestinationInquiry, describeArtifactDestinations } from '@/app/routes/jarvis-artifact-routing';
 import { createJarvisRoutes, purgeJarvisAskJobsForOwner } from '@/app/routes/jarvis-routes';
 import { createMemoryOnlyTaskStore } from '../helpers/jarvis-session-task-store';
 
@@ -64,6 +65,28 @@ afterEach(() => {
 });
 
 describe('real selected-artifact routing boundary', () => {
+  it('distinguishes read-only destination questions from handoff instructions', () => {
+    for (const inquiry of [
+      'For this selected fictional proof image, what destinations can receive it? Do not send it anywhere yet; list the available choices only.',
+      'Where can I send this image?',
+      'List the available options for this file.',
+    ]) expect(isArtifactDestinationInquiry(inquiry)).toBe(true);
+    for (const command of [
+      'Send this image to Portrait Studio.',
+      'Save it to OSHAL Storage.',
+      'What did you send yesterday?',
+      'List destinations and send it to Portrait Studio.',
+    ]) expect(isArtifactDestinationInquiry(command)).toBe(false);
+  });
+
+  it('describes only compatible visible actions without claiming a permission grant', () => {
+    const selection = resolveJarvisArtifact({ ref: mint().ref }, OWNER)!;
+    expect(describeArtifactDestinations(selection, [{ app: APP, id: 'restyle', label: 'Restyle portrait', mode: 'open' }]))
+      .toContain('Compatible destinations currently shown for chosen.png: Restyle portrait.');
+    expect(describeArtifactDestinations(selection, [])).toContain('No compatible destinations are currently shown');
+    expect(describeArtifactDestinations(selection, [])).toContain('Nothing was sent.');
+  });
+
   it('bounds manifest routing metadata before registration', () => {
     const action = { id: 'restyle', label: 'Portrait', mode: 'open', types: ['image/*'] };
     expect(validateArtifactActionsDeclaration({ accepts: [{ ...action, keywords: ['headshot'], useWhen: 'Restyle a portrait.' }] })).toBeNull();
@@ -204,6 +227,31 @@ describe('authenticated /api/jarvis/ask artifact handoff', () => {
       expect(prompt).toContain('Change the style of the selected portrait.');
       expect(prompt).not.toContain('Private destination');
       expect(prompt).not.toContain('Index document');
+      expect(createTicket).not.toHaveBeenCalled();
+
+      // Asking for choices is a read-only catalog lookup, not an invitation for the model to
+      // invent connector permissions or generate a visual. The owner-visible action menu is the source.
+      const beforeInquiry = executeBot.mock.calls.length;
+      const inquiry = await fetch(base + '/ask', { method: 'POST', headers, body: JSON.stringify({
+        message: 'For this selected fictional proof image, what destinations can receive it? Do not send it anywhere yet; list the available choices only.',
+        sessionId: 'artifact-routing-session', artifact: { ref: handle.ref },
+      }) });
+      expect(inquiry.status).toBe(202);
+      const inquiryJob = (await inquiry.json() as { jobId: string }).jobId;
+      expect(await (await fetch(base + '/ask/result?jobId=' + inquiryJob, { headers: { 'x-test-sub': OTHER } })).json())
+        .toEqual({ status: 'expired' });
+      for (let attempt = 0; attempt < 100; attempt++) {
+        result = await (await fetch(base + '/ask/result?jobId=' + inquiryJob, { headers })).json() as Record<string, unknown>;
+        if (result.status !== 'pending') break;
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      expect(result).toMatchObject({ status: 'done', dispatched: [], routed: [], handoffs: [] });
+      expect(result.answer).toContain('Restyle portrait');
+      expect(result.answer).toContain('not a permission check');
+      expect(result.answer).not.toContain('Private destination');
+      expect(result.artifactAction).toBeUndefined();
+      expect(result.visual).toBeUndefined();
+      expect(executeBot).toHaveBeenCalledTimes(beforeInquiry);
       expect(createTicket).not.toHaveBeenCalled();
 
       // A model cannot widen the selected-file gesture into a background task.

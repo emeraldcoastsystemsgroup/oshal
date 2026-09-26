@@ -1,6 +1,7 @@
 /**
  * CHANGE LOG
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Bind natural-language artifact proposals to the caller's selected handle and current destination registry.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Answer read-only destination inquiries from the visible action registry, not model guesses about connectors or permissions.
  */
 import type { Request } from 'express';
 import { resolveArtifactHandle, type ArtifactMenuAction } from '@/shared/artifact-exchange';
@@ -10,6 +11,24 @@ import { buildArtifactToolGuidance } from './jarvis-tool-catalog';
 
 export interface JarvisArtifactSelection { ref: string; name: string; type: string }
 export interface JarvisArtifactAction { ref: string; app: string; id: string }
+
+/** @description Recognize questions about the menu, never an instruction to perform a handoff. */
+export function isArtifactDestinationInquiry(message: string): boolean {
+  const asksForMenu = /\b(?:destinations?|receiv(?:e|ing)|where\s+can|where\s+could|what\s+can|available\s+(?:apps?|choices?|options?)|options?|choices?)\b/i.test(message);
+  const readOnlyOpening = /^\s*(?:what|which|where|list|show|tell me|give me|are there)\b/i.test(message);
+  const explicitNoSend = /\b(?:do not|don't|without|not yet)\s+(?:\w+\s+){0,2}(?:send|share|dispatch|route|post|publish)\b/i.test(message);
+  const chainedAction = /\b(?:and|then)\s+(?:send|share|dispatch|post|publish|save)\b/i.test(message);
+  return asksForMenu && (readOnlyOpening || explicitNoSend) && !chainedAction;
+}
+
+/** @description Report only MIME-compatible, owner-visible labels; visibility is not a permission grant. */
+export function describeArtifactDestinations(selection: JarvisArtifactSelection, actions: ArtifactMenuAction[]): string {
+  const list = actions.length
+    ? `Compatible destinations currently shown for ${selection.name}: ${actions.map(action => action.label).join('; ')}. `
+      + 'This is a compatibility list, not a permission check; a destination may require its own confirmation. '
+    : `No compatible destinations are currently shown for ${selection.name}. `;
+  return list + 'Nothing was sent.';
+}
 
 /** @description Resolve only a strictly shaped, currently owned selection; never trust client MIME/name. */
 export function resolveJarvisArtifact(raw: unknown, sub: string): JarvisArtifactSelection | null {
