@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — congressional ("political") trade signal: STOCK Act disclosures aggregated per ticker into world_metrics. "Trade the things getting free money from the gov." Gov-contracting award data is a future sibling.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Preserve transaction dates by aggregating per ticker/day and writing dated metric points, so downstream watchlists can show the feed-backed disclosure date instead of the collector's observation time.
  */
 
 /**
@@ -34,9 +35,55 @@ const POLITICAL_UA = process.env.WORLD_POLITICAL_UA
 /** Lookback window (days) over the disclosed TransactionDate (default 90 — covers the ~45d lag + a tail). */
 const POLITICAL_DAYS = Math.max(7, Number(process.env.WORLD_POLITICAL_DAYS) || 90);
 
-interface CongressTrade { Ticker?: string; Transaction?: string; ReportDate?: string; TransactionDate?: string; Amount?: string | number; }
+export interface CongressTrade { Ticker?: string; Transaction?: string; ReportDate?: string; TransactionDate?: string; Amount?: string | number; }
+
+export interface PoliticalTradeObservation {
+  ticker: string;
+  transactionDate: string;
+  buys: number;
+  sells: number;
+  notional: number;
+}
 
 export interface PoliticalTradesResult { tickers: number; trades: number; }
+
+/**
+ * @description Normalize the feed into dated ticker observations before any persistence. The
+ * transaction date is deliberately reduced to a UTC calendar day: the feed's timestamp may carry
+ * a timezone, but the watchlist needs the disclosure day that a human can verify from the source.
+ * @param raw - Untrusted feed rows.
+ * @param now - Clock used for deterministic lookback/future filtering.
+ * @param lookbackDays - Inclusive lookback window in days.
+ * @returns Sorted per-ticker/per-day aggregates and the number of accepted trades.
+ */
+export function aggregatePoliticalTrades(
+  raw: CongressTrade[], now = new Date(), lookbackDays = POLITICAL_DAYS,
+): { observations: PoliticalTradeObservation[]; trades: number } {
+  const cutoff = new Date(now.getTime() - Math.max(1, lookbackDays) * 86_400_000);
+  const agg = new Map<string, PoliticalTradeObservation>();
+  let trades = 0;
+  for (const t of raw) {
+    const sym = String(t?.Ticker || '').toUpperCase().trim();
+    if (!sym || !/^[A-Z][A-Z.]{0,5}$/.test(sym)) continue;
+    const dateStr = t?.TransactionDate || t?.ReportDate;
+    if (!dateStr) continue;
+    const d = new Date(dateStr);
+    if (Number.isNaN(d.getTime()) || d < cutoff || d > now) continue;
+    const tx = String(t?.Transaction || '').toLowerCase();
+    const isBuy = tx.includes('purchase');
+    const isSell = tx.includes('sale') || tx.includes('sold');
+    if (!isBuy && !isSell) continue;
+    const sourceDate = /^\d{4}-\d{2}-\d{2}/.exec(String(dateStr))?.[0] || d.toISOString().slice(0, 10);
+    const transactionDate = `${sourceDate}T00:00:00.000Z`;
+    const key = `${sym}\0${transactionDate}`;
+    const e = agg.get(key) || { ticker: sym, transactionDate, buys: 0, sells: 0, notional: 0 };
+    if (isBuy) e.buys += 1; else e.sells += 1;
+    e.notional += Number(String(t?.Amount ?? '').replace(/[,$]/g, '')) || 0;
+    agg.set(key, e);
+    trades += 1;
+  }
+  return { observations: [...agg.values()].sort((a, b) => a.ticker.localeCompare(b.ticker) || a.transactionDate.localeCompare(b.transactionDate)), trades };
+}
 
 /**
  * Fetch + aggregate recent congressional trades per ticker into world_metrics. Network/parse failures are
@@ -61,39 +108,20 @@ export async function collectPoliticalTrades(svcInput?: ReturnType<typeof create
   } catch (e) { logger.warn({ err: e }, 'congress trades fetch error'); return { tickers: 0, trades: 0 }; }
   if (!Array.isArray(raw)) return { tickers: 0, trades: 0 };
 
-  const cutoff = new Date(now.getTime() - POLITICAL_DAYS * 86_400_000);
-  const agg = new Map<string, { buys: number; sells: number; notional: number }>();
-  let trades = 0;
-  for (const t of raw) {
-    const sym = String(t.Ticker || '').toUpperCase().trim();
-    if (!sym || !/^[A-Z][A-Z.]{0,5}$/.test(sym)) continue;
-    const dateStr = t.TransactionDate || t.ReportDate;
-    if (!dateStr) continue;
-    const d = new Date(dateStr);
-    if (Number.isNaN(d.getTime()) || d < cutoff) continue;
-    const tx = String(t.Transaction || '').toLowerCase();
-    const isBuy = tx.includes('purchase');
-    const isSell = tx.includes('sale') || tx.includes('sold');
-    if (!isBuy && !isSell) continue;
-    const e = agg.get(sym) || { buys: 0, sells: 0, notional: 0 };
-    if (isBuy) e.buys += 1; else e.sells += 1;
-    e.notional += Number(t.Amount) || 0;
-    agg.set(sym, e);
-    trades += 1;
-  }
+  const { observations, trades } = aggregatePoliticalTrades(raw, now);
 
-  for (const [sym, e] of agg) {
-    const entity = `world:ticker:${sym.toLowerCase()}`;
+  for (const e of observations) {
+    const entity = `world:ticker:${e.ticker.toLowerCase()}`;
     const total = e.buys + e.sells;
     try {
-      await svc.writeMetric(entity, 'congress_buys', e.buys, 'quiver-congress');
-      await svc.writeMetric(entity, 'congress_sells', e.sells, 'quiver-congress');
-      await svc.writeMetric(entity, 'congress_net', e.buys - e.sells, 'quiver-congress');
-      if (total) await svc.writeMetric(entity, 'congress_sentiment', Number(((e.buys - e.sells) / total).toFixed(3)), 'quiver-congress');
-      await svc.writeMetric(entity, 'congress_notional', e.notional, 'quiver-congress');
-    } catch (err) { logger.warn({ err, sym }, 'congress metric write failed'); }
+      await svc.writeMetric(entity, 'congress_buys', e.buys, 'quiver-congress', e.transactionDate);
+      await svc.writeMetric(entity, 'congress_sells', e.sells, 'quiver-congress', e.transactionDate);
+      await svc.writeMetric(entity, 'congress_net', e.buys - e.sells, 'quiver-congress', e.transactionDate);
+      if (total) await svc.writeMetric(entity, 'congress_sentiment', Number(((e.buys - e.sells) / total).toFixed(3)), 'quiver-congress', e.transactionDate);
+      await svc.writeMetric(entity, 'congress_notional', e.notional, 'quiver-congress', e.transactionDate);
+    } catch (err) { logger.warn({ err, sym: e.ticker, transactionDate: e.transactionDate }, 'congress metric write failed'); }
   }
 
-  logger.info({ tickers: agg.size, trades }, 'political trades collected');
-  return { tickers: agg.size, trades };
+  logger.info({ tickers: new Set(observations.map((e) => e.ticker)).size, trades, observations: observations.length }, 'political trades collected');
+  return { tickers: new Set(observations.map((e) => e.ticker)).size, trades };
 }

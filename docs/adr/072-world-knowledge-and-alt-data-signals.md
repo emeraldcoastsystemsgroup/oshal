@@ -57,7 +57,9 @@ So the gate can stand aside into earnings and the miner can test event-proximity
 ### 4. Informed-money flow signals (free, per-ticker → `world_metrics`)
 Each isolated, on the 6h depth cycle; the miner auto-discovers them:
 - **Congress** (`political-trades.ts`) — Quiver live congress-trading (keyless): `congress_buys/sells/net/
-  sentiment/notional`. ~45-day disclosure lag (positioning, not catalyst).
+  sentiment/notional`, aggregated by ticker and transaction day. The metric timestamp is the
+  feed-backed transaction/disclosure day, not the collector's observation time, so downstream
+  watchlists can show when the reported trade occurred. ~45-day disclosure lag (positioning, not catalyst).
 - **Insider Form 4** (`insider-trades.ts`) — openinsider purchase+sale pages (direction per row):
   `insider_buys/sells/net/sentiment`. Timeliest informed tell.
 - **Short interest** (`short-interest.ts`) — FINRA RegSHO daily short volume, universe-filtered:

@@ -79,6 +79,9 @@ mine "which feature combinations actually precede a move," walk-forward, on our 
 
 ### 5. Provenance & cost
 - Every metric row carries `source` (feed/bot) — already supported.
+- Congressional `congress_*` rows are written per ticker and transaction day from the Quiver feed;
+  consumers must display that metric timestamp as the source-backed disclosure date and must not
+  synthesize a congressional holding from model text or the collector's current time.
 - News feeds are free (RSS/Yahoo); the only real cost is LLM classification → gate it to novel/high-attention
   items, and store `classifier_version` so we can re-score history when the classifier improves.
 
