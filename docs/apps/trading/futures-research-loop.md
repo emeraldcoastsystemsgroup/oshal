@@ -380,6 +380,25 @@ counts and timestamps, never OHLCV or a bearer. Disposable PostgreSQL and browse
 cover owner isolation and presentation. This slice is source code/local proof until the matching
 core image and package are deployed and the signed-in operator checks it.
 
+A second read-only live probe on 2026-09-25 sampled five-day Schwab `/pricehistory` windows
+through the existing owner connection. Current `/ESZ26` and `/CLX26` each returned closed
+30-minute candles in sampled June, July, August and September 2026 windows. Sampled 2025/2024
+dated contracts and root `/ES`/`/CL` windows returned HTTP 200 with zero candles; an August
+2026 front-month symbol sample was also empty while the then-deferred current contract returned
+bars. These observations justify **current dated-contract catch-up**, not a claim that Schwab can
+reconstruct the front-month/continuous history or an exact retention floor. No bearer or OHLCV
+payload was printed by the probe.
+
+The Trading catch-up control accepts ES, CL or both and two UTC dates, at most 14 dates in the
+past 180 days. Preview reports the currently active dated symbols, exact range, bounded request
+count and a content fingerprint. A separate explicit confirmation must match that preview; a
+changed range or roll refuses before resolving the broker token. Fetching uses at most five days
+per request, validates closed OHLCV, merges only identical page overlaps, gathers both roots
+before touching storage and reuses the private immutable/idempotent transaction. It never imports
+expired-contract substitutes or writes shared `market_bars`. The resulting count/coverage receipt
+is not an optimizer input. Local owner-RLS, idempotence, malformed-range, confirmation and
+partial-provider-failure guards pass; installed signed-in acceptance is still owed.
+
 Remaining: promote the matching core scheduler through a normal committed image deployment; the
 live scheduler is a targeted in-container compiled-file activation and would not survive container
 recreation. A full-swarm image build is deferred because the box's 6 GB Docker cap is below the

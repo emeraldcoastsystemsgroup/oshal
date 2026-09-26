@@ -9,8 +9,10 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Fetch bounded recent dated-contract 30-minute bars, validate complete buckets and immutable replays, and persist under forced owner RLS.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Measure bounded owner-private active-contract session gaps and trailing freshness on true UTC buckets.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Add bounded, explicit current-contract catch-up through the same immutable private store.
  */
 import type { Pool } from 'pg';
+import { createHash } from 'node:crypto';
 import { activeContractAt } from '@/features/trading';
 import { isSessionBucket } from '@/features/trading/services/futures-session-calendar';
 import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap, SCHEMA_LOCK_KEYS } from '@/shared/services/database';
@@ -37,6 +39,8 @@ export interface SchwabCaptureHealth {
   expected: number | null; received: number; missing: number | null; trailingMissing: number | null;
   outsideSession: number; gapCount: number; largestGaps: SchwabCaptureGap[];
 }
+export interface SchwabBackfillPlan { roots: string[]; fromDate: string; throughDate: string;
+  contracts: Array<{ root: string; symbol: string }>; requestCount: number; fingerprint: string }
 
 /** @description Grade the observable forward span, not a historical archive or a trading entitlement.
  * UTC iteration preserves distinct instants through DST; only the session predicate sees NY wall fields.
@@ -123,32 +127,25 @@ export function parseSchwabFuturesCandles(raw: unknown, now = Date.now()): Schwa
   return bars;
 }
 
-async function fetchSeries(token: string, symbol: string, now: number, fetcher: Fetcher): Promise<SchwabCapturedBar[]> {
+async function fetchSeries(token: string, symbol: string, from: number, to: number, now: number, fetcher: Fetcher, allowEmpty = false): Promise<SchwabCapturedBar[]> {
   const qs = new URLSearchParams({ symbol: `/${symbol}`, periodType: 'day', frequencyType: 'minute', frequency: '30',
-    startDate: String(now - LOOKBACK_MS), endDate: String(now), needExtendedHoursData: 'true' });
+    startDate: String(from), endDate: String(to), needExtendedHoursData: 'true' });
   const response = await fetcher(`${(process.env.SCHWAB_MARKETDATA_BASE_URL || BASE).replace(/\/+$/, '')}/pricehistory?${qs}`, {
     method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, signal: AbortSignal.timeout(10_000),
   });
   if (!response.ok) throw new Error(`Schwab Futures history HTTP ${response.status}`);
-  const bars = parseSchwabFuturesCandles(await response.json(), now);
-  if (!bars.length) throw new Error(`${symbol}: no closed Schwab Futures bars`);
+  const bars = parseSchwabFuturesCandles(await response.json(), now).filter(bar => Date.parse(bar.t) >= from && Date.parse(bar.t) < to);
+  if (!bars.length && !allowEmpty) throw new Error(`${symbol}: no closed Schwab Futures bars`);
   return bars;
 }
 
-/** @description Capture current and just-rolled dated contracts using the caller's brokered token; no order path. */
-export async function captureSchwabFuturesBars(pool: Pool, ownerSub: string, token: string, roots: string[] = ['ES','CL'],
-  fetcher: Fetcher = fetch, now = Date.now()): Promise<SchwabCaptureReceipt> {
-  if (!ownerSub || !token) throw new TypeError('Schwab Futures capture needs a connected owner');
-  if (!Array.isArray(roots) || !roots.length || roots.length > 2 || roots.some(root => root !== 'ES' && root !== 'CL')) throw new RangeError('Schwab Futures capture supports ES and CL only');
-  const wanted = new Map<string,string>();
-  for (const root of roots) for (const at of [new Date(now - LOOKBACK_MS), new Date(now)]) {
-    const contract = activeContractAt(root, at);
-    if (!contract) throw new Error(`${root}: dated contract unavailable`);
-    wanted.set(contract.symbol, root);
+function assertRoots(roots: string[]): void {
+  if (!Array.isArray(roots) || !roots.length || roots.length > 2 || roots.some(root => root !== 'ES' && root !== 'CL') || new Set(roots).size !== roots.length) {
+    throw new RangeError('Schwab Futures capture supports ES and CL only');
   }
-  // Fetch and validate EVERY series before touching the database; no partial source set on a bad response.
-  const series: Array<{ root: string; symbol: string; bars: SchwabCapturedBar[] }> = [];
-  for (const [symbol, root] of wanted) series.push({ root, symbol, bars: await fetchSeries(token, symbol, now, fetcher) });
+}
+
+async function persistSchwabSeries(pool: Pool, ownerSub: string, series: Array<{ root: string; symbol: string; bars: SchwabCapturedBar[] }>): Promise<SchwabCaptureReceipt> {
   await ensureSchwabFuturesBars(pool);
   const client = await pool.connect();
   const receipts: SchwabCaptureSeries[] = [];
@@ -176,6 +173,68 @@ export async function captureSchwabFuturesBars(pool: Pool, ownerSub: string, tok
   } catch (error) { await client.query('ROLLBACK'); throw error; }
   finally { client.release(); }
   return { source: 'schwab', ownerScoped: true, timeframe: '30Min', completedAt: new Date().toISOString(), series: receipts };
+}
+
+/** @description Capture current and just-rolled dated contracts using the caller's brokered token; no order path. */
+export async function captureSchwabFuturesBars(pool: Pool, ownerSub: string, token: string, roots: string[] = ['ES','CL'],
+  fetcher: Fetcher = fetch, now = Date.now()): Promise<SchwabCaptureReceipt> {
+  if (!ownerSub || !token) throw new TypeError('Schwab Futures capture needs a connected owner');
+  assertRoots(roots);
+  const wanted = new Map<string,string>();
+  for (const root of roots) for (const at of [new Date(now - LOOKBACK_MS), new Date(now)]) {
+    const contract = activeContractAt(root, at);
+    if (!contract) throw new Error(`${root}: dated contract unavailable`);
+    wanted.set(contract.symbol, root);
+  }
+  // Fetch and validate EVERY series before touching the database; no partial source set on a bad response.
+  const series: Array<{ root: string; symbol: string; bars: SchwabCapturedBar[] }> = [];
+  for (const [symbol, root] of wanted) series.push({ root, symbol, bars: await fetchSeries(token, symbol, now - LOOKBACK_MS, now, now, fetcher) });
+  return persistSchwabSeries(pool, ownerSub, series);
+}
+
+/** @description Preview a finite exact-date current-contract read without a provider call. */
+export function planSchwabCurrentBackfill(roots: string[], fromDate: string, throughDate: string, now = Date.now()): SchwabBackfillPlan {
+  assertRoots(roots);
+  const date = (value: string): number => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new RangeError('Choose ISO UTC dates');
+    const ms = Date.parse(`${value}T00:00:00.000Z`);
+    if (!Number.isFinite(ms) || new Date(ms).toISOString().slice(0,10) !== value) throw new RangeError('Choose real UTC dates');
+    return ms;
+  };
+  const from = date(fromDate), through = date(throughDate), end = Math.min(through + 86_400_000, now);
+  if (through < from || through - from >= 14 * 86_400_000 || from < now - 180 * 86_400_000 || from >= now || through > now) {
+    throw new RangeError('Schwab catch-up must be within the past 180 days and span at most 14 UTC dates');
+  }
+  const contracts = roots.map(root => ({ root, symbol: activeContractAt(root, new Date(now))?.symbol }));
+  if (contracts.some(item => !item.symbol)) throw new Error('Active dated contract unavailable');
+  const requestCount = roots.length * Math.ceil((end - from) / LOOKBACK_MS);
+  const fingerprint = createHash('sha256').update(JSON.stringify({ roots, fromDate, throughDate, contracts })).digest('hex');
+  return { roots, fromDate, throughDate, contracts: contracts as Array<{ root: string; symbol: string }>, requestCount, fingerprint };
+}
+
+/** @description Catch up currently active dated contracts over at most 14 selected UTC days. Never invent a front-month/rolled archive. */
+export async function backfillSchwabCurrentFuturesBars(pool: Pool, ownerSub: string, token: string, roots: string[], fromDate: string, throughDate: string,
+  confirmation: string, fetcher: Fetcher = fetch, now = Date.now()): Promise<SchwabCaptureReceipt> {
+  if (!ownerSub || !token) throw new TypeError('Schwab Futures backfill needs a connected owner');
+  const plan = planSchwabCurrentBackfill(roots, fromDate, throughDate, now);
+  if (!confirmation || confirmation !== plan.fingerprint) throw new RangeError('Preview and confirm the exact Futures catch-up range first');
+  const from = Date.parse(`${fromDate}T00:00:00.000Z`), end = Math.min(Date.parse(`${throughDate}T00:00:00.000Z`) + 86_400_000, now);
+  const series: Array<{ root: string; symbol: string; bars: SchwabCapturedBar[] }> = [];
+  for (const { root, symbol } of plan.contracts) {
+    const gathered = new Map<string,SchwabCapturedBar>();
+    for (let start = from; start < end; start += LOOKBACK_MS) {
+      const chunk = await fetchSeries(token, symbol, start, Math.min(start + LOOKBACK_MS, end), now, fetcher, true);
+      for (const bar of chunk) {
+        const prior = gathered.get(bar.t);
+        if (prior && JSON.stringify(prior) !== JSON.stringify(bar)) throw new Error(`${symbol}: conflicting catch-up pages`);
+        gathered.set(bar.t, bar);
+      }
+    }
+    const bars = [...gathered.values()].sort((a,b) => a.t.localeCompare(b.t));
+    if (!bars.length) throw new Error(`${symbol}: no closed candles in the selected range`);
+    series.push({ root, symbol, bars });
+  }
+  return persistSchwabSeries(pool, ownerSub, series);
 }
 
 /** @description Owner-only count and time coverage; no licensed bars leave the database. */

@@ -7,7 +7,8 @@
  */
 import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { assessSchwabCaptureHealth, captureSchwabFuturesBars, listSchwabFuturesCoverage, listSchwabFuturesHealth, parseSchwabFuturesCandles,
+import { assessSchwabCaptureHealth, backfillSchwabCurrentFuturesBars, captureSchwabFuturesBars, listSchwabFuturesCoverage,
+  listSchwabFuturesHealth, parseSchwabFuturesCandles, planSchwabCurrentBackfill,
   readSchwabFuturesWallBars } from '@/app/trading-futures-schwab-capture';
 import { DisposablePostgres } from '../helpers/disposable-postgres';
 
@@ -35,6 +36,57 @@ function application(sub: string): Pool {
 }
 
 describe('private Schwab Futures forward bars', () => {
+  it('previews only active dated contracts and refuses unbounded or unconfirmed catch-up', async () => {
+    const plan = planSchwabCurrentBackfill(['ES','CL'], '2026-09-23', '2026-09-24', now);
+    expect(plan).toMatchObject({ requestCount: 2, contracts: [{ root: 'ES', symbol: 'ESZ26' }, { root: 'CL', symbol: 'CLX26' }] });
+    expect(plan.fingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(() => planSchwabCurrentBackfill(['ES'], '2026-09-01', '2026-09-15', now)).toThrow(/14 UTC dates/);
+    expect(() => planSchwabCurrentBackfill(['NQ'], '2026-09-23', '2026-09-24', now)).toThrow(/ES and CL/);
+    expect(() => planSchwabCurrentBackfill(['ES'], '2026-09-31', '2026-09-31', now)).toThrow(/real UTC/);
+    const app = application(owner);
+    try {
+      const fetcher = provider();
+      await expect(backfillSchwabCurrentFuturesBars(app, owner, 'test-token', ['ES'], '2026-09-23', '2026-09-24', 'forged', fetcher, now)).rejects.toThrow(/Preview and confirm/);
+      expect(fetcher).not.toHaveBeenCalled();
+    } finally { await app.end(); }
+  });
+
+  it('catches up owner-private current contracts idempotently and leaves no partial source set', async () => {
+    const backfillOwner = 'schwab-backfill-owner';
+    const app = application(backfillOwner);
+    try {
+      const plan = planSchwabCurrentBackfill(['ES','CL'], '2026-09-23', '2026-09-24', now);
+      const backfillCandle = { ...candle, datetime: Date.UTC(2026,8,23,19) };
+      const fetcher = provider({ candles: [backfillCandle] });
+      const first = await backfillSchwabCurrentFuturesBars(app, backfillOwner, 'test-token', ['ES','CL'], plan.fromDate, plan.throughDate, plan.fingerprint, fetcher, now);
+      expect(first.series.map(item => item.inserted)).toEqual([1,1]);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(String(fetcher.mock.calls[0][0])).toContain('startDate=1790121600000');
+      const repeat = await backfillSchwabCurrentFuturesBars(app, backfillOwner, 'test-token', ['ES','CL'], plan.fromDate, plan.throughDate, plan.fingerprint, provider({ candles: [backfillCandle] }), now);
+      expect(repeat.series.map(item => item.inserted)).toEqual([0,0]);
+      const before = (await app.query('SELECT count(*)::int AS n FROM oshal_trading_futures_schwab_bars WHERE owner_sub=$1', [backfillOwner])).rows[0].n;
+      const failed = vi.fn().mockResolvedValueOnce(Response.json({ candles: [{ ...backfillCandle, datetime: Date.UTC(2026,8,23,20) }] }))
+        .mockResolvedValueOnce(Response.json({ candles: [] }));
+      await expect(backfillSchwabCurrentFuturesBars(app, backfillOwner, 'test-token', ['ES','CL'], plan.fromDate, plan.throughDate, plan.fingerprint, failed, now)).rejects.toThrow(/no closed candles/);
+      expect((await app.query('SELECT count(*)::int AS n FROM oshal_trading_futures_schwab_bars WHERE owner_sub=$1', [backfillOwner])).rows[0].n).toBe(before);
+    } finally { await app.end(); }
+  }, 60_000);
+
+  it('splits a 14-date catch-up into bounded five-day provider requests', async () => {
+    const pageOwner = 'schwab-backfill-page-owner', app = application(pageOwner);
+    try {
+      const plan = planSchwabCurrentBackfill(['ES'], '2026-09-10', '2026-09-23', now);
+      expect(plan.requestCount).toBe(3);
+      const fetcher = vi.fn(async (url: string) => {
+        const start = Number(new URL(url).searchParams.get('startDate'));
+        return Response.json({ candles: [{ ...candle, datetime: start + 22 * 60 * 60_000 }] });
+      });
+      const receipt = await backfillSchwabCurrentFuturesBars(app, pageOwner, 'test-token', ['ES'], plan.fromDate,
+        plan.throughDate, plan.fingerprint, fetcher, now);
+      expect(fetcher).toHaveBeenCalledTimes(3);
+      expect(receipt.series[0]).toMatchObject({ received: 3, inserted: 3 });
+    } finally { await app.end(); }
+  }, 60_000);
   it('counts true-UTC session slots, ignores closed weekends and exposes a trailing gap without inventing history', () => {
     const at = (hour: number, minute: number) => new Date(Date.UTC(2026, 8, 24, hour, minute)).toISOString();
     const gap = assessSchwabCaptureHealth('ES', 'ESZ26', [at(14,0), at(15,0), at(15,30)], Date.UTC(2026,8,24,16,4));
@@ -89,7 +141,7 @@ describe('private Schwab Futures forward bars', () => {
         expect(await readSchwabFuturesWallBars(outsider, owner, coverage[0].symbol, '2026-09-24', '2026-09-25')).toEqual([]);
         await expect(captureSchwabFuturesBars(outsider, owner, 'test-token', ['ES'], provider(), now)).rejects.toThrow();
       } finally { await outsider.end(); }
-      expect((await pool.query('SELECT count(*)::int AS n FROM oshal_trading_futures_schwab_bars')).rows[0].n).toBe(2);
+      expect((await pool.query('SELECT count(*)::int AS n FROM oshal_trading_futures_schwab_bars WHERE owner_sub=$1', [owner])).rows[0].n).toBe(2);
     } finally { await app.end(); }
   }, 60_000);
 
