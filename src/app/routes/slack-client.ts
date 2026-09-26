@@ -14,6 +14,8 @@
  * ---------------------------------------------------------------------------
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add the explicit-confirmation Office file-upload primitive over the caller's own Slack user token.
  * ---------------------------------------------------------------------------
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Validate external-upload response shapes and keep the server-only fetch body cast local to its actual parameter type.
+ * ---------------------------------------------------------------------------
  * @module slack-client
  */
 
@@ -22,6 +24,12 @@ import { createChildLogger } from '@/shared/logger';
 const logger = createChildLogger({ module: 'slack-client' });
 const SLACK_API = 'https://slack.com/api';
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+
+function slackObject(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
 
 export interface SlackFileUploadInput {
   channelId: string;
@@ -104,18 +112,18 @@ export async function uploadSlackFile(
     method: 'POST', headers: { ...authHeaders, 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ filename, length: String(content.length) }),
   });
-  const prepared = await request.json().catch(() => ({ ok: false, error: 'bad_json' }));
-  if (!request.ok || !prepared.ok || !prepared.upload_url || !prepared.file_id) {
-    throw new Error(`slack files.getUploadURLExternal failed: ${prepared.error || request.status}`);
+  const prepared = slackObject(await request.json().catch(() => ({ ok: false, error: 'bad_json' })));
+  if (!request.ok || prepared.ok !== true || typeof prepared.upload_url !== 'string' || !prepared.upload_url
+      || typeof prepared.file_id !== 'string' || !prepared.file_id) {
+    throw new Error(`slack files.getUploadURLExternal failed: ${String(prepared.error || request.status)}`);
   }
 
   const uploaded = await fetchImpl(String(prepared.upload_url), {
     method: 'POST',
     headers: { 'Content-Type': mimeType, 'Content-Disposition': `attachment; filename="${filename.replace(/"/g, '')}"` },
     // Node's fetch typings do not accept Uint8Array<ArrayBufferLike> even though the
-    // runtime body contract does; pass the exact bytes through as the already-validated
-    // BodyInit boundary rather than converting or copying the artifact.
-    body: content as unknown as BodyInit,
+    // runtime body contract does; pass the exact bytes through the fetch parameter type.
+    body: content as unknown as NonNullable<Parameters<typeof fetchImpl>[1]>['body'],
   });
   if (!uploaded.ok) throw new Error(`slack file upload failed: ${uploaded.status}`);
 
@@ -127,10 +135,13 @@ export async function uploadSlackFile(
       initial_comment: String(input.initialComment || '').slice(0, 4000) || undefined,
     }),
   });
-  const result = await completed.json().catch(() => ({ ok: false, error: 'bad_json' }));
-  if (!completed.ok || !result.ok) throw new Error(`slack files.completeUploadExternal failed: ${result.error || completed.status}`);
-  const file = Array.isArray(result.files) ? result.files[0] : result.file;
-  return { fileId: String(prepared.file_id), channelId, permalink: file?.permalink ? String(file.permalink) : undefined };
+  const result = slackObject(await completed.json().catch(() => ({ ok: false, error: 'bad_json' })));
+  if (!completed.ok || result.ok !== true) {
+    throw new Error(`slack files.completeUploadExternal failed: ${String(result.error || completed.status)}`);
+  }
+  const file = slackObject(Array.isArray(result.files) ? result.files[0] : result.file);
+  return { fileId: prepared.file_id, channelId,
+    permalink: typeof file.permalink === 'string' && file.permalink ? file.permalink : undefined };
 }
 
 /**

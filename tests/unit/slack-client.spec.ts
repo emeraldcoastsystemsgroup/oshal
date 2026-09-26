@@ -4,6 +4,7 @@
  * CHANGE LOG
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Guard the approval-gated Office adapter's bounded Slack external-upload handshake without contacting Slack.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Refuse malformed provider JSON before continuing the external upload.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -54,5 +55,14 @@ describe('Slack file upload primitive', () => {
       channelId: 'C123', filename: 'review.pptx', mimeType: 'application/octet-stream', content: new Uint8Array([1]),
     }, fetchImpl)).rejects.toThrow('missing_scope');
     expect(calls).toHaveLength(1);
+  });
+
+  it('does not upload bytes when Slack preparation is not an object with string upload fields', async () => {
+    let calls = 0;
+    const fetchImpl = async () => { calls += 1; return response({ ok: true, upload_url: 42, file_id: 'F123' }); };
+    await expect(uploadSlackFile('slack-user-token-fixture', {
+      channelId: 'C123', filename: 'review.pptx', mimeType: 'application/octet-stream', content: new Uint8Array([1]),
+    }, fetchImpl)).rejects.toThrow('files.getUploadURLExternal failed');
+    expect(calls).toBe(1);
   });
 });
