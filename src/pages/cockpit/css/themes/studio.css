@@ -1,0 +1,36 @@
+/* ═══ Studio — Graphite & Mint Workbench ═══ */
+[data-theme="studio"], [data-skin="studio"] {
+  --text-on-accent: #20311f;
+  --bg-primary: #181b1b;
+  --bg-secondary: #202424;
+  --bg-tertiary: #151818;
+  --bg-card: #202424;
+  --bg-card-hover: #2a2e2e;
+  --border-color: #323b37;
+  --border-color-hover: rgba(255, 255, 255, 0.16);
+  --text-primary: #e8eeea;
+  --text-secondary: #d0dad4;
+  --text-muted: #9ba8a2;
+  --accent-primary: #b9dfb2;
+  --accent-primary-hover: #cef2c7;
+  --accent-gradient: linear-gradient(135deg, #323b37 0%, #b9dfb2 100%);
+  --accent-glow: rgba(185, 223, 178, 0.22);
+  --status-success: #4ade80;
+  --status-active: #93c5fd;
+  --status-warning: #fbbf24;
+  --status-error: #fb7185;
+
+  /* Experience Token Aliases */
+  --bg: var(--bg-primary);
+  --surface: var(--bg-card);
+  --surface-2: var(--bg-card-hover);
+  --chrome: var(--bg-tertiary);
+  --ink: var(--text-primary);
+  --muted: var(--text-muted);
+  --line: var(--border-color);
+  --accent: var(--accent-primary);
+  --on-accent: var(--text-on-accent);
+  --soft: #2d3d31;
+}
+
+html[data-theme="studio"], html[data-skin="studio"] { color-scheme: dark; }

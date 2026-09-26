@@ -1,0 +1,45 @@
+/* Additions the live shells need beyond the prototype stylesheets: embedded application
+   frames, status tones, loading and sign-in states, and anchor variants of prototype buttons. */
+.loading-shell{max-width:720px;margin:12vh auto;padding:32px;text-align:center}
+.loading-shell h1{font-size:28px;margin:12px 0 18px}
+.embed-frame{display:block;width:100%;min-height:520px;height:70vh;border:1px solid var(--line);border-radius:14px;background:var(--surface);margin:12px 0}
+.embed-frame.compact{min-height:360px;height:48vh}
+.tone-good{color:var(--status-success,#2f8f5b)}
+.tone-warn{color:var(--status-warning,#b45309)}
+.run-strip .tone-good strong{color:var(--status-success,#2f8f5b)}
+.run-strip .tone-warn strong{color:var(--status-warning,#b45309)}
+.badge.tone-warn{border-color:currentColor}
+.context-summary{margin:12px 0}
+.context-summary .run-strip{flex-wrap:wrap;gap:8px;margin:10px 0}
+.context-summary .run-strip span{padding:6px 10px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);font-size:12px}
+.context-summary .artifact-steps{margin:8px 0 0;padding-left:18px;font-size:13px}
+a.mini-app,a.rail-button,a.nav-button,a.action,a.quiet-link{text-decoration:none;color:inherit}
+a.mini-app{display:flex;align-items:center;gap:10px}
+a.action.primary,a.action{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+.study-caption select.layout-picker{max-width:190px}
+.study-caption a{color:inherit;text-decoration:none;opacity:.8}
+.study-caption a:hover{opacity:1;text-decoration:underline}
+.running-row{width:100%;text-align:left;background:none;border:0;color:inherit;font:inherit;cursor:pointer}
+.provenance-facts code{font-size:12px}
+.person-row .avatar.active{box-shadow:0 0 0 2px var(--accent)}
+.experience-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(280px,100%),1fr));gap:16px;margin-top:22px}
+.experience-card{display:flex;flex-direction:column;gap:12px;padding:0 0 16px;border:1px solid var(--line);border-radius:18px;background:var(--surface);color:inherit;text-decoration:none;overflow:hidden;transition:transform .15s,border-color .15s}
+.experience-card:hover{transform:translateY(-3px);border-color:var(--accent)}
+.experience-card .swatch{height:120px;display:grid;grid-template-columns:1fr 2fr 1fr;gap:6px;padding:12px;background:var(--swatch-bg,#eee)}
+.experience-card .swatch span{border-radius:8px;background:var(--swatch-surface,#fff);border:1px solid var(--swatch-line,#ddd)}
+.experience-card .swatch span:nth-child(2){background:var(--swatch-surface,#fff);position:relative}
+.experience-card .swatch span:nth-child(2)::after{content:"";position:absolute;left:10%;right:10%;bottom:14px;height:10px;border-radius:6px;background:var(--swatch-accent,#888)}
+.experience-card .swatch span:nth-child(3){background:var(--swatch-accent,#888);opacity:.55}
+.experience-card h3{margin:0 16px;font-size:20px}
+.experience-card p{margin:0 16px;color:var(--muted);font-size:13px;line-height:1.5}
+.experience-card .card-meta{margin:auto 16px 0;display:flex;justify-content:space-between;font-size:11px;color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
+.experience-card.current{outline:2px solid var(--accent)}
+.portal-status{display:flex;flex-wrap:wrap;gap:12px 22px;margin:8px 0 26px;font-size:13px;color:var(--muted)}
+.portal-status strong{color:var(--ink)}
+@media (max-width:760px){.embed-frame{min-height:380px;height:60vh}.study-caption select.layout-picker{max-width:130px}}
+.finance-table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13px}
+.finance-table th{text-align:left;font-weight:600;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:6px 0;border-bottom:1px solid var(--line)}
+.finance-table td{padding:7px 0;border-bottom:1px solid var(--line)}
+.finance-table td:last-child,.finance-table th:last-child{text-align:right}
+.preview-bar .preview-selects label select{max-width:210px}
+.home-sidebar .nav-link{display:flex;align-items:center;gap:10px;width:100%;text-align:left}

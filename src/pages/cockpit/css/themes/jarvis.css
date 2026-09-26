@@ -1,0 +1,36 @@
+/* ═══ Jarvis — Parchment & Ember Executive Briefing ═══ */
+[data-theme="jarvis"], [data-skin="jarvis"] {
+  --text-on-accent: #fffaf5;
+  --bg-primary: #f8f5ee;
+  --bg-secondary: #f1ece2;
+  --bg-tertiary: #f5f1e8;
+  --bg-card: #fffdf8;
+  --bg-card-hover: #f1ece2;
+  --border-color: #e5dfd3;
+  --border-color-hover: #d2c8b8;
+  --text-primary: #37332c;
+  --text-secondary: #575146;
+  --text-muted: #7c766b;
+  --accent-primary: #b94e2d;
+  --accent-primary-hover: #d35f3b;
+  --accent-gradient: linear-gradient(135deg, #b94e2d 0%, #e07a5f 100%);
+  --accent-glow: rgba(185, 78, 45, 0.22);
+  --status-success: #15803d;
+  --status-active: #2563eb;
+  --status-warning: #b45309;
+  --status-error: #b91c1c;
+
+  /* Experience Token Aliases */
+  --bg: var(--bg-primary);
+  --surface: var(--bg-card);
+  --surface-2: var(--bg-card-hover);
+  --chrome: var(--bg-tertiary);
+  --ink: var(--text-primary);
+  --muted: var(--text-muted);
+  --line: var(--border-color);
+  --accent: var(--accent-primary);
+  --on-accent: var(--text-on-accent);
+  --soft: #f6e6d9;
+}
+
+html[data-theme="jarvis"], html[data-skin="jarvis"] { color-scheme: light; }

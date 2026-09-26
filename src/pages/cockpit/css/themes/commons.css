@@ -1,0 +1,36 @@
+/* ═══ Commons — Aubergine & Lilac Team Rooms ═══ */
+[data-theme="commons"], [data-skin="commons"] {
+  --text-on-accent: #ffffff;
+  --bg-primary: #f6f4f9;
+  --bg-secondary: #f2eef7;
+  --bg-tertiary: #ede7f2;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f2eef7;
+  --border-color: #e5deeb;
+  --border-color-hover: #cfc2da;
+  --text-primary: #322d40;
+  --text-secondary: #534c64;
+  --text-muted: #81748e;
+  --accent-primary: #725191;
+  --accent-primary-hover: #8c66b0;
+  --accent-gradient: linear-gradient(135deg, #725191 0%, #a481c8 100%);
+  --accent-glow: rgba(114, 81, 145, 0.22);
+  --status-success: #15803d;
+  --status-active: #725191;
+  --status-warning: #b45309;
+  --status-error: #b91c1c;
+
+  /* Experience Token Aliases */
+  --bg: var(--bg-primary);
+  --surface: var(--bg-card);
+  --surface-2: var(--bg-card-hover);
+  --chrome: var(--bg-tertiary);
+  --ink: var(--text-primary);
+  --muted: var(--text-muted);
+  --line: var(--border-color);
+  --accent: var(--accent-primary);
+  --on-accent: var(--text-on-accent);
+  --soft: #efe5f8;
+}
+
+html[data-theme="commons"], html[data-skin="commons"] { color-scheme: light; }

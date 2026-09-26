@@ -1,0 +1,36 @@
+/* ═══ Orbit — Arctic & Cobalt Hub ═══ */
+[data-theme="orbit"], [data-skin="orbit"] {
+  --text-on-accent: #ffffff;
+  --bg-primary: #f1f5fb;
+  --bg-secondary: #edf2fa;
+  --bg-tertiary: #f8faff;
+  --bg-card: #ffffff;
+  --bg-card-hover: #edf2fa;
+  --border-color: #dce4ef;
+  --border-color-hover: #b9cadf;
+  --text-primary: #213453;
+  --text-secondary: #435b80;
+  --text-muted: #6d7f9b;
+  --accent-primary: #3568d4;
+  --accent-primary-hover: #4e80eb;
+  --accent-gradient: linear-gradient(135deg, #3568d4 0%, #6894f0 100%);
+  --accent-glow: rgba(53, 104, 212, 0.22);
+  --status-success: #15803d;
+  --status-active: #3568d4;
+  --status-warning: #b45309;
+  --status-error: #b91c1c;
+
+  /* Experience Token Aliases */
+  --bg: var(--bg-primary);
+  --surface: var(--bg-card);
+  --surface-2: var(--bg-card-hover);
+  --chrome: var(--bg-tertiary);
+  --ink: var(--text-primary);
+  --muted: var(--text-muted);
+  --line: var(--border-color);
+  --accent: var(--accent-primary);
+  --on-accent: var(--text-on-accent);
+  --soft: #e7efff;
+}
+
+html[data-theme="orbit"], html[data-skin="orbit"] { color-scheme: light; }

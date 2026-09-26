@@ -1,0 +1,38 @@
+/* ═══ Family / Cozy — Warm Sage Household ═══ */
+[data-theme="family"], [data-skin="family"],
+[data-theme="cozy"], [data-skin="cozy"] {
+  --text-on-accent: #ffffff;
+  --bg-primary: #f6f5f0;
+  --bg-secondary: #e9eee1;
+  --bg-tertiary: #fffefa;
+  --bg-card: #fffefa;
+  --bg-card-hover: #e9eee1;
+  --border-color: #dce1d6;
+  --border-color-hover: #c4cdc0;
+  --text-primary: #283f38;
+  --text-secondary: #435e54;
+  --text-muted: #64756c;
+  --accent-primary: #3e6854;
+  --accent-primary-hover: #508069;
+  --accent-gradient: linear-gradient(135deg, #3e6854 0%, #689682 100%);
+  --accent-glow: rgba(62, 104, 84, 0.22);
+  --status-success: #15803d;
+  --status-active: #3e6854;
+  --status-warning: #b45309;
+  --status-error: #b91c1c;
+
+  /* Experience Token Aliases */
+  --bg: var(--bg-primary);
+  --surface: var(--bg-card);
+  --surface-2: var(--bg-card-hover);
+  --chrome: var(--bg-tertiary);
+  --ink: var(--text-primary);
+  --muted: var(--text-muted);
+  --line: var(--border-color);
+  --accent: var(--accent-primary);
+  --on-accent: var(--text-on-accent);
+  --soft: #e9eee1;
+}
+
+html[data-theme="family"], html[data-skin="family"],
+html[data-theme="cozy"], html[data-skin="cozy"] { color-scheme: light; }

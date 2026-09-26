@@ -27,6 +27,11 @@ The guiding model is:
     package's `SCHEMA.md` is produced (`scripts/generate-schema-docs.js`), plus
     [data-model/explorer.md](./data-model/explorer.md) — the live operator surface at
     `/data-model` (tables, relationships, shared objects, app integrations, store inventories)
+- [experience-shells.md](./experience-shells.md)
+  - as-built notes for the ADR-164 experience layouts (Studio, Jarvis, Orbit, Commons, the Home,
+    Little Monsters and Business homebases, the central assistant): the routes, the caller-scoped
+    contracts each screen reads, what is deliberately absent, device-local preferences and the
+    registered verification
 - [global-search-deep-link-contract.md](./global-search-deep-link-contract.md)
   - the per-source deep-link contract for `/api/search` (which URL each result kind opens, which kinds
     declare no surface and why), the adapter-owned isolation rules, and the measured before/after

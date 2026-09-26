@@ -41,6 +41,8 @@
   var SUPPORTED = [
     'midnight', 'daylight', 'ocean', 'sakura', 'forest', 'gray',
     'black', 'light-blue', 'aurora', 'graphite', 'amber', 'workspace',
+    'studio', 'jarvis', 'orbit', 'commons', 'nexus', 'family', 'classroom', 'company',
+    'cozy', 'playful', 'professional',
   ];
   var FALLBACK = 'midnight';
   var bootstrapScript = document.currentScript;

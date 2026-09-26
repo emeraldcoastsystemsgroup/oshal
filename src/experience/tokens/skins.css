@@ -1,0 +1,522 @@
+/**
+ * @file Experience Skin Palettes
+ * @description Color, surface, and brand token definitions for all 20 supported styles:
+ * 8 Experience Skins + 12 Core Cockpit Themes.
+ * Fully decoupled and non-impacting on existing Cockpit layouts.
+ */
+
+/* ============================================================================
+   EXPERIENCE SKINS (8 Skins)
+   ============================================================================ */
+
+/* 1. Studio: Graphite & Mint Workbench */
+body[data-skin="studio"], [data-layout][data-skin="studio"], .experience[data-skin="studio"], [data-skin="studio"], body[data-theme="studio"], [data-theme="studio"] {
+  --bg: #181b1b;
+  --surface: #202424;
+  --surface-2: #2a2e2e;
+  --chrome: #151818;
+  --ink: #e8eeea;
+  --muted: #9ba8a2;
+  --line: #323b37;
+  --accent: #b9dfb2;
+  --on-accent: #20311f;
+  --soft: #2d3d31;
+  --paper: #202424;
+  --on: #20311f;
+  --feature: #243026;
+  --teal: #b9dfb2;
+  --gold: #d8c39d;
+  --radius-custom: 10px;
+  --radius: 10px;
+  --theme-brand: "Studio";
+  color-scheme: dark;
+}
+
+/* 2. Jarvis: Parchment & Ember Briefing */
+body[data-skin="jarvis"], [data-layout][data-skin="jarvis"], .experience[data-skin="jarvis"], [data-skin="jarvis"], body[data-theme="jarvis"], [data-theme="jarvis"] {
+  --bg: #f8f5ee;
+  --surface: #fffdf8;
+  --surface-2: #f1ece2;
+  --chrome: #f5f1e8;
+  --ink: #37332c;
+  --muted: #7c766b;
+  --line: #e5dfd3;
+  --accent: #b94e2d;
+  --on-accent: #fffaf5;
+  --soft: #f6e6d9;
+  --paper: #fffdf8;
+  --on: #fffaf5;
+  --feature: #f6e6d9;
+  --teal: #b94e2d;
+  --gold: #d49547;
+  --radius-custom: 16px;
+  --radius: 16px;
+  --theme-brand: "Jarvis";
+  color-scheme: light;
+}
+
+/* 3. Orbit: Arctic & Cobalt Hub */
+body[data-skin="orbit"], [data-layout][data-skin="orbit"], .experience[data-skin="orbit"], [data-skin="orbit"], body[data-theme="orbit"], [data-theme="orbit"] {
+  --bg: #f1f5fb;
+  --surface: #ffffff;
+  --surface-2: #edf2fa;
+  --chrome: #f8faff;
+  --ink: #213453;
+  --muted: #6d7f9b;
+  --line: #dce4ef;
+  --accent: #3568d4;
+  --on-accent: #ffffff;
+  --soft: #e7efff;
+  --paper: #ffffff;
+  --on: #ffffff;
+  --feature: #e7efff;
+  --teal: #3568d4;
+  --gold: #e2b765;
+  --radius-custom: 14px;
+  --radius: 14px;
+  --theme-brand: "Orbit";
+  color-scheme: light;
+}
+
+/* 4. Commons: Aubergine & Lilac Team Rooms */
+body[data-skin="commons"], [data-layout][data-skin="commons"], .experience[data-skin="commons"], [data-skin="commons"], body[data-theme="commons"], [data-theme="commons"] {
+  --bg: #f6f4f9;
+  --surface: #ffffff;
+  --surface-2: #f2eef7;
+  --chrome: #ede7f2;
+  --ink: #322d40;
+  --muted: #81748e;
+  --line: #e5deeb;
+  --accent: #725191;
+  --on-accent: #ffffff;
+  --soft: #efe5f8;
+  --paper: #ffffff;
+  --on: #ffffff;
+  --feature: #efe5f8;
+  --teal: #725191;
+  --gold: #d5b583;
+  --radius-custom: 14px;
+  --radius: 14px;
+  --theme-brand: "Commons";
+  color-scheme: light;
+}
+
+/* 5. Nexus: Luminous Dark Teal & Cyan Assistant */
+body[data-skin="nexus"], [data-layout][data-skin="nexus"], .experience[data-skin="nexus"], [data-skin="nexus"], body[data-theme="nexus"], [data-theme="nexus"] {
+  --bg: #080f14;
+  --surface: #0e1c25;
+  --surface-2: #12232d;
+  --chrome: #091217;
+  --ink: #e6eded;
+  --muted: #90a4ae;
+  --line: #21343e;
+  --accent: #9bdfd0;
+  --on-accent: #10242b;
+  --soft: #18343a;
+  --paper: #0e1c25;
+  --on: #10242b;
+  --feature: #18343a;
+  --teal: #9bdfd0;
+  --gold: #dfbf90;
+  --radius-custom: 16px;
+  --radius: 16px;
+  --theme-brand: "Nexus";
+  color-scheme: dark;
+}
+
+/* 6. Family Homebase: Cozy Sage */
+body[data-skin="family"], [data-layout][data-skin="family"], .experience[data-skin="family"], [data-skin="family"],
+body[data-skin="cozy"], [data-layout][data-skin="cozy"], .experience[data-skin="cozy"], [data-skin="cozy"],
+body[data-theme="cozy"], [data-theme="cozy"] {
+  --bg: #f6f5f0;
+  --surface: #fffefa;
+  --surface-2: #e9eee1;
+  --chrome: #fffefa;
+  --ink: #283f38;
+  --muted: #64756c;
+  --line: #dce1d6;
+  --accent: #3e6854;
+  --on-accent: #ffffff;
+  --soft: #e9eee1;
+  --paper: #fffefa;
+  --on: #ffffff;
+  --feature: #e8eddd;
+  --teal: #3e6854;
+  --gold: #d4b07b;
+  --radius-custom: 20px;
+  --radius: 20px;
+  --theme-brand: "Family Homebase";
+  color-scheme: light;
+}
+
+/* 7. Little Monsters Classroom: Playful Violet & Gold */
+body[data-skin="classroom"], [data-layout][data-skin="classroom"], .experience[data-skin="classroom"], [data-skin="classroom"],
+body[data-skin="playful"], [data-layout][data-skin="playful"], .experience[data-skin="playful"], [data-skin="playful"],
+body[data-theme="playful"], [data-theme="playful"] {
+  --bg: #f7f3fc;
+  --surface: #fffcff;
+  --surface-2: #f0e6fa;
+  --chrome: #fffcff;
+  --ink: #382c50;
+  --muted: #756684;
+  --line: #e5daed;
+  --accent: #8952a5;
+  --on-accent: #ffffff;
+  --soft: #f0e6fa;
+  --paper: #fffcff;
+  --on: #ffffff;
+  --feature: #eee0f5;
+  --teal: #8952a5;
+  --gold: #f2c94c;
+  --radius-custom: 24px;
+  --radius: 24px;
+  --theme-brand: "Classroom";
+  color-scheme: light;
+}
+
+/* 8. Company Swarm: Professional Slate & Teal */
+body[data-skin="company"], [data-layout][data-skin="company"], .experience[data-skin="company"], [data-skin="company"],
+body[data-skin="professional"], [data-layout][data-skin="professional"], .experience[data-skin="professional"], [data-skin="professional"],
+body[data-theme="company"], [data-theme="company"], body[data-theme="professional"], [data-theme="professional"] {
+  --bg: #f3f5f7;
+  --surface: #ffffff;
+  --surface-2: #e5f1f1;
+  --chrome: #ffffff;
+  --ink: #182d3e;
+  --muted: #637584;
+  --line: #dce3e9;
+  --accent: #256c78;
+  --on-accent: #ffffff;
+  --soft: #e5f1f1;
+  --paper: #ffffff;
+  --on: #ffffff;
+  --feature: #173b4a;
+  --teal: #256c78;
+  --gold: #d4ac73;
+  --radius-custom: 12px;
+  --radius: 12px;
+  --theme-brand: "Company Swarm";
+  color-scheme: light;
+}
+
+/* ============================================================================
+   CANONICAL COCKPIT CORE THEMES (12 Themes)
+   ============================================================================ */
+
+/* 9. Workspace: Neutral Slate Light Default */
+body[data-skin="workspace"], [data-layout][data-skin="workspace"], .experience[data-skin="workspace"], [data-skin="workspace"], body[data-theme="workspace"], [data-theme="workspace"] {
+  --bg: #f8fafc;
+  --surface: #ffffff;
+  --surface-2: #f1f5f9;
+  --chrome: #ffffff;
+  --ink: #0f172a;
+  --muted: #64748b;
+  --line: #e2e8f0;
+  --accent: #2563eb;
+  --on-accent: #ffffff;
+  --soft: #eff6ff;
+  --paper: #ffffff;
+  --on: #ffffff;
+  --feature: #eff6ff;
+  --teal: #2563eb;
+  --gold: #d97706;
+  --radius: 12px;
+  --theme-brand: "Workspace";
+  color-scheme: light;
+}
+
+/* 10. Midnight: Deep Navy / Dark Default */
+body[data-skin="midnight"], [data-layout][data-skin="midnight"], .experience[data-skin="midnight"], [data-skin="midnight"], body[data-theme="midnight"], [data-theme="midnight"] {
+  --bg: #0b1120;
+  --surface: #131d36;
+  --surface-2: #1e293b;
+  --chrome: #0f172a;
+  --ink: #f8fafc;
+  --muted: #94a3b8;
+  --line: #1e293b;
+  --accent: #38bdf8;
+  --on-accent: #0f172a;
+  --soft: #172554;
+  --paper: #131d36;
+  --on: #0f172a;
+  --feature: #172554;
+  --teal: #38bdf8;
+  --gold: #f59e0b;
+  --radius: 12px;
+  --theme-brand: "Midnight";
+  color-scheme: dark;
+}
+
+/* 11. Daylight: High Contrast Daylight */
+body[data-skin="daylight"], [data-layout][data-skin="daylight"], .experience[data-skin="daylight"], [data-skin="daylight"], body[data-theme="daylight"], [data-theme="daylight"] {
+  --bg: #ffffff;
+  --surface: #f8fafc;
+  --surface-2: #f1f5f9;
+  --chrome: #ffffff;
+  --ink: #0f172a;
+  --muted: #64748b;
+  --line: #e2e8f0;
+  --accent: #0284c7;
+  --on-accent: #ffffff;
+  --soft: #f0f9ff;
+  --paper: #ffffff;
+  --on: #ffffff;
+  --feature: #f0f9ff;
+  --teal: #0284c7;
+  --gold: #eab308;
+  --radius: 10px;
+  --theme-brand: "Daylight";
+  color-scheme: light;
+}
+
+/* 12. Ocean: Deep Marine Blue */
+body[data-skin="ocean"], [data-layout][data-skin="ocean"], .experience[data-skin="ocean"], [data-skin="ocean"], body[data-theme="ocean"], [data-theme="ocean"] {
+  --bg: #0a192f;
+  --surface: #112240;
+  --surface-2: #1b3056;
+  --chrome: #0d1e38;
+  --ink: #ccd6f6;
+  --muted: #8892b0;
+  --line: #233554;
+  --accent: #64ffda;
+  --on-accent: #0a192f;
+  --soft: #123048;
+  --paper: #112240;
+  --on: #0a192f;
+  --feature: #123048;
+  --teal: #64ffda;
+  --gold: #f3c969;
+  --radius: 14px;
+  --theme-brand: "Ocean";
+  color-scheme: dark;
+}
+
+/* 13. Sakura: Soft Rose / Cherry Blossom */
+body[data-skin="sakura"], [data-layout][data-skin="sakura"], .experience[data-skin="sakura"], [data-skin="sakura"], body[data-theme="sakura"], [data-theme="sakura"] {
+  --bg: #fff5f5;
+  --surface: #ffffff;
+  --surface-2: #fed7d7;
+  --chrome: #fffafa;
+  --ink: #742a2a;
+  --muted: #9b2c2c;
+  --line: #fed7d7;
+  --accent: #e53e3e;
+  --on-accent: #ffffff;
+  --soft: #ffe3e3;
+  --paper: #ffffff;
+  --on: #ffffff;
+  --feature: #ffe3e3;
+  --teal: #e53e3e;
+  --gold: #dd6b20;
+  --radius: 18px;
+  --theme-brand: "Sakura";
+  color-scheme: light;
+}
+
+/* 14. Forest: Emerald Pine */
+body[data-skin="forest"], [data-layout][data-skin="forest"], .experience[data-skin="forest"], [data-skin="forest"], body[data-theme="forest"], [data-theme="forest"] {
+  --bg: #0d1f12;
+  --surface: #16301d;
+  --surface-2: #1e3f28;
+  --chrome: #102416;
+  --ink: #e2f0d9;
+  --muted: #95af8b;
+  --line: #254d2f;
+  --accent: #48bb78;
+  --on-accent: #0d1f12;
+  --soft: #1c3b24;
+  --paper: #16301d;
+  --on: #0d1f12;
+  --feature: #1c3b24;
+  --teal: #48bb78;
+  --gold: #d69e2e;
+  --radius: 14px;
+  --theme-brand: "Forest";
+  color-scheme: dark;
+}
+
+/* 15. Gray: Monochrome Neutral */
+body[data-skin="gray"], [data-layout][data-skin="gray"], .experience[data-skin="gray"], [data-skin="gray"], body[data-theme="gray"], [data-theme="gray"] {
+  --bg: #f7fafc;
+  --surface: #ffffff;
+  --surface-2: #edf2f7;
+  --chrome: #ffffff;
+  --ink: #2d3748;
+  --muted: #718096;
+  --line: #edf2f7;
+  --accent: #4a5568;
+  --on-accent: #ffffff;
+  --soft: #e2e8f0;
+  --paper: #ffffff;
+  --on: #ffffff;
+  --feature: #e2e8f0;
+  --teal: #4a5568;
+  --gold: #b7791f;
+  --radius: 10px;
+  --theme-brand: "Gray";
+  color-scheme: light;
+}
+
+/* 16. Black: OLED True Black */
+body[data-skin="black"], [data-layout][data-skin="black"], .experience[data-skin="black"], [data-skin="black"], body[data-theme="black"], [data-theme="black"] {
+  --bg: #000000;
+  --surface: #121212;
+  --surface-2: #1f1f1f;
+  --chrome: #0a0a0a;
+  --ink: #ffffff;
+  --muted: #a0a0a0;
+  --line: #272727;
+  --accent: #ffffff;
+  --on-accent: #000000;
+  --soft: #242424;
+  --paper: #121212;
+  --on: #000000;
+  --feature: #242424;
+  --teal: #ffffff;
+  --gold: #cccccc;
+  --radius: 8px;
+  --theme-brand: "OLED Black";
+  color-scheme: dark;
+}
+
+/* 17. Light Blue: Sky Blue Daylight */
+body[data-skin="light-blue"], [data-layout][data-skin="light-blue"], .experience[data-skin="light-blue"], [data-skin="light-blue"], body[data-theme="light-blue"], [data-theme="light-blue"] {
+  --bg: #f0f9ff;
+  --surface: #ffffff;
+  --surface-2: #e0f2fe;
+  --chrome: #f8fcff;
+  --ink: #0c4a6e;
+  --muted: #0369a1;
+  --line: #e0f2fe;
+  --accent: #0ea5e9;
+  --on-accent: #ffffff;
+  --soft: #e0f2fe;
+  --paper: #ffffff;
+  --on: #ffffff;
+  --feature: #e0f2fe;
+  --teal: #0ea5e9;
+  --gold: #f59e0b;
+  --radius: 14px;
+  --theme-brand: "Light Blue";
+  color-scheme: light;
+}
+
+/* 18. Aurora: Northern Lights Violet & Green */
+body[data-skin="aurora"], [data-layout][data-skin="aurora"], .experience[data-skin="aurora"], [data-skin="aurora"], body[data-theme="aurora"], [data-theme="aurora"] {
+  --bg: #0c0a1d;
+  --surface: #181533;
+  --surface-2: #241f48;
+  --chrome: #110e28;
+  --ink: #e8e5fa;
+  --muted: #a79fc7;
+  --line: #2d265a;
+  --accent: #a855f7;
+  --on-accent: #ffffff;
+  --soft: #2e1d52;
+  --paper: #181533;
+  --on: #ffffff;
+  --feature: #2e1d52;
+  --teal: #a855f7;
+  --gold: #10b981;
+  --radius: 16px;
+  --theme-brand: "Aurora";
+  color-scheme: dark;
+}
+
+/* 19. Graphite: Dark Technical Charcoal */
+body[data-skin="graphite"], [data-layout][data-skin="graphite"], .experience[data-skin="graphite"], [data-skin="graphite"], body[data-theme="graphite"], [data-theme="graphite"] {
+  --bg: #121212;
+  --surface: #1e1e1e;
+  --surface-2: #2a2a2a;
+  --chrome: #161616;
+  --ink: #e0e0e0;
+  --muted: #9e9e9e;
+  --line: #2d2d2d;
+  --accent: #b0bec5;
+  --on-accent: #121212;
+  --soft: #2c3437;
+  --paper: #1e1e1e;
+  --on: #121212;
+  --feature: #2c3437;
+  --teal: #b0bec5;
+  --gold: #ffb74d;
+  --radius: 8px;
+  --theme-brand: "Graphite";
+  color-scheme: dark;
+}
+
+/* 20. Amber: Warm Phosphor Ember */
+body[data-skin="amber"], [data-layout][data-skin="amber"], .experience[data-skin="amber"], [data-skin="amber"], body[data-theme="amber"], [data-theme="amber"] {
+  --bg: #181205;
+  --surface: #281d08;
+  --surface-2: #38290c;
+  --chrome: #1e1606;
+  --ink: #fde68a;
+  --muted: #d97706;
+  --line: #42300b;
+  --accent: #f59e0b;
+  --on-accent: #181205;
+  --soft: #3f2a08;
+  --paper: #281d08;
+  --on: #181205;
+  --feature: #3f2a08;
+  --teal: #f59e0b;
+  --gold: #fde68a;
+  --radius: 10px;
+  --theme-brand: "Amber Phosphor";
+  color-scheme: dark;
+}
+
+/* Base styles when any skin is explicitly applied */
+body[data-skin] {
+  background: var(--bg);
+  color: var(--ink);
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+/* Universal Skin Switcher & Swatches UI tokens */
+.skin-swatch-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow-x: auto;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.skin-swatch-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 11px;
+  white-space: nowrap;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--ink);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.skin-swatch-btn:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+.skin-swatch-btn.active {
+  background: var(--soft);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.skin-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+}

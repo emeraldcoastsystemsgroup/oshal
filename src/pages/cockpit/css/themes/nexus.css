@@ -1,0 +1,36 @@
+/* ═══ Nexus — Luminous Deep Teal & Cyan Assistant ═══ */
+[data-theme="nexus"], [data-skin="nexus"] {
+  --text-on-accent: #10242b;
+  --bg-primary: #080f14;
+  --bg-secondary: #0e1c25;
+  --bg-tertiary: #091217;
+  --bg-card: #0e1c25;
+  --bg-card-hover: #12232d;
+  --border-color: #21343e;
+  --border-color-hover: rgba(155, 223, 208, 0.28);
+  --text-primary: #e6eded;
+  --text-secondary: #b5c7cb;
+  --text-muted: #90a4ae;
+  --accent-primary: #9bdfd0;
+  --accent-primary-hover: #b4efe3;
+  --accent-gradient: linear-gradient(135deg, #10242b 0%, #2697a4 50%, #9bdfd0 100%);
+  --accent-glow: rgba(155, 223, 208, 0.22);
+  --status-success: #4ade80;
+  --status-active: #38bdf8;
+  --status-warning: #fbbf24;
+  --status-error: #fb7185;
+
+  /* Experience Token Aliases */
+  --bg: var(--bg-primary);
+  --surface: var(--bg-card);
+  --surface-2: var(--bg-card-hover);
+  --chrome: var(--bg-tertiary);
+  --ink: var(--text-primary);
+  --muted: var(--text-muted);
+  --line: var(--border-color);
+  --accent: var(--accent-primary);
+  --on-accent: var(--text-on-accent);
+  --soft: #18343a;
+}
+
+html[data-theme="nexus"], html[data-skin="nexus"] { color-scheme: dark; }
