@@ -57,9 +57,11 @@ rebuild them** (checked 2026-09-14 against `origin/main`):
 - Both commits are ancestors of `b8de2099` (the PR #431 merge), which `scripts/oshal-deploy.sh`
   deployed on 2026-09-14.
 
-What is still open for them is acceptance on the deployed cockpit — a signed-in picker selection and
-a live Jarvis turn — tracked in [BACKLOG.md](../BACKLOG.md) under `### ADR-139 Stage 4a` and
-`### ADR-139 Stage 4b`. That acceptance, then the cheapest rollout moves below, is the next work.
+Stage 4a deployed acceptance was completed 2026-09-26: the signed-in Portrait Studio picker listed
+registered sources, and an authorized PNG from OSHAL Storage > artifacts loaded into the crop stage
+through the owner-bound handle. The receipt is in [ADR-139](../adr/139-artifact-exchange-send-to-registry.md).
+Only the separate Stage 4b live Jarvis turn remains to be accepted; the audit lane owns the Stage 4a
+BACKLOG/ledger transition.
 
 ## Continuing the rollout
 

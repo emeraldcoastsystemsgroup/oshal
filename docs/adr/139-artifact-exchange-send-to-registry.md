@@ -85,8 +85,17 @@ declares its finished-image gallery as the first app source.
 Local real-HTTP/browser acceptance covers file ownership, foreign-handle refusal, registered
 source discovery, folder navigation, filtering, cancellation, and loading both a stored file and
 a gallery image into the actual crop stage. The test doubles authentication and the portrait SQL
-store explicitly. Production rollout remains subject to the protected core merge; this is not
-a claim that the new routes are already deployed.
+store explicitly.
+
+Installed acceptance (2026-09-26): a signed-in operator opened Portrait Studio in the deployed
+cockpit, chose **Choose from OSHAL**, and saw the registered **Connected files** and **Portrait
+Studio** sources. Connected files exposed OSHAL Storage, Career, Dropbox, Google Drive, and GitHub.
+Within OSHAL Storage > artifacts, the available `stage2-proof.png` passed the picker's image filter;
+selecting it closed the picker and displayed Portrait Studio's crop stage with its aspect, reset,
+and Different photo controls. This exercised the session-bound source listing, selection handle,
+content redemption, and crop load without uploading, generating, sharing, or publishing anything.
+The Stage 4a deployed acceptance criterion is met; the separate Stage 4b live-model handoff remains
+open.
 
 The operator's framing, verbatim intent: *"for any artifact (images, documents, etc.) there should be a
 general swarm service that apps register with on load, that subscribes artifact types to applications,
