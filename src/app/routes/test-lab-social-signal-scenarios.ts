@@ -4,13 +4,16 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | AI Test Lab registration for subscription-driven social signals (BACKLOG "Subscription-driven social signals"). Four deterministic steps over the caller's own /api/content/subscriptions routes: an unregistered bot is refused before anything is stored, the caller's watches are listed, another subscription's delivery audit answers 404, and the caller's own first watch returns its delivery audit. Nothing is registered, published or disabled on a passing run; if the bot refusal ever regresses, the step disables the watch it accidentally created and fails. The real-boundary proof (enforcing Postgres role, Redis lanes) is attached as a regression suite, not re-run live.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The loopback call no longer swallows a body parse failure in an empty catch: a non-JSON answer (by content-type) is returned with json=null without parsing, and a JSON-labelled body that fails to parse is logged at ERROR with its path and status before the step classifies the HTTP status. Guard: the non-JSON and malformed-JSON cases in tests/unit/test-lab-social-signal-registration.spec.ts.
  *
  * @module routes/test-lab-social-signal-scenarios
  */
 
 import { randomUUID } from 'node:crypto';
+import { createChildLogger } from '@/shared/logger';
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
+const logger = createChildLogger({ module: 'test-lab-social-signal-scenarios' });
 const APP = 'social-signals';
 const UNREGISTERED_BOT = 'test-lab-unregistered-bot';
 
@@ -27,9 +30,13 @@ async function call(cookie: string, method: string, path: string, body?: unknown
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: AbortSignal.timeout(30_000),
   });
-  let json: any = null;
-  try { json = await response.json(); } catch { /* non-JSON answer */ }
-  return { status: response.status, json };
+  if (!String(response.headers.get('content-type') || '').includes('application/json')) return { status: response.status, json: null };
+  try {
+    return { status: response.status, json: await response.json() };
+  } catch (error) {
+    logger.error({ err: error, method, path, status: response.status }, 'Test Lab social-signal call answered malformed JSON');
+    return { status: response.status, json: null };
+  }
 }
 
 /**

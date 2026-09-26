@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Test Lab registration guard for the social-signals card: it is in SCENARIOS, every suite it names exists on disk, and its four steps, driven over real HTTP against the REAL subscription router (with the real bot registry), pass for a signed-in owner, degrade without a session, and fail when the bot refusal regresses (disabling the watch the regression created). The pool is a scripted double; the database boundary is proven by tests/unit/social-signal-subscriptions-postgres.spec.ts, which the card lists.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the loopback call's body handling (it used to swallow a parse failure in an empty catch): a non-JSON answer fails the list step with its HTTP status and logs nothing, and a JSON-labelled malformed body fails the step with its status AND logs the parse failure at ERROR with the path. The logger mock is hoisted so the ERROR call is observable.
  */
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -14,8 +15,9 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { Pool } from 'pg';
 
+const log = vi.hoisted(() => ({ error: vi.fn() }));
 vi.mock('@/shared/logger', () => ({
-  createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
+  createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: log.error, debug: vi.fn() }),
 }));
 
 import { mountSocialSignalSubscriptionRoutes } from '@/app/routes/social-signal-routes';
@@ -68,6 +70,11 @@ beforeAll(async () => {
   const brokenApp = express();
   brokenApp.post('/api/content/subscriptions', (_req, res) => { res.status(201).json({ subscriptionId: OWNED }); });
   brokenApp.delete('/api/content/subscriptions/:id', (req, res) => { deleted.push(req.params.id); res.json({ ok: true }); });
+  // A gateway page instead of JSON, and a JSON-labelled body that does not parse.
+  brokenApp.get('/api/content/subscriptions', (req, res) => {
+    if (req.headers.cookie?.includes('malformed')) res.status(200).type('application/json').send('{"subscriptions": [');
+    else res.status(502).type('text/html').send('<html>bad gateway</html>');
+  });
   broken = await listen(brokenApp);
   process.env.PORT = String((server.address() as AddressInfo).port);
 });
@@ -125,6 +132,34 @@ describe('social signals Test Lab registration', () => {
       expect(refused.state).toBe('fail');
       expect(refused.detail).toContain('ACCEPTED');
       expect(deleted).toEqual([OWNED]);
+    } finally {
+      process.env.PORT = realPort;
+    }
+  });
+
+  it('fails a non-JSON answer on its HTTP status without logging a parse error', async () => {
+    const realPort = process.env.PORT;
+    process.env.PORT = String((broken.address() as AddressInfo).port);
+    log.error.mockClear();
+    try {
+      const listed = await SOCIAL_SIGNAL_SCENARIOS[0].steps[1].run('test-user=gateway', {});
+      expect([listed.state, listed.status]).toEqual(['fail', 502]);
+      expect(listed.detail).toContain('HTTP 502');
+      expect(log.error).not.toHaveBeenCalled();
+    } finally {
+      process.env.PORT = realPort;
+    }
+  });
+
+  it('logs a JSON-labelled body that does not parse at ERROR and fails on its status', async () => {
+    const realPort = process.env.PORT;
+    process.env.PORT = String((broken.address() as AddressInfo).port);
+    log.error.mockClear();
+    try {
+      const listed = await SOCIAL_SIGNAL_SCENARIOS[0].steps[1].run('test-user=malformed', {});
+      expect([listed.state, listed.status]).toEqual(['fail', 200]);
+      expect(log.error).toHaveBeenCalledTimes(1);
+      expect(log.error.mock.calls[0][0]).toMatchObject({ method: 'GET', path: '/subscriptions', status: 200 });
     } finally {
       process.env.PORT = realPort;
     }
