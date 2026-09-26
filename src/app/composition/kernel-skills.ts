@@ -108,6 +108,7 @@ export * as spatialMapping from '@/features/spatial-mapping';
 export * as applicationAuthorization from '@/shared/application-authorization';
 export * as authenticatedArtifacts from '@/app/routes/artifact-authenticated-relay';
 export * as packageTools from '@/shared/package-tools';
+export * as packageCallbacks from '@/shared/package-callbacks';
 export * as packageTesting from '@/shared/package-testing';
 export * as appDependencies from '@/shared/app-dependencies';
 export * as specialistContext from '@/shared/specialist-context';

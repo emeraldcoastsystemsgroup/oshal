@@ -41,6 +41,7 @@ import { appAccessCallerSub, appAccessCallerIssuer, appAccessDenial, appAccessEn
 import type { ApplicationRouteAuthorization } from './application-authorization-runtime';
 import type { SpecialistContextRegistry } from '@/shared/specialist-context';
 import type { PackageToolRegistry } from '@/shared/package-tools';
+import { validCallbackPrincipal, type PackageCallbackVerifier } from '@/shared/package-callbacks';
 
 const logger = createChildLogger({ module: 'manifest-route-mounter' });
 
@@ -76,6 +77,7 @@ interface MountedRoute {
   access?: SwarmAppAccessDeclaration;
   /** Explicit manifest contract; only inference-bearing routes are unavailable on a no-AI box. */
   requiresAi: boolean;
+  callbackVerifier?: PackageCallbackVerifier;
 }
 
 /**
@@ -220,6 +222,15 @@ export class ManifestRouteMounterImpl implements ManifestRouteMounter {
         // must not become publicly callable through a forgotten field (CLAUDE.md: auth is opt-in
         // per route, so an unwrapped Express route IS public).
         const mode = resolveRouteAuthMode(decl);
+        let callbackVerifier: PackageCallbackVerifier | undefined;
+        if (decl.callbackVerifier) {
+          const verifierFactory = mod[decl.callbackVerifier];
+          if (mode !== 'public' || !strict || !this.applicationAuthorization?.guardCallback || typeof verifierFactory !== 'function') {
+            throw new Error('Signed callback authentication is unavailable');
+          }
+          callbackVerifier = (verifierFactory as (ctx: AppContext) => PackageCallbackVerifier)(packageCtx);
+          if (typeof callbackVerifier !== 'function') throw new Error('Callback verifier factory returned no verifier');
+        }
         const guards = this.buildGuards(mode, appName, decl.mountPath);
         entries.push({
           appName,
@@ -229,6 +240,7 @@ export class ManifestRouteMounterImpl implements ManifestRouteMounter {
           handler,
           access,
           requiresAi: decl.requiresAi === true,
+          callbackVerifier,
         });
         logger.info({ appName, mountPath: decl.mountPath, module: decl.module, auth: mode }, 'Mounted package route');
       } catch (err) {
@@ -354,6 +366,22 @@ export class ManifestRouteMounterImpl implements ManifestRouteMounter {
   private run(entry: MountedRoute, req: Request, res: Response, next: NextFunction): void {
     const originalUrl = req.url;
     const remainder = originalUrl.slice(entry.mountPath.length) || '/';
+    if (entry.callbackVerifier) {
+      if (req.method !== 'POST') { res.status(405).json({ error: 'callback_post_required' }); return; }
+      void (async () => {
+        try {
+          const principal = await entry.callbackVerifier!(req);
+          if (!validCallbackPrincipal(principal)) { res.status(401).json({ error: 'callback_signature_invalid' }); return; }
+          if (!this.byApp.get(entry.appName)?.includes(entry)) { res.status(503).end(); return; }
+          await this.applicationAuthorization!.guardCallback!(entry.appName, req, res, principal, () => {
+            if (!this.byApp.get(entry.appName)?.includes(entry)) { res.status(503).end(); return; }
+            req.url = remainder.startsWith('/') ? remainder : '/' + remainder;
+            entry.handler(req, res, (err?: unknown) => { req.url = originalUrl; next(err); });
+          });
+        } catch { if (!res.headersSent) res.status(503).json({ error: 'callback_unavailable' }); }
+      })();
+      return;
+    }
     const invoke = (): void => {
       if (entry.requiresAi && isAiDisabled()) {
         logger.info(

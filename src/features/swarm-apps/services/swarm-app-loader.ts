@@ -376,6 +376,12 @@ function validateRouteDeclarations(manifest: SwarmAppManifest, absPath: string):
 
     const mode = resolveRouteAuthMode(decl);
 
+    if (decl.callbackVerifier !== undefined && (mode !== 'public'
+      || !manifest.uses?.includes('signed-package-callbacks') || !manifest.authorization
+      || typeof decl.callbackVerifier !== 'string' || !/^[A-Za-z_$][\w$]*$/.test(decl.callbackVerifier))) {
+      throw new Error(`Manifest ${absPath}: ${at}.callbackVerifier requires an explicit public route, authorization catalog and signed-package-callbacks capability`);
+    }
+
     if (mode === 'public') {
       // Two segments minimum: the package dispatcher runs ahead of core's /api mounts, so a short
       // anonymous mountPath could shadow them entirely.

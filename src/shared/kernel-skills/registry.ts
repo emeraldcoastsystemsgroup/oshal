@@ -36,6 +36,7 @@ export type KernelSkillId =
   | 'application-authorization'
   | 'authenticated-artifacts'
   | 'package-tools'
+  | 'signed-package-callbacks'
   | 'test-catalog'
   | 'jarvis-briefings'
   | 'app-dependencies'
@@ -92,6 +93,11 @@ export interface KernelSkillDeclaration {
  * docs/apps/kernel-skills.md. The CI guard then enforces it forever.
  */
 export const KERNEL_SKILLS: readonly KernelSkillDeclaration[] = [
+  {
+    id: 'signed-package-callbacks', title: 'Signed package callbacks',
+    why: 'Authenticate provider callbacks to their durable owner and recheck current application permissions without a browser session.',
+    modules: [{ specifier: '@/shared/package-callbacks', distFile: 'dist/shared/package-callbacks/index.js' }],
+  },
   { id: 'futures-archive-import', title: 'Confirmed Futures archive imports',
     why: 'Owner-bound content previews and explicit operator confirmation precede atomic shared reference writes.',
     modules: [{ specifier: '@/app/trading-futures-archive-import', distFile: 'dist/app/trading-futures-archive-import.js' }] },
