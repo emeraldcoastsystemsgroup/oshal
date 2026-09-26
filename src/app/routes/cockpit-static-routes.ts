@@ -7,10 +7,12 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Hardened cockpit sendFile error handling so retrofit validation typechecks cleanly
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added /css and /js static aliases so legacy ui-enhanced engineering pages resolve absolute asset references
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Mount a fixed authenticated allowlist for locked local startup dependencies.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | ADR-164 experience shells: resolve the experience directory like cockpitDir (src/ or the image copy) so /portal, /studio, /jarvis, /orbit, /commons, /homebase and /nexus serve from the built container; the dist-relative guess, the layout-prefixed cockpit duplicates and the store-checkout Little Monsters mount are gone, and /little-monsters redirects to the classroom preset.
  */
 
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import { createChildLogger } from '@/shared/logger';
 import { registerCockpitVendorAssets } from './cockpit-vendor-assets';
 
@@ -28,6 +30,28 @@ export interface CockpitStaticRoutesOptions {
   sharedUiCssDir: string;
   /** Shared surface JS (surface-theme.js) — served public, see the mount comment. */
   sharedUiJsDir: string;
+}
+
+/** Entry pages served from the experience directory: every path an experience chooser links to. */
+const EXPERIENCE_PAGES: ReadonlyArray<readonly [string[], string]> = [
+  [['/experience', '/experience/', '/portal', '/portal/'], 'index.html'],
+  [['/homebase', '/homebase/'], 'homebase.html'],
+  [['/nexus', '/nexus/'], 'nexus.html'],
+  [['/studio', '/studio/'], 'studio.html'],
+  [['/jarvis', '/jarvis/'], 'jarvis.html'],
+  [['/orbit', '/orbit/'], 'orbit.html'],
+  [['/commons', '/commons/'], 'commons.html'],
+];
+
+/**
+ * @description Locate the experience directory for this process: beside the compiled routes when a
+ * build copies it there, otherwise `src/experience` under the working directory (ts-node and the
+ * image, where the Dockerfile copies the source tree). The first candidate holding index.html wins.
+ * @returns Absolute directory path; the first candidate when none exists so the 404 names a real path.
+ */
+export function resolveExperienceDir(): string {
+  const candidates = [path.resolve(__dirname, '../../experience'), path.resolve(process.cwd(), 'src/experience')];
+  return candidates.find((dir) => fs.existsSync(path.join(dir, 'index.html'))) ?? candidates[0];
 }
 
 /**
@@ -81,6 +105,30 @@ export function registerCockpitStaticRoutes(options: CockpitStaticRoutesOptions)
         res.status(readSendFileStatusCode(error)).end();
       }
     });
+  });
+
+  // ADR-164 experience shells: one authenticated static mount plus the named entry pages. The
+  // directory is resolved the same way as cockpitDir so ts-node (src/) and the built image
+  // (/app/src/experience, copied by Dockerfile.oshal) both serve it; a dist-relative guess 404s.
+  const experienceDir = resolveExperienceDir();
+  options.app.use('/experience', options.requiresAuth, noCache, express.static(experienceDir));
+  const sendHtml = (filePath: string): express.RequestHandler => (_req, res) => {
+    res.sendFile(filePath, (error) => {
+      if (!error) {
+        return;
+      }
+      logger.error({ err: error, filePath }, 'Failed to send experience page');
+      if (!res.headersSent) {
+        res.status(readSendFileStatusCode(error)).end();
+      }
+    });
+  };
+  for (const [paths, file] of EXPERIENCE_PAGES) {
+    options.app.get(paths, options.requiresAuth, noCache, sendHtml(path.join(experienceDir, file)));
+  }
+  // The classroom experience is the Little Monsters homebase preset; the earlier direct path stays reachable.
+  options.app.get(['/little-monsters', '/little-monsters/'], options.requiresAuth, noCache, (_req, res) => {
+    res.redirect('/homebase?preset=classroom');
   });
 
   options.app.use('/ui-enhanced', options.requiresAuth, express.static(options.uiEnhancedDir));

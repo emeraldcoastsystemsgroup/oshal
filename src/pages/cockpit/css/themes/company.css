@@ -1,0 +1,38 @@
+/* ═══ Company / Professional — Slate & Teal Organization ═══ */
+[data-theme="company"], [data-skin="company"],
+[data-theme="professional"], [data-skin="professional"] {
+  --text-on-accent: #ffffff;
+  --bg-primary: #f4f6f8;
+  --bg-secondary: #eaf0f4;
+  --bg-tertiary: #ffffff;
+  --bg-card: #ffffff;
+  --bg-card-hover: #eaf0f4;
+  --border-color: #d5e0e8;
+  --border-color-hover: #bacbd6;
+  --text-primary: #1e293b;
+  --text-secondary: #3b4e68;
+  --text-muted: #64748b;
+  --accent-primary: #1f6b75;
+  --accent-primary-hover: #2b8c99;
+  --accent-gradient: linear-gradient(135deg, #1f6b75 0%, #3ca0ad 100%);
+  --accent-glow: rgba(31, 107, 117, 0.22);
+  --status-success: #15803d;
+  --status-active: #1f6b75;
+  --status-warning: #b45309;
+  --status-error: #b91c1c;
+
+  /* Experience Token Aliases */
+  --bg: var(--bg-primary);
+  --surface: var(--bg-card);
+  --surface-2: var(--bg-card-hover);
+  --chrome: var(--bg-tertiary);
+  --ink: var(--text-primary);
+  --muted: var(--text-muted);
+  --line: var(--border-color);
+  --accent: var(--accent-primary);
+  --on-accent: var(--text-on-accent);
+  --soft: #eaf0f4;
+}
+
+html[data-theme="company"], html[data-skin="company"],
+html[data-theme="professional"], html[data-skin="professional"] { color-scheme: light; }

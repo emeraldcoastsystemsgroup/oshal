@@ -61,6 +61,7 @@
 # 8 | maintainer@emeraldcoastsystemsgroup.com   | Bake scripts/image-freshness.js. The installer's freshness gate runs INSIDE the pulled image on mode 1, where there is no repository on the host and no guaranteed node - without this COPY the check silently degrades to a skip on exactly the install path it exists to protect.
 # 9 | maintainer@emeraldcoastsystemsgroup.com   | Make the Cline fallback START. cline@latest floated from the pure-JS 2.x line onto 3.x (2026-05-12), whose npm package is a Bun-compiled GLIBC executable (PT_INTERP /lib64/ld-linux-x86-64.so.2) that this musl base cannot exec: the launcher reports `spawnSync .../cline/bin/.cline ENOENT` on a file that exists, and every ticket that failed over from Codex to cline-cli died there (measured 2026-09-17 22:57Z on a real ticket). The version is now pinned by ARG so the harness cannot float across a packaging change unnoticed, the gcompat loader stub is installed CONFINED to the glibc executable (only /lib64/ld-linux-x86-64.so.2 and /lib/libgcompat.so.0 stay; the libc.so.6/libm/libpthread aliases apk drops into /lib are removed so a node process still refuses glibc-only native addons exactly as before - the onnxruntime-node SEGFAULT note below is about those aliases), and the build asserts INSIDE the layer that `cline --version` runs and that the confinement held. Deploy-time twin: scripts/check-cline-entrypoint.mjs.
 # 10 | maintainer@emeraldcoastsystemsgroup.com  | Antigravity CLI on the existing Alpine fleet without pretending gcompat can load it. The checksum-pinned vendor binary and Debian glibc libraries are staged into /opt/agy-runtime; /usr/local/bin/agy invokes that private loader explicitly. Node and native addons remain musl and never see a global libc alias. Both amd64 and arm64 artifacts are pinned, and the image build proves `agy --version` through the real launcher.
+# 11 | maintainer@emeraldcoastsystemsgroup.com   | Copy src/experience so the ADR-164 experience shells serve from the image, not only from a source checkout.
 #                      |                          | Lab browser fixtures
 #                      |                          | (tests/fixtures/isolated-
 #                      |                          | browser.ts and stl-viewer.ts)
@@ -299,6 +300,7 @@ COPY src/shared/ ./src/shared/
 COPY src/entities/ ./src/entities/
 COPY src/app/ ./src/app/
 COPY src/pages/ ./src/pages/
+COPY src/experience/ ./src/experience/
 COPY src/types/ ./src/types/
 COPY tsconfig.server.json ./
 

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>oshal · Experiences</title>
+  <link rel="stylesheet" href="/experience/tokens/skins.css">
+  <link rel="stylesheet" href="/experience/styles.css">
+  <link rel="stylesheet" href="/experience/experience-live.css">
+  <script src="/experience/live-data.js" defer></script>
+  <script src="/experience/style-switcher.js" defer></script>
+  <script src="/experience/shell.js" defer></script>
+  <script src="/experience/portal.js" defer></script>
+</head>
+<body class="gallery-page" data-page="portal">
+  <header class="gallery-top">
+    <a class="brand" href="/portal">
+      <span class="brand-mark" aria-hidden="true"></span>
+      oshal
+      <span class="brand-divider"></span>
+      <span class="eyebrow">Experiences</span>
+    </a>
+    <div class="row wrap" style="gap:10px;align-items:center;">
+      <a class="quiet-link" href="/cockpit/">Cockpit</a>
+      <label class="screenreader" for="universal-skin-picker">Visual style</label>
+      <select id="universal-skin-picker" class="layout-picker" aria-label="Select visual style" style="max-width:150px;min-width:0;">
+        <optgroup label="Experience skins">
+          <option value="studio">Studio · graphite &amp; mint</option>
+          <option value="jarvis">Jarvis · parchment &amp; ember</option>
+          <option value="orbit">Orbit · arctic &amp; cobalt</option>
+          <option value="commons">Commons · aubergine &amp; lilac</option>
+          <option value="nexus">Nexus · luminous cyan</option>
+          <option value="family">Family · cozy sage</option>
+          <option value="classroom">Classroom · playful violet</option>
+          <option value="company">Company · slate &amp; teal</option>
+        </optgroup>
+        <optgroup label="Cockpit themes">
+          <option value="workspace">Workspace · slate</option>
+          <option value="midnight">Midnight · deep navy</option>
+          <option value="daylight">Daylight · high contrast</option>
+          <option value="ocean">Ocean · marine blue</option>
+          <option value="sakura">Sakura · rose &amp; coral</option>
+          <option value="forest">Forest · emerald pine</option>
+          <option value="gray">Gray · monochrome</option>
+          <option value="black">Black · OLED minimal</option>
+          <option value="light-blue">Light Blue · sky daylight</option>
+          <option value="aurora">Aurora · northern violet</option>
+          <option value="graphite">Graphite · technical charcoal</option>
+          <option value="amber">Amber · warm phosphor</option>
+        </optgroup>
+      </select>
+      <span class="study-label"><span class="status-dot"></span>Live swarm</span>
+    </div>
+  </header>
+  <main class="gallery-main" id="portal-root"></main>
+  <footer class="gallery-footer">
+    <span>oshal · experiences over your installed swarm</span>
+    <span>Appearance choices stay on this device</span>
+  </footer>
+</body>
+</html>

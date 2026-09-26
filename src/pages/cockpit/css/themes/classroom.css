@@ -1,0 +1,38 @@
+/* ═══ Classroom / Playful — Lilac & Lavender Learning Space ═══ */
+[data-theme="classroom"], [data-skin="classroom"],
+[data-theme="playful"], [data-skin="playful"] {
+  --text-on-accent: #ffffff;
+  --bg-primary: #fbf8f5;
+  --bg-secondary: #f4eef9;
+  --bg-tertiary: #ffffff;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f4eef9;
+  --border-color: #ebdff5;
+  --border-color-hover: #d8c3e8;
+  --text-primary: #342845;
+  --text-secondary: #584670;
+  --text-muted: #796694;
+  --accent-primary: #6c4f97;
+  --accent-primary-hover: #8664b8;
+  --accent-gradient: linear-gradient(135deg, #6c4f97 0%, #a47ec9 100%);
+  --accent-glow: rgba(108, 79, 151, 0.22);
+  --status-success: #15803d;
+  --status-active: #6c4f97;
+  --status-warning: #b45309;
+  --status-error: #b91c1c;
+
+  /* Experience Token Aliases */
+  --bg: var(--bg-primary);
+  --surface: var(--bg-card);
+  --surface-2: var(--bg-card-hover);
+  --chrome: var(--bg-tertiary);
+  --ink: var(--text-primary);
+  --muted: var(--text-muted);
+  --line: var(--border-color);
+  --accent: var(--accent-primary);
+  --on-accent: var(--text-on-accent);
+  --soft: #f4eef9;
+}
+
+html[data-theme="classroom"], html[data-skin="classroom"],
+html[data-theme="playful"], html[data-skin="playful"] { color-scheme: light; }
