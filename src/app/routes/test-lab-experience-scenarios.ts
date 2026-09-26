@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register the ADR-164 experience shells in the AI Test Lab: a read-only step that opens every experience entry page with the initiating operator's cookie and reads the caller-scoped feeds those pages join, classifying a missing page as a deployment gap and a refused feed as degraded rather than a pass.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Type-only repair so the committed-HEAD typecheck passes (it failed on origin/main b2c0d916 and blocked every push containing main): classifyExperienceProbe now takes the page type that carries its root marker (what experienceShellsStep and the spec already pass) instead of PageProbe, which has no marker (TS2339), and the request headers are an explicit Record<string, string> instead of a {cookie} | {} union fetch rejects (TS2769 x2). No behaviour change; tests/unit/test-lab-experience-scenarios.spec.ts is unchanged and green.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -17,9 +18,11 @@ export const EXPERIENCE_JOINED_READS = ['/api/auth/user', '/api/swarm/apps/home-
 
 export interface PageProbe { path: string; status: number; contentType: string; body: string }
 export interface ReadProbe { path: string; status: number }
+/** A fetched page plus the root marker its shell must render. */
+export type PageWithMarker = PageProbe & { marker: (p: PageProbe) => string };
 
 /** @description Classify one pass over the entry pages and joined reads without any write. */
-export function classifyExperienceProbe(pages: PageProbe[], reads: ReadProbe[]): StepResult {
+export function classifyExperienceProbe(pages: PageWithMarker[], reads: ReadProbe[]): StepResult {
   const result = (state: StepResult['state'], detail: string, status?: number): StepResult => ({ app: 'cockpit', label: 'Experience pages and their joined reads', state, detail, ...(status ? { status } : {}) });
   const missing = pages.filter(p => p.status === 404);
   if (missing.length) return result('gap', `${missing.map(p => p.path).join(', ')} answered 404: the running image predates the experience shells (needs a core deploy that includes src/experience).`, 404);
@@ -34,12 +37,10 @@ export function classifyExperienceProbe(pages: PageProbe[], reads: ReadProbe[]):
   return result('pass', `${pages.length} experience pages serve behind the session and all ${reads.length} caller-scoped feeds they join answered 200. Rendering, pins, the ask flow and the homebase modules are proven by the registered browser suite.`);
 }
 
-type PageWithMarker = PageProbe & { marker: (p: PageProbe) => string };
-
 /** @description Read every entry page and joined feed with the initiating operator's cookie. Nothing is written. */
 export async function experienceShellsStep(cookie: string, fetchImpl: typeof fetch = fetch): Promise<StepResult> {
   const base = `http://127.0.0.1:${process.env.PORT || '5000'}`;
-  const headers = cookie ? { cookie } : {};
+  const headers: Record<string, string> = cookie ? { cookie } : {};
   const pages: PageWithMarker[] = [];
   for (const [path, marker] of EXPERIENCE_ENTRY_PAGES) {
     try {
