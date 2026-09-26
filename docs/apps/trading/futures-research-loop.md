@@ -490,6 +490,18 @@ closing the log pipe early; that readiness wait was interrupted after separate
 manifest, loader and health checks succeeded, and the helper was corrected
 in source for future releases.
 
+At 06:40 UTC on 2026-09-26, the operator's signed-in cockpit also exercised
+the installed **catch-up preview and confirm** controls for exactly September
+24–25 UTC. The preview named ESZ26 and CLX26 and bounded the action to at most
+two Schwab requests. One confirmation returned ESZ26 88 received / 0 new and
+CLX26 87 received / 0 new, with existing bars retained. Capture remained ON,
+the stored counts remained 220/219, and the CL session-model gap remained one.
+This adds owner-facing flow and idempotence evidence to the earlier backend
+receipt, not historical roll coverage or a new open-market candle. The cockpit's
+global storage badge briefly reported message-store readiness as IN MEMORY or
+unknown during the check; the private Futures bar query itself returned stored
+coverage, but broader durable-store health was not established by this action.
+
 Remaining: observe a new open-market bar and capture gap/freshness behavior over time. The
 one-time historical source/backfill and its provenance still require operator selection and
 proof; the existing archive importer writes shared `market_bars`, **not** this private capture
