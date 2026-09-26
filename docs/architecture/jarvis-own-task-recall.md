@@ -18,3 +18,16 @@ This separation keeps broad Jarvis questions cheap and bounded. A list result he
 record, and only an explicit fetch brings message content into the current answer. Missing or
 foreign records are not retried with another owner and are not treated as evidence that a caller
 never discussed the topic.
+
+## Invariant preamble cache seam
+
+The OpenAI-compatible provider accepts an optional provider-owned invariant cache. Its key covers
+the endpoint, model, credential fingerprint, system prompt and declared tool schemas, so a persona
+or tool change cannot reuse a stale handle and two credentials cannot share one. The cache factory
+receives only that system/tool contract; task messages are never eligible for caching. A valid
+handle is sent as `extra_body.cached_content` while task history remains in `messages`. Expired,
+invalidated, unsupported or failed handles take the ordinary full-preamble path.
+
+The source guard proves request shape, key invalidation, single-flight creation and full-send
+fallback. It does not claim that a deployed provider has created a handle or measured a token/time
+saving; those remain installed/provider evidence for the backlog item.

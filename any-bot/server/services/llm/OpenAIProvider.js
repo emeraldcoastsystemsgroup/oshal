@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | A turn spent attempting a tool call is no longer thrown away. generateResponse now reads tool_calls AND the legacy function_call field and surfaces both as tool_use blocks. Because it declares no tools, any call is one the model invented from the system prompt's "you have access to N tools", so a call carrying its own id completes the exchange once with a truthful no-tools-available result to obtain a direct answer; a gateway-filtered malformed attempt, which leaves no call id to answer, restates the constraint as a user turn instead. A call read out of the legacy function_call field was surfaced but did NOT complete that way - that field carries no id, and the continuation built for it was not a valid tool exchange, so it fell through to the empty-answer error; entry 5 is what makes that shape complete. Measured live on generativelanguage.googleapis.com 2026-09-22: gemini-2.5-flash and gemini-3.8-flash both return { role, tool_calls } with no content key, and 3.8-flash also returns finish_reason "function_call_filter: MALFORMED_FUNCTION_CALL" with message keys [extra_content, role]. The empty-answer error and warning now name provider, model, finish_reason and output tokens, report an ABSENT finish_reason as absent instead of defaulting the diagnostic to "stop" (that default is what made the genuinely empty turn read as a normal completion), and carry a content-free fingerprint of the response SHAPE in the message string, because the console transport prints only the message and drops metadata. Usage accumulates across both legs and honours an endpoint-reported total_tokens rather than assuming input + output.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The tool-call continuation now builds its replayed assistant turn FROM the normalized calls instead of passing the raw tool_calls array through, because the two do not line up: normalizeToolCalls synthesizes call_${index} for a call that arrived without an id and for the legacy function_call field (which has no tool_calls array at all), and drops a call with no function name. Replaying the raw array while answering the normalized ids produced an assistant turn and a tool turn that disagreed in three shapes - a legacy function_call, a tool_calls entry with no id, and several calls of which one was unnamed - and a chat-completions gateway rejects that pairing with a 400, which landed in the continuation's catch. The recovery entry 4 claims therefore never happened for those shapes, and the caller was billed for two legs to receive the same empty-answer error. A call with no function name is not replayed at all: there is no name to attribute a result to, so it cannot be answered, and a declared-but-unanswered call is the same 400. rawArguments, which is the text replayed verbatim, now also carries arguments a gateway sent already parsed - the wire format is a JSON string, and dropping a non-string to '' told the model it had called with no arguments when it had not.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | The direct conversational path now DECLARES the tools it was given and runs the exchange to a real answer. generateResponse read only model and max_tokens, so options.tools, options.enforceToolBoundary and options.authorizedScopes - all three passed by TaskController:418-422 and AgenticController:410-413 - arrived and were discarded: the system prompt promised N tools while the request declared none, which is the upstream cause entry 4 recovers from. Tools are now formatted through the same formatFunctions sendRequest already used, and a tool_calls response is executed through a caller-supplied executeTool channel and fed back until the model answers (MAX_DECLARED_TOOL_ROUNDS legs, then one final leg after a truthful budget-exhausted result). enforceToolBoundary and authorizedScopes became the enforcement ADR-122 and the SEC-05 dispatch-capability pair describe: nothing executes unless the caller asserted enforceToolBoundary, the name is in the exact declared set, the exact tool:<name> / control:attempt_completion scope is held, and an execution channel exists - every other call is refused and the refusal is told to the model rather than executed. Absence is never authority, matching normalizeAllowedTools/normalizeAuthorizedScopes. A request with no declared tools behaves exactly as before, including entry 4's unsolicited-call recovery.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Add the optional invariant-prompt cache seam. It keys only the system/tool preamble, strips no task history, sends provider handles through `extra_body.cached_content`, and falls back to the full prompt on expiry, unsupported endpoints or cache errors.
  */
 
 /**
@@ -27,6 +28,7 @@ const {
   normalizeAuthorizedScopes,
   requiredScope,
 } = require('../../utils/dispatch-capabilities');
+const { buildInvariantPromptCacheKey } = require('./invariant-prompt-cache');
 
 /**
  * @description Concrete LLMService implementation that adapts OpenAI's
@@ -66,6 +68,10 @@ class OpenAIProvider extends LLMService {
     this.model = config.model || 'gpt-4-turbo-preview';
     this.maxTokens = config.maxTokens || 4096;
     this.temperature = config.temperature !== undefined ? config.temperature : 0.7;
+    // Optional because most OpenAI-compatible endpoints do not implement Gemini context caching.
+    // A configured cache is a provider-owned handle factory; absent/failed factories leave the
+    // ordinary full-send request untouched.
+    this.invariantPromptCache = config.invariantPromptCache || null;
   }
 
   /**
@@ -92,7 +98,11 @@ class OpenAIProvider extends LLMService {
     // to the capability set the caller captured at request start rather than to anything a later
     // leg could influence.
     const boundary = resolveDispatchToolBoundary(options);
-    const request = this.buildChatRequest(formatted, options, boundary);
+    const cached = await this.resolveInvariantPromptCache(formatted, options, boundary);
+    const request = this.buildChatRequest(cached.messages, {
+      ...options,
+      ...(cached.extraBody ? { extraBody: cached.extraBody } : {}),
+    }, boundary);
     const exchange = await this.runDeclaredToolExchange(request, boundary);
     const completion = exchange.completion;
 
@@ -157,6 +167,50 @@ class OpenAIProvider extends LLMService {
   }
 
   /**
+   * @description Resolve a provider-side cache handle for the invariant system/tool preamble.
+   * Only the first system message and the declared tool definitions enter the cache key. User and
+   * assistant messages remain in the request, so a cached Jarvis turn cannot replay another task.
+   * @param {Array<Object>} formatted - System message followed by task-scoped messages.
+   * @param {Object} options - Provider options and optional cache override.
+   * @param {Object} boundary - Captured declared tool boundary.
+   * @returns {Promise<{messages:Array<Object>, extraBody?:Object}>}
+   */
+  async resolveInvariantPromptCache(formatted, options, boundary) {
+    const cache = options.invariantPromptCache || this.invariantPromptCache;
+    const system = formatted[0];
+    if (!cache || !system || system.role !== 'system' || typeof cache.getHandle !== 'function') {
+      return { messages: formatted };
+    }
+    const tools = boundary.definitions || [];
+    const key = buildInvariantPromptCacheKey({
+      endpoint: this.baseUrl,
+      model: this.model,
+      apiKey: cache.apiKey || undefined,
+      systemPrompt: system.content,
+      tools,
+    });
+    let handle = null;
+    try {
+      handle = await cache.getHandle({
+        key,
+        systemPrompt: system.content,
+        tools,
+        model: this.model,
+        endpoint: this.baseUrl,
+      });
+    } catch (error) {
+      logger.warn(`Invariant prompt cache unavailable; sending full preamble: ${error.message}`);
+    }
+    if (typeof handle !== 'string' || handle.trim().length === 0) return { messages: formatted };
+    return {
+      // The provider-side handle represents only this system/tool preamble. Preserve every
+      // non-system message, including all task history, exactly as supplied by the caller.
+      messages: formatted.slice(1),
+      extraBody: { cached_content: handle },
+    };
+  }
+
+  /**
    * @description Builds the chat-completions request for one conversational turn.
    * @param {Array<Object>} formatted - the conversation, system prompt already prepended
    * @param {Object} options - the generateResponse options
@@ -183,6 +237,8 @@ class OpenAIProvider extends LLMService {
       ...(isOpenRouterBaseUrl(this.baseUrl) ? {
         reasoning: { effort: options.reasoningEffort || 'low', exclude: true },
       } : {}),
+      ...(options.extraBody && typeof options.extraBody === 'object'
+        ? { extra_body: options.extraBody } : {}),
     };
   }
 
