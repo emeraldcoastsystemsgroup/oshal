@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Homebase shells (Home, Little Monsters classroom, Business) over live data: the signed-in person, Little Monsters identity/classes/assignments/roster/calendar, the Purchasing list, the Finance snapshot (a calm personal picture at home, a dense account table at work), Smart Home facts, open tickets as projects, application summaries as the noticeboard, and the real Jarvis thread. The role switcher, fixture people and sample records of the prototype are gone; teacher and learner views follow the caller's actual classroom role, and display choices are saved on this device only.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Paint the preset skin on load when the device remembers none: the style switcher initialises before this script selects the preset, so the default was never applied to the document.
  */
 (() => {
   'use strict';
@@ -13,6 +14,8 @@
   const key = Object.prototype.hasOwnProperty.call(presets, requested) ? requested : 'family';
   const preset = presets[key], root = document.getElementById('homebase-root');
   document.body.dataset.defaultSkin = preset.skin;
+  // The switcher initialised before this script chose the preset, so paint the preset skin now unless the device remembers one.
+  if (window.OSHAL_STYLE_SWITCHER && !window.OSHAL_STYLE_SWITCHER.getStoredSkin()) window.OSHAL_STYLE_SWITCHER.applySkin(preset.skin, false);
   const btn = (text, action, cls = 'button', attrs = '') => `<button type="button" class="${cls}" data-action="${action}" ${attrs}>${text}</button>`;
   const link = (text, href, cls = 'button', attrs = '') => `<a class="${cls}" href="${esc(href)}" ${attrs}>${text}</a>`;
   const pill = s => `<span class="pill">${esc(s)}</span>`;

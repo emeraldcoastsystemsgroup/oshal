@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Shared shell kernel for every experience layout: the experience chooser bar, device-local pins, the application directory, application and work-item panels over live summaries, the people and provenance panels, and the Jarvis conversation engine (history + ask/result) that Studio, Jarvis, Orbit, Commons, the homebases and the central assistant all reuse instead of fixtures.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Render the assistant's markdown links to same-origin paths and http(s) URLs as anchors after escaping, so an answer that names an application opens it instead of showing raw brackets.
  */
 (() => {
   'use strict';
@@ -40,7 +41,10 @@
   }
   /** @description Light, safe rendering of an assistant answer: escaped paragraphs, bullet lists and bold. */
   function answerHtml(text) {
-    const inline = s => esc(s).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    const inline = s => esc(s)
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      // [label](/path) or [label](https://…) as the assistant writes them; anything else stays literal text.
+      .replace(/\[([^\]\n]{1,120})\]\(((?:\/(?!\/)|https?:\/\/)[^\s()<>"']{1,400})\)/g, (_, label, href) => `<a href="${href}"${href.startsWith('/') ? '' : ' rel="noopener noreferrer" target="_blank"'}>${label}</a>`);
     return String(text || '').trim().split(/\n{2,}/).filter(Boolean).map(block => {
       const lines = block.split('\n');
       if (lines.every(l => /^\s*[-*•]\s+/.test(l))) return `<ul class="artifact-steps">${lines.map(l => `<li>${inline(l.replace(/^\s*[-*•]\s+/, ''))}</li>`).join('')}</ul>`;

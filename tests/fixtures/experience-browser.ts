@@ -50,7 +50,7 @@ export function experienceState() {
     ],
     bots: [{ agentId: 'a1', name: 'Synthetic Bot', role: 'assistant', online: true, active: true }, { agentId: 'a2', name: 'Idle Bot', role: 'assistant', online: false, active: false }],
     history: [] as Array<{ role: string; text: string }>,
-    ask: { status: 202, refuseFirst: false, polls: 2, result: { status: 'done', answer: 'Synthetic answer: the **ledger** is ready.\n\n- one\n- two', handoffs: [{ name: 'Synthetic ledger', deepLink: '/cockpit/?app=ledger' }], files: [] as unknown[], taskId: 'task-9' } },
+    ask: { status: 202, refuseFirst: false, polls: 2, result: { status: 'done', answer: 'Synthetic answer: the **ledger** is ready, see [Synthetic ledger](/cockpit/?app=ledger).\n\n- one\n- two', handoffs: [{ name: 'Synthetic ledger', deepLink: '/cockpit/?app=ledger' }], files: [] as unknown[], taskId: 'task-9' } },
     jobs: new Map<string, number>(),
     education: {
       meStatus: 200, me: { studentId: 'stu-1', name: 'Synthetic Teacher', email: 'synthetic@fixture.test', role: 'teacher', classCount: 1 },
@@ -98,7 +98,8 @@ function swarmRoutes(app: express.Application, state: ExperienceState) {
   });
   app.post('/api/voice/synthesize', (_req, res) => res.status(state.voiceStatus).json({ error: 'Synthetic voice unavailable' }));
   app.get('/fixture/probe/:name', (req, res) => res.status(statusOr(state, `probe:${req.params.name}`)).json({ tiles: [{ id: 'reported', label: 'Reported items', value: '2', tone: 'neutral' }], items: [{ text: `Update from ${req.params.name}`, detail: 'A synthetic owner-provided detail.', highlight: true }], asOf: iso(0) }));
-  app.get('/fixture/surface/:name', (req, res) => res.type('html').send(`<!doctype html><title>Synthetic ${req.params.name}</title><h1>Opened ${req.params.name}</h1>`));
+  app.get('/fixture/surface/:name', (req, res) => res.type('html').send(`<!doctype html><html><head><title>Synthetic ${req.params.name}</title>
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css"><script src="/shared/ui/js/surface-theme.js"></script></head><body><h1>Opened ${req.params.name}</h1></body></html>`));
   app.get('/api/user-directory', (_req, res) => res.status(state.directory.status).json({ users: state.directory.users }));
 }
 
@@ -135,6 +136,7 @@ export async function startExperienceBrowserFixture(options: { denyAuth?: boolea
   const app = express(), state = experienceState();
   const requiresAuth: express.RequestHandler = options.denyAuth ? (_req, res) => { res.status(401).json({ error: 'unauthorized' }); } : (_req, _res, next) => next();
   swarmRoutes(app, state); packageRoutes(app, state);
+  app.use('/shared/ui/js', express.static(resolve(ROOT, 'src/shared/ui/js')));
   registerCockpitStaticRoutes({ app, requiresAuth, cockpitDir: resolve(ROOT, 'src/pages/cockpit'), uiEnhancedDir: resolve(ROOT, 'any-bot/ui-enhanced'),
     codiconFontsDir: resolve(ROOT, 'node_modules/@vscode/codicons/dist'), sharedUiCssDir: resolve(ROOT, 'src/shared/ui/css'), sharedUiJsDir: resolve(ROOT, 'src/shared/ui/js') });
   const server = app.listen(0, '127.0.0.1');
