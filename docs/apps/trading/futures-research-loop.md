@@ -359,14 +359,19 @@ replay. An installed one-shot capture on 2026-09-25 wrote 220 ESZ26 and 219 CLX2
 a repeat inserted zero. The one-shot was run with the existing brokered owner token inside the API
 container; no token or bar payload was printed. The installed API loaded the new scheduler branch,
 and a temporary one-minute canary dispatched twice with `success: true` on 2026-09-25. It was
-restored to hourly `7 * * * *` UTC with the next run at 2026-09-26 03:07 UTC. The deployed
-unauthenticated route returned 401. A signed-in console visual check was not performed because
+restored to hourly `7 * * * *` UTC. The normal 03:07 UTC run then dispatched with `success: true`,
+execution count 3 and next run at 04:07 UTC; owner-private counts stayed 220/219 during the closed
+market. Trading 1.29.3 was installed from committed store HEAD in the persistent package volume
+and loaded active after API restart. The deployed unauthenticated route returned 401. A signed-in
+console visual check was not performed because
 the available browser session redirected to Google sign-in; browser-script and route tests cover
 the controls locally, not an authenticated installed click-through.
 
-Remaining: promote the matching core scheduler and Trading package through committed image/package
-deployment (the live proof used targeted in-container files), complete signed-in console acceptance,
-and observe per-contract gap/freshness behavior over time. The
+Remaining: promote the matching core scheduler through a normal committed image deployment; the
+live scheduler is a targeted in-container compiled-file activation and would not survive container
+recreation. A full-swarm image build is deferred because the box's 6 GB Docker cap is below the
+runbook's 8 GB safe build floor. Complete signed-in console acceptance and observe per-contract
+gap/freshness behavior over time. The
 one-time historical source/backfill and its provenance still require operator selection and proof.
 Only then may the Schwab owner-private reader be admitted to the research worker; the current study
 config still expects its existing archive source. Session completeness and the DST fold remain
