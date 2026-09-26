@@ -367,14 +367,28 @@ console visual check was not performed because
 the available browser session redirected to Google sign-in; browser-script and route tests cover
 the controls locally, not an authenticated installed click-through.
 
+The next source-health slice adds active-contract coverage diagnostics to the owner-only status
+route. For each current ES/CL dated contract it scans at most the past five days of private
+30-minute timestamps and counts expected session buckets from that contract's **first captured
+bar** through the last bucket closed with a two-minute safety margin. It converts each true UTC
+instant to New York wall fields only to consult the existing Globex calendar, so the same wall
+hour on a DST fold cannot collapse two different source instants. The result reports observed,
+missing and trailing buckets, gap runs and out-of-session rows; an unobserved contract has no
+denominator rather than a fabricated zero-percent score. The UI labels this a session-**model**
+estimate, not CME-notice-complete market coverage or proof of a historical backfill. It exposes
+counts and timestamps, never OHLCV or a bearer. Disposable PostgreSQL and browser-script guards
+cover owner isolation and presentation. This slice is source code/local proof until the matching
+core image and package are deployed and the signed-in operator checks it.
+
 Remaining: promote the matching core scheduler through a normal committed image deployment; the
 live scheduler is a targeted in-container compiled-file activation and would not survive container
 recreation. A full-swarm image build is deferred because the box's 6 GB Docker cap is below the
 runbook's 8 GB safe build floor. Complete signed-in console acceptance and observe per-contract
-gap/freshness behavior over time. The
+gap/freshness behavior over time, including a new open-market bar. The
 one-time historical source/backfill and its provenance still require operator selection and proof.
 Only then may the Schwab owner-private reader be admitted to the research worker; the current study
-config still expects its existing archive source. Session completeness and the DST fold remain
-explicit failure gates, not assumed-good timestamps. No silent switch to equity proxies.
+config still expects its existing archive source. The bounded diagnostic does not certify
+per-year exchange notices or full-contract completeness; the research-source DST fold and
+session admission remain explicit failure gates. No silent switch to equity proxies.
 
 Archive-to-`market_bars` ingestion now has a console/CLI implementation and private boundary proofs; actual installed ES/CL import and idempotence receipts remain unproven. Installed-console/provider-cost receipts, a real nightly observation and subsequently matured forward outcomes on the deployed box remain unproven. Exchange-session completeness remains open; the forward clock and freshness guards do not assert exchange-session coverage. Proactive source notifications have local real-worker/owner-routing proofs, not installed channel-delivery acceptance. Pre-optimizer duplicate reuse has real-file and private-worker/JSONB proofs, not an installed nightly receipt. Outcome feedback now has local owner/RLS and frozen-citation proofs; deployed provider review of matured real outcomes still needs acceptance. Paper-book/cockpit acceptance and any eventual live decision remain separate phases; live requires a named operator approval backed by positive research evidence. Keep [Futures extension layer](../../BACKLOG.md) open until its own Done when is met.

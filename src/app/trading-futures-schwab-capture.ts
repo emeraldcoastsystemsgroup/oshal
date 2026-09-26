@@ -8,9 +8,11 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Fetch bounded recent dated-contract 30-minute bars, validate complete buckets and immutable replays, and persist under forced owner RLS.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Measure bounded owner-private active-contract session gaps and trailing freshness on true UTC buckets.
  */
 import type { Pool } from 'pg';
 import { activeContractAt } from '@/features/trading';
+import { isSessionBucket } from '@/features/trading/services/futures-session-calendar';
 import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap, SCHEMA_LOCK_KEYS } from '@/shared/services/database';
 import { futuresUtcToWall } from './trading-futures-prediction-clock';
 import { getValidAccessToken } from './routes/connectors-routes';
@@ -28,6 +30,60 @@ export interface SchwabCapturedBar { t: string; o: number; h: number; l: number;
 export interface SchwabCaptureSeries { root: string; symbol: string; received: number; inserted: number; first: string; last: string }
 export interface SchwabCaptureReceipt { source: 'schwab'; ownerScoped: true; timeframe: '30Min'; completedAt: string; series: SchwabCaptureSeries[] }
 export interface SchwabCaptureCoverage { symbol: string; bars: number; first: string; last: string }
+export interface SchwabCaptureGap { first: string; last: string; missingBars: number }
+export interface SchwabCaptureHealth {
+  root: string; symbol: string; state: 'unobserved' | 'covered' | 'missing';
+  windowStart: string | null; latestExpected: string | null; latestCaptured: string | null;
+  expected: number | null; received: number; missing: number | null; trailingMissing: number | null;
+  outsideSession: number; gapCount: number; largestGaps: SchwabCaptureGap[];
+}
+
+/** @description Grade the observable forward span, not a historical archive or a trading entitlement.
+ * UTC iteration preserves distinct instants through DST; only the session predicate sees NY wall fields.
+ */
+export function assessSchwabCaptureHealth(root: string, symbol: string, timestamps: string[], now = Date.now()): SchwabCaptureHealth {
+  const cutoff = Math.floor((now - 120_000) / BAR_MS) * BAR_MS - BAR_MS;
+  const present = new Set(timestamps.map(Date.parse).filter(t => Number.isFinite(t) && t % BAR_MS === 0 && t <= cutoff && t >= now - LOOKBACK_MS));
+  const ordered = [...present].sort((a,b) => a-b);
+  const base = { root, symbol, latestCaptured: ordered.length ? new Date(ordered.at(-1)!).toISOString() : null };
+  if (!ordered.length) return { ...base, state: 'unobserved', windowStart: null, latestExpected: null,
+    expected: null, received: 0, missing: null, trailingMissing: null, outsideSession: 0, gapCount: 0, largestGaps: [] };
+  const windowStart = ordered[0];
+  const expectedSlots: number[] = [];
+  for (let t = windowStart; t <= cutoff; t += BAR_MS) {
+    if (isSessionBucket(futuresUtcToWall(t, 'America/New_York'), BAR_MS)) expectedSlots.push(t);
+  }
+  const eligible = new Set(expectedSlots);
+  const missingSlots = expectedSlots.filter(t => !present.has(t));
+  const received = expectedSlots.length - missingSlots.length;
+  const outsideSession = ordered.filter(t => !eligible.has(t)).length;
+  const gaps: SchwabCaptureGap[] = [];
+  let run: { first: number; last: number; missingBars: number } | null = null;
+  for (const t of expectedSlots) {
+    if (!present.has(t)) {
+      if (run) { run.last = t; run.missingBars++; }
+      else run = { first: t, last: t, missingBars: 1 };
+    } else if (run) { gaps.push({ first: new Date(run.first).toISOString(), last: new Date(run.last).toISOString(), missingBars: run.missingBars }); run = null; }
+  }
+  if (run) gaps.push({ first: new Date(run.first).toISOString(), last: new Date(run.last).toISOString(), missingBars: run.missingBars });
+  const trailingMissing = expectedSlots.length ? gaps.at(-1)?.last === new Date(expectedSlots.at(-1)!).toISOString()
+    ? gaps.at(-1)!.missingBars : 0 : 0;
+  return { ...base, state: missingSlots.length || outsideSession ? 'missing' : 'covered',
+    windowStart: new Date(windowStart).toISOString(), latestExpected: expectedSlots.length ? new Date(expectedSlots.at(-1)!).toISOString() : null,
+    expected: expectedSlots.length, received, missing: missingSlots.length, trailingMissing, outsideSession,
+    gapCount: gaps.length, largestGaps: gaps.sort((a,b) => b.missingBars - a.missingBars).slice(0, 5) };
+}
+
+/** @description Active ES/CL aggregate diagnostics only; bounded to five days and enforced by owner RLS. */
+export async function listSchwabFuturesHealth(pool: Pool, ownerSub: string, now = Date.now()): Promise<SchwabCaptureHealth[]> {
+  await ensureSchwabFuturesBars(pool);
+  const active = ['ES','CL'].map(root => ({ root, symbol: activeContractAt(root, new Date(now))!.symbol }));
+  const rows = (await pool.query(`SELECT symbol,bar_ts FROM ${TABLE} WHERE owner_sub=$1 AND symbol=ANY($2::text[])
+    AND timeframe='30Min' AND bar_ts >= $3 ORDER BY symbol,bar_ts`,
+    [ownerSub, active.map(item => item.symbol), new Date(now - LOOKBACK_MS).toISOString()])).rows;
+  return active.map(item => assessSchwabCaptureHealth(item.root, item.symbol,
+    rows.filter(row => row.symbol === item.symbol).map(row => new Date(row.bar_ts).toISOString()), now));
+}
 
 /** @description Runtime schema mirrors migration 167 for fresh install; provider bars never enter shared market_bars. */
 export async function ensureSchwabFuturesBars(pool: Pool): Promise<void> {

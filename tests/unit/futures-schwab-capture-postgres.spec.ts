@@ -7,7 +7,7 @@
  */
 import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { captureSchwabFuturesBars, listSchwabFuturesCoverage, parseSchwabFuturesCandles,
+import { assessSchwabCaptureHealth, captureSchwabFuturesBars, listSchwabFuturesCoverage, listSchwabFuturesHealth, parseSchwabFuturesCandles,
   readSchwabFuturesWallBars } from '@/app/trading-futures-schwab-capture';
 import { DisposablePostgres } from '../helpers/disposable-postgres';
 
@@ -35,6 +35,25 @@ function application(sub: string): Pool {
 }
 
 describe('private Schwab Futures forward bars', () => {
+  it('counts true-UTC session slots, ignores closed weekends and exposes a trailing gap without inventing history', () => {
+    const at = (hour: number, minute: number) => new Date(Date.UTC(2026, 8, 24, hour, minute)).toISOString();
+    const gap = assessSchwabCaptureHealth('ES', 'ESZ26', [at(14,0), at(15,0), at(15,30)], Date.UTC(2026,8,24,16,4));
+    expect(gap).toMatchObject({ state: 'missing', expected: 4, received: 3, missing: 1, trailingMissing: 0, gapCount: 1,
+      largestGaps: [{ first: at(14,30), last: at(14,30), missingBars: 1 }] });
+    const friday = new Date(Date.UTC(2026,8,25,20,30)).toISOString();
+    const closed = assessSchwabCaptureHealth('ES', 'ESZ26', [friday], Date.UTC(2026,8,27,20));
+    expect(closed).toMatchObject({ state: 'covered', expected: 1, received: 1, missing: 0, trailingMissing: 0 });
+    expect(assessSchwabCaptureHealth('CL', 'CLX26', [], Date.UTC(2026,8,25,20))).toMatchObject({
+      state: 'unobserved', expected: null, missing: null, latestCaptured: null });
+  });
+
+  it('does not double-count the fall DST fold or fabricate a Sunday-open bar before it closes', () => {
+    const friday = new Date(Date.UTC(2026,9,30,20,30)).toISOString();
+    const beforeOpenClose = assessSchwabCaptureHealth('ES', 'ESZ26', [friday], Date.UTC(2026,10,1,23,4));
+    expect(beforeOpenClose).toMatchObject({ expected: 1, missing: 0, trailingMissing: 0 });
+    const afterOpenClose = assessSchwabCaptureHealth('ES', 'ESZ26', [friday], Date.UTC(2026,10,1,23,35));
+    expect(afterOpenClose).toMatchObject({ expected: 2, missing: 1, trailingMissing: 1, latestExpected: '2026-11-01T23:00:00.000Z' });
+  });
   it('rejects malformed, unaligned, duplicate and still-forming candles', () => {
     expect(parseSchwabFuturesCandles({ candles: [candle] }, now)).toEqual([{ t: new Date(stamp).toISOString(), o: 100, h: 103, l: 99, c: 102, v: 20 }]);
     expect(() => parseSchwabFuturesCandles({ candles: [{ ...candle, datetime: stamp + 1 }] }, now)).toThrow(/Invalid/);
@@ -57,11 +76,16 @@ describe('private Schwab Futures forward bars', () => {
       const coverage = await listSchwabFuturesCoverage(app, owner);
       expect(coverage).toHaveLength(2);
       expect(coverage.map(item => item.bars)).toEqual([1, 1]);
+      const health = await listSchwabFuturesHealth(app, owner, now);
+      expect(health).toHaveLength(2);
+      expect(health.every(item => item.root === 'ES' || item.root === 'CL')).toBe(true);
+      expect(health.every(item => item.received <= item.expected!)).toBe(true);
       const wall = await readSchwabFuturesWallBars(app, owner, coverage[0].symbol, '2026-09-24', '2026-09-25');
       expect(wall).toEqual([{ t: '2026-09-24T15:00:00.000Z', o: 100, h: 103, l: 99, c: 102, v: 20 }]);
       const outsider = application(other);
       try {
         expect(await listSchwabFuturesCoverage(outsider, owner)).toEqual([]);
+        expect((await listSchwabFuturesHealth(outsider, owner, now)).every(item => item.state === 'unobserved')).toBe(true);
         expect(await readSchwabFuturesWallBars(outsider, owner, coverage[0].symbol, '2026-09-24', '2026-09-25')).toEqual([]);
         await expect(captureSchwabFuturesBars(outsider, owner, 'test-token', ['ES'], provider(), now)).rejects.toThrow();
       } finally { await outsider.end(); }
