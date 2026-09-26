@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Declare the immutable Futures forward receipt compatibility floor for matching console packages.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Declare confirmed archive imports so older cores refuse console packages without the shared-write approval boundary.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | ADR-045: declare the world-data engine and every module imported by the World package as a kernel skill, so package compatibility and build-artifact checks cover deep imports.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | Declare the signed provider-callback compatibility floor so packages cannot mount anonymous callbacks without a verified owner and current application permission.
  */
 
 /**
@@ -37,6 +38,7 @@ export type KernelSkillId =
   | 'application-authorization'
   | 'authenticated-artifacts'
   | 'package-tools'
+  | 'signed-package-callbacks'
   | 'test-catalog'
   | 'jarvis-briefings'
   | 'app-dependencies'
@@ -103,6 +105,11 @@ export const KERNEL_SKILLS: readonly KernelSkillDeclaration[] = [
       { specifier: '@/features/world-data/outlet-ratings', distFile: 'dist/features/world-data/outlet-ratings.js' },
       { specifier: '@/features/world-data/news-fetcher', distFile: 'dist/features/world-data/news-fetcher.js' },
     ] },
+  {
+    id: 'signed-package-callbacks', title: 'Signed package callbacks',
+    why: 'Authenticate provider callbacks to their durable owner and recheck current application permissions without a browser session.',
+    modules: [{ specifier: '@/shared/package-callbacks', distFile: 'dist/shared/package-callbacks/index.js' }],
+  },
   { id: 'futures-archive-import', title: 'Confirmed Futures archive imports',
     why: 'Owner-bound content previews and explicit operator confirmation precede atomic shared reference writes.',
     modules: [{ specifier: '@/app/trading-futures-archive-import', distFile: 'dist/app/trading-futures-archive-import.js' }] },

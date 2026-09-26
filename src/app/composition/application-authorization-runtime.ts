@@ -36,6 +36,7 @@ export interface PackageAuthorizationContext {
 }
 export interface ApplicationRouteAuthorization {
   guard(appName: string, req: Request, res: Response, next: () => void): Promise<void>;
+  guardCallback?(appName: string, req: Request, res: Response, principal: { sub: string; issuer: string }, next: () => void): Promise<void>;
   forPackage(appName: string): PackageAuthorizationContext;
   protectedApp(appName: string): boolean;
   packageToolDeclarations?(appName: string): PackageToolDeclaration[];
@@ -64,7 +65,8 @@ export class ApplicationAuthorizationRuntime implements ManifestAuthorizationReg
   private readonly registrations = new Map<string, RuntimeRegistration>();
   constructor(readonly service: ApplicationAuthorizationService,
     readonly resolveActor: (req: Request) => Promise<AuthorizationActor>, private readonly env: NodeJS.ProcessEnv = process.env,
-    private readonly findApp?: (name: string) => Promise<SwarmApplicationRecord | null>) {}
+      private readonly findApp?: (name: string) => Promise<SwarmApplicationRecord | null>,
+      private readonly callbackActor?: (sub: string, issuer: string) => Promise<AuthorizationActor | null>) {}
 
   private candidate(manifest: SwarmAppManifest, manifestPath: string): AuthorizationAppRegistration {
     validatePackageTools(manifest);
@@ -203,7 +205,14 @@ export class ApplicationAuthorizationRuntime implements ManifestAuthorizationReg
     catch { return false; }
   }
   /** Apply named permissions before package code, retaining a restricted business database identity. */
-  async guard(appName: string, req: Request, res: Response, next: () => void): Promise<void> {
+  async guardCallback(appName: string, req: Request, res: Response, principal: { sub: string; issuer: string }, next: () => void): Promise<void> {
+    const actor = await this.callbackActor?.(principal.sub, principal.issuer);
+    if (!actor?.isActive || actor.sub !== principal.sub || actor.issuer !== principal.issuer) {
+      res.status(403).json({ error: 'callback_owner_unavailable' }); return;
+    }
+    await this.guard(appName, req, res, next, actor);
+  }
+  async guard(appName: string, req: Request, res: Response, next: () => void, verifiedActor?: AuthorizationActor): Promise<void> {
     try {
       const state = this.registrations.get(appName);
       if (!state) {
@@ -215,7 +224,7 @@ export class ApplicationAuthorizationRuntime implements ManifestAuthorizationReg
       }
       if (!this.protectedApp(appName)) { next(); return; }
       if (!state.available) { res.status(503).json({ error: 'authorization_app_unavailable' }); return; }
-      const actor = await this.resolveActor(req);
+      const actor = verifiedActor ?? await this.resolveActor(req);
       const requestPath = (req.originalUrl || req.url).split('?')[0];
       const mounts = [...(state.registration.mountPaths ?? [])].sort((a, b) => b.length - a.length);
       const mount = mounts.find(prefix => requestPath === prefix || requestPath.startsWith(`${prefix}/`));

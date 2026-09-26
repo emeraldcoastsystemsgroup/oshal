@@ -35,6 +35,7 @@ the carve doesn't prune them out of `dist/` (the google-calendar/notifications b
 | `futures-archive-import` | `@/app/trading-futures-archive-import` | Owned immutable previews and explicit confirmation of atomic shared-bar imports; source drift and conflicting reference data fail without replacement. Requires migrations 096/162. |
 | `application-authorization` | `@/shared/application-authorization` | Imported application roles and permissions evaluated for the current exact user and selected business tenant. |
 | `package-tools` | `@/shared/package-tools` | Activation-scoped `ctx.tools.register` handlers run under current caller authorization and the tool approval policy. |
+| `signed-package-callbacks` | `@/shared/package-callbacks` | Narrow POST-only provider callbacks verify a durable owner, then recheck current application permissions without using a browser session. See [the callback contract](signed-package-callbacks.md). |
 | `authenticated-artifacts` | `@/app/routes/artifact-authenticated-relay` | Authenticated local artifact reads preserve the original caller and recheck source permission and registration before returning bytes. |
 | `specialist-context` | `@/shared/specialist-context` | Package-owned scalar facts for caller-authorized specialist dispatch; bounded reads, lifecycle and permission rechecks. |
 | `jarvis-briefings` | `@/shared/briefings` | Registered briefing sources and per-user enable, frequency and voice/bubble/screen delivery preferences. |
