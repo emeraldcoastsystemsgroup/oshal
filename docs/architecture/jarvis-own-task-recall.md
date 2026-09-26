@@ -1,7 +1,7 @@
 # Jarvis own-task recall
 
-Jarvis can look up the caller's own prior conversations without loading their history into every
-turn. The capability is deliberately two-step:
+The source provides a way for Jarvis to look up the caller's own prior conversations without loading
+their history into every turn. The capability is deliberately two-step:
 
 1. `conversation_query` searches the caller's title/message record and returns only selection
    metadata: task id, title, status, kind, timestamps, and a cockpit link. It never returns a
@@ -18,6 +18,20 @@ This separation keeps broad Jarvis questions cheap and bounded. A list result he
 record, and only an explicit fetch brings message content into the current answer. Missing or
 foreign records are not retried with another owner and are not treated as evidence that a caller
 never discussed the topic.
+
+## Installed acceptance boundary (2026-09-26)
+
+The real-PostgreSQL two-owner guard passed 24/24 over both the application and bot roles,
+including the case where only database RLS can refuse the other caller's rows. The signed-in
+live Jarvis check is still **red**. One owner thread recorded a fictional codeword, then a
+separate thread requested it without repeating it. Jarvis dispatched a work item, but its
+completed result said no conversation search tools or scopes were authorized. The bot-node's
+auto-executable view contained zero tools and its workspace listed
+`conversation-query` and `conversation-fetch` as not installed. Registration, handler mapping,
+persona guidance and local isolation tests do not install a per-bot grant. No live recall,
+other-user access or real-history fetch is claimed. Enable only those two read-only tools
+through the normal tool-control grant after operator approval, then repeat the signed-in
+two-thread check before closing the backlog item.
 
 ## Invariant preamble cache seam
 
