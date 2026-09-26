@@ -9,6 +9,16 @@
 
 export { ChannelLinkService, type ChannelLink } from './services/channel-link-service';
 export {
+  DISCORD_CHANNEL_PROVIDER,
+  getDiscordBotToken,
+  parseDiscordGatewayMessage,
+  sendDiscordMessage,
+  startDiscordGateway,
+  type DiscordGatewayHandle,
+  type DiscordGatewayOptions,
+  type InboundDiscordMessage,
+} from './services/discord-channel-adapter';
+export {
   type InboundChannelMessage,
   getTelegramBotToken,
   deriveWebhookSecret,

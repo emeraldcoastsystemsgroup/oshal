@@ -34,6 +34,7 @@ import type { AppContext } from '@/app/composition/app-context';
 import { BotNodeClient, createRegistryEndpointResolver } from '@/features/agent-management';
 import {
   ChannelLinkService,
+  DISCORD_CHANNEL_PROVIDER,
   SMS_CHANNEL_PROVIDER,
   WHATSAPP_CHANNEL_PROVIDER,
   normalizeE164,
@@ -46,6 +47,10 @@ import {
   sendTelegramTyping,
   registerTelegramWebhook,
   getTelegramBotIdentity,
+  getDiscordBotToken,
+  sendDiscordMessage,
+  startDiscordGateway,
+  type InboundDiscordMessage,
 } from '@/features/chat-channels';
 import { executeBotOrInline } from './inline-bot-execution';
 import { resolveUserLlmConnection } from './free-tier-rotation';
@@ -78,10 +83,10 @@ function callerSub(req: Request): string | null {
  * in the same conversation context — the cockpit Jarvis surface threads a session id the same way.
  * @returns The bot's reply text (never empty).
  */
-async function dispatchToSwarm(ctx: AppContext, sub: string, chatId: string, text: string): Promise<string> {
+async function dispatchToSwarm(ctx: AppContext, provider: string, sub: string, chatId: string, text: string): Promise<string> {
   return runWithRequestIdentity({ sub, isOperator: false }, async () => {
     const byoLlmConnection = await resolveUserLlmConnection(ctx.pool, sub);
-    const taskId = `telegram-${sub}-${chatId}`;
+    const taskId = `${provider}-${sub}-${chatId}`;
     const result = await executeBotOrInline(ctx, botClient, JARVIS_AGENT_ID, {
       text,
       taskId,
@@ -115,11 +120,27 @@ async function handleInbound(ctx: AppContext, links: ChannelLinkService, msg: In
   }
   await sendTelegramTyping(msg.chatId);
   try {
-    const reply = await dispatchToSwarm(ctx, link.userSub, msg.chatId, msg.text);
+    const reply = await dispatchToSwarm(ctx, msg.provider, link.userSub, msg.chatId, msg.text);
     await sendTelegramMessage(msg.chatId, reply);
   } catch (err) {
     logger.error({ err, provider: msg.provider }, 'channel dispatch failed');
     await sendTelegramMessage(msg.chatId, 'Something went wrong reaching your swarm. Please try again in a moment.');
+  }
+}
+
+/** Discord Gateway handler: DM-only, link-resolved, owner-bound dispatch and reply. */
+async function handleDiscordInbound(ctx: AppContext, links: ChannelLinkService, msg: InboundDiscordMessage): Promise<void> {
+  const link = await links.resolveLink(DISCORD_CHANNEL_PROVIDER, msg.channelUserId);
+  if (!link) {
+    await sendDiscordMessage(msg.channelId, 'This DM is not linked to an oshal account yet. Open your cockpit → Channels → Connect Discord to get a one-time link.');
+    return;
+  }
+  try {
+    const reply = await dispatchToSwarm(ctx, msg.provider, link.userSub, msg.channelId, msg.text);
+    await sendDiscordMessage(msg.channelId, reply);
+  } catch (err) {
+    logger.error({ err, provider: msg.provider }, 'Discord DM dispatch failed');
+    await sendDiscordMessage(msg.channelId, 'Something went wrong reaching your swarm. Please try again in a moment.');
   }
 }
 
@@ -147,6 +168,7 @@ export function createChatChannelRoutes(ctx: AppContext, requiresAuth: RequestHa
   const router = Router();
   const links = new ChannelLinkService(ctx.pool as never);
   void links.ensureSchema();
+  startDiscordGateway((message) => handleDiscordInbound(ctx, links, message));
 
   // ── PUBLIC: Telegram delivers updates here ────────────────────────────────
   // FIXED PATH, secret in the HEADER ONLY (double-check 2026-07-08): the secret used to
@@ -180,6 +202,8 @@ export function createChatChannelRoutes(ctx: AppContext, requiresAuth: RequestHa
   router.delete('/sms/:channelUserId', requiresAuth, (req, res) => void unlinkSms(links, req, res));
   router.post('/whatsapp/link', requiresAuth, (req, res) => void mintWhatsAppLink(links, req, res));
   router.delete('/whatsapp/:channelUserId', requiresAuth, (req, res) => void unlinkWhatsApp(links, req, res));
+  router.post('/discord/link', requiresAuth, (req, res) => void mintDiscordLink(links, req, res));
+  router.delete('/discord/:channelUserId', requiresAuth, (req, res) => void unlinkDiscord(links, req, res));
 
   return router;
 }
@@ -225,6 +249,22 @@ async function unlinkWhatsApp(links: ChannelLinkService, req: Request, res: Resp
   res.json({ removed: await links.unlink(sub, WHATSAPP_CHANNEL_PROVIDER, number) });
 }
 
+async function mintDiscordLink(links: ChannelLinkService, req: Request, res: Response): Promise<void> {
+  const sub = callerSub(req);
+  if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
+  if (!getDiscordBotToken()) { res.status(503).json({ error: 'discord_not_configured' }); return; }
+  const code = await links.mintLinkCode(sub, DISCORD_CHANNEL_PROVIDER);
+  res.json({ code, message: `DM the Discord bot: LINK ${code}`, expiresInMinutes: 15 });
+}
+
+async function unlinkDiscord(links: ChannelLinkService, req: Request, res: Response): Promise<void> {
+  const sub = callerSub(req);
+  if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
+  const channelUserId = String(req.params.channelUserId || '').trim();
+  if (!/^\d{5,30}$/.test(channelUserId)) { res.status(400).json({ error: 'invalid_discord_user_id' }); return; }
+  res.json({ removed: await links.unlink(sub, DISCORD_CHANNEL_PROVIDER, channelUserId) });
+}
+
 /** GET / — the caller's linked channels + Telegram setup status (bot identity, token presence). */
 async function listChannels(links: ChannelLinkService, req: Request, res: Response): Promise<void> {
   const sub = callerSub(req);
@@ -233,6 +273,7 @@ async function listChannels(links: ChannelLinkService, req: Request, res: Respon
   res.json({
     telegram: { configured: Boolean(getTelegramBotToken()), bot: identity },
     sms: { configured: Boolean(inboundSmsNumber()), number: inboundSmsNumber() || null },
+    discord: { configured: Boolean(getDiscordBotToken()) },
     links: await links.listLinks(sub),
   });
 }

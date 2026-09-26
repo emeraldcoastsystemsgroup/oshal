@@ -76,6 +76,11 @@ dispatches through a transport registry; sends/skips are logged and never throw 
 Routes: `/api/notify/*`. The career digest consults it while keeping its own once/day cursor +
 opt-out.
 
+The chat-channel adapter separately exposes a DM-only Discord Gateway listener. Guild and group
+messages are refused before owner lookup; direct messages use the existing one-time
+`channel_links` binding and the same accountable bot dispatch as Telegram/SMS. Discord enablement,
+operator credentials, and real provider receipts remain deployment work.
+
 The temporary tag `wip/notification-prefs-index-snapshot-20260801` was reviewed on 2026-08-05.
 Its sole commit (`15b9b813990e0e10e89d5a3713a8d16a1ce08acd`) removed the welcome notification step,
 default-topic fallback, voice channel, deployment Twilio fallback, and their regression tests; it
