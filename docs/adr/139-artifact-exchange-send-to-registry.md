@@ -79,6 +79,18 @@ Ownership, expiry, MIME compatibility and current app visibility are rechecked b
 is returned; Email still opens compose and requires recipient/send confirmation. Non-exact target
 requests remain model-directed and still need a live acceptance, as does this new exact-label path.
 
+Installed owner acceptance on 2026-09-26 for `24b54f8d` (image `a05b647f438c`): the fictional
+`stage2-proof.png` was selected through Choose from OSHAL and the exact-label command “Use the
+available Email it destination ... Open its compose overlay now; leave recipient blank and do not
+send” opened the **Email it** overlay with that image attached. The recipient was blank and Send
+was never pressed; the overlay was closed without email transmission. The browser cleared its
+selected file on successful handoff. The same signed-in session previously received the six real
+image-compatible labels for a read-only destination question, without a dispatch. Core deploy
+verification passed bot-role grant, Jarvis ask and synthetic ticket completion, with 37/37 healthy
+containers, parity clean and zero API restarts. This proves the exact-label/browser-compose path,
+not the model-interpreted non-exact path or an ambiguous/unavailable target clarification. Both
+remain open acceptance work; do not close Stage 4b from this partial receipt.
+
 Destination manifests may add `keywords` (up to 16 nonempty strings, each at most 60 characters)
 and `useWhen` (a nonempty single line, at most 300 characters) under each `artifacts.accepts` entry:
 
