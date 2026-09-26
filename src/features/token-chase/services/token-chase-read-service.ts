@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Token Chase step 1: read-only service over captured per-call frames (ADR-046)
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Tail-replay inputs (ADR-046 §1/§8): surface the additive capture fields the forward-replay consumer needs — a frame's `pins` (per-tool-read pinned/unpinned classification) and `workspaceTree` (content-addressed manifest) now ride on TokenChaseFrameDetail, and readTreeObject() serves one content-addressed blob from <capture>/objects/<sha256> so the tail replay can restage the tree a frame saw. Both additive: pre-tail frames simply lack the fields and behave exactly as before.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read three of the six.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Workspace-bound provenance: expose captured tool schemas, workspace commit/store-version references and the bounded snapshot result used by the tail replay.
  */
 
 import fsSync from 'node:fs';
@@ -65,6 +66,12 @@ export interface TokenChaseFrameDetail extends TokenChaseFrameSummary {
    *  capture lane records for this frame, or undefined on pre-tail frames. Raw recorded value;
    *  the tail-replay service normalizes and restages it against readTreeObject(). */
   workspaceTree?: unknown;
+  /** Full declared tool schemas captured for prompt/replay identity (not executable callbacks). */
+  toolSchema: unknown[];
+  /** Optional immutable workspace commit/ref supplied by the caller at capture time. */
+  workspaceCommit: string | null;
+  /** Optional encrypted owner-store snapshot ref; plaintext store bytes never enter a frame. */
+  ownerStoreVersion: string | null;
 }
 
 /**
@@ -194,6 +201,9 @@ export class TokenChaseReadService {
       systemPrompt: (context.systemPrompt as string) ?? null,
       responseContent: (response.content as string) ?? null,
       responseBlocks: Array.isArray(response.blocks) ? (response.blocks as unknown[]) : [],
+      toolSchema: Array.isArray(context.toolSchema) ? (context.toolSchema as unknown[]) : [],
+      workspaceCommit: (context.workspaceCommit as string) ?? null,
+      ownerStoreVersion: (context.ownerStoreVersion as string) ?? null,
       // Additive tail-replay inputs — passed through raw (undefined on pre-tail frames).
       pins: frame.pins,
       workspaceTree: frame.workspaceTree,

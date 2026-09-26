@@ -131,3 +131,13 @@ No assessor, corpus, or policy needed — this view is fully powered by steps 1�
 
 Ship the debugger at the end of step 2. The optimizer (ADR-046 steps 3–5) is a separate effort on this
 same substrate.
+
+## Current provenance contract
+
+The capture rail writes a bounded `workspaceTree` manifest and redacted content-addressed objects
+under `.tokenchase/objects/<sha256>` in its background writer. It retains the complete declared tool
+schemas (descriptions and parameter shapes, never executable callbacks), plus optional
+`workspaceCommit` and `ownerStoreVersion` references supplied by the caller. A caller-supplied
+unpinned/live-read marker makes the frame `replayable: false`; omitted refs remain an honest source
+gap rather than being fabricated. This is still a source contract: the actual AgenticController
+caller must supply the immutable commit and encrypted store ref before the checkpoint is complete.

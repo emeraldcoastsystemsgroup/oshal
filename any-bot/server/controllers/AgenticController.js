@@ -427,6 +427,10 @@ class AgenticController {
           history,
           source: options.source || task.source,
           userSub: options.extraEnv && options.extraEnv.OSHAL_USER_SUB,
+          pins: options.pins,
+          replayable: options.replayable,
+          workspaceCommit: options.workspaceCommit,
+          ownerStoreVersion: options.ownerStoreVersion,
         });
         try {
           response = await llmProvider.generateResponse(history, {
