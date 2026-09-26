@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Prove in real Chromium, against the real Jarvis router and an isolated PostgreSQL, that a persisted thread the server cannot attribute to the current sign-in is refused, the page rolls to a fresh thread and resends the turn once, the answer renders, and the new thread carries the caller's issuer.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Search the recorded bot call through plain objects only. The first execution threw "Converting circular structure to JSON": the AppContext argument carries the pg pool's timers, and its in-memory task store also holds the planted legacy row, so stringifying the whole call could never prove the turn ran clean of it. The assertion now names the missing thread id when it fails.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Give the hooks that own the isolated fixture browser the fixture's exit budget, so a confirmed but slow shutdown on a loaded box is failed by neither deadline.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Fail immediately with the served status when the page itself is unavailable, instead of timing out waiting for a handler it cannot contain; keep the turn neutral so domain handoff does not bypass the mocked answer.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import type { Browser } from 'playwright';
@@ -27,8 +28,8 @@ const database = new DisposableAlertPostgres();
 let fixture: Awaited<ReturnType<typeof createProtectedJarvisFixture>>;
 let owned: Awaited<ReturnType<typeof launchIsolatedBrowser>>;
 let browser: Browser;
-const question = 'How did I do in the stock market last week?';
-const answer = 'Last week you finished **up 2.3%** on the fixture ledger.';
+const question = 'Explain how a compass works in one sentence.';
+const answer = 'A compass aligns with the **Earth’s magnetic field**.';
 
 beforeAll(async () => {
   await database.start();
@@ -57,7 +58,8 @@ async function openJarvis(bookmarkedThread: string) {
     const sessionId = String((JSON.parse(request.postData() || '{}') as { sessionId?: string }).sessionId);
     asks.push({ status: response.status(), sessionId, body: await response.text().catch(() => '') });
   });
-  await page.goto(fixture.base + '/api/jarvis/?layout=compact');
+  const response = await page.goto(fixture.base + '/api/jarvis/?layout=compact');
+  expect(response?.status(), `Jarvis fixture page at ${page.url()} must load`).toBe(200);
   await page.waitForFunction(() => typeof (window as unknown as { handleInput?: unknown }).handleInput === 'function');
   return { page, context, asks, errors };
 }
@@ -95,7 +97,7 @@ it('refuses the bookmarked legacy thread, rolls to a fresh one, answers on it, a
     expect(asks[1].status).toBe(202);
     const fresh = asks[1].sessionId;
     expect(fresh).toMatch(/^jarvis-[0-9a-f-]{36}$/);
-    await expect.poll(() => page.locator('#convo .msg.bot .bx').last().textContent(), { timeout: 20_000 }).toContain('up 2.3%');
+    await expect.poll(() => page.locator('#convo .msg.bot .bx').last().textContent(), { timeout: 20_000 }).toContain('magnetic field');
     expect(await page.evaluate(() => localStorage.getItem('jarvisSessionId'))).toBe(fresh);
     expect(await page.locator('#convo').textContent()).not.toContain('session_not_found');
     // The server created the fresh thread for this caller with issuer provenance; the legacy row never ran a turn.
@@ -115,7 +117,7 @@ it('leaves a thread the caller does own untouched: one ask, no roll', async () =
   try {
     await page.locator('#typein').fill(question);
     await page.locator('#typer button').click();
-    await expect.poll(() => page.locator('#convo .msg.bot .bx').last().textContent(), { timeout: 20_000 }).toContain('up 2.3%');
+    await expect.poll(() => page.locator('#convo .msg.bot .bx').last().textContent(), { timeout: 20_000 }).toContain('magnetic field');
     expect(asks.map(ask => ask.status)).toEqual([202]);
     expect(asks[0].sessionId).toBe('jarvis-owned-thread-000000000000000000000000000');
     expect(await page.evaluate(() => localStorage.getItem('jarvisSessionId'))).toBe('jarvis-owned-thread-000000000000000000000000000');

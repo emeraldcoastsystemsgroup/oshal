@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Serve the actual Jarvis page and panel with bounded disposable HTTP proposal responses for browser boundary tests.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep fixed fixture assets accessible when the isolated checkout sits below a hidden worktree directory.
  */
 import express, { type Express } from 'express';
 import type { AddressInfo } from 'node:net';
@@ -51,10 +52,10 @@ function toolEndpoints(app: Express, state: ReturnType<typeof browserToolState>)
  * @param app Disposable fixture server. @returns Nothing; mounts static browser assets.
  */
 export function attachJarvisBrowserAssets(app: Express): void {
-  app.get('/api/jarvis/ui', (_req, res) => res.sendFile(resolve('src/api/jarvis.html')));
-  app.use('/shared/ui', express.static(resolve('src/shared/ui')));
-  app.use('/cockpit/css/themes', express.static(resolve('src/shared/ui/css/themes')));
-  app.use('/api/jarvis/assets', express.static(resolve('src/api')));
+  app.get('/api/jarvis/ui', (_req, res) => res.sendFile(resolve('src/api/jarvis.html'), { dotfiles: 'allow' }));
+  app.use('/shared/ui', express.static(resolve('src/shared/ui'), { dotfiles: 'allow' }));
+  app.use('/cockpit/css/themes', express.static(resolve('src/shared/ui/css/themes'), { dotfiles: 'allow' }));
+  app.use('/api/jarvis/assets', express.static(resolve('src/api'), { dotfiles: 'allow' }));
 }
 
 /** @description Serve browser edge cases without using a deployment database or provider.

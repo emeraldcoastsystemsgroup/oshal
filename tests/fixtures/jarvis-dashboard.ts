@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Serve unchanged Jarvis markup and real client assets over isolated synthetic HTTP for dashboard proofs.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Let a case refuse chosen thread ids (or every ask) with the server's real session_not_found contract, so the page's roll-to-a-fresh-thread resend is proven at the HTTP boundary.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Optional real Jarvis router: a case can hand the page's ask traffic to the shipped route (mounted after the synthetic task/read routes, ahead of the synthetic conversation routes) so a failure the server produces is proven all the way to what the page renders and speaks. The read routes now register before conversation; the two sets share no path, so existing cases see no change.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Serve fixed fixture files from a hidden worktree without Express treating their trusted parent directory as an inaccessible dotfile.
  */
 import express, { type Express, type RequestHandler } from 'express';
 import { resolve } from 'node:path';
@@ -90,7 +91,7 @@ function dashboardConversationRoutes(app: Express, state: ReturnType<typeof dash
 
 /** @description Keep all local helpers real while returning inert ambient/overview data. */
 function dashboardReadRoutes(app: Express) {
-  app.get('/api/jarvis/briefings/client.js', (_req, res) => res.sendFile(resolve('src/pages/jarvis-briefings/client.js')));
+  app.get('/api/jarvis/briefings/client.js', (_req, res) => res.sendFile(resolve('src/pages/jarvis-briefings/client.js'), { dotfiles: 'allow' }));
   app.get('/api/jarvis/ambient/settings', (_req, res) => res.json({ settings: { enabled: false, assistantName: 'Jarvis', speakerDiarizationEnabled: false } }));
   app.get('/api/jarvis/ambient/speaker-context', (_req, res) => res.json({ enrolled: false }));
   app.get('/api/jarvis/overview', (_req, res) => res.json({ bots: [{ agentId: 'engineering-fixture', name: 'Engineering', status: 'online' }], activity: [], comms: {}, calendar: {} }));
@@ -113,11 +114,11 @@ export interface DashboardFixtureOptions {
  * @returns Fixture and explicit cleanup. */
 export async function startJarvisDashboardFixture(options: DashboardFixtureOptions = {}) {
   const state = dashboardState(), app = express(); app.use(express.json());
-  app.use('/cockpit/css/themes', express.static(resolve('src/pages/cockpit/css/themes')));
+  app.use('/cockpit/css/themes', express.static(resolve('src/pages/cockpit/css/themes'), { dotfiles: 'allow' }));
   attachJarvisBrowserAssets(app);
   app.get('/api/jarvis/', (_req, res) => {
     if (state.denyMicrophone) res.setHeader('Permissions-Policy', 'microphone=()');
-    res.sendFile(resolve('src/api/jarvis.html'));
+    res.sendFile(resolve('src/api/jarvis.html'), { dotfiles: 'allow' });
   });
   app.get('/fixture-home', (_req, res) => res.send('<!doctype html><html data-theme="workspace"><body style="margin:0"><iframe title="Jarvis" allow="microphone; camera" src="/api/jarvis/?layout=compact" style="display:block;border:0;width:100%;height:100vh"></iframe></body></html>'));
   dashboardTaskRoutes(app, state); dashboardReadRoutes(app);

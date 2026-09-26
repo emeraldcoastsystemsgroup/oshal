@@ -61,6 +61,7 @@
  * 26 | maintainer@emeraldcoastsystemsgroup.com   | A build request is handed to the swarm without a model turn. The decision step was an agentic bot turn raced against a 75s timeout, and on "build me X" the agent ignored the hand-off rule and ground the build inline (8.6 min, 1.87M tokens measured 2026-06-20) while the route, having lost the race, filed the same ask with the swarm - two builds of one request, acknowledged after 75 seconds. detectBuildRequest recognises the imperative deterministically alongside the existing recall/provider/schedule guards, fileBuildHandoff files it, and the turn returns before runJarvisBot is ever called, so there is no losing turn to abandon. The decision-timeout fallback now files through the same claim-guarded path, so a resent ask cannot open a second build.
  * 28 | maintainer@emeraldcoastsystemsgroup.com   | Preflight protected-result admission before registering a fresh Jarvis session, while retaining the post-write owner/read-back guard.
  * 29 | maintainer@emeraldcoastsystemsgroup.com   | Report a selected-file model timeout with only the caller-visible compatible destinations and an explicit no-send/no-work receipt; preserve the selected-file handoff guard.
+ * 30 | maintainer@emeraldcoastsystemsgroup.com   | Serve fixed Jarvis files from a trusted hidden install directory; Express otherwise treats a dot-prefixed parent as a hidden file and returns 404.
  */
 
 import { getJarvisBriefingDelivery } from './jarvis-briefing-delivery';
@@ -244,7 +245,7 @@ function servePage(apiDir: string, file: string): RequestHandler {
   return (_req, res) => {
     // Always revalidate so a rebuilt jarvis.html isn't served stale by browser/CF cache.
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
-    res.sendFile(path.join(apiDir, file), (err) => {
+    res.sendFile(path.join(apiDir, file), { dotfiles: 'allow' }, (err) => {
       if (err) { logger.error({ err, file }, 'serve jarvis surface failed'); res.status(404).send('Not found'); }
     });
   };
@@ -394,7 +395,7 @@ function serveJarvisClientAsset(apiDir: string): RequestHandler {
     res.setHeader('Content-Type', contentType);
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.sendFile(path.join(apiDir, file), (err) => {
+    res.sendFile(path.join(apiDir, file), { dotfiles: 'allow' }, (err) => {
       if (err && !res.headersSent) res.status(404).send('Not found');
     });
   };

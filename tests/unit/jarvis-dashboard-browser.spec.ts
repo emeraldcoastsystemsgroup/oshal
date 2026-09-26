@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Prove compact Jarvis layout, grouped real task actions and retained voice/stage flows in Chromium.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Prove the page rolls a refused persisted thread id to a fresh one and resends the turn exactly once (the 'Sorry — I couldn't do that just now' regression after issuer provenance landed).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Give the hooks that own the isolated fixture browser the fixture's exit budget, so a confirmed but slow shutdown on a loaded box is failed by neither deadline.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Create the ignored cleanup receipt directory in a fresh isolated checkout before writing the browser-close result.
  */
 import { type Browser, type Page, type Frame } from 'playwright';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -28,6 +29,7 @@ beforeEach(() => Object.assign(fixture.state, dashboardState()));
 afterAll(async () => {
   try {
     const cleanup = await owned?.close();
+    await mkdir('temp', { recursive: true });
     await writeFile('temp/jarvis-dashboard-browser-cleanup.json', JSON.stringify(cleanup, null, 2));
   } finally { await fixture?.stop(); await media?.cleanup(); }
 }, BROWSER_HOOK_TIMEOUT_MS);
