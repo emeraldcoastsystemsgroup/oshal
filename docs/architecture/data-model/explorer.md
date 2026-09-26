@@ -9,10 +9,10 @@ committed snapshot of one reference database; the explorer reads whatever deploy
   **operator-only** (`requiresAuth` + `requiresOperator` on the mount in `src/app/server.ts`).
   Read-only: catalog `SELECT`s, a source scan, and read calls to the other stores.
 - **Landed:** commit `18edcbf4`, merged to `main` through PR #431 (merge `b8de2099`, 2026-09-14).
-- **Deployed 2026-09-14.** `src/app` is not bind-mounted, so the route only exists after a core
-  deploy; `scripts/oshal-deploy.sh` deployed `b8de2099` (image `1fe73566ae87`), whose
-  `src/app/server.ts` mounts `/api/admin/data-model`. What remains is the operator walk-through in
-  [Deploying](#deploying-it), steps 3-4.
+- **Deployed 2026-09-14; installed acceptance 2026-09-26.** `src/app` is not bind-mounted, so the
+  route only exists after a core deploy. The initial rollout was `b8de2099` (image
+  `1fe73566ae87`); the later operator walk-through and Test Lab receipt are recorded in
+  [Deploying](#deploying-it).
 
 ## What it shows
 
@@ -230,18 +230,29 @@ node scripts/test-schema-alert-producer.cjs  # producer, detector and disposable
 
 ## Deploying it
 
-The page files are bind-mounted, but the route is not: **a core deploy is required.** Steps 1-2
-are done — PR #431 merged as `b8de2099` and `scripts/oshal-deploy.sh` deployed it on 2026-09-14
-(image `1fe73566ae87`, api + 34 bots, parity clean). Steps 3-4 are the open work. They are kept
-below for a fresh deployment.
+The page files are bind-mounted, but the route is not: **a core deploy is required.** PR #431
+merged as `b8de2099` and `scripts/oshal-deploy.sh` deployed it on 2026-09-14 (image
+`1fe73566ae87`, API + 34 bots, parity clean). The installed walk-through was completed on
+2026-09-26 while signed in as the operator. The live header reported **429 tables, 16 views,
+89 apps, 133 integration links and 1 unowned relation**. Apps & integrations drew installed
+app links; Tables listed the core relations and foreign-key links; Shared objects listed 8
+multiply declared tables and 14 cross-owner foreign keys and exposed column/RLS detail for
+`vids_jobs`; Other stores showed 7
+relations outside the main database, 58 Arango graph databases, 12 Chroma collections and
+220 Redis keys in 4 families. Its unowned live relation was
+`oshal_ts.trading_signal_labels` — recorded, not silently assigned. The installed **Data model
+explorer** Test Lab card reported `pass` with the same five header counts. An unauthenticated
+`GET /api/admin/data-model` returned 401. This is the live-box acceptance receipt; it does
+not assert that the unowned relation has been remediated.
 
 1. ~~Merge PR #431, or preview-deploy the branch~~ — done: PR #431 merged. On another deployment,
    deploy a `main` that contains `18edcbf4` with `bash scripts/oshal-deploy.sh`.
 2. Check the box first: no deploy lock, the api healthy, and the Docker VM not starved —
    a build under memory pressure fails and rolls back.
 3. Verify: open `/data-model` as an operator; the Apps view draws; the Tables view lists core's
-   tables; the Stores view shows ArangoDB, ChromaDB and Redis cards.
+   tables; the Stores view shows ArangoDB, ChromaDB and Redis cards. **Passed 2026-09-26.**
 4. Run the **Data model explorer** Test Lab card; it should report `pass` with the live counts.
+   **Passed 2026-09-26.**
 
 ## Limits as built
 
@@ -253,12 +264,10 @@ below for a fresh deployment.
   contributes nothing, and its tables (if present) show as unowned.
 - **Redis shows key families and value types, never values**; families mask segments that look like
   an email, id or long number.
-- **Drift is detected, not announced.** `GET /drift` classifies and the explorer can render it,
-  but nothing is raised into the Operations Stream yet - see the backlog entry for the three
-  things the ladder needs first. There is also no scheduler: a digest is recorded only when a
-  caller asks for `?capture=1`.
-- **The page has no "what changed since" panel yet.** `src/pages` is bind-mounted and `/drift` is
-  not, so the panel waits for the core deploy that ships the route.
+- **Drift does not authorize repair.** The one-minute detector and internal alarm producer
+  can surface settled, unexplained changes as manual-approval tickets; they never remediate
+  a schema or silently advance the reviewed baseline. The installed page displayed its
+  "What changed since baseline" panel in `first-run` state during this acceptance.
 
 ## Troubleshooting
 
