@@ -24,13 +24,13 @@ import type { Router } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '@/app/composition/app-context';
 import { BotNodeClient, createRegistryEndpointResolver } from '@/features/agent-management';
-import { ChannelLinkService } from '@/features/chat-channels';
+import { ChannelLinkService, SMS_CHANNEL_PROVIDER, WHATSAPP_CHANNEL_PROVIDER, type TwilioChannelProvider } from '@/features/chat-channels';
 import { executeBotOrInline } from './inline-bot-execution';
 import { resolveUserLlmConnection } from './free-tier-rotation';
 import { JARVIS_AGENT_ID } from './jarvis-orchestrator';
 import { createSmsInboundSink } from './sms-inbound-dispatch';
 import { createSmsInboundRoutes } from './sms-inbound-routes';
-import { sendUserTwilioSms } from './twilio-sms-operation';
+import { sendUserTwilioMessage } from './twilio-sms-operation';
 
 const logger = createChildLogger({ module: 'sms-inbound-wiring' });
 
@@ -66,8 +66,8 @@ export function createWiredSmsInboundRoutes(ctx: AppContext): Router {
         return String(result.response || '').trim();
       },
       /** The owner's OWN Twilio account carries the answer; no connected account = no reply. */
-      async reply(userSub, to, body) {
-        const sent = await sendUserTwilioSms(ctx.pool, userSub, to, body);
+      async reply(userSub, to, body, provider: TwilioChannelProvider = SMS_CHANNEL_PROVIDER) {
+        const sent = await sendUserTwilioMessage(ctx.pool, userSub, to, body, provider === WHATSAPP_CHANNEL_PROVIDER ? WHATSAPP_CHANNEL_PROVIDER : SMS_CHANNEL_PROVIDER);
         if (!sent.delivered) logger.warn({ userSub, error: sent.error }, 'inbound SMS reply not delivered');
         return { delivered: sent.delivered, ...(sent.error ? { error: sent.error } : {}) };
       },

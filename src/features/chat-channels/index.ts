@@ -21,6 +21,9 @@ export {
 } from './services/telegram-channel-adapter';
 export {
   SMS_CHANNEL_PROVIDER,
+  WHATSAPP_CHANNEL_PROVIDER,
+  parseTwilioChannelAddress,
+  type TwilioChannelProvider,
   SMS_REPLY_MAX_CHARS,
   normalizeE164,
   parseSmsLinkCommand,

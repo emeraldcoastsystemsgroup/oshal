@@ -8,6 +8,7 @@
 
 import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '@/app/composition/app-context';
+import { SMS_CHANNEL_PROVIDER, type TwilioChannelProvider, WHATSAPP_CHANNEL_PROVIDER } from '@/features/chat-channels';
 import { getValidAccessToken } from './connectors-routes';
 
 const logger = createChildLogger({ module: 'twilio-sms-operation' });
@@ -40,7 +41,19 @@ export async function sendUserTwilioSms(
   to: string,
   body: string,
 ): Promise<TwilioSmsOperationResult> {
+  return sendUserTwilioMessage(pool, userSub, to, body, SMS_CHANNEL_PROVIDER);
+}
+
+/** Send one owner-scoped Twilio message as SMS or WhatsApp. */
+export async function sendUserTwilioMessage(
+  pool: AppContext['pool'],
+  userSub: string,
+  to: string,
+  body: string,
+  provider: TwilioChannelProvider = SMS_CHANNEL_PROVIDER,
+): Promise<TwilioSmsOperationResult> {
   if (!userSub.trim()) return { delivered: false, error: 'twilio_user_required' };
+  if (provider !== SMS_CHANNEL_PROVIDER && provider !== WHATSAPP_CHANNEL_PROVIDER) return { delivered: false, error: 'twilio_provider_invalid' };
   if (!E164_RE.test(to)) return { delivered: false, error: 'twilio_destination_invalid' };
   const boundedBody = body.trim().slice(0, MAX_SMS_CHARS);
   if (!boundedBody) return { delivered: false, error: 'twilio_message_required' };
@@ -71,7 +84,8 @@ export async function sendUserTwilioSms(
     const from = String(numbers.incoming_phone_numbers?.[0]?.phone_number || '');
     if (!E164_RE.test(from)) return { delivered: false, error: 'twilio_sender_unavailable' };
 
-    const form = new URLSearchParams({ From: from, To: to, Body: boundedBody });
+    const prefix = provider === WHATSAPP_CHANNEL_PROVIDER ? 'whatsapp:' : '';
+    const form = new URLSearchParams({ From: `${prefix}${from}`, To: `${prefix}${to}`, Body: boundedBody });
     const sendResponse = await fetch(
       TWILIO_API_BASE + '/Accounts/' + encodeURIComponent(credential.sid) + '/Messages.json',
       {
@@ -86,14 +100,14 @@ export async function sendUserTwilioSms(
     );
     const result = await sendResponse.json().catch(() => ({})) as { sid?: unknown };
     if (!sendResponse.ok || typeof result.sid !== 'string' || !result.sid.trim()) {
-      logger.warn({ userSub, status: sendResponse.status }, 'Twilio SMS operation failed');
-      return { delivered: false, error: 'twilio_sms_http_' + sendResponse.status };
+      logger.warn({ userSub, provider, status: sendResponse.status }, 'Twilio message operation failed');
+      return { delivered: false, error: 'twilio_message_http_' + sendResponse.status };
     }
     return { delivered: true, id: result.sid };
   } catch (error) {
     logger.warn(
       { userSub, errorType: error instanceof Error ? error.name : 'unknown' },
-      'Twilio SMS operation network failure',
+      'Twilio message operation network failure',
     );
     return { delivered: false, error: 'twilio_sms_network_failed' };
   }

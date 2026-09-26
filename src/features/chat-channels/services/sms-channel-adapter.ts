@@ -22,6 +22,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — SMS_CHANNEL_PROVIDER, strict country-agnostic normalizeE164 (separators tolerated, a bare national number refused), parseSmsLinkCommand for the LINK <code> handshake a texter uses instead of Telegram's /start deep link, and boundSmsReply for the Twilio body cap.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added explicit WhatsApp-via-Twilio address parsing so the shared signed webhook cannot bind or reply to a WhatsApp identity as plain SMS.
  *
  * @module features/chat-channels/services/sms-channel-adapter
  */
@@ -31,6 +32,17 @@
  * channels' identities can never collide on the shared primary key.
  */
 export const SMS_CHANNEL_PROVIDER = 'sms';
+export const WHATSAPP_CHANNEL_PROVIDER = 'whatsapp';
+
+export type TwilioChannelProvider = typeof SMS_CHANNEL_PROVIDER | typeof WHATSAPP_CHANNEL_PROVIDER;
+
+/** Normalize Twilio's `From`/`To` channel address without guessing a country. */
+export function parseTwilioChannelAddress(raw: string | null | undefined): { provider: TwilioChannelProvider; number: string } | null {
+  const value = String(raw || '').trim();
+  const isWhatsApp = /^whatsapp:/i.test(value);
+  const number = normalizeE164(isWhatsApp ? value.slice('whatsapp:'.length) : value);
+  return number ? { provider: isWhatsApp ? WHATSAPP_CHANNEL_PROVIDER : SMS_CHANNEL_PROVIDER, number } : null;
+}
 
 /** Twilio's per-message body cap; a longer reply is truncated rather than rejected. */
 export const SMS_REPLY_MAX_CHARS = 1_600;

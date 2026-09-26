@@ -35,6 +35,7 @@ import { BotNodeClient, createRegistryEndpointResolver } from '@/features/agent-
 import {
   ChannelLinkService,
   SMS_CHANNEL_PROVIDER,
+  WHATSAPP_CHANNEL_PROVIDER,
   normalizeE164,
   type InboundChannelMessage,
   getTelegramBotToken,
@@ -177,6 +178,8 @@ export function createChatChannelRoutes(ctx: AppContext, requiresAuth: RequestHa
   router.post('/telegram/register-webhook', requiresAuth, (req, res) => void doRegisterWebhook(req, res));
   router.post('/sms/link', requiresAuth, (req, res) => void mintSmsLink(links, req, res));
   router.delete('/sms/:channelUserId', requiresAuth, (req, res) => void unlinkSms(links, req, res));
+  router.post('/whatsapp/link', requiresAuth, (req, res) => void mintWhatsAppLink(links, req, res));
+  router.delete('/whatsapp/:channelUserId', requiresAuth, (req, res) => void unlinkWhatsApp(links, req, res));
 
   return router;
 }
@@ -203,6 +206,23 @@ async function unlinkSms(links: ChannelLinkService, req: Request, res: Response)
   const number = normalizeE164(String(req.params.channelUserId || ''));
   if (!number) { res.status(400).json({ error: 'invalid_phone_number' }); return; }
   res.json({ removed: await links.unlink(sub, SMS_CHANNEL_PROVIDER, number) });
+}
+
+async function mintWhatsAppLink(links: ChannelLinkService, req: Request, res: Response): Promise<void> {
+  const sub = callerSub(req);
+  if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
+  const textTo = inboundSmsNumber();
+  if (!textTo) { res.status(503).json({ error: 'whatsapp_not_configured' }); return; }
+  const code = await links.mintLinkCode(sub, WHATSAPP_CHANNEL_PROVIDER);
+  res.json({ code, textTo: `whatsapp:${textTo}`, message: `LINK ${code}`, expiresInMinutes: 15 });
+}
+
+async function unlinkWhatsApp(links: ChannelLinkService, req: Request, res: Response): Promise<void> {
+  const sub = callerSub(req);
+  if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
+  const number = normalizeE164(String(req.params.channelUserId || ''));
+  if (!number) { res.status(400).json({ error: 'invalid_phone_number' }); return; }
+  res.json({ removed: await links.unlink(sub, WHATSAPP_CHANNEL_PROVIDER, number) });
 }
 
 /** GET / — the caller's linked channels + Telegram setup status (bot identity, token presence). */

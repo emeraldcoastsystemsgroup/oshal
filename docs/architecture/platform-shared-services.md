@@ -67,8 +67,9 @@ wire the noop lane as a CI gate.
 
 ### Notification preference center — `src/features/notifications`
 Per-user `topic → channel` routing (`user_notification_prefs`) over the existing transports
-(the user's own Gmail via `sendGmail`, fixed-operation Twilio SMS, deployment Twilio SMS/voice,
-and Telegram) with quiet hours (America/Chicago). A topic-specific row wins; otherwise the
+(the user's own Gmail via `sendGmail`, fixed-operation Twilio SMS/WhatsApp, deployment Twilio SMS/voice,
+and Telegram) with quiet hours (America/Chicago). The signed Twilio inbound rail distinguishes
+SMS from `whatsapp:` identities before owner-bound dispatch and reply. A topic-specific row wins; otherwise the
 welcome wizard's opt-in row under `DEFAULT_TOPIC` applies before the Gmail-or-none default.
 `NotificationRouter.notify(userSub, topic, {...})` resolves prefs, respects quiet hours, and
 dispatches through a transport registry; sends/skips are logged and never throw into callers.

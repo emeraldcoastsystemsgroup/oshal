@@ -31,10 +31,10 @@
 import { createChildLogger } from '@/shared/logger';
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
 import {
-  SMS_CHANNEL_PROVIDER,
   boundSmsReply,
-  normalizeE164,
+  parseTwilioChannelAddress,
   parseSmsLinkCommand,
+  type TwilioChannelProvider,
 } from '@/features/chat-channels';
 import type { InboundSms } from '@/features/notifications';
 
@@ -67,7 +67,7 @@ export interface SmsInboundSinkDeps {
   /** Runs one message on the owner's accountable bot. Called INSIDE the owner's identity. */
   dispatch(userSub: string, threadKey: string, text: string): Promise<string>;
   /** Sends the out-of-band answer back to the texter. Called INSIDE the owner's identity. */
-  reply(userSub: string, to: string, body: string): Promise<{ delivered: boolean; error?: string }>;
+  reply(userSub: string, to: string, body: string, provider?: TwilioChannelProvider): Promise<{ delivered: boolean; error?: string }>;
   /**
    * How deferred work is scheduled. Production fires and forgets so the webhook answers inside
    * Twilio's budget; a spec collects the promise and awaits it instead of racing a timer.
@@ -95,33 +95,34 @@ export function createSmsInboundSink(deps: SmsInboundSinkDeps): SmsInboundSink {
   const defer = deps.defer ?? defaultDefer;
 
   return async function onInboundSms(sms: InboundSms): Promise<string | void> {
-    const from = normalizeE164(sms.from);
-    if (!from) {
+    const address = parseTwilioChannelAddress(sms.from);
+    const from = address?.number;
+    if (!address || !from) {
       logger.warn({ messageSid: sms.messageSid }, 'inbound SMS refused: sender is not a usable E.164 identity');
       return undefined;
     }
 
     const code = parseSmsLinkCommand(sms.body);
-    if (code) return handleLink(deps, sms, from);
+    if (code) return handleLink(deps, sms, from, address.provider);
 
-    const link = await deps.links.resolveLink(SMS_CHANNEL_PROVIDER, from);
+    const link = await deps.links.resolveLink(address.provider, from);
     if (!link?.userSub) {
-      logger.warn({ messageSid: sms.messageSid, provider: SMS_CHANNEL_PROVIDER },
-        'inbound SMS from an unlinked number — refused, no swarm dispatch');
+      logger.warn({ messageSid: sms.messageSid, provider: address.provider },
+        'inbound Twilio channel message from an unlinked number — refused, no swarm dispatch');
       return SMS_UNLINKED_REPLY;
     }
 
     const userSub = link.userSub;
     logger.info({ messageSid: sms.messageSid, userSub }, 'inbound SMS resolved to a linked owner — dispatching');
-    defer(runOwnerTurn(deps, userSub, from, sms));
+    defer(runOwnerTurn(deps, userSub, from, address.provider, sms));
     return undefined;
   };
 }
 
 /** The `LINK <code>` handshake: bind this number to the code's owner, answer in the TwiML body. */
-async function handleLink(deps: SmsInboundSinkDeps, sms: InboundSms, from: string): Promise<string> {
+async function handleLink(deps: SmsInboundSinkDeps, sms: InboundSms, from: string, provider: TwilioChannelProvider): Promise<string> {
   const code = parseSmsLinkCommand(sms.body) as string;
-  const userSub = await deps.links.redeemLinkCode(SMS_CHANNEL_PROVIDER, code, from, from, null);
+  const userSub = await deps.links.redeemLinkCode(provider, code, from, from, null);
   if (!userSub) {
     logger.warn({ messageSid: sms.messageSid }, 'inbound SMS link code invalid/expired/consumed');
     return SMS_LINK_FAILED_REPLY;
@@ -135,10 +136,10 @@ async function handleLink(deps: SmsInboundSinkDeps, sms: InboundSms, from: strin
  * key is stable per number so follow-up texts land in the same conversation, exactly as the
  * Telegram channel threads per chat.
  */
-async function runOwnerTurn(deps: SmsInboundSinkDeps, userSub: string, from: string, sms: InboundSms): Promise<void> {
+async function runOwnerTurn(deps: SmsInboundSinkDeps, userSub: string, from: string, provider: TwilioChannelProvider, sms: InboundSms): Promise<void> {
   const startedAt = Date.now();
   await runWithRequestIdentity({ sub: userSub, isOperator: false }, async () => {
-    const threadKey = `${SMS_CHANNEL_PROVIDER}-${userSub}-${from}`;
+    const threadKey = `${provider}-${userSub}-${from}`;
     let answer: string;
     try {
       answer = boundSmsReply(await deps.dispatch(userSub, threadKey, sms.body));
@@ -147,7 +148,7 @@ async function runOwnerTurn(deps: SmsInboundSinkDeps, userSub: string, from: str
       answer = 'Something went wrong reaching your swarm. Please try again in a moment.';
     }
     if (!answer) answer = '(no reply)';
-    const sent = await deps.reply(userSub, from, answer);
+    const sent = await deps.reply(userSub, from, answer, provider);
     logger.info(
       { userSub, messageSid: sms.messageSid, delivered: sent.delivered, error: sent.error, durationMs: Date.now() - startedAt },
       'inbound SMS answered',
