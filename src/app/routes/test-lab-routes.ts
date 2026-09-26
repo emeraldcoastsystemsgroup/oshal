@@ -42,7 +42,7 @@ import { renderCatalogVisual } from './test-lab-visual-catalog';
 import type { InstalledAppTestCatalog, InstalledTestAuth, InstalledAppTestCase, AppSmokeVerificationOptions } from '@/features/swarm-apps';
 import { createTestLabRunRoutes, type TestLabRunRouteOptions } from './test-lab-run-routes';
 import { createTestLabScheduleRoutes, type TestLabScheduleRouteOptions } from './test-lab-schedule-routes';
-import { isMockOidcEnabled } from '@/shared/middleware/principal-issuer';
+import { getAuthenticatedPrincipalIssuer, isMockOidcEnabled } from '@/shared/middleware/principal-issuer';
 
 const logger = createChildLogger({ module: 'test-lab-routes' });
 const TOOLS_DIR = 'any-bot/server/services/tools/test-lab';
@@ -94,7 +94,7 @@ function installedScenario(test: InstalledAppTestCase) {
   };
 }
 
-export function createTestLabRoutes(_ctx: AppContext, options: TestLabRouteOptions = {}): Router {
+export function createTestLabRoutes(ctx: AppContext, options: TestLabRouteOptions = {}): Router {
   const router = Router();
   router.use(createTestLabRunRoutes(options));
   router.use(createTestLabScheduleRoutes(options));
@@ -148,7 +148,7 @@ export function createTestLabRoutes(_ctx: AppContext, options: TestLabRouteOptio
   }));
 
   /** Run one scenario (or ?id=all) and return per-step results. */
-  router.post('/run', tester(async (req, res) => {
+  router.post('/run', tester(async (req, res, ownerSub) => {
     const cookie = req.headers.cookie || '';
     const id = String(req.body?.scenarioId || req.query.id || 'all');
     const expectedCases = req.body?.expectedCases;
@@ -170,7 +170,9 @@ export function createTestLabRoutes(_ctx: AppContext, options: TestLabRouteOptio
       const stepResults: StepResult[] = [];
       for (const st of sc.steps) {
         let r: StepResult;
-        try { r = await st.run(cookie, prior); }
+        try { r = await st.run(cookie, prior, { ctx, ownerSub,
+          issuer: getAuthenticatedPrincipalIssuer(req),
+          apiBaseUrl: options.apiBaseUrl ?? `http://127.0.0.1:${process.env.PORT || '5000'}` }); }
         catch (e: any) { r = { app: st.app, label: st.label, state: 'fail', detail: `step threw: ${e?.message || e}` }; }
         if (r.output !== undefined) prior[st.id] = r.output;
         stepResults.push(r);

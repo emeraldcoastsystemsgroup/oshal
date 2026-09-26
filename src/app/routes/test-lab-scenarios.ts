@@ -106,6 +106,7 @@ import { CHANNEL_SCENARIOS } from './test-lab-channel-scenarios';
 import { DEVICE_SCENARIOS } from './test-lab-device-scenarios';
 import { STORYBOARD_SCENARIOS } from './test-lab-storyboard-scenarios';
 import { renderCatalogVisual, VISUAL_CATALOG } from './test-lab-visual-catalog';
+import type { AppContext } from '@/app/composition/app-context';
 
 const SELF_PORT = process.env.PORT || '5000';
 const SELF_BASE = `http://localhost:${SELF_PORT}`;
@@ -133,7 +134,16 @@ export interface Scenario {
   group: 'visual' | 'tool' | 'jarvis' | 'coupled';
   description: string;
   regressionTests?: Array<{ level: 'unit' | 'integration' | 'browser'; path: string }>;
-  steps: Array<{ id: string; app: string; label: string; run: (cookie: string, prior: Record<string, any>) => Promise<StepResult> }>;
+  steps: Array<{ id: string; app: string; label: string;
+    run: (cookie: string, prior: Record<string, any>, runtime?: ScenarioRunContext) => Promise<StepResult> }>;
+}
+
+/** Server-derived only; never populated from a Lab request body or catalog metadata. */
+export interface ScenarioRunContext {
+  ctx: AppContext;
+  ownerSub: string;
+  issuer: string | null;
+  apiBaseUrl: string;
 }
 
 // (isoPlusDays helper removed with the travel smoke — its only consumer, ADR-085 Wave 3.)

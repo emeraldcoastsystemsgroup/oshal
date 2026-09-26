@@ -4,6 +4,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Pin the briefing settings client readiness step and the briefing asset suite in the registration.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Pin the two no-hosted-brain honesty suites (route-level integration and Chromium browser) in the registration.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Pin the Home admission suite, so the landing view's authorization coverage cannot be unregistered silently.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Pin the signed-in refused-thread lifecycle and keep the fixed-asset-only assertion scoped to its four asset steps.
  */
 import { afterEach, expect, it, vi } from 'vitest';
 import { SCENARIOS } from '@/app/routes/test-lab-scenarios';
@@ -24,9 +25,11 @@ it('registers daily dashboard once with browser, Home lifecycle and HTTP asset c
     { level: 'integration', path: 'tests/unit/app-home-plan-authorization.spec.ts' },
     { level: 'integration', path: 'tests/unit/jarvis-dashboard-assets.spec.ts' },
     { level: 'integration', path: 'tests/unit/jarvis-briefing-assets.spec.ts' },
+    { level: 'integration', path: 'tests/unit/test-lab-jarvis-thread-lifecycle.spec.ts' },
     { level: 'integration', path: 'tests/unit/jarvis-delayed-visual-lifecycle.integration.spec.ts' },
     { level: 'unit', path: 'tests/unit/isolated-browser.spec.ts' },
   ]));
+  expect(registered[0].steps.at(-1)).toMatchObject({ id: 'jarvis-legacy-thread', label: expect.stringContaining('Refused thread') });
 });
 
 it('reads only fixed assets using current session and never starts assistant work', async () => {
@@ -35,7 +38,7 @@ it('reads only fixed assets using current session and never starts assistant wor
     headers: { 'content-type': url.endsWith('.css') ? 'text/css' : 'application/javascript' },
   }));
   vi.stubGlobal('fetch', fetcher);
-  for (const step of DASHBOARD_SCENARIOS[0].steps) expect((await step.run('test-session')).state).toBe('pass');
+  for (const step of DASHBOARD_SCENARIOS[0].steps.slice(0, 4)) expect((await step.run('test-session', {})).state).toBe('pass');
   expect(fetcher.mock.calls.map(call => call[0])).toEqual([
     'http://127.0.0.1:5017/api/jarvis/assets/jarvis-dashboard.css',
     'http://127.0.0.1:5017/api/jarvis/assets/jarvis-dashboard.js',
@@ -50,13 +53,13 @@ it('reads only fixed assets using current session and never starts assistant wor
 it.each([[401, 'degraded'], [403, 'degraded'], [503, 'degraded'], [404, 'gap'], [302, 'fail']])(
   'reports HTTP %i as %s without following a login redirect', async (status, state) => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: Number(status) })));
-    expect((await DASHBOARD_SCENARIOS[0].steps[0].run('')).state).toBe(state);
+    expect((await DASHBOARD_SCENARIOS[0].steps[0].run('', {})).state).toBe(state);
   },
 );
 
 it('refuses a successful HTML login page and reports an unavailable asset separately', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response('<html>Login</html>', { headers: { 'content-type': 'text/html' } })));
-  expect((await DASHBOARD_SCENARIOS[0].steps[0].run('')).state).toBe('fail');
+  expect((await DASHBOARD_SCENARIOS[0].steps[0].run('', {})).state).toBe('fail');
   vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('timeout'); }));
-  expect((await DASHBOARD_SCENARIOS[0].steps[0].run('')).state).toBe('degraded');
+  expect((await DASHBOARD_SCENARIOS[0].steps[0].run('', {})).state).toBe('degraded');
 });

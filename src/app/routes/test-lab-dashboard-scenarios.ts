@@ -6,13 +6,15 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Link the no-hosted-brain honesty suites: the route-level guard over the real router and execution chokepoint, and the Chromium guard that the page writes and speaks the no-engine sentence while the briefing shelf still lists its row.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Link the terminal-ticket return guard: the real-PostgreSQL suite proving a dead ticket closes its work row and says so once in the thread, instead of sitting at 'queued' and being injected into every turn as "in progress".
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Link the Home admission guard: the route-level suite proving Home offers an application only while current application policy admits it, converging with workspace discovery on grant, revocation and explicit deny.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Exercise the signed-in issuer-less Jarvis thread refusal and fresh-thread cleanup in the running Lab, not only the isolated browser suite.
  */
 import type { Scenario } from './test-lab-scenarios';
 import { assetReadiness } from './test-lab-asset-readiness';
+import { runJarvisLegacyThreadLifecycle } from './test-lab-jarvis-thread-lifecycle';
 
 export const DASHBOARD_SCENARIOS: Scenario[] = [{
   id: 'cockpit-daily-dashboard', title: 'Jarvis and daily dashboard', group: 'tool',
-  description: 'Read the fixed compact Home/Jarvis assets without starting voice, generation or application work. Linked suites exercise actual browser layout, task grouping, preserved drafts, directory navigation and current-user summaries; run them from the core checkout with Chromium.',
+  description: 'Read compact Home/Jarvis assets and exercise a clearly labelled, owner-bound Jarvis thread-refusal fixture. The lifecycle step asks only for a deterministic weather-location clarification (no provider dispatch or model call), then deletes its own threads and chat ticket. Linked suites exercise browser layout, task grouping, drafts, navigation and summaries.',
   regressionTests: [
     { level: 'browser', path: 'tests/unit/jarvis-dashboard-browser.spec.ts' },
     { level: 'browser', path: 'tests/unit/jarvis-legacy-thread-browser.spec.ts' },
@@ -26,6 +28,7 @@ export const DASHBOARD_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/applications-directory-navigation.spec.ts' },
     { level: 'integration', path: 'tests/unit/jarvis-dashboard-assets.spec.ts' },
     { level: 'integration', path: 'tests/unit/jarvis-briefing-assets.spec.ts' },
+    { level: 'integration', path: 'tests/unit/test-lab-jarvis-thread-lifecycle.spec.ts' },
     { level: 'integration', path: 'tests/unit/jarvis-delayed-visual-lifecycle.integration.spec.ts' },
     { level: 'integration', path: 'tests/unit/jarvis-terminal-ticket-return.integration.spec.ts' },
     { level: 'unit', path: 'tests/unit/test-lab-dashboard-registration.spec.ts' },
@@ -40,5 +43,7 @@ export const DASHBOARD_SCENARIOS: Scenario[] = [{
       run: cookie => assetReadiness(cookie, '/api/jarvis/briefings/client.js', 'javascript', 'Briefing settings client') },
     { id: 'daily-home-client', app: 'cockpit', label: 'Daily Home client',
       run: cookie => assetReadiness(cookie, '/cockpit/js/views/AppsHomeView.js', 'javascript', 'Daily Home client') },
+    { id: 'jarvis-legacy-thread', app: 'jarvis', label: 'Refused thread rolls to an owned fresh thread and cleans up',
+      run: (cookie, _prior, runtime) => runJarvisLegacyThreadLifecycle(cookie, runtime) },
   ],
 }];

@@ -1,5 +1,11 @@
 # Jarvis says "Sorry — I couldn't do that just now"
 
+## 2026-09-26 forward status
+
+- The real-Chromium/isolated-Postgres legacy-thread guard has now executed green (2/2), alongside the dashboard browser suite (19/19). The installed Test Lab **Briefing settings client** asset step also reads `pass`; these receipts are in `COLLABORATE.md`.
+- Source now registers a signed-in `cockpit-daily-dashboard` lifecycle step. It seeds a uniquely tagged issuer-less task through the task store, requires the real `/api/jarvis/ask` to return `404 session_not_found`, starts a fresh thread with the deterministic weather-location clarification, checks the persisted owner issuer, and removes its exact threads, messages and synthetic chat ticket. It refuses to write without a verified issuer and session cookie; incomplete cleanup is a failure. This is **source/test proof only until deployed and run by the signed-in operator**.
+- The two older live scripts and the historic exact-ID token/thread cleanup below remain unproven. Do not treat the source step or asset receipt as closure of the backlog item. In particular, the operator-ask script uses a bootstrap PAT without issuer provenance and the guest script's stock-market prompt now routes to Trading; review those scripts before running either on the live box.
+
 That sentence is the Jarvis page's catch-all for **any** non-OK answer from `POST /api/jarvis/ask`.
 It is not a model failure. Read the HTTP status in the browser devtools Network tab first; the two
 causes met on 2026-09-13 are below, with what was fixed, what was proven, and what is still owed.
@@ -32,8 +38,9 @@ causes met on 2026-09-13 are below, with what was fixed, what was proven, and wh
 |---|---|---|
 | `tests/unit/jarvis-dashboard-browser.spec.ts` — two Chromium cases: refused bookmarked thread → roll + resend once; refusal of the fresh thread → one readable error, no third ask | real page ↔ the server's real `session_not_found` contract (fixture answers it at HTTP) | **green 19/19; proven red on the pre-fix page** |
 | `tests/unit/jarvis-briefing-assets.spec.ts` — exact bytes/MIME/cache through the real briefing router, auth gate, and a layout rule: no route under `src/app/routes` may reach a page asset only via `__dirname` while the server build excludes `src/pages` | real router ↔ the build layout | **green 4/4; proven red on the pre-fix router** |
-| Test Lab `cockpit-daily-dashboard` step "Briefing settings client" (`src/app/routes/test-lab-dashboard-scenarios.ts`) | the **running image** on the box, as the signed-in user | reads `gap` today; turns `pass` after the core deploy |
-| `tests/unit/jarvis-legacy-thread-browser.spec.ts` — the real page in Chromium against the **real Jarvis router and an isolated Postgres** (`createProtectedJarvisFixture`): legacy row planted, first ask 404, page rolls, second ask 202, answer renders, new row carries the caller's issuer; plus the owned-thread control case | page ↔ real router ↔ real database (only the model turn is doubled) | **written, typechecks, NOT YET EXECUTED** — its disposable Postgres container could not start on the wedged engine (see below). Run it first. |
+| Test Lab `cockpit-daily-dashboard` step "Briefing settings client" (`src/app/routes/test-lab-dashboard-scenarios.ts`) | the **running image** on the box, as the signed-in user | **pass on 2026-09-26** |
+| `tests/unit/jarvis-legacy-thread-browser.spec.ts` — the real page in Chromium against the **real Jarvis router and an isolated Postgres** (`createProtectedJarvisFixture`): legacy row planted, first ask 404, page rolls, second ask 202, answer renders, new row carries the caller's issuer; plus the owned-thread control case | page ↔ real router ↔ real database (only the model turn is doubled) | **green 2/2 on 2026-09-26** |
+| Test Lab `cockpit-daily-dashboard` step "Refused thread rolls to an owned fresh thread and cleans up" | signed-in installed router ↔ persistent task store ↔ exact synthetic cleanup | **source registered, unit guard green; installed run pending** |
 
 ## What was proven on the live box (2026-09-14, image `1694a3ca`, includes `c18f057a`)
 
