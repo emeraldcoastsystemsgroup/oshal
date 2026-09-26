@@ -24,6 +24,7 @@ the carve doesn't prune them out of `dist/` (the google-calendar/notifications b
 | `storage` | `@/app/routes/storage-target` | Dropbox / GitHub / local storage targets (ADR-041). |
 | `deck-generation` | `@/features/presentation-generation` | The deck engine behind the presentations app. |
 | `graph` | `@/features/graph`, `@/features/personal-graph` | Engine-agnostic graph connector (ADR-045). |
+| `world-data` | `@/features/world-data`, `@/features/world-data/world-intelligence-service`, `@/features/world-data/world-types`, `@/features/world-data/outlet-ratings`, `@/features/world-data/news-fetcher` | Shared world index used by Jarvis, Trading, and the World package. The surface is package-owned; the engine stays in core (ADR-045, ADR-093). All four deep package imports are part of the compatibility contract. |
 | `scheduling` | `@/features/scheduling` | Manifest `schedules:` register and tear down through it. |
 | `memory` | `@/features/memory`, `@/features/user-model`, `@/features/personal-data` | Cross-app user state. |
 | `tool-registry` | `@/features/tool-registry`, `@/features/llm-provider` | Tool + model access — the aggregation thesis (ADR-049). |
@@ -72,11 +73,11 @@ its **surface** carves — the engine stays kernel ("skills with a surface", mig
 
 ## Why this contract has to exist — the silent-prune bug
 
-`tsconfig.server.json` compiles `src/app/**`, `src/shared/**`, `src/entities/**` and **excludes
-`src/features/**`**. So a feature reaches `dist/` **only when something in an include-root imports
-it.** TypeScript's `exclude` filters `include` but never overrides the import graph — meaning an
-explicit tsconfig `include` of a feature is *silently a no-op* while that broad exclude stands.
-**An import is the only reliable pin.**
+`tsconfig.server.json` compiles `src/app/**`, `src/shared/**`, `src/entities/**`, and selected
+features. It formerly excluded all of `src/features/**`; that blanket exclusion is gone. A
+per-feature include can still be removed without a loud failure, so the build anchor's explicit
+re-export remains the durable pin for every module a package imports. The artifact guard then
+checks that the compiled module really reached `dist/`.
 
 The failure mode this produces is nasty, because the cause and the symptom are far apart:
 

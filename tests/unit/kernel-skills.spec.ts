@@ -111,8 +111,20 @@ describe('kernel-skill contract (ADR-085 Tier-0b / ADR-090 D8)', () => {
         'storage',
         'tool-registry',
         'voice',
+        'world-data',
       ].sort(),
     );
+  });
+
+  it('pins every world-data specifier imported by the World package, including deep paths', () => {
+    expect(KERNEL_SKILLS.find((skill) => skill.id === 'world-data')?.modules.map((m) => m.specifier).sort())
+      .toEqual([
+        '@/features/world-data',
+        '@/features/world-data/news-fetcher',
+        '@/features/world-data/outlet-ratings',
+        '@/features/world-data/world-intelligence-service',
+        '@/features/world-data/world-types',
+      ]);
   });
 
   it.each(allModules)('skill $skill: $specifier has a source file', ({ specifier }) => {

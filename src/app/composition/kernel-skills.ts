@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Pin the versioned bound-workflow-results contract into the executable build.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Pin the Futures forward receipt ledger and its bounded worker into the runtime build.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Pin confirmed Futures archive import and worker boundaries into deployable artifacts.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | Pin the World package's barrel and four deep world-data imports as the ADR-045 kernel-skill contract.
  */
 
 /**
@@ -78,6 +79,13 @@ export * as presentationGeneration from '@/features/presentation-generation';
 // ── graph: engine-agnostic graph connector (ADR-045) ─────────────────────────
 export * as graph from '@/features/graph';
 export * as personalGraph from '@/features/personal-graph';
+
+// ── world-data: shared world index; the World package owns only its surface ───
+export * as worldData from '@/features/world-data';
+export * as worldIntelligenceService from '@/features/world-data/world-intelligence-service';
+export * as worldTypes from '@/features/world-data/world-types';
+export * as worldOutletRatings from '@/features/world-data/outlet-ratings';
+export * as worldNewsFetcher from '@/features/world-data/news-fetcher';
 
 // ── scheduling: manifest `schedules:` register + teardown ────────────────────
 export * as scheduling from '@/features/scheduling';

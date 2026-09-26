@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Declare the bound-workflow-results compatibility floor so older runtimes refuse workflows requiring durable evidence/result bindings.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Declare the immutable Futures forward receipt compatibility floor for matching console packages.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Declare confirmed archive imports so older cores refuse console packages without the shared-write approval boundary.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | ADR-045: declare the world-data engine and every module imported by the World package as a kernel skill, so package compatibility and build-artifact checks cover deep imports.
  */
 
 /**
@@ -44,7 +45,8 @@ export type KernelSkillId =
   | 'google-calendar'
   | 'bound-workflow-results'
   | 'futures-forward-receipts'
-  | 'futures-archive-import';
+  | 'futures-archive-import'
+  | 'world-data';
 
 /**
  * @description One importable module behind a skill.
@@ -92,6 +94,15 @@ export interface KernelSkillDeclaration {
  * docs/apps/kernel-skills.md. The CI guard then enforces it forever.
  */
 export const KERNEL_SKILLS: readonly KernelSkillDeclaration[] = [
+  { id: 'world-data', title: 'World intelligence engine',
+    why: 'The shared world index feeds Jarvis and Trading as well as the World package; its engine stays in core while its surface is installed separately (ADR-045, ADR-093).',
+    modules: [
+      { specifier: '@/features/world-data', distFile: 'dist/features/world-data/index.js' },
+      { specifier: '@/features/world-data/world-intelligence-service', distFile: 'dist/features/world-data/world-intelligence-service.js' },
+      { specifier: '@/features/world-data/world-types', distFile: 'dist/features/world-data/world-types.js' },
+      { specifier: '@/features/world-data/outlet-ratings', distFile: 'dist/features/world-data/outlet-ratings.js' },
+      { specifier: '@/features/world-data/news-fetcher', distFile: 'dist/features/world-data/news-fetcher.js' },
+    ] },
   { id: 'futures-archive-import', title: 'Confirmed Futures archive imports',
     why: 'Owner-bound content previews and explicit operator confirmation precede atomic shared reference writes.',
     modules: [{ specifier: '@/app/trading-futures-archive-import', distFile: 'dist/app/trading-futures-archive-import.js' }] },

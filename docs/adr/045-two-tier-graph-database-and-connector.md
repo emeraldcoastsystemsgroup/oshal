@@ -2,8 +2,8 @@
 
 - **Status:** Accepted — connector + both tiers + `/api/graph` + the swarm operational graph BUILT
   and LIVE; two of three domain carve-outs (jobs, capture) shipped; the RCA/capture persona rewiring
-  DONE 2026-07-29 and `subgraph()` decided WON'T BUILD. One item is an open operator decision
-  (`world-data` is not a kernel skill). See
+  DONE 2026-07-29 and `subgraph()` decided WON'T BUILD. The remaining world-data kernel-skill
+  boundary was decided for promotion on 2026-09-21 and implemented 2026-09-26. See
   [Resolved 2026-07-29](#resolved-2026-07-29--the-ambiguous-middle-closed).
 - **Date:** 2026-06-17 (status reconciled 2026-07-26; closure pass 2026-07-29)
 - **Related:** [ADR-036 (bot-owned application architecture)](036-bot-owned-application-architecture.md),
@@ -240,26 +240,18 @@ HTTP path reaches that tier. `tests/unit/graph-route-tenant-boundary.spec.ts` no
 starts honouring a `?tenant=` (or a tenant in the body or a header). Building that membership check
 is the prerequisite for ever exposing the shared tier over HTTP.
 
-### Open decision for the operator — `world-data` is not a kernel skill
+### `world-data` kernel skill — option A adopted 2026-09-21
 
 `world` reaches the graph TRANSITIVELY: the store package imports
 `@/features/world-data/world-intelligence-service` (a DEEP path, not even the barrel), and
-`world-data` is **not** a registered kernel skill. It survives in `dist/` only because unrelated
-app-layer core files happen to import it — `jarvis-brief-sections.ts` and the trading
-assess/research/schedule/strategy-lab dispatchers. That is precisely the documented silent-prune
-failure class (`tsconfig.server.json` excludes `src/features/**`; a re-export is the only pin), and
-the day trading's dispatchers carve out, the installed `world` package fails at mount.
-
-Two ways out, and it is the operator's call:
-
-1. **Promote `world-data` to a kernel skill** — declare it in `src/shared/kernel-skills/registry.ts`
-   and anchor it in `src/app/composition/kernel-skills.ts`. Cheap, but it also means committing to
-   the modules the package deep-imports (`world-intelligence-service`, `news-fetcher`,
-   `outlet-ratings`, `world-types`) or making the package import the barrel instead.
-2. **Move the slice into the `world` package** — ADR-093 kept the Layer-B engine core because core
-   callers exist; if those callers are the only reason, the honest resolution may be the reverse.
-
-Not decided here because it is a kernel-boundary question (ADR-093), not a graph question.
+`world-data` was not a registered kernel skill and survived in `dist/` only because unrelated
+core callers imported it. The operator chose option A: the shared engine remains core, and
+`world-data` is now a declared kernel skill. Its contract names the barrel plus the four deep
+modules the World package imports (`world-intelligence-service`, `world-types`, `outlet-ratings`,
+`news-fetcher`); the build anchor pins each and the artifact guard checks each emitted file.
+The World manifest declares `uses: world-data`, so an older core refuses the package before
+mounting instead of failing on a missing deep module. This is a package compatibility boundary,
+not a move of Jarvis or Trading's world-index consumers into the World package.
 
 ### The `uses:` declaration gap — now gated
 

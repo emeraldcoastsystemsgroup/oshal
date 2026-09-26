@@ -187,6 +187,22 @@ describe('kernel-skills Phase 3 — a store package must declare the skills it i
     expect(res.out).toContain('graph');
   });
 
+  it('requires the World package to declare world-data for its deep engine import', () => {
+    const store = newStore();
+    writePackage(store, 'world', ['test-catalog', 'app-dependencies'], {
+      'routes/world-routes.js': "const w = require('@/features/world-data/world-intelligence-service');\nmodule.exports = w;",
+    });
+    const refused = runGate(store);
+    expect(refused.code).toBe(1);
+    expect(refused.out).toContain("store package 'world'");
+    expect(refused.out).toContain('world-data');
+
+    writePackage(store, 'world', ['test-catalog', 'app-dependencies', 'world-data'], {
+      'routes/world-routes.js': "const w = require('@/features/world-data/world-intelligence-service');\nmodule.exports = w;",
+    });
+    expect(runGate(store).code).toBe(0);
+  }, 30_000);
+
   it('a package importing NO kernel skill and declaring nothing is fine', () => {
     const store = newStore();
     writePackage(store, 'self-contained-app', [], {
