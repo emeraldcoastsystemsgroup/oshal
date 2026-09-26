@@ -304,3 +304,34 @@ Defined in `scripts/migrations/059-vids-platform.sql` · RLS **forced** - owner 
 | `rating` | smallint | yes |  |  |
 | `created_at` | timestamp with time zone | no | now() |  |
 | `updated_at` | timestamp with time zone | no | now() |  |
+
+## Subscription-driven social signals
+
+The inbox ingest remains the sensor: it captures caller-owned mail into
+`oshal_inbox_messages` with `category='social'`. The watch/notify layer is
+deliberately separate from the Social Signals display and uses two runtime
+tables:
+
+### `oshal_social_signal_subscriptions`
+
+| Column | Type | Null | Notes |
+|---|---|---|---|
+| `subscription_id` | text | no | caller-owned subscription identity |
+| `user_sub` | text | no | owner boundary; every route query includes it |
+| `bot_agent_id` | text | no | requesting bot registry identity |
+| `selector` | jsonb | no | bounded `{kind: account\|keyword\|topic, value}` descriptor |
+| `active` | boolean | no | disabling a watch is reversible |
+| `created_at` / `updated_at` | timestamp with time zone | no | lifecycle timestamps |
+
+### `oshal_social_signal_deliveries`
+
+The `(subscription_id, msg_id)` primary key is the delivery claim and prevents
+duplicate notifications. A claim is removed if mesh publication fails, so the
+next poll can retry it; `published_at` is written only after the mesh send
+completes.
+
+Matched signals publish through the derived
+`social.signal.<owner-hash>.<bot-agent-id>` mesh channel. The raw owner subject
+does not appear in the Redis key, while the owner-bound payload remains available
+to the receiving bot for audit and routing. This source slice does not claim a
+live provider read, a deployed bot receipt, or cross-provider sensor coverage.

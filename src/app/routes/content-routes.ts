@@ -41,6 +41,13 @@ import type { AppContext } from '@/app/composition/app-context';
 import { BotNodeClient, createRegistryEndpointResolver } from '@/features/agent-management';
 import { getValidAccessToken } from './connectors-routes';
 import { executeBotOrInline } from './inline-bot-execution';
+import {
+  deleteSocialSignalSubscription,
+  listSocialSignalSubscriptions,
+  parseSocialSignalBotAgentId,
+  parseSocialSignalSelector,
+  registerSocialSignalSubscription,
+} from './social-signal-subscriptions';
 
 const logger = createChildLogger({ module: 'content-routes' });
 
@@ -148,6 +155,18 @@ export async function ensureContentSchema(pool: AppContext['pool']): Promise<voi
         PRIMARY KEY (user_sub, url)
       )`,
       'CREATE INDEX IF NOT EXISTS idx_content_articles_user_seen ON oshal_content_articles (user_sub, dismissed, last_seen DESC)',
+      `CREATE TABLE IF NOT EXISTS oshal_social_signal_subscriptions (
+        subscription_id TEXT PRIMARY KEY, user_sub TEXT NOT NULL, bot_agent_id TEXT NOT NULL,
+        selector JSONB NOT NULL, active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (user_sub, bot_agent_id, selector)
+      )`,
+      'CREATE INDEX IF NOT EXISTS idx_social_signal_subscriptions_user ON oshal_social_signal_subscriptions (user_sub, active, created_at DESC)',
+      `CREATE TABLE IF NOT EXISTS oshal_social_signal_deliveries (
+        subscription_id TEXT NOT NULL, msg_id TEXT NOT NULL,
+        claimed_at TIMESTAMPTZ NOT NULL DEFAULT now(), published_at TIMESTAMPTZ,
+        PRIMARY KEY (subscription_id, msg_id)
+      )`,
     ],
     requirements: [
       { table: 'oshal_content_topics', columns: ['user_sub', 'cards', 'focus', 'generated_at'] },
@@ -169,6 +188,14 @@ export async function ensureContentSchema(pool: AppContext['pool']): Promise<voi
           'dismissed',
           'dismissed_at',
         ],
+      },
+      {
+        table: 'oshal_social_signal_subscriptions',
+        columns: ['subscription_id', 'user_sub', 'bot_agent_id', 'selector', 'active', 'created_at', 'updated_at'],
+      },
+      {
+        table: 'oshal_social_signal_deliveries',
+        columns: ['subscription_id', 'msg_id', 'claimed_at', 'published_at'],
       },
     ],
   });
@@ -489,6 +516,42 @@ export function createContentRoutes(ctx: AppContext, apiDir: string): Router {
       `INSERT INTO oshal_content_settings (user_sub, email_social_scan, updated_at) VALUES ($1,$2,now())
        ON CONFLICT (user_sub) DO UPDATE SET email_social_scan=$2, updated_at=now()`, [sub, on]);
     res.json({ ok: true, emailSocialScan: on });
+  });
+
+  /**
+   * Caller-owned watch registration. The descriptor is deliberately small and
+   * deterministic; provider credentials and sensor reads stay in core services.
+   */
+  router.post('/subscriptions', async (req, res) => {
+    const sub = callerSub(req); if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
+    const body = req.body as { botAgentId?: unknown; selector?: unknown };
+    const botAgentId = parseSocialSignalBotAgentId(body?.botAgentId);
+    const selector = parseSocialSignalSelector(body?.selector);
+    if (!botAgentId || !selector) {
+      res.status(400).json({ error: 'botAgentId and a bounded selector { kind, value } are required' });
+      return;
+    }
+    try {
+      const subscriptionId = await registerSocialSignalSubscription(ctx.pool, sub, botAgentId, selector);
+      res.status(201).json({ subscriptionId, botAgentId, selector, active: true });
+    } catch (err) {
+      logger.error({ err }, 'social signal subscription registration failed');
+      res.status(502).json({ error: 'subscription_unavailable' });
+    }
+  });
+
+  /** List only the caller's own watches; no captured signal bodies are returned here. */
+  router.get('/subscriptions', async (req, res) => {
+    const sub = callerSub(req); if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
+    res.json({ subscriptions: await listSocialSignalSubscriptions(ctx.pool, sub) });
+  });
+
+  /** Disable only a watch belonging to the caller. */
+  router.delete('/subscriptions/:subscriptionId', async (req, res) => {
+    const sub = callerSub(req); if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
+    const subscriptionId = String(req.params.subscriptionId || '');
+    if (!/^[0-9a-f-]{36}$/i.test(subscriptionId)) { res.status(400).json({ error: 'invalid_subscription_id' }); return; }
+    res.json({ ok: await deleteSocialSignalSubscription(ctx.pool, sub, subscriptionId) });
   });
 
   /** GET /signals — engagement signals (work anniversaries, new jobs, …) mined from connected email. Opt-in. */

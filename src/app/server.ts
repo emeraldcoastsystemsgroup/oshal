@@ -279,6 +279,7 @@ import { registerEvalWallRoutes } from './routes/eval-wall-routes';
 import { createFilesRoutes } from './routes/files-routes';
 import { createGraphRoutes } from './routes/graph-routes';
 import { startInboxIngestCron } from './routes/inbox-ingest';
+import { startSocialSignalSubscriptionCron } from './routes/social-signal-subscriptions';
 // (trading route imports removed: the trading SURFACE carved to the oshal-applications store,
 //  ADR-085 Wave 3 — the ENGINE stays kernel in app/trading-{engine,schema}.ts + the dispatch loops.)
 import { createSecurityRoutes } from './routes/security-routes';
@@ -1148,6 +1149,7 @@ function createApp(): express.Application {
   // Cost governance, A2A gateway, run traces, queue DLQ, and notify routes
   mountBudgetAndQueueRoutes(app, ctx, requiresAuth);
   startInboxIngestCron(ctx); // cron: capture all new mail (timestamped, categorized) into the store
+  startSocialSignalSubscriptionCron(ctx); // cron: deliver caller-owned social watches from the durable inbox sensor
   startFeedsIndexingCron(ctx); // cron: index each connected user's Slack messages into feed_messages
   startGovContractingCron(ctx); // cron: gated daily SAM.gov capture scan + draft enqueue (no-op unless GOVCON_CRON=1)
   // Update-check daemon — public /api/version + auth-gated /api/updates + operator-gated
