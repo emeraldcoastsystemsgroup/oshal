@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Claim one owner-routed source notification per opted-in failed run and retain honest delivery receipts.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Describe incomplete captured sessions as a distinct refused research source.
  */
 import type { AppContext } from './composition-root';
 import type { NotificationRouter, NotifyOutcome } from '@/features/notifications';
@@ -34,7 +35,9 @@ function sourceMessage(runId: string, issue: FuturesSourceIssue): { subject: str
   const subject = `Futures ${issue.root}: ${issue.code} source blocked research`;
   const detail = issue.code === 'stale'
     ? `Chart date ${issue.chartDate}, higher-timeframe date ${issue.ltfDate}; study end ${issue.freshness.referenceDate}. Bar-date lags ${issue.freshness.chartLagDays}/${issue.freshness.ltfLagDays} days exceed the configured ${issue.freshness.maxSourceLagDays}-day maximum.`
-    : issue.code === 'empty' ? 'The chart or higher-timeframe series is empty.' : 'The configured source is unavailable.';
+    : issue.code === 'empty' ? 'The chart or higher-timeframe series is empty.'
+      : issue.code === 'incomplete' ? 'The captured source has missing or invalid session bars; research was refused.'
+        : 'The configured source is unavailable.';
   return { subject, shortText: subject, body: `${subject}.\n${detail}\nRun ${runId}. Open Trading > Strategies > Tuning to inspect the source and settings. Optimization did not run for this market. No study success or trading approval is implied.` };
 }
 

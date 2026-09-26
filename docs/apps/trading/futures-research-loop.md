@@ -378,7 +378,7 @@ denominator rather than a fabricated zero-percent score. The UI labels this a se
 estimate, not CME-notice-complete market coverage or proof of a historical backfill. It exposes
 counts and timestamps, never OHLCV or a bearer. Disposable PostgreSQL and browser-script guards
 cover owner isolation and presentation. The matching core image and Trading package were installed
-on 2026-09-26; the signed-in operator still needs to check the rendered coverage and gap states.
+on 2026-09-26; the signed-in check is recorded below.
 
 A second read-only live probe on 2026-09-25 sampled five-day Schwab `/pricehistory` windows
 through the existing owner connection. Current `/ESZ26` and `/CLX26` each returned closed
@@ -397,7 +397,8 @@ per request, validates closed OHLCV, merges only identical page overlaps, gather
 before touching storage and reuses the private immutable/idempotent transaction. It never imports
 expired-contract substitutes or writes shared `market_bars`. The resulting count/coverage receipt
 is not an optimizer input. Local owner-RLS, idempotence, malformed-range, confirmation and
-partial-provider-failure guards pass; installed signed-in acceptance is still owed.
+partial-provider-failure guards pass. The installed status display was later checked as recorded
+below; the browser's own catch-up action was not exercised.
 
 The committed core `97c48623` and Trading 1.29.5 package (`e8967e5`) were installed on
 2026-09-26. On the 6 GB engine, the 37 app containers were stopped for the image build while infra
@@ -427,11 +428,50 @@ CL 87 received/0 inserted. Total stored counts remained 220/219; the one CL gap 
 visible. This verifies the backend preview/confirmation and idempotent store path without
 a remote node, not the signed-in browser flow or a multi-year historical backfill.
 
-Remaining: complete signed-in console acceptance and observe per-contract gap/freshness behavior
-over time, including a new open-market bar. The
-one-time historical source/backfill and its provenance still require operator selection and proof.
-Only then may the Schwab owner-private reader be admitted to the research worker; the current study
-config still expects its existing archive source. The bounded diagnostic does not certify
+The operator then signed in through the installed cockpit. In Trading → Strategies → Tuning,
+the live **Schwab forward bars** panel showed capture ON, the next hourly run at 05:07 UTC,
+220 ESZ26 and 219 CLX26 stored bars, and the single CL session-model gap with zero trailing
+gaps. The modeled denominator had rolled to 215 buckets by the time the page loaded; the
+panel showed ES 215/215 and CL 214/215. The preview and confirm controls were present, but
+were not clicked in the browser. The same page stated that no Futures research loop is
+configured; its source selector still offers only Kibot file/API sources. Thus signed-in
+capture **status** is accepted, while the nightly study/forward prediction loop remains
+unconfigured and cannot be counted as running on Schwab bars.
+After the 05:07 UTC closed-market cadence, a signed-in refresh showed the next capture at
+06:07 UTC with unchanged 220/219 counts and the same single CL model gap. This confirms the
+installed hourly schedule advanced; it does not prove a new open-market candle.
+
+The next code slice adds `schwab-capture` to the bounded research configuration and isolated
+worker. It reads only the owner's `oshal_trading_futures_schwab_bars` rows under forced RLS,
+never the shared equities store. Each front-month dated ES/CL segment is queried as true UTC
+30-minute bars, checked against the exchange session model at every expected bucket, and only
+then encoded in New York wall fields for the existing continuous-series builder. Invalid,
+ambiguous or absent session evidence fails with an `incomplete` source receipt **before** the
+optimizer. If a study crosses a dated-contract roll, both chart and higher-timeframe seams
+must have overlapping outgoing/incoming bars; the existing adjacent-bar fallback is not
+accepted as Schwab study evidence. Today's active-contract-only collector cannot produce
+that overlap by itself. Supported chart and higher timeframes are 1Hour and 1Day; weekly aggregation is
+excluded until an exchange-week anchor is implemented and tested. The source needs
+no container directory. Its `latest` end means the previous completed New York calendar day.
+The source cannot issue forward predictions; that separate opt-in remains file-only. The
+Trading 1.29.6 console exposes the source and these limits. Local disposable-PostgreSQL tests
+prove aggregation, missing-bar refusal, cross-owner denial and worker classification; console
+tests prove route admission and form round-trip. A complete **synthetic** owner-private ES
+chain was refused across an unproven roll; after synthetic overlapping next-contract bars were
+added, the same chain produced two OOS windows. A single-contract slice produced one OOS window
+without a roll. These are source and success-path tests, not a deployed study or
+market-performance evidence.
+
+Remaining: install the matching core and Trading source choice, then verify the signed-in
+console. Observe a new open-market bar and capture gap/freshness behavior over time. The
+one-time historical source/backfill and its provenance still require operator selection and
+proof; the existing archive importer writes shared `market_bars`, **not** this private capture
+table, so it is not yet an input to `schwab-capture`. A future source/import must provide
+true overlapping dated-contract bars at each roll, or the study will refuse across that seam.
+Current private ESZ26/CLX26 counts are
+only a recent current-contract slice, not months of complete front-month history. Do not
+enable a nightly study expecting valid OOS windows until that history is present; a configured
+run must fail closed rather than fabricate a result. The bounded diagnostic does not certify
 per-year exchange notices or full-contract completeness; the research-source DST fold and
 session admission remain explicit failure gates. No silent switch to equity proxies.
 

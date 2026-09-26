@@ -16,6 +16,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Settle forward outcomes before scheduled review admission so new grades can inform unchanged historical studies.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Select owned prior evidence before the worker and fence optimizer reuse to this API generation.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Persist classified source failures and opt-in notification receipts independently of forward settlement.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Admit owner-private captured Schwab bars through a bounded worker source and require schedule-owner identity agreement.
  */
 
 import { dirname, resolve } from 'node:path';
@@ -37,6 +38,7 @@ import { normalizeFuturesQuality, type FuturesQualityConfig } from './trading-fu
 import { normalizeFuturesPredictions, type FuturesPredictionConfig } from './trading-futures-prediction-config';
 import { FuturesSourceError } from './trading-futures-source-error';
 import { notifyFuturesSourceFailure, type FuturesSourceAlert } from './trading-futures-source-alert';
+import { futuresUtcToWall } from './trading-futures-prediction-clock';
 
 const logger = createChildLogger({ module: 'trading-futures-research-dispatch' });
 // Supported code reloads/deployments restart the API. Never reuse a report across that boundary.
@@ -49,7 +51,7 @@ export interface FuturesResearchConfig {
   roots: string[];
   timeframe: Timeframe;
   ltfTimeframe: Timeframe;
-  source: 'mock' | 'kibot' | 'kibot-file';
+  source: 'mock' | 'kibot' | 'kibot-file' | 'schwab-capture';
   dataDir: string;
   adjust: 'panama' | 'none';
   minVolume: number;
@@ -122,7 +124,11 @@ export function normalizeFuturesResearchConfig(raw: unknown): FuturesResearchCon
   const ltfTimeframe = String(input.ltfTimeframe ?? '1Day') as Timeframe;
   if (!TIMEFRAMES.has(timeframe) || !TIMEFRAMES.has(ltfTimeframe)) throw new RangeError('unsupported futures timeframe');
   const source = String(input.source ?? 'kibot-file') as FuturesResearchConfig['source'];
-  if (!['mock', 'kibot', 'kibot-file'].includes(source)) throw new RangeError('unsupported futures source');
+  if (!['mock', 'kibot', 'kibot-file', 'schwab-capture'].includes(source)) throw new RangeError('unsupported futures source');
+  if (source === 'schwab-capture' && (roots.some(root => root !== 'ES' && root !== 'CL')
+    || !['1Hour', '1Day'].includes(timeframe) || !['1Hour', '1Day'].includes(ltfTimeframe))) {
+    throw new RangeError('Schwab captured research supports ES/CL at 1Hour or 1Day');
+  }
   const splitInput = (input.split && typeof input.split === 'object' ? input.split : {}) as Record<string, unknown>;
   const split = {
     inSampleMonths: positiveInt(splitInput.inSampleMonths, 24, 120),
@@ -133,7 +139,11 @@ export function normalizeFuturesResearchConfig(raw: unknown): FuturesResearchCon
   const start = isoDate(input.start, '2021-01-01T00:00:00Z');
   if (input.endMode != null && input.endMode !== 'latest' && input.endMode !== 'fixed') throw new RangeError('unsupported futures research end mode');
   const endMode = input.endMode === 'fixed' ? 'fixed' : 'latest';
-  const latestCompletedUtcDay = new Date();
+  // Captured Schwab bars become exchange-wall stamps for the existing optimizer.
+  // Resolve the previous completed New York calendar day, not a future wall instant
+  // obtained by interpreting the previous UTC day's 23:59 as New York time.
+  const latestCompletedUtcDay = new Date(source === 'schwab-capture'
+    ? futuresUtcToWall(Date.now(), 'America/New_York') : Date.now());
   latestCompletedUtcDay.setUTCHours(0, 0, 0, 0);
   latestCompletedUtcDay.setTime(latestCompletedUtcDay.getTime() - 1_000);
   const end = endMode === 'latest'
@@ -149,7 +159,7 @@ export function normalizeFuturesResearchConfig(raw: unknown): FuturesResearchCon
   if (!estimatedWindows) throw new RangeError('futures research window has no complete out-of-sample period');
   if (upperBoundBacktests > 512) throw new RangeError(`futures research study too large: ${upperBoundBacktests} estimated backtests (max 512)`);
   if (input.dataDir != null && typeof input.dataDir !== 'string') throw new TypeError('futures research dataDir must be a path string');
-  const dataDir = String(input.dataDir || process.env.KIBOT_DATA_DIR || '').trim();
+  const dataDir = source === 'schwab-capture' ? '' : String(input.dataDir || process.env.KIBOT_DATA_DIR || '').trim();
   if (dataDir.length > 512) throw new RangeError('futures research dataDir is too long');
   if (source === 'kibot-file' && !dataDir) throw new RangeError('Kibot file source requires a data directory');
   if (source === 'mock' && process.env.NODE_ENV !== 'test') throw new RangeError('mock futures data is test-only');
@@ -221,7 +231,7 @@ export async function ensureFuturesResearchTable(pool: AppContext['pool']): Prom
  * @param config - Normalized study settings. @param previous - Server-selected owned ledger candidate.
  * @returns Current market evidence and computation receipts.
  */
-export function executeFuturesStudyOffLoop(config: FuturesResearchConfig, previous?: FuturesStudyReuse['previous']): Promise<FuturesResearchMarket[]> {
+export function executeFuturesStudyOffLoop(config: FuturesResearchConfig, previous?: FuturesStudyReuse['previous'], ownerSub?: string): Promise<FuturesResearchMarket[]> {
   return new Promise((resolveStudy, rejectStudy) => {
     const entry = futuresResearchWorkerEntry;
     const preload = entry.endsWith('.ts') ? require.resolve('tsx/cjs') : null;
@@ -233,7 +243,7 @@ export function executeFuturesStudyOffLoop(config: FuturesResearchConfig, previo
     ].join('\n');
     const worker = new Worker(bootstrap, {
       eval: true,
-      workerData: { config, reuse: { generation: studyGeneration, previous }, entry, preload, root: resolve(dirname(entry), '..') },
+      workerData: { config, reuse: { generation: studyGeneration, previous }, ownerSub, entry, preload, root: resolve(dirname(entry), '..') },
       resourceLimits: { maxOldGenerationSizeMb: 1024 },
     });
     let settled = false;
@@ -266,7 +276,7 @@ async function settleFuturesResearch(ctx: AppContext, run: FuturesResearchRun): 
   try {
     const prior = (await ctx.pool.query(`SELECT run_id, markets FROM oshal_trading_futures_research_runs WHERE owner_sub=$1 AND schedule_id=$2 AND status IN ('completed','insufficient_sample','unchanged') ORDER BY created_at DESC LIMIT 1`, [run.ownerSub, run.scheduleId])).rows[0];
     const previous = Array.isArray(prior?.markets) ? prior.markets as FuturesResearchMarket[] : undefined;
-    const markets = await executeFuturesStudyOffLoop(run.config, previous ? { runId: String(prior.run_id), markets: previous } : undefined);
+    const markets = await executeFuturesStudyOffLoop(run.config, previous ? { runId: String(prior.run_id), markets: previous } : undefined, run.ownerSub);
     run.markets = markets;
     const fingerprints = (rows: FuturesResearchMarket[]): string => JSON.stringify(rows.map(({ root, latestCompleteOosEnd, evidenceFingerprint }) => [root, latestCompleteOosEnd, evidenceFingerprint]));
     const unchanged = Array.isArray(previous) && fingerprints(previous) === fingerprints(markets);
@@ -322,8 +332,10 @@ export async function runFuturesResearch(ctx: AppContext, ownerSub: string, sche
 
 export async function dispatchTradingFuturesResearch(ctx: AppContext, schedule: ScheduleRecord): Promise<ScheduleDispatchResult> {
   const td = schedule.taskData as Record<string, unknown>;
-  const ownerSub = String(td.userSub || schedule.ownerSub || '');
-  if (!ownerSub) return { success: false, scheduleId: schedule.id, error: 'futures research schedule missing userSub' };
+  const ownerSub = schedule.ownerSub || '';
+  if (!ownerSub || td.userSub !== ownerSub || schedule.taskType !== futuresResearchTaskType(ownerSub)) {
+    return { success: false, scheduleId: schedule.id, error: 'futures research schedule owner mismatch' };
+  }
   try {
     const run = await runFuturesResearch(ctx, ownerSub, schedule.id, td.futures);
     return { success: true, scheduleId: schedule.id, taskId: run.runId };

@@ -5,9 +5,10 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Require an explicit boolean review opt-in and keep it outside deterministic market fingerprints.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Require an explicit source-alert opt-in without changing research evidence.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Guard captured Schwab source bounds, New York latest end and scheduler owner consistency.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { FUTURES_RESEARCH_CRON_DEFAULT, executeFuturesStudyOffLoop, normalizeFuturesResearchConfig } from '@/app/trading-futures-research-dispatch';
+import { FUTURES_RESEARCH_CRON_DEFAULT, dispatchTradingFuturesResearch, executeFuturesStudyOffLoop, futuresResearchTaskType, normalizeFuturesResearchConfig } from '@/app/trading-futures-research-dispatch';
 
 describe('console-configured futures research loop', () => {
   it('normalizes the bounded nightly research contract', () => {
@@ -58,6 +59,38 @@ describe('console-configured futures research loop', () => {
       expect(normalizeFuturesResearchConfig(scheduled).end).toBe('2026-09-24T23:59:59.000Z');
       expect(normalizeFuturesResearchConfig({ ...scheduled, endMode: 'fixed' }).end).toBe('2026-09-23T23:59:59.000Z');
     } finally { vi.useRealTimers(); }
+  });
+
+  it('keeps captured Schwab research on dated ES/CL, coarse bars and a completed New York day', () => {
+    vi.useFakeTimers();
+    vi.stubEnv('KIBOT_DATA_DIR', '/unrelated/archive');
+    try {
+      vi.setSystemTime(new Date('2026-09-26T02:00:00Z')); // Friday 22:00 in New York.
+      const request = { roots: ['ES','CL'], source: 'schwab-capture', timeframe: '1Hour', ltfTimeframe: '1Day',
+        start: '2026-05-01T00:00:00Z', split: { inSampleMonths: 1, oosMonths: 1, stepMonths: 1 } };
+      const config = normalizeFuturesResearchConfig(request);
+      expect(config.end).toBe('2026-09-24T23:59:59.000Z');
+      expect(config.dataDir).toBe('');
+      vi.setSystemTime(new Date('2026-09-26T04:00:00Z')); // Saturday midnight in New York.
+      expect(normalizeFuturesResearchConfig(request).end).toBe('2026-09-25T23:59:59.000Z');
+      expect(() => normalizeFuturesResearchConfig({ ...request, roots: ['NQ'] })).toThrow(/supports ES\/CL/);
+      expect(() => normalizeFuturesResearchConfig({ ...request, timeframe: '5Min' })).toThrow(/1Hour or 1Day/);
+      expect(() => normalizeFuturesResearchConfig({ ...request, ltfTimeframe: '1Week' })).toThrow(/1Hour or 1Day/);
+      expect(() => normalizeFuturesResearchConfig({ ...request, predictions: { enabled: true } })).toThrow(/require Kibot files/);
+    } finally { vi.useRealTimers(); vi.unstubAllEnvs(); }
+  });
+
+  it('rejects a schedule whose owner, task type and payload identity do not agree before any owner-private read', async () => {
+    const base = { id: 'schwab-spec', taskType: futuresResearchTaskType('owner'), ownerSub: 'owner',
+      taskData: { userSub: 'owner', futures: { source: 'schwab-capture' } } };
+    for (const schedule of [
+      { ...base, ownerSub: null },
+      { ...base, taskType: futuresResearchTaskType('other') },
+      { ...base, taskData: { ...base.taskData, userSub: 'other' } },
+    ]) {
+      const result = await dispatchTradingFuturesResearch({} as never, schedule as never);
+      expect(result).toMatchObject({ success: false, error: 'futures research schedule owner mismatch' });
+    }
   });
 
   it('runs a bounded synthetic study in an isolated worker and returns per-window evidence', async () => {

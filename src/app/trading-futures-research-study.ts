@@ -9,10 +9,12 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Exclude forward operational controls from historical evidence fingerprints.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Reuse exact owned inputs before optimization after source freshness; canonicalize stored report evidence.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Classify missing/empty sources for owner notification without hiding unexpected worker errors.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Read owner-private captured Schwab bars with strict session evidence before optimization.
  */
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
+import type { Pool } from 'pg';
 import {
   DEFAULT_OPTIMIZER_STAGES, getFuturesRoot, runStagedOptimizer, walkForwardWindows,
   MockFuturesDataSource, KibotFuturesDataSource, KibotFileDataSource, buildContinuousSeries,
@@ -24,6 +26,7 @@ import { FuturesSourceError } from './trading-futures-source-error';
 import { assertFuturesSourceFreshness, assessFuturesSample, type FuturesResearchQuality } from './trading-futures-research-quality';
 import { fingerprintFuturesEvidence } from './trading-futures-prediction-evidence';
 import { futuresStudyDefinition, futuresStudyInputFingerprint, reusableFuturesReport, type FuturesStudyComputation, type FuturesStudyReuse } from './trading-futures-research-reuse';
+import { SchwabCapturedFuturesDataSource } from './trading-futures-schwab-source';
 
 export interface FuturesResearchMarket {
   root: string; bars: number; ltfBars: number; ltfResampledFromMinute: boolean;
@@ -35,9 +38,15 @@ export interface FuturesResearchMarket {
 }
 
 interface SourcePair { src: FuturesDataSource; probe?: FuturesDataSource }
-function sourceFor(config: FuturesResearchConfig, tf: Timeframe, forceMinute = false): SourcePair {
+export interface FuturesStudySourceContext { pool: Pool; ownerSub: string }
+function sourceFor(config: FuturesResearchConfig, tf: Timeframe, sourceContext?: FuturesStudySourceContext, forceMinute = false): SourcePair {
   if (config.source === 'mock') return { src: new MockFuturesDataSource() };
   if (config.source === 'kibot') return { src: new KibotFuturesDataSource() };
+  if (config.source === 'schwab-capture') {
+    if (!sourceContext?.ownerSub || !sourceContext.pool) throw new FuturesSourceError('Schwab captured source is unavailable', { code: 'unconfigured', root: config.roots[0] });
+    return { src: new SchwabCapturedFuturesDataSource(sourceContext.pool, sourceContext.ownerSub, config.minVolume),
+      probe: new SchwabCapturedFuturesDataSource(sourceContext.pool, sourceContext.ownerSub, 0, false) };
+  }
   const daily = join(config.dataDir, 'daily');
   const minute = join(config.dataDir, 'minute');
   const isDaily = (tf === '1Day' || tf === '1Week') && !forceMinute;
@@ -45,15 +54,15 @@ function sourceFor(config: FuturesResearchConfig, tf: Timeframe, forceMinute = f
   return { src: new KibotFileDataSource({ dir, minVolume: config.minVolume }), probe: new KibotFileDataSource({ dir, frontMonthOnly: false, minVolume: 0 }) };
 }
 
-async function buildSeries(config: FuturesResearchConfig, root: string): Promise<{ chart: ContinuousSeries; ltf: ContinuousSeries; ltfResampledFromMinute: boolean }> {
-  const pair = sourceFor(config, config.timeframe); const ltfPair = sourceFor(config, config.ltfTimeframe);
+async function buildSeries(config: FuturesResearchConfig, root: string, sourceContext?: FuturesStudySourceContext): Promise<{ chart: ContinuousSeries; ltf: ContinuousSeries; ltfResampledFromMinute: boolean }> {
+  const pair = sourceFor(config, config.timeframe, sourceContext); const ltfPair = sourceFor(config, config.ltfTimeframe, sourceContext);
   if (!pair.src.configured()) throw new FuturesSourceError(`source '${config.source}' is not configured`, { code: 'unconfigured', root });
   const start = new Date(config.start); const end = new Date(config.end);
   const chart = await buildContinuousSeries(pair.src, root, config.timeframe, start, end, { adjust: config.adjust, basisProbe: pair.probe });
   let ltf = await buildContinuousSeries(ltfPair.src, root, config.ltfTimeframe, start, end, { adjust: config.adjust, basisProbe: ltfPair.probe });
   let ltfResampledFromMinute = false;
   if (!ltf.bars.length && config.source === 'kibot-file') {
-    const fallback = sourceFor(config, config.ltfTimeframe, true);
+    const fallback = sourceFor(config, config.ltfTimeframe, sourceContext, true);
     ltf = await buildContinuousSeries(fallback.src, root, config.ltfTimeframe, start, end, { adjust: config.adjust, basisProbe: fallback.probe });
     ltfResampledFromMinute = ltf.bars.length > 0;
   }
@@ -90,10 +99,15 @@ function lastBarAt(series: ContinuousSeries): string {
  * @param config - Normalized bounded study. @param reuse - Internal process-fenced ledger context.
  * @returns Markets with current source assessment and explicit computation receipts.
  */
-export async function executeFuturesStudy(config: FuturesResearchConfig, reuse: FuturesStudyReuse = { generation: randomUUID() }): Promise<FuturesResearchMarket[]> {
+export async function executeFuturesStudy(config: FuturesResearchConfig, reuse: FuturesStudyReuse = { generation: randomUUID() },
+  sourceContext?: FuturesStudySourceContext): Promise<FuturesResearchMarket[]> {
   const markets: FuturesResearchMarket[] = [];
   for (const root of config.roots) {
-    const { chart, ltf, ltfResampledFromMinute } = await buildSeries(config, root);
+    const { chart, ltf, ltfResampledFromMinute } = await buildSeries(config, root, sourceContext);
+    if (config.source === 'schwab-capture' && [...chart.seams, ...ltf.seams].some(seam => seam.method !== 'overlap')) {
+      throw new FuturesSourceError(`${root}: captured Schwab roll lacks overlapping dated-contract bars; optimizer not run`,
+        { code: 'incomplete', root });
+    }
     if (!chart.bars.length || !ltf.bars.length) throw new FuturesSourceError(`${root}: chart or higher-timeframe series is empty`, { code: 'empty', root });
     const chartAsOf = lastBarAt(chart), ltfAsOf = lastBarAt(ltf);
     const freshness = assertFuturesSourceFreshness(config.quality, root, config.end, chartAsOf, ltfAsOf);

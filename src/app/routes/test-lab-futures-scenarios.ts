@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Register owned source-alert claims, real routing and uncertain-delivery guards with fixture transports.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Register the read-only Schwab dated-contract capability guard without treating quotes as bars or fixtures as provider proof.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Register disposable-PostgreSQL Schwab capture, immutable replay and owner-RLS evidence separately from installed schedule acceptance.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | Register owner-private captured-bar research admission and incomplete-session refusal without claiming a live study.
  */
 import type { Scenario } from './test-lab-scenarios';
 
@@ -37,6 +38,7 @@ export const FUTURES_RESEARCH_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/futures-archive-cli.spec.ts' },
     { level: 'unit', path: 'tests/unit/futures-schwab-probe.spec.ts' },
     { level: 'integration', path: 'tests/unit/futures-schwab-capture-postgres.spec.ts' },
+    { level: 'integration', path: 'tests/unit/futures-schwab-source-postgres.spec.ts' },
     { level: 'unit', path: 'tests/unit/futures-research-test-lab.spec.ts' },
   ],
   steps: [{ id: 'isolated', app: 'intelligent-trades', label: 'Isolated research regression runner', run: async () => ({
