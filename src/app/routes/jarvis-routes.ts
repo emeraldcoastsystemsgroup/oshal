@@ -130,7 +130,7 @@ import { visibleArtifactActions } from './artifact-action-visibility';
 import type { PickerVisibleApps } from './artifact-picker-routes';
 import {
   resolveJarvisArtifact, buildArtifactRoutingPrompt, resolveJarvisArtifactAnswer,
-  isArtifactDestinationInquiry, describeArtifactDestinations, type JarvisArtifactAction,
+  isArtifactDestinationInquiry, describeArtifactDestinations, explicitArtifactDestinations, type JarvisArtifactAction,
 } from './jarvis-artifact-routing';
 import { assembleJarvisBotMessage, withImageDeliverableContract } from './jarvis-tool-catalog';
 import { buildToolsBlockWithShadow } from './jarvis-selector-shadow';
@@ -752,12 +752,14 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
       ? detectBuildRequest(message)
       : null;
     const artifactDestinationInquiry = !!artifactSelection && isArtifactDestinationInquiry(message);
+    const explicitArtifactTargets = artifactSelection && !artifactDestinationInquiry
+      ? explicitArtifactDestinations(message, artifactActions) : [];
     // Prepend the auto tool-feed (what Jarvis can actually DO) + the user's recent tasks/results only
     // when a direct model decision is still needed; the deterministic provider path needs neither.
     let botMessage = message;
     let offeredPackageTools: JarvisPackageToolDiscovery[] = [];
     try {
-      if (!providerBoundIntent && !buildRequest && !artifactDestinationInquiry) {
+      if (!providerBoundIntent && !buildRequest && !artifactDestinationInquiry && !explicitArtifactTargets.length) {
         const authorizationActor = getApplicationAuthorizationActor();
         const authorizationTools = ctx.authorizationTool && authorizationActor
           ? await ctx.authorizationTool.discover(authorizationActor, true) : [];
@@ -807,6 +809,25 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
             sub, issuer, label, taskId: sessionId, kind: 'chat', status: 'done',
             createdAt: j?.createdAt ?? Date.now(), finishedAt: Date.now(),
             result: { answer, routed: [], handoffs: [], dispatched: [] },
+          });
+          return;
+        }
+        if (explicitArtifactTargets.length && artifactSelection) {
+          const chosen = explicitArtifactTargets.length === 1 ? explicitArtifactTargets[0] : null;
+          const reply = chosen
+            ? await resolveJarvisArtifactAnswer(
+                `\`\`\`oshal:artifact\n${JSON.stringify({ app: chosen.app, id: chosen.id })}\n\`\`\``,
+                artifactSelection, req, sub, artifactActions, artifactVisibleApps)
+            : { cleanAnswer: `I found more than one named destination: ${explicitArtifactTargets.map(action => action.label).join('; ')}. Which should I use? Nothing was sent.`,
+                artifactAction: undefined };
+          await persistJarvisTurn(ctx, sessionId, 'assistant', reply.cleanAnswer);
+          await markJarvisSessionTaskStatus(ctx, sessionId, 'active');
+          const j = askJobs.get(jobId);
+          askJobs.set(jobId, {
+            sub, issuer, label, taskId: sessionId, kind: 'chat', status: 'done',
+            createdAt: j?.createdAt ?? Date.now(), finishedAt: Date.now(),
+            result: { answer: reply.cleanAnswer, routed: [], handoffs: [], dispatched: [],
+              ...(reply.artifactAction ? { artifactAction: reply.artifactAction } : {}) },
           });
           return;
         }

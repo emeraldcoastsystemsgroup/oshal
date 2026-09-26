@@ -64,6 +64,21 @@ handoff requests still use the model proposal and destination confirmation rails
 is not an installed acceptance until deployed and checked on the owner session; Stage 4b remains
 open pending that check and a confirmation-gated handoff to a safe destination.
 
+The first installed owner check confirmed the six live image-action labels and no dispatch. A
+named Email compose request still yielded a future-tense promise rather than an artifact action.
+A more explicit retry exposed a separate classifier regression: the read-only matcher interpreted
+“Use the available Email it destination ... do not send” as a request for the menu because it
+treated “do not send” as sufficient read-only intent. The correction requires an actual question
+or list request and excludes a direct action opening; the exact live phrase is a negative guard.
+Neither the unanswered model handoff nor this classifier correction closes Stage 4b.
+For an imperative request that names exactly one full, currently visible action label (for example
+“Use the available Email it destination”), the owner-bound server now resolves that exact label
+directly to the same checked `{app,id}` proposal and browser dispatcher. It does not infer a label
+from a keyword or connector name, and multiple named labels prompt for one choice without action.
+Ownership, expiry, MIME compatibility and current app visibility are rechecked before the action
+is returned; Email still opens compose and requires recipient/send confirmation. Non-exact target
+requests remain model-directed and still need a live acceptance, as does this new exact-label path.
+
 Destination manifests may add `keywords` (up to 16 nonempty strings, each at most 60 characters)
 and `useWhen` (a nonempty single line, at most 300 characters) under each `artifacts.accepts` entry:
 

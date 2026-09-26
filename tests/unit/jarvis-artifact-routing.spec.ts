@@ -32,7 +32,7 @@ import { mintArtifactHandle, registerAppArtifactActions, unregisterAppArtifactAc
 import { visibleArtifactActions } from '@/app/routes/artifact-action-visibility';
 import { buildArtifactToolGuidance } from '@/app/routes/jarvis-tool-catalog';
 import * as toolCatalog from '@/app/routes/jarvis-tool-catalog';
-import { buildArtifactRoutingPrompt, resolveJarvisArtifact, resolveJarvisArtifactAnswer, isArtifactDestinationInquiry, describeArtifactDestinations } from '@/app/routes/jarvis-artifact-routing';
+import { buildArtifactRoutingPrompt, resolveJarvisArtifact, resolveJarvisArtifactAnswer, isArtifactDestinationInquiry, describeArtifactDestinations, explicitArtifactDestinations } from '@/app/routes/jarvis-artifact-routing';
 import { createJarvisRoutes, purgeJarvisAskJobsForOwner } from '@/app/routes/jarvis-routes';
 import { createMemoryOnlyTaskStore } from '../helpers/jarvis-session-task-store';
 
@@ -76,6 +76,7 @@ describe('real selected-artifact routing boundary', () => {
       'Save it to OSHAL Storage.',
       'What did you send yesterday?',
       'List destinations and send it to Portrait Studio.',
+      'Use the available Email it destination for the selected stage2-proof.png file. Open its compose overlay now; leave recipient blank and do not send.',
     ]) expect(isArtifactDestinationInquiry(command)).toBe(false);
   });
 
@@ -85,6 +86,17 @@ describe('real selected-artifact routing boundary', () => {
       .toContain('Compatible destinations currently shown for chosen.png: Restyle portrait.');
     expect(describeArtifactDestinations(selection, [])).toContain('No compatible destinations are currently shown');
     expect(describeArtifactDestinations(selection, [])).toContain('Nothing was sent.');
+  });
+
+  it('matches only explicit full destination labels and leaves ambiguous labels unresolved', () => {
+    const email = { app: 'kernel-email', id: 'compose', label: 'Email it…', mode: 'open' as const };
+    const storage = { app: 'kernel-storage', id: 'save', label: 'Save to OSHAL Storage', mode: 'post' as const, endpoint: '/api/artifacts/builtin/save' };
+    const actions = [email, storage];
+    expect(explicitArtifactDestinations('Use the available Email it destination. Open its compose overlay now; do not send.', actions)).toEqual([email]);
+    expect(explicitArtifactDestinations('Send this selected file to Email it. Open compose, but do not send.', actions)).toEqual([email]);
+    expect(explicitArtifactDestinations('What destinations can receive this file?', actions)).toEqual([]);
+    expect(explicitArtifactDestinations('Do not send this to Email it.', actions)).toEqual([]);
+    expect(explicitArtifactDestinations('Use Email it and Save to OSHAL Storage for this file.', actions)).toEqual(actions);
   });
 
   it('bounds manifest routing metadata before registration', () => {
@@ -253,6 +265,20 @@ describe('authenticated /api/jarvis/ask artifact handoff', () => {
       expect(result.visual).toBeUndefined();
       expect(executeBot).toHaveBeenCalledTimes(beforeInquiry);
       expect(createTicket).not.toHaveBeenCalled();
+
+      const named = await fetch(base + '/ask', { method: 'POST', headers, body: JSON.stringify({
+        message: 'Use the available Restyle portrait destination for this selected file. Open it now; do not send anything.',
+        sessionId: 'artifact-routing-session', artifact: { ref: handle.ref },
+      }) });
+      expect(named.status).toBe(202);
+      const namedJob = (await named.json() as { jobId: string }).jobId;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        result = await (await fetch(base + '/ask/result?jobId=' + namedJob, { headers })).json() as Record<string, unknown>;
+        if (result.status !== 'pending') break;
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      expect(result).toMatchObject({ status: 'done', artifactAction: { ref: handle.ref, app: APP, id: 'restyle' }, dispatched: [] });
+      expect(executeBot).toHaveBeenCalledTimes(beforeInquiry);
 
       // A model cannot widen the selected-file gesture into a background task.
       executeBot.mockResolvedValue({ response: validDirective + '\n```handoff\n' + JSON.stringify({

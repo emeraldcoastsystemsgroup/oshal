@@ -16,9 +16,23 @@ export interface JarvisArtifactAction { ref: string; app: string; id: string }
 export function isArtifactDestinationInquiry(message: string): boolean {
   const asksForMenu = /\b(?:destinations?|receiv(?:e|ing)|where\s+can|where\s+could|what\s+can|available\s+(?:apps?|choices?|options?)|options?|choices?)\b/i.test(message);
   const readOnlyOpening = /^\s*(?:what|which|where|list|show|tell me|give me|are there)\b/i.test(message);
-  const explicitNoSend = /\b(?:do not|don't|without|not yet)\s+(?:\w+\s+){0,2}(?:send|share|dispatch|route|post|publish)\b/i.test(message);
+  const question = /\b(?:what|which|where)\b[^?]*\?/i.test(message);
+  const directAction = /^\s*(?:use|open|send|share|route|save|email|attach|post|publish)\b/i.test(message);
   const chainedAction = /\b(?:and|then)\s+(?:send|share|dispatch|post|publish|save)\b/i.test(message);
-  return asksForMenu && (readOnlyOpening || explicitNoSend) && !chainedAction;
+  return asksForMenu && (readOnlyOpening || (question && !directAction)) && !chainedAction;
+}
+
+/** @description Exact visible labels in an action request can use the same checked browser handoff without model interpretation. */
+export function explicitArtifactDestinations(message: string, actions: ArtifactMenuAction[]): ArtifactMenuAction[] {
+  if (!/^\s*(?:please\s+)?(?:send|use|open|save|email|attach|route|share)\b/i.test(message)) return [];
+  const firstClause = message.split(/(?:[!?;]|\.\s+)/, 1)[0].toLowerCase();
+  return actions.filter(action => {
+    const label = action.label.replace(/[.!?…]+$/u, '').trim().toLowerCase();
+    if (label.split(/\s+/).length < 2) return false;
+    const at = firstClause.indexOf(label);
+    return at >= 0 && (at === 0 || !/[a-z0-9]/.test(firstClause[at - 1]))
+      && (at + label.length === firstClause.length || !/[a-z0-9]/.test(firstClause[at + label.length]));
+  });
 }
 
 /** @description Report only MIME-compatible, owner-visible labels; visibility is not a permission grant. */
