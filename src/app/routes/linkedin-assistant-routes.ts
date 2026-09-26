@@ -21,6 +21,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial LinkedIn AI Content Assistant surface: GET /panel, POST /drafts (draft→judge→refine→pending-approval on the accountable bots), GET /drafts (+?state), GET /drafts/:id, POST /drafts/:id/approve (→scheduled+slot), /reject, /publish (confirm-gated, real LinkedIn publish with clean no-connection skip). Wires the linkedin-assistant service to social-writer (draft), quality-judge (grade), and the LinkedIn connector (publish).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review gap-list round2: publisher now resolves the author-id urn from the SAME personal∪shared connection row (resolveConnectionRow) the broker token comes from, instead of a caller-only `WHERE user_sub` query — a user on a household-shared LinkedIn grant now gets a consistent token + author id rather than a misleading "missing author id" skip.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Publish now runs through the CONNECTOR WRITE-ACTION EXECUTOR (runConnectorAction against the create-post action on swarm-apps/connectors/linkedin.yaml) instead of a bespoke fetch() to /v2/ugcPosts. Same brokered caller token, same clean no-connection skip, but the params are validated against the declared schema before any HTTP, the risky-write confirm gate is the shared one, and every attempt writes a connector_action_audit row (migration 083) — a public post on someone's behalf now leaves a trail. The confirm signal is passed because approval already happened upstream: the surface only reaches publish from an APPROVED draft.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Queue-created drafts may retain a bounded citation list and originating ticket provenance; interactive drafts continue to use the same owner-scoped assistant lifecycle.
  * ---------------------------------------------------------------------------
  * @module linkedin-assistant-routes
  */
@@ -246,6 +247,9 @@ function parseCreateBody(body: unknown): { input?: DraftGenerationInput; error?:
       goal: typeof b.goal === 'string' && b.goal.trim() ? b.goal.trim() : undefined,
       tone: typeof b.tone === 'string' && b.tone.trim() ? b.tone.trim() : undefined,
       sourceUrl: typeof b.sourceUrl === 'string' && b.sourceUrl.trim() ? b.sourceUrl.trim() : undefined,
+      sourceCitations: Array.isArray(b.sourceCitations)
+        ? b.sourceCitations.filter((value): value is string => typeof value === 'string' && Boolean(value.trim())).map((value) => value.trim().slice(0, 2000)).slice(0, 8)
+        : undefined,
     },
   };
 }

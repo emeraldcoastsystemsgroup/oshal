@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | LinkedIn AI Content Assistant domain types: the SocialContentDraft record + its five-state lifecycle, the LinkedIn-content judge rubric, and the injected generator/grader/publisher contracts. Kept in the feature layer with NO import of the sibling quality-judge slice (FSD forbids same-layer cross-slice imports) — the app layer adapts JudgeVerdict onto GradeResult when it wires the service.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Preserve bounded source citations and the originating queue ticket on drafts so queue-created content carries reviewable provenance into the human approval and connector-audit boundary.
  */
 
 /**
@@ -56,6 +57,8 @@ export interface DraftGenerationInput {
   tone?: string;
   /** Optional article the post shares + links. */
   sourceUrl?: string;
+  /** Additional bounded source links retained as reviewable citations. */
+  sourceCitations?: string[];
 }
 
 /**
@@ -95,6 +98,10 @@ export interface SocialContentDraft {
   tone: string | null;
   /** The shared article URL, if any. */
   sourceUrl: string | null;
+  /** Bounded source links retained with the draft for review and audit provenance. */
+  sourceCitations: string[];
+  /** Queue ticket that originated this draft, or null for interactive drafts. */
+  sourceTicketId: string | null;
   /** The drafted post body (the exact text that would be published). */
   body: string;
   /** The judge's overall score (0..100), or null before grading. */

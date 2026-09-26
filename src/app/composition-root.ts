@@ -74,6 +74,7 @@ import { startTicketGraphIngestion } from '@/features/graph';
 import { executeBotOrInline } from '@/app/routes/inline-bot-execution';
 import { createOutlookMailReader, createOutlookMailSyncReader } from '@/app/routes/outlook-mail-reader';
 import { createRingcentralCallLogReader } from '@/app/routes/ringcentral-call-log';
+import { bindLinkedInContentWorker } from '@/app/linkedin-content-queue-workflow';
 
 const logger = createChildLogger({ module: 'composition-root' });
 
@@ -182,7 +183,12 @@ export function createAppContext(): CompositionAppContext {
     },
   );
   const verification = createVerificationComponents(pool, logger);
-  const swarm = createSwarmExtensionBindings(pool, providerResolver.getProvider, { taskStore, messageStore });
+  const swarm = createSwarmExtensionBindings(
+    pool,
+    providerResolver.getProvider,
+    { taskStore, messageStore },
+    bindLinkedInContentWorker(pool, orchestrator),
+  );
   swarm.swarmTicketProcessingService?.setTicketService(ticketService);
   const botNodeClient = new BotNodeClient(createRegistryEndpointResolver());
 

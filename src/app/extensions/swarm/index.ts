@@ -76,6 +76,7 @@ import type { Pool } from 'pg';
 import type { Application, RequestHandler } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { bindFuturesResearchWorker } from '@/app/trading-futures-research-workflow';
+import type { BindManifestWorker } from '@/features/swarm-orchestration';
 import { serviceSecretHeaders, serviceSecretOr } from '@/shared/middleware/authz';
 import { AgentProfileRepository } from '@/entities/agent';
 import { AgentToolRepository, ToolRepository } from '@/entities/tool';
@@ -346,6 +347,7 @@ export function createSwarmExtensionBindings(
   pool: Pool | null = null,
   getProvider?: () => LLMService,
   conversationStores?: { taskStore: ITaskStore; messageStore: IMessageStore },
+  workerBinding?: BindManifestWorker,
 ): SwarmExtensionBindings {
   // A2: Validate persona identities at boot — fail fast on collision
   validatePersonaIdentities();
@@ -825,7 +827,10 @@ export function createSwarmExtensionBindings(
           ? async (ownerSub: string) => resolveUserBrain(pool, ownerSub)
           : undefined,
         workflowRunRecorder,
-        bindWorker: pool ? bindFuturesResearchWorker(pool) : undefined,
+        bindWorker: pool ? async (...args) => {
+          const packageBinding = workerBinding ? await workerBinding(...args) : undefined;
+          return packageBinding ?? bindFuturesResearchWorker(pool)(...args);
+        } : undefined,
         resolveAgentIdByName: agentProfileRepository
           ? async (name: string) => {
               const agents = await agentProfileRepository.listAgents();

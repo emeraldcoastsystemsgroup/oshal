@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The LinkedIn AI Content Assistant orchestration: generate a draft on the accountable social-writer bot -> grade it on the shared quality-judge against the LinkedIn rubric -> if it misses the bar (SOCIAL_JUDGE_BAR) run exactly ONE refine pass and keep the better version -> persist as a pending-approval draft. Plus the approve->schedule / reject / publish-now transitions, all funneled through the pure state machine so publish is impossible unless approved and a rejected draft is terminal. LLM transport (bot draft, judge) and the LinkedIn publish are injected so the whole flow is unit-testable under noop with zero cost.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review gap-list round2: (1) publishNow now atomically CLAIMS the scheduled draft (casState scheduled->published) BEFORE the live LinkedIn POST so two concurrent publishes can't both fire a UGC post; on skip/error/throw it releases the claim back to scheduled. (2) createDraft wraps the best-effort refine pass in try/catch — a refine bot/judge failure now keeps the already-graded first version and still persists pending-approval instead of orphaning an ungraded 'draft' row.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Carry interactive source citations into the persisted draft record; queue-originated drafts use the same store fields plus sourceTicketId.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -111,7 +112,7 @@ export class LinkedInContentService {
     const firstBody = await this.generator.generate(input);
     const draft = await this.store.insertDraft(userSub, {
       topic: input.topic, goal: input.goal ?? null, tone: input.tone ?? null,
-      sourceUrl: input.sourceUrl ?? null, body: firstBody,
+      sourceUrl: input.sourceUrl ?? null, sourceCitations: input.sourceCitations ?? [], body: firstBody,
     });
     const task = gradeTask(input);
     let best = { body: firstBody, grade: await this.grader({ task, output: firstBody, rubric: LINKEDIN_RUBRIC }) };

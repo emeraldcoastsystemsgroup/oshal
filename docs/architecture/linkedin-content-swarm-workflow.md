@@ -1,6 +1,6 @@
 # LinkedIn Content Swarm Workflow Design
 
-Last updated: 2026-06-15
+Last updated: 2026-09-25
 
 ## Intent
 
@@ -17,7 +17,7 @@ The user-facing result is a content queue:
 
 ## Runtime Shape
 
-### Swarm App
+### Swarm App — future expansion contract
 
 Target app name:
 
@@ -49,11 +49,26 @@ workflow:
     - publish
 ```
 
-Current OSHAL note: app-contributed workflows are queue-routed through `WorkflowPipelineRegistry`, and the runtime dispatches app workflows as manifest-worker jobs. Multi-agent phases in the YAML are the design contract. The first executable version should use a single orchestrator worker that writes phase artifacts and requests help from other bots through mesh tasks or child tickets.
+Current OSHAL note: app-contributed workflows are queue-routed through `WorkflowPipelineRegistry`, and the runtime dispatches app workflows as manifest-worker jobs. The multi-agent phases below remain the expansion contract; the shipped bridge currently uses the declared `social-writer` worker and the kernel quality-judge seam, not a separate orchestrator or reviewer ticket type.
+
+### Shipped queue bridge (2026-09-25)
+
+The Social package now declares `ticketType: linkedin-content-post` and exposes the owner-scoped
+`POST /api/social/linkedin-content-queue` intake. The route creates an approved queue ticket with
+bounded citation URLs and caller provenance; it does not publish. The framework binding consumes that
+ticket through the normal manifest-worker transport, asks `social-writer` for the post body, grades the
+body through the shared quality-judge contract, and persists a `pending-approval` draft in the
+kernel-owned `social_content_drafts` table with `source_ticket_id` and `source_citations` attached.
+
+The queue binding is idempotent by `(owner_sub, source_ticket_id)`, rejects forged provider/target
+metadata, and leaves publish behind the existing owner-scoped approval plus explicit confirmation gate.
+The publish rail remains the declared LinkedIn connector action and its caller-scoped audit record.
+This is source/package acceptance only: installed queue execution and a real provider receipt remain
+open evidence for the backlog item.
 
 ## Participating Bots
 
-### `linkedin-content-orchestrator`
+### Future `linkedin-content-orchestrator`
 
 Owns the workflow state machine for a content item.
 
@@ -505,7 +520,7 @@ Creates or updates a content ticket.
 ## Acceptance Criteria
 
 - Creating a content opportunity creates a `linkedin-content-post` ticket visible in the queue.
-- Queue manager dispatches the ticket to `linkedin-content-orchestrator`.
+- Queue manager dispatches the ticket to the manifest-declared `social-writer` worker; a separate orchestrator remains future work.
 - Orchestrator can request email context through the mesh using a focus query.
 - Email context is reduced to relevant signal packets.
 - The UI shows topic cards with "comment by audio" and "comment by text" actions.

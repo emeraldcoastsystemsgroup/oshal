@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS social_content_drafts (
   goal          TEXT,
   tone          TEXT,
   source_url    TEXT,
+  source_citations JSONB NOT NULL DEFAULT '[]'::jsonb,
+  source_ticket_id TEXT,
   body          TEXT NOT NULL DEFAULT '',
   score         INT,
   dimensions    JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -42,3 +44,7 @@ CREATE TABLE IF NOT EXISTS social_content_drafts (
 -- The surface lists a user's drafts by state, newest first.
 CREATE INDEX IF NOT EXISTS idx_social_content_drafts_user_state
   ON social_content_drafts (user_sub, state, updated_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_social_content_drafts_queue_ticket
+  ON social_content_drafts (user_sub, source_ticket_id)
+  WHERE source_ticket_id IS NOT NULL;

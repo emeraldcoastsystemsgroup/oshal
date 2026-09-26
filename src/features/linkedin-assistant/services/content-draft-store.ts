@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Postgres store for LinkedIn content drafts (social_content_drafts). EVERY read/write is scoped by user_sub in the WHERE clause — a draft is personal content, so one operator's drafts never surface to another (mirrors the per-user oshal_content_* tables, not an operator-visible governance surface). Idempotent CREATE TABLE IF NOT EXISTS on construction (same self-applying pattern as content-routes) with the canonical DDL living in scripts/migrations/085-social-content-drafts.sql.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add casState — a compare-and-swap state write (WHERE also pins the expected from-state) so publishNow can atomically claim a scheduled draft before the live LinkedIn POST; two concurrent publishes can no longer both fire a UGC post (review gap-list round2).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Wrapped the lazy-DDL ensureSchema chain in runWithSystemIdentity — it fires detached at boot with no request in scope; under OSHAL_DB_GUC_STRICT=deny the identity-less CREATE TABLE/INDEX would be RLS-scoped to nothing. This was the final identity-less site the SQL-logging audit named (its stack was fully detached).
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Add queue provenance: bounded source citations and source ticket id are persisted and owner-scoped, with an idempotent lookup for a retried queue dispatch.
  */
 
 import type { Pool } from 'pg';
@@ -23,6 +24,8 @@ interface DraftRow {
   goal: string | null;
   tone: string | null;
   source_url: string | null;
+  source_citations: unknown;
+  source_ticket_id: string | null;
   body: string;
   score: number | null;
   dimensions: unknown;
@@ -42,6 +45,8 @@ export interface InsertDraftInput {
   goal?: string | null;
   tone?: string | null;
   sourceUrl?: string | null;
+  sourceCitations?: string[];
+  sourceTicketId?: string | null;
   body: string;
 }
 
@@ -72,6 +77,10 @@ function mapRow(row: DraftRow): SocialContentDraft {
     goal: row.goal,
     tone: row.tone,
     sourceUrl: row.source_url,
+    sourceCitations: Array.isArray(row.source_citations)
+      ? row.source_citations.filter((value): value is string => typeof value === 'string').slice(0, 8)
+      : [],
+    sourceTicketId: row.source_ticket_id,
     body: row.body,
     score: row.score === null ? null : Number(row.score),
     dimensions: dims,
@@ -87,7 +96,7 @@ function mapRow(row: DraftRow): SocialContentDraft {
 }
 
 const SELECT_COLS =
-  'id, user_sub, topic, goal, tone, source_url, body, score, dimensions, judge_mode, rationale, refined, state, scheduled_for, publish_error, created_at, updated_at';
+  'id, user_sub, topic, goal, tone, source_url, source_citations, source_ticket_id, body, score, dimensions, judge_mode, rationale, refined, state, scheduled_for, publish_error, created_at, updated_at';
 
 /**
  * @description Per-user Postgres store for LinkedIn content drafts. Owns table creation and all
@@ -125,6 +134,8 @@ export class ContentDraftStore {
              goal TEXT,
              tone TEXT,
              source_url TEXT,
+             source_citations JSONB NOT NULL DEFAULT '[]'::jsonb,
+             source_ticket_id TEXT,
              body TEXT NOT NULL DEFAULT '',
              score INT,
              dimensions JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -141,7 +152,18 @@ export class ContentDraftStore {
         )
         .then(() =>
           this.pool.query(
+            'ALTER TABLE social_content_drafts ADD COLUMN IF NOT EXISTS source_citations JSONB NOT NULL DEFAULT \'[]\'::jsonb',
+          ),
+        )
+        .then(() => this.pool.query('ALTER TABLE social_content_drafts ADD COLUMN IF NOT EXISTS source_ticket_id TEXT'))
+        .then(() =>
+          this.pool.query(
             'CREATE INDEX IF NOT EXISTS idx_social_content_drafts_user_state ON social_content_drafts (user_sub, state, updated_at DESC)',
+          ),
+        )
+        .then(() =>
+          this.pool.query(
+            'CREATE UNIQUE INDEX IF NOT EXISTS idx_social_content_drafts_queue_ticket ON social_content_drafts (user_sub, source_ticket_id) WHERE source_ticket_id IS NOT NULL',
           ),
         )
         .then(() => undefined))
@@ -165,12 +187,22 @@ export class ContentDraftStore {
     await this.ensureSchema();
     const row = (
       await this.pool.query<DraftRow>(
-        `INSERT INTO social_content_drafts (user_sub, topic, goal, tone, source_url, body, state)
-         VALUES ($1,$2,$3,$4,$5,$6,'draft') RETURNING ${SELECT_COLS}`,
-        [userSub, input.topic, input.goal ?? null, input.tone ?? null, input.sourceUrl ?? null, input.body],
+        `INSERT INTO social_content_drafts (user_sub, topic, goal, tone, source_url, source_citations, source_ticket_id, body, state)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'draft') RETURNING ${SELECT_COLS}`,
+        [userSub, input.topic, input.goal ?? null, input.tone ?? null, input.sourceUrl ?? null, JSON.stringify(input.sourceCitations ?? []), input.sourceTicketId ?? null, input.body],
       )
     ).rows[0];
     return mapRow(row);
+  }
+
+  /** @description Return the owner's draft created by a queue ticket, for retry idempotency. */
+  async getBySourceTicket(userSub: string, sourceTicketId: string): Promise<SocialContentDraft | null> {
+    await this.ensureSchema();
+    const row = (await this.pool.query<DraftRow>(
+      `SELECT ${SELECT_COLS} FROM social_content_drafts WHERE user_sub=$1 AND source_ticket_id=$2`,
+      [userSub, sourceTicketId],
+    )).rows[0];
+    return row ? mapRow(row) : null;
   }
 
   /**

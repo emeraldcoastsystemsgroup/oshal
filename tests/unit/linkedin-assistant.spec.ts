@@ -29,11 +29,11 @@ class FakeStore {
   rows = new Map<number, SocialContentDraft>();
   private seq = 0;
   async ensureSchema(): Promise<void> {}
-  async insertDraft(userSub: string, input: { topic: string; goal?: string | null; tone?: string | null; sourceUrl?: string | null; body: string }): Promise<SocialContentDraft> {
+  async insertDraft(userSub: string, input: { topic: string; goal?: string | null; tone?: string | null; sourceUrl?: string | null; sourceCitations?: string[]; sourceTicketId?: string | null; body: string }): Promise<SocialContentDraft> {
     const id = ++this.seq;
     const d: SocialContentDraft = {
       id, userSub, topic: input.topic, goal: input.goal ?? null, tone: input.tone ?? null,
-      sourceUrl: input.sourceUrl ?? null, body: input.body, score: null, dimensions: {},
+      sourceUrl: input.sourceUrl ?? null, sourceCitations: input.sourceCitations ?? [], sourceTicketId: input.sourceTicketId ?? null, body: input.body, score: null, dimensions: {},
       judgeMode: null, rationale: null, refined: false, state: 'draft', scheduledFor: null,
       publishError: null, createdAt: 'now', updatedAt: 'now',
     };
