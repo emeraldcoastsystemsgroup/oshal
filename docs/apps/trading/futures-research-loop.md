@@ -339,4 +339,37 @@ acceptance instructions, not a record that those steps have occurred.
 
 ## Still required before Futures can close
 
+The operator's data-source direction changed on 2026-09-25: Kibot ES/CL archives are not available
+and are a roadmap discussion, not a dependency for the active Futures loop. The intended path is a
+one-time historical backfill from a source the operator obtains, followed by forward dated-contract
+OHLCV collection from the existing Schwab connection. A read-only console probe checks active dated
+ES/CL quotes, 30-minute and daily candles independently and returns only statuses/counts/coverage;
+quote snapshots never become bars. The connected operator account returned real
+volume-bearing `/ESZ26` and `/CLX26` 30-minute candles on 2026-09-25. This establishes entitlement
+to a recent dated-contract sample, not multi-year retention or continuous-contract quality.
+
+Migration 167 places Schwab bars in `oshal_trading_futures_schwab_bars` under forced owner RLS,
+separate from shared `market_bars`. The capture adapter stores the true UTC timestamp and only
+converts to the research engine's New York wall-time convention on an owner-scoped read. It rejects
+malformed/duplicate/out-of-order buckets, drops the current bucket, refuses revisions to already
+captured closed OHLCV and replays unchanged bars idempotently. Strategies → Tuning has separate
+probe, status, manual capture, enable and stop controls. The bounded hourly/half-hour schedule is
+read-only and never arms trading or a study. Disposable PostgreSQL tests prove owner denial and
+replay. An installed one-shot capture on 2026-09-25 wrote 220 ESZ26 and 219 CLX26 closed bars;
+a repeat inserted zero. The one-shot was run with the existing brokered owner token inside the API
+container; no token or bar payload was printed. The installed API loaded the new scheduler branch,
+and a temporary one-minute canary dispatched twice with `success: true` on 2026-09-25. It was
+restored to hourly `7 * * * *` UTC with the next run at 2026-09-26 03:07 UTC. The deployed
+unauthenticated route returned 401. A signed-in console visual check was not performed because
+the available browser session redirected to Google sign-in; browser-script and route tests cover
+the controls locally, not an authenticated installed click-through.
+
+Remaining: promote the matching core scheduler and Trading package through committed image/package
+deployment (the live proof used targeted in-container files), complete signed-in console acceptance,
+and observe per-contract gap/freshness behavior over time. The
+one-time historical source/backfill and its provenance still require operator selection and proof.
+Only then may the Schwab owner-private reader be admitted to the research worker; the current study
+config still expects its existing archive source. Session completeness and the DST fold remain
+explicit failure gates, not assumed-good timestamps. No silent switch to equity proxies.
+
 Archive-to-`market_bars` ingestion now has a console/CLI implementation and private boundary proofs; actual installed ES/CL import and idempotence receipts remain unproven. Installed-console/provider-cost receipts, a real nightly observation and subsequently matured forward outcomes on the deployed box remain unproven. Exchange-session completeness remains open; the forward clock and freshness guards do not assert exchange-session coverage. Proactive source notifications have local real-worker/owner-routing proofs, not installed channel-delivery acceptance. Pre-optimizer duplicate reuse has real-file and private-worker/JSONB proofs, not an installed nightly receipt. Outcome feedback now has local owner/RLS and frozen-citation proofs; deployed provider review of matured real outcomes still needs acceptance. Paper-book/cockpit acceptance and any eventual live decision remain separate phases; live requires a named operator approval backed by positive research evidence. Keep [Futures extension layer](../../BACKLOG.md) open until its own Done when is met.

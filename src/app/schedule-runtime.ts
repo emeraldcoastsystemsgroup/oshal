@@ -33,6 +33,7 @@ import { isReviewSchedule, dispatchTradingReview } from './trading-review-dispat
 import { isOptimizeSchedule, dispatchTradingOptimize } from './trading-optimize-dispatch';
 import { isLabSchedule, dispatchTradingLab } from './trading-lab-dispatch';
 import { isFuturesResearchSchedule, dispatchTradingFuturesResearch } from './trading-futures-research-dispatch';
+import { isSchwabFuturesCaptureSchedule, dispatchSchwabFuturesCapture } from './trading-futures-schwab-capture';
 import { isSwingSchedule, dispatchTradingSwing } from './trading-swing-dispatch';
 import { isWorldSchedule, dispatchWorldSchedule } from './world-schedule-dispatch';
 import { isWorkflowTicketSchedule, dispatchWorkflowTicketSchedule } from './workflow-ticket-schedule-dispatch';
@@ -73,6 +74,7 @@ export function createScheduleController(
       : isOptimizeSchedule(schedule.taskType) ? dispatchTradingOptimize(ctx, schedule)
       : isLabSchedule(schedule.taskType) ? dispatchTradingLab(ctx, schedule)
       : isFuturesResearchSchedule(schedule.taskType) ? dispatchTradingFuturesResearch(ctx, schedule)
+      : isSchwabFuturesCaptureSchedule(schedule.taskType) ? dispatchSchwabFuturesCapture(ctx, schedule)
       : isSwingSchedule(schedule.taskType) ? dispatchTradingSwing(ctx, schedule)
       : isWorldSchedule(schedule.taskType) ? dispatchWorldSchedule(ctx, schedule)
       : isWorkflowTicketSchedule(schedule.taskType) ? dispatchWorkflowTicketSchedule(ctx, schedule)
@@ -102,6 +104,7 @@ export function createScheduleController(
       if (isLabSchedule(taskType)) return;
       // Futures research is a console-owned bounded paper study, not a user agent self-schedule.
       if (isFuturesResearchSchedule(taskType)) return;
+      if (isSchwabFuturesCaptureSchedule(taskType)) return;
       // The daily swing (trend) sleeve runs the deterministic Donchian loop in-controller — bypass.
       if (isSwingSchedule(taskType)) return;
       // Manifest/framework-declared schedules (taskType `app:<app>-<id>`) are operator/

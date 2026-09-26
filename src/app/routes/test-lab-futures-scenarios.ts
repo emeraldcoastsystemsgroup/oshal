@@ -11,6 +11,8 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Register real archive/worker/transaction/RLS import proofs, distinct from installed-data acceptance.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Register real-source pre-optimizer reuse and invalidation guards.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Register owned source-alert claims, real routing and uncertain-delivery guards with fixture transports.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Register the read-only Schwab dated-contract capability guard without treating quotes as bars or fixtures as provider proof.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Register disposable-PostgreSQL Schwab capture, immutable replay and owner-RLS evidence separately from installed schedule acceptance.
  */
 import type { Scenario } from './test-lab-scenarios';
 
@@ -33,10 +35,12 @@ export const FUTURES_RESEARCH_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/futures-archive-source.spec.ts' },
     { level: 'integration', path: 'tests/unit/futures-archive-import-postgres.spec.ts' },
     { level: 'integration', path: 'tests/unit/futures-archive-cli.spec.ts' },
+    { level: 'unit', path: 'tests/unit/futures-schwab-probe.spec.ts' },
+    { level: 'integration', path: 'tests/unit/futures-schwab-capture-postgres.spec.ts' },
     { level: 'unit', path: 'tests/unit/futures-research-test-lab.spec.ts' },
   ],
   steps: [{ id: 'isolated', app: 'intelligent-trades', label: 'Isolated research regression runner', run: async () => ({
     app: 'intelligent-trades', label: 'Isolated research regression runner', state: 'degraded',
-    detail: 'No tests ran from this browser step. Run npx vitest run --no-file-parallelism futures-research- futures-prediction- futures-review-forward- futures-archive- from the framework checkout with Docker available. Follow docs/apps/trading/futures-research-loop.md for console acceptance; no live provider or nightly completion is claimed.',
+    detail: 'No tests ran from this browser step. Run the listed Futures specs from the framework checkout with Docker available. Follow docs/apps/trading/futures-research-loop.md for installed acceptance; this browser step does not prove a live nightly capture or study.',
   }) }],
 }];
