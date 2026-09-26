@@ -3,6 +3,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove selected-artifact routing through real owner handles, registry, YAML and authenticated Jarvis HTTP routes; model and persistence are isolated fixtures.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Partial-mock the database barrel instead of listing its exports. createPersistenceActivation arrived in the barrel and both in-memory stores call it, so this file's mock threw on construction and the suite was red on main with nobody acting on it.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Correct a stale assumption about the session-ownership gate, which is why the HTTP case answered 404 session_not_found. Its task-store double returned undefined from create() and null from get() forever - enough while ensureSessionTask read `return !created || created.ownerSub === sub`, and not enough after the 2026-09-11 hardening made a store that cannot hand back an owner-bound task a refusal. The case now runs against the REAL InMemoryTaskStore with Postgres configuration withheld, so it exercises the shipped create/read-back contract instead of a fixture's idea of it. No assertion is relaxed; updateStatus is observed with a spy over the real method.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Keep an owner-visible, no-dispatch destination list when the selected-file model decision times out; an imperative selected-file ask must not become a background ticket.
  */
 import type { AddressInfo } from 'node:net';
 import express, { type Request, type RequestHandler } from 'express';
@@ -220,6 +221,20 @@ describe('authenticated /api/jarvis/ask artifact handoff', () => {
         await new Promise(resolve => setTimeout(resolve, 10));
       }
       expect(result).toMatchObject({ status: 'done', artifactAction: { ref: handle.ref, app: APP, id: 'restyle' }, dispatched: [] });
+      expect(createTicket).not.toHaveBeenCalled();
+
+      executeBot.mockRejectedValueOnce(new Error('DECISION_TIMEOUT'));
+      const timedOut = await ask({ ref: handle.ref });
+      const timedOutJob = (await timedOut.json() as { jobId: string }).jobId;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        result = await (await fetch(base + '/ask/result?jobId=' + timedOutJob, { headers })).json() as Record<string, unknown>;
+        if (result.status !== 'pending') break;
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      expect(result).toMatchObject({ status: 'done', dispatched: [] });
+      expect(result.artifactAction).toBeUndefined();
+      expect(result.answer).toContain('Nothing was sent or filed.');
+      expect(result.answer).toContain('Compatible destinations: Restyle portrait.');
       expect(createTicket).not.toHaveBeenCalled();
 
       // A catalog failure must fail the request without leaving a pending job or calling the model.

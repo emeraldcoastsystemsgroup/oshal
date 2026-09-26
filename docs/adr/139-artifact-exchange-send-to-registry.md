@@ -39,6 +39,18 @@ is shown and is never automatically retried with `confirm:true`. Selected-file t
 queue plans or background handoffs, including on model timeout. Changing the selection while a
 turn runs refuses its stale response; history replay never dispatches.
 
+An installed signed-in owner probe on 2026-09-26 selected the existing fictional
+`stage2-proof.png` and asked only for available destinations, explicitly forbidding a send.
+No file was dispatched, but the old conversation's protected read-back refused and the browser's
+fresh-thread retry hit `DECISION_TIMEOUT`; no clarification appeared. A concurrent PostgreSQL
+restore-smoke `pg_dump` was observed in `ClientWrite` while API schema sessions waited on its
+relation locks, with connection and briefing-authority timeouts in the API log. This is a RED
+Stage 4b live acceptance, not an artifact-routing pass. The source now returns an owner-visible
+list of already compatible destination labels and says nothing was sent/filed if a selected-file
+decision times out; a focused owner-bound HTTP guard proves no action or background job is returned.
+That fallback does not establish live model semantics or the confirmation-gated handoff. Retest
+those after the database and provider path are healthy before closing Stage 4b.
+
 Destination manifests may add `keywords` (up to 16 nonempty strings, each at most 60 characters)
 and `useWhen` (a nonempty single line, at most 300 characters) under each `artifacts.accepts` entry:
 

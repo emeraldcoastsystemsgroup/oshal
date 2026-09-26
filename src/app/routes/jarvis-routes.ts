@@ -60,6 +60,7 @@
  * 27 | maintainer@emeraldcoastsystemsgroup.com   | The ask job result carries brainFallback when the turn was answered by the operator's hot fallback (2026-09-22) so the surface says which rung answered and that the chosen endpoint was unavailable; a fallback that was not ready reaches the job as its own clear error text.
  * 26 | maintainer@emeraldcoastsystemsgroup.com   | A build request is handed to the swarm without a model turn. The decision step was an agentic bot turn raced against a 75s timeout, and on "build me X" the agent ignored the hand-off rule and ground the build inline (8.6 min, 1.87M tokens measured 2026-06-20) while the route, having lost the race, filed the same ask with the swarm - two builds of one request, acknowledged after 75 seconds. detectBuildRequest recognises the imperative deterministically alongside the existing recall/provider/schedule guards, fileBuildHandoff files it, and the turn returns before runJarvisBot is ever called, so there is no losing turn to abandon. The decision-timeout fallback now files through the same claim-guarded path, so a resent ask cannot open a second build.
  * 28 | maintainer@emeraldcoastsystemsgroup.com   | Preflight protected-result admission before registering a fresh Jarvis session, while retaining the post-write owner/read-back guard.
+ * 29 | maintainer@emeraldcoastsystemsgroup.com   | Report a selected-file model timeout with only the caller-visible compatible destinations and an explicit no-send/no-work receipt; preserve the selected-file handoff guard.
  */
 
 import { getJarvisBriefingDelivery } from './jarvis-briefing-delivery';
@@ -894,15 +895,24 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
           answer = raced.answer;
           brainFallback = raced.brainFallback;
         } catch (e) {
-          if ((e as Error).message !== 'DECISION_TIMEOUT' || artifactSelection) throw e;
+          if ((e as Error).message !== 'DECISION_TIMEOUT') throw e;
 
           // A greeting or a question that timed out is an unavailable assistant, not a build.
           // Filing it produces a ticket nobody asked for, titled with the user's small talk, that
           // then escalates — and tells them something untrue about their own message.
-          if (!looksLikeWorkRequest(message)) {
-            const unavailable = 'I could not get an answer just now — my model provider did not '
-              + 'respond in time. Nothing was filed. Try again shortly, or pick a different '
-              + 'provider in Settings → AI Providers.';
+          // A selected-file turn is never a build either, even when the operator's words look
+          // imperative. Its already-filtered destination menu remains useful on a model timeout.
+          if (artifactSelection || !looksLikeWorkRequest(message)) {
+            const unavailable = artifactSelection
+              ? 'I could not choose a destination because my model provider did not respond in time. '
+                + 'Nothing was sent or filed. '
+                + (artifactActions.length
+                  ? `Compatible destinations: ${artifactActions.map(action => action.label).join('; ')}. `
+                  : 'No compatible destinations are currently available. ')
+                + 'Try again when Jarvis is available.'
+              : 'I could not get an answer just now — my model provider did not '
+                + 'respond in time. Nothing was filed. Try again shortly, or pick a different '
+                + 'provider in Settings → AI Providers.';
             await persistJarvisTurn(ctx, sessionId, 'assistant', unavailable);
             await markJarvisSessionTaskStatus(ctx, sessionId, 'active');
             const prior = askJobs.get(jobId);
@@ -912,8 +922,8 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
               result: { answer: unavailable, routed: [], handoffs: [], dispatched: [] },
             });
             logger.warn(
-              { sessionId, messageLength: message.length },
-              'jarvis: decision timeout on a conversational message — reported as unavailable, nothing filed',
+              { sessionId, messageLength: message.length, selectedArtifact: Boolean(artifactSelection) },
+              'jarvis: decision timeout without work filing — reported as unavailable',
             );
             return;
           }
