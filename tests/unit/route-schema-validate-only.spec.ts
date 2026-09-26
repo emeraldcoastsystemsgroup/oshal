@@ -1,3 +1,10 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added oshal_social_signal_subscriptions and oshal_social_signal_deliveries (with the delivery audit columns user_sub, bot_agent_id, channel, correlation_id) to the validate-only catalog. ensureContentSchema has required both tables since the subscription slice landed, and without them the priority-route case rejected with "content routes schema is not ready ... missing oshal_social_signal_subscriptions table". ensureContentSchema ran before the Jarvis and trading bootstraps, so once it passed the same case failed on the catalog gaps it had been masking; the rows those bootstraps already require were added so the case is green again: jarvis_tasks.visual/files/briefing_source_id/principal_issuer/summarize_started_at, oshal_trading_accounts, oshal_trading_books, and book_id on the signals/decisions/orders/predictions tables. Fixture rows only; no schema code changed.
+ */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ensureContentSchema } from '../../src/app/routes/content-routes';
 import { ensureConnectionsSchema } from '../../src/app/routes/connectors-routes';
@@ -57,6 +64,25 @@ const ROUTE_SCHEMA_COLUMNS: Record<string, string[]> = {
     'dismissed',
     'dismissed_at',
   ],
+  oshal_social_signal_subscriptions: [
+    'subscription_id',
+    'user_sub',
+    'bot_agent_id',
+    'selector',
+    'active',
+    'created_at',
+    'updated_at',
+  ],
+  oshal_social_signal_deliveries: [
+    'subscription_id',
+    'msg_id',
+    'user_sub',
+    'bot_agent_id',
+    'channel',
+    'correlation_id',
+    'claimed_at',
+    'published_at',
+  ],
   // (oshal_email_digests removed: email-summarizer carved to the app store, ADR-085 Wave 3 —
   //  the packaged route validates its own lazy schema, with owner-RLS appended.)
   feed_messages: [
@@ -113,9 +139,14 @@ const ROUTE_SCHEMA_COLUMNS: Record<string, string[]> = {
     'error',
     'kind',
     'ticket_id',
+    'visual',
     'delivered',
+    'files',
+    'briefing_source_id',
+    'principal_issuer',
     'created_at',
     'finished_at',
+    'summarize_started_at',
   ],
   visual_response_artifacts: [
     'artifact_id',
@@ -175,6 +206,39 @@ const ROUTE_SCHEMA_COLUMNS: Record<string, string[]> = {
     'files_repo',
     'updated_at',
   ],
+  oshal_trading_accounts: [
+    'account_id',
+    'user_sub',
+    'broker',
+    'connection_key',
+    'account_number_enc',
+    'account_digest',
+    'account_last4',
+    'account_hash',
+    'account_type',
+    'nickname',
+    'discovered_at',
+    'last_seen_at',
+  ],
+  oshal_trading_books: [
+    'book_id',
+    'user_sub',
+    'ref',
+    'label',
+    'kind',
+    'broker',
+    'account_id',
+    'connection_key',
+    'enabled',
+    'learn',
+    'capital_cap_usd',
+    'settlement_policy',
+    'discovered_account_type',
+    'arm_ack_at',
+    'arm_ack_by',
+    'arm_ack_note',
+    'created_at',
+  ],
   oshal_trading_signals: [
     'signal_id',
     'user_sub',
@@ -189,6 +253,7 @@ const ROUTE_SCHEMA_COLUMNS: Record<string, string[]> = {
     'indicators',
     'content_hash',
     'observed_at',
+    'book_id',
   ],
   oshal_trading_decisions: [
     'decision_id',
@@ -211,6 +276,7 @@ const ROUTE_SCHEMA_COLUMNS: Record<string, string[]> = {
     'trail_price',
     'trail_percent',
     'time_in_force',
+    'book_id',
   ],
   oshal_trading_orders: [
     'order_id',
@@ -238,6 +304,7 @@ const ROUTE_SCHEMA_COLUMNS: Record<string, string[]> = {
     'trail_price',
     'trail_percent',
     'time_in_force',
+    'book_id',
   ],
   oshal_trading_predictions: [
     'prediction_id',
@@ -256,6 +323,7 @@ const ROUTE_SCHEMA_COLUMNS: Record<string, string[]> = {
     'hit',
     'created_at',
     'resolved_at',
+    'book_id',
   ],
   // (oshal_youtube_activity removed: youtube-kids carved to the app store, ADR-085 —
   //  the packaged route validates its own lazy schema.)
