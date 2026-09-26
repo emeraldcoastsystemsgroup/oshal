@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127 remote-brain guards for stampRemoteBrain: a CLI-harness node dispatch carries the caller's resolved brain (cli → the ADR-034 providerId/model stamp; hosted → the byoLlmConnection wire trio with resolver metadata stripped), explicit caller choices and identity-less/hosted-harness dispatches pass through with the ladder never consulted, an empty ladder refuses with NO_HOSTED_BRAIN, and a ladder FAILURE dispatches unstamped (fail-open) — the exact behaviours that keep the operator's mounted-CLI turns and guest hosted turns from regressing onto a node's static default.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Require the resolved CLI provider stamp at the protected remote reasoning boundary.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -51,6 +52,7 @@ describe('stampRemoteBrain (ADR-127 remote branch)', () => {
     await stampRemoteBrain(POOL, CLI_AGENT, req, overrides({ kind: 'cli', providerId: 'claude-code', model: 'claude-sonnet-4-6' }));
     expect(req.providerId).toBe('claude-code');
     expect(req.model).toBe('claude-sonnet-4-6');
+    expect(req.providerConfigRequired).toBe(true);
     expect(req.byoLlmConnection).toBeUndefined();
   });
 
@@ -64,6 +66,7 @@ describe('stampRemoteBrain (ADR-127 remote branch)', () => {
       },
     }));
     expect(req.byoLlmConnection).toEqual({ baseUrl: 'https://lane.example/v1', apiKey: 'k', model: 'm-1' });
+    expect(req.providerConfigRequired).toBeUndefined();
     expect(req.providerId).toBeUndefined();
   });
 
