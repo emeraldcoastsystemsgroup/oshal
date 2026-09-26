@@ -136,6 +136,7 @@ The autonomous backlog suites have matching Lab registrations and local commands
 | `npm run test:specialist-context` | Package-owned facts, exact caller scope, signed dispatch and revocation/timeout refusal |
 | `npm run test:briefings` | Registered sources, per-user preferences, frequency and delivery channels |
 | `npm run test:vendor-login` | The vendor login seeding rail (Lab card **Vendor login seeding**): Codex / Claude / Google imports under the ADR-127 carve, what may leave the operator's machine, and where a Gemini turn runs once a sign-in has been pushed. No vendor endpoint is contacted and no browser login is attempted - the success path is the operator's own, by design. |
+| `npm run test:social-signals` | Social signal subscriptions (Lab card **Social signals — your watches reach only your bot**): bot binding, the cron's SYSTEM identity under deny-by-default, owner RLS on subscriptions and deliveries, the owner-only delivery audit, and one subscription producing exactly one event on its owner's Redis lane - proven against a disposable PostgreSQL with the non-superuser enforcing role and a disposable Redis. |
 
 Docker-backed suites create their own temporary databases. Do not substitute a deployment DSN or
 run the unrestricted historical unit collection against a live application database.

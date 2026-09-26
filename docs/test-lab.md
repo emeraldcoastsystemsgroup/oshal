@@ -68,6 +68,31 @@ HTTP assertions and negative cases are themselves covered by
 `tests/unit/test-lab-artifact-registration.spec.ts`. Registration in source does not claim that the
 updated catalog or its live-model scenarios have already run on the deployed instance.
 
+### Social signal subscriptions
+
+**Social signals — your watches reach only your bot** (`social-signal-subscriptions`, Tools) runs
+four steps over the signed-in caller's own `/api/content/subscriptions` routes:
+
+- a watch naming a bot this swarm does not run is refused (`400 unknown_bot`) before anything is
+  stored;
+- the caller's watches are listed;
+- the delivery audit of a subscription the caller does not own answers `404`;
+- the caller's first watch returns its delivery audit (message id, bot lane, correlation id,
+  claimed/published times). With no watch yet this step is degraded, not failed.
+
+A passing run registers, publishes and disables nothing. If the bot refusal ever regresses, the
+step disables the watch it accidentally created and reports fail. The card does not register a
+watch or wait for the 15-minute poll, so it does not observe a live stream event.
+
+Run the linked suites locally with `npm run test:social-signals`. The real-boundary suite
+(`tests/unit/social-signal-subscriptions-postgres.spec.ts`) starts its own PostgreSQL and Redis.
+Against the non-superuser enforcing role, under deny-by-default identity, it proves that one
+subscription produces exactly one event on its owner's bot lane with a matching delivery audit
+row, and that another user cannot read the subscription, the captured post, the delivery row or
+the stream event. That is local evidence. Registration in source does not mean the card has run
+on the deployed instance, and nothing here claims a live provider capture or a bot consuming the
+lane.
+
 ---
 
 ## Application-installed smoke cases

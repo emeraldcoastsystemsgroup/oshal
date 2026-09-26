@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Extended SYSTEM_SEAMS with the two mesh-subscription handlers the live deny audit caught running identity-less (remote-client-task-results landing — the DENIED "WorkItemRepository.findByExternalIdAnyProvider" site — and the config-sync config-change handler, same shape found by inspection). Mesh poll callbacks carry no ALS identity; both now wrap in runWithSystemIdentity. Behavioral proof lives in tests/unit/mesh-handler-system-identity.spec.ts.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Fixes a RED main. #605 made authorization grants (subject, issuer) pairs and added oshal.current_issuer to the GUC stamp, taking it from two parameters to three; this case still asserted the two-parameter shape and had been failing since. Updated to the real shape, and a second case added so the issuer is actually COVERED rather than merely tolerated - nothing in this spec asserted it reached Postgres at all, which is how the change landed without anyone noticing the pin.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Guards the ARITY of the identity stamp, which is what actually drifts. #605 added a third GUC parameter and left two specs asserting the two-parameter shape; the second was found only by an adversarial re-check, after the root cause had already been missed twice. Fixing each file as it surfaces does not stop the next one, so this fails when the parameter count changes and names every spec that asserts on the stamp, so the sweep is a list rather than a memory.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Added src/app/routes/social-signal-subscriptions.ts to SYSTEM_SEAMS. Its cron joined every owner's subscriptions to the FORCE-RLS inbox sensor with no identity in scope, so deny-by-default stamped it anonymous and it produced no signal; both ticks now run through runSocialSignalPollAsSystem. Behavioral proofs: tests/unit/social-signal-subscriptions.spec.ts (the cron's stamp under deny) and tests/unit/social-signal-subscriptions-postgres.spec.ts (the enforcing role sees the rows only under the sentinel).
  */
 
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
@@ -192,6 +193,7 @@ describe('background runner seam coverage (static)', () => {
     'src/app/bot-node-batch.ts',                                          // one-shot batch phase
     'src/app/routes/remote-client-task-results.ts',                       // mesh task-result landing (work_items writes)
     'src/features/config-sync/services/config-sync-service.ts',           // config-change mesh handler (config_sync_log audit)
+    'src/app/routes/social-signal-subscriptions.ts',                      // social signal poll (inbox join + delivery claims)
   ] as const;
 
   for (const file of SYSTEM_SEAMS) {
