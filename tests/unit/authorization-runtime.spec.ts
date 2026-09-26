@@ -54,6 +54,12 @@ const PACKAGE = `exports.createRoutes = function(ctx) {
     const observation = ctx.fixtureObserve('handler');
     res.json({ ok: true, marker: 'version-one', path: req.url, observation, actor: ctx.authorization.currentActor() });
   };
+};
+exports.createVerifier = function(ctx) {
+  return async function(req) {
+    if (req.get('x-fixture-signature') !== 'verified-provider-request') return null;
+    return ctx.fixtureCallbackPrincipal();
+  };
 };`;
 
 let root: string, server: Server, base: string;
@@ -64,6 +70,8 @@ let queries: string[], repoWrites: number, factoryContexts: unknown[];
 let observations: Array<{ phase: string; identity: ReturnType<typeof getRequestIdentity>; actor: ReturnType<typeof getApplicationAuthorizationActor> }>;
 let failTakeout: boolean, hasCatalog: boolean;
 let memberTenants: string[];
+let callbackActive: boolean;
+let callbackPrincipal: { sub: string; issuer: string } | null;
 let activationPause: { entered(): void; wait: Promise<void> } | undefined;
 
 /** @description Install an isolated shell catalog and a business-only editor without personal access.
@@ -138,7 +146,9 @@ beforeEach(async () => {
     if (name === 'administrator') return structuredClone(admin);
     throw Object.assign(new Error('No verified fixture actor'), { status: 401 });
   };
-  runtime = new ApplicationAuthorizationRuntime(policy, actor, { OSHAL_APPLICATION_AUTHORIZATION_MODE: 'enforce' }, repo.findByName);
+  callbackActive = true; callbackPrincipal = { sub: alice.sub, issuer: alice.issuer };
+  runtime = new ApplicationAuthorizationRuntime(policy, actor, { OSHAL_APPLICATION_AUTHORIZATION_MODE: 'enforce' }, repo.findByName,
+    async (sub, issuer) => sub === alice.sub && issuer === alice.issuer ? { ...alice, isActive: callbackActive } : null);
   const app = express();
   // Simulate a platform administrator scope upstream; package execution must narrow it.
   app.use((_req, _res, next) => runWithRequestIdentity({ sub: 'upstream-operator', principalIssuer: ISSUER, isOperator: true }, next));
@@ -149,7 +159,7 @@ beforeEach(async () => {
     const observation = { phase, identity: getRequestIdentity(), actor: getApplicationAuthorizationActor() };
     observations.push(structuredClone(observation)); return observation;
   };
-  const ctx = { pool, fixtureObserve: observe, fixtureHasCatalog: () => hasCatalog,
+  const ctx = { pool, fixtureObserve: observe, fixtureHasCatalog: () => hasCatalog, fixtureCallbackPrincipal: () => callbackPrincipal,
     fixtureFactoryContext: (value: unknown) => factoryContexts.push(value), applicationAuthorization: runtime, authorizationTool: {} } as unknown as AppContext;
   // TYPED, deliberately: this double used to be cast `as never`, and that cast is what let it rot.
   // It declared `resolve`, which #605 replaced with `resolveForPrincipal(appName, userSub,
@@ -194,6 +204,53 @@ afterEach(async () => {
 });
 
 describe('Application authorization runtime integration', () => {
+  describe('signed package callbacks', () => {
+    async function install() {
+      await apps.loadApp(writePackage(manifest({ uses: ['application-authorization', 'signed-package-callbacks'],
+        routes: [{ module: 'routes.js', factory: 'createRoutes', mountPath: '/api/runtime-app', auth: 'public', callbackVerifier: 'createVerifier' }] })));
+    }
+    const signed = { user: null, method: 'POST', headers: { 'x-fixture-signature': 'verified-provider-request' } };
+    it('executes without browser login only after signature, current principal and named permission checks', async () => {
+      await install(); await grant('editor');
+      const result = await call('/records', signed); expect(result.status).toBe(200);
+      expect(result.body.actor).toMatchObject({ sub: alice.sub, issuer: ISSUER, isSwarmAdmin: false });
+      expect(result.body.observation.identity).toMatchObject({ sub: alice.sub, principalIssuer: ISSUER, isOperator: false });
+    });
+    it('does not grant an unsigned provider request authority even with a signed-in user', async () => {
+      await install(); await grant('editor');
+      expect((await call('/records', { method: 'POST' })).status).toBe(401);
+      expect(observations).toHaveLength(0);
+    });
+    it('requires POST and never accepts a browser identity instead of the verified owner', async () => {
+      await install(); await grant('editor');
+      expect((await call('/records', { ...signed, method: 'GET' })).status).toBe(405);
+      const result = await call('/records', { ...signed, user: 'administrator' });
+      expect(result.status).toBe(200); expect(result.body.actor.sub).toBe(alice.sub);
+    });
+    it('refuses a valid signature when the owner lacks current permissions', async () => {
+      await install(); expect((await call('/records', signed)).status).toBe(403);
+      expect(observations.filter(row => row.phase === 'handler')).toHaveLength(0);
+    });
+    it('refreshes owner liveness for every callback', async () => {
+      await install(); await grant('editor'); expect((await call('/records', signed)).status).toBe(200);
+      callbackActive = false; expect((await call('/records', signed)).status).toBe(403);
+    });
+    it('rejects missing or unknown durable principals', async () => {
+      await install(); await grant('editor'); callbackPrincipal = null;
+      expect((await call('/records', signed)).status).toBe(401);
+      callbackPrincipal = { sub: alice.sub, issuer: 'https://unrelated.example.test' };
+      expect((await call('/records', signed)).status).toBe(403);
+    });
+    it('retires callbacks with their package', async () => {
+      await install(); await grant('editor'); mounter.unmount('runtime-app');
+      expect((await call('/records', signed)).status).toBe(404);
+    });
+    it('refuses verifier declarations without the explicit compatibility capability', async () => {
+      await expect(apps.loadApp(writePackage(manifest({
+        routes: [{ module: 'routes.js', factory: 'createRoutes', mountPath: '/api/runtime-app', auth: 'public', callbackVerifier: 'createVerifier' }] }))))
+        .rejects.toThrow(/callbackVerifier/);
+    });
+  });
   it('publishes a unique execution generation only after activation and retracts it across reload or disable', async () => {
     expect(runtime.snapshot('runtime-app')).toBeNull();
     await apps.loadApp(writePackage());

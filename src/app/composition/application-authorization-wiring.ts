@@ -153,7 +153,7 @@ export function createApplicationAuthorizationWiring(ctx: AppContext, appAccess:
   const memberships = new ExternalTenantMembershipService(membershipStore, { refreshActor: actors.refreshActor, resolveTarget: directory.targetActor });
   const { resolveActor } = actors;
   const service = new ApplicationAuthorizationService(store, createPolicyOptions(appAccess, getApps, actors));
-  const runtime = new ApplicationAuthorizationRuntime(service, resolveActor, process.env, name => getApps().getApp(name));
+  const runtime = new ApplicationAuthorizationRuntime(service, resolveActor, process.env, name => getApps().getApp(name), actors.targetActor);
   const remoteExecution = createApplicationRemoteExecutionWiring(ctx.pool, ready, runtime, actors.refreshActor);
   const isProtected = async (app: string) => {
     await ready();

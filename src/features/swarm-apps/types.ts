@@ -268,6 +268,8 @@ export interface SwarmAppRouteDeclaration {
   module: string;
   factory: string;
   mountPath: string;
+  /** Named factory returning a signature verifier for POST-only provider callbacks. */
+  callbackVerifier?: string;
   /** ADR-085 D2: how this route is authenticated —
    *  `oidc` (default, applied on OMISSION) | `service-or-oidc` | `service` | `operator` | `public`.
    *
