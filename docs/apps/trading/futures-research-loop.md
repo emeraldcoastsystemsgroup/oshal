@@ -462,8 +462,35 @@ added, the same chain produced two OOS windows. A single-contract slice produced
 without a roll. These are source and success-path tests, not a deployed study or
 market-performance evidence.
 
-Remaining: install the matching core and Trading source choice, then verify the signed-in
-console. Observe a new open-market bar and capture gap/freshness behavior over time. The
+The matching core commit `5be446d7` and Trading 1.29.6 store commit `32efaee`
+were pushed and installed on 2026-09-26. The committed core passed its pre-push
+TypeScript and publish gates; the clean store gate passed 58 checks with no
+failures and four named Career/Embodied live-environment skips. The 6 GB-box
+deployment rebuilt from the committed core with the 37 app-tier containers
+temporarily stopped, then restored the API and 36 bots with 37/37 healthy
+and image parity. Host `/health` returned 200, API restart count was zero,
+and the Trading manifest remained active at 1.29.6. Its loader logged
+`intelligent-trades` as loaded. Both Stack and Trading watchdog scheduled
+tasks were re-enabled after the package bounce. The deploy's bot-role grant
+passed; Jarvis and synthetic-ticket product checks were **unverified** because
+its automation token lacked a verified principal issuer.
+
+In the operator's signed-in cockpit, Trading → Strategies → Tuning showed the
+new **Schwab private captured bars** source choice, capture ON with next run
+at 06:07 UTC, 220 ESZ26 and 219 CLX26 closed bars, and one CL session-model
+gap (zero trailing gaps). Selecting that source disabled the container
+directory and displayed the 1Hour/1Day, missing-session and roll-overlap
+limits; no form was saved. The page still said no Futures research loop was
+configured. The source adapter and console choice are installed and
+owner-visible, but no real optimization, nightly receipt or forward call has
+been claimed. The package deployment helper initially looked for the folder
+name `trading` in the loader log rather than manifest name
+`intelligent-trades`, and its quiet grep could fail under `pipefail` by
+closing the log pipe early; that readiness wait was interrupted after separate
+manifest, loader and health checks succeeded, and the helper was corrected
+in source for future releases.
+
+Remaining: observe a new open-market bar and capture gap/freshness behavior over time. The
 one-time historical source/backfill and its provenance still require operator selection and
 proof; the existing archive importer writes shared `market_bars`, **not** this private capture
 table, so it is not yet an input to `schwab-capture`. A future source/import must provide

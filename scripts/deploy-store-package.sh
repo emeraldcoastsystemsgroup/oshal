@@ -9,6 +9,7 @@
 #   e.g.  bash scripts/deploy-store-package.sh portrait-studio print-ingest
 #
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | Bounce with stop+start (scripts/api-bounce.sh when present), never `docker restart`: a plain restart reliably leaves the published host port wedged on this box — proven here, the port never answered inside 180s and needed api-bounce.sh to recover — which is the same vpnkit/forward wedge that script already exists for. Also wait for the api to be REALLY up, not just docker-healthy. The container healthcheck is shallow HTTP and goes green while boot work (schema bootstraps, digests, LLM init) is still running; probing in that window is how a restart looks wedged. After the restart this now waits on the HOST port answering /health and then on each package logging "App loaded", so the script only reports success when the packages it copied are actually mounted.
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | Match the loader's manifest app name when checking readiness: package directories can differ from `name:` (for example `trading` loads as `intelligent-trades`). Consume the complete log stream: `grep -q` closed the pipe early and made `docker logs` fail under pipefail even when the app loaded.
 #
 # Env:    OSHAL_STORE_DIR   store checkout (default ../oshal-applications beside this repo)
 #         OSHAL_API         api container name (default oshal-local-api)
@@ -29,6 +30,7 @@ fail() { log "ERROR: $*"; exit 1; }
 
 RESTART=1
 PKGS=()
+APP_NAMES=()
 for arg in "$@"; do
   case "$arg" in
     --no-restart) RESTART=0 ;;
@@ -52,6 +54,9 @@ db_status() {
 for pkg in "${PKGS[@]}"; do
   SRC="$STORE_DIR/$pkg"
   [ -f "$SRC/oshal-app.yaml" ] || fail "not a package: $SRC/oshal-app.yaml missing"
+  APP_NAME="$(grep -m1 '^name:' "$SRC/oshal-app.yaml" | awk '{print $2}' | tr -d '\r')"
+  [ -n "$APP_NAME" ] || fail "$pkg: manifest name missing"
+  APP_NAMES+=("$APP_NAME")
 
   PRIOR_YAML="$(box_yaml_status "$pkg")"
   PRIOR_DB="$(db_status "$pkg")"
@@ -100,8 +105,10 @@ if [ "$RESTART" -eq 1 ]; then
   done
   if [ "$ready" -eq 1 ]; then
     log "api answering on 127.0.0.1:$PORT"
-    for pkg in "${PKGS[@]}"; do
-      until docker logs "$API" --since 15m 2>&1 | grep -q "\"name\":\"$pkg\".*App loaded"; do
+    for i in "${!PKGS[@]}"; do
+      pkg="${PKGS[$i]}"
+      app_name="${APP_NAMES[$i]}"
+      until docker logs "$API" --since 15m 2>&1 | grep "\"name\":\"$app_name\".*App loaded" >/dev/null; do
         if [ "$(date +%s)" -ge "$deadline" ]; then ready=0; break; fi
         sleep 5
       done
