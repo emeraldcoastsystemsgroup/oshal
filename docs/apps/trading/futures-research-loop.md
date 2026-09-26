@@ -377,8 +377,8 @@ missing and trailing buckets, gap runs and out-of-session rows; an unobserved co
 denominator rather than a fabricated zero-percent score. The UI labels this a session-**model**
 estimate, not CME-notice-complete market coverage or proof of a historical backfill. It exposes
 counts and timestamps, never OHLCV or a bearer. Disposable PostgreSQL and browser-script guards
-cover owner isolation and presentation. This slice is source code/local proof until the matching
-core image and package are deployed and the signed-in operator checks it.
+cover owner isolation and presentation. The matching core image and Trading package were installed
+on 2026-09-26; the signed-in operator still needs to check the rendered coverage and gap states.
 
 A second read-only live probe on 2026-09-25 sampled five-day Schwab `/pricehistory` windows
 through the existing owner connection. Current `/ESZ26` and `/CLX26` each returned closed
@@ -399,11 +399,23 @@ expired-contract substitutes or writes shared `market_bars`. The resulting count
 is not an optimizer input. Local owner-RLS, idempotence, malformed-range, confirmation and
 partial-provider-failure guards pass; installed signed-in acceptance is still owed.
 
-Remaining: promote the matching core scheduler through a normal committed image deployment; the
-live scheduler is a targeted in-container compiled-file activation and would not survive container
-recreation. A full-swarm image build is deferred because the box's 6 GB Docker cap is below the
-runbook's 8 GB safe build floor. Complete signed-in console acceptance and observe per-contract
-gap/freshness behavior over time, including a new open-market bar. The
+The committed core `97c48623` and Trading 1.29.5 package (`e8967e5`) were installed on
+2026-09-26. On the 6 GB engine, the 37 app containers were stopped for the image build while infra
+stayed up; the deployment then recreated the API first and 36 bots in paced batches. Migration 167
+applied, the active Trading app loaded, host `/health` answered 200, and all 37 app containers were
+healthy with image parity and no API restart/OOM or transaction termination during the bot ramp.
+The unauthenticated capture and catch-up-preview routes both returned 401. The owner-private table
+still held 220 ESZ26 and 219 CLX26 closed bars; the hourly schedule remained active with four
+executions, last at 04:07:15 UTC and next at 05:07 UTC. The deployed package/version and scheduler
+are durable across API recreation; a signed-in console check, an actual confirmed catch-up receipt,
+and a new open-market candle are still unproven. The deployment's bot-role grant check passed, but
+Jarvis and synthetic-ticket checks were **unverified**, not passed: the automation-minted token has
+no verified principal issuer under delegation signing. A signed-in operator token is needed for
+those product checks. The original committed-image attempt failed at a server TypeScript error in
+the Slack upload adapter; `97c48623` fixed that compile gate before this successful rollout.
+
+Remaining: complete signed-in console acceptance and observe per-contract gap/freshness behavior
+over time, including a new open-market bar. The
 one-time historical source/backfill and its provenance still require operator selection and proof.
 Only then may the Schwab owner-private reader be admitted to the research worker; the current study
 config still expects its existing archive source. The bounded diagnostic does not certify
