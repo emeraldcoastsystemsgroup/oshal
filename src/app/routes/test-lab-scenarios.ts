@@ -88,6 +88,7 @@
  * 36 | maintainer@emeraldcoastsystemsgroup.com | Register bounded Futures research and review guards with explicit local-runner and live-proof limits.
  * 37 | maintainer@emeraldcoastsystemsgroup.com   | Registered the experience-shells card (EXPERIENCE_SCENARIOS): a read-only step over the ADR-164 entry pages and the caller-scoped feeds they join, with its adapter unit, classification unit and Chromium regression suites.
  * 38 | maintainer@emeraldcoastsystemsgroup.com   | Registered the social-signals card (SOCIAL_SIGNAL_SCENARIOS, test-lab-social-signal-scenarios.ts): four deterministic steps over the caller's own /api/content/subscriptions routes (unregistered bot refused, own list, foreign delivery audit 404, own delivery audit) with the unit, real-boundary Postgres/Redis and schema guards attached. Guard: tests/unit/test-lab-social-signal-registration.spec.ts.
+ * 39 | maintainer@emeraldcoastsystemsgroup.com   | Attached the Jarvis own-task recall guards to 'jarvis-routing' regressionTests: jarvis-persona-recall pins that the persona reaches for conversation_query/conversation_fetch before it defers to an app, and bot-statement-privilege-contract runs the shipped recall statements (now including the Jarvis work-item list/fetch) as the real oshal_bot role. The owner-scope Postgres sibling already attached here now also proves the work-item reads and the protected-result boundary. A spec on disk is not Test Lab registration.
  * @module test-lab-scenarios
  */
 
@@ -463,6 +464,8 @@ export const SCENARIOS: Scenario[] = [
       { level: 'integration', path: 'tests/unit/byo-connection-declared-tools.spec.ts' },
       { level: 'unit', path: 'tests/unit/bot-node-read-only-tools.spec.ts' },
       { level: 'integration', path: 'tests/unit/bot-node-read-only-tools-owner-scope-postgres.spec.ts' },
+      { level: 'integration', path: 'tests/unit/bot-statement-privilege-contract.spec.ts' },
+      { level: 'unit', path: 'tests/unit/jarvis-persona-recall.spec.ts' },
     ],
     steps: [
       { id: 'j-jobs', app: 'jarvis', label: '"What are my top job opportunities right now?"', run: (c) => jarvisStep(c, 'top jobs', 'What are my top job opportunities right now?') },

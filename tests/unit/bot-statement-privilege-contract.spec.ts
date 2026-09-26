@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The bot grant contract, proved by RUNNING the statements. Three gaps were open on the box at once and every one of them was caught and swallowed: the ticket_task_links upsert answered permission denied inside a warn-level catch, the ticket_agent_assignments upsert would have done the same the moment a bot reached it, and durable swarm-memory recall failed closed to "no memory" behind one warning. No existing guard could see any of them, because every guard over this contract reads the allowlist and compares it to itself - and a column allowlist that is missing a column is perfectly self-consistent. This one provisions a real oshal_bot on a private server from the SHIPPED grant text, then issues each statement the bot runtime actually issues and requires it to succeed; a statement needing a privilege the allowlist does not carry raises 42501 and the case is red. The allowlist's two halves (the SQL that grants and the map that verifies) are compared to each other here as well, so updating one and not the other is also red.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The reader helper had to be able to say WITHHELD. Returning only the permitted rows made a row the database refused this reader look exactly like a work item with no ledger row - and the recall path lets a missing row through, so the memory came back judged only by the metadata copied into the vector index at index time. Two cases cover it: the helper answers for every id that exists and marks each answer readable or withheld while disclosing nothing but the identifier of a withheld one, and the real recall path over the real oshal_bot pool DENIES a withheld row, still returns an absent-row memory untrusted, and reaches the same verdict as the controller's untouched table reach on the same three work items.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | The contract gained its first OPTIONAL table: rag_chunks exists only where the vector extension does, and this fixture is postgres:16-alpine, which has none. A grant on an absent table would fail the whole suite at setup, so grants are now applied only where their table exists on the fixture, and the set skipped must be EXACTLY the exported OPTIONAL_BOT_CONTRACT_TABLES - a typo'd table name cannot be skipped silently. Also drives the bot-node conversation read (chat-search-source.ts) as oshal_bot, so the contract change that admits it is measured here the way every other bot statement is.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | The bot-node recall statements are no longer copied here: the conversation list, task lookup and message read are IMPORTED from chat-search-source.ts, and the new work-item list/fetch (jarvis-task-source.ts) and the protected-lineage read (recall-protected-results.ts) join them, so a column added to any recall statement is measured against the shipped grants on the next run instead of drifting past a stale copy. jarvis_tasks comes from the shipped base-schema migration (100-jarvis-tasks-base-schema.sql), which is also what makes it a REQUIRED contract table rather than an optional one.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -14,6 +15,15 @@ import path from 'node:path';
 import type { Pool, PoolClient } from 'pg';
 import { DisposablePostgres } from '../helpers/disposable-postgres';
 import { SwarmMemoryService } from '../../src/features/agent-management';
+import {
+  CONVERSATION_LIST_SQL,
+  CONVERSATION_MESSAGES_SQL,
+  CONVERSATION_TASK_SQL,
+  JARVIS_TASK_FETCH_SQL,
+  JARVIS_TASK_LIST_SQL,
+  RECALL_LINEAGE_SQL,
+} from '../../src/features/global-search';
+import { PROTECTED_RESULT_EXECUTIONS } from '../../src/shared/protected-results';
 import type { RagSearchResult, RagService } from '../../src/features/rag';
 import {
   BOT_COLUMN_PRIVILEGES,
@@ -81,6 +91,7 @@ const fixture = new DisposablePostgres({
     '055-chat-tasks-owner-sub.sql',
     '078-cost-governance.sql',
     '090-cost-event-tokens-duration.sql',
+    '100-jarvis-tasks-base-schema.sql',
     '100-ticket-family-base-schema.sql',
     '113-derived-owner-rls-ticket-family.sql',
     '117-swarm-memory-provenance.sql',
@@ -96,6 +107,7 @@ const OWNER = 'auth0|bot-contract-owner';
 const OTHER_OWNER = 'auth0|bot-contract-stranger';
 const SHA = 'b'.repeat(64);
 const TASK = 'bot-contract-task';
+const JOB = 'bot-contract-job';
 const WORKLOAD_SHARED = 'wi-shared';
 const WORKLOAD_MINE = 'wi-mine';
 const WORKLOAD_THEIRS = 'wi-theirs';
@@ -186,6 +198,10 @@ beforeAll(async () => {
   await owner.query(
     `INSERT INTO chat_tasks (task_id, status, owner_sub) VALUES ($1, 'processing', $2)`,
     [TASK, OWNER],
+  );
+  await owner.query(
+    `INSERT INTO jarvis_tasks (id, user_sub, session_id, title, status, result) VALUES ($1, $2, $3, 'contract work', 'done', 'contract result')`,
+    [JOB, OWNER, TASK],
   );
   await owner.query(
     `INSERT INTO ticket_task_links (task_id, ticket_id, role) VALUES ($1, $2, 'primary')`,
@@ -390,38 +406,38 @@ const BOT_STATEMENTS: Array<{ name: string; site: string; sql: string; params: (
   {
     name: 'chat_tasks + chat_messages — metadata-only conversation list',
     site: 'src/features/global-search/services/chat-search-source.ts',
-    sql: `SELECT t.task_id, t.title, t.status, t.processing_mode,
-                 t.metadata->>'kind' AS metadata_kind, t.created_at, t.updated_at
-            FROM chat_tasks t
-           WHERE t.owner_sub = $1
-             AND (t.title ILIKE $2 ESCAPE '\\'
-                  OR EXISTS (
-                    SELECT 1 FROM chat_messages m
-                     WHERE m.task_id = t.task_id AND m.text ILIKE $2 ESCAPE '\\'
-                  ))
-           ORDER BY t.updated_at DESC
-           LIMIT $3`,
-    params: () => [OWNER, '%contract%', 10],
+    sql: CONVERSATION_LIST_SQL,
+    params: () => [OWNER, '%contract%', 10, PROTECTED_RESULT_EXECUTIONS],
   },
   {
     name: 'chat_tasks — exact conversation fetch',
     site: 'src/features/global-search/services/chat-search-source.ts',
-    sql: `SELECT task_id, title, status, processing_mode, metadata->>'kind' AS metadata_kind,
-                 created_at, updated_at
-            FROM chat_tasks
-           WHERE task_id = $1 AND owner_sub = $2
-           LIMIT 1`,
+    sql: CONVERSATION_TASK_SQL,
     params: () => [TASK, OWNER],
   },
   {
     name: 'chat_messages — exact conversation message fetch',
     site: 'src/features/global-search/services/chat-search-source.ts',
-    sql: `SELECT role, text, created_at
-            FROM chat_messages
-           WHERE task_id = $1
-           ORDER BY created_at ASC
-           LIMIT $2`,
+    sql: CONVERSATION_MESSAGES_SQL,
     params: () => [TASK, 100],
+  },
+  {
+    name: 'chat_tasks — protected lineage of recalled records',
+    site: 'src/features/global-search/services/recall-protected-results.ts',
+    sql: RECALL_LINEAGE_SQL,
+    params: () => [[TASK, JOB], PROTECTED_RESULT_EXECUTIONS],
+  },
+  {
+    name: 'jarvis_tasks + chat_tasks — metadata-only work-item list',
+    site: 'src/features/global-search/services/jarvis-task-source.ts',
+    sql: JARVIS_TASK_LIST_SQL,
+    params: () => [OWNER, '%contract%', 10, PROTECTED_RESULT_EXECUTIONS],
+  },
+  {
+    name: 'jarvis_tasks — exact work-item fetch',
+    site: 'src/features/global-search/services/jarvis-task-source.ts',
+    sql: JARVIS_TASK_FETCH_SQL,
+    params: () => [JOB, OWNER],
   },
   {
     name: 'chat_tasks — read the cost rollup',

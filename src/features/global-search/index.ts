@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Global search barrel — the slice's ONLY public surface (FSD: no deep imports). Exposes the adapter contract, the pure ranking helpers (unit-tested), the four caller-scoped adapters, and the fan-out orchestrator.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export the deep-link contract (deepLinkFor + the per-kind builders + NO_SURFACE_REASON + SearchHitKind) and the three new typed adapters (apps/bots/connectors) with their injected-lister record types. The deep-link builders are exported because the resolvability guard and the surface both need the SAME source of truth for what a hit's URL is.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Export the owner-scoped recall surface the bot-node conversation tools use: the Jarvis work-item adapter, the exact recall statements (so the real-database guards run the shipped text) and the protected-result recall boundary.
  */
 
 /**
@@ -36,7 +37,28 @@ export {
 } from './services/search-ranking';
 export { GlobalSearchService, type GlobalSearchResponse } from './services/global-search-service';
 export { TicketsSearchSource } from './services/tickets-search-source';
-export { ChatSearchSource } from './services/chat-search-source';
+export {
+  ChatSearchSource,
+  CONVERSATION_LIST_SQL,
+  CONVERSATION_TASK_SQL,
+  CONVERSATION_MESSAGES_SQL,
+  MAX_CONVERSATION_MESSAGES,
+  type ConversationSummary,
+  type ConversationDetail,
+} from './services/chat-search-source';
+export {
+  JarvisTaskRecallSource,
+  JARVIS_TASK_LIST_SQL,
+  JARVIS_TASK_FETCH_SQL,
+  type JarvisTaskSummary,
+  type JarvisTaskDetail,
+} from './services/jarvis-task-source';
+export {
+  RECALL_WITHHELD_PROTECTED,
+  RECALL_LINEAGE_SQL,
+  recallReferencesReadable,
+  type RecallFetchResult,
+} from './services/recall-protected-results';
 export { PersonalDataSearchSource } from './services/personal-data-search-source';
 export { RagSearchSource } from './services/rag-search-source';
 export { AppsSearchSource, type SearchableApp, type SearchableAppLister } from './services/apps-search-source';
