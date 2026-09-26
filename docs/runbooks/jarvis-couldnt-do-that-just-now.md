@@ -3,8 +3,8 @@
 ## 2026-09-26 forward status
 
 - The real-Chromium/isolated-Postgres legacy-thread guard has now executed green (2/2), alongside the dashboard browser suite (19/19). The installed Test Lab **Briefing settings client** asset step also reads `pass`; these receipts are in `COLLABORATE.md`.
-- Source now registers a signed-in `cockpit-daily-dashboard` lifecycle step. It seeds a uniquely tagged issuer-less task through the task store, requires the real `/api/jarvis/ask` to return `404 session_not_found`, starts a fresh thread with the deterministic weather-location clarification, checks the persisted owner issuer, and removes its exact threads, messages and synthetic chat ticket. It refuses to write without a verified issuer and session cookie; incomplete cleanup is a failure. This is **source/test proof only until deployed and run by the signed-in operator**.
-- The two older live scripts and the historic exact-ID token/thread cleanup below remain unproven. Do not treat the source step or asset receipt as closure of the backlog item. In particular, the operator-ask script uses a bootstrap PAT without issuer provenance and the guest script's stock-market prompt now routes to Trading; review those scripts before running either on the live box.
+- Core `54320699` is installed on image `2cdf184bc2a8` (normal deploy exit 0, 37/37 app-tier healthy and image parity clean). In the signed-in operator Test Lab, `Jarvis and daily dashboard` now reads **PASS** for all four assets and the fifth lifecycle step. The live step seeded only its uniquely tagged issuer-less fixture, saw the real `/api/jarvis/ask` refuse it with `404 session_not_found`, opened a fresh owner/issuer-stamped thread with `202` and the deterministic weather-location clarification, and reported verified removal of both synthetic tasks, messages and the chat ticket. It makes no provider/model call. The source refuses to write without a verified issuer and session cookie and fails on incomplete cleanup.
+- The older operator-brain and guest-Chromium live scripts and the historic exact-ID token/thread cleanup below remain unproven. Do **not** close either Jarvis backlog row from the Lab receipt alone: the Lab proves the installed router/persistence boundary, while the older guest script is still owed for the live *page* rollover and the real-brain question has its own acceptance criterion. The operator-ask script uses a bootstrap PAT without issuer provenance and the guest script's stock-market prompt now routes to Trading; review and correct those scripts before running either on the live box.
 
 That sentence is the Jarvis page's catch-all for **any** non-OK answer from `POST /api/jarvis/ask`.
 It is not a model failure. Read the HTTP status in the browser devtools Network tab first; the two
@@ -15,8 +15,8 @@ causes met on 2026-09-13 are below, with what was fixed, what was proven, and wh
 | Devtools shows | Cause | State |
 |---|---|---|
 | `POST /api/jarvis/ask` → **404** `{"error":"session_not_found"}` | The page keeps a thread id in `localStorage.jarvisSessionId` until "New chat". Under `OSHAL_APPLICATION_AUTHORIZATION_MODE=enforce` the server refuses a thread it cannot attribute to the current sign-in: every thread created before issuer provenance landed (2026-09-11, `c18f057a`) carries no `oshalOwnerPrincipalIssuer`, and so does a thread opened under another sign-in. That refusal is deliberate and guarded in `tests/unit/protected-jarvis-results.spec.ts`. | **Fixed in `7aae3ce5`** (page side, live on reload — `src/api/jarvis.html` is bind-mounted). |
-| `GET /api/jarvis/briefings/client.js` → **404** with `application/json` and "Refused to execute script … MIME type" | `jarvis-briefing-routes.ts` resolved its page assets through `__dirname/../../pages`. `src/pages/**` is excluded from `tsconfig.server.json`, so in the baked image that is `dist/pages/…`, which does not exist; the missing file fell through to the app-level error handler as a JSON 404. | **Fixed in `7aae3ce5`** (router side, needs the next core deploy). |
-| `POST /api/jarvis/ask` → **404** `{"error":"session_not_found"}` **on a brand-new thread too** | The ownership read behind the gate was raising a SQL type error. See "The 2026-09-14 cause" below. | **Fixed in the tree; NEEDS A CORE DEPLOY.** |
+| `GET /api/jarvis/briefings/client.js` → **404** with `application/json` and "Refused to execute script … MIME type" | `jarvis-briefing-routes.ts` formerly resolved its page assets through `__dirname/../../pages`. `src/pages/**` is excluded from `tsconfig.server.json`, so the baked `dist/pages/…` did not exist. | **Fixed in `7aae3ce5`; installed asset step PASS on 2026-09-26.** A new 404 needs fresh triage. |
+| `POST /api/jarvis/ask` → **404** `{"error":"session_not_found"}` **on a brand-new thread too** | The ownership read behind the gate formerly raised a SQL type error. See "The 2026-09-14 cause" below. | **Fixed and deployed in 2026-09-14; the 2026-09-26 signed-in Lab fresh-thread check returned 202.** A new failure needs fresh triage. |
 | `POST /api/jarvis/ask` → 401 | No session / expired session. | Sign in again. |
 | `POST /api/jarvis/ask` → 503 `ai_disabled` | Deployment declared `OSHAL_NO_AI=true`. | Expected. |
 
@@ -40,7 +40,7 @@ causes met on 2026-09-13 are below, with what was fixed, what was proven, and wh
 | `tests/unit/jarvis-briefing-assets.spec.ts` — exact bytes/MIME/cache through the real briefing router, auth gate, and a layout rule: no route under `src/app/routes` may reach a page asset only via `__dirname` while the server build excludes `src/pages` | real router ↔ the build layout | **green 4/4; proven red on the pre-fix router** |
 | Test Lab `cockpit-daily-dashboard` step "Briefing settings client" (`src/app/routes/test-lab-dashboard-scenarios.ts`) | the **running image** on the box, as the signed-in user | **pass on 2026-09-26** |
 | `tests/unit/jarvis-legacy-thread-browser.spec.ts` — the real page in Chromium against the **real Jarvis router and an isolated Postgres** (`createProtectedJarvisFixture`): legacy row planted, first ask 404, page rolls, second ask 202, answer renders, new row carries the caller's issuer; plus the owned-thread control case | page ↔ real router ↔ real database (only the model turn is doubled) | **green 2/2 on 2026-09-26** |
-| Test Lab `cockpit-daily-dashboard` step "Refused thread rolls to an owned fresh thread and cleans up" | signed-in installed router ↔ persistent task store ↔ exact synthetic cleanup | **source registered, unit guard green; installed run pending** |
+| Test Lab `cockpit-daily-dashboard` step "Refused thread rolls to an owned fresh thread and cleans up" | signed-in installed router ↔ persistent task store ↔ exact synthetic cleanup; this does not itself operate the live page | **PASS on 2026-09-26**, including 404 old id, 202 fresh id, owner issuer and verified fixture cleanup |
 
 ## What was proven on the live box (2026-09-14, image `1694a3ca`, includes `c18f057a`)
 
@@ -53,23 +53,16 @@ causes met on 2026-09-13 are below, with what was fixed, what was proven, and wh
   thread owned by another sub → `404 {"error":"session_not_found"}` (ownership fails before any write);
   `GET /api/jarvis/briefings/client.js` → `404 application/json` naming `/app/dist/pages/jarvis-briefings/client.js`.
 
-## What is NOT proven yet (do these first when continuing)
+## Remaining acceptance work (as of 2026-09-26)
 
-1. **A signed-in ask on the live box.** Agents cannot obtain the operator's Google session. The two automated
-   substitutes both hit engine wedges on 2026-09-14 (Docker Desktop on this host wedges when free memory is
-   ~1 GB; two other sessions were building images at the time):
-   - `scripts/operations/jarvis-live-operator-ask.js` — the operator's real question through the live brain via a
-     PAT (bootstrap PATs carry **no issuer**, so this path does not reproduce the 404; it proves the brain answers).
-   - `scripts/operations/jarvis-live-guest-e2e.js` — real Chromium on the live page as a **guest** (a real issuer,
-     `urn:oshal:guest`), with a planted issuer-less thread, so it reproduces the refusal and the page's recovery.
-2. **`tests/unit/jarvis-legacy-thread-browser.spec.ts` has not run.** Same cause: `DisposableAlertPostgres`
-   could not start its `postgres:16-alpine` container. It is registered in the Test Lab dashboard scenario as a
-   browser-level regression reference.
-3. ~~**The core deploy** that makes the briefings asset fix live~~ — **done 2026-09-14.** PR 431 merged to `main` as
-   `b8de2099`, and `scripts/oshal-deploy.sh` deployed that commit (image `1fe73566ae87`); the briefing-asset fix
-   `7aae3ce5` is an ancestor of it. What is left: the Test Lab "Briefing settings client" step must read `pass`.
+1. **Live page rollover and real-brain answer.** The two older scripts have not produced their required recorded passes. `jarvis-live-guest-e2e.js` exercises the installed page in Chromium as a guest with a planted legacy thread; the new signed-in Lab step exercises the real router/store but not that page. `jarvis-live-operator-ask.js` exercises an actual brain answer with a bootstrap PAT; that PAT does not reproduce the issuer-bound refusal. Their old prompts and cleanup paths must be reviewed before execution.
+2. **Historic cleanup.** Verify the named 2026-09-14 PAT and any exact-ID test threads described below; do not assume the new Test Lab's cleanup touched them.
 
-## How to continue (exact steps)
+The real-boundary Chromium/Postgres spec is now green 2/2, the core fix is deployed, and the signed-in asset/lifecycle Lab steps are PASS. These are completed criteria, not remaining work.
+
+## Historical commands from 2026-09-14 — do not run unchanged
+
+The following command transcript records the originally planned live probes. It is **not** a current run recipe: its operator-thread lookup targets a real user thread and the guest prompt now routes to Trading. Before running either script, choose only generated test thread ids, correct the prompt, verify exact-ID cleanup and token revocation, and record redacted status/answer/issuer receipts. Never run the operator script against the operator's real legacy thread: its bootstrap PAT lacks issuer provenance and could append to that thread. Check the named historic PAT by label and revoke **by id** only if still active; resolve any test thread by exact id before deleting it. Do not use a broad `jarvis-%` delete.
 
 ```bash
 # 0. Box sanity: engine answering, api healthy, >2 GB free host memory, no image build running
