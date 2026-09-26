@@ -8,12 +8,19 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | applyTransient(theme) — apply a per-app skin (from the focused app's manifest) for this page-load WITHOUT persisting it, so each app opens in its own look while the operator's saved global theme is preserved for plain /cockpit visits.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Add selectable Workspace as the no-saved-choice default while preserving saved preferences, invalid-choice fallback and transient application themes.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Keep the portal choice authoritative across applications and tabs, with an explicit opt-in for application colors.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Accept the eight ADR-164 experience skins (EXPERIENCE_THEMES) as the saved cockpit appearance so a skin chosen in an experience shell is worn by the cockpit and by every surface that inherits it; the Settings picker and the header cycle keep the twelve canonical themes.
  */
 
 /**
  * @description Canonical, ordered list of every cockpit theme id the shell supports; drives validation and the theme cycle order so shell, settings, and embedded workspaces stay visually aligned.
  */
 export const COCKPIT_THEMES = ['midnight', 'daylight', 'ocean', 'sakura', 'forest', 'gray', 'black', 'light-blue', 'aurora', 'graphite', 'amber', 'workspace'];
+/**
+ * @description ADR-164 experience skins. Chosen in an experience shell, they are accepted as the saved cockpit
+ * appearance and worn by the cockpit and every surface that inherits it; they are not part of the Settings
+ * picker or the header cycle, which stay on the twelve canonical themes.
+ */
+export const EXPERIENCE_THEMES = ['studio', 'jarvis', 'orbit', 'commons', 'nexus', 'family', 'classroom', 'company'];
 const APP_COLORS_KEY = 'cockpit-application-colors';
 const APP_COLORS_EVENT = 'oshal-application-colors-changed';
 const memoryPreferences = new Map();
@@ -53,7 +60,7 @@ export function setApplicationColors(enabled) {
  * @returns {string} The theme id if supported, otherwise 'midnight'.
  */
 export function resolveCockpitTheme(theme) {
-  return COCKPIT_THEMES.includes(theme) ? theme : 'midnight';
+  return COCKPIT_THEMES.includes(theme) || EXPERIENCE_THEMES.includes(theme) ? theme : 'midnight';
 }
 
 /** @description Keep both the legacy picker and current Settings buttons aligned with the active shell theme. */

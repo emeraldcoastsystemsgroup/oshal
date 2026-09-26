@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Skin switcher shared by every experience page: eight experience skins plus the twelve canonical cockpit themes, remembered per layout on this device only (a skin chosen for Studio never repaints Jarvis), applied through the same data-skin/data-theme hooks the cockpit themes use. Appearance never carries identity, access or installation authority.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | An explicit skin choice also writes the saved cockpit appearance (`cockpit-theme`), so opening an application in the cockpit or standalone continues in the chosen skin; layout defaults still never write it.
  */
 (() => {
   'use strict';
@@ -65,7 +66,11 @@
     document.documentElement.style.colorScheme = def.mode;
     const experience = document.querySelector('.experience');
     if (experience) experience.dataset.skin = def.alias || def.id;
-    if (save) { try { localStorage.setItem(storageKey(), def.id); } catch (_) { /* device storage unavailable */ } }
+    if (save) {
+      // The explicit choice is remembered for this layout AND becomes the saved cockpit appearance, so the
+      // cockpit and every standalone surface reading `cockpit-theme` wear the same skin (ADR-164 D7/D9).
+      try { localStorage.setItem(storageKey(), def.id); localStorage.setItem('cockpit-theme', def.id); } catch (_) { /* device storage unavailable */ }
+    }
     document.querySelectorAll('#universal-skin-picker').forEach(p => { if (p.value !== def.id) p.value = def.id; });
     document.querySelectorAll('[data-swatch-skin]').forEach(btn => {
       const match = btn.dataset.swatchSkin === def.id;

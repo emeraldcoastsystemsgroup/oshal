@@ -102,6 +102,7 @@ describe('experience shells over the real routes', () => {
     const thread = await page.locator('.conversation-list').innerText();
     expect(thread).toContain('What is ready?'); expect(thread).toContain('ledger'); expect(thread).toContain('one');
     expect(await page.locator('.conversation-list a.mini-app').getAttribute('href')).toBe('/cockpit/?app=ledger');
+    expect(await page.locator('.conversation-list .message-content p a[href="/cockpit/?app=ledger"]').innerText()).toBe('Synthetic ledger');
     expect(fixture.state.asks).toHaveLength(1);
     expect(fixture.state.asks[0]).toEqual({ message: 'What is ready?', sessionId: await stored('jarvisSessionId') });
     expect(errors).toEqual([]);
@@ -248,5 +249,29 @@ describe('experience shells over the real routes', () => {
     expect(text).toContain('Sign in to see your swarm.');
     expect(await page.locator('a[href="/login"]').count()).toBe(1);
     expect(text).not.toContain('Synthetic');
+  });
+
+  it('a chosen skin becomes the saved cockpit appearance and reaches an embedded application surface', async () => {
+    await open('/studio', '#universal-skin-picker');
+    expect(await page.evaluate(() => localStorage.getItem('cockpit-theme'))).toBeNull();
+    await page.selectOption('#universal-skin-picker', 'orbit');
+    expect(await page.evaluate(() => localStorage.getItem('cockpit-theme'))).toBe('orbit');
+    expect(await page.evaluate(() => document.documentElement.dataset.theme)).toBe('orbit');
+    await page.keyboard.press('Control+k');
+    await page.fill('#app-search', 'ledger');
+    await page.locator('.catalog-card .catalog-main').click();
+    await page.locator('#full-dialog').getByRole('button', { name: 'Open here' }).click();
+    const frame = page.frameLocator('#full-dialog iframe.embed-frame');
+    await expect.poll(() => frame.locator('html').getAttribute('data-theme')).toBe('orbit');
+    await page.selectOption('#universal-skin-picker', 'family');
+    await expect.poll(() => frame.locator('html').getAttribute('data-theme')).toBe('family');
+    expect(await page.evaluate(() => localStorage.getItem('cockpit-theme'))).toBe('family');
+  });
+
+  it('a homebase preset paints its own skin on first load without writing the cockpit appearance', async () => {
+    await open('/homebase?preset=company', '.home-shell');
+    expect(await page.evaluate(() => document.body.dataset.skin)).toBe('company');
+    expect(await page.evaluate(() => document.querySelector('.experience')?.getAttribute('data-skin'))).toBe('professional');
+    expect(await page.evaluate(() => localStorage.getItem('cockpit-theme'))).toBeNull();
   });
 });
