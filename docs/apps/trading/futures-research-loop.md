@@ -407,12 +407,25 @@ healthy with image parity and no API restart/OOM or transaction termination duri
 The unauthenticated capture and catch-up-preview routes both returned 401. The owner-private table
 still held 220 ESZ26 and 219 CLX26 closed bars; the hourly schedule remained active with four
 executions, last at 04:07:15 UTC and next at 05:07 UTC. The deployed package/version and scheduler
-are durable across API recreation; a signed-in console check, an actual confirmed catch-up receipt,
-and a new open-market candle are still unproven. The deployment's bot-role grant check passed, but
+are durable across API recreation; a signed-in console check, a confirmed catch-up receipt,
+and a new open-market candle were still unproven at deployment. The deployment's bot-role grant check passed, but
 Jarvis and synthetic-ticket checks were **unverified**, not passed: the automation-minted token has
 no verified principal issuer under delegation signing. A signed-in operator token is needed for
 those product checks. The original committed-image attempt failed at a server TypeScript error in
 the Slack upload adapter; `97c48623` fixed that compile gate before this successful rollout.
+
+On 2026-09-26, an owner-context read of the installed capture service reported ESZ26
+`covered` at 216/216 modeled session buckets and CLX26 `missing` at 215/216. The CL
+gap is 2026-09-25 01:30 UTC. A first ad-hoc probe had incorrectly reported both
+unobserved because its separate database pool omitted the operator identity under forced
+RLS; the installed request-scoped route was not the cause. A bounded read of Schwab's
+CLX26 30-minute history for September 24–25 returned HTTP 200 and 87 candles but omitted
+the gap timestamp. With operator approval, the API container then ran the two-day,
+two-request current-contract catch-up through the existing brokered Schwab connection.
+Its private immutable-store receipt at 04:57:11 UTC recorded ES 88 received/0 inserted,
+CL 87 received/0 inserted. Total stored counts remained 220/219; the one CL gap remained
+visible. This verifies the backend preview/confirmation and idempotent store path without
+a remote node, not the signed-in browser flow or a multi-year historical backfill.
 
 Remaining: complete signed-in console acceptance and observe per-contract gap/freshness behavior
 over time, including a new open-market bar. The
