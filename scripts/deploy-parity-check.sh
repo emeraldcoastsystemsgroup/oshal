@@ -5,6 +5,7 @@
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — deploy parity check: warn loudly when the api and bot-node containers run different image builds (the split-image drift that ships two-half features broken). BACKLOG "Deploy parity check".
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Retry a transient missing Docker image-ID read before declaring drift; an unreadable image is an unverified check, never a proven different build.
 #
 # WHY: api and every bot-node run the SAME image (any-bot:latest); which process starts is decided at
 # container boot by BOT_RUNTIME. When concurrent sessions retag :latest at different times and recreate
@@ -26,6 +27,20 @@ say() { [ "$QUIET" -eq 1 ] || printf '%s\n' "$*"; }
 command -v docker >/dev/null 2>&1 || { echo "deploy-parity-check: docker CLI not found" >&2; exit 2; }
 docker info >/dev/null 2>&1 || { echo "deploy-parity-check: docker daemon not reachable" >&2; exit 2; }
 
+verified_image_id() {
+  local container="$1" id="" attempt
+  for attempt in 1 2 3; do
+    id=$(docker inspect "$container" --format '{{.Image}}' 2>/dev/null | tr -d '\r')
+    if [[ "$id" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+      printf '%s' "$id"
+      return 0
+    fi
+    [ "$attempt" -eq 3 ] || sleep 1
+  done
+  echo "deploy-parity-check: image ID for $container unreadable after 3 attempts; parity UNVERIFIED" >&2
+  return 2
+}
+
 # Collect OSHAL app containers (those with BOT_RUNTIME set — this excludes infra: postgres/redis/chroma/arango).
 # Row shape: name<TAB>runtime<TAB>image-id(12)<TAB>image-created
 rows=""
@@ -33,8 +48,9 @@ for c in $(docker ps --format '{{.Names}}'); do
   rt=$(docker inspect "$c" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
         | grep -E '^BOT_RUNTIME=' | head -1 | cut -d= -f2 | tr -d '\r')
   [ -z "$rt" ] && continue
-  img=$(docker inspect "$c" --format '{{.Image}}' 2>/dev/null | sed 's/^sha256://' | cut -c1-12)
-  created=$(docker inspect "$(docker inspect "$c" --format '{{.Image}}' 2>/dev/null)" --format '{{.Created}}' 2>/dev/null)
+  image_id=$(verified_image_id "$c") || exit 2
+  img=$(printf '%s' "$image_id" | sed 's/^sha256://' | cut -c1-12)
+  created=$(docker inspect "$image_id" --format '{{.Created}}' 2>/dev/null)
   rows="${rows}${c}	${rt}	${img}	${created}
 "
 done
