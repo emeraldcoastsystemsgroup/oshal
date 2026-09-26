@@ -37,6 +37,7 @@ import {
   DISCORD_CHANNEL_PROVIDER,
   SMS_CHANNEL_PROVIDER,
   WHATSAPP_CHANNEL_PROVIDER,
+  parseSmsLinkCommand,
   normalizeE164,
   type InboundChannelMessage,
   getTelegramBotToken,
@@ -118,6 +119,7 @@ async function handleInbound(ctx: AppContext, links: ChannelLinkService, msg: In
       'This chat isn\'t linked to an oshal account yet. Open your cockpit → Channels → Connect Telegram to get a one-time link.');
     return;
   }
+  if (!await links.claimInboundMessage(link.userSub, msg.provider, msg.eventId)) return;
   await sendTelegramTyping(msg.chatId);
   try {
     const reply = await dispatchToSwarm(ctx, msg.provider, link.userSub, msg.chatId, msg.text);
@@ -128,20 +130,50 @@ async function handleInbound(ctx: AppContext, links: ChannelLinkService, msg: In
   }
 }
 
-/** Discord Gateway handler: DM-only, link-resolved, owner-bound dispatch and reply. */
-async function handleDiscordInbound(ctx: AppContext, links: ChannelLinkService, msg: InboundDiscordMessage): Promise<void> {
-  const link = await links.resolveLink(DISCORD_CHANNEL_PROVIDER, msg.channelUserId);
-  if (!link) {
-    await sendDiscordMessage(msg.channelId, 'This DM is not linked to an oshal account yet. Open your cockpit → Channels → Connect Discord to get a one-time link.');
+/** Discord DM processing with injected bot/send boundaries for owner and replay acceptance. */
+interface DiscordLinkPort {
+  resolveLink(provider: string, channelUserId: string): Promise<{ userSub: string } | null>;
+  redeemLinkCode(provider: string, code: string, channelUserId: string, chatId: string, displayName: string | null): Promise<string | null>;
+  claimInboundMessage(userSub: string, provider: string, eventId: string): Promise<boolean>;
+}
+
+export async function processDiscordInbound(
+  links: DiscordLinkPort,
+  msg: InboundDiscordMessage,
+  dispatch: (ownerSub: string, message: InboundDiscordMessage) => Promise<string>,
+  send: (channelId: string, text: string) => Promise<void>,
+): Promise<void> {
+  const code = parseSmsLinkCommand(msg.text);
+  if (code) {
+    const sub = await links.redeemLinkCode(DISCORD_CHANNEL_PROVIDER, code, msg.channelUserId, msg.channelId, msg.displayName);
+    await send(msg.channelId, sub
+      ? 'Connected. You can now message your swarm from this DM.'
+      : 'That link code is invalid or expired. Generate a fresh one in your cockpit under Channels.');
     return;
   }
+  const link = await links.resolveLink(DISCORD_CHANNEL_PROVIDER, msg.channelUserId);
+  if (!link) {
+    logger.warn({ provider: msg.provider, eventId: msg.eventId }, 'unlinked Discord DM refused');
+    await send(msg.channelId, 'This DM is not linked to an oshal account yet. Open your cockpit → Channels → Connect Discord to get a one-time link.');
+    return;
+  }
+  if (!await links.claimInboundMessage(link.userSub, msg.provider, msg.eventId)) return;
   try {
-    const reply = await dispatchToSwarm(ctx, msg.provider, link.userSub, msg.channelId, msg.text);
-    await sendDiscordMessage(msg.channelId, reply);
+    const reply = await dispatch(link.userSub, msg);
+    await send(msg.channelId, reply);
   } catch (err) {
     logger.error({ err, provider: msg.provider }, 'Discord DM dispatch failed');
-    await sendDiscordMessage(msg.channelId, 'Something went wrong reaching your swarm. Please try again in a moment.');
+    await send(msg.channelId, 'Something went wrong reaching your swarm. Please try again in a moment.');
   }
+}
+
+/** Discord Gateway handler: DM-only, link-resolved, owner-bound dispatch and reply. */
+async function handleDiscordInbound(ctx: AppContext, links: ChannelLinkService, msg: InboundDiscordMessage): Promise<void> {
+  await processDiscordInbound(
+    links, msg,
+    (ownerSub, message) => dispatchToSwarm(ctx, message.provider, ownerSub, message.channelId, message.text),
+    sendDiscordMessage,
+  );
 }
 
 /** @description The linking handshake: redeem a `/start <code>` deep-link code, or greet+instruct. */
@@ -186,7 +218,7 @@ export function createChatChannelRoutes(ctx: AppContext, requiresAuth: RequestHa
       res.sendStatus(401);
       return;
     }
-    // Acknowledge immediately; process out of band so a slow swarm turn can't trigger a retry.
+    // Acknowledge immediately; the durable event claim suppresses provider retries and a slow turn.
     res.sendStatus(200);
     const msg = parseTelegramUpdate(req.body);
     if (!msg) return;

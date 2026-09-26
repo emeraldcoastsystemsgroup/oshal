@@ -55,6 +55,7 @@ export const SMS_LINK_FAILED_REPLY =
 /** The subset of ChannelLinkService this sink uses; injected so a spec can supply the real one. */
 export interface SmsChannelLinkPort {
   resolveLink(provider: string, channelUserId: string): Promise<{ userSub: string } | null>;
+  claimInboundMessage(userSub: string, provider: string, eventId: string): Promise<boolean>;
   redeemLinkCode(
     provider: string, code: string, channelUserId: string, chatId: string, displayName: string | null,
   ): Promise<string | null>;
@@ -113,6 +114,7 @@ export function createSmsInboundSink(deps: SmsInboundSinkDeps): SmsInboundSink {
     }
 
     const userSub = link.userSub;
+    if (!await deps.links.claimInboundMessage(userSub, address.provider, sms.messageSid)) return undefined;
     logger.info({ messageSid: sms.messageSid, userSub }, 'inbound SMS resolved to a linked owner — dispatching');
     defer(runOwnerTurn(deps, userSub, from, address.provider, sms));
     return undefined;

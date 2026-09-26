@@ -9,7 +9,7 @@
 
 import * as crypto from 'crypto';
 import { createChildLogger } from '@/shared/logger';
-import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
+import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap } from '@/shared/services/database';
 import { runWithRequestIdentity, runWithSystemIdentity } from '@/shared/services/database/request-identity';
 
 const logger = createChildLogger({ module: 'channel-link-service' });
@@ -72,10 +72,19 @@ export class ChannelLinkService {
           consumed_at TIMESTAMPTZ
         )`,
         'CREATE INDEX IF NOT EXISTS idx_channel_link_codes_user ON channel_link_codes (user_sub)',
+        `CREATE TABLE IF NOT EXISTS channel_inbound_events (
+          provider TEXT NOT NULL,
+          event_id TEXT NOT NULL,
+          owner_sub TEXT NOT NULL,
+          claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (provider, event_id)
+        )`,
+        ...buildOwnerRlsPolicyStatements('channel_inbound_events', 'owner_sub'),
       ],
       requirements: [
         { table: 'channel_links', columns: ['provider', 'channel_user_id', 'chat_id', 'user_sub', 'display_name', 'linked_at'] },
         { table: 'channel_link_codes', columns: ['code', 'user_sub', 'provider', 'expires_at', 'consumed_at'] },
+        { table: 'channel_inbound_events', columns: ['provider', 'event_id', 'owner_sub', 'claimed_at'] },
       ],
     });
     this.schemaReady = true;
@@ -155,6 +164,23 @@ export class ChannelLinkService {
       [provider, channelUserId],
     ));
     return res.rows[0] ? this.mapRow(res.rows[0]) : null;
+  }
+
+  /** Claim a signed provider occurrence once before running the owner's bot. */
+  async claimInboundMessage(userSub: string, provider: string, eventId: string): Promise<boolean> {
+    if (!userSub || !['telegram', 'discord', 'sms', 'whatsapp'].includes(provider)
+      || !/^[A-Za-z0-9:_-]{1,128}$/.test(eventId)) {
+      throw new Error('Invalid inbound channel occurrence');
+    }
+    await this.ensureSchema();
+    const result = await runWithRequestIdentity({ sub: userSub, isOperator: false }, () => this.pool.query(
+      `INSERT INTO channel_inbound_events (provider, event_id, owner_sub)
+       VALUES ($1, $2, $3) ON CONFLICT (provider, event_id) DO NOTHING RETURNING event_id`,
+      [provider, eventId, userSub],
+    ));
+    const claimed = result.rows.length > 0;
+    if (!claimed) logger.info({ provider, eventId }, 'duplicate channel occurrence refused');
+    return claimed;
   }
 
   /** @description Lists a signed-in user's linked channels (for the cockpit "Channels" card). */

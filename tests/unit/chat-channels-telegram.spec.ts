@@ -15,11 +15,12 @@ import {
 
 describe('parseTelegramUpdate', () => {
   it('normalizes a text message with sender + chat', () => {
-    const msg = parseTelegramUpdate({
+    const msg = parseTelegramUpdate({ update_id: 123,
       message: { text: '  hello swarm  ', chat: { id: 42, type: 'private' }, from: { id: 7, first_name: 'Ada', last_name: 'Lovelace' } },
     });
     expect(msg).toEqual({
       provider: 'telegram',
+      eventId: '123',
       channelUserId: '7',
       chatId: '42',
       text: 'hello swarm',
@@ -28,8 +29,15 @@ describe('parseTelegramUpdate', () => {
   });
 
   it('falls back to @username when no name is present', () => {
-    const msg = parseTelegramUpdate({ message: { text: 'hi', chat: { id: 5, type: 'private' }, from: { id: 5, username: 'octocat' } } });
+    const msg = parseTelegramUpdate({ update_id: 124, message: { text: 'hi', chat: { id: 5, type: 'private' }, from: { id: 5, username: 'octocat' } } });
     expect(msg?.displayName).toBe('@octocat');
+  });
+
+  it('refuses a text message without a valid provider occurrence id', () => {
+    const message = { text: 'hi', chat: { id: 5, type: 'private' }, from: { id: 5 } };
+    expect(parseTelegramUpdate({ message })).toBeNull();
+    expect(parseTelegramUpdate({ update_id: -1, message })).toBeNull();
+    expect(parseTelegramUpdate({ update_id: '5', message })).toBeNull();
   });
 
   it('ignores non-text updates and empty text', () => {

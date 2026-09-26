@@ -23,6 +23,7 @@ const logger = createChildLogger({ module: 'discord-channel-adapter' });
 
 export interface InboundDiscordMessage {
   provider: typeof DISCORD_CHANNEL_PROVIDER;
+  eventId: string;
   channelUserId: string;
   channelId: string;
   text: string;
@@ -30,19 +31,21 @@ export interface InboundDiscordMessage {
 }
 
 /** Parse only direct-message Gateway events; guild/group messages are refused. */
-export function parseDiscordGatewayMessage(body: unknown): InboundDiscordMessage | null {
+export function parseDiscordGatewayMessage(body: unknown, verifiedChannelType?: number): InboundDiscordMessage | null {
   const envelope = body as { op?: unknown; t?: unknown; d?: Record<string, unknown> } | null;
   if (envelope?.op !== 0 || envelope.t !== 'MESSAGE_CREATE') return null;
   const data = envelope.d;
   const author = data?.author as { id?: unknown; bot?: unknown; username?: unknown; global_name?: unknown } | undefined;
-  const channelType = Number(data?.channel_type);
+  const channelType = Number(data?.channel_type ?? verifiedChannelType);
   const channelId = typeof data?.channel_id === 'string' ? data.channel_id.trim() : '';
+  const eventId = typeof data?.id === 'string' ? data.id.trim() : '';
   const userId = typeof author?.id === 'string' ? author.id.trim() : '';
   const text = typeof data?.content === 'string' ? data.content.trim() : '';
-  if (!channelId || !userId || !text || channelType !== 1 || author?.bot === true) return null;
+  if (!/^\d{5,30}$/.test(eventId) || !channelId || !userId || !text || channelType !== 1 || author?.bot === true) return null;
   if (data?.guild_id != null) return null;
   return {
     provider: DISCORD_CHANNEL_PROVIDER,
+    eventId,
     channelUserId: userId,
     channelId,
     text,
@@ -81,9 +84,21 @@ export interface DiscordGatewayOptions {
   token?: string | null;
   socketFactory?: (url: string) => DiscordSocket;
   reconnectDelayMs?: number;
+  /** Called only when a Gateway message omits its optional channel_type field. */
+  channelTypeResolver?: (channelId: string, token: string) => Promise<number | null>;
 }
 
 export interface DiscordGatewayHandle { stop(): void }
+
+async function getDiscordChannelType(channelId: string, token: string): Promise<number | null> {
+  const response = await fetch(`${DISCORD_API_BASE}/channels/${encodeURIComponent(channelId)}`, {
+    headers: { Authorization: `Bot ${token}` },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) return null;
+  const body = await response.json() as { id?: unknown; type?: unknown };
+  return body.id === channelId && Number.isInteger(body.type) ? Number(body.type) : null;
+}
 
 /** Start the DM-only Gateway listener when a deployment token is configured. */
 export function startDiscordGateway(
@@ -94,11 +109,38 @@ export function startDiscordGateway(
   if (!token) return { stop() { /* unconfigured is an explicit no-op */ } };
   const socketFactory = options.socketFactory ?? ((url) => new WebSocket(url) as unknown as DiscordSocket);
   const reconnectDelayMs = Math.max(500, Math.min(options.reconnectDelayMs ?? 5_000, 60_000));
+  const resolveChannelType = options.channelTypeResolver ?? getDiscordChannelType;
+  const knownChannelTypes = new Map<string, number>();
+  const pendingChannelTypes = new Map<string, Promise<number | null>>();
   let socket: DiscordSocket | null = null;
   let heartbeat: ReturnType<typeof setInterval> | null = null;
   let reconnect: ReturnType<typeof setTimeout> | null = null;
   let stopped = false;
   let sequence: number | null = null;
+
+  const deliver = (packet: unknown, verifiedChannelType?: number) => {
+    if (stopped) return;
+    const message = parseDiscordGatewayMessage(packet, verifiedChannelType);
+    if (message) void Promise.resolve().then(() => onMessage(message)).catch((err) => logger.warn({ err }, 'Discord DM handler failed'));
+  };
+
+  const verifiedType = (channelId: string): Promise<number | null> => {
+    const known = knownChannelTypes.get(channelId);
+    if (known !== undefined) return Promise.resolve(known);
+    const pending = pendingChannelTypes.get(channelId);
+    if (pending) return pending;
+    const lookup = resolveChannelType(channelId, token)
+      .then((type) => {
+        if (type !== null && Number.isInteger(type)) {
+          if (knownChannelTypes.size >= 1024) knownChannelTypes.delete(knownChannelTypes.keys().next().value as string);
+          knownChannelTypes.set(channelId, type);
+        }
+        return type;
+      })
+      .finally(() => { pendingChannelTypes.delete(channelId); });
+    pendingChannelTypes.set(channelId, lookup);
+    return lookup;
+  };
 
   const clearTimers = () => {
     if (heartbeat) { clearInterval(heartbeat); heartbeat = null; }
@@ -120,8 +162,17 @@ export function startDiscordGateway(
           heartbeat.unref();
         }
       } else if (packet.op === 0 && packet.t === 'MESSAGE_CREATE') {
-        const message = parseDiscordGatewayMessage(packet);
-        if (message) void Promise.resolve(onMessage(message)).catch((err) => logger.warn({ err }, 'Discord DM handler failed'));
+        const data = packet.d as Record<string, unknown> | null;
+        if (data?.channel_type != null) {
+          deliver(packet);
+        } else {
+          const channelId = typeof data?.channel_id === 'string' ? data.channel_id : '';
+          if (data?.guild_id == null && /^\d{5,30}$/.test(channelId)) {
+            void verifiedType(channelId)
+              .then((type) => { if (type === 1) deliver(packet, type); })
+              .catch((err) => logger.warn({ err, channelId }, 'Discord channel verification failed'));
+          }
+        }
       } else if (packet.op === 7 || packet.op === 9) {
         socket?.close();
       }

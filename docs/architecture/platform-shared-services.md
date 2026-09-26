@@ -77,9 +77,15 @@ Routes: `/api/notify/*`. The career digest consults it while keeping its own onc
 opt-out.
 
 The chat-channel adapter separately exposes a DM-only Discord Gateway listener. Guild and group
-messages are refused before owner lookup; direct messages use the existing one-time
-`channel_links` binding and the same accountable bot dispatch as Telegram/SMS. Discord enablement,
-operator credentials, and real provider receipts remain deployment work.
+messages are refused before owner lookup. Discord's Gateway can omit `channel_type`; those events
+require a verified channel lookup and type 1 before dispatch. Direct messages use the existing one-time
+`channel_links` binding and the same accountable bot dispatch as Telegram/SMS. A `LINK <code>` DM
+redeems the signed-in caller's one-time code. Telegram update IDs, Discord message IDs and Twilio
+message SIDs are claimed in `channel_inbound_events` under the resolved owner before a linked
+message reaches the bot. The unique provider/event claim survives retries and reconnects; a failed
+turn does not replay automatically, so the caller must send a fresh message. Unlinked identities get
+setup guidance and never reach the bot. Discord enablement, operator credentials, and real provider
+receipts remain deployment work.
 
 The temporary tag `wip/notification-prefs-index-snapshot-20260801` was reviewed on 2026-08-05.
 Its sole commit (`15b9b813990e0e10e89d5a3713a8d16a1ce08acd`) removed the welcome notification step,

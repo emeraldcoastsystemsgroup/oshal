@@ -45,7 +45,11 @@ interface DispatchRecord {
 /** One recorded outbound answer. */
 interface ReplyRecord { userSub: string; to: string; body: string }
 
-const fixture = new DisposablePostgres({ purpose: 'sms-inbound-dispatch' });
+const fixture = new DisposablePostgres({
+  purpose: 'sms-inbound-dispatch',
+  roles: ['oshal_app'],
+  migrations: ['166-chat-channel-inbound-events.sql'],
+});
 
 let pool: Pool;
 let links: ChannelLinkService;
@@ -96,6 +100,7 @@ afterAll(async () => {
 
 afterEach(async () => {
   dispatches = []; replies = []; deferred = [];
+  await pool.query('DELETE FROM channel_inbound_events');
   await pool.query('DELETE FROM channel_links');
   await pool.query('DELETE FROM channel_link_codes');
 });
@@ -176,6 +181,38 @@ describe('an inbound message reaches the correct caller-scoped bot', () => {
     expect(dispatches[0]).toMatchObject({ userSub: ALICE, text: 'summarize my day', ambientSub: ALICE, ambientOperator: false });
     expect(dispatches[0].threadKey).toBe(`${SMS_CHANNEL_PROVIDER}-${ALICE}-${ALICE_PHONE}`);
     expect(replies).toEqual([{ userSub: ALICE, to: ALICE_PHONE, body: `answered ${ALICE}` }]);
+  });
+
+  it('claims a signed provider occurrence once across webhook retries', async () => {
+    await linkNumber(ALICE, ALICE_PHONE);
+    const repeated = payload(ALICE_PHONE, 'summarize my day', 'SMrepeatedfixture');
+    await postInbound(repeated);
+    await postInbound(repeated);
+    await settle();
+    expect(dispatches).toHaveLength(1);
+    expect(replies).toHaveLength(1);
+    const { rows } = await pool.query('SELECT owner_sub FROM channel_inbound_events WHERE provider=$1 AND event_id=$2', [SMS_CHANNEL_PROVIDER, repeated.MessageSid]);
+    expect(rows).toEqual([{ owner_sub: ALICE }]);
+  });
+
+  it('hides another owner\'s occurrence and rejects a forged owner under forced RLS', async () => {
+    await linkNumber(ALICE, ALICE_PHONE);
+    await postInbound(payload(ALICE_PHONE, 'hello', 'SMrlsfixture'));
+    await settle();
+    const client = await fixture.rolePool('oshal_app').connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT set_config($1, $2, true)', ['oshal.current_sub', BOB]);
+      const hidden = await client.query('SELECT event_id FROM channel_inbound_events WHERE event_id=$1', ['SMrlsfixture']);
+      expect(hidden.rows).toEqual([]);
+      await expect(client.query(
+        'INSERT INTO channel_inbound_events (provider,event_id,owner_sub) VALUES ($1,$2,$3)',
+        [SMS_CHANNEL_PROVIDER, 'SMforgedfixture', ALICE],
+      )).rejects.toThrow();
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
   });
 
   it('keeps two users isolated: each number reaches only its own owner', async () => {

@@ -16,6 +16,7 @@ const TELEGRAM_API = 'https://api.telegram.org';
 /** A normalized inbound message, provider-agnostic so the dispatcher is channel-neutral. */
 export interface InboundChannelMessage {
   provider: 'telegram';
+  eventId: string;
   channelUserId: string;
   chatId: string;
   text: string;
@@ -66,8 +67,9 @@ export function verifyWebhookSecret(provided: string | undefined, expected: stri
  * @returns The normalized message, or null when there's no actionable private-chat text.
  */
 export function parseTelegramUpdate(body: unknown): InboundChannelMessage | null {
-  const update = body as { message?: TelegramMessage } | null;
+  const update = body as { update_id?: unknown; message?: TelegramMessage } | null;
   const msg = update?.message;
+  if (typeof update?.update_id !== 'number' || !Number.isSafeInteger(update.update_id) || update.update_id < 0) return null;
   if (!msg || typeof msg.text !== 'string' || msg.text.trim().length === 0) return null;
   if (msg.chat?.type !== 'private') return null;
   const from = msg.from;
@@ -76,6 +78,7 @@ export function parseTelegramUpdate(body: unknown): InboundChannelMessage | null
   if (!channelUserId || !chatId) return null;
   return {
     provider: 'telegram',
+    eventId: String(update?.update_id),
     channelUserId,
     chatId,
     text: msg.text.trim(),
