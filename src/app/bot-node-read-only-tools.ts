@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the read-only question tools a bot node may answer with. Until now the bot-node built `new ToolRegistry()` and registered NOTHING into it (registerFileTools/registerCLITools run only from any-bot/server/app.js, which BOT_RUNTIME=bot-node never boots), so captureDispatchCapabilities advertised attempt_completion and nothing else no matter what a bot was granted. These three handlers are the first real capabilities on that registry, and they are deliberately the ones that let a bot ANSWER rather than act: retrieval, the caller's own graph, and the caller's own conversation history. No shell, no file write, no cloud CLI, no ingestion. Owner scoping is never a WHERE clause this module writes — RAG and conversation reads run inside runWithRequestIdentity so the GUC pool stamps the caller and PostgreSQL row-level security refuses another owner's rows, and the graph is resolved by personDbName(sub) into a physically separate ArangoDB database.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Adversarial verification of the first cut. (1) graph_query materialized the ENTIRE result before bounding it - readQuery drained cursor.all() and the slice ran afterwards, so a model-authored `FOR i IN 1..100000000 RETURN i` was an unbounded allocation in the bot-node process and the registry's Promise.race timeout rejected the caller without touching the running query; the read now passes maxRows and maxRuntimeSeconds, enforced at the cursor and by the engine respectively, before any row exists in memory. (2) The comments overstated the scoping as one layer: ChatSearchSource carries its own owner_sub predicate and RagService its own permission filter, so it is defense in depth - the database boundary AND the adapter predicate - and the comments now say so.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Split conversation recall into metadata-only list/search and exact-id fetch. The list cannot inject message bodies into a broad Jarvis turn; fetch returns only the caller-owned record after the task owner check and database message policy.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The same two tools now cover the caller's Jarvis work items (jarvis_tasks), which nothing but the eight-row OPEN WORK block could reach: conversation_query returns `tasks` (metadata only, `source: 'jarvis-task'`) beside `conversations`, and conversation_fetch resolves an id against conversations first and work items second (or exactly one family when `source` is given). Extending the two tools rather than adding a third keeps the pending per-bot grant at exactly these two names. Both fetches now apply the protected-result read boundary the HTTP read paths already apply, reporting a refused caller-owned record as `withheld: 'protected_result'`.
  */
 
 /**
@@ -36,7 +37,12 @@
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
-import { ChatSearchSource } from '@/features/global-search';
+import {
+  ChatSearchSource,
+  JarvisTaskRecallSource,
+  type ConversationDetail,
+  type JarvisTaskDetail,
+} from '@/features/global-search';
 import { pgvectorRagEngine, type RagService } from '@/features/rag';
 import type { GraphConnector } from '@/features/graph';
 
@@ -50,6 +56,8 @@ export const BOT_NODE_GRAPH_QUERY_TOOL = 'graph_query';
 export const BOT_NODE_CONVERSATION_QUERY_TOOL = 'conversation_query';
 /** Exact any-bot runtime name for fetching one caller-owned conversation. */
 export const BOT_NODE_CONVERSATION_FETCH_TOOL = 'conversation_fetch';
+/** The record families conversation_fetch may be narrowed to with its optional `source` input. */
+export const CONVERSATION_FETCH_SOURCES: readonly string[] = Object.freeze(['conversation', 'jarvis-task']);
 
 /** Every read-only question tool this module registers, in registration order. */
 export const BOT_NODE_READ_ONLY_TOOL_NAMES: readonly string[] = Object.freeze([
@@ -146,6 +154,52 @@ function boundedCount(value: unknown): number {
   const parsed = Number.parseInt(String(value ?? ''), 10);
   if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_RESULTS;
   return Math.min(parsed, MAX_RESULTS);
+}
+
+/**
+ * @description Optional record-family narrowing for conversation_fetch.
+ * @param value - Raw model-supplied value.
+ * @returns The family, or undefined to try conversations first and work items second.
+ * @throws Error when a value is supplied that names no family.
+ */
+function optionalFetchSource(value: unknown): 'conversation' | 'jarvis-task' | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value === 'string' && CONVERSATION_FETCH_SOURCES.includes(value)) {
+    return value as 'conversation' | 'jarvis-task';
+  }
+  throw new Error(`Field 'source' must be one of: ${CONVERSATION_FETCH_SOURCES.join(', ')}.`);
+}
+
+/** What conversation_fetch hands back: at most one of the two records, and why none when refused. */
+interface ConversationFetchOutput {
+  conversation: ConversationDetail | null;
+  task: JarvisTaskDetail | null;
+  withheld?: 'protected_result';
+}
+
+/**
+ * @description Resolve one caller-owned record by id: a conversation first, then a Jarvis work item,
+ * unless `source` names exactly one family. Must run inside the caller's request identity.
+ * @param pool - The bot-node's GUC-wrapped pool.
+ * @param sub - The caller's verified subject.
+ * @param taskId - The id conversation_query returned.
+ * @param source - Optional family narrowing.
+ * @returns The record found, or nulls (with `withheld` when the protected-result boundary refused it).
+ */
+async function fetchOwnRecord(
+  pool: Pool,
+  sub: string,
+  taskId: string,
+  source: 'conversation' | 'jarvis-task' | undefined,
+): Promise<ConversationFetchOutput> {
+  if (source !== 'jarvis-task') {
+    const chat = await new ChatSearchSource(pool).fetch(sub, taskId);
+    if (chat.record || chat.withheld || source === 'conversation') {
+      return { conversation: chat.record, task: null, ...(chat.withheld ? { withheld: chat.withheld } : {}) };
+    }
+  }
+  const work = await new JarvisTaskRecallSource(pool).fetch(sub, taskId);
+  return { conversation: null, task: work.record, ...(work.withheld ? { withheld: work.withheld } : {}) };
 }
 
 /** Optional plain-object bind variables; anything else is dropped rather than forwarded. */
@@ -294,16 +348,18 @@ export function registerBotNodeReadOnlyTools(
   registry.register({
     name: BOT_NODE_CONVERSATION_QUERY_TOOL,
     description:
-      "Search the caller's OWN past conversations with this swarm and return the matching "
-      + 'conversations with selection metadata and a link. It never returns message bodies; call '
-      + 'conversation_fetch after choosing a task id. Read-only.',
+      "Search the caller's OWN past conversations with this swarm AND the caller's own Jarvis work "
+      + 'items, and return matches with selection metadata only: `conversations` (title, status, '
+      + 'kind, timestamps, link) and `tasks` (title, status, kind, timestamps, the conversation it '
+      + 'was filed from). It never returns message bodies or task results; call conversation_fetch '
+      + 'with a chosen taskId. Read-only.',
     category: 'knowledge',
     inputSchema: {
       type: 'object',
       required: ['query'],
       properties: {
-        query: { type: 'string', description: 'Words to look for in past conversations.' },
-        limit: { type: 'integer', description: `Maximum conversations to return (1-${MAX_RESULTS}).` },
+        query: { type: 'string', description: 'Words to look for in past conversations and work items.' },
+        limit: { type: 'integer', description: `Maximum records of each family to return (1-${MAX_RESULTS}).` },
       },
     },
     requiresApproval: false,
@@ -312,7 +368,7 @@ export function registerBotNodeReadOnlyTools(
       const sub = requireCallerSub(context, BOT_NODE_CONVERSATION_QUERY_TOOL);
       const pool = deps.pool;
       if (!pool) {
-        return { conversations: [], unavailable: 'no_database' };
+        return { conversations: [], tasks: [], unavailable: 'no_database' };
       }
       const query = requireText(input.query, 'query');
       const limit = boundedCount(input.limit);
@@ -320,15 +376,17 @@ export function registerBotNodeReadOnlyTools(
       // independently the identity rides the connection: chat_tasks is FORCE ROW LEVEL SECURITY on
       // owner_sub and chat_messages is walled by oshal_owns_task(task_id), so a conversation this
       // caller does not own is refused by PostgreSQL even if the adapter predicate were dropped.
-      // The owner-scope guard proves the database layer on its own by handing the adapter one
-      // identity while the connection carries another.
+      // jarvis_tasks is walled the same way (FORCE ROW LEVEL SECURITY on user_sub). The owner-scope
+      // guard proves the database layer on its own by handing each adapter one identity while the
+      // connection carries another.
       return runWithRequestIdentity({ sub, isOperator: false }, async () => {
         const conversations = await new ChatSearchSource(pool).list(sub, query, limit);
+        const tasks = await new JarvisTaskRecallSource(pool).list(sub, query, limit);
         logger.info(
-          { tool: BOT_NODE_CONVERSATION_QUERY_TOOL, resultCount: conversations.length },
+          { tool: BOT_NODE_CONVERSATION_QUERY_TOOL, resultCount: conversations.length, taskCount: tasks.length },
           'read-only tool completed',
         );
-        return { conversations };
+        return { conversations, tasks };
       });
     },
   });
@@ -336,14 +394,21 @@ export function registerBotNodeReadOnlyTools(
   registry.register({
     name: BOT_NODE_CONVERSATION_FETCH_TOOL,
     description:
-      "Fetch one caller-owned conversation selected by task id, including its bounded message "
-      + 'history. A foreign or unknown id returns no conversation. Read-only.',
+      'Fetch one caller-owned record selected by the taskId conversation_query returned: a '
+      + 'conversation with its bounded message history, or a Jarvis work item with its recorded '
+      + 'result. A foreign or unknown id returns nothing; a record the protected-result boundary '
+      + "refuses here comes back with `withheld: 'protected_result'`. Read-only.",
     category: 'knowledge',
     inputSchema: {
       type: 'object',
       required: ['taskId'],
       properties: {
         taskId: { type: 'string', description: 'The task id returned by conversation_query.' },
+        source: {
+          type: 'string',
+          enum: [...CONVERSATION_FETCH_SOURCES],
+          description: 'Optional: the `source` of the chosen item, to read only that family.',
+        },
       },
     },
     requiresApproval: false,
@@ -351,15 +416,20 @@ export function registerBotNodeReadOnlyTools(
     handler: async (input, context) => {
       const sub = requireCallerSub(context, BOT_NODE_CONVERSATION_FETCH_TOOL);
       const pool = deps.pool;
-      if (!pool) return { conversation: null, unavailable: 'no_database' };
+      if (!pool) return { conversation: null, task: null, unavailable: 'no_database' };
       const taskId = requireText(input.taskId, 'taskId');
+      const source = optionalFetchSource(input.source);
       return runWithRequestIdentity({ sub, isOperator: false }, async () => {
-        const conversation = await new ChatSearchSource(pool).fetch(sub, taskId);
+        const output = await fetchOwnRecord(pool, sub, taskId, source);
         logger.info(
-          { tool: BOT_NODE_CONVERSATION_FETCH_TOOL, found: Boolean(conversation) },
+          {
+            tool: BOT_NODE_CONVERSATION_FETCH_TOOL,
+            found: output.conversation ? 'conversation' : output.task ? 'jarvis-task' : 'none',
+            withheld: output.withheld ?? null,
+          },
           'read-only tool completed',
         );
-        return { conversation };
+        return output;
       });
     },
   });

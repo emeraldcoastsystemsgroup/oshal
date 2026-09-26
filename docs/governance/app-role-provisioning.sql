@@ -7,6 +7,7 @@
 -- 3 | maintainer@emeraldcoastsystemsgroup.com | Add the derived application-execution-ownership helper (migration 142) to the bot contract: EXECUTE for oshal_app and oshal_bot, never PUBLIC. A bot node's ADR-149 posture guard needs that one decision; the tables behind it stay outside the contract, which is why migration 140's direct grants were stripped here on every boot.
 -- 4 | maintainer@emeraldcoastsystemsgroup.com | Close three measured bot gaps without widening the contract. (a) Both ticket upserts read the columns their conflict target and update expression name, so PostgreSQL requires SELECT on exactly those columns: ticket_task_links gains SELECT(role) and ticket_agent_assignments gains SELECT(ticket_id, agent_id, role). Measured by running the two statements as oshal_bot against a private server with the shipped migrations - with the previous grants both raise 42501 permission denied, with these they succeed, and created_at/assigned_at stay ungranted because neither statement needs them. (b) The durable swarm-memory recall reaches the new derived helper (migration 152) instead of the table: oshal_swarm_memory stays entirely outside the contract, and the owner rule lives in SQL rather than in an application filter. (c) the agent-tool resolver's join selects install_verified, tool_config, created_at and updated_at, none of which the allowlist carried, so agent_tools answered 42501 too - measured the same way. (d) oshal_bot's connection limit follows the declared bot fleet - 38 bot-node services at DB_MAX_CONNECTIONS=3 is 114 - instead of 8, which every fleet boot exhausted; the ceiling still fits inside max_connections=200 beside oshal_app's 24.
 -- 5 | maintainer@emeraldcoastsystemsgroup.com | Operator decision 2026-09-22 ("column-level SELECT via the governed allowlist; RLS scopes rows"; SECURITY DEFINER helpers declined): the bot-node read-only question tools read through oshal_bot and the contract carried none of it - measured live as no SELECT on chat_tasks, chat_messages or rag_chunks and no EXECUTE on oshal_owns_task. chat_tasks SELECT gains title and updated_at; chat_messages enters with SELECT(task_id, text, created_at); rag_chunks enters with SELECT(chunk_id, collection, document, embedding, fts, metadata), granted inside a DO block because migration 070 creates that table only where the vector extension exists; oshal_owns_task(text) becomes executable by oshal_bot because the chat_messages policy calls it. Each list is exactly the columns the reading SQL names (chat-search-source.ts, pgvector-rag-engine.ts) and no more; the verifier in provision-app-role.mjs carries the same lists.
+-- 6 | maintainer@emeraldcoastsystemsgroup.com | jarvis_tasks enters the bot contract with column-level SELECT for the bot-node work-item recall (conversation_query/conversation_fetch): exactly the columns jarvis-task-source.ts names - id, user_sub, session_id, title, status, result, error, kind, ticket_id, created_at, finished_at. Unconditional, because migration 100-jarvis-tasks-base-schema.sql now creates the table before this final phase. The verifier in provision-app-role.mjs carries the same list.
 -- ===========================================================================
 -- app-role-provisioning.sql  (ADR-076)
 --
@@ -392,6 +393,15 @@ GRANT UPDATE (
 -- oshal_owns_task policy (migration 094), which is why that helper is granted below.
 GRANT SELECT (task_id, text, created_at, role)
   ON TABLE public.chat_messages TO oshal_bot;
+
+-- The bot-node work-item recall (jarvis-task-source.ts): the list selects id, title, status, kind,
+-- session_id, created_at and finished_at and matches on title/result; its protected-lineage
+-- predicate names ticket_id and session_id; the fetch reads result and error; user_sub is the
+-- adapter's owner predicate. Rows are scoped by the user_sub owner policy (migrations 060/100).
+-- visual, files, delivered, briefing_source_id, principal_issuer and summarize_started_at stay out.
+GRANT SELECT (id, user_sub, session_id, title, status, result, error, kind, ticket_id,
+              created_at, finished_at)
+  ON TABLE public.jarvis_tasks TO oshal_bot;
 
 -- Exactly what the pgvector engine's reads name (pgvector-rag-engine.ts): chunk_id, document and
 -- metadata in the select list; collection in every WHERE and in listCollections; embedding for

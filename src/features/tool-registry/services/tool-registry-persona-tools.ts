@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Restored compile compatibility by de-contextualizing extracted persona seed literals before CreateToolInput cast
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Seed `conversation-query`, the read-only tool that lets a bot answer from what the caller has already said to this swarm instead of asking them to repeat it. Seeded HERE rather than beside rag-query/graph-query in tool-registry-baseline-tools.ts because that file stands at 829 code lines - past the 800-line mark where the house rule says stop and propose a decomposition before adding. Both arrays are seeded by the same seedBaselineAgentTools pass, so placement changes nothing a caller can observe.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Add the paired `conversation-fetch` read capability so a bot first selects a caller-owned task using metadata and only then asks for that task's message history.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | The two recall tools now also cover the caller's Jarvis work items (jarvis_tasks): conversation-query returns `tasks` beside `conversations`, conversation-fetch returns a work item's recorded result as `task`, and a record the protected-result boundary refuses comes back `withheld`. Descriptions, schemas and usage instructions follow the runtime handlers in bot-node-read-only-tools.ts; no tool is added, so the grant still names exactly these two.
  */
 
 import type { CreateToolInput } from '@/entities/tool';
@@ -186,7 +187,7 @@ export const TOOL_REGISTRY_PERSONA_TOOLS = [
     installSpec: { method: 'none' },
     skills: ['conversation-query', 'recall', 'history', 'answer-synthesis'],
     selectorFragment:
-      "The caller's own past conversations with this swarm are searchable, so a question about what was already said, asked or decided is answered from the record.",
+      "The caller's own past conversations with this swarm and their Jarvis work items are searchable, so a question about what was already said, asked, decided or done is answered from the record.",
     routingTags: ['conversation', 'history', 'recall', 'chat'],
     authGroup: 'agent-tools',
     // Read-only and owner-scoped, and the thing a front-door assistant is asked for most often is
@@ -194,23 +195,24 @@ export const TOOL_REGISTRY_PERSONA_TOOLS = [
     // to grounding an answer in the record is inventing one.
     defaultAuthMode: 'auto',
     description:
-      "Search the caller's OWN past conversations with this swarm and return matching selection metadata and a link, never message bodies. Scoped to the caller by row-level security on chat_tasks - another person's conversations are refused by the database, not filtered in application code. Read-only: it never writes, renames or deletes a conversation.",
+      "Search the caller's OWN past conversations with this swarm and the caller's own Jarvis work items, and return matching selection metadata only - never message bodies or task results. Scoped to the caller by row-level security on chat_tasks and jarvis_tasks - another person's records are refused by the database, not filtered in application code. Read-only: it never writes, renames or deletes anything.",
     inputSchema: {
       type: 'object',
       required: ['query'],
       properties: {
-        query: { type: 'string', description: 'Words to look for in past conversations.' },
-        limit: { type: 'integer', description: 'Maximum conversations to return (1-25).' },
+        query: { type: 'string', description: 'Words to look for in past conversations and work items.' },
+        limit: { type: 'integer', description: 'Maximum records of each family to return (1-25).' },
       },
     },
     outputSchema: {
       type: 'object',
       properties: {
         conversations: { type: 'array', items: { type: 'object' } },
+        tasks: { type: 'array', items: { type: 'object' } },
       },
     },
     usageInstructions:
-      "Call conversation_query with the words the caller used when asking 'what did we decide about X', 'did I already ask you about Y', or 'what was that thing I mentioned'. The result contains only taskId, title, status, kind, timestamps and a cockpit link. Then call conversation_fetch with the chosen taskId to read the record. An empty result means the record holds nothing matching, not that the caller never said it: say so plainly instead of inventing a recollection.",
+      "Call conversation_query with the words the caller used when asking 'what did we decide about X', 'did I already ask you about Y', 'what did that task find' or 'what was that thing I mentioned'. `conversations` are past threads and `tasks` are Jarvis work items; each carries only taskId, source, title, status, kind and timestamps. Then call conversation_fetch with the one chosen taskId (and its source) to read the record - never fetch every hit. An empty result means the record holds nothing matching, not that the caller never said it: say so plainly instead of inventing a recollection.",
     examples: [],
     requiresApproval: false,
     timeoutMs: 30000,
@@ -227,27 +229,34 @@ export const TOOL_REGISTRY_PERSONA_TOOLS = [
     installSpec: { method: 'none' },
     skills: ['conversation-fetch', 'recall', 'history', 'answer-synthesis'],
     selectorFragment:
-      "After selecting one of the caller's own conversations, fetch that task's recorded messages to ground an answer.",
+      "After selecting one of the caller's own conversations or Jarvis work items, fetch its recorded messages or result to ground an answer.",
     routingTags: ['conversation', 'history', 'recall', 'chat'],
     authGroup: 'agent-tools',
     defaultAuthMode: 'auto',
     description:
-      "Fetch one caller-owned conversation by task id, including its recorded messages. The database owner policy returns no foreign conversation, and the operation is read-only.",
+      "Fetch one caller-owned record by the task id conversation-query returned: a conversation with its recorded messages, or a Jarvis work item with its recorded result. The database owner policies return no foreign record, a record the protected-result boundary refuses comes back withheld, and the operation is read-only.",
     inputSchema: {
       type: 'object',
       required: ['taskId'],
       properties: {
         taskId: { type: 'string', description: 'Task id returned by conversation-query.' },
+        source: {
+          type: 'string',
+          enum: ['conversation', 'jarvis-task'],
+          description: 'Optional: the source of the chosen item, to read only that family.',
+        },
       },
     },
     outputSchema: {
       type: 'object',
       properties: {
         conversation: { type: ['object', 'null'] },
+        task: { type: ['object', 'null'] },
+        withheld: { type: 'string' },
       },
     },
     usageInstructions:
-      'Call conversation_fetch only after conversation_query selects a taskId. If conversation is null, the caller cannot read that id; do not retry with another owner or infer its contents.',
+      "Call conversation_fetch only after conversation_query selects a taskId. A conversation comes back as `conversation`, a work item as `task`. If both are null the caller cannot read that id; do not retry with another owner or infer its contents. `withheld: 'protected_result'` means the caller's own record is protected and cannot be read here: say so instead of guessing what it said.",
     examples: [],
     requiresApproval: false,
     timeoutMs: 30000,

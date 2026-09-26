@@ -1,23 +1,47 @@
 # Jarvis own-task recall
 
-The source provides a way for Jarvis to look up the caller's own prior conversations without loading
-their history into every turn. The capability is deliberately two-step:
+The source provides a way for Jarvis to look up the caller's own prior conversations and Jarvis work
+items without loading their history into every turn. The capability is deliberately two-step:
 
-1. `conversation_query` searches the caller's title/message record and returns only selection
-   metadata: task id, title, status, kind, timestamps, and a cockpit link. It never returns a
-   message snippet or answer body.
-2. `conversation_fetch` accepts one task id selected by the caller and returns that conversation's
-   recorded messages. An unknown or foreign task returns `conversation: null`.
+1. `conversation_query` searches the caller's conversation titles/messages and work-item
+   titles/results and returns only selection metadata. `conversations` carry task id, title,
+   status, kind, timestamps and a cockpit link; `tasks` (rows of `jarvis_tasks`) carry task id,
+   title, status, kind, timestamps and the conversation the item was filed from. Every entry names
+   its `source` (`conversation` or `jarvis-task`). It never returns a message snippet, an answer
+   body, a task result or a failure note.
+2. `conversation_fetch` accepts one task id (and optionally its `source`) and returns that
+   conversation's recorded messages as `conversation`, or that work item's recorded result and
+   failure note as `task`. An unknown or foreign id returns `conversation: null, task: null`.
 
 Both tools run through the bot-node's normal persisted-tool binding, exact operation scope, and
-identity-stamped Postgres pool. `chat_tasks.owner_sub` is checked in the task query, while the
-`chat_messages` policy independently calls `oshal_owns_task` on the same connection. The bot role
-uses column-level grants only; it is not granted table-wide access.
+identity-stamped Postgres pool. The adapters (`ChatSearchSource`, `JarvisTaskRecallSource` in
+`src/features/global-search`) keep an owner predicate of their own, and independently the
+database refuses another owner's rows: `chat_tasks` and `jarvis_tasks` are FORCE row-level
+security on their owner column, and the `chat_messages` policy calls `oshal_owns_task` on the same
+connection. The message read carries no owner predicate at all, so that policy is its only wall.
+The bot role uses column-level grants only (`BOT_COLUMN_PRIVILEGES` in
+`scripts/governance/provision-app-role.mjs` and `docs/governance/app-role-provisioning.sql`); it is
+not granted table-wide access. `jarvis_tasks` used to be created only lazily by the api, so
+`scripts/migrations/100-jarvis-tasks-base-schema.sql` now creates it, with its owner policy,
+before the role provisioner's final phase names it.
+
+Protected results follow the same read boundary the message-history route and the OPEN WORK block
+apply. A bot-node tool has the caller's subject and no verified actor to re-check current
+application rights, so the shared `canReadProtectedResult` decision is evaluated with an actor
+resolver that refuses: a conversation carrying protected execution lineage, and a work item whose
+own id, ticket or conversation carries it, are left out of the list, and fetch returns
+`withheld: 'protected_result'` instead of their content. A foreign id never reaches that check,
+so the marker says nothing about another owner's records.
 
 This separation keeps broad Jarvis questions cheap and bounded. A list result helps Jarvis choose a
-record, and only an explicit fetch brings message content into the current answer. Missing or
-foreign records are not retried with another owner and are not treated as evidence that a caller
-never discussed the topic.
+record, and only an explicit fetch brings message content or a task result into the current
+answer. Missing or foreign records are not retried with another owner and are not treated as
+evidence that a caller never discussed the topic.
+
+The Jarvis persona (`ai-lab/bot-personas/oshal-assistant.yaml`) tells Jarvis to recall through
+these two tools, in the same turn, before it defers to an app, asks the user to repeat themselves
+or says it does not know; `tests/unit/jarvis-persona-recall.spec.ts` pins that rule. The persona
+keeps `allowed_tools: []`, so it grants nothing: the per-bot grant below is still required.
 
 ## Installed acceptance boundary (2026-09-26)
 

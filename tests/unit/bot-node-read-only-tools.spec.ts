@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the read-only question tools. Four failures it must catch: a new tool left UNBOUND in the persisted->runtime map (the state every one of rag-query/graph-query/conversation-query was in, which is why a granted bot was advertised nothing but attempt_completion); a tool reachable OUTSIDE the declared set or without its exact operation scope; a WRITE-capable path reachable through a read-only binding (rag-ingestion binding, rawQuery instead of readQuery, a modifying AQL, graph provisioning as a side effect of a read); and an identity-less dispatch executing at all. Crosses the boundary each claim lives on: the map is the real module, the advertise/authorize decision runs through the REAL any-bot ToolRegistry + captureDispatchCapabilities + authorizeCapability, and the handlers are the REAL registered ones invoked through executeSnapshot. Owner scoping over PostgreSQL is NOT claimed here - that boundary is a database and it is proven in bot-node-read-only-tools-owner-scope-postgres.spec.ts.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Two cases from adversarial verification. (1) The graph read is bounded at the CURSOR, before materialization: a stubbed arangojs Database hands the REAL ArangoGraphAdapter a lazy cursor over a million rows, and the case asserts the bound rode into the query options, that no more rows than the bound were ever pulled, that all() was never called and that the over-bound cursor was killed. Slicing after all() - the shape that was shipped - goes red on the pull count. (2) The compose file carries RAG_ENGINE on the shared bot anchor, because rag_query refuses without the pgvector engine and the key sat on oshal-api alone, so the tool would have shipped inert on every bot.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The conversation query is metadata-only and the paired fetch is separately registered and scope-bound; the unit rail proves both exact capability names and the no-database refusal shape.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The two tools now cover Jarvis work items too. Pinned here: the no-database shapes name both families, an unknown fetch `source` is refused before any read, and the SHIPPED list statements (imported, not copied) select no body - no message text from the conversation list, no result or error from the work-item list - so a column added to either select list reddens this file without a database. The owner-scoped reads themselves are proven over PostgreSQL in the owner-scope spec.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -27,6 +28,7 @@ import {
 } from '@/app/bot-node-read-only-tools';
 import { anyBotRuntimeToolFor, anyBotRuntimeToolScope } from '@/shared/llm-runtime';
 import { GraphReadOnlyError } from '@/features/graph';
+import { CONVERSATION_LIST_SQL, JARVIS_TASK_LIST_SQL } from '@/features/global-search';
 import { ArangoGraphAdapter } from '@/features/graph/services/arango-graph-adapter';
 
 /* eslint-disable @typescript-eslint/no-require-imports */
@@ -319,7 +321,41 @@ describe('read-only question tools: no write path is reachable', () => {
     const { registry } = registerOn({ pool: null });
     const { output } = await runThroughDispatch(registry, BOT_NODE_CONVERSATION_QUERY_TOOL,
       { query: 'anything' }, fullAuthority(BOT_NODE_CONVERSATION_QUERY_TOOL));
-    expect(output).toEqual({ conversations: [], unavailable: 'no_database' });
+    expect(output).toEqual({ conversations: [], tasks: [], unavailable: 'no_database' });
+  });
+
+  it('a database-less node reports conversation_fetch unavailable for both record families', async () => {
+    const { registry } = registerOn({ pool: null });
+    const { output } = await runThroughDispatch(registry, BOT_NODE_CONVERSATION_FETCH_TOOL,
+      { taskId: 'any-task' }, fullAuthority(BOT_NODE_CONVERSATION_FETCH_TOOL));
+    expect(output).toEqual({ conversation: null, task: null, unavailable: 'no_database' });
+  });
+
+  it('conversation_fetch refuses a source that names no record family before reading anything', async () => {
+    const query = vi.fn();
+    const { registry } = registerOn({ pool: { query } as unknown as BotNodeReadOnlyToolDeps['pool'] });
+    await expect(
+      runThroughDispatch(registry, BOT_NODE_CONVERSATION_FETCH_TOOL,
+        { taskId: 'any-task', source: 'tickets' }, fullAuthority(BOT_NODE_CONVERSATION_FETCH_TOOL)),
+    ).rejects.toThrow(/Field 'source' must be one of: conversation, jarvis-task/);
+    expect(query, 'a refused source must not still reach the database').not.toHaveBeenCalled();
+  });
+});
+
+describe('read-only question tools: the list statements select no body', () => {
+  /** The select list of a shipped statement: everything between its first SELECT and first FROM. */
+  const selectList = (sql: string): string => sql.slice(sql.indexOf('SELECT') + 6, sql.indexOf('FROM')).toLowerCase();
+
+  it('the conversation list selects no message text', () => {
+    const columns = selectList(CONVERSATION_LIST_SQL);
+    expect(columns).toContain('t.task_id');
+    expect(columns).not.toMatch(/\btext\b|\bbody\b|snippet/);
+  });
+
+  it('the work-item list selects no result and no failure note', () => {
+    const columns = selectList(JARVIS_TASK_LIST_SQL);
+    expect(columns).toContain('j.id');
+    expect(columns).not.toMatch(/\bresult\b|\berror\b/);
   });
 });
 
