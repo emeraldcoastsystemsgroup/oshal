@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Global search: chat-history adapter — ILIKE over chat_tasks titles AND chat_messages text. chat_messages carries no owner column, so message hits are scoped by an INNER JOIN to the caller's OWN chat_tasks rows (owner_sub = caller) — never queried bare. Deduped per task (best hit wins), ILIKE+recency scored.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Emit kind:'chat' and the CANONICAL deep link (deepLinkFor -> /chat?taskId=<id>) instead of the bare '/chat' path, which started a BRAND-NEW conversation and lost the one the user searched for.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Add the owner-scoped conversation list/fetch read model: list returns selection metadata only, while fetch returns one named conversation's messages. Both rely on the identity-stamped pool and the database owner policy.
  */
 
 import type { Pool } from 'pg';
@@ -15,12 +16,35 @@ import { deepLinkFor } from './deep-link';
 
 const logger = createChildLogger({ module: 'global-search-chat' });
 
+/** Maximum messages one explicit conversation fetch may place in a model turn. */
+export const MAX_CONVERSATION_MESSAGES = 100;
+
 interface ChatHitRow {
   task_id: string;
   title: string;
   body: string;
   matched_title: boolean;
   ts: Date | string | null;
+}
+
+/** Selection metadata returned before the caller chooses a conversation to fetch. */
+export interface ConversationSummary {
+  taskId: string;
+  title: string;
+  status: string;
+  kind: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+  url: string | null;
+}
+
+/** One caller-owned conversation and its bounded message history. */
+export interface ConversationDetail extends ConversationSummary {
+  messages: Array<{
+    role: string;
+    text: string;
+    createdAt: string | null;
+  }>;
 }
 
 /**
@@ -84,6 +108,117 @@ export class ChatSearchSource implements SearchSource {
     } catch (err) {
       logger.error({ err, stack: (err as Error).stack }, 'chat search failed');
       return [];
+    }
+  }
+
+  /**
+   * @description List caller-owned conversations matching a title or message query without
+   * returning message bodies. The EXISTS predicate uses message text only to select candidate
+   * task ids; the result shape is deliberately metadata-only so a broad question cannot inject
+   * old answers into the model context before it chooses a record.
+   * @param userSub - The caller's verified subject.
+   * @param query - Words to match in a title or message.
+   * @param limit - Maximum summaries to return.
+   * @returns Caller-owned conversation summaries, newest first.
+   */
+  async list(userSub: string, query: string, limit: number): Promise<ConversationSummary[]> {
+    const pattern = `%${escapeIlike(query)}%`;
+    try {
+      const result = await this.pool.query(
+        `SELECT t.task_id, t.title, t.status, t.processing_mode,
+                t.metadata->>'kind' AS metadata_kind, t.created_at, t.updated_at
+           FROM chat_tasks t
+          WHERE t.owner_sub = $1
+            AND (t.title ILIKE $2 ESCAPE '\\'
+                 OR EXISTS (
+                   SELECT 1 FROM chat_messages m
+                    WHERE m.task_id = t.task_id AND m.text ILIKE $2 ESCAPE '\\'
+                 ))
+          ORDER BY t.updated_at DESC
+          LIMIT $3`,
+        [userSub, pattern, limit],
+      );
+      return result.rows.map((row: {
+        task_id: string;
+        title: string;
+        status: string;
+        processing_mode: string;
+        metadata_kind: string | null;
+        created_at: Date | string | null;
+        updated_at: Date | string | null;
+      }) => ({
+        taskId: row.task_id,
+        title: row.title || '(untitled conversation)',
+        status: row.status,
+        kind: row.metadata_kind || row.processing_mode,
+        createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
+        updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null,
+        url: deepLinkFor('chat', row.task_id),
+      }));
+    } catch (err) {
+      logger.error({ err, stack: (err as Error).stack }, 'conversation list failed');
+      return [];
+    }
+  }
+
+  /**
+   * @description Fetch one caller-owned conversation and its messages. Ownership is part of the
+   * task lookup and the message policy is independently enforced by `oshal_owns_task` on the
+   * identity-stamped connection; a foreign or absent id returns null without an existence leak.
+   * @param userSub - The caller's verified subject.
+   * @param taskId - The exact conversation identifier selected by the caller.
+   * @returns One caller-owned conversation, or null when it is not visible to this caller.
+   */
+  async fetch(userSub: string, taskId: string): Promise<ConversationDetail | null> {
+    try {
+      const taskResult = await this.pool.query(
+        `SELECT task_id, title, status, processing_mode, metadata->>'kind' AS metadata_kind,
+                created_at, updated_at
+           FROM chat_tasks
+          WHERE task_id = $1 AND owner_sub = $2
+          LIMIT 1`,
+        [taskId, userSub],
+      );
+      const row = taskResult.rows[0] as {
+        task_id: string;
+        title: string;
+        status: string;
+        processing_mode: string;
+        metadata_kind: string | null;
+        created_at: Date | string | null;
+        updated_at: Date | string | null;
+      } | undefined;
+      if (!row) return null;
+
+      const messagesResult = await this.pool.query(
+        `SELECT role, text, created_at
+           FROM chat_messages
+          WHERE task_id = $1
+          ORDER BY created_at ASC
+          LIMIT $2`,
+        [taskId, MAX_CONVERSATION_MESSAGES],
+      );
+      return {
+        taskId: row.task_id,
+        title: row.title || '(untitled conversation)',
+        status: row.status,
+        kind: row.metadata_kind || row.processing_mode,
+        createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
+        updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null,
+        url: deepLinkFor('chat', row.task_id),
+        messages: messagesResult.rows.map((message: {
+          role: string;
+          text: string;
+          created_at: Date | string | null;
+        }) => ({
+          role: message.role,
+          text: message.text,
+          createdAt: message.created_at ? new Date(message.created_at).toISOString() : null,
+        })),
+      };
+    } catch (err) {
+      logger.error({ err, taskId, stack: (err as Error).stack }, 'conversation fetch failed');
+      return null;
     }
   }
 }

@@ -14,6 +14,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Approve the derived application-execution-ownership helper (migration 142): a fourth SECURITY DEFINER helper, and the second one oshal_bot may execute. The bot ACL check verifies an explicit set of bot helpers instead of one hard-coded signature, and the helper count message follows the approved set.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Close three measured bot gaps, in the one place a grant is durable. ticket_task_links gains SELECT(role), ticket_agent_assignments gains SELECT(ticket_id, agent_id, role), and agent_tools gains the four link columns its resolver selects: PostgreSQL requires SELECT on every column an ON CONFLICT DO UPDATE names, and both upserts were raising 42501 permission denied against the previous contract - measured by running the two statements as oshal_bot on a private server with the shipped migrations, which is also what tests/unit/bot-statement-privilege-contract.spec.ts now does on every run. Approves the derived swarm-memory reader helper (migration 152) as a fifth SECURITY DEFINER helper and the third one oshal_bot may execute, so durable recall works with oshal_swarm_memory still entirely outside the contract. The two allowlist maps are exported so a guard can grant exactly this contract rather than a copy of it that drifts.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Operator decision 2026-09-22 ("column-level SELECT via the governed allowlist; RLS scopes rows"; SECURITY DEFINER helpers declined): the bot-node read-only question tools read through oshal_bot, and the contract carried none of what they read - measured on the live box as has_table_privilege('oshal_bot', chat_tasks|chat_messages|rag_chunks, 'SELECT') = f and no EXECUTE on oshal_owns_task. chat_tasks SELECT gains title and updated_at (ChatSearchSource selects both; the other columns it names were already granted for the cost rollup); chat_messages enters the contract with SELECT(task_id, text, created_at), exactly the message columns that adapter selects and joins on; rag_chunks enters with SELECT(chunk_id, collection, document, embedding, fts, metadata), exactly what the pgvector engine's two search legs and listCollections name - owner_sub, tenant_id and created_at stay out because no read names them and row-level security compares owner_sub without a column grant. oshal_owns_task(text) becomes the fourth helper oshal_bot may execute: the chat_messages policy calls it, so without EXECUTE the policy itself is a permission error. rag_chunks is the first OPTIONAL contract table - migration 070 creates it only where the vector extension exists and skips with a NOTICE otherwise - so its absence is tolerated exactly when that extension is unavailable, and on no other condition. Every other absence still fails loud.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Add the metadata-only conversation list and exact-id message fetch columns to the governed bot read contract without introducing table-wide privileges.
  */
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -99,7 +100,7 @@ export const BOT_COLUMN_PRIVILEGES = new Map([
     SELECT: new Set([
       'task_id', 'status', 'agent_id', 'provider_id', 'total_input_tokens', 'total_output_tokens',
       'total_input_cost', 'total_output_cost', 'total_cost', 'total_requests', 'cost_currency',
-      'usage_by_model', 'owner_sub', 'metadata', 'title', 'updated_at',
+      'usage_by_model', 'owner_sub', 'metadata', 'title', 'updated_at', 'processing_mode', 'created_at',
     ]),
     INSERT: new Set([
       'task_id', 'title', 'status', 'processing_mode', 'agent_id', 'provider_id', 'message_count',
@@ -114,10 +115,10 @@ export const BOT_COLUMN_PRIVILEGES = new Map([
     ]),
   }],
   ['chat_messages', {
-    // The conversation read joins on task_id and selects text and created_at; nothing reads
-    // role, type, content_blocks or metadata, so they stay out. Rows are walled by the
+    // The conversation read joins on task_id and selects role, text and created_at; nothing reads
+    // type, content_blocks or metadata, so they stay out. Rows are walled by the
     // oshal_owns_task policy, which is why the helper is in BOT_HELPERS.
-    SELECT: new Set(['task_id', 'text', 'created_at']),
+    SELECT: new Set(['task_id', 'text', 'created_at', 'role']),
   }],
   ['rag_chunks', {
     // Exactly what the pgvector engine's reads name: chunk_id/document/metadata in the select

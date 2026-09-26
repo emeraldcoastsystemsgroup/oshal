@@ -4,7 +4,8 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: define the explicit persisted-tool to any-bot runtime capability map; unknown names fail closed and completion remains a side-effect-free control capability.
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | Bind the read-only question tools. Every name this map held was a shell, a file write or an infrastructure CLI, so the only thing a granted bot could be advertised was a way to ACT; the tools that let one ANSWER - retrieval, the caller's own graph, the caller's own conversation history - had no binding at all and were denied here as unmapped no matter what the operator granted. The three added names resolve to the handlers bot-node-read-only-tools.ts registers on the bot-node registry. Deliberately absent: rag-ingestion, whose sibling name differs by one word and which WRITES.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Bind the read-only question tools. Every name this map held was a shell, a file write or an infrastructure CLI, so the only thing a granted bot could be advertised was a way to ACT; the tools that let one ANSWER - retrieval, the caller's own graph, and the caller's own conversation history - had no binding at all and were denied here as unmapped no matter what the operator granted. The three added names resolve to the handlers bot-node-read-only-tools.ts registers on the bot-node registry. Deliberately absent: rag-ingestion, whose sibling name differs by one word and which WRITES.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Bind the exact conversation-fetch capability beside conversation-query so the persisted tool assignment cannot advertise a handler that the bot-node registry does not expose.
  */
 
 /** Side-effect-free protocol control understood by AgenticController. */
@@ -36,6 +37,7 @@ const PERSISTED_TO_RUNTIME_TOOL: Readonly<Record<string, string>> = Object.freez
   'rag-query': 'rag_query',
   'graph-query': 'graph_query',
   'conversation-query': 'conversation_query',
+  'conversation-fetch': 'conversation_fetch',
 });
 
 /**

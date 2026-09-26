@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Adversarial verification corrections. (1) The header called oshal_app "the role production connects as" - true of the api, wrong for the bot-node these tools run on: docker-compose.oshal-local.yml wires every bot to oshal_bot through BOT_DATABASE_URL, and oshal_bot is a NON-owner, so the isolation it gets is plain ENABLE RLS rather than FORCE. Every case now runs for BOTH roles, each a minted NOSUPERUSER NOBYPASSRLS LOGIN role. (2) The scoping is two layers, not one - ChatSearchSource carries its own owner_sub predicate - so a mutation that stamped the OPERATOR instead of the caller went red on nothing: the adapter still scoped. Added the case that reads the GUC values PostgreSQL itself saw on the tool's connection, through a recording proxy on the role pool, so operator-stamping goes red on its own.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The bot role now holds ONLY what the governed contract grants it, derived from BOT_COLUMN_PRIVILEGES and BOT_HELPERS at run time rather than hand-listed - so the spec and the provisioner cannot drift apart without this file going red. The chat tables come from the shipped migrations (005, 055) so the derived column lists name real columns. Three claims added for oshal_bot: its effective privileges are exactly the allowlist and nothing table-wide; a column outside the list (turn_count - total_cost was already granted for the cost rollup, so it is not a sentinel) is refused 42501 when read directly; and the tool's read still succeeds and still starves identity B under exactly those grants. Removing one granted column from the map reddens the read; adding the sentinel reddens the refusal.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Seq 3 swapped the hand-built chat_messages for shipped migration 005 and left the seed inserting only (task_id, text) - but 005's message_id, role and type are NOT NULL with no defaults, so beforeAll raised 23502 and every case SKIPPED on every run, here and on the verifier's fixture alike. A guard that cannot start proves nothing. The seed now supplies message_id (gen_random_uuid()), role ('user', the CHECK allows user|assistant) and type ('say'; no CHECK). Measured by the verifier with only this change: 20 passed; removing title from the map reddens 5 (the four bot reads and the positive control of the database-refuses case); adding turn_count reddens 1; stamping the operator reddens 2.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Prove the metadata-only conversation list and exact-id fetch over both non-superuser roles, including a foreign-task null result and message-body retrieval only after a caller-owned task is selected.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -15,6 +16,7 @@ import { wrapPoolWithGuc } from '@/shared/services/database';
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
 import { ChatSearchSource } from '@/features/global-search';
 import {
+  BOT_NODE_CONVERSATION_FETCH_TOOL,
   BOT_NODE_CONVERSATION_QUERY_TOOL,
   registerBotNodeReadOnlyTools,
   type BotNodeReadOnlyToolDeps,
@@ -176,7 +178,7 @@ function recordingPool(raw: Pool, stamps: Stamp[]): Pool {
 }
 
 /** Run conversation_query exactly as a dispatch does: capture, authorize, execute the snapshot. */
-async function conversationQueryAs(role: Role, sub: string, query: string): Promise<Array<{ taskId: string; title: string }>> {
+async function conversationQueryAs(role: Role, sub: string, query: string): Promise<Array<Record<string, unknown>>> {
   const { registry } = harnesses.get(role)!;
   const caps = captureDispatchCapabilities(
     registry,
@@ -189,6 +191,22 @@ async function conversationQueryAs(role: Role, sub: string, query: string): Prom
     extraEnv: { OSHAL_USER_SUB: sub },
   });
   return (output as { conversations: Array<{ taskId: string; title: string }> }).conversations;
+}
+
+/** Run the exact-id conversation fetch through the same capture/authorize/execute path. */
+async function conversationFetchAs(role: Role, sub: string, taskId: string): Promise<Record<string, unknown> | null> {
+  const { registry } = harnesses.get(role)!;
+  const caps = captureDispatchCapabilities(
+    registry,
+    normalizeAllowedTools([BOT_NODE_CONVERSATION_FETCH_TOOL]),
+    normalizeAuthorizedScopes([anyBotRuntimeToolScope(BOT_NODE_CONVERSATION_FETCH_TOOL)]),
+  );
+  const decision = authorizeCapability(caps, BOT_NODE_CONVERSATION_FETCH_TOOL);
+  expect(decision.allowed, decision.error).toBe(true);
+  const output = await registry.executeSnapshot(decision.snapshot, { taskId }, {
+    extraEnv: { OSHAL_USER_SUB: sub },
+  });
+  return (output as { conversation: Record<string, unknown> | null }).conversation;
 }
 
 beforeAll(async () => {
@@ -258,6 +276,22 @@ describe.each(ROLES)('conversation_query owner scoping is the database, over a r
   it('identity A reads its own conversation by MESSAGE text, through oshal_owns_task', async () => {
     const hits = await conversationQueryAs(role, ALICE, 'lands in October');
     expect(hits.map((h) => h.taskId)).toEqual([ALICE_TASK]);
+  });
+
+  it('the list returns metadata only, then fetch returns the selected messages', async () => {
+    const summaries = await conversationQueryAs(role, ALICE, 'lands in October');
+    expect(summaries[0]).toMatchObject({ taskId: ALICE_TASK, title: `Alice ${SHARED_WORD} plan` });
+    expect(summaries[0]).not.toHaveProperty('snippet');
+    expect(summaries[0]).toHaveProperty('status');
+    const detail = await conversationFetchAs(role, ALICE, ALICE_TASK);
+    expect(detail).toMatchObject({ taskId: ALICE_TASK, title: `Alice ${SHARED_WORD} plan` });
+    expect(detail?.messages).toEqual([
+      expect.objectContaining({ role: 'user', text: 'we agreed the budget lands in October' }),
+    ]);
+  });
+
+  it('a caller cannot fetch another owner task by guessing its id', async () => {
+    expect(await conversationFetchAs(role, BOB, ALICE_TASK)).toBeNull();
   });
 
   it('identity B gets NOTHING of A, on a word that matches both conversations', async () => {

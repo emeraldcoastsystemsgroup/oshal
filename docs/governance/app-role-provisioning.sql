@@ -366,14 +366,14 @@ GRANT SELECT ON TABLE public.work_items TO oshal_bot;
 GRANT UPDATE (status, assigned_agent_id, execution_output, updated_at)
   ON TABLE public.work_items TO oshal_bot;
 
--- title and updated_at are what the bot-node conversation read (chat-search-source.ts) selects
--- beyond the cost-rollup columns already here; message_count, turn_count, processing_mode and
--- created_at are named by no bot read and stay out.
+-- title/updated_at plus processing_mode/created_at are the metadata columns the bot-node
+-- conversation list/fetch uses beyond the cost-rollup columns already here. message_count and
+-- turn_count remain out.
 GRANT SELECT (
   task_id, status, agent_id, provider_id, total_input_tokens,
   total_output_tokens, total_input_cost, total_output_cost, total_cost,
   total_requests, cost_currency, usage_by_model, owner_sub, metadata,
-  title, updated_at
+  title, updated_at, processing_mode, created_at
 ) ON TABLE public.chat_tasks TO oshal_bot;
 GRANT INSERT (
   task_id, title, status, processing_mode, agent_id, provider_id, message_count,
@@ -387,10 +387,10 @@ GRANT UPDATE (
   cost_currency, usage_by_model, owner_sub, metadata, updated_at
 ) ON TABLE public.chat_tasks TO oshal_bot;
 
--- The conversation read joins chat_messages on task_id and selects text and created_at; role,
+-- The conversation read joins chat_messages on task_id and selects role, text and created_at;
 -- type, content_blocks and metadata are named by no bot read. Rows are walled by the
 -- oshal_owns_task policy (migration 094), which is why that helper is granted below.
-GRANT SELECT (task_id, text, created_at)
+GRANT SELECT (task_id, text, created_at, role)
   ON TABLE public.chat_messages TO oshal_bot;
 
 -- Exactly what the pgvector engine's reads name (pgvector-rag-engine.ts): chunk_id, document and

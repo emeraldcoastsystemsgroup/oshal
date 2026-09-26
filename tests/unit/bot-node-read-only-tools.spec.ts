@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the read-only question tools. Four failures it must catch: a new tool left UNBOUND in the persisted->runtime map (the state every one of rag-query/graph-query/conversation-query was in, which is why a granted bot was advertised nothing but attempt_completion); a tool reachable OUTSIDE the declared set or without its exact operation scope; a WRITE-capable path reachable through a read-only binding (rag-ingestion binding, rawQuery instead of readQuery, a modifying AQL, graph provisioning as a side effect of a read); and an identity-less dispatch executing at all. Crosses the boundary each claim lives on: the map is the real module, the advertise/authorize decision runs through the REAL any-bot ToolRegistry + captureDispatchCapabilities + authorizeCapability, and the handlers are the REAL registered ones invoked through executeSnapshot. Owner scoping over PostgreSQL is NOT claimed here - that boundary is a database and it is proven in bot-node-read-only-tools-owner-scope-postgres.spec.ts.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Two cases from adversarial verification. (1) The graph read is bounded at the CURSOR, before materialization: a stubbed arangojs Database hands the REAL ArangoGraphAdapter a lazy cursor over a million rows, and the case asserts the bound rode into the query options, that no more rows than the bound were ever pulled, that all() was never called and that the over-bound cursor was killed. Slicing after all() - the shape that was shipped - goes red on the pull count. (2) The compose file carries RAG_ENGINE on the shared bot anchor, because rag_query refuses without the pgvector engine and the key sat on oshal-api alone, so the tool would have shipped inert on every bot.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The conversation query is metadata-only and the paired fetch is separately registered and scope-bound; the unit rail proves both exact capability names and the no-database refusal shape.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -13,6 +14,7 @@ import yaml from 'js-yaml';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  BOT_NODE_CONVERSATION_FETCH_TOOL,
   BOT_NODE_CONVERSATION_QUERY_TOOL,
   BOT_NODE_GRAPH_QUERY_TIMEOUT_MS,
   BOT_NODE_GRAPH_QUERY_TOOL,
@@ -172,6 +174,7 @@ describe('read-only question tools: the persisted names are BOUND', () => {
     ['rag-query', BOT_NODE_RAG_QUERY_TOOL],
     ['graph-query', BOT_NODE_GRAPH_QUERY_TOOL],
     ['conversation-query', BOT_NODE_CONVERSATION_QUERY_TOOL],
+    ['conversation-fetch', BOT_NODE_CONVERSATION_FETCH_TOOL],
   ])('%s resolves to the runtime handler name %s', (persisted, runtime) => {
     // Unbound is the state these three were in: anyBotRuntimeToolFor returned undefined, the
     // prompt-authorization resolver logged "Unmapped runtime tool denied" and dropped it, and the
@@ -241,8 +244,11 @@ describe('read-only question tools: registration is candidacy, never authority',
     '%s refuses a dispatch that carried no owner',
     async (toolName) => {
       const { registry } = registerOn();
+      const input = toolName === BOT_NODE_CONVERSATION_FETCH_TOOL
+        ? { taskId: 'task-without-owner' }
+        : { query: 'x', aql: 'FOR n IN nodes RETURN n' };
       await expect(
-        runThroughDispatch(registry, toolName, { query: 'x', aql: 'FOR n IN nodes RETURN n' },
+        runThroughDispatch(registry, toolName, input,
           fullAuthority(toolName), { extraEnv: {} }),
       ).rejects.toThrow(/requires an authenticated caller/);
     },

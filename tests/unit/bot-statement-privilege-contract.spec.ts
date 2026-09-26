@@ -388,6 +388,42 @@ const BOT_STATEMENTS: Array<{ name: string; site: string; sql: string; params: (
     params: () => [OWNER, '%contract%', 10],
   },
   {
+    name: 'chat_tasks + chat_messages — metadata-only conversation list',
+    site: 'src/features/global-search/services/chat-search-source.ts',
+    sql: `SELECT t.task_id, t.title, t.status, t.processing_mode,
+                 t.metadata->>'kind' AS metadata_kind, t.created_at, t.updated_at
+            FROM chat_tasks t
+           WHERE t.owner_sub = $1
+             AND (t.title ILIKE $2 ESCAPE '\\'
+                  OR EXISTS (
+                    SELECT 1 FROM chat_messages m
+                     WHERE m.task_id = t.task_id AND m.text ILIKE $2 ESCAPE '\\'
+                  ))
+           ORDER BY t.updated_at DESC
+           LIMIT $3`,
+    params: () => [OWNER, '%contract%', 10],
+  },
+  {
+    name: 'chat_tasks — exact conversation fetch',
+    site: 'src/features/global-search/services/chat-search-source.ts',
+    sql: `SELECT task_id, title, status, processing_mode, metadata->>'kind' AS metadata_kind,
+                 created_at, updated_at
+            FROM chat_tasks
+           WHERE task_id = $1 AND owner_sub = $2
+           LIMIT 1`,
+    params: () => [TASK, OWNER],
+  },
+  {
+    name: 'chat_messages — exact conversation message fetch',
+    site: 'src/features/global-search/services/chat-search-source.ts',
+    sql: `SELECT role, text, created_at
+            FROM chat_messages
+           WHERE task_id = $1
+           ORDER BY created_at ASC
+           LIMIT $2`,
+    params: () => [TASK, 100],
+  },
+  {
     name: 'chat_tasks — read the cost rollup',
     site: 'src/features/operational-intelligence/services/cost-tracking-service.ts',
     sql: `SELECT agent_id, provider_id, total_input_tokens, total_output_tokens,

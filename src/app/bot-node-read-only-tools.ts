@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the read-only question tools a bot node may answer with. Until now the bot-node built `new ToolRegistry()` and registered NOTHING into it (registerFileTools/registerCLITools run only from any-bot/server/app.js, which BOT_RUNTIME=bot-node never boots), so captureDispatchCapabilities advertised attempt_completion and nothing else no matter what a bot was granted. These three handlers are the first real capabilities on that registry, and they are deliberately the ones that let a bot ANSWER rather than act: retrieval, the caller's own graph, and the caller's own conversation history. No shell, no file write, no cloud CLI, no ingestion. Owner scoping is never a WHERE clause this module writes — RAG and conversation reads run inside runWithRequestIdentity so the GUC pool stamps the caller and PostgreSQL row-level security refuses another owner's rows, and the graph is resolved by personDbName(sub) into a physically separate ArangoDB database.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Adversarial verification of the first cut. (1) graph_query materialized the ENTIRE result before bounding it - readQuery drained cursor.all() and the slice ran afterwards, so a model-authored `FOR i IN 1..100000000 RETURN i` was an unbounded allocation in the bot-node process and the registry's Promise.race timeout rejected the caller without touching the running query; the read now passes maxRows and maxRuntimeSeconds, enforced at the cursor and by the engine respectively, before any row exists in memory. (2) The comments overstated the scoping as one layer: ChatSearchSource carries its own owner_sub predicate and RagService its own permission filter, so it is defense in depth - the database boundary AND the adapter predicate - and the comments now say so.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Split conversation recall into metadata-only list/search and exact-id fetch. The list cannot inject message bodies into a broad Jarvis turn; fetch returns only the caller-owned record after the task owner check and database message policy.
  */
 
 /**
@@ -47,12 +48,15 @@ export const BOT_NODE_RAG_QUERY_TOOL = 'rag_query';
 export const BOT_NODE_GRAPH_QUERY_TOOL = 'graph_query';
 /** Exact any-bot runtime name for the caller's own conversation read. */
 export const BOT_NODE_CONVERSATION_QUERY_TOOL = 'conversation_query';
+/** Exact any-bot runtime name for fetching one caller-owned conversation. */
+export const BOT_NODE_CONVERSATION_FETCH_TOOL = 'conversation_fetch';
 
 /** Every read-only question tool this module registers, in registration order. */
 export const BOT_NODE_READ_ONLY_TOOL_NAMES: readonly string[] = Object.freeze([
   BOT_NODE_RAG_QUERY_TOOL,
   BOT_NODE_GRAPH_QUERY_TOOL,
   BOT_NODE_CONVERSATION_QUERY_TOOL,
+  BOT_NODE_CONVERSATION_FETCH_TOOL,
 ]);
 
 /**
@@ -291,8 +295,8 @@ export function registerBotNodeReadOnlyTools(
     name: BOT_NODE_CONVERSATION_QUERY_TOOL,
     description:
       "Search the caller's OWN past conversations with this swarm and return the matching "
-      + 'conversations with a snippet and a link, so a question about what was already said or '
-      + 'decided can be answered from the record. Read-only.',
+      + 'conversations with selection metadata and a link. It never returns message bodies; call '
+      + 'conversation_fetch after choosing a task id. Read-only.',
     category: 'knowledge',
     inputSchema: {
       type: 'object',
@@ -319,20 +323,43 @@ export function registerBotNodeReadOnlyTools(
       // The owner-scope guard proves the database layer on its own by handing the adapter one
       // identity while the connection carries another.
       return runWithRequestIdentity({ sub, isOperator: false }, async () => {
-        const hits = await new ChatSearchSource(pool).search(sub, query, limit);
+        const conversations = await new ChatSearchSource(pool).list(sub, query, limit);
         logger.info(
-          { tool: BOT_NODE_CONVERSATION_QUERY_TOOL, resultCount: hits.length },
+          { tool: BOT_NODE_CONVERSATION_QUERY_TOOL, resultCount: conversations.length },
           'read-only tool completed',
         );
-        return {
-          conversations: hits.map((hit) => ({
-            taskId: hit.id,
-            title: hit.title,
-            snippet: hit.snippet,
-            updatedAt: hit.ts,
-            url: hit.url,
-          })),
-        };
+        return { conversations };
+      });
+    },
+  });
+
+  registry.register({
+    name: BOT_NODE_CONVERSATION_FETCH_TOOL,
+    description:
+      "Fetch one caller-owned conversation selected by task id, including its bounded message "
+      + 'history. A foreign or unknown id returns no conversation. Read-only.',
+    category: 'knowledge',
+    inputSchema: {
+      type: 'object',
+      required: ['taskId'],
+      properties: {
+        taskId: { type: 'string', description: 'The task id returned by conversation_query.' },
+      },
+    },
+    requiresApproval: false,
+    timeout: 30_000,
+    handler: async (input, context) => {
+      const sub = requireCallerSub(context, BOT_NODE_CONVERSATION_FETCH_TOOL);
+      const pool = deps.pool;
+      if (!pool) return { conversation: null, unavailable: 'no_database' };
+      const taskId = requireText(input.taskId, 'taskId');
+      return runWithRequestIdentity({ sub, isOperator: false }, async () => {
+        const conversation = await new ChatSearchSource(pool).fetch(sub, taskId);
+        logger.info(
+          { tool: BOT_NODE_CONVERSATION_FETCH_TOOL, found: Boolean(conversation) },
+          'read-only tool completed',
+        );
+        return { conversation };
       });
     },
   });

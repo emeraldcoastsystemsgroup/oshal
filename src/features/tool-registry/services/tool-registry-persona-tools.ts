@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted persona tool seed catalog from ToolRegistryService for file-size compliance
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Restored compile compatibility by de-contextualizing extracted persona seed literals before CreateToolInput cast
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Seed `conversation-query`, the read-only tool that lets a bot answer from what the caller has already said to this swarm instead of asking them to repeat it. Seeded HERE rather than beside rag-query/graph-query in tool-registry-baseline-tools.ts because that file stands at 829 code lines - past the 800-line mark where the house rule says stop and propose a decomposition before adding. Both arrays are seeded by the same seedBaselineAgentTools pass, so placement changes nothing a caller can observe.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Add the paired `conversation-fetch` read capability so a bot first selects a caller-owned task using metadata and only then asks for that task's message history.
  */
 
 import type { CreateToolInput } from '@/entities/tool';
@@ -193,7 +194,7 @@ export const TOOL_REGISTRY_PERSONA_TOOLS = [
     // to grounding an answer in the record is inventing one.
     defaultAuthMode: 'auto',
     description:
-      "Search the caller's OWN past conversations with this swarm and return the matching conversations with a snippet and a link. Scoped to the caller by row-level security on chat_tasks - another person's conversations are refused by the database, not filtered in application code. Read-only: it never writes, renames or deletes a conversation.",
+      "Search the caller's OWN past conversations with this swarm and return matching selection metadata and a link, never message bodies. Scoped to the caller by row-level security on chat_tasks - another person's conversations are refused by the database, not filtered in application code. Read-only: it never writes, renames or deletes a conversation.",
     inputSchema: {
       type: 'object',
       required: ['query'],
@@ -209,7 +210,44 @@ export const TOOL_REGISTRY_PERSONA_TOOLS = [
       },
     },
     usageInstructions:
-      "Call conversation_query with the words the caller used when asking 'what did we decide about X', 'did I already ask you about Y', or 'what was that thing I mentioned'. Each hit carries taskId, title, snippet, updatedAt and a cockpit link - cite the title and the link rather than paraphrasing a snippet as if it were new. An empty result means the record holds nothing matching, not that the caller never said it: say so plainly instead of inventing a recollection.",
+      "Call conversation_query with the words the caller used when asking 'what did we decide about X', 'did I already ask you about Y', or 'what was that thing I mentioned'. The result contains only taskId, title, status, kind, timestamps and a cockpit link. Then call conversation_fetch with the chosen taskId to read the record. An empty result means the record holds nothing matching, not that the caller never said it: say so plainly instead of inventing a recollection.",
+    examples: [],
+    requiresApproval: false,
+    timeoutMs: 30000,
+    tags: ['conversation', 'history', 'recall', 'read-only'],
+    enabled: true,
+    registeredBy: 'system',
+  },
+  {
+    name: 'conversation-fetch',
+    displayName: 'Conversation History Fetch',
+    type: 'api',
+    category: 'knowledge',
+    version: '1.0.0',
+    installSpec: { method: 'none' },
+    skills: ['conversation-fetch', 'recall', 'history', 'answer-synthesis'],
+    selectorFragment:
+      "After selecting one of the caller's own conversations, fetch that task's recorded messages to ground an answer.",
+    routingTags: ['conversation', 'history', 'recall', 'chat'],
+    authGroup: 'agent-tools',
+    defaultAuthMode: 'auto',
+    description:
+      "Fetch one caller-owned conversation by task id, including its recorded messages. The database owner policy returns no foreign conversation, and the operation is read-only.",
+    inputSchema: {
+      type: 'object',
+      required: ['taskId'],
+      properties: {
+        taskId: { type: 'string', description: 'Task id returned by conversation-query.' },
+      },
+    },
+    outputSchema: {
+      type: 'object',
+      properties: {
+        conversation: { type: ['object', 'null'] },
+      },
+    },
+    usageInstructions:
+      'Call conversation_fetch only after conversation_query selects a taskId. If conversation is null, the caller cannot read that id; do not retry with another owner or infer its contents.',
     examples: [],
     requiresApproval: false,
     timeoutMs: 30000,
