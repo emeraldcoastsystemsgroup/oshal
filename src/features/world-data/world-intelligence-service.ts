@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Read the windowed averages and the subject catalog from the pre-aggregated HEAD (world-preaggregate) instead of re-scanning the running stream on every call. The trading autopilot's 100-name basket read cost 10.5s every 5 minutes and listEntities cost 7.8s to return 402 rows; both are now sub-200ms. Means are recovered as sum/count, which is arithmetically identical to avg over the same rows — verified equal across 6,714 (entity,metric) pairs.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Put the rollup's four per-entity reads behind the bounded, coalescing series gate, and answer a whole-day sentiment window from the daily HEAD instead of scanning the stream per source. The 2026-09-14 saturation had both shapes: 19 concurrent sessions on oshal-local-tsdb (282% CPU) all running perSourceSentimentHours, and overlapping pulses recomputing the same aggregate twice. Measured read-only on the live store: the 24h stream read is 786ms planning + 366ms execution and the 168h one 810 + 651, against 245 + 16 and 303 + 20 for the same answers off world_metrics_daily — which carries `source`, so it can answer the per-source question. Whole-day windows are now day-aligned, matching the head-backed metricAvg the trading gate already reads these features back through.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Own the memoized TimescaleDB pool's connection 'error' events (ownPoolConnectionErrors) - a server-terminated connection on an unowned pool is an uncaught exception that ends the api process.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Expose a bounded latest-point read that preserves timestamp/source provenance for feed-backed read-only consumers such as the Trading congressional watchlist projection.
  */
 
 /**
@@ -78,6 +79,15 @@ async function withWriteConflictRetry<T>(fn: () => Promise<T>, attempts = 6): Pr
 }
 
 export interface WorldIngestResult { nodes: number; edges: number; facts: number; }
+
+/** One latest raw metric point, retaining the source and timestamp that make it auditable. */
+export interface LatestMetricPoint {
+  entity: string;
+  metric: string;
+  ts: string;
+  value: number;
+  source: string | null;
+}
 
 /** The immutable record of one pulled item + what we classified it as — the backtest substrate. */
 export interface ArchiveRecord {
@@ -504,6 +514,29 @@ export class WorldIntelligenceService {
       m.set(row.metric, { points: row.points || 0, avg: Number(row.avg) });
     }
     return out;
+  }
+
+  /**
+   * Read the newest point for each requested entity/metric pair without collapsing away its
+   * disclosure/observation timestamp or source. This is deliberately bounded by the caller's
+   * arrays and is used by read-only projections that must show provenance beside a value.
+   */
+  async latestMetricPoints(entities: string[], metrics: string[]): Promise<LatestMetricPoint[]> {
+    if (!entities.length || !metrics.length) return [];
+    await this.ensureSeries();
+    const r = await this.tsdb.query(
+      `SELECT DISTINCT ON (entity, metric) entity, metric, ts, value, source
+         FROM world_metrics
+        WHERE entity = ANY($1::text[]) AND metric = ANY($2::text[])
+        ORDER BY entity, metric, ts DESC`,
+      [entities.slice(0, 100), metrics.slice(0, 20)],
+    );
+    return (r.rows as Array<{ entity: string; metric: string; ts: string | Date; value: string | number; source?: string | null }>)
+      .map((row) => ({
+        entity: String(row.entity), metric: String(row.metric), ts: new Date(row.ts).toISOString(),
+        value: Number(row.value), source: row.source == null ? null : String(row.source),
+      }))
+      .filter((row) => Number.isFinite(row.value) && !Number.isNaN(Date.parse(row.ts)));
   }
 
   /**

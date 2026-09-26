@@ -180,6 +180,34 @@ describe('world series-read gate — the whole-day window reads the head', () =>
   });
 });
 
+describe('world latest metric points — preserve the newest source date', () => {
+  it('bounds requested dimensions and returns one auditable point per pair', async () => {
+    const queries: Array<{ sql: string; values: unknown[] }> = [];
+    const pool = {
+      async query(sql: string, values: unknown[] = []) {
+        queries.push({ sql, values });
+        if (/SELECT DISTINCT ON/.test(sql)) {
+          return { rows: [{ entity: 'world:ticker:nvda', metric: 'congress_buys', ts: '2026-09-24T00:00:00.000Z', value: '12.5', source: 'quiver-congress' }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      },
+    };
+    const svc = new WorldIntelligenceService(graphConnector as unknown as GraphConnector, pool as unknown as Pool);
+    const entities = Array.from({ length: 101 }, (_, i) => `world:ticker:t${i}`);
+    const metrics = Array.from({ length: 21 }, (_, i) => `metric_${i}`);
+    const points = await svc.latestMetricPoints(entities, metrics);
+
+    expect(points).toEqual([{
+      entity: 'world:ticker:nvda', metric: 'congress_buys', ts: '2026-09-24T00:00:00.000Z', value: 12.5, source: 'quiver-congress',
+    }]);
+    const read = queries.find((q) => /SELECT DISTINCT ON/.test(q.sql));
+    expect(read).toBeDefined();
+    expect((read!.values[0] as string[]).length).toBe(100);
+    expect((read!.values[1] as string[]).length).toBe(20);
+    expect(read!.sql).toContain('ORDER BY entity, metric, ts DESC');
+  });
+});
+
 describe('world pulse budget — a long run is visible before fires start stacking', () => {
   const saved = { ...process.env };
   afterEach(() => {

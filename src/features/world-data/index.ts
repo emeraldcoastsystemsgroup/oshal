@@ -15,6 +15,7 @@
 
 export {
   createWorldIntelligenceService,
+  type LatestMetricPoint,
   type WorldIntelligenceService,
 } from './world-intelligence-service';
 export {
