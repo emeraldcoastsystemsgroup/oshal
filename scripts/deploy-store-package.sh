@@ -10,6 +10,7 @@
 #
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | Bounce with stop+start (scripts/api-bounce.sh when present), never `docker restart`: a plain restart reliably leaves the published host port wedged on this box — proven here, the port never answered inside 180s and needed api-bounce.sh to recover — which is the same vpnkit/forward wedge that script already exists for. Also wait for the api to be REALLY up, not just docker-healthy. The container healthcheck is shallow HTTP and goes green while boot work (schema bootstraps, digests, LLM init) is still running; probing in that window is how a restart looks wedged. After the restart this now waits on the HOST port answering /health and then on each package logging "App loaded", so the script only reports success when the packages it copied are actually mounted.
 # 3 | maintainer@emeraldcoastsystemsgroup.com   | Match the loader's manifest app name when checking readiness: package directories can differ from `name:` (for example `trading` loads as `intelligent-trades`). Consume the complete log stream: `grep -q` closed the pipe early and made `docker logs` fail under pipefail even when the app loaded.
+# 4 | maintainer@emeraldcoastsystemsgroup.com   | Redirect curl stdout in the shell instead of passing `-o /dev/null`: global MSYS_NO_PATHCONV=1 is needed for docker container paths but makes Windows curl treat `/dev/null` as an invalid output file (exit 23 after HTTP 200), so the readiness loop falsely times out.
 #
 # Env:    OSHAL_STORE_DIR   store checkout (default ../oshal-applications beside this repo)
 #         OSHAL_API         api container name (default oshal-local-api)
@@ -99,7 +100,7 @@ if [ "$RESTART" -eq 1 ]; then
   docker stop "$API" >/dev/null && docker start "$API" >/dev/null || fail "api stop/start failed"
   deadline=$(( $(date +%s) + ${OSHAL_READY_TIMEOUT:-600} ))
   ready=1
-  until curl -sf -m 5 -o /dev/null "http://127.0.0.1:$PORT/health" 2>/dev/null; do
+  until curl -sf -m 5 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; do
     if [ "$(date +%s)" -ge "$deadline" ]; then ready=0; break; fi
     sleep 5
   done
