@@ -87,6 +87,7 @@
  * 35 | maintainer@emeraldcoastsystemsgroup.com   | Registered the storyboard image-rail card (STORYBOARD_SCENARIOS): a read-only readback of which rail renders storyboard stills plus the free ComfyUI GPU rail's own health probe, and the four storyboard guards attached as regressionTests. The comfyui rail stopped being a throw and became a real submit/poll/fetch provider; its guard, and the three that already shipped beside it, were registered nowhere - a test file on disk is not Test Lab registration. No generating step on purpose: one still on a paid rail is real money per lab run.
  * 36 | maintainer@emeraldcoastsystemsgroup.com | Register bounded Futures research and review guards with explicit local-runner and live-proof limits.
  * 37 | maintainer@emeraldcoastsystemsgroup.com   | Registered the experience-shells card (EXPERIENCE_SCENARIOS): a read-only step over the ADR-164 entry pages and the caller-scoped feeds they join, with its adapter unit, classification unit and Chromium regression suites.
+ * 38 | maintainer@emeraldcoastsystemsgroup.com   | Registered the social-signals card (SOCIAL_SIGNAL_SCENARIOS, test-lab-social-signal-scenarios.ts): four deterministic steps over the caller's own /api/content/subscriptions routes (unregistered bot refused, own list, foreign delivery audit 404, own delivery audit) with the unit, real-boundary Postgres/Redis and schema guards attached. Guard: tests/unit/test-lab-social-signal-registration.spec.ts.
  * @module test-lab-scenarios
  */
 
@@ -107,6 +108,7 @@ import { NOTIFICATION_SCENARIOS } from './test-lab-notification-scenarios';
 import { CHANNEL_SCENARIOS } from './test-lab-channel-scenarios';
 import { DEVICE_SCENARIOS } from './test-lab-device-scenarios';
 import { STORYBOARD_SCENARIOS } from './test-lab-storyboard-scenarios';
+import { SOCIAL_SIGNAL_SCENARIOS } from './test-lab-social-signal-scenarios';
 import { renderCatalogVisual, VISUAL_CATALOG } from './test-lab-visual-catalog';
 import type { AppContext } from '@/app/composition/app-context';
 
@@ -284,6 +286,7 @@ export const SCENARIOS: Scenario[] = [
   ...CHANNEL_SCENARIOS,
   ...DEVICE_SCENARIOS,
   ...STORYBOARD_SCENARIOS,
+  ...SOCIAL_SIGNAL_SCENARIOS,
   // ── Rich visuals — every kind rendered deterministically through the real renderer ──────────
   ...VISUAL_CATALOG.map((entry): Scenario => ({
     id: `visual-${entry.kind}`,

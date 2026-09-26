@@ -310,28 +310,56 @@ Defined in `scripts/migrations/059-vids-platform.sql` · RLS **forced** - owner 
 The inbox ingest remains the sensor: it captures caller-owned mail into
 `oshal_inbox_messages` with `category='social'`. The watch/notify layer is
 deliberately separate from the Social Signals display and uses two runtime
-tables:
+tables. `ensureContentSchema` creates both and applies the tier-1
+`<table>_owner_or_operator` row-level security policy on `user_sub` to each, so
+neither is ever policy-less (they are not in migration 060).
 
 ### `oshal_social_signal_subscriptions`
 
 | Column | Type | Null | Notes |
 |---|---|---|---|
 | `subscription_id` | text | no | caller-owned subscription identity |
-| `user_sub` | text | no | owner boundary; every route query includes it |
-| `bot_agent_id` | text | no | requesting bot registry identity |
+| `user_sub` | text | no | owner; RLS policy column, and every route query also filters on it |
+| `bot_agent_id` | text | no | an `agentId` in the active bot registry; unregistered ids are refused `400 unknown_bot` |
 | `selector` | jsonb | no | bounded `{kind: account\|keyword\|topic, value}` descriptor |
 | `active` | boolean | no | disabling a watch is reversible |
 | `created_at` / `updated_at` | timestamp with time zone | no | lifecycle timestamps |
 
 ### `oshal_social_signal_deliveries`
 
-The `(subscription_id, msg_id)` primary key is the delivery claim and prevents
-duplicate notifications. A claim is removed if mesh publication fails, so the
-next poll can retry it; `published_at` is written only after the mesh send
-completes.
+| Column | Type | Null | Notes |
+|---|---|---|---|
+| `subscription_id` / `msg_id` | text | no | primary key; the delivery claim that prevents duplicate notifications |
+| `user_sub` | text | no* | owner; RLS policy column |
+| `bot_agent_id` | text | no* | the bot the event was addressed to |
+| `channel` | text | no* | the derived mesh lane the event was written to |
+| `correlation_id` | text | no* | the stream envelope's `correlationId` |
+| `claimed_at` / `published_at` | timestamp with time zone | no / yes | `published_at` is written only after the mesh send completes |
+
+\* `NOT NULL` on a freshly created table. An installed table gains these four
+columns through `ADD COLUMN IF NOT EXISTS`. Claims made before that keep null
+audit columns, and the owner audit route does not return them.
+
+A claim is removed if mesh publication fails, so the next poll can retry it.
+The failure is logged at ERROR with the correlation id it would have carried.
+
+The poll joins every owner's subscriptions to the inbox sensor, so it runs
+under the SYSTEM identity (`runSocialSignalPollAsSystem`). Under the default
+`OSHAL_DB_GUC_STRICT=deny`, an identity-less query is scoped to no rows.
+Per-owner scoping comes from the join (`i.user_sub = s.user_sub`) and the
+owner-derived lane.
 
 Matched signals publish through the derived
 `social.signal.<owner-hash>.<bot-agent-id>` mesh channel. The raw owner subject
 does not appear in the Redis key, while the owner-bound payload remains available
-to the receiving bot for audit and routing. This source slice does not claim a
-live provider read, a deployed bot receipt, or cross-provider sensor coverage.
+to the receiving bot for audit and routing.
+
+`GET /api/content/subscriptions/:subscriptionId/deliveries` returns the owner's
+delivery rows (message id, bot, lane, correlation id, claimed/published times).
+For a subscription the caller does not own it returns `404`.
+
+These properties are proven locally by
+`tests/unit/social-signal-subscriptions-postgres.spec.ts`, which uses a
+disposable PostgreSQL with the non-superuser enforcing role and a disposable
+Redis. This section does not claim a live provider read, a deployed bot
+receipt, a consumer of the lane, or cross-provider sensor coverage.

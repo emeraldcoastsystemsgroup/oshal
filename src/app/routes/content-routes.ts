@@ -27,6 +27,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: remove Google/Twitter credential forwarding from comms-bot reasoning requests; provider operations resolve credentials only inside audited server-side handlers.
  *
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Isolate the public-feed research child from controller/database/connector secrets with an explicit runtime environment.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | Social signal subscriptions: both tables get tier-1 owner RLS (buildOwnerRlsPolicyStatements) at this lazy-DDL chokepoint, and oshal_social_signal_deliveries gains user_sub, bot_agent_id, channel and correlation_id (created NOT NULL on a fresh table, ADD COLUMN IF NOT EXISTS on an installed one) so each delivery names its owner and the stream entry it produced. The /subscriptions handlers moved to social-signal-routes.ts, which adds bot binding and the owner-only deliveries read.
  *
  * @module content-routes
  */
@@ -36,18 +37,12 @@ import * as path from 'path';
 import { spawn } from 'child_process';
 import { createChildLogger } from '@/shared/logger';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
-import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
+import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap } from '@/shared/services/database';
 import type { AppContext } from '@/app/composition/app-context';
 import { BotNodeClient, createRegistryEndpointResolver } from '@/features/agent-management';
 import { getValidAccessToken } from './connectors-routes';
 import { executeBotOrInline } from './inline-bot-execution';
-import {
-  deleteSocialSignalSubscription,
-  listSocialSignalSubscriptions,
-  parseSocialSignalBotAgentId,
-  parseSocialSignalSelector,
-  registerSocialSignalSubscription,
-} from './social-signal-subscriptions';
+import { mountSocialSignalSubscriptionRoutes } from './social-signal-routes';
 
 const logger = createChildLogger({ module: 'content-routes' });
 
@@ -164,9 +159,20 @@ export async function ensureContentSchema(pool: AppContext['pool']): Promise<voi
       'CREATE INDEX IF NOT EXISTS idx_social_signal_subscriptions_user ON oshal_social_signal_subscriptions (user_sub, active, created_at DESC)',
       `CREATE TABLE IF NOT EXISTS oshal_social_signal_deliveries (
         subscription_id TEXT NOT NULL, msg_id TEXT NOT NULL,
+        user_sub TEXT NOT NULL, bot_agent_id TEXT NOT NULL, channel TEXT NOT NULL, correlation_id TEXT NOT NULL,
         claimed_at TIMESTAMPTZ NOT NULL DEFAULT now(), published_at TIMESTAMPTZ,
         PRIMARY KEY (subscription_id, msg_id)
       )`,
+      // Converge a table created before the audit columns existed; claims made before then keep
+      // NULL audit columns and are never returned by the owner deliveries read.
+      'ALTER TABLE oshal_social_signal_deliveries ADD COLUMN IF NOT EXISTS user_sub TEXT',
+      'ALTER TABLE oshal_social_signal_deliveries ADD COLUMN IF NOT EXISTS bot_agent_id TEXT',
+      'ALTER TABLE oshal_social_signal_deliveries ADD COLUMN IF NOT EXISTS channel TEXT',
+      'ALTER TABLE oshal_social_signal_deliveries ADD COLUMN IF NOT EXISTS correlation_id TEXT',
+      'CREATE INDEX IF NOT EXISTS idx_social_signal_deliveries_owner ON oshal_social_signal_deliveries (user_sub, subscription_id, claimed_at DESC)',
+      // Tier-1 owner RLS at the chokepoint, after the CREATEs, so neither table is ever policy-less.
+      ...buildOwnerRlsPolicyStatements('oshal_social_signal_subscriptions', 'user_sub'),
+      ...buildOwnerRlsPolicyStatements('oshal_social_signal_deliveries', 'user_sub'),
     ],
     requirements: [
       { table: 'oshal_content_topics', columns: ['user_sub', 'cards', 'focus', 'generated_at'] },
@@ -195,7 +201,16 @@ export async function ensureContentSchema(pool: AppContext['pool']): Promise<voi
       },
       {
         table: 'oshal_social_signal_deliveries',
-        columns: ['subscription_id', 'msg_id', 'claimed_at', 'published_at'],
+        columns: [
+          'subscription_id',
+          'msg_id',
+          'user_sub',
+          'bot_agent_id',
+          'channel',
+          'correlation_id',
+          'claimed_at',
+          'published_at',
+        ],
       },
     ],
   });
@@ -518,41 +533,8 @@ export function createContentRoutes(ctx: AppContext, apiDir: string): Router {
     res.json({ ok: true, emailSocialScan: on });
   });
 
-  /**
-   * Caller-owned watch registration. The descriptor is deliberately small and
-   * deterministic; provider credentials and sensor reads stay in core services.
-   */
-  router.post('/subscriptions', async (req, res) => {
-    const sub = callerSub(req); if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
-    const body = req.body as { botAgentId?: unknown; selector?: unknown };
-    const botAgentId = parseSocialSignalBotAgentId(body?.botAgentId);
-    const selector = parseSocialSignalSelector(body?.selector);
-    if (!botAgentId || !selector) {
-      res.status(400).json({ error: 'botAgentId and a bounded selector { kind, value } are required' });
-      return;
-    }
-    try {
-      const subscriptionId = await registerSocialSignalSubscription(ctx.pool, sub, botAgentId, selector);
-      res.status(201).json({ subscriptionId, botAgentId, selector, active: true });
-    } catch (err) {
-      logger.error({ err }, 'social signal subscription registration failed');
-      res.status(502).json({ error: 'subscription_unavailable' });
-    }
-  });
-
-  /** List only the caller's own watches; no captured signal bodies are returned here. */
-  router.get('/subscriptions', async (req, res) => {
-    const sub = callerSub(req); if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
-    res.json({ subscriptions: await listSocialSignalSubscriptions(ctx.pool, sub) });
-  });
-
-  /** Disable only a watch belonging to the caller. */
-  router.delete('/subscriptions/:subscriptionId', async (req, res) => {
-    const sub = callerSub(req); if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
-    const subscriptionId = String(req.params.subscriptionId || '');
-    if (!/^[0-9a-f-]{36}$/i.test(subscriptionId)) { res.status(400).json({ error: 'invalid_subscription_id' }); return; }
-    res.json({ ok: await deleteSocialSignalSubscription(ctx.pool, sub, subscriptionId) });
-  });
+  /** Caller-owned social signal watches, bot binding and the owner delivery audit (social-signal-routes.ts). */
+  mountSocialSignalSubscriptionRoutes(router, { pool: ctx.pool });
 
   /** GET /signals — engagement signals (work anniversaries, new jobs, …) mined from connected email. Opt-in. */
   router.get('/signals', async (req, res) => {
