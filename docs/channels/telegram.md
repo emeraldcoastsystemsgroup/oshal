@@ -35,13 +35,26 @@ dispatches to the accountable bot, exactly like the cockpit does.
    rejects anything without it. The secret travels ONLY in that header — never in the URL, which
    would persist it to access/audit logs on every delivery.
 
-## How a user connects (self-serve)
+## How a user connects (self-serve, from the cockpit card)
 
-1. Cockpit → **Channels → Connect Telegram** calls `POST /api/channels/telegram/link`, which mints a
-   one-time code and a `https://t.me/<bot>?start=<code>` deep link (valid 15 minutes).
-2. The user taps it; Telegram opens the bot and sends `/start <code>`.
-3. The bot redeems the code, binding **(telegram, that chat) → the user's sub** permanently. From then
-   on the user just messages the bot and the swarm answers.
+1. Sign in to the cockpit and open **Chat channels** (left rail under the platform tools, or
+   Settings → Chat channels). *Screen:* under "Your channels", a **Telegram** card with the pill
+   **available** and `Bot: @<bot username>`. "not set up" means the operator step above is not done.
+2. Click **Link my Telegram**. *Screen:* a code panel with **Open Telegram and connect** (the
+   `https://t.me/<bot>?start=<code>` deep link), a **Copy** button, and a countdown — the code is
+   one-time and works for 15 minutes. Behind the button is `POST /api/channels/telegram/link`.
+3. Click **Open Telegram and connect**. Telegram opens the bot and sends `/start <code>` for you
+   (on a phone this switches to the Telegram app; on a desktop it may ask which app opens the link).
+   If the link does not open, message the bot yourself with `/start <code>`.
+4. *Reply:* `✅ Connected.` — the bot has bound **(telegram, that chat) → your sub**. From then on
+   just message the bot and the swarm answers. The card's **Linked accounts** list shows the chat
+   with an **Unlink** button.
+
+Replies that mean something else: `That link code is invalid or expired` (older than 15 minutes,
+already used, or minted for another channel — click **Link my Telegram** again), `This chat isn't
+linked to an oshal account yet` (send the code from this chat first), `This chat was connected before
+oshal recorded which sign-in it belongs to` (a pre-#841 link — link again from the card; the re-link
+repairs it), `already connected to a different oshal account` (that account unlinks it first).
 
 `GET /api/channels` lists a user's linked channels + whether the bot is configured;
 `DELETE /api/channels/telegram/:channelUserId` unlinks one (owner-scoped).

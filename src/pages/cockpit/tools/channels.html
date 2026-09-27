@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="en" data-theme="midnight">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chat channels — message your swarm from Discord, Telegram, SMS or WhatsApp</title>
+<link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+<script src="/shared/ui/js/surface-theme.js"></script>
+<style>
+  :root {
+    --bg: var(--bg-primary);
+    --panel: var(--bg-card);
+    --panel2: var(--bg-tertiary);
+    --line: var(--border-color);
+    --text: var(--text-primary);
+    --muted: var(--text-muted);
+    --accent: var(--accent-primary, #5b8cff);
+    --ok: var(--status-success, #36d399);
+    --warn: var(--status-warning, #f4bf50);
+    --bad: var(--status-error, #ff8585);
+    --chip: var(--bg-tertiary);
+    --solid-panel: linear-gradient(var(--panel), var(--panel));
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
+  a { color: var(--accent); }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 24px 20px 90px; }
+  h1 { font-size: 25px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 16px; font-size: 13.5px; max-width: 74ch; }
+  .status { color: var(--muted); font-size: 12.5px; margin: 8px 0 16px; min-height: 17px; }
+  .status.err { color: var(--bad); }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin: 26px 0 10px; }
+  .card { border: 1px solid var(--line); border-radius: 11px; padding: 14px 16px; margin-bottom: 12px; background: var(--panel); }
+  .card h3 { margin: 0 0 2px; font-size: 16px; display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+  .card .meta { color: var(--muted); font-size: 12.5px; margin: 0 0 10px; }
+  .f { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+  .f > span { color: var(--muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; }
+  input { border: 1px solid var(--line); background: var(--panel2); color: var(--text); border-radius: 8px;
+    padding: 7px 10px; font: inherit; font-size: 13.5px; width: 100%; }
+  input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button, a.btn { cursor: pointer; border: 1px solid var(--line); background: var(--chip); color: var(--text);
+    border-radius: 9px; padding: 8px 14px; font: inherit; font-size: 13.5px; font-weight: 600; text-decoration: none;
+    display: inline-block; }
+  button.primary, a.btn.primary { background: var(--accent); color: #04122e; border-color: transparent; }
+  button:disabled { opacity: .55; cursor: default; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
+  .pill { display: inline-block; border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; font-size: 11.5px; color: var(--muted); }
+  .pill.on { border-color: var(--ok); color: var(--ok); }
+  .pill.warn { border-color: var(--warn); color: var(--warn); }
+  .pill.bad { border-color: var(--bad); color: var(--bad); }
+  .result { font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+  .result.ok { color: var(--ok); }
+  .result.bad { color: var(--bad); }
+  .problem { border: 1px solid var(--bad); border-radius: 9px; padding: 9px 12px; font-size: 13px; margin: 8px 0; }
+  .hint { color: var(--muted); font-size: 12.5px; margin: 10px 0 0; }
+  .codebox { border: 1px dashed var(--line); border-radius: 9px; padding: 10px 12px; margin-top: 10px; background: var(--panel2); }
+  .codebox .send { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 17px; letter-spacing: .04em; }
+  .codebox ol { margin: 6px 0 0; padding-left: 20px; font-size: 13px; }
+  .codebox li { margin: 2px 0; }
+  .link-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 0; border-top: 1px solid var(--line); font-size: 13.5px; }
+  .link-row:first-child { border-top: none; }
+  .link-row .who { flex: 1; min-width: 160px; }
+  .empty { border: 1px dashed var(--line); border-radius: 11px; padding: 18px; color: var(--muted); font-size: 13.5px; }
+  .foot { color: var(--muted); font-size: 12px; margin-top: 28px; border-top: 1px solid var(--line); padding-top: 12px; max-width: 84ch; }
+  code { background: var(--chip); border-radius: 5px; padding: 0 5px; font-size: 12.5px; }
+</style>
+<link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+<div class="wrap">
+  <h1>Chat channels</h1>
+  <p class="sub">Message your swarm from an app you already have open. Every message runs on your own
+  assistant with your own connectors and cost tracking — the chat app is only the surface. Link a
+  channel once with a one-time code; unlink it here any time.</p>
+
+  <div class="status" id="status">Loading…</div>
+
+  <section id="operatorSection" hidden data-testid="operator-section">
+    <h2>Deployment bot setup <span class="pill">operator</span></h2>
+    <div class="card" data-testid="discord-admin-card">
+      <h3>Discord bot <span class="pill" id="discordAdminPill" data-testid="discord-admin-pill">…</span></h3>
+      <p class="meta" id="discordAdminMeta" data-testid="discord-admin-meta"></p>
+      <div class="problem" id="discordAdminProblem" data-testid="discord-admin-problem" hidden></div>
+      <label class="f"><span>Bot token</span>
+        <input id="discordToken" data-testid="discord-token" type="password" autocomplete="off" spellcheck="false"
+          placeholder="Paste the token from Developer Portal → your app → Bot → Reset Token" /></label>
+      <div class="actions">
+        <button class="primary" id="discordSaveBtn" data-testid="discord-save" type="button">Save &amp; connect</button>
+        <a class="btn" id="discordInviteLink" data-testid="discord-invite" target="_blank" rel="noopener" hidden>Add the bot to your server</a>
+        <button id="discordDisconnectBtn" data-testid="discord-disconnect" type="button" hidden>Disconnect</button>
+        <span class="result" id="discordAdminResult" data-testid="discord-admin-result"></span>
+      </div>
+      <p class="hint"><strong>Message Content intent must be ON</strong>, or the bot cannot read DMs:
+        Discord Developer Portal → Applications → your app → <strong>Bot</strong> → Privileged Gateway Intents →
+        <strong>Message Content Intent</strong> → Save Changes. The token is validated with Discord before it is saved,
+        stored encrypted, and never shown again.</p>
+    </div>
+  </section>
+
+  <h2>Your channels</h2>
+  <div id="userCards"></div>
+
+  <h2>Linked accounts</h2>
+  <div id="links" data-testid="links"></div>
+
+  <p class="foot">A link binds one chat identity (a Discord user, a Telegram chat, a phone number) to
+  <strong>your</strong> account only. A code works for 15 minutes, for the one channel it was made for,
+  once. An identity already linked to someone else is never moved by your code — they unlink it first.</p>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const $status = document.getElementById('status');
+  const $userCards = document.getElementById('userCards');
+  const $links = document.getElementById('links');
+  const $operator = document.getElementById('operatorSection');
+  const $adminPill = document.getElementById('discordAdminPill');
+  const $adminMeta = document.getElementById('discordAdminMeta');
+  const $adminProblem = document.getElementById('discordAdminProblem');
+  const $token = document.getElementById('discordToken');
+  const $saveBtn = document.getElementById('discordSaveBtn');
+  const $invite = document.getElementById('discordInviteLink');
+  const $disconnectBtn = document.getElementById('discordDisconnectBtn');
+  const $adminResult = document.getElementById('discordAdminResult');
+
+  /** Per channel: display name, how the code is delivered, and the specific not-configured wording. */
+  const PROVIDERS = {
+    discord: { label: 'Discord', verb: 'DM the bot',
+      unconfigured: 'Discord is not set up on this deployment yet. An operator pastes the bot token in "Deployment bot setup" above.' },
+    telegram: { label: 'Telegram', verb: 'open the bot',
+      unconfigured: 'Telegram is not set up on this deployment yet (no bot token). An operator adds TELEGRAM_BOT_TOKEN and registers the webhook.' },
+    sms: { label: 'SMS', verb: 'text the number',
+      unconfigured: 'SMS is not set up on this deployment yet (no inbound number). An operator adds TWILIO_INBOUND_NUMBER.' },
+    whatsapp: { label: 'WhatsApp', verb: 'message the number',
+      unconfigured: 'WhatsApp is not set up on this deployment yet (no WhatsApp sender). An operator adds TWILIO_WHATSAPP_FROM.' },
+  };
+  const timers = new Map();
+  let channels = null;
+
+  function say(text, bad) {
+    $status.textContent = text;
+    $status.classList.toggle('err', Boolean(bad));
+  }
+
+  async function readJson(res) {
+    const raw = await res.text();
+    if (!raw) return null;
+    try { return JSON.parse(raw); } catch { return null; }
+  }
+
+  function el(tag, cls, text) {
+    const node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  /** The specific reason a request failed, from the route's error code; never a bare "error". */
+  function explain(status, data, provider) {
+    const code = data && data.error;
+    if (status === 401) return 'Not signed in — reload the cockpit to authenticate.';
+    if (code === 'issuer_required') return data.message || 'Your sign-in did not carry a verified issuer. Sign out, sign back in, and try again.';
+    if (provider && code === provider + '_not_configured') return PROVIDERS[provider].unconfigured;
+    if (code === 'token_required' || code === 'token_malformed') return data.message;
+    if (code === 'token_invalid') return 'Token invalid: ' + (data.message || 'Discord rejected it.');
+    if (code === 'discord_unreachable') return 'Discord could not be reached: ' + (data.message || 'try again in a moment.');
+    if (data && data.message) return data.message;
+    return (code ? String(code) : 'HTTP ' + status);
+  }
+
+  /** mm:ss countdown to `until`, stopped and reworded at zero. */
+  function countdown(node, until, key) {
+    if (timers.has(key)) clearInterval(timers.get(key));
+    const tick = () => {
+      const left = Math.max(0, Math.floor((until - Date.now()) / 1000));
+      const mm = String(Math.floor(left / 60)).padStart(2, '0');
+      const ss = String(left % 60).padStart(2, '0');
+      node.textContent = left > 0 ? 'Code expires in ' + mm + ':' + ss : 'Code expired — generate a new one.';
+      if (left <= 0) { clearInterval(timers.get(key)); timers.delete(key); node.classList.add('bad'); }
+    };
+    tick();
+    timers.set(key, setInterval(tick, 1000));
+  }
+
+  async function copyText(text, resultNode) {
+    try {
+      await navigator.clipboard.writeText(text);
+      resultNode.textContent = 'Copied.';
+      resultNode.className = 'result ok';
+    } catch (err) {
+      resultNode.textContent = 'Copy failed — select the text and copy it yourself.';
+      resultNode.className = 'result bad';
+    }
+  }
+
+  /** The panel shown after a code is minted: the exact text to send, copy, the one-click opener, the countdown. */
+  function codePanel(provider, data) {
+    const send = data.send || ('LINK ' + data.code);
+    const box = el('div', 'codebox');
+    box.dataset.testid = provider + '-code-panel';
+    box.appendChild(el('div', 'meta', 'Send exactly this to ' + PROVIDERS[provider].label + ':'));
+    const sendLine = el('div', 'send', send);
+    sendLine.dataset.testid = provider + '-send-text';
+    box.appendChild(sendLine);
+    const steps = el('ol');
+    const actions = el('div', 'actions');
+    const copyBtn = el('button', '', 'Copy');
+    copyBtn.type = 'button';
+    copyBtn.dataset.testid = provider + '-copy';
+    const copied = el('span', 'result');
+    copyBtn.addEventListener('click', () => copyText(send, copied));
+    actions.appendChild(copyBtn);
+    if (provider === 'discord') {
+      if (data.dmUrl) {
+        const open = el('a', 'btn primary', 'Open a DM with the bot');
+        open.href = data.dmUrl; open.target = '_blank'; open.rel = 'noopener';
+        open.dataset.testid = 'discord-open-dm';
+        actions.appendChild(open);
+      }
+      steps.appendChild(el('li', '', 'Click "Open a DM with the bot" (or find ' + (data.botUsername ? '@' + data.botUsername : 'the bot') + ' in Discord), then click the bot\'s name → Message.'));
+      steps.appendChild(el('li', '', 'Paste ' + send + ' into the DM and press Enter.'));
+      steps.appendChild(el('li', '', 'The bot answers "Connected". From then on, just DM it.'));
+    } else if (provider === 'telegram') {
+      if (data.deepLink) {
+        const open = el('a', 'btn primary', 'Open Telegram and connect');
+        open.href = data.deepLink; open.target = '_blank'; open.rel = 'noopener';
+        open.dataset.testid = 'telegram-open';
+        actions.appendChild(open);
+      }
+      steps.appendChild(el('li', '', 'Tap "Open Telegram and connect" — Telegram opens ' + (data.botUsername ? '@' + data.botUsername : 'the bot') + ' and sends /start with your code for you.'));
+      steps.appendChild(el('li', '', 'If the link does not open, message the bot yourself: /start ' + data.code));
+    } else {
+      const number = String(data.textTo || '').replace(/^whatsapp:/i, '');
+      const numberLine = el('div', '', 'Number: ' + number);
+      numberLine.dataset.testid = provider + '-number';
+      box.appendChild(numberLine);
+      const open = el('a', 'btn primary', provider === 'whatsapp' ? 'Open WhatsApp with the message ready' : 'Open Messages with the text ready');
+      open.href = provider === 'whatsapp'
+        ? 'https://wa.me/' + number.replace(/[^\d]/g, '') + '?text=' + encodeURIComponent(send)
+        : 'sms:' + number + '?body=' + encodeURIComponent(send);
+      open.target = '_blank'; open.rel = 'noopener';
+      open.dataset.testid = provider + '-open';
+      actions.appendChild(open);
+      steps.appendChild(el('li', '', 'Send ' + send + ' to ' + number + ' from the phone you want linked.'));
+      steps.appendChild(el('li', '', 'You get a "Connected" reply. From then on, just ' + PROVIDERS[provider].verb + '.'));
+    }
+    actions.appendChild(copied);
+    const expiry = el('div', 'result');
+    expiry.dataset.testid = provider + '-expiry';
+    countdown(expiry, Date.now() + (Number(data.expiresInMinutes) || 15) * 60 * 1000, provider);
+    box.appendChild(actions);
+    box.appendChild(steps);
+    box.appendChild(expiry);
+    return box;
+  }
+
+  /** One "Your <channel>" card: configured state, the link button, and the code panel once minted. */
+  function userCard(provider, state) {
+    const meta = PROVIDERS[provider];
+    const card = el('div', 'card');
+    card.dataset.testid = provider + '-user-card';
+    const h3 = el('h3', '', meta.label);
+    const pill = el('span', 'pill ' + (state.configured ? 'on' : 'off'), state.configured ? 'available' : 'not set up');
+    pill.dataset.testid = provider + '-user-pill';
+    h3.appendChild(pill);
+    card.appendChild(h3);
+    const detail = provider === 'discord' && state.bot ? 'Bot: @' + state.bot.username + (state.connected ? ' (online)' : ' (offline)')
+      : provider === 'telegram' && state.bot ? 'Bot: @' + state.bot.username
+      : (provider === 'sms' || provider === 'whatsapp') && state.number ? 'Number: ' + String(state.number).replace(/^whatsapp:/i, '') : '';
+    card.appendChild(el('p', 'meta', state.configured ? detail : meta.unconfigured));
+    if (provider === 'discord' && state.problem === 'intent_missing') {
+      card.appendChild(el('div', 'problem', 'The bot is configured but cannot read DMs: the Message Content intent is off in the Discord Developer Portal. Ask the operator to switch it on.'));
+    }
+    const actions = el('div', 'actions');
+    const btn = el('button', 'primary', 'Link my ' + meta.label);
+    btn.type = 'button';
+    btn.dataset.testid = provider + '-link';
+    btn.disabled = !state.configured;
+    const result = el('span', 'result');
+    result.dataset.testid = provider + '-link-result';
+    actions.appendChild(btn); actions.appendChild(result);
+    card.appendChild(actions);
+    const panelHost = el('div');
+    card.appendChild(panelHost);
+    btn.addEventListener('click', async () => {
+      btn.disabled = true; result.className = 'result'; result.textContent = 'Generating a code…';
+      let res;
+      try {
+        res = await fetch('/api/channels/' + provider + '/link', { method: 'POST', credentials: 'same-origin' });
+      } catch (err) {
+        result.className = 'result bad'; result.textContent = 'Network error: ' + (err && err.message ? err.message : String(err)); btn.disabled = false; return;
+      }
+      const data = await readJson(res);
+      btn.disabled = false;
+      if (!res.ok) { result.className = 'result bad'; result.textContent = explain(res.status, data, provider); return; }
+      result.textContent = '';
+      panelHost.replaceChildren(codePanel(provider, data));
+    });
+    return card;
+  }
+
+  function linkRow(link) {
+    const row = el('div', 'link-row');
+    row.dataset.testid = 'link-' + link.provider;
+    const label = PROVIDERS[link.provider] ? PROVIDERS[link.provider].label : link.provider;
+    row.appendChild(el('span', 'who', label + ': ' + (link.displayName ? link.displayName + ' · ' : '') + link.channelUserId));
+    row.appendChild(el('span', 'result', 'linked ' + (link.linkedAt ? new Date(link.linkedAt).toLocaleString() : '')));
+    const unlink = el('button', '', 'Unlink');
+    unlink.type = 'button';
+    unlink.dataset.testid = 'unlink-' + link.provider + '-' + link.channelUserId;
+    unlink.addEventListener('click', async () => {
+      unlink.disabled = true;
+      const res = await fetch('/api/channels/' + link.provider + '/' + encodeURIComponent(link.channelUserId), { method: 'DELETE', credentials: 'same-origin' });
+      if (!res.ok) { unlink.disabled = false; say('Unlink failed: ' + explain(res.status, await readJson(res)), true); return; }
+      await load();
+    });
+    row.appendChild(unlink);
+    return row;
+  }
+
+  function renderUser(data) {
+    $userCards.replaceChildren();
+    for (const provider of Object.keys(PROVIDERS)) $userCards.appendChild(userCard(provider, data[provider] || { configured: false }));
+    $links.replaceChildren();
+    const links = Array.isArray(data.links) ? data.links : [];
+    if (!links.length) {
+      $links.appendChild(el('div', 'empty', 'Nothing linked yet. Link a channel above, send the code, and it appears here.'));
+    } else {
+      for (const link of links) $links.appendChild(linkRow(link));
+    }
+    channels = data;
+  }
+
+  /** The operator card, from GET/POST/DELETE /api/channels/admin/discord state. Never shows a token. */
+  function renderAdmin(state) {
+    $operator.hidden = false;
+    const conn = state.connection || {};
+    let pillText = 'not configured', pillClass = 'pill';
+    if (state.configured && conn.problem) { pillText = conn.problem === 'intent_missing' ? 'intent off' : 'token rejected'; pillClass = 'pill bad'; }
+    else if (state.configured && conn.state === 'connected') { pillText = 'Connected'; pillClass = 'pill on'; }
+    else if (state.configured) { pillText = 'Offline (' + (conn.state || 'starting') + ')'; pillClass = 'pill warn'; }
+    $adminPill.textContent = pillText; $adminPill.className = pillClass;
+    const bits = [];
+    if (state.bot) bits.push('Bot: @' + state.bot.username + (state.bot.applicationName ? ' (app "' + state.bot.applicationName + '")' : ''));
+    if (state.source) bits.push('token from ' + (state.source === 'database' ? 'the cockpit' : state.source === 'env' ? 'DISCORD_BOT_TOKEN in .env (seed)' : state.source));
+    if (state.messageContentIntent === true) bits.push('Message Content intent: ON');
+    if (state.messageContentIntent === false) bits.push('Message Content intent: OFF');
+    $adminMeta.textContent = state.configured ? bits.join(' · ') : 'No bot yet. Paste a bot token below to connect one — nothing else to edit or restart.';
+    $adminProblem.hidden = true;
+    if (conn.problem === 'intent_missing' || state.messageContentIntent === false) {
+      $adminProblem.hidden = false;
+      $adminProblem.textContent = 'Message Content intent is off. Discord Developer Portal → Applications → your app → Bot → Privileged Gateway Intents → switch Message Content Intent ON → Save Changes. Then paste the token again (or wait: the bot reconnects on the next save).';
+    } else if (conn.problem === 'token_invalid') {
+      $adminProblem.hidden = false;
+      $adminProblem.textContent = 'Discord rejected the saved token at the Gateway. Reset the token (Bot → Reset Token) and paste the new one.';
+    }
+    $invite.hidden = !state.inviteUrl;
+    if (state.inviteUrl) $invite.href = state.inviteUrl;
+    $disconnectBtn.hidden = !state.configured || state.source === 'seam';
+  }
+
+  async function loadAdmin() {
+    let res;
+    try { res = await fetch('/api/channels/admin/discord', { credentials: 'same-origin' }); } catch { $operator.hidden = true; return; }
+    if (res.status === 403 || res.status === 401) { $operator.hidden = true; return; }
+    const data = await readJson(res);
+    if (!res.ok || !data) { $operator.hidden = true; return; }
+    renderAdmin(data);
+  }
+
+  $saveBtn.addEventListener('click', async () => {
+    const token = $token.value.trim();
+    $adminResult.className = 'result';
+    if (!token) { $adminResult.className = 'result bad'; $adminResult.textContent = 'Paste the bot token first.'; return; }
+    $saveBtn.disabled = true; $adminResult.textContent = 'Checking the token with Discord and connecting…';
+    let res;
+    try {
+      res = await fetch('/api/channels/admin/discord', { method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
+    } catch (err) {
+      $saveBtn.disabled = false; $adminResult.className = 'result bad'; $adminResult.textContent = 'Network error: ' + (err && err.message ? err.message : String(err)); return;
+    }
+    $token.value = '';
+    $saveBtn.disabled = false;
+    const data = await readJson(res);
+    if (!res.ok) { $adminResult.className = 'result bad'; $adminResult.textContent = explain(res.status, data); return; }
+    renderAdmin(data);
+    const conn = data.connection || {};
+    $adminResult.className = conn.problem ? 'result bad' : 'result ok';
+    $adminResult.textContent = conn.problem === 'intent_missing' ? 'Saved, but Discord refused the connection: Message Content intent is off (see above).'
+      : conn.problem === 'token_invalid' ? 'Saved, but Discord rejected the token at the Gateway.'
+      : conn.state === 'connected' ? 'Connected as @' + (data.bot ? data.bot.username : 'bot') + '.'
+      : 'Saved. The bot is connecting…';
+    await load();
+  });
+
+  $disconnectBtn.addEventListener('click', async () => {
+    $disconnectBtn.disabled = true;
+    const res = await fetch('/api/channels/admin/discord', { method: 'DELETE', credentials: 'same-origin' });
+    $disconnectBtn.disabled = false;
+    const data = await readJson(res);
+    if (!res.ok) { $adminResult.className = 'result bad'; $adminResult.textContent = explain(res.status, data); return; }
+    renderAdmin(data);
+    $adminResult.className = 'result'; $adminResult.textContent = 'Disconnected. The token was forgotten.';
+    await load();
+  });
+
+  async function load() {
+    say('Loading…');
+    let res;
+    try {
+      res = await fetch('/api/channels', { credentials: 'same-origin' });
+    } catch (err) {
+      say('Network error reaching /api/channels: ' + (err && err.message ? err.message : String(err)), true);
+      return;
+    }
+    if (res.status === 401) { say('Not signed in — reload the cockpit to authenticate.', true); return; }
+    const data = await readJson(res);
+    if (!res.ok || !data) { say('Could not read your channels: ' + explain(res.status, data), true); return; }
+    renderUser(data);
+    await loadAdmin();
+    const wired = Object.keys(PROVIDERS).filter((p) => data[p] && data[p].configured);
+    say((wired.length ? 'Available on this deployment: ' + wired.map((p) => PROVIDERS[p].label).join(', ') : 'No channel is set up on this deployment yet')
+      + '. Linked to you: ' + (Array.isArray(data.links) ? data.links.length : 0) + '.');
+  }
+
+  load();
+})();
+</script>
+</body>
+</html>

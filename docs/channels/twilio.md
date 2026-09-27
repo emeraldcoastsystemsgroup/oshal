@@ -59,10 +59,15 @@ A text to the deployment's Twilio number reaches the accountable Jarvis bot of t
 owns that number, and nobody else. The binding is the same `channel_links` identity store Telegram
 uses, with `provider = 'sms'` and the sender's E.164 number as the identity:
 
-1. In the cockpit, `POST /api/channels/sms/link` mints a one-time code (15 minutes) and returns the
-   number to text it to.
-2. The user texts `LINK <code>` to that number. The signed webhook
-   (`POST /api/sms/inbound`) redeems it and the binding is written as that user.
+1. In the cockpit open **Chat channels** (left rail, or Settings → Chat channels) and click
+   **Link my SMS** on the SMS card. *Screen:* a code panel with the number to text, the exact line
+   `LINK <code>`, a **Copy** button, an **Open Messages with the text ready** button (an `sms:` link
+   that pre-fills the text on a phone) and a 15-minute countdown. Behind it is
+   `POST /api/channels/sms/link`, which returns the number and the code.
+2. The user texts `LINK <code>` to that number from the phone they want linked. The signed webhook
+   (`POST /api/sms/inbound`) redeems it and the binding is written as that user. *Reply:*
+   `Connected.` The card's **Linked accounts** list shows the number with an **Unlink** button.
+   "SMS is not set up on this deployment yet" on the card means `TWILIO_INBOUND_NUMBER` is unset.
 3. From then on, a text from that number runs on the user's Jarvis under
    `runWithRequestIdentity({ sub, principalIssuer, isOperator: false })` (the verified issuer stored
    on the link; a link without one is refused with a re-link reply), and the answer returns over the user's OWN
@@ -106,10 +111,13 @@ WhatsApp arrives on the same signed webhook (`POST /api/sms/inbound`) with `what
 SMS binding never authorizes the same number on WhatsApp and a code minted for one cannot link the
 other.
 
-1. `POST /api/channels/whatsapp/link` (auth-gated) mints a one-time code and returns
-   `textTo: "whatsapp:<sender>"`. The sender is `TWILIO_WHATSAPP_FROM` when it is set (E.164, the
-   `whatsapp:` prefix is added for you), otherwise the inbound SMS number.
-2. The user sends `LINK <code>` to that WhatsApp sender.
+1. On the cockpit **Chat channels** page click **Link my WhatsApp**. *Screen:* the WhatsApp sender
+   number, the exact line `LINK <code>`, **Copy**, an **Open WhatsApp with the message ready** button
+   (a `wa.me` link with the text pre-filled) and a 15-minute countdown. Behind it is
+   `POST /api/channels/whatsapp/link` (auth-gated), which returns `textTo: "whatsapp:<sender>"` —
+   `TWILIO_WHATSAPP_FROM` when it is set (E.164, the `whatsapp:` prefix is added for you), otherwise
+   the inbound SMS number.
+2. The user sends `LINK <code>` to that WhatsApp sender. *Reply:* `Connected.`
 3. From then on a WhatsApp message runs on the user's Jarvis as that user, each `MessageSid` runs
    once, and the answer leaves **from the WhatsApp sender the user messaged** (the inbound `To`)
    through the fixed per-user Twilio operation. Without a usable inbound `To`, it falls back to the

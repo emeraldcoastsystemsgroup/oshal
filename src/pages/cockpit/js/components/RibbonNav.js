@@ -17,6 +17,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com  | ADR-147/148: App Loader and Users join Dead Letters as operator-only platform-tray entries (iframe tool views over /app-loader and /users). Operator asked why the store was not reachable from the default /cockpit/ page — it was reachable only by typing the URL. Gated by the same _loadOperatorState flag, which reads whoami -> isOperator(), so a role granted on the Users page surfaces them without an env-file edit; the routes self-gate with requiresOperator regardless.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | app-navigate may carry a `query` (sanitizeToolQuery: k=v&k=v, URL-safe, bounded) that the view controller appends to that tool's OWN iframeUrl — so the Create front door can open AI Office on a purpose (kind/starter/theme). A query onto the already-active tile re-renders it. Nothing here can point a frame anywhere but the tile's own URL.
  * 14 | maintainer@emeraldcoastsystemsgroup.com | Delegate explicitly marked default-sidebar pages to admitted top workspaces while keeping active pages, focused app navigation and registered iframe targets available.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com | Platform tools: add 'tool-channels' (Chat channels) — the self-serve page for Discord, Telegram, SMS and WhatsApp (link a chat identity with a one-time code, unlink it, and for an operator paste the deployment's Discord bot token). A static page under src/pages/cockpit/tools/ like Notifications; nothing in the cockpit linked the channel routes before, so "cockpit → Channels" in the docs pointed at a page that did not exist.
  * 15 | maintainer@emeraldcoastsystemsgroup.com | ADR-149 locked tiles: a synthesised profile item may carry `locked` (the target package is not discoverable for this person). The item is forwarded into the view, rendered in the existing guest-disabled treatment (lock glyph, dimmed) with the kernel's role-guidance link on the button, and a click follows that link top-level — where the 403 page would have sent the person — instead of opening a dead frame. ribbonTilePresentation is the pure, exported decision so it can be tested against real view shapes.
  */
 
@@ -602,6 +603,16 @@ export class RibbonNav {
         // quiet window, and destination, plus a confirm-gated real test send that reports the
         // router's actual outcome rather than an unconditional success.
         toolUi: { iframeUrl: '/cockpit/tools/notify.html', sidebarLabel: 'Notifications' },
+      },
+      {
+        id: 'tool-channels',
+        icon: 'codicon codicon-comment-discussion',
+        label: 'Chat channels',
+        section: 'bottom',
+        // Self-serve messaging channels (/api/channels): link Discord / Telegram / SMS / WhatsApp to
+        // this account with a one-time code, unlink, and — for an operator — paste the deployment's
+        // Discord bot token (validated live, stored encrypted, Gateway started in process).
+        toolUi: { iframeUrl: '/cockpit/tools/channels.html', sidebarLabel: 'Chat channels' },
       },
       {
         id: 'tool-my-data',

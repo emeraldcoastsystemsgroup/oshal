@@ -15,6 +15,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Decomposed global-tab and bot-tab controllers out of SettingsView to bring the file back under the governance cap
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Hardening-backlog #13: the model-selector last-resort fallback no longer hardcodes the codex-only `gpt-5.3-codex` (which fails under a non-codex provider lacking codex auth); falls back to '' (no explicit model → backend uses the provider's own default). The per-provider catalogs keep codex models correctly scoped under openai-codex.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Dropped the retired Presentron + deprecated Google Search MCP config loads and health probes from Global Settings; RAG remains the only shared service-runtime surface
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | Added a "Chat channels" settings tab that embeds the self-serve channels page (/cockpit/tools/channels.html), the same way Connections embeds /utilities, so linking Discord/Telegram/SMS/WhatsApp and the operator's Discord bot setup are reachable from Settings as well as the platform-tools rail.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Added a first-class "Knowledge" (RAG) settings tab (SettingsKnowledgeTab): ingestion tool + permission-aware visibility, replacing the flaky embedded-chat RAG popup. Data-driven tab bar honors a one-shot deep-link tab hint so the cockpit header RAG icon lands directly on Knowledge
  */
 
@@ -32,6 +33,7 @@ const SETTINGS_TABS = [
   ['bots', 'Bot Settings'],
   ['knowledge', 'Knowledge'],
   ['connections', 'Connections'],
+  ['channels', 'Chat channels'],
 ];
 
 /**
@@ -153,6 +155,14 @@ export class SettingsView {
       // Code). Embeds the connectors hub so config lives in one Settings home;
       // Claude Code here propagates to every bot (the OSHAL→bot config loop).
       body.innerHTML = '<iframe src="/utilities" title="Connections" style="width:100%;height:72vh;border:none;border-radius:8px;"></iframe>';
+      return;
+    }
+
+    if (this.currentTab === 'channels') {
+      // Self-serve messaging channels: link Discord / Telegram / SMS / WhatsApp with a one-time
+      // code, unlink, and (operator) paste the deployment's Discord bot token. Same static page
+      // the platform-tools rail opens, embedded so Settings is one home for account wiring.
+      body.innerHTML = '<iframe src="/cockpit/tools/channels.html" title="Chat channels" style="width:100%;height:72vh;border:none;border-radius:8px;"></iframe>';
       return;
     }
 
