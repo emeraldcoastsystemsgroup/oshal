@@ -28,6 +28,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Initial — daily Donchian swing sleeve on commodity/trend ETFs (the validated trend edge, executable on the equity rail); breakout entry / channel exit, hold across days, conviction-free fixed allocation, paper-only, provenance-preserving.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Trading engine extraction (ADR-085 pre-carve): import repoint only — guardrails/placeDecisionOrder/ensureTradingSchema now come from app/trading-engine.ts instead of the carvable route surface. Zero behavior change.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 reaches the swing leg. This dispatcher sells `qtyHeld` straight off the venue's positions and honoured NEITHER the unmanaged mark NOR TRADING_CORE_SYMBOLS, so it sat outside the closure that PR #486 drove through dispatchTradingSchedule/runAutopilot — a separate ScheduleService branch reading the same book. Two gates, both of which can only REMOVE an order: (a) positions run through withEngineCostBasis and a long the ledger cannot account for is never channel-exited; (b) the traded universe drops TRADING_CORE_SYMBOLS names, which matters concretely because USO — the symbol ADR-159's own Context names, ring-fenced as USO:0 — is in DEFAULT_SWING_UNIVERSE and this leg both entered and exited it. The withhold is nested INSIDE the `qtyHeld > 0` branch: folding it into that test would drop the name into the `else if` entry branch and invert a refusal-to-sell into a buy. `held` and `swingHeld` deliberately still count every long, so withholding never frees a MAX_NAMES slot or re-opens a name for entry.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Export DEFAULT_SWING_UNIVERSE (the keyword only; value and every read unchanged) so ADR-168's multi-market universe can be guarded against it by import rather than by a hand-typed copy: the swing leg and a multi-market rotation must never trade the same symbol on one book, the promise this header makes about the autopilot's equity universe.
  *
  * @module trading-swing-dispatch
  */
@@ -51,7 +52,7 @@ const logger = createChildLogger({ module: 'trading-swing-dispatch' });
 const SWING_AGENT = 'swing-donchian';
 /** Commodity/trend ETF sleeve — the futures-trend edge in a form the equity rail can trade.
  *  Diversified across energy/metals/broad-commodity so the lumpy single-market edge smooths out. */
-const DEFAULT_SWING_UNIVERSE = ['USO', 'BNO', 'UNG', 'GLD', 'SLV', 'DBC'];
+export const DEFAULT_SWING_UNIVERSE = ['USO', 'BNO', 'UNG', 'GLD', 'SLV', 'DBC'];
 const ENTRY_N = Math.max(5, Number(process.env.SWING_ENTRY_N || 20));   // breakout lookback (days)
 const EXIT_N = Math.max(3, Number(process.env.SWING_EXIT_N || 10));     // channel-exit lookback (days)
 const ALLOC_PCT = Math.max(1, Number(process.env.SWING_ALLOC_PCT || 15)); // equity % per position

@@ -4,11 +4,13 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — guards TRADING_SECTOR_TILT: neutral-by-default (an unset knob must not move the ranking), the lean actually re-orders, and the sign-preservation property rotateSleeve's `score > 0` admission depends on.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-168: a lean on a multi-market bucket (fixed-income) re-orders a ranking that holds extension names, and leaves a default-universe-only ranking byte-identical — the extension buckets are new, so no existing lean can reach a default name through them.
  */
 
 import { describe, expect, it } from 'vitest';
 import { parseSectorTilt, sectorTiltConfig, applySectorTilt, MAX_SECTOR_TILT } from '../../src/features/trading/services/sector-tilt';
-import { sectorOf } from '../../src/features/trading/services/portfolio';
+import { sectorOf, MULTI_MARKET_BUCKETS } from '../../src/features/trading/services/portfolio';
+import { DEFAULT_UNIVERSE } from '../../src/features/trading/services/multi-timeframe';
 
 /** Sort the way rotateSleeve does, then take the leaderboard it would buy (`score > 0`, top N). */
 const leaderboard = (ranked: Array<{ sym: string; score: number }>, n: number): string[] =>
@@ -115,3 +117,19 @@ describe('applySectorTilt', () => {
     expect(leaderboard(applySectorTilt(ranked, new Map([['materials', 0]])), 10)).toEqual(['NVDA']);
   });
 });
+
+describe('applySectorTilt over the ADR-168 multi-market buckets', () => {
+  it('a fixed-income lean promotes a Treasury fund past an equity leader', () => {
+    expect(sectorOf('TLT')).toBe('fixed-income');
+    const ranked = [{ sym: 'NVDA', score: 1.2 }, { sym: 'TLT', score: 0.9 }];
+    expect(leaderboard(applySectorTilt(ranked, new Map()), 1)).toEqual(['NVDA']);
+    expect(leaderboard(applySectorTilt(ranked, parseSectorTilt('fixed-income:1.5')), 1)).toEqual(['TLT']);
+  });
+
+  it('a lean on every extension bucket leaves a default-universe-only ranking byte-identical', () => {
+    const ranked = DEFAULT_UNIVERSE.map((sym, i) => ({ sym, score: ((i * 7) % 11) / 10 - 0.3 }));
+    const tilt = new Map(Object.keys(MULTI_MARKET_BUCKETS).map((b) => [b, MAX_SECTOR_TILT] as [string, number]));
+    expect(applySectorTilt(ranked, tilt)).toEqual(ranked);
+  });
+});
+

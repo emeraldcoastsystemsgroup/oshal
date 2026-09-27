@@ -20,6 +20,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Export the ADR-143 D5 REST screener (alpaca-screener): screenerMovers / screenerMostActives over the owned key, the SCREENER_LABEL the surface prints verbatim, moversMinPrice() and the board/row/filter types. Fail-soft by contract — every failure answers null so the movers report falls back to its bounded board instead of blanking.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Export the ADR-116 Phase 1 walk-forward evidence rail (futures-walk-forward): walkForwardWindows/walkForward for the project's first out-of-sample futures measurement at frozen constants, scoreBacktest, and the shared experiment plumbing mergeBacktestConfig / patchFromDottedKey / expandGrid / resolveFitness that the backtest and sweep runners both consume.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Export the detached Futures replay observation contract.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com | ADR-168: export MULTI_MARKET_UNIVERSE and MULTI_MARKET_EXTENSION (multi-timeframe) and MULTI_MARKET_BUCKETS (portfolio), so the Strategy Lab, the Test Lab card and the store package name the multi-market universe through the barrel instead of a second hand-typed list.
  *
  * @module trading
  */
@@ -66,7 +67,7 @@ export { fundamentalsSummary } from './services/fundamentals';
 
 // Multi-timeframe trend engine (the every-5-minutes autopilot's decision core).
 export type { TimeframeView, MtfDecision } from './services/multi-timeframe';
-export { multiTimeframeScan, multiTimeframeDecision, isShortTermBreakdown, isShortTermPop, DEFAULT_UNIVERSE, decideSymbol } from './services/multi-timeframe';
+export { multiTimeframeScan, multiTimeframeDecision, isShortTermBreakdown, isShortTermPop, DEFAULT_UNIVERSE, MULTI_MARKET_UNIVERSE, MULTI_MARKET_EXTENSION, decideSymbol } from './services/multi-timeframe';
 // Shadow indicators (ADR-096): recorded nightly, never voting until promoted into ALGORITHMS.
 export { scoreSymbolShadow, shadowAlgoNames } from './services/algorithms';
 // Analyst-action headline classifier (the 07-12 pre-registered event-overlay hypothesis).
@@ -78,7 +79,7 @@ export { prefilterHeadline, buildReaderPrompt, parseReaderVerdicts } from './ser
 
 // Portfolio money-manager (sizing, exposure caps, stop-loss/take-profit/trailing, daily-loss breaker).
 export type { RiskPosture, RiskPolicy, PolicyOverride, ExitOrder, SizingResult, NameStrength } from './services/portfolio';
-export { RISK_POLICIES, riskPolicy, sectorOf, exitsToRun, trailingExits, nextPeaks, sizeEntry, rotationBenches, rebalanceTrims, drawdownHaltTriggered, dipExits, symbolBlocklist, unmanagedSymbols } from './services/portfolio';
+export { RISK_POLICIES, riskPolicy, sectorOf, exitsToRun, trailingExits, nextPeaks, sizeEntry, rotationBenches, rebalanceTrims, drawdownHaltTriggered, dipExits, symbolBlocklist, unmanagedSymbols, MULTI_MARKET_BUCKETS } from './services/portfolio';
 
 // Sector tilt — "lean harder on <sector>" as a rank multiplier (TRADING_SECTOR_TILT), so a lean is a
 // dial that can be turned back down rather than percentages baked into TRADING_CORE_SYMBOLS.
