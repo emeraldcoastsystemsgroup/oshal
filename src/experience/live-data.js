@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Two-phase snapshot: identity and catalog first (readyCore) so a home can paint at once; work, tasks and overview merge into the same snapshot afterwards (ready). Adds the ribbon-profile read an experience uses to host an application's admitted tools.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Live data adapter for the experience shells. Joins the caller-scoped home plan, active app listing and admitted navigation into one catalog, merges tickets and Jarvis tasks into work items, wraps Jarvis ask/result polling on the shared browser thread, reads per-package home-summary probes with the Home view's pointer caps, and exposes Little Monsters, Purchasing, Finance and voice reads. It replaces every fixture the design prototypes rendered; nothing here invents data when a source is unavailable, callers get the HTTP status and render the honest state.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Package adapters for the homebase gap closure over existing routes only: Little Monsters class activity (teacher analytics) and classwork creation through the route that also writes the class calendar event, a ticket read and its status transition, and the caller's saved content drafts. Each returns the route's own answer, refusals included.
  */
 (function attach(root, factory) {
   'use strict';
@@ -409,7 +410,41 @@
         students: function (id) { return getJson('/api/education/classes/' + encodeURIComponent(id) + '/students'); },
         assignments: function () { return getJson('/api/education/assignments'); },
         calendar: function (month) { return getJson('/api/education/calendar' + (month ? '?month=' + encodeURIComponent(month) : '')); },
-        addEvent: function (payload) { return sendJson('/api/education/calendar', 'POST', payload); }
+        addEvent: function (payload) { return sendJson('/api/education/calendar', 'POST', payload); },
+        /**
+         * @description One class's learner activity (level, streak, quiz average, cards reviewed) and class summary, the teacher-only analytics read. It is activity, never classwork completion.
+         * @param {string} id Little Monsters class id the caller teaches.
+         * @returns {Promise<{ok:boolean,status:number,body:any}>} The package's answer; 403/404 when the caller does not teach the class.
+         */
+        analytics: function (id) { return getJson('/api/education/teacher/classes/' + encodeURIComponent(id) + '/analytics'); },
+        /**
+         * @description Post classwork through the package route that also puts a dated item on the class calendar, so the shell never writes two records itself.
+         * @param {{classId:string,title:string,assignmentType?:string,dueDate?:string,description?:string}} payload Body the package validates and authorizes.
+         * @returns {Promise<{ok:boolean,status:number,body:any}>} 201 with assignmentId/eventId, or the package's refusal.
+         */
+        addClasswork: function (payload) { return sendJson('/api/education/assignments-with-events', 'POST', payload); }
+      },
+      tickets: {
+        /**
+         * @description Read one ticket as the ticket route answers it (current status plus the reason/nextAction mirror in metadata); the route refuses non-owners with 404.
+         * @param {string} id Ticket id.
+         * @returns {Promise<{ok:boolean,status:number,body:any}>} The ticket or the route's refusal.
+         */
+        get: function (id) { return getJson('/api/tickets/' + encodeURIComponent(id)); },
+        /**
+         * @description Ask the ticket route for one exact state transition; the server enforces ownership and the transition table, the shell only names the state.
+         * @param {string} id Ticket id.
+         * @param {string} status Canonical next state.
+         * @returns {Promise<{ok:boolean,status:number,body:any}>} The route's answer, including its refusal.
+         */
+        setStatus: function (id, status) { return sendJson('/api/tickets/' + encodeURIComponent(id) + '/status', 'PUT', { status: status }); }
+      },
+      content: {
+        /**
+         * @description The caller's saved content drafts (topic, take, draft, created_at), newest first; the route reads only the caller's own rows.
+         * @returns {Promise<{ok:boolean,status:number,body:any}>} The drafts list or the route's refusal.
+         */
+        drafts: function () { return getJson('/api/content/drafts'); }
       },
       purchasing: {
         lists: function () { return getJson('/api/purchasing/lists'); },

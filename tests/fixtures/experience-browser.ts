@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Serve the real experience shells through the real static route registration over an isolated, explicitly synthetic swarm: home plan, listing, navigation, tickets, Jarvis shelf/history/ask, package summaries, Little Monsters, Purchasing, Finance and the user directory, with controllable statuses so honest setup, denial and failure states can be proven in Chromium.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | The synthetic ribbon profile answers per application (Little Monsters role-filtered; every other host a home and a more page) so the multi-host presets are exercised against 19 installed applications
  * 3 | maintainer@emeraldcoastsystemsgroup.com | A synthetic application page under the shared audience-view kit (`/fixture/app-view`, its data with a controllable status, and a host page that frames it) so the kit is proven in Chromium: full page by default, audience views on request, hidden full UI, text-only rendering, failure with retry, and the escape that navigates the top window
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Homebase gap routes (`homebaseGapRoutes`): Little Monsters teacher analytics (pg-shaped counts, server-side summary), classwork through assignments-with-events (teacher-of-class check, calendar event on a due date), a ticket read and its status transition (only approval_required to approved), and the caller's saved content drafts, each with a controllable status. They are seated ahead of packageRoutes' `/api` catch-all, which is registered first and would otherwise answer them with 404.
  */
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -181,6 +182,7 @@ export async function startExperienceBrowserFixture(options: { denyAuth?: boolea
   const app = express(), state = experienceState();
   const requiresAuth: express.RequestHandler = options.denyAuth ? (_req, res) => { res.status(401).json({ error: 'unauthorized' }); } : (_req, _res, next) => next();
   swarmRoutes(app, state); packageRoutes(app, state);
+  homebaseGapRoutes(app, state);
   app.use('/shared/ui/js', express.static(resolve(ROOT, 'src/shared/ui/js')));
   registerCockpitStaticRoutes({ app, requiresAuth, cockpitDir: resolve(ROOT, 'src/pages/cockpit'), uiEnhancedDir: resolve(ROOT, 'any-bot/ui-enhanced'),
     codiconFontsDir: resolve(ROOT, 'node_modules/@vscode/codicons/dist'), sharedUiCssDir: resolve(ROOT, 'src/shared/ui/css'), sharedUiJsDir: resolve(ROOT, 'src/shared/ui/js') });
@@ -188,4 +190,63 @@ export async function startExperienceBrowserFixture(options: { denyAuth?: boolea
   await new Promise<void>(done => server.once('listening', done));
   return { origin: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, state,
     close: async () => { server.closeAllConnections(); await new Promise<void>((done, reject) => server.close(error => error ? reject(error) : done())); } };
+}
+
+/**
+ * @description Synthetic contracts for the homebase gap closure, each with a controllable status (`homebase:analytics`, `homebase:classwork`,
+ * `homebase:ticket`, `homebase:ticket-status`, `homebase:drafts`): Little Monsters teacher analytics shaped like the package's pg rows (counts as
+ * strings, the summary computed server-side), classwork through assignments-with-events, one ticket's read and status transition, and the caller's
+ * saved content drafts (seeded through their own POST route). packageRoutes registers the `/api` 404 catch-all before this runs, so the router is
+ * seated directly ahead of it.
+ * @param app The fixture application.
+ * @param state The synthetic swarm state these routes read and change.
+ * @returns Nothing; the routes are registered on `app`.
+ */
+function homebaseGapRoutes(app: express.Application, state: ExperienceState) {
+  const edu = state.education, gap = express.Router(), drafts: Array<{ id: number; topic: string | null; take: string | null; draft: string; created_at: string }> = [];
+  const refused = (res: express.Response, key: string, errors: Record<number, string>) => { const status = statusOr(state, key); if (status === 200) return false; res.status(status).json({ error: errors[status] ?? 'Synthetic refusal' }); return true; };
+  const count = (v: unknown) => String(Number(v ?? 0));
+  gap.get('/api/education/teacher/classes/:classId/analytics', (req, res) => {
+    const roster = edu.students[req.params.classId] as Array<Record<string, unknown>> | undefined;
+    if (refused(res, 'homebase:analytics', { 403: 'You do not teach this class', 404: 'Class not found' })) return;
+    if (!roster) { res.status(403).json({ error: 'You do not teach this class' }); return; }
+    const students = roster.map(s => ({ student_id: s.student_id, name: s.name, email: s.email ?? null, xp: Number(s.xp ?? 0), level: Number(s.level ?? 1), streak_days: Number(s.streak_days ?? 0),
+      last_active_date: s.last_active_date ?? null, quiz_average: count(s.quiz_average), quiz_count: count(s.quiz_count), cards_reviewed: count(s.cards_reviewed) }));
+    const quizzed = students.filter(s => Number(s.quiz_count) > 0);
+    res.json({ class: { class_id: req.params.classId }, students, summary: { studentCount: students.length, classQuizAverage: quizzed.length ? Math.round(quizzed.reduce((n, s) => n + Number(s.quiz_average), 0) / quizzed.length) : null,
+      studentsWithActivity: students.filter(s => Number(s.quiz_count) > 0 || Number(s.cards_reviewed) > 0).length, totalCardsReviewed: students.reduce((n, s) => n + Number(s.cards_reviewed), 0) } });
+  });
+  gap.post('/api/education/assignments-with-events', express.json(), (req, res) => {
+    const body = req.body || {}, title = String(body.title ?? '').trim(), cls = edu.classes.find(c => c.class_id === String(body.classId ?? ''));
+    if (refused(res, 'homebase:classwork', { 403: 'You do not teach this class', 409: 'Class authorization changed' })) return;
+    if (!title || title.length > 500) { res.status(400).json({ error: 'title must contain 1-500 characters' }); return; }
+    if (!cls || !(edu.me.role === 'admin' || (edu.me.role === 'teacher' && cls.teacher_student_id === edu.me.studentId))) { res.status(403).json({ error: 'You do not teach this class' }); return; }
+    const assignmentId = `a${edu.assignments.length + 1}`, dueDate = body.dueDate ? String(body.dueDate) : null, type = String(body.assignmentType || 'homework');
+    (edu.assignments as unknown[]).push({ assignment_id: assignmentId, class_id: cls.class_id, title, description: String(body.description || ''), status: 'open', due_date: dueDate, class_name: cls.name, assignment_type: type });
+    const eventId = dueDate ? `e${edu.events.length + 1}` : null;
+    if (dueDate) (edu.events as unknown[]).push({ event_id: eventId, class_id: cls.class_id, student_id: null, title: `${cls.name}: ${title}`, event_date: dueDate, event_time: '17:00:00', event_type: type === 'test' ? 'test' : type === 'quiz-prep' ? 'quiz' : 'assignment', class_name: cls.name, subject: cls.subject });
+    res.status(201).json({ assignmentId, eventId, dueDate });
+  });
+  gap.get('/api/tickets/:ticketId', (req, res) => {
+    const ticket = state.tickets.find(t => t.ticketId === req.params.ticketId);
+    if (refused(res, 'homebase:ticket', { 404: 'Ticket not found' })) return;
+    if (ticket) res.json(ticket); else res.status(404).json({ error: 'Ticket not found' });
+  });
+  gap.put('/api/tickets/:ticketId/status', express.json(), (req, res) => {
+    const ticket = state.tickets.find(t => t.ticketId === req.params.ticketId), next = String(req.body?.status ?? '');
+    if (refused(res, 'homebase:ticket-status', { 400: 'Invalid state transition', 404: 'Ticket not found' })) return;
+    if (!ticket) { res.status(404).json({ error: 'Ticket not found' }); return; }
+    if (!(ticket.status === 'approval_required' && next === 'approved')) { res.status(400).json({ error: `Invalid state transition: ${ticket.status} -> ${next}` }); return; }
+    ticket.status = next; ticket.updatedAt = iso(0);
+    res.json({ status: 'updated', newStatus: next });
+  });
+  gap.get('/api/content/drafts', (_req, res) => { if (!refused(res, 'homebase:drafts', { 401: 'not_authenticated' })) res.json({ drafts: [...drafts].reverse() }); });
+  gap.post('/api/content/drafts', express.json(), (req, res) => {
+    if (!String(req.body?.draft ?? '').trim()) { res.status(400).json({ error: 'draft required' }); return; }
+    drafts.push({ id: drafts.length + 1, topic: req.body.topic || null, take: req.body.take || null, draft: String(req.body.draft), created_at: iso(0) }); res.json({ ok: true });
+  });
+  app.use(gap);
+  const stack = (app as unknown as { router: { stack: Array<{ route?: unknown; matchers?: Array<(path: string) => false | { path: string }> }> } }).router.stack;
+  const seat = stack.findIndex(l => !l.route && (l.matchers?.[0]?.('/api/probe') || { path: '' }).path === '/api');
+  if (seat >= 0) stack.splice(seat, 0, stack.pop()!);
 }
