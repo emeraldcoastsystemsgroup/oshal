@@ -299,7 +299,7 @@
 </div>
 
 <script>
-function icon(id) { return ({ google:'🟢', gcp:'☁️', facebook:'🔵', 'meta-business':'📘', linkedin:'💼', outlook:'📧', twitter:'𝕏', github:'🐙', dropbox:'📦', smartthings:'🏠', 'google-home':'🌡️', 'any-llm':'🧠', slack:'💬', spotify:'🎵', tmdb:'🎬', duffel:'✈️' })[id] || '🔌'; }
+function icon(id) { return ({ google:'🟢', gcp:'☁️', facebook:'🔵', 'meta-business':'📘', linkedin:'💼', outlook:'📧', yahoo:'📨', twitter:'𝕏', github:'🐙', dropbox:'📦', smartthings:'🏠', 'google-home':'🌡️', 'any-llm':'🧠', slack:'💬', spotify:'🎵', tmdb:'🎬', duffel:'✈️' })[id] || '🔌'; }
 
 // Hub sections, in display order. Connectors are grouped by their `category`.
 var CAT_ORDER = [
@@ -542,7 +542,9 @@ var TWO_FIELD_TOKEN = { jira: 'Atlassian account email', twilio: 'Twilio Account
   // ESPN Fantasy is two-value like the rest: the SWID identifies the account and espn_s2
   // authenticates it. Without this entry the card renders ONE box, so there is nowhere to put
   // the SWID and the pasted half can never form the SWID:espn_s2 secret the connector stores.
-  'espn-fantasy': 'SWID cookie, e.g. {1A2B3C4D-...}' };
+  'espn-fantasy': 'SWID cookie, e.g. {1A2B3C4D-...}',
+  // Yahoo Mail is two-value: the address identifies the mailbox, the app password signs in to IMAP.
+  yahoo: 'Yahoo email address' };
 // Providers whose "token" is itself multi-line (a PEM key, not a short string) — these get a
 // <textarea> instead of the single-line type=password <input>, which some browsers truncate
 // or mangle a multi-line paste into (confirmed 2026-07-13: reproduces "missing BEGIN/END
@@ -552,8 +554,9 @@ var MULTILINE_TOKEN = { kalshi: true };
 // and "Personal Access Token", which is exactly wrong for ESPN Fantasy: ESPN publishes no API key
 // for fantasy at all, and a user hunting for one finds nothing. Naming the two cookies — and saying
 // out loud that they are ACCOUNT SESSION cookies with no per-app revocation — is the honest card.
-var TOKEN_FIELD_LABEL = { 'espn-fantasy': 'espn_s2 cookie value' };
+var TOKEN_FIELD_LABEL = { 'espn-fantasy': 'espn_s2 cookie value', yahoo: 'Yahoo app password (16 letters)' };
 var TOKEN_NOTE = {
+  yahoo: 'Use a Yahoo app password, never your Yahoo password: Yahoo Account Security → Generate app password. oshal signs in to imap.mail.yahoo.com and only reads your inbox; the password stays on the server.',
   'espn-fantasy': 'ESPN has no OAuth or API key for fantasy. The credential is the SWID + espn_s2 pair from a signed-in espn.com session — account session cookies, not a scoped key: they cannot be revoked for this app alone, and signing out of ESPN everywhere is the only way to kill them. The desktop node can capture them for you (Config → Accounts → ESPN Fantasy → Log in + push).',
 };
 

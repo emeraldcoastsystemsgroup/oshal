@@ -20,6 +20,7 @@
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | Exposed the fixed recent-mail sync reader (CR-22 auto email logging) — core matches the mailbox page against the package's authorized address set so unmatched mail never crosses the boundary.
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | Expose an activation-scoped package specialist reader port without the global registry or arbitrary caller inputs.
  * 17 | maintainer@emeraldcoastsystemsgroup.com | Expose only the activation-scoped fixed-name package tool registration port.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com | Expose the fixed read-only Yahoo inbox reader (`imapMail`) — the outlookMail seam shape: core resolves the caller's personal app-password grant and spends it on the fixed imap.mail.yahoo.com:993, packages receive only MailSummary metadata.
  */
 
 import type { Pool } from 'pg';
@@ -47,6 +48,7 @@ import type { ConnectorMarketplaceService } from '@/app/connectors/runtime/marke
 import type { BotNodeRequest, BotNodeResponse } from '@/features/agent-management';
 import type { OutlookMailReader, OutlookMailSyncReader } from '@/app/routes/outlook-mail-reader';
 import type { RingcentralCallLogReader } from '@/app/routes/ringcentral-call-log';
+import type { ImapMailReader } from '@/app/routes/imap-mail-reader';
 import type { ApplicationAuthorizationRuntime, PackageAuthorizationContext } from './application-authorization-runtime';
 import type { AuthorizationToolRuntime } from './authorization-tool';
 
@@ -118,6 +120,12 @@ export interface AppContext {
    * the same seam shape as outlookMail: the token is resolved and spent inside core.
    */
   ringcentralCallLog?: RingcentralCallLogReader;
+  /**
+   * Fixed, read-only Yahoo Mail inbox read for trusted application packages: the caller's own
+   * personal `yahoo` grant, EXAMINE INBOX and a bounded envelope FETCH on the fixed
+   * imap.mail.yahoo.com:993. The app password is resolved and spent inside core.
+   */
+  imapMail?: ImapMailReader;
   /**
    * @description Absolute path of the installed app package this context was built FOR.
    * Populated ONLY on the per-package context the manifest route mounter passes to a

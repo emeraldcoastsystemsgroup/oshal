@@ -287,6 +287,14 @@ and prerequisites without running application smokes. **Connector sign-in callba
 identities without installing packages or changing trust. Their linked local suites run using
 `npm run test:platform-readiness`.
 
+**Yahoo Mail connector (app password, read-only IMAP)** (`yahoo-mail-connector`, Tools) checks that
+the Yahoo credential stays behind sign-in. Its linked suites run the real IMAP client against a
+loopback responder. They cover the closed `address:app-password` schema, the fixed
+`imap.mail.yahoo.com:993` endpoint, a read-only `EXAMINE` with one bounded envelope `FETCH`, the
+caller's personal grant, and LOGIN refusal. Run them locally with
+`npx vitest run tests/unit/imap-mail-reader.spec.ts tests/unit/connector-yahoo.spec.ts`. Signing
+in to a real Yahoo mailbox is an operator acceptance step, and no suite here performs it.
+
 Eligible offline package Node suites now use a disposable runner with Run/Cancel controls and
 durable versioned history. See [package test execution](testing/package-test-execution.md) for
 supported prerequisites, current-user authorization, isolation and local regression commands.

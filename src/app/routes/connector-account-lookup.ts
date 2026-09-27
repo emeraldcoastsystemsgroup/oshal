@@ -20,11 +20,13 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Add 'resend' (GENERIC_VERIFY against GET /domains, label by the first verified domain) and a bespoke 'bluesky' branch (kalshi shape) — the pasted secret is "identifier:app-password"; no bearer whoami exists, so validate via a real com.atproto.server.createSession POST; label = handle, id = DID.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Add 'ringcentral' branch — GET /restapi/v1.0/account/~/extension/~ labels the connection by contact email (else name + extension number); id = the extension id the screen-pop presence events are scoped to. Throws on a non-OK lookup so a bad token fails the connect loudly.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Add a bespoke 'espn-fantasy' branch (bluesky shape): the pasted secret is "SWID:espn_s2"; no bearer whoami exists, so validate by calling the real fan API for that SWID with both cookies set. SWID is normalised to its braced form so either paste works; an unknown SWID or a wrong/expired espn_s2 answers 404 and fails closed. Label = the fan's display name, id = the braced SWID.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com  | Add a bespoke 'yahoo' branch: the pasted secret is "address:app-password" under the closed schema in imap-mail-reader; no HTTP whoami exists, so validate by a real IMAP LOGIN on the fixed imap.mail.yahoo.com:993 (probeYahooLogin). A malformed secret opens no socket; a refused LOGIN fails closed. Label = the address, id = the address.
  *
  * @module connector-account-lookup
  */
 
 import { probeKalshiAccount } from '@/features/prediction-markets';
+import { probeYahooLogin } from './imap-mail-reader';
 
 const FB_VERSION = process.env.FACEBOOK_API_VERSION || 'v21.0';
 const GOOGLE_HOME_PROJECT_ID = process.env.GOOGLE_HOME_PROJECT_ID || '';
@@ -237,6 +239,13 @@ export async function fetchAccount(provider: string, tok: { access_token?: strin
     } catch {
       return { email: null, id: null };
     }
+  }
+  if (provider === 'yahoo') {
+    // accessToken is the combined "address:app-password" secret (two-value shape). There is no
+    // HTTP whoami for Yahoo Mail, so validate with a real IMAP LOGIN on the FIXED endpoint; the
+    // closed schema refuses anything but those two values before a socket is opened.
+    const address = await probeYahooLogin(accessToken);
+    return address ? { email: `Yahoo Mail · ${address}`, id: address } : { email: null, id: null };
   }
   if (provider === 'espn-fantasy') {
     // accessToken is the combined "SWID:espn_s2" secret (two-value shape; SWID is a braced GUID and
