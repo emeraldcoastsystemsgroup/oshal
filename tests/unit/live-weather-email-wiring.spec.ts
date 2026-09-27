@@ -6,14 +6,15 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Backfilled the missing change-log header. Compose alignment check updated for the security-audit port de-publish: weather-bot's 5000 is now expose-only (internal Docker network), no longer host-published as 127.0.0.1:3032:5000 — the test now asserts the INTERNAL-ONLY posture so a re-published port fails loudly.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Extended the internal-only posture guard to the alternate swarm stacks (docker-compose.swarm-local.yml + docker-compose.incident-lab.yml): the security-audit de-publish only covered oshal-local.yml, leaving those variants publishing bot 5000s on the host; the new case fails loudly if any bot service in them host-publishes :5000 again.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | BACKLOG "Bot runtime consolidation": the any-bot runtime case no longer asserts that the entrypoint STARTS any-bot/server/app.js. That runtime is retired (the entrypoint refuses BOT_RUNTIME=any-bot outright) and any-bot/server/swarm-node.js is deleted, so the case now pins the demoted posture instead; the behavioural proof lives in tests/unit/bot-runtime-consolidation.spec.ts, which evaluates the shipped selection block under sh.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Both compose cases parse through loadComposeYaml (@/shared/config). A bare js-yaml load of docker-compose.oshal-local.yml fails on the library's default merge-key limit since #869; the shared loader carries the repository's explicit budget and tests/unit/compose-yaml-merge-key-budget.spec.ts pins every compose parse to it.
  */
 
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
-import yaml from 'js-yaml';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LOCAL_BOT_REGISTRY } from '../../src/app/extensions/swarm/swarm-bot-registry-local';
 import { summarizeGmailMetadata } from '../../src/app/routes/email-routes';
+import { loadComposeYaml } from '../../src/shared/config';
 
 const requireModule = createRequire(import.meta.url);
 const gmailScript = requireModule('../../scripts/oshal-gmail.js') as {
@@ -48,7 +49,7 @@ describe('live weather and email data-path wiring', () => {
   });
 
   it('keeps compose identity, provider, persona, and port aligned with the registry', () => {
-    const compose = yaml.load(fs.readFileSync('docker-compose.oshal-local.yml', 'utf8')) as {
+    const compose = loadComposeYaml(fs.readFileSync('docker-compose.oshal-local.yml', 'utf8')) as {
       services: Record<string, { ports?: string[]; expose?: Array<string | number>; environment?: Record<string, string> }>;
     };
     const service = compose.services['weather-bot'];
@@ -69,7 +70,7 @@ describe('live weather and email data-path wiring', () => {
     // docker-compose.oshal-local.yml must hold for the alternate stacks, or booting
     // them re-opens the unauthenticated /api/swarm-execute exposure on the host.
     for (const file of ['docker-compose.swarm-local.yml', 'docker-compose.incident-lab.yml']) {
-      const compose = yaml.load(fs.readFileSync(file, 'utf8')) as {
+      const compose = loadComposeYaml(fs.readFileSync(file, 'utf8')) as {
         services: Record<string, { ports?: string[]; image?: string; environment?: Record<string, string> }>;
       };
       for (const [name, service] of Object.entries(compose.services ?? {})) {

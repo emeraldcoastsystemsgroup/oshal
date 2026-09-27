@@ -4,12 +4,13 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | CKR-20 / R3.3 done-when (1) and (3). Every container that runs bot work mounts the SAME workspace volume read-write with no subpath, so every ticket's and every owner's working directory is a sibling of every other. ADR-060 already records that a directory layout on a shared read-write mount is attribution, not enforcement. Nothing here CHANGES that - the option is the operator's to choose (ADR-060 lists three, this repo's entry adds a fourth) - but an unmeasured property is one nobody notices changing, so the posture is pinned: the counts, the :rw, the absence of a subpath, and the exact mounting set. Asserted against the RESOLVED compose, because the mounts arrive through a `<<:` merge and a regex cannot tell an anchor from a service block. The second half pins why persona YAML does not help: runtimeToolMatchesCapabilities short-circuits for CORE_RUNTIME_TOOL_NAMES, and execute_command is in it - a reader who assumes capabilities gate the shell is repeating a belief this entry exists to correct.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Resolve the compose through loadComposeYaml (@/shared/config). The bare js-yaml load failed on the library's default merge-key limit once #869 took docker-compose.oshal-local.yml past 10000 units; the shared loader carries the repository's explicit budget and still resolves every `<<:` merge.
  */
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import yaml from 'js-yaml';
+import { loadComposeYaml } from '@/shared/config';
 import { HARNESS_NATIVE_TOOL_NAMES } from '@/shared/tools/embedded-tool-tier';
 
 const COMPOSE = join(process.cwd(), 'docker-compose.oshal-local.yml');
@@ -19,7 +20,7 @@ type Service = { environment?: Record<string, unknown>; volumes?: unknown[] };
 
 /** The merge key is resolved by the PARSER — this is what each container actually receives. */
 function services(): Record<string, Service> {
-  const doc = yaml.load(readFileSync(COMPOSE, 'utf8')) as { services?: Record<string, Service> };
+  const doc = loadComposeYaml(readFileSync(COMPOSE, 'utf8')) as { services?: Record<string, Service> };
   return doc.services ?? {};
 }
 

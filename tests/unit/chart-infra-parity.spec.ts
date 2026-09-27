@@ -5,19 +5,21 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the ADR-129 shared-service tier (chart 0.3.0). The defect it prevents is the one the operator caught by reading, not by testing: the chart shipped WITHOUT tsdb/arango/vault/code-server/diarization even though none of them carries a compose profile — they start on every default `up`, so k8s silently ran a degraded platform (no trading series, graph 503, no vault, no IDE, no local transcription). This derives the shared-service set FROM compose, so adding a profile-less infra service there without templating it here goes red. Also pins: every templated service's URL env is actually wired (a StatefulSet nothing points at is a no-op), profile-gated services stay OFF by default (ollama), code-server is never exposed by default (it runs --auth none over a read-write workspace — compose contains it by binding 127.0.0.1), and store-package staging lands before the api boots.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The Vault case pinned the 0.3.0 dev posture (`server -dev`, no PVC). Chart 0.5.0 replaces it (server mode, file storage on its own claim, no root token), so the case now pins the opposite: no -dev flag, no dev root token, a StatefulSet with a volumeClaimTemplate and file storage. The render-level guard, including the sealed/degraded path, is tests/unit/chart-vault-server.spec.ts.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Parse docker-compose.oshal-local.yml through loadComposeYaml (@/shared/config). A bare js-yaml load fails on the library's default merge-key limit since #869; the shared loader carries the repository's explicit budget and tests/unit/compose-yaml-merge-key-budget.spec.ts pins every compose parse to it.
  */
 
 import fs from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 import yaml from 'js-yaml';
+import { loadComposeYaml } from '@/shared/config';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const CHART_DIR = path.join(REPO_ROOT, 'deploy', 'helm', 'oshal');
 const TEMPLATES = path.join(CHART_DIR, 'templates');
 
 const values = yaml.load(fs.readFileSync(path.join(CHART_DIR, 'values.yaml'), 'utf8')) as Record<string, any>;
-const compose = yaml.load(
+const compose = loadComposeYaml(
   fs.readFileSync(path.join(REPO_ROOT, 'docker-compose.oshal-local.yml'), 'utf8'),
 ) as Record<string, any>;
 

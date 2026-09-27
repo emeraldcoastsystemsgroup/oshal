@@ -73,6 +73,11 @@ The core release pipeline suites (ADR-167: cut, promote, the on-box managed rele
 check) run the shipped scripts in Git Bash against temporary local Git repositories, with docker,
 ssh, curl and the image probe runners as recording stand-ins; they never build an image, reach a
 box or touch the running stack.
+The compose loader budget suite runs `scripts/gen-dist-compose.js` on the real
+`docker-compose.oshal-local.yml` from a scratch copy of the files the image build has at that step,
+scans `scripts/`, `src/`, `tests/` and `any-bot/` for js-yaml parses of a compose file that bypass the
+shared loader, and fails when the file's measured merge-key total passes 80% of the loader's bound.
+It builds no image and starts no container.
 They also exercise the actual startup-readiness function with synthetic logs,
 including large output and producer failures, without restarting services.
 The PostgreSQL pool-budget suite runs actual Docker Compose configuration resolution

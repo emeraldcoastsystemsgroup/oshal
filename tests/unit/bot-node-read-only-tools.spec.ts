@@ -7,11 +7,11 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Two cases from adversarial verification. (1) The graph read is bounded at the CURSOR, before materialization: a stubbed arangojs Database hands the REAL ArangoGraphAdapter a lazy cursor over a million rows, and the case asserts the bound rode into the query options, that no more rows than the bound were ever pulled, that all() was never called and that the over-bound cursor was killed. Slicing after all() - the shape that was shipped - goes red on the pull count. (2) The compose file carries RAG_ENGINE on the shared bot anchor, because rag_query refuses without the pgvector engine and the key sat on oshal-api alone, so the tool would have shipped inert on every bot.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The conversation query is metadata-only and the paired fetch is separately registered and scope-bound; the unit rail proves both exact capability names and the no-database refusal shape.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The two tools now cover Jarvis work items too. Pinned here: the no-database shapes name both families, an unknown fetch `source` is refused before any read, and the SHIPPED list statements (imported, not copied) select no body - no message text from the conversation list, no result or error from the work-item list - so a column added to either select list reddens this file without a database. The owner-scoped reads themselves are proven over PostgreSQL in the owner-scope spec.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | The RAG_ENGINE compose case parses docker-compose.oshal-local.yml through loadComposeYaml (@/shared/config). A bare js-yaml load fails on the library's default merge-key limit since #869; the shared loader carries the repository's explicit budget and tests/unit/compose-yaml-merge-key-budget.spec.ts pins every compose parse to it.
  */
 
 import { describe, expect, it, vi } from 'vitest';
 import type { Database } from 'arangojs';
-import yaml from 'js-yaml';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -27,6 +27,7 @@ import {
   type ReadOnlyToolRegistration,
 } from '@/app/bot-node-read-only-tools';
 import { anyBotRuntimeToolFor, anyBotRuntimeToolScope } from '@/shared/llm-runtime';
+import { loadComposeYaml } from '@/shared/config';
 import { GraphReadOnlyError } from '@/features/graph';
 import { CONVERSATION_LIST_SQL, JARVIS_TASK_LIST_SQL } from '@/features/global-search';
 import { ArangoGraphAdapter } from '@/features/graph/services/arango-graph-adapter';
@@ -419,7 +420,7 @@ describe('read-only question tools: the deployment carries the engine the tool r
     // rag_query refuses outright without the pgvector engine. The key sat on oshal-api alone, so on
     // the deployed box every bot booted on the chroma default and the tool shipped inert.
     type Service = { environment?: Record<string, unknown> };
-    const doc = yaml.load(readFileSync(join(ROOT, 'docker-compose.oshal-local.yml'), 'utf8')) as { services: Record<string, Service> };
+    const doc = loadComposeYaml(readFileSync(join(ROOT, 'docker-compose.oshal-local.yml'), 'utf8')) as { services: Record<string, Service> };
     const bots = Object.entries(doc.services).filter(([, s]) => s.environment?.BOT_RUNTIME === 'bot-node');
     expect(bots.length, 'no bot-node services parsed - the file shape changed').toBeGreaterThanOrEqual(30);
     const missing = bots.filter(([, s]) => s.environment?.RAG_ENGINE !== 'pgvector').map(([name]) => name);
