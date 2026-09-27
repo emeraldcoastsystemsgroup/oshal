@@ -14,9 +14,9 @@ Eight selectable experiences over one unchanged backend:
 | Jarvis | `/jarvis` | Warm assistant home: briefing from the real queue, recent work, suites |
 | Orbit | `/orbit` | Suites as connected worlds around Jarvis; drill into a suite, inspect an app |
 | Commons | `/commons` | Suite rooms with applications, declared assistants, a work board and one Jarvis thread per room |
-| Home · family homebase | `/homebase?preset=family` | Calendar, shopping list, Smart Home facts, people, personal finance |
+| Home · family homebase | `/homebase?preset=family` | Calendar, shopping list, Smart Home facts, people, personal finance; hosts Smart Home, Shopping, Money and Little Monsters in place with the `family` view requested |
 | Little Monsters · classroom | `/homebase?preset=classroom` | Classwork, class calendar, teacher roster or learner checklist by real role; the Little Monsters tools the caller is admitted to open in place |
-| Business · company swarm | `/homebase?preset=company` | Open tickets as projects, team calendar, people, dense account table |
+| Business · company swarm | `/homebase?preset=company` | Open tickets as projects, team calendar, people, dense account table; hosts Presentations, Finance, Communications, Payroll, Payments, Identity and Engineering in place with the `company` view requested |
 | Central assistant | `/nexus` | Intent composer, real ask ledger, answer workspace with handoffs, speaking core |
 
 `/portal` (also `/experience`) is the chooser. The cockpit header's **Experiences** menu links the
@@ -37,7 +37,7 @@ own session:
 | Per-application facts | each app's own `home-summary` probe from the plan, with the Home view's ADR-145 caps |
 | Conversation | `GET /api/jarvis/history`, `POST /api/jarvis/ask`, `GET /api/jarvis/ask/result` on the browser's shared `jarvisSessionId`; Commons rooms use `jarvis-room-<suite>-<sub>` |
 | Classroom | Little Monsters `/api/education/me`, `/classes`, `/classes/:id/students` (only classes the caller teaches), `/assignments`, `/calendar`; personal events are created through `POST /api/education/calendar` |
-| Hosted tools | `GET /api/ui/profile?name=<host app>`: the same caller-scoped ribbon profile the cockpit renders. The classroom preset names its host application (`homebase-config.js`), lists the admitted tools in its sidebar and tile row (per-class tools stay out of that list; teacher-only tools show to teachers as a presentation choice, the server still decides), and opens a tool in an iframe that follows the skin through the shared theme bootstrap. The frame's navigation messages are the shapes the cockpit ribbon already honours (`app-navigate`, `app-tools-changed`, and the Little Monsters literals); only the frame the home opened is heard, same origin only, and only an admitted tool ever opens |
+| Hosted tools | `GET /api/ui/profile?name=<host app>` per host: the same caller-scoped ribbon profile the cockpit renders, already filtered per caller by the app's own visibility answer. Each preset names the applications it hosts (`hosts` in `homebase-config.js`, with hidden tool prefixes that keep off-audience tiles out of the rails), lists their admitted tools grouped per host in its sidebar and tile row, and opens a tool in an iframe that follows the skin through the shared theme bootstrap, with the preset's audience view appended as `?audience=family|classroom|company` (a request the page may honour, never authority). The frame's navigation messages are the shapes the cockpit ribbon already honours (`app-navigate`, `app-tools-changed`, and the Little Monsters literals); only the frame the home opened is heard, same origin only, and only an admitted tool ever opens |
 | Shopping list | Purchasing `/api/purchasing/lists` and `/lists/:id/items`; add and remove use the package's own routes |
 | Money | Finance `/api/finance/summary` and `/api/finance/home-summary` |
 | Voice | `POST /api/voice/synthesize`, falling back to the browser engine |
@@ -87,3 +87,29 @@ Run locally:
 ```sh
 npx vitest run tests/unit/experience-live-data.spec.ts tests/unit/test-lab-experience-scenarios.spec.ts tests/unit/experience-layouts-browser.spec.ts
 ```
+
+## Audience views: what a hosted page renders for a shell (ADR-164 D6)
+
+A preset hosts an assembly of applications and opens every hosted page with `?audience=<preset.audience>`
+(`family` for Home, `company` for Business, `classroom` for the classroom). The parameter is a request, never
+authority (D5): the page decides whether it provides that audience, and every read still goes through the page's
+own routes under the caller's session. The word is `audience`, not `view`: store pages (the purchasing dashboard)
+and the cockpit ribbon already read `?view=` for their own tabs.
+
+The shared kit, served by the existing `/shared/ui` mounts, is what makes the assembly read as one room:
+
+| Piece | Where | What it does |
+|---|---|---|
+| `app-view.js` | `src/shared/ui/js/` | `AppView.boot({ app, escapeLabel, audiences: { family, company } })`. When `?audience=` names an audience the page provides, the builder's model (hero, stats, tiles, lists, tables, progress, timeline, custom) is painted from DOM text nodes only, the page's full UI is hidden, and one escape navigates the top window to `/cockpit/?app=<name>`. Otherwise the full page runs. A failed read becomes a retryable notice, never a blank frame. Date-only strings are calendar days. |
+| `app-view.css` | `src/shared/ui/css/` | Two grammars over the framework theme tokens the skin sets: `[data-audience="family"]` (roomy, rounded, tile-forward) and `[data-audience="company"]` (dense, squared, table-forward). No palette is hardcoded. |
+| the page | store package | Right after the theme bootstrap: the kit stylesheet + script + one inline head block with the builders; the page's own start is gated on `AppView.active()`, so a core without the kit runs the full page. |
+
+Guards: `tests/unit/app-view-kit-browser.spec.ts` (headless Chromium over the real mounts) and, per store package,
+`tests/audience-view.test.cjs` (static contract, registered in the package's Test Lab catalog) plus
+`tests/audience-view.fixture.cjs`, consumed by the store's `scripts/audience-views.browser.cjs`
+(`OSHAL_FRAMEWORK=<core checkout> node scripts/audience-views.browser.cjs [package]`: the real page at its declared
+URL, the real kit, synthetic reads for the page's routes, no writes, the full page untouched without an audience).
+
+Shipped audience views: Smart Home (family); Finance (family, company); AI Office, Switchboard Today, Payroll,
+Payments, Identity Hub, CAD Studio (company). Little Monsters pages are the classroom rewrite themselves and ignore
+the parameter.

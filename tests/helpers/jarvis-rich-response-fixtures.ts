@@ -5,21 +5,30 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted the Jarvis rich-response route/speech/audio stubs verbatim out of tests/jarvis-rich-response-integration.spec.ts, which had grown to 1006 code lines (over the 1000-line cap) and now splits into four topic specs that all share these fixtures
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Serve the framework theme off disk (surface-themes.css, surface-theme.js and the /cockpit/css/themes/*.css files the aggregator @imports): jarvis.html has read its orb colours from those tokens since BUG-12 (#191), and this fixture 404ing them is what left the native-wake spec red 3 of 3 (the unthemed page threw inside its first synchronous canvas tick, so the wake listener never registered). THEME_ASSET_PATHS is exported so the guard can withhold exactly these on purpose.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | fulfillJarvisWithResponseRenderer bundles the REAL response-renderer from source (esbuild, the way vite.config.ts bundles it) instead of reading a prebuilt src/api/dist/response-renderer.js: jarvis.html now requires the bundle's DISPLAY_ONLY_RESPONSE_CAPABILITIES, so a stale or missing dist would silently put the guard on the legacy fallback path.
  */
 
 // DELIBERATELY NOT re-exported through tests/helpers/index.ts. This module reads eight Jarvis
 // surface files at import time; putting it in the shared barrel would make every spec that
 // imports './helpers' for an unrelated origin helper pay those reads and fail if the surface
 // files move. The four jarvis-rich-response specs import this path directly.
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
+import { buildSync } from 'esbuild';
 import path from 'node:path';
 import { type Page, type Route } from '@playwright/test';
 
 const ROOT = path.resolve(__dirname, '../..');
 const HTML = readFileSync(path.join(ROOT, 'src/api/jarvis.html'), 'utf8');
-const RESPONSE_RENDERER_BUNDLE_PATH = path.join(ROOT, 'src/api/dist/response-renderer.js');
-const RESPONSE_RENDERER_BUNDLE = existsSync(RESPONSE_RENDERER_BUNDLE_PATH)
-  ? readFileSync(RESPONSE_RENDERER_BUNDLE_PATH, 'utf8') : null;
+let cachedRendererBundle: string | null = null;
+
+/** The current renderer source bundled as the browser module served at /dist/response-renderer.js. */
+function responseRendererBundle(): string {
+  cachedRendererBundle ??= buildSync({
+    entryPoints: [path.join(ROOT, 'src/shared/ui/response-renderer/index.ts')],
+    bundle: true, format: 'esm', platform: 'browser', write: false,
+  }).outputFiles[0].text;
+  return cachedRendererBundle;
+}
 const STAGE_JS = readFileSync(path.join(ROOT, 'src/api/jarvis-stage.js'), 'utf8');
 const STAGE_CSS = readFileSync(path.join(ROOT, 'src/api/jarvis-stage.css'), 'utf8');
 const AMBIENT_CORE_JS = readFileSync(path.join(ROOT, 'src/api/jarvis-ambient-core.js'), 'utf8');
@@ -139,8 +148,8 @@ export async function fulfillJarvis(route: Route): Promise<void> {
  */
 export async function fulfillJarvisWithResponseRenderer(route: Route): Promise<void> {
   const url = new URL(route.request().url());
-  if (url.pathname === '/dist/response-renderer.js' && RESPONSE_RENDERER_BUNDLE !== null) {
-    return route.fulfill({ contentType: 'application/javascript', body: RESPONSE_RENDERER_BUNDLE });
+  if (url.pathname === '/dist/response-renderer.js') {
+    return route.fulfill({ contentType: 'application/javascript', body: responseRendererBundle() });
   }
   return fulfillJarvis(route);
 }

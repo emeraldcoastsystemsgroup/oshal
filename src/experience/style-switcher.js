@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Skin switcher shared by every experience page: eight experience skins plus the twelve canonical cockpit themes, remembered per layout on this device only (a skin chosen for Studio never repaints Jarvis), applied through the same data-skin/data-theme hooks the cockpit themes use. Appearance never carries identity, access or installation authority.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | An explicit skin choice also writes the saved cockpit appearance (`cockpit-theme`), so opening an application in the cockpit or standalone continues in the chosen skin; layout defaults still never write it.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Skin colours match the aligned tokens in skins.css (playful violet, professional teal) so the switcher swatches show the palette the page paints
  */
 (() => {
   'use strict';
@@ -17,8 +18,8 @@
       { id: 'commons', name: 'Commons · Aubergine & Lilac', mode: 'light', color: '#725191' },
       { id: 'nexus', name: 'Nexus · Luminous Cyan', mode: 'dark', color: '#9bdfd0' },
       { id: 'family', name: 'Family · Cozy Sage', mode: 'light', color: '#3e6854', alias: 'cozy' },
-      { id: 'classroom', name: 'Classroom · Playful Violet', mode: 'light', color: '#8952a5', alias: 'playful' },
-      { id: 'company', name: 'Company · Slate & Teal', mode: 'light', color: '#256c78', alias: 'professional' }
+      { id: 'classroom', name: 'Classroom · Playful Violet', mode: 'light', color: '#6c4f97', alias: 'playful' },
+      { id: 'company', name: 'Company · Slate & Teal', mode: 'light', color: '#1f6b75', alias: 'professional' }
     ] },
     { group: 'Cockpit themes', items: [
       { id: 'workspace', name: 'Workspace · Neutral Slate', mode: 'light', color: '#2563eb' },

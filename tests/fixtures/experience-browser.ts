@@ -4,6 +4,8 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Serve the real experience shells through the real static route registration over an isolated, explicitly synthetic swarm: home plan, listing, navigation, tickets, Jarvis shelf/history/ask, package summaries, Little Monsters, Purchasing, Finance and the user directory, with controllable statuses so honest setup, denial and failure states can be proven in Chromium.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | The synthetic ribbon profile answers per application (Little Monsters role-filtered; every other host a home and a more page) so the multi-host presets are exercised against 19 installed applications
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | A synthetic application page under the shared audience-view kit (`/fixture/app-view`, its data with a controllable status, and a host page that frames it) so the kit is proven in Chromium: full page by default, audience views on request, hidden full UI, text-only rendering, failure with retry, and the escape that navigates the top window
  */
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -35,6 +37,8 @@ export function experienceState() {
     syntheticApp('forge', 'ai-engineering'), syntheticApp('bot-only', 'ai-engineering', { navigable: false, summary: false }),
     syntheticApp('stage', 'ai-creative'), syntheticApp('arcade-games', 'ai-creative'), syntheticApp('deck', 'ai-productivity'), syntheticApp('purchasing', 'ai-productivity'),
     syntheticApp('hearth', 'ai-home'), syntheticApp('home', 'ai-home'), syntheticApp('little-monsters', 'ai-home'), syntheticApp('atlas', 'ai-knowledge'),
+    syntheticApp('presentations', 'ai-productivity'), syntheticApp('switchboard', 'ai-productivity'), syntheticApp('payroll', 'ai-finance'),
+    syntheticApp('payments', 'ai-productivity'), syntheticApp('identity', 'ai-productivity'), syntheticApp('cad-studio', 'ai-engineering'),
     syntheticApp('unadmitted', 'ai-knowledge', { inPlan: false, navigable: false }),
   ];
   return {
@@ -109,6 +113,26 @@ function swarmRoutes(app: express.Application, state: ExperienceState) {
   app.get('/fixture/surface/:name', (req, res) => res.type('html').send(`<!doctype html><html><head><title>Synthetic ${req.params.name}</title>
   <link rel="stylesheet" href="/shared/ui/css/surface-themes.css"><script src="/shared/ui/js/surface-theme.js"></script></head><body><h1>Opened ${req.params.name}</h1>
   <button id="post-navigate" onclick="parent.postMessage({ type: 'lm-navigate', view: 'myday' }, '*')">navigate</button><button id="post-class" onclick="parent.postMessage({ type: 'lm-open-class', classId: 'c1' }, '*')">class</button><button id="post-teacher" onclick="parent.postMessage({ type: 'lm-navigate', view: 'teacher' }, '*')">teacher</button><button id="post-changed" onclick="parent.postMessage('lm-classes-changed', '*')">changed</button></body></html>`));
+  // The shared audience-view kit under a synthetic application page: the full UI is in the body; the kit decides from ?audience= whether to replace it.
+  app.get('/fixture/app-view/data', (_req, res) => res.status(statusOr(state, 'appview')).json({ lede: 'Synthetic household reading.', stats: [{ id: 'on', label: 'Lights on', value: '3', tone: 'ok' }, { id: 'bills', label: 'Bills due', value: '2', tone: 'warn' }, { id: 'saved', label: 'Saved', value: '$120' }],
+    rooms: [{ name: 'Synthetic kitchen', text: '2 devices on' }, { name: 'Synthetic den', text: 'all off' }], events: [{ title: 'Synthetic recital', text: 'School hall', meta: 'tomorrow', badge: 'family', tone: 'info' }], rows: [['Synthetic ledger', '$1,200'], ['Synthetic payroll', '$980']] }));
+  app.get('/fixture/app-view/host', (_req, res) => res.type('html').send('<!doctype html><html><head><title>Synthetic host</title></head><body><iframe id="host-frame" src="/fixture/app-view?audience=family" style="width:900px;height:700px"></iframe></body></html>'));
+  app.get('/fixture/app-view', (_req, res) => res.type('html').send(`<!doctype html><html><head><title>Synthetic app view</title>
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css"><script src="/shared/ui/js/surface-theme.js"></script>
+  <link rel="stylesheet" href="/shared/ui/css/app-view.css"><script src="/shared/ui/js/app-view.js"></script>
+  <script>
+  window.__full = false; window.__fetches = [];
+  var q = new URLSearchParams(location.search);
+  function data() { return fetch('/fixture/app-view/data', { credentials: 'same-origin' }).then(function (r) { window.__fetches.push(r.status); if (!r.ok) throw new Error('Synthetic data unavailable (HTTP ' + r.status + ')'); return r.json(); }); }
+  function family(ctx) { return data().then(function (d) { return { kicker: 'Synthetic / Home', title: q.get('title') || 'Your synthetic home', lede: d.lede,
+    actions: [{ label: 'Run a scene', primary: true, onClick: function () { window.__acted = 'scene'; } }, { label: 'Refresh', onClick: function () { ctx.refresh(); } }], stats: d.stats,
+    sections: [{ kind: 'tiles', id: 'rooms', title: 'Rooms', items: d.rooms.map(function (r) { return { title: r.name, text: r.text, icon: 'H', onClick: function () { window.__opened = r.name; } }; }) },
+      { kind: 'list', id: 'events', title: 'Coming up', items: d.events }, { kind: 'progress', title: 'Budget', items: [{ label: 'Groceries', value: 0.4 }] },
+      { kind: 'timeline', title: 'Recent', items: [{ when: 'today', title: 'Synthetic event' }] }, { kind: 'table', id: 'bills', title: 'Bills', columns: ['Bill', { label: 'Amount', align: 'right' }], rows: [['Power', { text: AppView.money(120) }]] },
+      { kind: 'list', id: 'empty', title: 'Empty', items: [], empty: 'Nothing planned.' }, { kind: 'custom', id: 'custom', title: 'Custom', render: function (el) { el.textContent = 'Synthetic custom part'; } }] }; }); }
+  function company() { return data().then(function (d) { return { kicker: 'Synthetic / Business', title: 'Synthetic operations', stats: d.stats, sections: [{ kind: 'table', id: 'ledger', title: 'Ledger', columns: ['Item', 'Amount'], rows: d.rows }] }; }); }
+  window.__ctx = AppView.boot({ app: 'synthetic', title: q.get('doc') || undefined, full: function () { window.__full = true; }, audiences: { family: family, company: company } });
+  </script></head><body><div id="full-ui"><h1>Full synthetic page</h1><p id="full-marker">The complete application UI.</p></div></body></html>`));
   app.get('/api/user-directory', (_req, res) => res.status(state.directory.status).json({ users: state.directory.users }));
 }
 
@@ -116,8 +140,16 @@ function swarmRoutes(app: express.Application, state: ExperienceState) {
 function packageRoutes(app: express.Application, state: ExperienceState) {
   const edu = state.education, shop = state.purchasing, fin = state.finance;
   app.get('/api/ui/profile', (req, res) => {
-    if (String(req.query.name || '') !== 'little-monsters') { res.status(404).json({ error: 'Synthetic profile unavailable' }); return; }
-    res.status(statusOr(state, 'profile')).json({ profile: { name: 'little-monsters', displayName: 'Little Monsters', theme: 'little-monsters', defaultView: 'lm-dashboard', ribbon: { items: edu.tools } } });
+    const name = String(req.query.name || '');
+    const record = state.apps.find(a => a.summary.name === name);
+    if (!record) { res.status(404).json({ error: 'Synthetic profile unavailable' }); return; }
+    // Little Monsters answers like the real app: the profile arrives already filtered per caller (teacher-only tools only for teachers/admins).
+    const teacher = ['teacher', 'admin'].includes(edu.me.role);
+    const items = name === 'little-monsters'
+      ? edu.tools.filter(t => teacher || !['tool-lm-teacher', 'tool-lm-recorder'].includes(t.id))
+      : [{ id: `tool-${name}-home`, label: `${record.summary.displayName} home`, icon: 'codicon codicon-circle-outline', section: 'top', toolUi: { iframeUrl: `/fixture/surface/${name}` } },
+        { id: `tool-${name}-more`, label: `${record.summary.displayName} more`, icon: 'codicon codicon-circle-outline', section: 'bottom', toolUi: { iframeUrl: `/fixture/surface/${name}-more` } }];
+    res.status(statusOr(state, 'profile')).json({ profile: { name, displayName: record.summary.displayName, theme: 'midnight', defaultView: items[0]?.id, ribbon: { items } } });
   });
   app.get('/api/education/me', (_req, res) => edu.meStatus === 200 ? res.json(edu.me) : res.status(edu.meStatus).json({ error: 'Synthetic learner missing' }));
   app.get('/api/education/classes', (_req, res) => res.json({ classes: edu.classes }));

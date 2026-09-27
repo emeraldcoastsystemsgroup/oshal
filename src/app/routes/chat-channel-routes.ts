@@ -24,12 +24,14 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | SMS is a second channel on the same identity store: mint/unlink endpoints for provider 'sms'. The inbound webhook (POST /api/sms/inbound) redeems the minted code when the user texts LINK <code>, which is the SMS equivalent of Telegram's /start deep link — without a way to MINT one, the caller-scoped inbound dispatch had no binding to resolve. The number is normalized on both sides so one phone cannot become two identities.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The two replies an unlinked chat gets — the greeting and the linking prompt — name the product as it is called today. They were the retired standalone form, and they are the only product name a Telegram user ever sees, read before that person has any other context for what they are talking to.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Denial audit and real-boundary seams. Every refusal on Telegram and Discord (unlinked sender; invalid, expired or other-provider code; identity already bound to another user) is recorded in the refusal ledger through recordChannelRefusal - the Telegram unlinked path previously did not even log. The Telegram handler is exported as processTelegramInbound beside processDiscordInbound, both on one ChannelInboundLinkPort with optional audit/typing hooks, and a refused cross-user rebind gets its own reply instead of 'invalid code'. createChatChannelRoutes takes optional dispatch/provider-send/Gateway seams so the real webhook and the real Gateway protocol can be driven end to end against a real Postgres without a bot node or a provider account; production passes none. WhatsApp: the link mint advertises TWILIO_WHATSAPP_FROM (the sender the user actually messages) when set, and GET / reports the whatsapp configured state.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Linked messages carry the owner's verified principal issuer into the bot turn. The owner identity was entered as { sub, isOperator: false } only, so user-bound delegation threw "User-bound delegation requires a verified principal issuer" and every linked Telegram/Discord message answered "Something went wrong reaching your swarm" whenever delegation signing was on. Every mint route now reads the caller's verified issuer with getAuthenticatedPrincipalIssuer (idTokenClaims.iss for a browser session - the OIDC presentation user has no iss) and refuses 403 issuer_required without one; the issuer rides the code onto the link; asOwner enters { sub, principalIssuer } from the link. A legacy link with no recorded issuer is refused before any claim or dispatch, audited (reason link_issuer_missing) and told to re-link - never dispatched with a guessed issuer. dispatchToSwarm no longer re-enters a narrower identity of its own: it always runs inside the owner identity the inbound processor established.
  *
  * @module chat-channel-routes
  */
 
 import { Router, type Request, type Response, type RequestHandler } from 'express';
 import { createChildLogger } from '@/shared/logger';
+import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-issuer';
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
 import type { AppContext } from '@/app/composition/app-context';
 import { BotNodeClient, createRegistryEndpointResolver } from '@/features/agent-management';
@@ -77,40 +79,64 @@ function callerSub(req: Request): string | null {
 }
 
 /**
+ * The caller a link code is minted for: their sub and the VERIFIED issuer of their session, read
+ * with the canonical helper (a browser session keeps iss on idTokenClaims, not on the presentation
+ * user). Answers 401 without a session and 403 issuer_required without a verified issuer — a link
+ * minted without one could never run a bot turn. Returns null after answering.
+ */
+function callerLinkIdentity(req: Request, res: Response): { sub: string; issuer: string } | null {
+  const sub = callerSub(req);
+  if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return null; }
+  const issuer = getAuthenticatedPrincipalIssuer(req);
+  if (!issuer) {
+    logger.warn({ path: req.path }, 'channel link code refused: the session carries no verified principal issuer');
+    res.status(403).json({ error: 'issuer_required', message: 'Your sign-in did not carry a verified issuer. Sign out, sign back in, and generate a fresh link code.' });
+    return null;
+  }
+  return { sub, issuer };
+}
+
+/**
  * @description Runs one channel message on the accountable Jarvis bot, threading the linked user's
  * sub + their own LLM endpoint so owner scoping and cost capture apply. Connector credentials
  * remain inside audited server-side operations and never enter this model-visible request.
  *
- * IDENTITY (double-check 2026-07-08): the webhook request is unauthenticated, so the ambient
- * AsyncLocalStorage identity is ANONYMOUS (sub='') — under FORCE RLS, oshal_connections returns
- * zero rows and the BYO resolver silently returns no endpoint. Re-enter the
- * LINKED user's identity for the whole dispatch — scoped to exactly that user, never operator.
+ * IDENTITY: the webhook request is unauthenticated, so the ambient identity would be anonymous —
+ * under FORCE RLS the BYO resolver would see zero rows, and user-bound delegation refuses a subject
+ * without its verified issuer. This runs ONLY inside the owner identity the inbound processor
+ * entered through asOwner — { sub, principalIssuer } from the link row, never operator — so it
+ * must not re-enter a narrower identity of its own (that dropped the issuer and broke every turn).
  *
  * TASK CONTINUITY: the taskId is stable PER CHAT (not per message) so follow-up questions land
  * in the same conversation context — the cockpit Jarvis surface threads a session id the same way.
  * @returns The bot's reply text (never empty).
  */
 async function dispatchToSwarm(ctx: AppContext, provider: string, sub: string, chatId: string, text: string): Promise<string> {
-  return runWithRequestIdentity({ sub, isOperator: false }, async () => {
-    const byoLlmConnection = await resolveUserLlmConnection(ctx.pool, sub);
-    const taskId = `${provider}-${sub}-${chatId}`;
-    const result = await executeBotOrInline(ctx, botClient, JARVIS_AGENT_ID, {
-      text,
-      taskId,
-      workspaceFolderId: taskId,
-      agentId: JARVIS_AGENT_ID,
-      agenticMode: true,
-      direct: true,
-      userSub: sub,
-      byoLlmConnection,
-    });
-    return String(result.response || '').trim() || '(no reply)';
+  const byoLlmConnection = await resolveUserLlmConnection(ctx.pool, sub);
+  const taskId = `${provider}-${sub}-${chatId}`;
+  const result = await executeBotOrInline(ctx, botClient, JARVIS_AGENT_ID, {
+    text,
+    taskId,
+    workspaceFolderId: taskId,
+    agentId: JARVIS_AGENT_ID,
+    agenticMode: true,
+    direct: true,
+    userSub: sub,
+    byoLlmConnection,
   });
+  return String(result.response || '').trim() || '(no reply)';
+}
+
+/** The owner a resolved link names: their sub and the verified issuer recorded when they linked. */
+export interface ChannelLinkOwner {
+  userSub: string;
+  /** Null on a legacy link minted before issuer capture; such a link must never dispatch. */
+  userIssuer: string | null;
 }
 
 /** The link-store surface the inbound processors use; ChannelLinkService satisfies it. */
 export interface ChannelInboundLinkPort extends ChannelLinkRedeemer {
-  resolveLink(provider: string, channelUserId: string): Promise<{ userSub: string } | null>;
+  resolveLink(provider: string, channelUserId: string): Promise<ChannelLinkOwner | null>;
   claimInboundMessage(userSub: string, provider: string, eventId: string): Promise<boolean>;
 }
 
@@ -129,6 +155,7 @@ export const TELEGRAM_CHANNEL_REPLIES = Object.freeze({
   invalid: 'That link code is invalid or expired. Generate a fresh one in your cockpit → Channels → Connect Telegram.',
   rebind: 'This chat is already connected to a different oshal account. Unlink it from that account first, then use a fresh link.',
   unlinked: 'This chat isn\'t linked to an oshal account yet. Open your cockpit → Channels → Connect Telegram to get a one-time link.',
+  relink: 'This chat was connected before oshal recorded which sign-in it belongs to, so it cannot reach your swarm. Re-link it: open your cockpit → Channels → Connect Telegram and tap the new link.',
 });
 /** What a Discord DM sender is told on each link/refusal outcome. */
 export const DISCORD_CHANNEL_REPLIES = Object.freeze({
@@ -136,12 +163,27 @@ export const DISCORD_CHANNEL_REPLIES = Object.freeze({
   invalid: 'That link code is invalid or expired. Generate a fresh one in your cockpit under Channels.',
   rebind: 'This Discord account is already connected to a different oshal account. Unlink it from that account first, then send a fresh code.',
   unlinked: 'This DM is not linked to an oshal account yet. Open your cockpit → Channels → Connect Discord to get a one-time link.',
+  relink: 'This DM was connected before oshal recorded which sign-in it belongs to, so it cannot reach your swarm. Re-link it: open your cockpit → Channels → Connect Discord and send the new LINK code here.',
 });
 const FAILED_TURN_REPLY = 'Something went wrong reaching your swarm. Please try again in a moment.';
 
-/** Run a linked message's bot turn as its owner (never operator), whatever the ambient webhook identity. */
-function asOwner<T>(ownerSub: string, work: () => Promise<T>): Promise<T> {
-  return runWithRequestIdentity({ sub: ownerSub, isOperator: false }, work);
+/**
+ * Run a linked message's bot turn as its owner (never operator), whatever the ambient webhook
+ * identity. The verified issuer from the link rides along: user-bound delegation refuses without it.
+ */
+function asOwner<T>(owner: ChannelLinkOwner, work: () => Promise<T>): Promise<T> {
+  return runWithRequestIdentity({ sub: owner.userSub, principalIssuer: owner.userIssuer, isOperator: false }, work);
+}
+
+/**
+ * A legacy link (no recorded issuer) cannot run a user-bound turn. Refuse it before any occurrence
+ * claim or dispatch: log it, audit it, and let the caller send the re-link instruction.
+ */
+async function refuseIssuerlessLink(
+  audit: ChannelRefusalRecorder, provider: string, channelUserId: string, eventId: string | undefined,
+): Promise<void> {
+  logger.warn({ provider, eventId }, 'linked channel identity has no verified issuer - refused, re-link required');
+  await audit({ provider, channelUserId, reason: 'link_issuer_missing', eventId });
 }
 
 /**
@@ -178,10 +220,15 @@ export async function processTelegramInbound(
     await send(msg.chatId, TELEGRAM_CHANNEL_REPLIES.unlinked);
     return;
   }
+  if (!link.userIssuer) {
+    await refuseIssuerlessLink(audit, msg.provider, msg.channelUserId, msg.eventId);
+    await send(msg.chatId, TELEGRAM_CHANNEL_REPLIES.relink);
+    return;
+  }
   if (!await links.claimInboundMessage(link.userSub, msg.provider, msg.eventId)) return;
   await hooks.typing?.(msg.chatId);
   try {
-    await send(msg.chatId, await asOwner(link.userSub, () => dispatch(link.userSub, msg)));
+    await send(msg.chatId, await asOwner(link, () => dispatch(link.userSub, msg)));
   } catch (err) {
     logger.error({ err, stack: (err as Error).stack, provider: msg.provider }, 'channel dispatch failed');
     await send(msg.chatId, FAILED_TURN_REPLY);
@@ -220,9 +267,14 @@ export async function processDiscordInbound(
     await send(msg.channelId, DISCORD_CHANNEL_REPLIES.unlinked);
     return;
   }
+  if (!link.userIssuer) {
+    await refuseIssuerlessLink(audit, DISCORD_CHANNEL_PROVIDER, msg.channelUserId, msg.eventId);
+    await send(msg.channelId, DISCORD_CHANNEL_REPLIES.relink);
+    return;
+  }
   if (!await links.claimInboundMessage(link.userSub, msg.provider, msg.eventId)) return;
   try {
-    await send(msg.channelId, await asOwner(link.userSub, () => dispatch(link.userSub, msg)));
+    await send(msg.channelId, await asOwner(link, () => dispatch(link.userSub, msg)));
   } catch (err) {
     logger.error({ err, stack: (err as Error).stack, provider: msg.provider }, 'Discord DM dispatch failed');
     await send(msg.channelId, FAILED_TURN_REPLY);
@@ -330,11 +382,11 @@ function whatsAppSenderNumber(): string {
 
 /** POST /sms/link — mint a one-time code plus the number to text it to. */
 async function mintSmsLink(links: ChannelLinkService, req: Request, res: Response): Promise<void> {
-  const sub = callerSub(req);
-  if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
+  const caller = callerLinkIdentity(req, res);
+  if (!caller) return;
   const textTo = inboundSmsNumber();
   if (!textTo) { res.status(503).json({ error: 'sms_not_configured' }); return; }
-  const code = await links.mintLinkCode(sub, SMS_CHANNEL_PROVIDER);
+  const code = await links.mintLinkCode(caller.sub, SMS_CHANNEL_PROVIDER, caller.issuer);
   res.json({ code, textTo, message: `LINK ${code}`, expiresInMinutes: 15 });
 }
 
@@ -349,11 +401,11 @@ async function unlinkSms(links: ChannelLinkService, req: Request, res: Response)
 
 /** POST /whatsapp/link — mint a one-time code plus the WhatsApp sender to message it to. */
 async function mintWhatsAppLink(links: ChannelLinkService, req: Request, res: Response): Promise<void> {
-  const sub = callerSub(req);
-  if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
+  const caller = callerLinkIdentity(req, res);
+  if (!caller) return;
   const textTo = whatsAppSenderNumber();
   if (!textTo) { res.status(503).json({ error: 'whatsapp_not_configured' }); return; }
-  const code = await links.mintLinkCode(sub, WHATSAPP_CHANNEL_PROVIDER);
+  const code = await links.mintLinkCode(caller.sub, WHATSAPP_CHANNEL_PROVIDER, caller.issuer);
   res.json({ code, textTo: `whatsapp:${textTo}`, message: `LINK ${code}`, expiresInMinutes: 15 });
 }
 
@@ -366,10 +418,10 @@ async function unlinkWhatsApp(links: ChannelLinkService, req: Request, res: Resp
 }
 
 async function mintDiscordLink(links: ChannelLinkService, req: Request, res: Response): Promise<void> {
-  const sub = callerSub(req);
-  if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
+  const caller = callerLinkIdentity(req, res);
+  if (!caller) return;
   if (!getDiscordBotToken()) { res.status(503).json({ error: 'discord_not_configured' }); return; }
-  const code = await links.mintLinkCode(sub, DISCORD_CHANNEL_PROVIDER);
+  const code = await links.mintLinkCode(caller.sub, DISCORD_CHANNEL_PROVIDER, caller.issuer);
   res.json({ code, message: `DM the Discord bot: LINK ${code}`, expiresInMinutes: 15 });
 }
 
@@ -397,11 +449,11 @@ async function listChannels(links: ChannelLinkService, req: Request, res: Respon
 
 /** POST /telegram/link — mint a one-time code and the t.me deep link the user taps to connect. */
 async function mintTelegramLink(links: ChannelLinkService, req: Request, res: Response): Promise<void> {
-  const sub = callerSub(req);
-  if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
+  const caller = callerLinkIdentity(req, res);
+  if (!caller) return;
   const identity = await getTelegramBotIdentity();
   if (!identity) { res.status(503).json({ error: 'telegram_not_configured' }); return; }
-  const code = await links.mintLinkCode(sub, 'telegram');
+  const code = await links.mintLinkCode(caller.sub, 'telegram', caller.issuer);
   res.json({
     code,
     botUsername: identity.username,

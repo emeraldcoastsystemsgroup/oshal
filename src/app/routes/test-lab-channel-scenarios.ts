@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | AI Test Lab registration for the messaging channels card (BACKLOG "Twilio policy, fallback, and inbound messaging"). The live step reads GET /api/channels with the initiating user's cookie and checks the surface can say, for that user, whether each inbound channel is wired on this deployment and which identities are bound to THEM. Read-only: it links nothing, unlinks nothing and sends nothing.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | BACKLOG "Chat-channel adapter core": the bindings step also requires the discord and whatsapp wired state, and a second card runs one executable inbound round trip per provider (Telegram, Discord, SMS, WhatsApp) through the real identity store, processors and refusal ledger with only the bot turn and provider send doubled. The Discord, WhatsApp, denial-audit and real-Postgres inbound suites are registered.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Register tests/unit/chat-channel-principal-issuer.spec.ts: a linked message reaches the real BotNodeClient delegation with { sub, verified issuer }, a legacy link without an issuer is refused with a re-link reply, and a link code is never minted without a verified issuer.
  *
  * @module routes/test-lab-channel-scenarios
  */
@@ -53,6 +54,7 @@ const CHANNEL_REGRESSION_TESTS: NonNullable<Scenario['regressionTests']> = [
   { level: 'integration', path: 'tests/unit/sms-inbound-dispatch.spec.ts' },
   { level: 'integration', path: 'tests/unit/chat-channel-inbound-postgres.spec.ts' },
   { level: 'integration', path: 'tests/unit/chat-channel-denial-audit.spec.ts' },
+  { level: 'integration', path: 'tests/unit/chat-channel-principal-issuer.spec.ts' },
   { level: 'unit', path: 'tests/unit/inbound-sms-webhook.spec.ts' },
   { level: 'unit', path: 'tests/unit/chat-channels-telegram.spec.ts' },
   { level: 'unit', path: 'tests/unit/chat-channels-discord.spec.ts' },
@@ -74,7 +76,7 @@ export const CHANNEL_SCENARIOS: Scenario[] = [{
   steps: [{ id: 'bindings', app: APP, label: LABEL, run: bindingsStep }],
 }, {
   id: 'channel-inbound-round-trip', title: 'Messaging channels — one message in, one answer out, strangers refused', group: 'tool',
-  description: 'For Telegram, Discord, SMS and WhatsApp: links a lab identity to you with a fresh code, sends one message twice, and sends one from an identity nobody linked. Passes when exactly one bot turn ran as you, its answer came back, the duplicate was refused, and the stranger was refused with a committed refusal-ledger row. The bot turn and the provider send are doubled, so nothing is spent and no real account is messaged; the lab link is removed afterwards.',
+  description: 'For Telegram, Discord, SMS and WhatsApp: links a lab identity to you with a fresh code, sends one message twice, and sends one from an identity nobody linked. Passes when exactly one bot turn ran as you (carrying your verified sign-in issuer), its answer came back, the duplicate was refused, and the stranger was refused with a committed refusal-ledger row. The bot turn and the provider send are doubled, so nothing is spent and no real account is messaged; the lab link is removed afterwards.',
   regressionTests: CHANNEL_REGRESSION_TESTS,
   steps: ROUND_TRIP_PROVIDERS.map((provider) => ({
     id: `round-trip-${provider}`, app: APP, label: `${provider} inbound round trip`,

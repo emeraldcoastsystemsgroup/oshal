@@ -140,7 +140,7 @@ Each step runs as the signed-in caller through the real identity store, the prov
 processor and the real refusal ledger. It mints a code, links a lab-prefixed synthetic identity (a
 fictional 555-01xx number for SMS and WhatsApp), sends one message twice with the same occurrence
 id, and sends one from a never-linked identity. It passes only when exactly one bot turn ran for the
-caller under the caller's non-operator identity, the answer came back, the duplicate was refused, and
+caller under the caller's non-operator identity carrying the caller's verified issuer, the answer came back, the duplicate was refused, and
 the stranger was refused with a committed refusal-ledger row. The bot turn and the provider send are
 doubled, so a run spends nothing and messages no real account. The lab link is removed afterwards;
 the occurrence claims and the refusal row stay as permanent receipts (the runtime role can only
@@ -148,11 +148,64 @@ insert them). Without a signed-in caller and the app database each step is degra
 
 Run the linked suites locally with `npm run test:channels`. The real-boundary suites
 (`tests/unit/chat-channel-inbound-postgres.spec.ts`, `tests/unit/chat-channel-denial-audit.spec.ts`,
-`tests/unit/sms-inbound-dispatch.spec.ts`) start their own PostgreSQL. Against the non-superuser
+`tests/unit/chat-channel-principal-issuer.spec.ts`, `tests/unit/sms-inbound-dispatch.spec.ts`) start
+their own PostgreSQL. The principal-issuer suite sends each linked message through the real
+controller delegation client and verifies the signed token names the owner and the issuer. Against the non-superuser
 enforcing role under forced RLS they drive the real Telegram webhook over HTTP, the real Discord
 Gateway client over a local WebSocket server, and the real signed Twilio webhook for SMS and
 WhatsApp. That is local evidence: registration in source does not mean the card has run on the
 deployed instance, and nothing here is a real Telegram, Discord or WhatsApp message.
+
+### Shared response renderer
+
+**Shared response renderer: one untrusted reply, every surface** (`shared-response-renderer`,
+Jarvis) has three read-only steps:
+
+- the running server serves `/dist/response-renderer.js` and it publishes
+  `DISPLAY_ONLY_RESPONSE_CAPABILITIES`. Jarvis and the swarm-bot chat refuse a bundle without it
+  and stay on escaped text, so a missing or older bundle is reported as a deployment gap;
+- the same-origin Mermaid runtime is served from `/dist/vendor/mermaid` at an exact version
+  (a gap when the image predates the vendoring);
+- the renderer's own conformance reply, `SHARED_UNTRUSTED_RESPONSE` (remote gallery image,
+  arbitrary download link, forged `oshal:provider-record` and `artifact:image` fences), rendered in
+  the server process through that profile produces no image, link or URL-bearing attribute and
+  exactly its expected block sequence: the gallery and download stay visible escaped fallbacks and
+  no forged fence parses as a trusted block.
+
+Run the linked suites locally with `npm run test:response-renderer`. The Chromium suite
+(`tests/unit/shared-response-surfaces-browser.spec.ts`) loads the unmodified `jarvis.html` and the
+real chat bubble module, bundles the renderer from source and vendors Mermaid with the build's own
+step. It proves that the same conformance reply renders to the identical block sequence on both
+surfaces, that nothing requests the hostile host or any CDN, and that the diagram hydrates
+same-origin or stays readable text when the runtime is missing. The Little Monsters Tutor runs the
+same vector in the store (`little-monsters/tests/tutor-renderer.core.spec.mjs`).
+
+The card also carries the JVV-003 delayed-work suite
+(`tests/unit/jarvis-queue-lifecycle.integration.spec.ts`). A Jarvis hand-off files a real approved
+ticket, and one real queue poll dispatches it through the real `BotNodeClient` over loopback HTTP.
+The dispatcher then writes the completion to the message store and closes the ticket, and Jarvis
+summarizes that completion once, persists one immutable visual and returns it to the original
+Discussion. No test code writes the terminal ticket state.
+
+Real code in the chain: the Jarvis routes, `TicketService`, the queue poll and manifest-worker
+dispatch, the orchestration code of the ADR-083 call-out resolver, and the `BotNodeClient` HTTP
+client. Everything else is a double:
+
+- **Routing decision.** `agentRouter.route` is fixed to return the one worker with strategy `bid`.
+  The resolver's inputs are stubs too: the mesh bid transport, `agentProfileRepository`,
+  `resolveOnlineAgentIds` and `isAgentAccessibleTo`.
+- **Worker.** A canned loopback `node:http` handler for `POST /api/swarm-execute` returns a fixed
+  deliverable. It is not `bot-node-server`.
+- **Stores.** The completion goes to an in-memory `vi.fn` message store, not Postgres. Tickets and
+  tasks use the in-memory stores, and the Jarvis SQL rows are the in-memory `DelayedLifecyclePool`.
+  The database module's pool, bootstrap and RLS helpers are mocked.
+- **Runtime and helpers.** The swarm runtime, the chat orchestrator and `resolveAgentIdByName` are
+  stubs. The hosted model (`executeBotOrInline`), `connector-token-broker`, `free-tier-rotation` and
+  `user-model` are `vi.mock`ed.
+- **Identity.** A header middleware stands in for OIDC, and `applicationAuthorization` is a stub.
+
+All of this is local evidence. Registration in source does not mean the card has run on the deployed
+instance.
 
 ---
 

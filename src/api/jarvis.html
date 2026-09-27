@@ -22,6 +22,7 @@
   6 | maintainer@emeraldcoastsystemsgroup.com | A fallback turn says so (2026-09-22): when the ask result carries brainFallback, one attribution line is rendered beneath the answer — "answered by X (hot fallback); Y was unavailable after N attempts" — on both the live and the durable result paths, so the switch is never passed off as a normal turn.
   5 | maintainer@emeraldcoastsystemsgroup.com | Load and mount the Manage Voices → Ambient Recall bridge: every voice row in the Voice & Speakers panel opens that voice's profile page.
   7 | maintainer@emeraldcoastsystemsgroup.com | Prefer the shared response-renderer bundle for live, durable and resumed answers with the existing escaped renderer retained as the unavailable-bundle fallback.
+  8 | maintainer@emeraldcoastsystemsgroup.com | Render typed answers with the shared DISPLAY_ONLY_RESPONSE_CAPABILITIES profile (a model-authored oshal:gallery/oshal:download now degrades to escaped text instead of loading a remote image or rendering an arbitrary link; a bundle without the profile falls back to the escaped renderer), hydrate the shared [data-mermaid] diagram output as well as the legacy .mermaid blocks, and load Mermaid from the same-origin lock-pinned build copy under /dist/vendor/mermaid instead of the floating mermaid@11 jsDelivr import (JVV-007).
 -->
 <html lang="en" data-theme="midnight">
 <head>
@@ -539,10 +540,12 @@
     </div>
   </aside>
 
-<!-- Diagram engine: Jarvis renders Mermaid on the fly. CDN; degrades to readable text if blocked. -->
+<!-- Diagram engine: Jarvis renders Mermaid on the fly from the same-origin copy of the lock-pinned
+     mermaid package that `npm run build:chat` vendors into /dist/vendor/mermaid (vite.config.ts) —
+     no third-party module at render time. Degrades to readable diagram text if it is unavailable. -->
 <script type="module">
   try {
-    const mermaid = (await import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs')).default;
+    const mermaid = (await import('/dist/vendor/mermaid/mermaid.esm.min.mjs')).default;
     mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'dark' });
     window.__mermaid = mermaid;
     window.dispatchEvent(new Event('mermaid-ready'));
@@ -1051,22 +1054,26 @@ function renderMarkdown(md) {
   return html;
 }
 /** @description Render typed untrusted blocks through the shared contract while retaining the
- * established GFM-like prose renderer for ordinary answers. If the bundle is absent, unavailable
- * or rejects the typed reply, the legacy safe renderer remains the visible availability path. */
+ * established GFM-like prose renderer for ordinary answers. Typed blocks render with the shared
+ * display-only capability profile, so a model-authored gallery/download stays escaped text. If the
+ * bundle is absent, lacks that profile, or rejects the typed reply, the legacy safe renderer
+ * remains the visible availability path. */
 async function renderJarvisResponse(text) {
   const source = String(text || '');
   if (!/```\s*oshal:[^\n`]*/i.test(source)) return renderMarkdown(text);
   try {
     const renderer = await sharedResponseRendererReady;
-    if (renderer && typeof renderer.renderResponseHtml === 'function') {
-      const result = await renderer.renderResponseHtml(source);
+    const capabilities = renderer && renderer.DISPLAY_ONLY_RESPONSE_CAPABILITIES;
+    if (renderer && typeof renderer.renderResponseHtml === 'function' && Array.isArray(capabilities)) {
+      const result = await renderer.renderResponseHtml(source, { capabilities });
       if (result && result.html) return result.html;
     }
   } catch (_) { /* the legacy escaped renderer remains the safe availability path */ }
   return renderMarkdown(text);
 }
 async function renderMermaidIn(container) {
-  const nodes = [...container.querySelectorAll('.mermaid:not([data-rendered])')];
+  // The legacy prose renderer emits .mermaid; the shared renderer emits pre.rr-mermaid[data-mermaid].
+  const nodes = [...container.querySelectorAll('.mermaid:not([data-rendered]), .rr-mermaid[data-mermaid]:not([data-rendered])')];
   if (!nodes.length) return;
   const run = async () => {
     const m = window.__mermaid; if (!m) return false;

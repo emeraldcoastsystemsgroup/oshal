@@ -20,6 +20,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the ResponseBlock union (markdown / code / mermaid / oshal-typed) the parseResponse segmenter emits.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add the DOM-free portable component-registry contracts, trusted image attachment block, capability filter, and ordered render/fallback results.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Bind the trusted image attachment to a required server-channel provenance record (provider, record refs, capture time, owner-scoped artifact id) so a provider-grounded block can only be built beside the text, never parsed from it.
  *
  * @module shared/ui/response-renderer/types
  */
@@ -62,11 +63,32 @@ export interface ResponseImageArtifact {
   kind?: string;
 }
 
+/**
+ * Where a trusted block's facts came from. A serving surface copies this from its own
+ * control-plane record (for Jarvis, the persisted visual artifact's provenance) — never from the
+ * narrative text. The registry refuses an `artifact` block whose provenance is missing, malformed
+ * or bound to a different artifact, so a provider-grounded block cannot exist without it.
+ */
+export interface ResponseBlockProvenance {
+  /** The block travelled beside the text from the serving control plane; there is no other channel. */
+  channel: 'server';
+  /** Who captured the grounded facts, e.g. `nws`, `gmail`, `walmart`, or `oshal-visual`. */
+  provider: string;
+  /** Opaque provider-record / source references the facts were bound to (1..16 entries). */
+  recordRefs: string[];
+  /** ISO-8601 capture (or fact-locked generation) time. */
+  capturedAt: string;
+  /** Owner-scoped artifact id; must equal the block's `artifact.artifactId`. */
+  artifactId: string;
+}
+
 /** A trusted image attachment supplied alongside, rather than parsed from, narrative Markdown. */
 export interface ImageArtifactBlock {
   type: 'artifact';
   kind: 'image';
   artifact: ResponseImageArtifact;
+  /** Required: the registry resolves no key for an artifact block without valid provenance. */
+  provenance: ResponseBlockProvenance;
 }
 
 /** Every block the portable component registry can dispatch. */
