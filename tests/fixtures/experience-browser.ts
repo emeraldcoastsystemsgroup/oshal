@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Serve the real experience shells through the real static route registration over an isolated, explicitly synthetic swarm: home plan, listing, navigation, tickets, Jarvis shelf/history/ask, package summaries, Little Monsters, Purchasing, Finance and the user directory, with controllable statuses so honest setup, denial and failure states can be proven in Chromium.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | The synthetic ribbon profile answers per application (Little Monsters role-filtered; every other host a home and a more page) so the multi-host presets are exercised against 19 installed applications
  * 3 | maintainer@emeraldcoastsystemsgroup.com | A synthetic application page under the shared audience-view kit (`/fixture/app-view`, its data with a controllable status, and a host page that frames it) so the kit is proven in Chromium: full page by default, audience views on request, hidden full UI, text-only rendering, failure with retry, and the escape that navigates the top window
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | fullSwarmGapRoutes: the viewer-scoped app record (GET /api/swarm/apps/:name with manifest bots, chatBot and dependencies, 404 when not visible or when `detail:<name>` says so), a controllable Little Monsters calendar status (`edu-calendar`) and overview calendar events. It is registered ahead of the swarm and package routes because packageRoutes ends in the `/api` 404 catch-all; every path it does not answer falls through untouched.
  */
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -180,6 +181,7 @@ function packageRoutes(app: express.Application, state: ExperienceState) {
 export async function startExperienceBrowserFixture(options: { denyAuth?: boolean } = {}) {
   const app = express(), state = experienceState();
   const requiresAuth: express.RequestHandler = options.denyAuth ? (_req, res) => { res.status(401).json({ error: 'unauthorized' }); } : (_req, _res, next) => next();
+  fullSwarmGapRoutes(app, state);
   swarmRoutes(app, state); packageRoutes(app, state);
   app.use('/shared/ui/js', express.static(resolve(ROOT, 'src/shared/ui/js')));
   registerCockpitStaticRoutes({ app, requiresAuth, cockpitDir: resolve(ROOT, 'src/pages/cockpit'), uiEnhancedDir: resolve(ROOT, 'any-bot/ui-enhanced'),
@@ -188,4 +190,41 @@ export async function startExperienceBrowserFixture(options: { denyAuth?: boolea
   await new Promise<void>(done => server.once('listening', done));
   return { origin: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, state,
     close: async () => { server.closeAllConnections(); await new Promise<void>((done, reject) => server.close(error => error ? reject(error) : done())); } };
+}
+
+/**
+ * @description Synthetic reads for the full-swarm gap closure: the viewer-scoped app record per application
+ * (manifest bots, chatBot, dependencies; 404 when absent or when `status['detail:<name>']` says so), a
+ * controllable Little Monsters calendar status (`status['edu-calendar']`) and overview calendar events.
+ * Registered ahead of swarmRoutes/packageRoutes because packageRoutes ends in the `/api` 404 catch-all; any
+ * request it does not answer falls through with next(), and the requests it answers are logged here.
+ * @param app The fixture Express application.
+ * @param state The synthetic swarm state; gains `fullSwarm.manifests` (overrides by app name) and `fullSwarm.overviewEvents`.
+ * @returns Nothing; routes are registered on `app`.
+ */
+function fullSwarmGapRoutes(app: express.Application, state: ExperienceState) {
+  const gaps = Object.assign(state, { fullSwarm: {
+    manifests: { ledger: { bots: [{ agentId: 'a1', name: 'Synthetic Bot', role: 'assistant' }, { agentId: 'synthetic-reviewer', name: 'Synthetic reviewer', role: 'reviewer' }], chatBot: 'Synthetic Bot', uses: ['app-dependencies'], dependencies: { required: { apps: ['finance'] }, optional: { apps: ['synthetic-absent'] } } } } as Record<string, Record<string, unknown>>,
+    overviewEvents: [] as Array<{ title: string; when: string }>,
+  } }).fullSwarm;
+  const answered = (req: express.Request) => { state.calls.push(`${req.method} ${req.path}`); };
+  app.get('/api/swarm/apps/:name', (req, res, next) => {
+    const name = String(req.params.name);
+    if (name === 'home-plan') { next(); return; }
+    answered(req);
+    const record = state.apps.find(a => a.summary.name === name);
+    const status = statusOr(state, `detail:${name}`, record ? 200 : 404);
+    if (!record || status !== 200) { res.status(status).json({ error: 'App not found' }); return; }
+    const manifest = { name, displayName: record.summary.displayName, bots: [{ agentId: `${name}-agent`, name: `${record.summary.displayName} assistant`, role: 'assistant' }], ...gaps.manifests[name] };
+    res.json({ app: { name, displayName: record.summary.displayName, status: 'active', agentIds: (manifest.bots as Array<{ agentId: string }>).map(b => b.agentId), manifest } });
+  });
+  app.get('/api/education/calendar', (req, res, next) => {
+    const status = statusOr(state, 'edu-calendar');
+    if (status === 200) { next(); return; }
+    answered(req); res.status(status).json({ error: 'Synthetic calendar refused' });
+  });
+  app.get('/api/jarvis/overview', (req, res, next) => {
+    if (!gaps.overviewEvents.length) { next(); return; }
+    answered(req); res.json({ bots: state.bots, activity: { openCount: 0, tickets: [] }, comms: { digest: null, signals: [] }, calendar: { events: gaps.overviewEvents } });
+  });
 }

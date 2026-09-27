@@ -10,10 +10,10 @@ Eight selectable experiences over one unchanged backend:
 
 | Experience | Route | Shape |
 | --- | --- | --- |
-| Studio | `/studio` | Workbench: suites and pinned apps beside one Jarvis conversation, selected app's summary or embedded surface alongside |
-| Jarvis | `/jarvis` | Warm assistant home: briefing from the real queue, recent work, suites |
-| Orbit | `/orbit` | Suites as connected worlds around Jarvis; drill into a suite, inspect an app |
-| Commons | `/commons` | Suite rooms with applications, declared assistants, a work board and one Jarvis thread per room |
+| Studio | `/studio` | Workbench: suites and pinned apps beside one Jarvis conversation, selected app's summary or embedded surface alongside (hosted with the `company` view requested), its declared assistants and relationships |
+| Jarvis | `/jarvis` | Warm assistant home: briefing from the real queue, recent work, an agenda from the overview calendar feed plus the caller's Little Monsters calendar, suites; hosts apps with the `family` view requested |
+| Orbit | `/orbit` | Suites as connected worlds around Jarvis; drill into a suite, inspect an app and its declared relationships; hosts apps with the `company` view requested |
+| Commons | `/commons` | Suite rooms (plus a Game room) with applications, declared assistants, a work board, one Jarvis thread per room and the swarm roster; hosts apps with the `company` view requested |
 | Home · family homebase | `/homebase?preset=family` | Calendar, shopping list, Smart Home facts, people, personal finance; hosts Smart Home, Shopping, Money and Little Monsters in place with the `family` view requested |
 | Little Monsters · classroom | `/homebase?preset=classroom` | Classwork, class calendar, teacher roster or learner checklist by real role; the Little Monsters tools the caller is admitted to open in place |
 | Business · company swarm | `/homebase?preset=company` | Open tickets as projects, team calendar, people, dense account table; hosts Presentations, Finance, Communications, Payroll, Payments, Identity and Engineering in place with the `company` view requested |
@@ -31,9 +31,13 @@ own session:
 | Screen element | Contract |
 | --- | --- |
 | Signed-in person | `GET /api/auth/user` (display name from the account handle, never the whole address) |
-| Applications, suites, availability, summary probes, integration sources | `GET /api/swarm/apps/home-plan` (authorized facts lead) joined with `GET /api/swarm/apps?status=active` (package metadata) and `GET /api/ui/workspaces` (admitted navigation href and skin) |
+| Applications, suites, availability, summary probes, group members | `GET /api/swarm/apps/home-plan` (authorized facts lead) joined with `GET /api/swarm/apps?status=active` (package metadata) and `GET /api/ui/workspaces` (admitted navigation href and skin) |
 | Work items | `GET /api/tickets` (the caller's tickets) and `GET /api/jarvis/tasks` (the Jarvis shelf), attributed to apps by declared ticket type or title prefix |
-| Assistants online, open count | `GET /api/jarvis/overview` |
+| Assistants online, open count, swarm calendar feed | `GET /api/jarvis/overview` (`calendar.events` read as `{title, when}`, the shape the cockpit Jarvis page reads; empty on every current deployment) |
+| Declared assistants and relationships (app panel, Studio's selected workspace, Orbit's inspector) | `GET /api/swarm/apps/:name`, viewer-scoped (404 = not visible), read lazily the first time a panel shows the app; a group also reads each installed member. Assistants are `manifest.bots[].name`, the explicit `manifest.chatBot` is marked Concierge, and online state appears only where the agentId joins the overview roster (otherwise "declared in the package"). Relationships: group members are "Member (required)"; app dependencies follow the two-form rule of `scripts/oshal-app-dependencies.js` (tiered `required`/`optional`, a legacy flat block is all required, a mixed block shows a neutral note and no tiers), labelled Required / Optional and "not installed" when absent from the catalog. Connector tiers stay under Providers |
+| Games (directory chip, Commons Game room) | One shared predicate in `shell.js` (`isGameApp`): a Creative & games suite member whose name reads like a game. No manifest field marks a game, so the chip's title says "Creative apps that look like games" |
+| Swarm roster (Commons room and People panel) | `GET /api/user-directory` (swarm admins): account name, source and sign-in status, never presence or room membership. A refusal (403) shows only the caller's own identity and says only a swarm admin can list everyone |
+| Jarvis agenda | the overview calendar feed plus, when Little Monsters is installed, `GET /api/education/calendar?month=` for this month and next; each source and its empty, refused or not-installed state is named on screen |
 | Per-application facts | each app's own `home-summary` probe from the plan, with the Home view's ADR-145 caps |
 | Conversation | `GET /api/jarvis/history`, `POST /api/jarvis/ask`, `GET /api/jarvis/ask/result` on the browser's shared `jarvisSessionId`; Commons rooms use `jarvis-room-<suite>-<sub>` |
 | Classroom | Little Monsters `/api/education/me`, `/classes`, `/classes/:id/students` (only classes the caller teaches), `/assignments`, `/calendar`; personal events are created through `POST /api/education/calendar` |
@@ -41,6 +45,7 @@ own session:
 | Shopping list | Purchasing `/api/purchasing/lists` and `/lists/:id/items`; add and remove use the package's own routes |
 | Money | Finance `/api/finance/summary` and `/api/finance/home-summary` |
 | Voice | `POST /api/voice/synthesize`, falling back to the browser engine |
+| In-place frames (Studio, Jarvis, Orbit, Commons) | The application's `firstSurfaceUrl` with the layout's audience appended through one helper (`withAudience` in `shell.js`: existing query and hash kept, an audience the URL already names never overridden): `company` for Studio, Orbit and Commons, `family` for Jarvis. A Summary view / Full application switch (full = no audience parameter) is remembered per layout on this device; the hosted page decides whether it has that view and otherwise runs its full UI |
 
 Apps the listing shows but the plan does not admit stay visible as "not available in your
 workspace"; nothing is hidden and nothing is widened. A read that fails shows its HTTP status in the
@@ -50,15 +55,18 @@ provenance panel and the module renders its unavailable state. No module substit
 
 - No check-in, location or presence module: no application on the platform publishes such data.
 - No household directory: people appear only where a package publishes membership (a classroom
-  roster) or the user directory answers for the caller (company preset).
+  roster) or the user directory answers for the caller (company preset, Commons).
+- No presence, room membership or shared room conversation in Commons: the roster is the swarm's
+  account list and each room thread is the caller's own Jarvis conversation.
 - No calendar beyond what Little Monsters contributes; the swarm overview's calendar feed is empty
-  by design until an application contributes events.
+  by design until an application contributes events (the Jarvis agenda says so when it is empty).
 - No role switcher. Teacher and learner views follow `/api/education/me`.
 - No blocking on work data: a homebase paints from identity and the catalog (`readyCore`) and fills tickets, tasks and the overview in when they answer (`ready`), so a slow queue never delays the first screen.
 
 ## Device-local preferences
 
-Pins per layout, skin per layout, homebase density and module toggles, the central assistant's
+Pins per layout, skin per layout, the in-place Summary view / Full application choice per layout
+(`embed-view:<layout>`), homebase density and module toggles, the central assistant's
 display name and auto-speak are stored in `localStorage` under `oshal-experience:*`. They are
 visible as device-only choices in the UI and never reach a server setting or a permission.
 
@@ -78,6 +86,13 @@ stylesheets under `/experience/…`, so the strict CSP applies unchanged.
   gating, live rendering without fixture text, directory and pins, app panel and embed, the ask
   flow, room threads, the three presets, honest finance states, the central assistant, the portal
   and per-layout skins.
+- `tests/unit/experience-full-swarm-gaps.spec.ts`: the adapter's app-detail, roster and agenda reads,
+  then Chromium over the same fixture: audience-aware hosting and the remembered switch in all four
+  full-swarm layouts, declared assistants and relationship tiers (group, flat, mixed, 404, failure),
+  the shared games predicate, the Commons roster with its refusal states, and the Jarvis agenda's
+  empty, refused and not-installed states.
+- `tests/unit/experience-dependency-tiers.spec.ts`: the shell's dependency reader and
+  `scripts/oshal-app-dependencies.js` give identical tiers over tiered, flat, empty and mixed manifests.
 - AI Test Lab card `experience-shells` (`test-lab-experience-scenarios.ts`): a read-only step over
   the entry pages and the feeds they join, classified as gap when the running image predates
   `src/experience`.
@@ -85,13 +100,15 @@ stylesheets under `/experience/…`, so the strict CSP applies unchanged.
 Run locally:
 
 ```sh
-npx vitest run tests/unit/experience-live-data.spec.ts tests/unit/test-lab-experience-scenarios.spec.ts tests/unit/experience-layouts-browser.spec.ts
+npx vitest run tests/unit/experience-live-data.spec.ts tests/unit/test-lab-experience-scenarios.spec.ts tests/unit/experience-layouts-browser.spec.ts tests/unit/experience-full-swarm-gaps.spec.ts tests/unit/experience-dependency-tiers.spec.ts
 ```
 
 ## Audience views: what a hosted page renders for a shell (ADR-164 D6)
 
 A preset hosts an assembly of applications and opens every hosted page with `?audience=<preset.audience>`
-(`family` for Home, `company` for Business, `classroom` for the classroom). The parameter is a request, never
+(`family` for Home, `company` for Business, `classroom` for the classroom). The full-swarm layouts do the same for
+their in-place frames (`company` for Studio, Orbit and Commons, `family` for Jarvis) unless the viewer switches to the
+full application. The parameter is a request, never
 authority (D5): the page decides whether it provides that audience, and every read still goes through the page's
 own routes under the caller's session. The word is `audience`, not `view`: store pages (the purchasing dashboard)
 and the cockpit ribbon already read `?view=` for their own tabs.
