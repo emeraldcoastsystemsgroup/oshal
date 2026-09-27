@@ -17,6 +17,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — audit unlinked identities, refused link codes and cross-user rebind attempts on every inbound chat channel through the refusal ledger, under a hashed channel actor so no raw channel identity is stored; redeemChannelCode gives every provider one audited link handshake.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | New reason `link_issuer_missing`: a legacy link that predates issuer capture cannot run a user-bound bot turn (delegation needs the verified issuer), so it is refused before any dispatch and the sender is told to re-link. It reuses the existing `channel_link_required` ledger code — the user action is the same, a fresh link — and the reason stays distinct in the row's metadata.
  *
  * @module chat-channels/channel-refusal-audit
  */
@@ -29,13 +30,15 @@ import type { ChannelLinkRedemption } from './channel-link-service';
 const logger = createChildLogger({ module: 'channel-refusal-audit' });
 
 /** Why an inbound channel message was refused before any bot turn. */
-export type ChannelRefusalReason = 'unlinked_identity' | 'invalid_link_code' | 'identity_bound_to_another_user';
+export type ChannelRefusalReason =
+  | 'unlinked_identity' | 'invalid_link_code' | 'identity_bound_to_another_user' | 'link_issuer_missing';
 
 /** The stable refusal-ledger code for each channel refusal reason. */
 export const CHANNEL_REFUSAL_CODES: Readonly<Record<ChannelRefusalReason, string>> = Object.freeze({
   unlinked_identity: 'channel_link_required',
   invalid_link_code: 'channel_link_code_refused',
   identity_bound_to_another_user: 'channel_identity_rebind_denied',
+  link_issuer_missing: 'channel_link_required',
 });
 
 /** The package every channel refusal is attributed to in the ledger. */

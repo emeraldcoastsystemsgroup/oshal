@@ -64,7 +64,8 @@ uses, with `provider = 'sms'` and the sender's E.164 number as the identity:
 2. The user texts `LINK <code>` to that number. The signed webhook
    (`POST /api/sms/inbound`) redeems it and the binding is written as that user.
 3. From then on, a text from that number runs on the user's Jarvis under
-   `runWithRequestIdentity({ sub, isOperator: false })`, and the answer returns over the user's OWN
+   `runWithRequestIdentity({ sub, principalIssuer, isOperator: false })` (the verified issuer stored
+   on the link; a link without one is refused with a re-link reply), and the answer returns over the user's OWN
    connected Twilio account through the fixed `sendUserTwilioSms` operation.
 
 An **unlinked** number is refused: it gets linking guidance in the TwiML reply and reaches no swarm.

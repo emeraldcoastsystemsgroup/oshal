@@ -125,7 +125,7 @@ Each step runs as the signed-in caller through the real identity store, the prov
 processor and the real refusal ledger. It mints a code, links a lab-prefixed synthetic identity (a
 fictional 555-01xx number for SMS and WhatsApp), sends one message twice with the same occurrence
 id, and sends one from a never-linked identity. It passes only when exactly one bot turn ran for the
-caller under the caller's non-operator identity, the answer came back, the duplicate was refused, and
+caller under the caller's non-operator identity carrying the caller's verified issuer, the answer came back, the duplicate was refused, and
 the stranger was refused with a committed refusal-ledger row. The bot turn and the provider send are
 doubled, so a run spends nothing and messages no real account. The lab link is removed afterwards;
 the occurrence claims and the refusal row stay as permanent receipts (the runtime role can only
@@ -133,7 +133,9 @@ insert them). Without a signed-in caller and the app database each step is degra
 
 Run the linked suites locally with `npm run test:channels`. The real-boundary suites
 (`tests/unit/chat-channel-inbound-postgres.spec.ts`, `tests/unit/chat-channel-denial-audit.spec.ts`,
-`tests/unit/sms-inbound-dispatch.spec.ts`) start their own PostgreSQL. Against the non-superuser
+`tests/unit/chat-channel-principal-issuer.spec.ts`, `tests/unit/sms-inbound-dispatch.spec.ts`) start
+their own PostgreSQL. The principal-issuer suite sends each linked message through the real
+controller delegation client and verifies the signed token names the owner and the issuer. Against the non-superuser
 enforcing role under forced RLS they drive the real Telegram webhook over HTTP, the real Discord
 Gateway client over a local WebSocket server, and the real signed Twilio webhook for SMS and
 WhatsApp. That is local evidence: registration in source does not mean the card has run on the
