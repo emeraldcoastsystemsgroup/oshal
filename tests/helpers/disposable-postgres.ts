@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Extra LOGIN roles, because the one thing this fixture could not host was a spec whose SUBJECT is the enforcing role. A private server has only the superuser `postgres`, and a superuser bypasses row-level security unconditionally - so a FORCE-RLS assertion made over it passes for the wrong reason and proves nothing. That is why trading-book-report-scripts still resolved an oshal_app DSN out of the environment (and, failing that, out of the operator's .env) long after its sibling specs stopped: converting it onto a superuser-only fixture would have quietly made every RLS assertion in the file vacuous. `roles:` creates NOSUPERUSER NOBYPASSRLS LOGIN roles once the server answers and before migrations run, each with a password minted here like the superuser's - never a literal, never inherited from the environment - and hands back a pool/connection per role. Role pools deliberately do NOT inherit the fixture's libpq `options`: `-c row_security=off` on a non-privileged role turns an enforced read into an error instead of a filtered result.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The failure redaction now scrubs minted secrets BY VALUE as well as by the `POSTGRES_PASSWORD=` shape. A role password reaches the server inside a CREATE ROLE statement rather than a docker argv, so the entry-2 pattern would not have caught it; scrubbing the values the fixture generated covers both shapes and any future one.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Remove the container's anonymous volumes with it. This fixture mounts a tmpfs over `postgres:16-alpine`'s declared data directory, so today it mints no anonymous volume at all (measured: the running container's Mounts list is empty, and the machine's volume count is unchanged across a start/stop) - but that is a property of the image tag, not of the removal. `postgres:18` moved its data directory to `/var/lib/postgresql/18`, which this tmpfs does not cover, and two anonymous volumes holding exactly that layout were found on the dev box; on the day the tag moves, a `docker rm --force` without `--volumes` starts leaking one volume per start. The Redis sibling was already leaking for that reason. `--volumes` removes anonymous volumes only, never a named one.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Optional `image` (default unchanged: postgres:16-alpine). The world series store runs on TimescaleDB, and the one claim a plain PostgreSQL cannot test is what an ALTER does to an existing HYPERTABLE that already has a continuous aggregate over it - so a spec whose subject is that store can now start the same timescale/timescaledb image the stack runs. It must keep its data directory at /var/lib/postgresql/data, which the tmpfs covers.
  */
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -39,6 +40,12 @@ export interface DisposablePostgresOptions {
   purpose: string;
   /** Docker label value; defaults to `<purpose>-postgres`. */
   label?: string;
+  /**
+   * Server image (default `postgres:16-alpine`). A spec whose subject is the TimescaleDB series store
+   * names the timescale image the stack runs. The image must keep its data directory at
+   * `/var/lib/postgresql/data`, which is what the fixture's tmpfs covers.
+   */
+  image?: string;
   /** Database created at container start (default `oshal_fixture`). */
   database?: string;
   /** SQL files under `scripts/migrations/`, applied in order once the server answers. */
@@ -123,6 +130,7 @@ export class DisposablePostgres {
     this.opts = {
       purpose,
       label: options.label ?? `${purpose}-postgres`,
+      image: options.image ?? 'postgres:16-alpine',
       database: options.database ?? 'oshal_fixture',
       migrations: options.migrations ?? [],
       memory: options.memory ?? '256m',
@@ -229,7 +237,7 @@ export class DisposablePostgres {
         '--publish', '127.0.0.1::5432', '--tmpfs', '/var/lib/postgresql/data',
         '--memory', this.opts.memory, '--cpus', '1',
         '--env', `POSTGRES_PASSWORD=${password}`, '--env', `POSTGRES_DB=${this.opts.database}`,
-        'postgres:16-alpine'], 60_000);
+        this.opts.image], 60_000);
       this.started = true;
       const published = docker(['port', this.containerName, '5432/tcp'], 30_000);
       const match = /^127\.0\.0\.1:(\d+)$/m.exec(published);
@@ -261,7 +269,7 @@ export class DisposablePostgres {
       // POSTGRES_PASSWORD. The cause is worth printing; the value never is - so redact it here
       // rather than dropping the diagnostic and leaving a bare "setup failed".
       const detail = this.redact(error instanceof Error ? `${error.name}: ${error.message}` : 'unknown error');
-      throw new Error(`Disposable PostgreSQL setup failed for ${this.opts.purpose} (${detail}). Docker with postgres:16-alpine is required; deployment databases are never used.`);
+      throw new Error(`Disposable PostgreSQL setup failed for ${this.opts.purpose} (${detail}). Docker with ${this.opts.image} is required; deployment databases are never used.`);
     }
   }
 
