@@ -217,10 +217,26 @@ answer to the role and to the bullet it supports. Two rules keep it honest: a mo
 bullet the role actually carries (anything else falls back to a deterministic word-overlap match), and
 with no provider reachable the answer is stored verbatim with that same match — so the review works on a
 box with no AI, and each story records which path wrote it. `GET /stories` and `POST /stories/answer`
-drive it, Strengthen renders it, and `profile.summary()` emits an `EVIDENCE:` line per role so tailored
-resumes and covers cite the story instead of restating the bullet. A story the model flags as carrying no
-real evidence is kept but never cited. Guard: `career-hunter/tests/career-stories-contract.py` (21 checks
-against a real profile file, both provider outcomes) driven by `career-stories.test.mjs`.
+drive it and Strengthen renders it. A story the model flags as carrying no real evidence is kept but
+never cited. Guard: `career-hunter/tests/career-stories-contract.py` (21 checks against a real profile
+file, both provider outcomes) driven by `career-stories.test.mjs`.
+
+**D7, where the evidence goes (career-hunter 1.22.0, store `67c20ab`).** Tailored resumes and covers do
+not cite stories through `profile.summary()`. Its per-role `EVIDENCE:` line feeds the scorer
+(`score.py`), not the generator; this record said otherwise until 1.22.0. The generator path is
+`engine/jobhunter/generate.py`:
+
+- `build_prompt` appends `story_evidence_suffix`, which lists each role's stories with the bullet
+  each one supports. It requires a role that holds a story to draw one of its bullets from that story,
+  and it asks for a `story_evidence` key on each experience entry.
+- `generate_for` passes the model's answer to `collect_story_citations`. That function keeps only the
+  citations that name a story the profile holds on that same role, and drops invented, weak or moved
+  ones. The citations that survive are written to the packet's `application.json` as `stories_cited`.
+- The master document (`profile.base_document`, through `_master_stories`) carries each role's stories
+  with their bullets. Resume Studio renders each story under the bullet it supports.
+
+Guard: `career-hunter/tests/career-story-evidence.test.mjs` with `career-story-evidence-contract.py`,
+which runs the real `generate_for`.
 
 **Not taken, by design.** The interim path that needed no core change — a launcher package with
 hand-listed tiles and a bespoke dashboard — would have shipped the copied-URL defect this ADR exists to
