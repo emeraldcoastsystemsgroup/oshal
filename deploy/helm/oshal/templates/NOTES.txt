@@ -7,6 +7,7 @@ SEQ                 | AUTHOR                      | DESCRIPTION
 2 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — with in-cluster Vault, say it comes up SEALED and uninitialized (server mode, Shamir keys held by the operator), what answers 503 until it is unsealed, and the two kubectl exec commands; the README "Vault runbook" has the rest.
 3 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — with rbac.botLauncher on, warn that a bot the controller launches at runtime does not get oshal-shared-secret (the launcher's envFrom is oshal-shared-env + oshal-bot-env only), so without JWT_SECRET it fails to boot, and print the command that copies the chart Secret's keys into oshal-bot-env. Closing the gap in the launcher is a core change awaiting approval (docs/BACKLOG.md). Guard: tests/unit/chart-dynamic-bot-env.spec.ts.
 4 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — the runtime-bot warning says plainly that the missing JWT_SECRET is a 0.5.0 regression on this posture, lasting until the one-line core fix (oshal-shared-secret in the launcher's envFrom) or the copy step; and adds that such a bot sets no securityContext or liveness/startup probe, with its resources from the oshal-container-defaults LimitRange (or none, with limitRange.enabled=false). Guards: tests/unit/chart-dynamic-bot-env.spec.ts, tests/unit/chart-runtime-bot-defaults.spec.ts.
+5 | maintainer@emeraldcoastsystemsgroup.com   | AUTH-03 — the first-root path on Kubernetes: unless MOCK_OIDC is on, print the one-use installer proof command as a kubectl exec into the api container (terminal-only delivery; never a Job or hook, whose logs would keep the code), in its local-account and exact identity-provider forms. With MOCK_OIDC on, say that no root ceremony applies and that the posture is not multi-user. Guard: tests/unit/chart-installer-root.spec.ts.
 */ -}}
 oshal {{ .Values.role }} cluster deployed (chart {{ .Chart.Version }}).
 
@@ -35,6 +36,17 @@ Relay disabled — single-cluster tenant (relay.enabled=true for tailnet federat
 {{- end }}
 Swarm apps: the manifests baked into the image (swarm-apps/*.yaml) auto-load at
 api boot — same as compose. Store packages install from the cockpit (Explore Apps).
+{{- if eq (toString (index (.Values.api.extraEnv | default dict) "MOCK_OIDC" | default "")) "true" }}
+Sign-in: MOCK_OIDC is on, so every visitor is the one mock identity and no first-root
+ceremony applies. Local validation only; a multi-user tenant uses deploy/terraform.
+{{- else }}
+First swarm root: a one-use installer code, printed to your terminal only (never run it
+as a Job or hook - their logs would keep the code). Local accounts (LOCAL_AUTH=true):
+  kubectl -n {{ .Release.Namespace }} exec -ti deploy/oshal-api -c api -- node scripts/oshal-setup-root.mjs --origin <exact cockpit origin>
+Identity-provider sign-in: sign in once, read your exact issuer and subject on /users, then
+  kubectl -n {{ .Release.Namespace }} exec -ti deploy/oshal-api -c api -- node scripts/oshal-setup-root.mjs --origin <exact cockpit origin> --issuer <issuer> --subject <subject>
+and enter the code on /users (local accounts: on /login). Runbook: deploy/helm/oshal/README.md ("First swarm root").
+{{- end }}
 {{- if .Values.infra.vault.inCluster }}
 Vault: server mode, SEALED and uninitialized until you unseal it (Shamir keys stay
 with you). Until then the DevOps Vault console answers 503; nothing else waits on it.

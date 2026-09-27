@@ -16,6 +16,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Register issuer pool reset, lifecycle authority and reviewed package assignment browser regressions.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | Register the bot-role grant fail-loud proof beside the least-privilege shape guard: migration 099 wrapped every GRANT in an exception handler that degraded to a NOTICE, so the file recorded as applied whether or not the privileges landed. The new spec applies the real migration to a real disposable PostgreSQL as a real under-privileged login.
  * 13 | maintainer@emeraldcoastsystemsgroup.com | Register the bot statement privilege contract: the guard that provisions a real oshal_bot from the shipped grant text and runs every statement a bot container issues, which is what caught three open grant gaps that every existing guard over this contract was blind to.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com | AUTH-03: register the Kubernetes first-root chart guard (tests/unit/chart-installer-root.spec.ts) and the Users-page identity-provider root browser proof (tests/unit/installer-root-oidc-browser.spec.ts) beside the installer-root suite, which now also proves the exact identity-provider issuer+subject election.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -97,6 +98,8 @@ export const AUTHORIZATION_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/kernel-skills.spec.ts' },
     { level: 'integration', path: 'tests/unit/authorization-execution-boundary.spec.ts' },
     { level: 'integration', path: 'tests/unit/installer-root-bootstrap.spec.ts' },
+    { level: 'integration', path: 'tests/unit/chart-installer-root.spec.ts' },
+    { level: 'browser', path: 'tests/unit/installer-root-oidc-browser.spec.ts' },
     { level: 'integration', path: 'tests/unit/local-auth-routes.spec.ts' },
     { level: 'integration', path: 'tests/unit/authorization-tool.spec.ts' },
     { level: 'unit', path: 'tests/unit/authorization-tool-policy.spec.ts' },

@@ -187,14 +187,49 @@ node scripts/oshal-setup-root.mjs --origin https://your-swarm.example
 Use the resulting transient code at the local login setup form. Account creation, root assignment,
 and proof consumption commit atomically. The database stores a hash of the proof. Ordinary first login
 cannot claim an empty root role; existing operator recovery remains available. Local setup requires
-`LOCAL_AUTH=true` and `MOCK_OIDC=false`; existing Bash/PowerShell/Kubernetes installation defaults have
-not been converted to enterprise OIDC provisioning.
+`LOCAL_AUTH=true` and `MOCK_OIDC=false`.
+
+An identity-provider installation (OIDC sign-in, `LOCAL_AUTH` off) binds the same one-use proof to one
+exact issuer and subject:
+
+```text
+node scripts/oshal-setup-root.mjs --origin https://your-swarm.example --issuer <exact issuer> --subject <exact subject>
+```
+
+While root is unclaimed, `/users` shows a signed-in caller their own verified issuer and subject. The
+owner, signed in as exactly that identity, enters the code there under **Swarm root**
+(`POST /api/swarm/roles/installer-root`). The proof check, root row and proof consumption commit in one
+locked transaction, and migration 172 stores the binding.
+
+The redemption is refused, with nothing written, in each of these cases:
+- a different subject or issuer (including a kernel `urn:oshal:*` session);
+- another origin, or a cross-site request;
+- mock sign-in;
+- a local-account proof;
+- an expired proof;
+- any account, role or verified principal other than the bound one.
+
+A proof bound to an identity cannot complete the local-account ceremony, and completion never reopens.
+
+On Kubernetes the chart's install notes print both forms as `kubectl exec` into the api container, so
+the code reaches only the operator's terminal. No rendered object runs the script. The chart's default
+`MOCK_OIDC` posture has no root ceremony. See [the chart runbook](../../deploy/helm/oshal/README.md)
+("First swarm root").
+
+The Bash/PowerShell installers still offer only their `basic` (local accounts) and `mock` modes. An
+identity-provider installation runs the command above by hand.
+
+Evidence for all of the above is isolated and has not been live-accepted against a real identity provider:
+- `tests/unit/installer-root-bootstrap.spec.ts`, on disposable PostgreSQL;
+- `tests/unit/installer-root-oidc-browser.spec.ts`, the real Users page in Chromium;
+- `tests/unit/chart-installer-root.spec.ts`, the real chart render.
 
 Existing accounts, roles, verified external inventory or a completed installation close fresh-root
 election. [Users administration](local-account-administration.md) supports local invitations and status
 changes; root disable and administrative credential-reset guards remain transactional.
 
-Migrations 127–129 add policy state/audit/app posture, installer proof and verified principal storage;
+Migrations 127–129 add policy state/audit/app posture, installer proof and verified principal storage
+(migration 172 adds the proof's optional bound issuer and subject);
 migration 131 indexes scoped audit reads; migrations 132–133 persist remote execution authority and
 queued initiator provenance. Migrations 134–135 add reviewed roster registrations and exact external
 business-tenant memberships. Normal schema
@@ -219,6 +254,33 @@ Package catalog adoption is a separate migration. Existing source/revision-bound
 block activation; review and remove incompatible grants under the old catalog, activate the new
 catalog, then make explicit named-role grants. Do not infer roles from an old `@app-admin` assignment.
 Little Monsters documents its student/teacher/admin adoption sequence in its package documentation.
+
+### Pilot package evidence (isolated, not live)
+
+Little Monsters 1.4.5 is the pilot business package. Its store suites run against this core with an
+unchanged catalog, and each one is registered in its package test catalog. The Lab status given for
+each is what core's own admission rule reports.
+
+- **`authorization-groups-delegation`** (runnable in the Lab).
+  - A verified directory group mapped to the non-sensitive `student` role and a direct `teacher`
+    grant open different functions over the same HTTP routes.
+  - A group-mapped deny wins over a direct grant. Unmapping a group revokes it.
+  - Stale, overage, foreign-tenant, future-dated or missing group evidence refuses.
+  - A sensitive group mapping needs an approval verifier.
+  - The tutor and study bots go through the controller execution guard (`BotNodeClient` and the inline
+    orchestrator). They are admitted for a granted learner. They are refused before any endpoint for an
+    unassigned actor, a mismatched subject, an explicit deny, and a grant revoked between queueing and
+    execution.
+- **`authorization-record-rights-postgres`** (pending in the Lab by design: `engine-container:disposable-postgres`).
+  The compiled routes run behind the real guard on PostgreSQL 16, as a NOSUPERUSER NOBYPASSRLS role.
+  - Teacher class, analytics and roster rows stay inside the teacher's own class and school.
+  - Learners read only their own dashboard. Aggregates exclude other classes.
+  - Refused actors are stopped before any handler SQL.
+- **`authorization-permission-ui`** (pending in the Lab by design: browser runner). The actual
+  dashboard, teacher and Tutor pages run in Chromium, with a mid-session revocation.
+
+These suites are not live acceptance. Signed-in multi-user acceptance on an installed swarm, and
+directory-group rights from a real identity-provider tenant, have not been run.
 
 Migration 145 keys coarse application access by subject, application and issuer. A legacy NULL issuer
 and `urn:oshal:local-auth` identify the same local principal; different external issuers remain separate,
