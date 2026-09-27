@@ -32,6 +32,7 @@
  * 27 | maintainer@emeraldcoastsystemsgroup.com | A bot that loses the cold-start race to Postgres is no longer pool-less for life while reporting healthy. The runtime is built with recoverDatabase, so the pool survives boot-window exhaustion and recovers in the background; /health and /api/health moved to bot-node-health-routes.ts and answer 503 until a configured database has answered once (the container HEALTHCHECK is curl -f /health); and the boot-only database step - the agent profile seed and the persisted heartbeat role/capabilities - re-runs on the first late connect.
  * 28 | maintainer@emeraldcoastsystemsgroup.com | Treat dead-letter quarantine as terminal in the bot-node stale-envelope guard so refused work cannot execute after the controller parks it.
  * 29 | maintainer@emeraldcoastsystemsgroup.com | Token Chase owner-store binding (BACKLOG "Workspace-bound checkpoint and tail replay", ADR-046 three-part checkpoint): after the shared runtime is built, install the encrypted owner-store snapshotter (createOwnerStoreSnapshotter over readOwnerStoreConfig — PI_STORE_ROOT / TOKEN_CHASE_STORE_ROOT) on the any-bot capture lane through tokenChase.configureOwnerStore, so every captured frame and final.json records the accountable owner's store version from ciphertext only. A node with no store root stays unbound and records null, never a fabricated version.
+ * 30 | maintainer@emeraldcoastsystemsgroup.com | Mount POST /api/token-chase/replay-tail (bot-node-token-chase-tail-route.ts) behind authorizeBotNodeCall with the ownership pool and the owner-store snapshotter: the hermetic no-edit tail (BACKLOG "Workspace-bound checkpoint and tail replay") runs on this accountable node, never on the controller.
  */
 
 /**
@@ -83,6 +84,7 @@ import {
 } from './bot-node-execute-entitlement';
 import { parseTrustedProviderIntent } from './bot-node-provider-intent';
 import { registerBotNodeLlmProviderRoute } from './bot-node-llm-provider-route';
+import { registerBotNodeTokenChaseTailRoute } from './bot-node-token-chase-tail-route';
 import { registerBotNodeSelfHealRoute } from './bot-node-self-heal-route';
 import { registerBotNodeClaudeAuthRoutes } from './bot-node-claude-auth-routes';
 import {
@@ -547,6 +549,14 @@ async function start(): Promise<void> {
       try { nodeFs.rmSync(workspaceDir, { recursive: true, force: true }); } catch (err) { logger.warn({ err, workspaceDir }, 'Token Chase replay workspace cleanup failed'); }
     }
   });
+
+  // ── POST /api/token-chase/replay-tail — hermetic no-edit tail executor (ADR-046 §3) ──
+  // The controller's TokenChaseTailReplayService delegates the WHOLE tail here: frame N's
+  // checkpoint commit and the owner's store ciphertext are restored into isolated roots on
+  // this node, the captured responses are served with their workspace tools re-executed,
+  // a live tool stops the tail, and the tree digest + store version are compared with
+  // final.json. No provider is called; the controller never restores or replays anything.
+  registerBotNodeTokenChaseTailRoute(app, { agentId, authorize: authorizeBotNodeCall, pool, ownerStore });
 
   const port = parseInt(process.env.PORT || '5000', 10);
   app.listen(port, '0.0.0.0', () => {

@@ -143,6 +143,21 @@ runs the real collector against a local feed server. It proves the ReportDate ke
 column, that a second run appends nothing, and the bounded recent-disclosure read. That is local
 evidence; only a pass of the live step shows the installed collector ran.
 
+### Token Chase checkpoint and tail replay
+
+**Token Chase checkpoint and tail replay** (`token-chase-checkpoint-replay`, Tools) runs one read-only
+step: the captured runs visible to the caller through `/api/token-chase/runs`. Degraded when nothing is
+captured yet (capture is `TOKEN_CHASE_CAPTURE=true` on a bot node plus one agentic run) or the caller is
+not signed in; gap when the route is missing. It never fires a replay: a tail replay restores a worktree
+on a bot node and is an action, not a probe.
+
+Run the linked suites locally with `npm run test:token-chase`. The real-boundary suites run the real
+capture lane in a child process (private-git commits, per-turn pins, `final.json`), the real bot-node
+route behind the real service-secret gate over a loopback server, the real file-tool handlers against an
+isolated worktree, a real AES-256-GCM ciphertext store, and, end to end, the real `AgenticController`
+loop over a scripted provider (`scripted-fixture`, explicitly identified). That is local evidence: a
+provider-backed capture on the deployed stack is a separate operator acceptance step.
+
 ### Messaging channels
 
 **Messaging channels — what can reach your swarm** (`channel-inbound-bindings`, Tools) reads the

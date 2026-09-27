@@ -1,9 +1,11 @@
 # ADR-046 — Token Chase: git-versioned checkpoint/replay for counterfactual workflow optimization
 
-- **Status:** Partially implemented — capture, accountable replay, judging, savings, and reversible
-  re-baselining are implemented locally (see "Implementation status" below). The complete
-  commit/store checkpoint, interactive splice debugger, and learned selector remain Proposed.
-- **Date:** 2026-06-17 (proposed); build status updated 2026-08-06
+- **Status:** Partially implemented — capture, the workspace-bound checkpoint (private-git commit,
+  ciphertext-only owner-store version, per-turn replay pins), the hermetic no-edit tail replay on the
+  bot node with artifact/store comparison, accountable prompt re-fire, judging, savings, and reversible
+  re-baselining are implemented locally (see "Implementation status" below). The interactive splice
+  debugger and the learned selector remain Proposed.
+- **Date:** 2026-06-17 (proposed); build status updated 2026-09-27
 - **Related:** [ADR-027 (swarm cost rollup / chat_tasks linking)](027-swarm-cost-rollup-task-linking.md),
   [ADR-032 (Process Lab non-invasive trace runs)](032-process-lab-non-invasive-trace-runs.md),
   [ADR-033 (multi-harness execution framework)](033-multi-harness-execution-framework.md),
@@ -316,11 +318,23 @@ that a provider-backed production acceptance run has occurred:
 
 - **Step 1 — capture/read: implemented.** `TokenChaseCapture` writes redacted, owner-scoped frames
   under `<workspace>/.tokenchase/`; authenticated read routes expose runs and frame details.
-- **Step 2 — replay substrate: partially implemented.** Single-call replay re-fires the captured
-  prompt on an accountable bot node. A tail-replay service can hash-verify and restage recorded
-  workspace-tree objects into isolation, walk frames forward, stop at first divergence, and report
-  pinned/unpinned reads. Capture does not yet bind every frame to the complete workspace commit,
-  encrypted owner-store version, pinned external reads, and tool schema required by this ADR.
+- **Step 2 — checkpoint + no-edit replay: implemented locally (2026-09-27).** Every captured frame
+  is bound to a workspace commit in a private repository under `.tokenchase/git` (built from the same
+  redacted content-addressed objects, reachable under `refs/tokenchase/<task>/<seq>`; a git failure
+  fails open to `null`, never a fabricated SHA), to the accountable owner's encrypted store version
+  (sha256 over the ciphertext manifest; ciphertext only is copied, nothing is decrypted), to per-turn
+  replay pins (`replayClass` declared on tool definitions; an undeclared tool is live, so the frame that
+  consumed it is `replayable:false`), and to the full tool schema. `final.json` records the post-tool
+  tree and store version. `POST /api/token-chase/runs/:runId/tail-replay` delegates to the producing
+  bot node's `POST /api/token-chase/replay-tail`, which restores frame N's commit and store into
+  isolated roots, serves the captured responses, re-executes their workspace tools, refuses live
+  tools, and compares the resulting tree digest and store version with `final.json` (`reproduced` /
+  `diverged` with the differing paths named / `stopped` at a live tool). The controller restores and
+  executes nothing; `no-endpoint` fails closed. The prompt re-fire determinism verdict is the optional
+  `refire` mode. Proven locally by the suites the Test Lab card `token-chase-checkpoint-replay` lists,
+  including an end-to-end run over the real `AgenticController` loop, real git, real ciphertext and the
+  real bot-node route (`tests/unit/token-chase-checkpoint-replay-e2e.spec.ts`); a provider-backed
+  acceptance run on the deployed stack has not been performed.
 - **Step 3 — variants and savings: implemented for per-frame model lanes.** BYO/framework
   OpenAI-compatible variants produce cost, latency, and determinism diffs; the run loop persists
   corpus observations and reports realizable `equivalent-cheaper` savings. The `free:auto`
@@ -342,9 +356,9 @@ that a provider-backed production acceptance run has occurred:
   `TOKEN_CHASE_JUDGE_BUDGET_USD` separately caps quality-judge calls. Both have finite defaults,
   check before the next paid call, and report partial completion rather than implying a full grade.
 
-**Still Proposed or awaiting external proof:** the complete commit + encrypted-store checkpoint,
-tool/read pin capture, artifact-producing downstream replay, interactive rewind/edit/forward debugger,
-and current provider-backed acceptance evidence. Their exact
+**Still Proposed or awaiting external proof:** the interactive rewind/edit/forward debugger,
+hermetic replay of tools beyond the workspace file tools (a tail stops at the first live-read or
+side-effect tool by design), and current provider-backed acceptance evidence. Their exact
 acceptance boundaries remain in the Token Chase section of [BACKLOG.md](../BACKLOG.md).
 
 **§6's learned selection policy is reframed as a non-goal** (operator decision, 2026-08-09): routing
