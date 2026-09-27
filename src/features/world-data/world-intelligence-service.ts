@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Put the rollup's four per-entity reads behind the bounded, coalescing series gate, and answer a whole-day sentiment window from the daily HEAD instead of scanning the stream per source. The 2026-09-14 saturation had both shapes: 19 concurrent sessions on oshal-local-tsdb (282% CPU) all running perSourceSentimentHours, and overlapping pulses recomputing the same aggregate twice. Measured read-only on the live store: the 24h stream read is 786ms planning + 366ms execution and the 168h one 810 + 651, against 245 + 16 and 303 + 20 for the same answers off world_metrics_daily — which carries `source`, so it can answer the per-source question. Whole-day windows are now day-aligned, matching the head-backed metricAvg the trading gate already reads these features back through.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Own the memoized TimescaleDB pool's connection 'error' events (ownPoolConnectionErrors) - a server-terminated connection on an unowned pool is an uncaught exception that ends the api process.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Expose a bounded latest-point read that preserves timestamp/source provenance for feed-backed read-only consumers such as the Trading congressional watchlist projection.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Record when a feed point was observed: world_metrics gains a nullable observed_at column (added once, never back-stamped onto existing rows), writeMetric takes an optional observedAt, and writeMetricIfChanged appends a point only when the newest stored value for the same entity/metric/ts/source differs, so a collector re-reading the same disclosure window stops piling identical rows. latestMetricPoints breaks same-ts ties on observed_at and returns it. recentFeedMetricPoints is the bounded "which names did this feed disclose lately" read the Trading disclosure list needs. The congress_* namespace and the quiver-congress source are reserved: ingest() refuses them, and writeMetric only accepts them together.
  */
 
 /**
@@ -28,7 +29,7 @@ import { readWorldCoverage } from './world-coverage-read';
 import { createGraphConnector, type GraphConnector, type GraphNode, type GraphEdge } from '@/features/graph';
 import { createChildLogger } from '@/shared/logger';
 import { ownPoolConnectionErrors } from '@/shared/services/database';
-import type { WorldContribution } from './world-types';
+import { isReservedCongressMetric, isReservedCongressSource, type WorldContribution } from './world-types';
 import { computeSentimentBreakdown, type SentimentRow } from './sentiment-math';
 import {
   METRICS_DAILY_VIEW,
@@ -80,13 +81,44 @@ async function withWriteConflictRetry<T>(fn: () => Promise<T>, attempts = 6): Pr
 
 export interface WorldIngestResult { nodes: number; edges: number; facts: number; }
 
-/** One latest raw metric point, retaining the source and timestamp that make it auditable. */
+/** One latest raw metric point, retaining the source and timestamps that make it auditable. */
 export interface LatestMetricPoint {
   entity: string;
   metric: string;
+  /** The series timestamp (for a feed point, the source-backed day it describes). */
   ts: string;
   value: number;
   source: string | null;
+  /** When the collector read this point from its feed; null for rows written before it was recorded. */
+  observedAt: string | null;
+}
+
+/** Hard caps on the recent-feed read: it backs an interactive list, never a scan. */
+const RECENT_FEED_MAX_DAYS = 120;
+const RECENT_FEED_MAX_ENTITIES = 100;
+const RECENT_FEED_MAX_METRICS = 20;
+
+/**
+ * @description Refuse a congressional disclosure point unless metric and source are paired. The
+ * disclosure feed collector is the only caller that writes that pairing; any other writer naming
+ * either half would be authoring a congressional holding the feed never reported.
+ * @param metric - Metric being written.
+ * @param source - Provenance being written.
+ * @returns Nothing; throws on a mismatched pairing.
+ */
+function assertCongressProvenance(metric: string, source: string): void {
+  if (isReservedCongressMetric(metric) !== isReservedCongressSource(source)) {
+    throw new Error(`world metric ${metric} with source ${source}: congress_* points are written only with the quiver-congress feed source`);
+  }
+}
+
+/** Map a raw latest-point row into its auditable shape. */
+function toLatestPoint(row: { entity: string; metric: string; ts: string | Date; value: string | number; source?: string | null; observed_at?: string | Date | null }): LatestMetricPoint {
+  return {
+    entity: String(row.entity), metric: String(row.metric), ts: new Date(row.ts).toISOString(),
+    value: Number(row.value), source: row.source == null ? null : String(row.source),
+    observedAt: row.observed_at == null ? null : new Date(row.observed_at).toISOString(),
+  };
 }
 
 /** The immutable record of one pulled item + what we classified it as — the backtest substrate. */
@@ -133,6 +165,7 @@ export class WorldIntelligenceService {
          value DOUBLE PRECISION NOT NULL, source TEXT
        )`,
     );
+    await this.ensureObservedAtColumn();
     try {
       await this.tsdb.query(`SELECT create_hypertable('world_metrics','ts', if_not_exists => TRUE)`);
     } catch (err) {
@@ -151,6 +184,22 @@ export class WorldIntelligenceService {
     // sub-day window reads (perSourceSentimentHours) go straight to the stream, below day granularity.
     await ensureMetricsPreaggregate(this.tsdb);
     this.seriesReady = true;
+  }
+
+  /**
+   * Add `observed_at` to world_metrics once. It is nullable with no default on purpose: rows written
+   * before it existed stay NULL instead of being back-stamped with a time nobody observed them at.
+   * The catalog check keeps the ALTER — an ACCESS EXCLUSIVE lock on every chunk of the hypertable —
+   * off every warm-up after the first.
+   */
+  private async ensureObservedAtColumn(): Promise<void> {
+    const present = await this.tsdb.query(
+      `SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'world_metrics' AND column_name = 'observed_at'`,
+    );
+    if (present.rowCount) return;
+    await this.tsdb.query(`ALTER TABLE world_metrics ADD COLUMN IF NOT EXISTS observed_at TIMESTAMPTZ`);
+    logger.info('world_metrics.observed_at added (existing rows keep NULL)');
   }
 
   /** Lazily ensure the archive (raw items + classification) and pull-log tables exist. */
@@ -356,10 +405,59 @@ export class WorldIntelligenceService {
     }));
   }
 
-  /** Write a single metric point (e.g. days_to_earnings) — used by the events collector + future callers. */
-  async writeMetric(entity: string, metric: string, value: number, source: string, at?: string): Promise<void> {
+  /**
+   * @description Write a single metric point (e.g. days_to_earnings) — used by the events collector
+   * and the flow collectors.
+   * @param entity - world:<type>:<key>.
+   * @param metric - Metric name; a congress_* metric must carry the quiver-congress source.
+   * @param value - The point's value.
+   * @param source - Provenance label.
+   * @param at - Series timestamp (defaults to now).
+   * @param observedAt - When the collector read the point from its feed; omitted means not recorded (NULL).
+   * @returns Nothing.
+   */
+  async writeMetric(entity: string, metric: string, value: number, source: string, at?: string, observedAt?: string): Promise<void> {
+    assertCongressProvenance(metric, source);
     await this.ensureSeries();
-    await this.tsdb.query(`INSERT INTO world_metrics (entity, metric, ts, value, source) VALUES ($1,$2,$3,$4,$5)`, [entity, metric, at || new Date().toISOString(), value, source]);
+    await this.tsdb.query(
+      `INSERT INTO world_metrics (entity, metric, ts, value, source, observed_at) VALUES ($1,$2,$3,$4,$5,$6)`,
+      [entity, metric, at || new Date().toISOString(), value, source, observedAt ?? null],
+    );
+  }
+
+  /**
+   * @description Append a feed point only when it would change what readers see: skipped when the
+   * newest OBSERVED value for the same entity/metric/ts/source already equals it. A collector that
+   * re-reads an overlapping window therefore appends only new or revised points. Rows written before
+   * observed_at existed are never the comparison: the first run records an observed copy of every
+   * point, so provenance-requiring readers see the whole window.
+   * @param entity - world:<type>:<key>.
+   * @param metric - Metric name; a congress_* metric must carry the quiver-congress source.
+   * @param value - The point's value.
+   * @param source - Provenance label.
+   * @param at - Series timestamp (the source-backed day the point describes).
+   * @param observedAt - When the collector read the point from its feed.
+   * @returns True when a row was appended, false when the stored value was already current.
+   */
+  async writeMetricIfChanged(entity: string, metric: string, value: number, source: string, at: string, observedAt: string): Promise<boolean> {
+    assertCongressProvenance(metric, source);
+    await this.ensureSeries();
+    const r = await this.tsdb.query(
+      `INSERT INTO world_metrics (entity, metric, ts, value, source, observed_at)
+       SELECT $1::text, $2::text, $3::timestamptz, $4::double precision, $5::text, $6::timestamptz
+        WHERE NOT EXISTS (
+          SELECT 1 FROM (
+            SELECT value FROM world_metrics
+             WHERE entity = $1::text AND metric = $2::text AND ts = $3::timestamptz AND source = $5::text
+               AND observed_at IS NOT NULL
+             ORDER BY observed_at DESC
+             LIMIT 1
+          ) newest
+          WHERE newest.value = $4::double precision
+        )`,
+      [entity, metric, at, value, source, observedAt],
+    );
+    return (r.rowCount ?? 0) > 0;
   }
 
   /** The ticker entities with the most NEW items recently — the attention/velocity signal that meters which
@@ -443,8 +541,14 @@ export class WorldIntelligenceService {
     }));
   }
 
-  /** Ingest a world contribution: upsert nodes/edges into the shared graph + append series points. */
+  /** Ingest a world contribution: upsert nodes/edges into the shared graph + append series points.
+   *  A contribution can never carry a congressional disclosure: the schema refuses it at the HTTP
+   *  edge, and this refuses it again for in-process callers that build contributions unparsed —
+   *  before anything is written, so a refused contribution leaves no partial graph write behind. */
   async ingest(c: WorldContribution): Promise<WorldIngestResult> {
+    if (isReservedCongressSource(c.source) || c.facts.some((f) => isReservedCongressMetric(f.metric))) {
+      throw new Error('world contribution refused: congress_* metrics and the quiver-congress source are written only by the congressional disclosure feed collector');
+    }
     const g = await this.connector.getTenantGraph(WORLD_TENANT);
 
     const nodes: GraphNode[] = c.entities.map((e) => ({
@@ -517,25 +621,71 @@ export class WorldIntelligenceService {
   }
 
   /**
-   * Read the newest point for each requested entity/metric pair without collapsing away its
-   * disclosure/observation timestamp or source. This is deliberately bounded by the caller's
-   * arrays and is used by read-only projections that must show provenance beside a value.
+   * @description Read the newest point for each requested entity/metric pair without collapsing
+   * away its timestamps or source. Among points with the same ts, the most recently observed wins,
+   * so a revised feed value replaces the one it corrected. Bounded by the caller's arrays; used by
+   * read-only projections that must show provenance beside a value.
+   * @param entities - Entity ids (at most 100 are read).
+   * @param metrics - Metric names (at most 20 are read).
+   * @returns One auditable point per pair that has data.
    */
   async latestMetricPoints(entities: string[], metrics: string[]): Promise<LatestMetricPoint[]> {
     if (!entities.length || !metrics.length) return [];
     await this.ensureSeries();
     const r = await this.tsdb.query(
-      `SELECT DISTINCT ON (entity, metric) entity, metric, ts, value, source
+      `SELECT DISTINCT ON (entity, metric) entity, metric, ts, value, source, observed_at
          FROM world_metrics
         WHERE entity = ANY($1::text[]) AND metric = ANY($2::text[])
-        ORDER BY entity, metric, ts DESC`,
+        ORDER BY entity, metric, ts DESC, observed_at DESC NULLS LAST`,
       [entities.slice(0, 100), metrics.slice(0, 20)],
     );
-    return (r.rows as Array<{ entity: string; metric: string; ts: string | Date; value: string | number; source?: string | null }>)
-      .map((row) => ({
-        entity: String(row.entity), metric: String(row.metric), ts: new Date(row.ts).toISOString(),
-        value: Number(row.value), source: row.source == null ? null : String(row.source),
-      }))
+    return (r.rows as Array<Parameters<typeof toLatestPoint>[0]>)
+      .map(toLatestPoint)
+      .filter((row) => Number.isFinite(row.value) && !Number.isNaN(Date.parse(row.ts)));
+  }
+
+  /**
+   * @description Which names did one feed report lately — the bounded discovery read behind a
+   * "recent disclosures" list. Candidates come from the daily head's (metric, bucket) index, newest
+   * first; each candidate's newest point per metric then comes from the stream's
+   * (entity, metric, ts) index. Only points with a recorded observed_at qualify: those are the rows
+   * a collector wrote with full provenance, so older rows keyed on a different date never surface
+   * beside a "disclosed" label. Every dimension is hard-capped.
+   * @param metrics - Metric names to return per entity (at most 20).
+   * @param source - The exact feed source every returned point must carry.
+   * @param sinceDays - Window over the point timestamp, in whole days (1–120).
+   * @param limit - Maximum distinct entities (1–100).
+   * @returns The newest observed point per (entity, metric), newest entities first.
+   */
+  async recentFeedMetricPoints(metrics: string[], source: string, sinceDays: number, limit: number): Promise<LatestMetricPoint[]> {
+    const names = metrics.slice(0, RECENT_FEED_MAX_METRICS);
+    if (!names.length || !source) return [];
+    const days = Math.min(RECENT_FEED_MAX_DAYS, Math.max(1, Math.floor(Number(sinceDays) || 1)));
+    const cap = Math.min(RECENT_FEED_MAX_ENTITIES, Math.max(1, Math.floor(Number(limit) || 1)));
+    await this.ensureSeries();
+    const r = await this.tsdb.query(
+      `WITH candidates AS (
+         SELECT entity, max(bucket) AS newest
+           FROM ${METRICS_DAILY_VIEW}
+          WHERE metric = ANY($1::text[]) AND source = $2 AND bucket >= ${alignedWindowStart('$3')}
+          GROUP BY entity
+          ORDER BY newest DESC, entity
+          LIMIT $4
+       )
+       SELECT c.entity, p.metric, p.ts, p.value, p.source, p.observed_at
+         FROM candidates c
+         CROSS JOIN LATERAL (
+           SELECT DISTINCT ON (w.metric) w.metric, w.ts, w.value, w.source, w.observed_at
+             FROM world_metrics w
+            WHERE w.entity = c.entity AND w.metric = ANY($1::text[]) AND w.source = $2
+              AND w.observed_at IS NOT NULL AND w.ts >= ${alignedWindowStart('$3')}
+            ORDER BY w.metric, w.ts DESC, w.observed_at DESC
+         ) p
+        ORDER BY c.newest DESC, c.entity, p.metric`,
+      [names, source, days, cap],
+    );
+    return (r.rows as Array<Parameters<typeof toLatestPoint>[0]>)
+      .map(toLatestPoint)
       .filter((row) => Number.isFinite(row.value) && !Number.isNaN(Date.parse(row.ts)));
   }
 

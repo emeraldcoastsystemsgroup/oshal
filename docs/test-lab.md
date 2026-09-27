@@ -113,6 +113,21 @@ caller's brokered token, and proves the audit join, the ticket write-back and th
 local evidence. It does not show that a deployed Social package ran a ticket, or that a real LinkedIn
 post was made.
 
+### Congressional disclosure signal
+
+**Congressional disclosure signal (STOCK Act)** (`congress-disclosures`, Tools) runs one read-only
+step against the world series store: how many names carry an observed `quiver-congress` disclosure in
+the last 90 days, the newest disclosure (ReportDate) day, and the newest `observed_at`. It makes no
+write and no feed call. With world intelligence off it is degraded; with nothing observed yet it is
+degraded and names the api log line to check; an unreachable store fails.
+
+Run the linked suites locally with `npm run test:world-congress`. The real-boundary suite
+(`tests/unit/world-metrics-observed-at-postgres.spec.ts`) starts its own TimescaleDB with
+`world_metrics` in the pre-change shape (hypertable, legacy rows, the daily continuous aggregate) and
+runs the real collector against a local feed server. It proves the ReportDate keying, the `observed_at`
+column, that a second run appends nothing, and the bounded recent-disclosure read. That is local
+evidence; only a pass of the live step shows the installed collector ran.
+
 ### Messaging channels
 
 **Messaging channels — what can reach your swarm** (`channel-inbound-bindings`, Tools) reads the

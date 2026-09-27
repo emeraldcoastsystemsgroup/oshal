@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard the 2026-09-14 series-store saturation: the market-hours pulse rolled 184 entities up with nothing bounding the sum of overlapping fires, so oshal-local-tsdb answered 19 concurrent copies of the same aggregate at 282% CPU. Pins the two properties whose loss recreates it — a process-wide ceiling on in-flight read statements, and one statement for identical concurrent reads.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The latest-point read returns observed_at and breaks a same-ts tie on it (a revised feed value must replace the one it corrected), and the new recent-feed read is hard-capped on every dimension (metrics 20, days 1-120, entities 1-100), fixes the source, and admits only points with a recorded observed_at.
  */
 
 /**
@@ -187,7 +188,7 @@ describe('world latest metric points — preserve the newest source date', () =>
       async query(sql: string, values: unknown[] = []) {
         queries.push({ sql, values });
         if (/SELECT DISTINCT ON/.test(sql)) {
-          return { rows: [{ entity: 'world:ticker:nvda', metric: 'congress_buys', ts: '2026-09-24T00:00:00.000Z', value: '12.5', source: 'quiver-congress' }], rowCount: 1 };
+          return { rows: [{ entity: 'world:ticker:nvda', metric: 'congress_buys', ts: '2026-09-24T00:00:00.000Z', value: '12.5', source: 'quiver-congress', observed_at: new Date('2026-09-25T06:00:00.000Z') }], rowCount: 1 };
         }
         return { rows: [], rowCount: 0 };
       },
@@ -199,12 +200,61 @@ describe('world latest metric points — preserve the newest source date', () =>
 
     expect(points).toEqual([{
       entity: 'world:ticker:nvda', metric: 'congress_buys', ts: '2026-09-24T00:00:00.000Z', value: 12.5, source: 'quiver-congress',
+      observedAt: '2026-09-25T06:00:00.000Z',
     }]);
     const read = queries.find((q) => /SELECT DISTINCT ON/.test(q.sql));
     expect(read).toBeDefined();
     expect((read!.values[0] as string[]).length).toBe(100);
     expect((read!.values[1] as string[]).length).toBe(20);
-    expect(read!.sql).toContain('ORDER BY entity, metric, ts DESC');
+    expect(read!.sql).toContain('ORDER BY entity, metric, ts DESC, observed_at DESC NULLS LAST');
+  });
+});
+
+describe('world recent feed points — a bounded discovery read', () => {
+  /** A pg double that records the recent-feed statement and answers one observed point. */
+  function recordingPool() {
+    const queries: Array<{ sql: string; values: unknown[] }> = [];
+    const pool = {
+      async query(sql: string, values: unknown[] = []) {
+        queries.push({ sql, values });
+        if (/WITH candidates AS/.test(sql)) {
+          return { rows: [{ entity: 'world:ticker:nvda', metric: 'congress_net', ts: new Date('2026-09-24T00:00:00.000Z'), value: 2, source: 'quiver-congress', observed_at: '2026-09-25T06:00:00.000Z' }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      },
+    };
+    return { queries, pool: pool as unknown as Pool };
+  }
+
+  it('caps every dimension, fixes the source, and admits only observed points', async () => {
+    const { queries, pool } = recordingPool();
+    const svc = new WorldIntelligenceService(graphConnector as unknown as GraphConnector, pool);
+    const metrics = Array.from({ length: 25 }, (_, i) => `congress_m${i}`);
+    const points = await svc.recentFeedMetricPoints(metrics, 'quiver-congress', 9_999, 9_999);
+
+    expect(points).toEqual([{
+      entity: 'world:ticker:nvda', metric: 'congress_net', ts: '2026-09-24T00:00:00.000Z', value: 2,
+      source: 'quiver-congress', observedAt: '2026-09-25T06:00:00.000Z',
+    }]);
+    const read = queries.find((q) => /WITH candidates AS/.test(q.sql))!;
+    expect((read.values[0] as string[]).length).toBe(20);
+    expect(read.values.slice(1)).toEqual(['quiver-congress', 120, 100]);
+    expect(read.sql).toContain('FROM world_metrics_daily');
+    expect(read.sql).toContain('w.observed_at IS NOT NULL');
+    expect(read.sql).toContain('w.source = $2');
+    expect(read.sql).toMatch(/LIMIT \$4/);
+  });
+
+  it('clamps a zero or negative window and limit up to one, and reads nothing without metrics or a source', async () => {
+    const { queries, pool } = recordingPool();
+    const svc = new WorldIntelligenceService(graphConnector as unknown as GraphConnector, pool);
+    await svc.recentFeedMetricPoints(['congress_net'], 'quiver-congress', -5, 0);
+    expect(queries.find((q) => /WITH candidates AS/.test(q.sql))!.values.slice(2)).toEqual([1, 1]);
+
+    queries.length = 0;
+    expect(await svc.recentFeedMetricPoints([], 'quiver-congress', 30, 10)).toEqual([]);
+    expect(await svc.recentFeedMetricPoints(['congress_net'], '', 30, 10)).toEqual([]);
+    expect(queries).toEqual([]);
   });
 });
 
