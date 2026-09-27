@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-167 guard for scripts/managed-core-release.sh, the on-box release transaction. The shipped helper's functions are sourced into Git Bash and driven through its own dispatcher (the root/PATH entrypoint is exercised separately and must refuse a non-root caller). The release dir is a REAL clone of a REAL bare origin carrying the release tag, the env file is a real file the helper rewrites, and the launcher is a fixture committed at both commits that brings the "stack" to whatever the env file pins; docker (identities, the dump container, the api container), curl (/api/version) and stat (root ownership on a Windows filesystem) are stand-ins. Pins: success (dump taken and history written BEFORE the launcher runs, checkout + atomic repoint, live verification), every refusal leaves the box untouched, a failed up or failed verification restores and verifies the prior pin (exit 1), a failed restore is exit 3 and blocks the next promote until rollback finishes it, and rollback / status against the recorded history.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The launcher stand-in now reports /api/version release as null for any label outside the core-YYYY.MM.DD[.N] scheme, as getRunningBuild does; it had echoed every non-empty label, which hid that a prior image labelled with the Dockerfile's `unreleased` default was recorded and verified as a release name. Regression cases: with that prior image, a failed launcher up restores with exit 1 (history restored, from_release '-') and a promote then rollback exits 0 (history rollback ok, to_release '-'), and a degraded promote is finished by one rollback that records its own from_release as '-'.
  */
 
 import fs from 'node:fs';
@@ -40,6 +41,9 @@ const LAUNCHER = [
   'printf "%s\\n" "$id" >"$state/running-id"',
   '[ "$release" = "<no value>" ] && release=""',
   'printf "GIT_SHA=%s\\nOSHAL_RELEASE=%s\\n" "$commit" "${release:-unreleased}" >"$state/running-env"',
+  // /api/version reports only a CORE_RELEASE_PATTERN name (update-check-cron.ts getRunningBuild):
+  // the `unreleased` build-arg default, or any other off-scheme label, reads as null.
+  '[[ "$release" =~ ^core-[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}(\\.[1-9][0-9]*)?$ ]] || release=""',
   'if [ -n "$release" ]; then rel="\\"$release\\""; else rel=null; fi',
   'printf "{\\"name\\":\\"oshal\\",\\"version\\":\\"2.1.0\\",\\"commit\\":\\"%s\\",\\"release\\":%s}\\n" "$commit" "$rel" >"$state/version.json"',
 ];
@@ -265,6 +269,48 @@ describe('managed-core-release.sh promote — a failure restores the prior pin a
     expect(history(b).slice(-1)[0].slice(2, 4)).toEqual(['rollback', 'ok']);
     const retry = promote(b);
     expect(retry.status, retry.out).toBe(0);
+  });
+});
+
+describe('managed-core-release.sh — a prior image labelled oshal.release=unreleased (the Dockerfile default)', { timeout: SHELL_CASE_TIMEOUT_MS }, () => {
+  // A hand, on-box or oshal-deploy.sh build of the current Dockerfile carries the `unreleased`
+  // label; /api/version reports null for it, so it is recorded and verified as '-', never as a name.
+  beforeEach(() => { image(b, `oshal-bot:sha-${b.c1}`, ID1, b.c1, 'unreleased'); });
+
+  it('restores it after a failed launcher up (exit 1, history restored) and records it as -', () => {
+    const r = promote(b, { SHIM_UP_FAIL_FOR: `oshal-bot:sha-${b.c2}` });
+    expect(r.status, r.out).toBe(1);
+    expect(r.out).toContain('the prior release was restored and verified serving');
+    expect(head(b)).toBe(b.c1);
+    expect(pin(b)).toBe(`oshal-bot:sha-${b.c1}`);
+    const h = history(b);
+    expect(h.map((l) => l[3])).toEqual(['begin', 'restored']);
+    expect(h.map((l) => l[8])).toEqual(['-', '-']);
+  });
+
+  it('rolls a verified promote back to it in one command (exit 0, history rollback ok)', () => {
+    const p = promote(b);
+    expect(p.status, p.out).toBe(0);
+    const r = helper(b, ['rollback']);
+    expect(r.status, r.out).toBe(0);
+    expect(head(b)).toBe(b.c1);
+    expect(pin(b)).toBe(`oshal-bot:sha-${b.c1}`);
+    expect(readOr(path.join(b.state, 'running-id')).trim()).toBe(ID1);
+    const last = history(b).slice(-1)[0];
+    expect(last.slice(2, 5)).toEqual(['rollback', 'ok', '-']);
+    const retry = promote(b);
+    expect(retry.status, retry.out).toBe(0);
+  });
+
+  it('finishes a degraded promote back to it with one rollback, recording the rollback from it as -', () => {
+    const r = promote(b, { SHIM_UP_FAIL_FOR: `oshal-bot:sha-${b.c2} oshal-bot:sha-${b.c1}` });
+    expect(r.status, r.out).toBe(3);
+    const recovered = helper(b, ['rollback']);
+    expect(recovered.status, recovered.out).toBe(0);
+    expect(head(b)).toBe(b.c1);
+    const last = history(b).slice(-1)[0];
+    // The restore had already repointed to the prior image, so the rollback runs FROM it too.
+    expect([last[2], last[3], last[4], last[8], last[10]]).toEqual(['rollback', 'ok', '-', '-', `oshal-bot:sha-${b.c1}`]);
   });
 });
 

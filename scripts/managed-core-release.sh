@@ -4,6 +4,7 @@
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-167 on-box release transaction for a managed CRM box, the root-side sibling of managed-postgres-compose.sh. Replaces the manual customer-box core update (back up by hand, tag :rollback, reset --hard, build on the box, recreate) with one command that takes the image the pipeline cut and verified: it refuses unless the loaded image IS that artifact (ID + labels), the box's declared channel matches, the release dir is clean and the commit and its release tag are published; then takes a pre-deploy pg_dump, writes the history line BEFORE touching anything, checks out, repoints OSHAL_BOT_IMAGE atomically, runs the guarded launcher and proves the result on /api/version. A failure after the capture restores the prior checkout and pin and proves THAT. Rollback is one command against the recorded history.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | The prior image's release is recorded as a core-YYYY.MM.DD[.N] name or '-', never as an off-scheme label. The Dockerfile's `unreleased` default (any hand, on-box or oshal-deploy.sh build) had been recorded as a release name; /api/version reports null for it, so the restore after a failed promote and a rollback to that image could never verify - exit 3, a 'degraded' line, and every later promote refused. Both capture points (promote and rollback) go through mcr_recorded_release.
 # -----------------------------------------------------------------------------
 #
 # Usage (as root, from the root-owned release directory; promote.sh drives it over ssh):
@@ -141,11 +142,18 @@ mcr_load_line() {
     H_FROM_RELEASE H_FROM_SHA H_FROM_REF H_FROM_ID H_DUMP H_REVERTS <<<"$1"
 }
 
+# The release a just-read image (oshal_core_image_identity) is recorded and verified as: its
+# core-YYYY.MM.DD[.N] name, or '-' for anything else - no label, or the Dockerfile's `unreleased`
+# default - because /api/version reports every off-scheme value as null.
+mcr_recorded_release() {
+  if oshal_core_release_name_ok "$CORE_IMAGE_RELEASE"; then printf '%s' "$CORE_IMAGE_RELEASE"; else printf '%s' -; fi
+}
+
 # What the box pins and has checked out now: the state a failed promote returns to.
 mcr_capture_current() {
   FROM_REF=$(mcr_env_value OSHAL_BOT_IMAGE) || mcr_refuse "OSHAL_BOT_IMAGE must be defined once in the env file"
   oshal_core_image_identity "$FROM_REF" || mcr_refuse "the pinned image $FROM_REF is not on this engine - there would be nothing to return to"
-  FROM_ID="$CORE_IMAGE_ID"; FROM_RELEASE="${CORE_IMAGE_RELEASE:--}"
+  FROM_ID="$CORE_IMAGE_ID"; FROM_RELEASE=$(mcr_recorded_release)
   FROM_SHA=$(git -C "$MCR_REPO_ROOT" rev-parse --verify --quiet 'HEAD^{commit}') || mcr_refuse "the release dir HEAD is unreadable"
   CURRENT_COMMIT_LABEL="$CORE_IMAGE_COMMIT"
 }
@@ -229,7 +237,8 @@ mcr_api_container() {
 }
 
 # The box is AT (sha, image, release) only when the running api runs that image and /api/version
-# says that commit and release ('-' = an unreleased prior image, whose release is not checked).
+# says that commit and release ('-' = a prior image that was not a release cut, whose release is
+# not checked; see mcr_recorded_release).
 mcr_verify_live() {
   local sha="$1" id="$2" release="$3" deadline cid='' running='' body commit='' rel=''
   deadline=$((SECONDS + MCR_VERIFY_SECONDS))
@@ -331,7 +340,7 @@ mcr_rollback() {
   FROM_REF=$(mcr_env_value OSHAL_BOT_IMAGE) || FROM_REF='-'
   FROM_SHA=$(git -C "$MCR_REPO_ROOT" rev-parse --verify --quiet 'HEAD^{commit}') || FROM_SHA='-'
   FROM_ID='-'; FROM_RELEASE='-'
-  if oshal_core_image_identity "$FROM_REF"; then FROM_ID="$CORE_IMAGE_ID"; FROM_RELEASE="${CORE_IMAGE_RELEASE:--}"; fi
+  if oshal_core_image_identity "$FROM_REF"; then FROM_ID="$CORE_IMAGE_ID"; FROM_RELEASE=$(mcr_recorded_release); fi
   mcr_history_add rollback begin || mcr_refuse "cannot write $MCR_HISTORY - nothing was changed"
   mcr_say "rolling back to ${TO_RELEASE} ${TO_SHA:0:12} ($TO_REF) (txn $TXN). The database is not rolled back."
   if mcr_apply "$TO_SHA" "$TO_REF" "$TO_ID" "$TO_RELEASE"; then
