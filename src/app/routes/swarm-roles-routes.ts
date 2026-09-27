@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Swarm root (ADR-148): the /api/swarm/roles surface behind the Users page. Every mutating route is operator-gated, and the ONE deliberately un-gated-by-requiresOperator route is the root claim — it has to be reachable by a signed-in caller while root is unclaimed, or a fresh LOCAL_AUTH box where OSHAL_OPERATOR_SUBS was never set could never establish an operator at all (the exact bootstrap deadlock this feature exists to end). That claim carries its own fail-closed conditions instead: authenticated caller, root genuinely unclaimed, and either the store is empty of roles or the caller already passes break-glass.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Remove empty-table public root election; retain authenticated existing-operator recovery.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | AUTH-03: POST /installer-root completes an identity-provider installation's first root from the local installer's one-use proof, bound to one exact issuer and subject and presented from the bound origin by that verified session; mock sign-in is refused. /status also tells the caller their own verified issuer and subject, the two values the installer binds.
  */
 
 import type { Router, Request, Response, RequestHandler } from 'express';
@@ -13,6 +14,8 @@ import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { getCaller, requiresOperator, isOperatorIdentity, isBreakGlassOnlyOperator } from '@/shared/middleware/authz';
 import { getRootSub, privilegedIdentityStatus } from '@/shared/middleware/privileged-identities';
+import { getAuthenticatedPrincipalIssuer, isMockOidcEnabled } from '@/shared/middleware/principal-issuer';
+import { completeOidcInstallerRootSetup } from '@/app/composition/installer-root-bootstrap';
 import {
   ensureSwarmRoleSchema, refreshPrivilegedCache,
   listRoles, getRole, getRootSubFromStore, claimRoot, grantRole, revokeRole, transferRoot,
@@ -56,6 +59,40 @@ function fail(res: Response, err: unknown, context: string): void {
   res.status(500).json({ error: 'role operation failed' });
 }
 
+/** Maps an installer ceremony refusal (status 4xx) to its response; anything else is a logged 500. */
+function failInstaller(res: Response, err: unknown): void {
+  const status = (err as { status?: unknown })?.status;
+  if (typeof status === 'number' && status >= 400 && status < 500) {
+    res.status(status).json({ error: (err as Error).message });
+    return;
+  }
+  logger.error({ err }, 'installer root election failed');
+  res.status(500).json({ error: 'root setup failed' });
+}
+
+/**
+ * @description POST /installer-root handler: the verified session identity presents the proof the local installer
+ * bound to it. The origin must be this server's own and the request same-site, like the local-account ceremony.
+ * @param pool - Postgres pool. @returns Express handler.
+ */
+function installerRootHandler(pool: Pool): (req: Request, res: Response) => Promise<void> {
+  return async (req: Request, res: Response) => {
+    const origin = req.get('origin');
+    if (!origin || origin !== `${req.protocol}://${req.get('host')}` || req.get('sec-fetch-site') === 'cross-site') {
+      res.status(403).json({ error: 'installer setup requires the original browser origin' }); return;
+    }
+    if (isMockOidcEnabled()) { res.status(403).json({ error: 'mock sign-in cannot establish swarm root' }); return; }
+    const issuer = getAuthenticatedPrincipalIssuer(req);
+    const { sub, email } = getCaller(req);
+    if (!issuer || !sub) { res.status(401).json({ error: 'sign in with the identity the installer bound' }); return; }
+    try {
+      await completeOidcInstallerRootSetup(pool, { token: String(req.body?.setupToken ?? ''), origin, issuer, subject: sub, email,
+        displayName: typeof req.body?.displayName === 'string' ? req.body.displayName : null });
+      res.status(201).json({ rootClaimed: true, callerIsRoot: true });
+    } catch (err) { failInstaller(res, err); }
+  };
+}
+
 /**
  * @description Builds the swarm-role router.
  *
@@ -64,9 +101,12 @@ function fail(res: Response, err: unknown, context: string): void {
  *                      lets a surface say "you are not an admin" instead of rendering an empty
  *                      page that looks broken.
  *  - `GET /status`   — any authenticated caller. Reports whether root is claimed and whether the
- *                      caller's privilege is break-glass only. No identities are disclosed.
+ *                      caller's privilege is break-glass only, plus the caller's OWN verified issuer and subject.
+ *                      No other identity is disclosed.
  *  - `POST /claim-root` — authenticated existing operator recovery. Fresh local installation
  *                      uses the separately proof-bound account/root ceremony.
+ *  - `POST /installer-root` — authenticated; the local installer's one-use proof bound to the
+ *                      caller's exact identity-provider issuer and subject. Never an empty-table election.
  *  - everything else — requiresOperator (root or admin).
  *
  * @param pool - Postgres pool.
@@ -101,6 +141,9 @@ export function createSwarmRolesRoutes(pool: Pool, requiresAuth: RequestHandler)
         rootClaimed: Boolean(rootSub),
         // Only ever tells the CALLER about themselves — never who root is.
         callerIsRoot: Boolean(sub) && rootSub === sub,
+        // The caller's OWN verified identity: the exact issuer and subject an installer binds a setup proof to.
+        callerSub: sub ?? null,
+        callerIssuer: getAuthenticatedPrincipalIssuer(req),
         callerIsOperator: isOperatorIdentity(sub, email),
         callerBreakGlassOnly: isBreakGlassOnlyOperator(sub, email),
         rolesLoaded: cache.loaded,
@@ -140,6 +183,8 @@ export function createSwarmRolesRoutes(pool: Pool, requiresAuth: RequestHandler)
       res.status(201).json({ root: row });
     } catch (err) { fail(res, err, 'POST /claim-root'); }
   });
+
+  router.post('/installer-root', requiresAuth, installerRootHandler(pool));
 
   router.post('/', requiresAuth, requiresOperator, async (req: Request, res: Response) => {
     const caller = getCaller(req);

@@ -95,6 +95,8 @@
  * 43 | maintainer@emeraldcoastsystemsgroup.com   | Attached the invariant-preamble cache guards to 'jarvis-routing' regressionTests: invariant-prompt-cache (content key, negative caching, google-nested wire shape, no tools/system on a handle-carrying request, one full-send fallback), gemini-context-cache (the cachedContents adapter and the shared default cache with its kill switch), invariant-prompt-cache-protocol-seam (the real openai client and TaskController.processMessage against a loopback Gemini surface: one create for two owners' new tasks, re-creation on a preamble change, a rejected handle answered from one full send, no cross-task text) and invariant-prompt-cache-usage-accounting (cached tokens and the input/output split reaching the call log, apiMetrics and recordCost). Same Jarvis turn, same scenario; a spec on disk is not Test Lab registration.
  * 44 | maintainer@emeraldcoastsystemsgroup.com   | Registered the Token Chase checkpoint + tail replay card (TOKEN_CHASE_SCENARIOS, test-lab-token-chase-scenarios.ts): one read-only listing of the captured runs visible to the caller, with the workspace-bound checkpoint, ciphertext-only owner-store, per-turn pin, hermetic bot-node tail, controller-delegation and end-to-end suites attached as regressionTests. A test file on disk is not Test Lab registration. No replay step on purpose: a tail replay restores a worktree on a bot node and is an action.
  * 45 | maintainer@emeraldcoastsystemsgroup.com   | Registered the market-data stream card (MARKET_STREAM_SCENARIOS, test-lab-market-stream-scenarios.ts): one credential-free readback of the kernel's ADR-143 stream status (unarmed = degraded and names the operator step; entitlement refusal = fail; authenticated with a print = pass, never claiming the regular-hours observation), with the real-local-WebSocketServer kernel suite and the compose default-off pin attached as regressionTests. Guard: tests/unit/test-lab-market-stream-registration.spec.ts.
+ * 46 | maintainer@emeraldcoastsystemsgroup.com   | Registered the Jarvis cross-conversation recall card (JARVIS_RECALL_SCENARIOS, test-lab-jarvis-recall-scenarios.ts): it seeds a tagged owner-bound thread with a random codeword, asks for it from a new thread through the real /api/jarvis/ask, and requires the answer plus the owner-scoped capture of conversation_query/conversation_fetch, with exact cleanup. It spends one real model turn, so Scenario gained `explicitOnly` and the run-all selection moved into scenariosForRun(), which leaves explicit-only cards out of 'all'. Guard: tests/unit/test-lab-jarvis-recall-registration.spec.ts.
+ * 47 | maintainer@emeraldcoastsystemsgroup.com   | Attached antigravity-host-tool-loop and antigravity-bot-runtime to 'jarvis-routing' regressionTests. The automated recall case found a Jarvis ask on the Antigravity brain dying on a headless read_file denial after 10 min 45 s; the fix runs agy with no native tools inside the host loop for interactive turns. The seam guard drives the real handler marker, AgenticController loop, provider, wrapper and a real child process; the runtime spec pins the permission scope as a closed set per mode. Same Jarvis turn, same scenario; a spec on disk is not Test Lab registration.
  * @module test-lab-scenarios
  */
 
@@ -121,6 +123,7 @@ import { LINKEDIN_CONTENT_SCENARIOS } from './test-lab-linkedin-content-scenario
 import { RESPONSE_RENDERER_SCENARIOS } from './test-lab-response-renderer-scenarios';
 import { WORLD_SIGNAL_SCENARIOS } from './test-lab-world-signal-scenarios';
 import { TOKEN_CHASE_SCENARIOS } from './test-lab-token-chase-scenarios';
+import { JARVIS_RECALL_SCENARIOS } from './test-lab-jarvis-recall-scenarios';
 import { renderCatalogVisual, VISUAL_CATALOG } from './test-lab-visual-catalog';
 import type { AppContext } from '@/app/composition/app-context';
 
@@ -150,6 +153,8 @@ export interface Scenario {
   group: 'visual' | 'tool' | 'jarvis' | 'coupled';
   description: string;
   regressionTests?: Array<{ level: 'unit' | 'integration' | 'browser'; path: string }>;
+  /** Runs only from its own card: it spends a real model turn or acts, so a run-all never includes it. */
+  explicitOnly?: boolean;
   steps: Array<{ id: string; app: string; label: string;
     run: (cookie: string, prior: Record<string, any>, runtime?: ScenarioRunContext) => Promise<StepResult> }>;
 }
@@ -304,6 +309,7 @@ export const SCENARIOS: Scenario[] = [
   ...RESPONSE_RENDERER_SCENARIOS,
   ...WORLD_SIGNAL_SCENARIOS,
   ...TOKEN_CHASE_SCENARIOS,
+  ...JARVIS_RECALL_SCENARIOS,
   // ── Rich visuals — every kind rendered deterministically through the real renderer ──────────
   ...VISUAL_CATALOG.map((entry): Scenario => ({
     id: `visual-${entry.kind}`,
@@ -486,6 +492,9 @@ export const SCENARIOS: Scenario[] = [
       { level: 'unit', path: 'tests/unit/gemini-context-cache.spec.ts' },
       { level: 'integration', path: 'tests/unit/invariant-prompt-cache-protocol-seam.spec.ts' },
       { level: 'unit', path: 'tests/unit/invariant-prompt-cache-usage-accounting.spec.ts' },
+      // A Jarvis turn on the Antigravity brain: agy runs tool-less inside the host loop.
+      { level: 'integration', path: 'tests/unit/antigravity-host-tool-loop.spec.ts' },
+      { level: 'unit', path: 'tests/unit/antigravity-bot-runtime.spec.ts' },
     ],
     steps: [
       { id: 'j-jobs', app: 'jarvis', label: '"What are my top job opportunities right now?"', run: (c) => jarvisStep(c, 'top jobs', 'What are my top job opportunities right now?') },
@@ -530,6 +539,16 @@ export const SCENARIOS: Scenario[] = [
   //  package route and its save step the storage package — both carved to the app store,
   //  ADR-085 Wave 2; travel keeps its own smoke above.)
 ];
+
+/**
+ * @description Which scenarios one Lab run executes. A run-all leaves out explicit-only cards, which
+ * spend a real model turn or act on the caller's behalf and so run only from their own card.
+ * @param id - The requested scenario id, or 'all'.
+ * @returns The scenarios to run, in registry order (empty for an unknown id).
+ */
+export function scenariosForRun(id: string): Scenario[] {
+  return id === 'all' ? SCENARIOS.filter((s) => !s.explicitOnly) : SCENARIOS.filter((s) => s.id === id);
+}
 
 const WORST: State[] = ['fail', 'gap', 'degraded', 'pass'];
 /** Roll a set of step states up to the scenario state (worst wins). */

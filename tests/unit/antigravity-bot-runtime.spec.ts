@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Prove call-time MCP provisioning is invocation-scoped, carries exact controller bindings through environment rather than the prompt, adopts only the existing login files, and removes the temporary Antigravity home.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Pin the invocation-only MCP permission grant required by Antigravity headless mode without allowing arbitrary MCP servers or terminal commands.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Pin an invocation-only command grant for both ordinary and protected-tool turns. The grant lives only in the temporary HOME while --sandbox and --add-dir remain mandatory, so headless RunCommand can proceed without changing the persistent host settings or using the dangerous bypass.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Pin the host-tools-only shape behind the 2026-09-27 Jarvis recall fix: the private HOME carries the tool-less custom agent (excludeDefaultComponents, no tools list) and an EMPTY allow list, the argv selects that agent and drops accept-edits, and a protected bridge cannot be combined with it. The permission scope is pinned as a closed set per mode, so any rule that could reach past the single --add-dir task folder (read_file, write_file, a URL, a wildcard MCP server, a second directory) turns this red. A failed turn reports the denied tool and target from the stream-json events.
  */
 
 import { EventEmitter } from 'node:events';
@@ -201,6 +202,100 @@ describe('Antigravity bot-node wrapper', () => {
       const wrapper = new AntigravityCLIWrapper({ spawnImpl });
       await expect(wrapper.executeTask('work', workspace, { extraEnv: { OSHAL_USER_SUB: 'operator-sub' } }))
         .resolves.toMatchObject({ success: true, text: 'fast' });
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('Antigravity host-tools-only invocations', () => {
+  const PERMITTED = new Set(['command(regex:.*)', 'mcp(oshal-tools/*)']);
+
+  it('writes the tool-less host agent and an empty allow list into the private HOME only', () => {
+    const scope = AntigravityCLIWrapper.provisionToolBridge(undefined, { hostToolsOnly: true });
+    const home = String(scope.env.HOME);
+    try {
+      expect(scope.agent).toBe('oshal-host-tools');
+      const settings = JSON.parse(fs.readFileSync(path.join(home, '.gemini', 'antigravity-cli', 'settings.json'), 'utf8'));
+      expect(settings).toEqual({ permissions: { allow: [] } });
+      const agentMd = fs.readFileSync(path.join(home, '.gemini', 'config', 'agents', 'oshal-host-tools', 'agent.md'), 'utf8');
+      expect(agentMd.split('\n').slice(0, 7)).toEqual(['---', 'name: oshal-host-tools',
+        'description: Reasoning step of an oshal host-run tool loop; it holds no tools of its own.',
+        'excludeDefaultComponents: true', 'inheritCustomizations: false', 'subagent: false', '---']);
+      expect(agentMd).not.toMatch(/^tools:/m);
+      expect(fs.existsSync(path.join(home, '.gemini', 'config', 'mcp_config.json'))).toBe(false);
+    } finally {
+      scope.release();
+    }
+    expect(fs.existsSync(home)).toBe(false);
+  });
+
+  it('refuses to combine a protected tool bridge with a host-tools-only turn', () => {
+    expect(() => AntigravityCLIWrapper.provisionToolBridge({ agentId: 'jarvis', taskId: 't', userSub: 'operator-sub',
+      applicationExecutionId: 'e', applicationExecutionToken: 'signed' }, { hostToolsOnly: true }))
+      .toThrow('cannot carry a protected tool bridge');
+  });
+
+  it('pins the permission scope of every mode to a closed set that never names a file or URL', () => {
+    const modes = [
+      { bridged: false, hostToolsOnly: true, expected: [] },
+      { bridged: false, hostToolsOnly: false, expected: ['command(regex:.*)'] },
+      { bridged: true, hostToolsOnly: false, expected: ['command(regex:.*)', 'mcp(oshal-tools/*)'] },
+    ];
+    for (const { expected, ...mode } of modes) {
+      const allow = AntigravityCLIWrapper.permissionAllowList(mode);
+      expect(allow).toEqual(expected);
+      for (const rule of allow) {
+        expect(PERMITTED.has(rule), rule).toBe(true);
+        expect(rule).not.toMatch(/^(read_file|write_file|read_url|execute_url)\(|^mcp\(\*|^command\(\*\)$/);
+      }
+    }
+  });
+
+  it('selects the host agent, keeps one --add-dir and the sandbox, and drops accept-edits', () => {
+    const workspace = path.join(os.tmpdir(), 'oshal-agy-args', 'task-folder');
+    const host = AntigravityCLIWrapper.buildAgyArgs(workspace, { model: 'gemini-3.8-flash-low', idleMs: 90000, agent: 'oshal-host-tools' });
+    const task = AntigravityCLIWrapper.buildAgyArgs(workspace, { model: 'gemini-3.8-flash-low', idleMs: 90000, agent: null });
+    expect(host).toEqual(['--agent', 'oshal-host-tools', '--sandbox', '--add-dir', workspace, '--input-format', 'stream-json',
+      '--output-format', 'stream-json', '--model', 'gemini-3.8-flash-low', '--print-timeout', '2m']);
+    expect(task.slice(0, 2)).toEqual(['--mode', 'accept-edits']);
+    for (const args of [host, task]) {
+      expect(args.filter((arg: string) => arg === '--add-dir')).toHaveLength(1);
+      expect(args.filter((arg: string) => path.isAbsolute(arg))).toEqual([workspace]);
+      expect(args).not.toContain('--dangerously-skip-permissions');
+    }
+  });
+
+  it('reports the denied tool and its target when a turn is refused', async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-agy-denied-diag-'));
+    const spawnImpl = vi.fn(() => {
+      const child = new EventEmitter() as EventEmitter & {
+        stdout: PassThrough; stderr: PassThrough; stdin: { end(value: string): void }; kill: ReturnType<typeof vi.fn>;
+      };
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      child.kill = vi.fn();
+      child.stdin = {
+        end() {
+          queueMicrotask(() => {
+            child.stdout.write(`${JSON.stringify({ event: 'step_update', step_update: { step_type: 'tool', state: 'ERROR',
+              tool_name: 'view_file', tool_info: { error: { message: 'permission check failed for read_file "/app/bot-configs/x.yaml": user denied\nDo not retry.' } } } })}\n`);
+            child.stdout.write(`${JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: '',
+              denied_actions: [{ action: 'read_file', display_name: 'ViewFile' }] } })}\n`);
+            child.stdout.end();
+            child.emit('close', 0);
+          });
+        },
+      };
+      return child;
+    });
+    try {
+      const wrapper = new AntigravityCLIWrapper({ spawnImpl });
+      const result = await wrapper.executeTask('recall', workspace, { extraEnv: { OSHAL_USER_SUB: 'operator-sub' }, hostToolsOnly: true });
+      expect(result.success).toBe(false);
+      expect(result.stderr).toContain('denied tool calls: view_file: permission check failed for read_file "/app/bot-configs/x.yaml"');
+      expect(result.stderr).not.toContain('Do not retry');
+      expect((spawnImpl.mock.calls[0] as unknown[])[1]).toEqual(expect.arrayContaining(['--agent', 'oshal-host-tools']));
     } finally {
       fs.rmSync(workspace, { recursive: true, force: true });
     }

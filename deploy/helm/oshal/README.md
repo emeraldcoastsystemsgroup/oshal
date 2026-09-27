@@ -81,6 +81,31 @@ per-bot registry overrides still win.
   contributor cluster — see [values-bot-pod.example.yaml](values-bot-pod.example.yaml).
   Bot-pod clusters never receive a DATABASE_URL (trust rule).
 
+## First swarm root
+
+A new installation gets its first root from a **one-use installer code** that is issued in a terminal.
+Nobody gets root by being the first visitor. The code is valid for 15 minutes and the database keeps
+only its hash. Deliver it through `kubectl exec` to your own terminal. Do not run it as a Job or a
+Helm hook: pod logs would keep the code. `helm install` prints the exact command for the release.
+
+- **Local accounts (`LOCAL_AUTH=true`):**
+  `kubectl -n <ns> exec -ti deploy/oshal-api -c api -- node scripts/oshal-setup-root.mjs --origin <exact cockpit origin>`.
+  Open `/login` and enter the code. That creates the first account and makes it root.
+- **Identity-provider sign-in (OIDC, `LOCAL_AUTH` off):**
+  1. Sign in once.
+  2. `/users` shows your exact issuer and subject.
+  3. Run `kubectl -n <ns> exec -ti deploy/oshal-api -c api -- node scripts/oshal-setup-root.mjs --origin <exact cockpit origin> --issuer <issuer> --subject <subject>`.
+  4. Enter the code on `/users` under "Swarm root".
+
+  Only that exact issuer and subject, signed in at that origin, can redeem the code. The code is
+  refused under `MOCK_OIDC`, and it is refused once any other account, role or principal exists.
+- **`MOCK_OIDC=true` (the chart default):** every visitor is the one mock identity. No root ceremony
+  applies. This posture is not for a multi-user tenant.
+
+Completing the ceremony consumes the code for good. Recovery after that is the existing operator
+path (the Users page, or the `OSHAL_OPERATOR_SUBS` break-glass list).
+The isolated proof is `tests/unit/installer-root-bootstrap.spec.ts`. The chart guard is `tests/unit/chart-installer-root.spec.ts`.
+
 ## Credentials
 
 No credential is rendered into a ConfigMap. The chart keeps most of its own in two Secrets

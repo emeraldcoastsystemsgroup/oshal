@@ -21,6 +21,7 @@
   1 | maintainer@emeraldcoastsystemsgroup.com | Separate current administrator access from root ownership and honor shared theme contrast.
   2 | maintainer@emeraldcoastsystemsgroup.com | Show the complete known roster, exact application-access links and reviewed metadata imports.
   3 | maintainer@emeraldcoastsystemsgroup.com | Adopt the shared live theme bootstrap and semantic surface colors.
+  4 | maintainer@emeraldcoastsystemsgroup.com | AUTH-03: while root is unclaimed, a caller signed in through an identity provider (HTTPS issuer) sees their own exact issuer and subject and can redeem the installer setup code the local installer bound to exactly that identity (POST /api/swarm/roles/installer-root). Local and mock sessions see no form; operator recovery is unchanged.
 -->
 <!DOCTYPE html>
 <html lang="en" data-theme="midnight">
@@ -286,6 +287,31 @@
       });
     }
 
+    function installerRootForm(st) {
+      return '<p class="hint">On a new installation, the installer can bind a one-use setup code to your exact identity: ' +
+        'issuer <span class="root-id" id="installerIssuer">' + esc(st.callerIssuer) + '</span> subject <span class="root-id" id="installerSubject">' +
+        esc(st.callerSub) + '</span> (<code>node scripts/oshal-setup-root.mjs --origin ' + esc(location.origin) + ' --issuer &hellip; --subject &hellip;</code>). ' +
+        'Only this signed-in identity can redeem that code.</p>' +
+        '<form class="grant-form" id="installerRootForm" style="margin-top:14px">' +
+        '<input id="installerRootCode" type="text" autocomplete="off" spellcheck="false" placeholder="Installer setup code" aria-label="Installer setup code" required />' +
+        '<button class="primary" type="submit">Become swarm root</button></form>';
+    }
+
+    function bindInstallerRoot() {
+      document.getElementById('installerRootForm').addEventListener('submit', async function (ev) {
+        ev.preventDefault();
+        var code = document.getElementById('installerRootCode').value.trim();
+        if (!code) return;
+        var button = this.querySelector('button');
+        button.disabled = true;
+        try {
+          await call('POST', '/api/swarm/roles/installer-root', { setupToken: code });
+          show('ok', 'You now hold swarm root.');
+          await load();
+        } catch (e) { show('err', e.message); button.disabled = false; }
+      });
+    }
+
     function bindRootTransfer() {
       document.getElementById('transferForm').addEventListener('submit', async function (ev) {
         ev.preventDefault();
@@ -308,11 +334,14 @@
         banner.classList.add('unclaimed');
         pill.innerHTML = '<span class="pill warn">unclaimed</span>';
         var claimable = st.callerIsOperator === true;
+        var installer = !claimable && /^https:\/\//.test(st.callerIssuer || '') && Boolean(st.callerSub);
         body.innerHTML = '<p class="sub">No identity has been assigned the swarm root ownership role. ' +
           'This is separate from your current access shown above.</p>' + (claimable
             ? '<p style="margin:14px 0 0"><button class="primary" id="claimBtn" type="button">Claim swarm root</button></p>'
-            : '<p class="hint">An existing operator can complete root recovery. Contact a swarm administrator.</p>');
+            : '<p class="hint">An existing operator can complete root recovery. Contact a swarm administrator.</p>') +
+          (installer ? installerRootForm(st) : '');
         if (claimable) bindRootClaim();
+        if (installer) bindInstallerRoot();
         return;
       }
       if (st.callerIsRoot) {

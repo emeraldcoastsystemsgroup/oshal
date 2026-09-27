@@ -13,9 +13,27 @@ AUTH-01 is implemented using `uses: [application-authorization]` as the old-core
 AUTH-02 and AUTH-07 have a shared service, UI/tool parity and isolated PostgreSQL/browser
 proofs, including scoped applied-change history, delegated access administrators/auditors and the
 per-user application permission screen. A sensitive approval workflow and catalog migration tooling
-remain. AUTH-03 covers local proof-based setup and
-established-account/root credential guards; OIDC bootstrap and all installer variants
-remain. AUTH-04 preserves verified claims, adopts exact provider identities, supports reviewed roster
+remain. AUTH-03 now covers four things:
+- local proof-based setup;
+- established-account and root credential guards;
+- an identity-provider first root, from a proof bound to one exact issuer and subject and redeemed on
+  `/users` by that verified session;
+- the Kubernetes path: the chart notes print the `kubectl exec` command, and no Job or hook runs it.
+
+All of it is isolated evidence from disposable PostgreSQL, Chromium and a real `helm template` render.
+Two parts remain:
+- live acceptance with a real identity provider;
+- the Bash/PowerShell installers, which still offer only their `basic` and `mock` modes.
+
+AUTH-08 has a pilot: Little Monsters 1.4.5 store suites. They cover:
+- direct and directory-group grants;
+- deny and revocation;
+- delegated tutor and study bots through the controller execution guard;
+- PostgreSQL record rights through the compiled routes;
+- permission-aware pages in Chromium.
+
+This is isolated evidence only. There is no installed or live acceptance yet, and no team/tenant scopes
+or field sets. AUTH-04 preserves verified claims, adopts exact provider identities, supports reviewed roster
 snapshots and explicit external business membership, and maps exact groups. Live refresh/Graph and
 external-tenant canary proof remain. AUTH-05 has HTTP/controller checks and signed, freshly revalidated
 protected remote hosted reasoning without tools. Broader remote agentic execution remains refused.

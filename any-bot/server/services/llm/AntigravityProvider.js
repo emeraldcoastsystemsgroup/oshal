@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Bot-node provider for Google's Antigravity CLI, under the same ADR-127 boundary and model-gateway preflight as the other autonomous CLI providers.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Forward the trusted call-time framework-tool bridge binding to the native CLI wrapper.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Advertise explicit support for the execution-bound framework-tool bridge so routers can keep its credential away from unrelated providers.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Forward hostToolsOnly to the wrapper. The agentic host loop sets it for an interactive (direct) turn, whose tools the loop itself brokers; the wrapper then runs agy with no native tools instead of letting it chase the answer with file reads and commands a headless run cannot be granted.
  */
 
 'use strict';
@@ -50,6 +51,7 @@ class AntigravityProvider {
       source: options.source,
       extraEnv: options.extraEnv,
       toolBridge: options.toolBridge,
+      hostToolsOnly: options.hostToolsOnly === true,
     });
     if (!result.success) {
       const error = new Error(`Antigravity CLI error: ${result.stderr || result.text || 'no output'}`);

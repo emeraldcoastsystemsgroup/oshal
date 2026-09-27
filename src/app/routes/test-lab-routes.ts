@@ -29,6 +29,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Obtain request-bound caller transport only for declared service smokes, keeping session data out of Node execution and public catalog results.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Serve the fixed package-batch UI asset; execution remains on existing guarded schedule routes.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Reads the ONE MOCK_OIDC predicate instead of testing `=== 'true'`. The auth bypass accepts true|1|yes in any case, so a deployment started with MOCK_OIDC=1 was authenticated as the mock user while this site read the flag as OFF - a deployment half in demo mode and half out of it. It failed CLOSED here, which is why it went unnoticed rather than becoming an incident; the hazard is the next person "fixing" the inconsistency in the permissive direction on one site alone.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | A run-all now selects through scenariosForRun(), which leaves explicit-only cards out: the Jarvis cross-conversation recall card spends a real model turn and must run only from its own card.
  * ---------------------------------------------------------------------------
  * @module test-lab-routes
  */
@@ -37,7 +38,7 @@ import { Router, type Request, type Response, type RequestHandler } from 'expres
 import * as path from 'path';
 import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '@/app/composition/app-context';
-import { SCENARIOS, rollup, type StepResult } from './test-lab-scenarios';
+import { SCENARIOS, rollup, scenariosForRun, type StepResult } from './test-lab-scenarios';
 import { renderCatalogVisual } from './test-lab-visual-catalog';
 import type { InstalledAppTestCatalog, InstalledTestAuth, InstalledAppTestCase, AppSmokeVerificationOptions } from '@/features/swarm-apps';
 import { createTestLabRunRoutes, type TestLabRunRouteOptions } from './test-lab-run-routes';
@@ -156,7 +157,7 @@ export function createTestLabRoutes(ctx: AppContext, options: TestLabRouteOption
       || Object.values(expectedCases).some(value => typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)))) {
       res.status(400).json({ error: 'expectedCases must map installed case IDs to their catalog revisions.' }); return;
     }
-    const toRun = id === 'all' ? SCENARIOS : SCENARIOS.filter((s) => s.id === id);
+    const toRun = scenariosForRun(id);
     const installed = (options.installedTests?.list(await visibleApps(req), executionAuth(req)) ?? [])
       .filter(test => id === 'all' || test.id === id);
     if (id !== 'all' && installed.some(test => test.runner.kind !== 'smoke' && test.runnable)) {
