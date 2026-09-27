@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 credential containment: reject generic OSHAL_CRED_* execution context before a handler runs; only exact caller identity reaches model-selected tools.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: attest authorized snapshot executions with a module-private capability so MCP transports cannot be called through a raw handler reference.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Keep the attestation-minting captured-definition executor private so only registry entry points can reach it.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Retain a tool definition's declared Token Chase `replayClass` on the frozen registration (and in getMetadata). register() destructured a fixed field list, so the class a tool declared never reached the capture lane's classifier and every tool looked undeclared (= live-read). Unknown values are kept as-is; the classifier fails them closed.
  */
 
 /**
@@ -67,6 +68,9 @@ class ToolRegistry {
       handler,
       requiresApproval = true,
       timeout = 60000,
+      // Token Chase replay class (turn-provenance.js). Retained verbatim; the classifier treats an
+      // undeclared or unknown value as live-read, so a typo here fails closed rather than open.
+      replayClass = undefined,
     } = toolDefinition;
 
     // Validate required fields
@@ -89,6 +93,7 @@ class ToolRegistry {
       handler,
       requiresApproval,
       timeout,
+      ...(typeof replayClass === 'string' ? { replayClass } : {}),
       registered: Date.now(),
     });
     this.tools.set(name, registeredTool);
@@ -386,6 +391,7 @@ class ToolRegistry {
       description: tool.description,
       category: tool.category,
       requiresApproval: tool.requiresApproval,
+      replayClass: tool.replayClass ?? null,
       timeout: tool.timeout,
       hasSchema: Object.keys(tool.inputSchema).length > 0,
       registered: tool.registered,

@@ -31,6 +31,7 @@
  * 26 | maintainer@emeraldcoastsystemsgroup.com | Capture protected execution authority after signed replay verification and refuse unbound Token Chase replay for protected bots.
  * 27 | maintainer@emeraldcoastsystemsgroup.com | A bot that loses the cold-start race to Postgres is no longer pool-less for life while reporting healthy. The runtime is built with recoverDatabase, so the pool survives boot-window exhaustion and recovers in the background; /health and /api/health moved to bot-node-health-routes.ts and answer 503 until a configured database has answered once (the container HEALTHCHECK is curl -f /health); and the boot-only database step - the agent profile seed and the persisted heartbeat role/capabilities - re-runs on the first late connect.
  * 28 | maintainer@emeraldcoastsystemsgroup.com | Treat dead-letter quarantine as terminal in the bot-node stale-envelope guard so refused work cannot execute after the controller parks it.
+ * 29 | maintainer@emeraldcoastsystemsgroup.com | Token Chase owner-store binding (BACKLOG "Workspace-bound checkpoint and tail replay", ADR-046 three-part checkpoint): after the shared runtime is built, install the encrypted owner-store snapshotter (createOwnerStoreSnapshotter over readOwnerStoreConfig — PI_STORE_ROOT / TOKEN_CHASE_STORE_ROOT) on the any-bot capture lane through tokenChase.configureOwnerStore, so every captured frame and final.json records the accountable owner's store version from ciphertext only. A node with no store root stays unbound and records null, never a fabricated version.
  */
 
 /**
@@ -92,6 +93,7 @@ import {
 import { runBotNodeExecutionWithSystemIdentity } from './bot-node-request-identity';
 import { createProtectedBotDispatchContext } from './bot-node-protected-context';
 import { assertBotNodeApplicationTransport } from './bot-node-application-authorization';
+import { createOwnerStoreSnapshotter, readOwnerStoreConfig } from '@/features/token-chase';
 
 const logger = createChildLogger({ module: 'bot-node-server' });
 
@@ -130,6 +132,17 @@ async function start(): Promise<void> {
   // response's provider/model attribution, so read through getActiveProvider() instead
   // of freezing the boot-time values into consts.
   const activeLlm = (): { provider: string; model: string } => runtime.getActiveProvider();
+
+  // ── Token Chase owner-store binding (ADR-046 §1 three-part checkpoint) ────────
+  // The any-bot capture lane versions the accountable owner's encrypted store on every
+  // frame through this snapshotter — CIPHERTEXT ONLY, nothing is ever decrypted. With no
+  // store root configured on this node it stays unbound and each recorded version is
+  // honestly null (ownerStore.bound:false) rather than a made-up reference.
+  const ownerStore = createOwnerStoreSnapshotter(readOwnerStoreConfig());
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { tokenChase } = require('../../any-bot/server/services/token-chase/TokenChaseCapture');
+  tokenChase.configureOwnerStore(ownerStore);
+  logger.info({ ownerStoreBound: ownerStore.bound, captureEnabled: tokenChase.isEnabled() }, 'Token Chase owner-store snapshotter configured');
 
   // ── Redis mesh transport ────────────────────────────────────────
   const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
