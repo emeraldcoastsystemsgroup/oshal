@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Drive the real experience shells in headless Chromium through the real static route registration over an isolated synthetic swarm: auth gating, live catalog and work rendering, directory/pins/app panel, the Jarvis ask flow with thread roll and refusal, room-scoped Commons threads, the three homebase presets (list, money, calendar, roster, role-driven views, honest finance states), the central assistant, the portal chooser and per-layout skins.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Home and Business host their application assemblies: per-host sidebar sections and tile groups, hosted pages opened with the preset audience view (`?view=`), hidden tool prefixes honoured, and a refused tool is a notice never a fetch
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Hosted pages carry `?audience=` instead of `?view=`
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -197,13 +198,13 @@ describe('experience shells over the real routes', () => {
     expect(await page.locator('.tools-row .app-tile').count()).toBe(3);
     await page.locator('.tool-nav button', { hasText: 'My Day' }).click();
     await page.waitForSelector('#tool-frame');
-    expect(await page.locator('#tool-frame').getAttribute('src')).toBe('/fixture/surface/lm-myday?view=classroom');
+    expect(await page.locator('#tool-frame').getAttribute('src')).toBe('/fixture/surface/lm-myday?audience=classroom');
     expect(await page.locator('.breadcrumb').innerText()).toContain('My Day');
     expect(await page.locator('.hero').count()).toBe(0);
     await page.frameLocator('#tool-frame').locator('#post-class').click();
-    await page.waitForFunction(() => document.querySelector('#tool-frame')?.getAttribute('src') === '/fixture/surface/lm-class-c1?view=classroom');
+    await page.waitForFunction(() => document.querySelector('#tool-frame')?.getAttribute('src') === '/fixture/surface/lm-class-c1?audience=classroom');
     await page.frameLocator('#tool-frame').locator('#post-navigate').click();
-    await page.waitForFunction(() => document.querySelector('#tool-frame')?.getAttribute('src') === '/fixture/surface/lm-myday?view=classroom');
+    await page.waitForFunction(() => document.querySelector('#tool-frame')?.getAttribute('src') === '/fixture/surface/lm-myday?audience=classroom');
     await page.getByRole('button', { name: /Back to our classroom/ }).click();
     await page.waitForSelector('.hero');
     fixture.state.education.me = { ...fixture.state.education.me, role: 'student' };
@@ -212,7 +213,7 @@ describe('experience shells over the real routes', () => {
     await page.locator('.tool-nav button', { hasText: 'Home' }).click(); await page.waitForSelector('#tool-frame');
     await page.frameLocator('#tool-frame').locator('#post-teacher').click();
     await page.waitForFunction(() => document.getElementById('toast')?.textContent?.includes('not available to you here'));
-    expect(await page.locator('#tool-frame').getAttribute('src')).toBe('/fixture/surface/lm-dashboard?view=classroom');
+    expect(await page.locator('#tool-frame').getAttribute('src')).toBe('/fixture/surface/lm-dashboard?audience=classroom');
     expect(errors).toEqual([]);
   });
 
@@ -226,7 +227,7 @@ describe('experience shells over the real routes', () => {
     expect(labels.join('|')).toContain('Synthetic home home'); expect(labels.join('|')).not.toContain('Synthetic Science');
     await page.locator('.tool-nav button', { hasText: 'Synthetic home home' }).first().click();
     await page.waitForSelector('#tool-frame');
-    expect(await page.locator('#tool-frame').getAttribute('src')).toBe('/fixture/surface/home?view=family');
+    expect(await page.locator('#tool-frame').getAttribute('src')).toBe('/fixture/surface/home?audience=family');
     expect(await page.locator('.breadcrumb').innerText()).toContain('Synthetic home home');
     expect(errors).toEqual([]);
   });
@@ -239,7 +240,7 @@ describe('experience shells over the real routes', () => {
     expect(await page.locator('.tool-group').count()).toBe(7);
     await page.locator('.tool-nav button', { hasText: 'Synthetic presentations home' }).first().click();
     await page.waitForSelector('#tool-frame');
-    expect(await page.locator('#tool-frame').getAttribute('src')).toBe('/fixture/surface/presentations?view=company');
+    expect(await page.locator('#tool-frame').getAttribute('src')).toBe('/fixture/surface/presentations?audience=company');
     expect(errors).toEqual([]);
   });
 
