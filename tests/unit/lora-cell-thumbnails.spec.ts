@@ -5,10 +5,12 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Real-boundary guard for the validation thumbnails the GPU box copies to the controller. Runs the REAL scripts/comfyui-edge/validate-lora.py main() with ComfyUI and CLIP stubbed out, against a real loopback HTTP listener, and inspects the requests the LoRA Studio's ingest mount would actually receive - method, path, query, both guard headers, media type and body bytes. The defect being closed was that a scorecard cell carried only a box-local filename and so had no fetchable image at all, so the assertion has to be on what left the box, not on a helper in isolation. Fails loudly (never skips) when Python or Pillow is missing, since a skipped guard is no guard.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Match the configured-character generator signature, confine validation output to the fixture, and prove thumbnail filenames match the exact scorecard cells.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | The validator now signs every callback with the dispatch's callback grant (OSHAL_LORA_CALLBACK_GRANT) instead of sending the fleet secret. The run keeps SWARM_SERVICE_SECRET in its environment on purpose and asserts no request carries it, that each signature verifies under an independent recomputation of the store verifier's contract, and that no two callbacks share a nonce.
  */
 
 import { describe, expect, it, beforeAll, afterAll } from 'vitest';
 import { spawn, spawnSync } from 'child_process';
+import { createHash, createHmac } from 'crypto';
 import { createServer, type Server } from 'http';
 import { mkdtempSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
@@ -18,6 +20,8 @@ const REPO_ROOT = resolve(__dirname, '../..');
 const VALIDATE = join(REPO_ROOT, 'scripts/comfyui-edge/validate-lora.py');
 const RUN_TIMEOUT_MS = 180_000;
 const SERVICE_SECRET = 'lora-thumbnail-guard-secret';
+const GRANT_ID = '0c0c0c0c-1111-4222-8333-444444444444';
+const GRANT_SECRET = 'Q'.repeat(43);
 const OWNER_PLAINTEXT = 'owner-under-test';
 const OWNER_SUB_B64 = Buffer.from(OWNER_PLAINTEXT, 'utf8').toString('base64url');
 
@@ -37,6 +41,26 @@ interface CapturedRequest {
 interface DriverResult {
   cells: number;
   renderBytes: number;
+}
+
+/**
+ * @description Recompute a captured callback's signature from the grant secret, independently of the
+ *   box helper, using the contract the controller verifies: HMAC-SHA256 keyed by SHA-256 of
+ *   "oshal-lora-callback-grant-v1:" + secret over METHOD|target|timestamp|nonce|sha256(body).
+ * @param secret - The grant secret half.
+ * @param method - HTTP method as received.
+ * @param target - Request target as received (path and query).
+ * @param headers - Received headers.
+ * @param body - Received body bytes.
+ * @returns The expected hex signature.
+ */
+function expectedSignature(secret: string, method: string, target: string,
+  headers: Record<string, string | string[] | undefined>, body: Buffer): string {
+  const key = createHash('sha256').update(`oshal-lora-callback-grant-v1:${secret}`).digest();
+  const bodyHash = createHash('sha256').update(body).digest('hex');
+  return createHmac('sha256', key)
+    .update(`${method}|${target}|${headers['x-lora-callback-timestamp']}|${headers['x-lora-callback-nonce']}|${bodyHash}`)
+    .digest('hex');
 }
 
 /**
@@ -150,7 +174,7 @@ describe('LoRA validation thumbnails reach the controller', () => {
     const run = await new Promise<{ status: number; stdout: string; stderr: string }>((done, fail) => {
       const child = spawn(python(), [driver, VALIDATE, work, origin, OWNER_SUB_B64], {
         timeout: RUN_TIMEOUT_MS,
-        env: { ...process.env, SWARM_SERVICE_SECRET: SERVICE_SECRET },
+        env: { ...process.env, SWARM_SERVICE_SECRET: SERVICE_SECRET, OSHAL_LORA_CALLBACK_GRANT: `${GRANT_ID}.${GRANT_SECRET}` },
       });
       let stdout = '';
       let stderr = '';
@@ -204,13 +228,23 @@ describe('LoRA validation thumbnails reach the controller', () => {
     }
   });
 
-  it('carries the fleet secret and the separately encoded owner, and neither in the URL', () => {
-    for (const request of cellImagePosts()) {
-      expect(request.headers['x-service-secret']).toBe(SERVICE_SECRET);
-      expect(request.headers['x-oshal-user-sub-b64']).toBe(OWNER_SUB_B64);
-      expect(request.url).not.toContain(SERVICE_SECRET);
+  it('signs every callback with the dispatch grant: no fleet secret, a valid signature and a fresh nonce each', () => {
+    const callbacks = captured.filter((request) => request.url.startsWith('/api/lora/ingest'));
+    expect(callbacks.length).toBeGreaterThanOrEqual(3);
+    for (const request of callbacks) {
+      expect(request.headers['x-service-secret']).toBeUndefined();
+      expect(JSON.stringify(request.headers)).not.toContain(SERVICE_SECRET);
+      expect(request.headers['x-lora-callback-grant']).toBe(GRANT_ID);
+      expect(request.headers['x-lora-callback-owner']).toBe(OWNER_SUB_B64);
+      expect(request.headers['x-lora-callback-signature'])
+        .toBe(expectedSignature(GRANT_SECRET, request.method, request.url, request.headers, request.body));
+      expect(request.url).not.toContain(GRANT_SECRET);
       expect(request.url).not.toContain(OWNER_PLAINTEXT);
     }
+    const nonces = callbacks.map((request) => request.headers['x-lora-callback-nonce']);
+    expect(new Set(nonces).size).toBe(callbacks.length);
+    const scorecard = callbacks.find((request) => request.url === '/api/lora/ingest');
+    expect(scorecard?.headers['content-type']).toBe('application/vnd.oshal.lora-callback+json');
   });
 
   it('sends real bounded JPEG bytes the controller route will accept', () => {

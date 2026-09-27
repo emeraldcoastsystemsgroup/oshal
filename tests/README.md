@@ -5,8 +5,10 @@
 `npx vitest run tests/unit/lora-cell-thumbnails.spec.ts` executes the shipping Python validator
 against a loopback receiver. Only ComfyUI rendering and CLIP scoring are fixture ports; real PNG
 files are encoded and posted as bounded JPEG thumbnails after the scorecard, with matching cell
-filenames and owner headers. Python and Pillow are required, and all output stays in the fixture's
-temporary directory. This is not a live GPU run. The store's `lora/tests/test-lab.yaml` separately
+filenames. Every callback is signed with the dispatch's callback grant (`OSHAL_LORA_CALLBACK_GRANT`,
+`scripts/comfyui-edge/lora_callback.py`): the spec recomputes each signature independently, requires
+a distinct nonce per request, and refuses any request that carries the fleet secret. Python and
+Pillow are required, and all output stays in the fixture's temporary directory. This is not a live GPU run. The store's `lora/tests/test-lab.yaml` separately
 registers actual package HTTP, forced-RLS disposable PostgreSQL and Chromium pixel/expiry/deletion
 acceptance; run its documented `lora/tests/gallery.config.mjs` command from the store checkout.
 
