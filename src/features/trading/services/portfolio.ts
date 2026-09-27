@@ -26,6 +26,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 — exitsToRun, trailingExits and rebalanceTrims emit NOTHING for a position marked `unmanaged` (the engine's own filled orders do not account for the quantity held), and unmanagedSymbols exposes that same rule to the dispatch legs. The engine reads the VENUE's positions, so a share bought by hand is picked up and traded against a basis the engine never paid. Withholding only ever REMOVES a decision from the plan; a position without the mark is byte-identical to today, which keeps the strategy-lab replay and every other caller that never runs the attachment unchanged. Exposure, capital and drawdown deliberately keep counting the position — it is real money at the venue.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 round 2 — rotationBenches withholds the bench SELL for a position marked `unmanaged`, the fourth sell rule in this file and the one SEQ 9 missed. The mark is applied to `cold` only, never to `held` or `heldSyms`: those decide which names count as already-held, and a withheld name dropped from them would resurface as a hot BENCH CANDIDATE the caller then buys. Filtering `cold` can only shorten the returned list.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 round 3 — dipExits withholds the extended-hours dip sell for a position marked `unmanaged`: the fifth sell rule in this file, and the one SEQ 9 and SEQ 10 both missed. It is also the one that mattered most, because computeExits RETURNS on it off-hours before exitsToRun, trailingExits and rebalanceTrims are ever reached — so on every pre/post-market fire the only exit rule that ran was the only one still ungated, and a hand-bought share printing TRADING_EXT_DIP_SELL_PCT under its prior regular close was sold out in full against a basis the engine never paid. The rule is close-anchored rather than basis-anchored, but the ORDER it emits is still a full-position sell of a quantity the engine cannot account for. Filtering can only shorten the returned list; a position without the mark is byte-identical to before.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | ADR-168 — MULTI_MARKET_BUCKETS, the single source of the 41-name multi-market extension (developed ex-US, emerging, fixed income, commodities, real estate, currency, digital assets), and SECTOR coverage for every one of those names. Each bucket is NEW: no default-universe name uses it, and the block is spread FIRST into SECTOR so it can never overwrite an existing mapping. A book that trades only DEFAULT_UNIVERSE therefore sizes, caps and tilts exactly as before; the change reaches only a book that holds or scans one of the 41 names, which moves from the shared 'other' bucket to its own market bucket. No dispatch leg reads the extension.
  *
  * @module portfolio
  */
@@ -137,8 +138,35 @@ export function symbolBlocklist(): Set<string> {
   return new Set(String(process.env.TRADING_SYMBOL_BLOCKLIST || '').split(',').map((s) => s.trim().toUpperCase()).filter(Boolean));
 }
 
+/**
+ * ADR-168 multi-market extension, by market bucket — the single source for both
+ * MULTI_MARKET_UNIVERSE (multi-timeframe.ts) and the SECTOR entries below, so the list and its
+ * buckets cannot drift apart. US-listed, unlevered, non-inverse instruments that reach markets the
+ * default universe cannot: developed ex-US and emerging equity indices, US Treasury/credit/muni and
+ * international bonds, commodities, real estate, currencies and digital assets.
+ *
+ * Every bucket name here is one no DEFAULT_UNIVERSE name uses, which is what keeps this addition
+ * inert for a book that trades only the default universe (its per-sector room, tilt and Allocation
+ * card never see these names). Deliberately absent: the swing leg's six commodity ETFs
+ * (trading-swing-dispatch.ts DEFAULT_SWING_UNIVERSE) so two sleeves never trade one symbol on a
+ * book; SPY, the benchmark and default core symbol; and the T-bill/ultra-short funds reserved for
+ * the idle-cash yield sleeve another BACKLOG entry owns. Proposed, not ratified — ADR-168 D2.
+ */
+export const MULTI_MARKET_BUCKETS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  'intl-developed': ['EFA', 'VGK', 'EWJ', 'EWG', 'EWU', 'EWC', 'EWA', 'EWL', 'EWH'],
+  emerging: ['EEM', 'FXI', 'KWEB', 'INDA', 'EWZ', 'EWT', 'EWY', 'EWW', 'EZA'],
+  'fixed-income': ['TLT', 'IEF', 'IEI', 'TIP', 'LQD', 'MUB', 'BNDX', 'EMB'],
+  commodities: ['CPER', 'DBA', 'PPLT'],
+  'real-estate': ['VNQ', 'VNQI', 'PLD', 'AMT', 'O', 'SPG', 'PSA'],
+  currency: ['UUP', 'FXE', 'FXY'],
+  'digital-assets': ['IBIT', 'ETHA'],
+});
+
 /** Symbol → sector for the default universe (drives the per-sector cap). Unknown → 'other'. */
 export const SECTOR: Record<string, string> = Object.fromEntries([
+  // ADR-168 extension FIRST: Object.fromEntries keeps the LAST entry for a key, so a name that ever
+  // appeared in both this block and a default-universe block below would keep its existing bucket.
+  ...Object.entries(MULTI_MARKET_BUCKETS).flatMap(([bucket, syms]) => syms.map((s) => [s, bucket])),
   ...['AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'META', 'AVGO', 'ORCL', 'CRM', 'ADBE', 'AMD', 'INTC', 'CSCO', 'QCOM', 'TXN', 'IBM', 'NOW', 'INTU', 'AMAT', 'PANW', 'SNOW', 'SHOP', 'UBER', 'PLTR', 'VRSN'].map((s) => [s, 'tech']),
   ...['JPM', 'BAC', 'WFC', 'GS', 'MS', 'C', 'SCHW', 'BLK', 'AXP', 'SPGI', 'BX', 'V', 'MA', 'PYPL', 'COF', 'USB', 'PNC', 'TFC', 'CB', 'MMC', 'MCO', 'AB'].map((s) => [s, 'financials']),
   ...['WMT', 'COST', 'PG', 'KO', 'PEP', 'MCD', 'DIS', 'NKE', 'HD', 'LOW', 'SBUX', 'TGT', 'CAT', 'GE', 'HON', 'UPS', 'BA', 'MMM', 'CL', 'PM', 'KHC'].map((s) => [s, 'consumer']),

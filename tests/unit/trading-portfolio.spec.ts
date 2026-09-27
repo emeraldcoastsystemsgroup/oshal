@@ -1,5 +1,13 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add Change Log header. ADR-168 SECTOR coverage: every multi-market name has a real bucket, no default-universe name shares a bucket with the extension, a book that holds extension names sizes a default-universe entry exactly as it would without them, and an extension name is capped by its own market bucket rather than the shared 'other' one.
+ */
 import { describe, expect, it } from 'vitest';
-import { exitsToRun, trailingExits, nextPeaks, sizeEntry, riskPolicy, RISK_POLICIES, sectorOf, rotationBenches, rebalanceTrims, drawdownHaltTriggered, dipExits } from '../../src/features/trading/services/portfolio';
+import { exitsToRun, trailingExits, nextPeaks, sizeEntry, riskPolicy, RISK_POLICIES, sectorOf, rotationBenches, rebalanceTrims, drawdownHaltTriggered, dipExits, MULTI_MARKET_BUCKETS, SECTOR } from '../../src/features/trading/services/portfolio';
+import { DEFAULT_UNIVERSE, MULTI_MARKET_UNIVERSE, MULTI_MARKET_EXTENSION } from '../../src/features/trading/services/multi-timeframe';
 import type { NameStrength } from '../../src/features/trading/services/portfolio';
 import type { BrokerAccount, Position } from '../../src/features/trading/services/broker-adapter';
 
@@ -234,3 +242,50 @@ describe('account-drawdown circuit breaker', () => {
     expect(drawdownHaltTriggered(80000, 100000, RISK_POLICIES.aggressive)).toBe(false); // -20% < 25%
   });
 });
+
+describe('ADR-168 SECTOR coverage for the multi-market universe', () => {
+  const extensionBuckets = new Set(Object.keys(MULTI_MARKET_BUCKETS));
+
+  it('buckets every multi-market name, so none falls into the shared "other" bucket', () => {
+    expect(MULTI_MARKET_UNIVERSE.filter((s) => sectorOf(s) === 'other')).toEqual([]);
+    expect(new Set(MULTI_MARKET_UNIVERSE.map((s) => sectorOf(s))).size).toBeGreaterThanOrEqual(8);
+    for (const [bucket, syms] of Object.entries(MULTI_MARKET_BUCKETS)) {
+      for (const s of syms) expect(sectorOf(s), s).toBe(bucket);
+    }
+    expect(sectorOf('ZZZZ')).toBe('other');
+  });
+
+  it('adds only NEW buckets: no default-universe name lands in one, and no default block re-buckets an extension name', () => {
+    const defaultBuckets = new Set(DEFAULT_UNIVERSE.map((s) => sectorOf(s)));
+    expect([...extensionBuckets].filter((b) => defaultBuckets.has(b))).toEqual([]);
+    expect(extensionBuckets.has('other')).toBe(false);
+    // Each extension key still resolves to its extension bucket: no later default-universe block shares a key with it.
+    const extension = new Set(MULTI_MARKET_EXTENSION);
+    expect(Object.keys(SECTOR).filter((k) => extension.has(k)).every((k) => extensionBuckets.has(SECTOR[k]))).toBe(true);
+    expect(DEFAULT_UNIVERSE.filter((s) => extensionBuckets.has(sectorOf(s)))).toEqual([]);
+  });
+
+  it('holding extension names leaves a default-universe entry sized exactly as without them', () => {
+    // A 5% sector cap that binds on tech: AAPL already holds $4k of the $5k tech room.
+    const policy = { ...RISK_POLICIES.active, maxSectorPct: 5, maxDeployedPct: 100, maxPositions: 50 };
+    const base = [pos('AAPL', 40, 100, 100)];
+    const withExtension = [...base, pos('TLT', 200, 100, 100), pos('EFA', 200, 100, 100), pos('IBIT', 100, 50, 50)];
+    const without = sizeEntry('NVDA', 100, 1, acct(), base, policy);
+    const alongside = sizeEntry('NVDA', 100, 1, acct(), withExtension, policy);
+    expect(without).toEqual({ qty: 10, notional: 1000 });
+    expect(alongside).toEqual(without);
+  });
+
+  it('caps an extension name by its own market bucket, not by the shared "other" one', () => {
+    const policy = { ...RISK_POLICIES.active, maxSectorPct: 5, maxDeployedPct: 100, maxPositions: 50 };
+    // $6k of Treasuries fills the fixed-income bucket past its $5k cap → another fixed-income fund is refused…
+    const bonds = [pos('TLT', 60, 100, 100)];
+    const ief = sizeEntry('IEF', 100, 1, acct(), bonds, policy);
+    expect(ief.qty).toBe(0);
+    expect(ief.blocked).toMatch(/sector cap/);
+    // …while a different market's fund still has its own room, and an unbucketed name its 'other' room.
+    expect(sizeEntry('EFA', 100, 1, acct(), bonds, policy).qty).toBeGreaterThan(0);
+    expect(sizeEntry('ZZZZ', 100, 1, acct(), bonds, policy).qty).toBeGreaterThan(0);
+  });
+});
+
