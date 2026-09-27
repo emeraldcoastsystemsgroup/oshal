@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Test Lab registration guard for the messaging-channels card: the card is in SCENARIOS, every suite it names exists on disk, and its live step — driven over real HTTP against the REAL /api/channels router — passes with each channel's wired state in its detail, degrades (not fails) without a session, and fails when the surface omits a channel's state. A card whose suites are named but absent, or whose step passes against a payload missing the state it claims to read, is registration in name only.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The bindings step now requires all four channel states (telegram, sms, whatsapp, discord), and the round-trip card is registered with one step per provider that degrades - never passes, never writes - without a signed-in caller and the app database. Its pass path runs against real Postgres in chat-channel-inbound-postgres.spec.ts.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The operator-setup card is registered: its step, driven over real HTTP against the REAL router and the REAL operator gate, degrades without a session and for a non-operator and passes for an operator on a deployment with no bot. The Discord state GET / now reports (bot, dmUrl) is pinned in the payload shape.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -34,6 +35,8 @@ const cookieAuth: RequestHandler = (req, res, next) => {
 
 beforeAll(async () => {
   process.env.TELEGRAM_BOT_TOKEN = '';
+  process.env.DISCORD_BOT_TOKEN = '';
+  process.env.OSHAL_OPERATOR_SUBS = 'auth0|lab-operator';
   process.env.TWILIO_INBOUND_NUMBER = '+15559990000';
   const app = express();
   app.use('/api/channels', createChatChannelRoutes({ pool } as AppContext, cookieAuth));
@@ -51,6 +54,8 @@ beforeAll(async () => {
 
 afterAll(async () => {
   delete process.env.TWILIO_INBOUND_NUMBER;
+  delete process.env.OSHAL_OPERATOR_SUBS;
+  delete process.env.DISCORD_BOT_TOKEN;
   delete process.env.PORT;
   await Promise.all([server, broken].map((s) => new Promise((r) => s.close(r))));
 });
@@ -85,6 +90,18 @@ describe('messaging channels Test Lab registration', () => {
     const response = await fetch(`http://127.0.0.1:${process.env.PORT}/api/channels`, { headers: { cookie: 'test-user=auth0|lab-user' } });
     const payload = await response.json() as Record<string, { configured?: unknown }>;
     for (const channel of ['telegram', 'sms', 'whatsapp', 'discord']) expect(typeof payload[channel]?.configured, channel).toBe('boolean');
+    expect(payload.discord).toEqual({ configured: false, connected: false, problem: null, bot: null, dmUrl: null });
+  });
+
+  it('registers the operator-setup card: degraded without a session or as a non-operator, pass for an operator with no bot', async () => {
+    const card = CHANNEL_SCENARIOS.find((s) => s.id === 'channel-operator-setup');
+    expect(card?.steps.map((s) => s.id)).toEqual(['discord-setup']);
+    const step = card!.steps[0];
+    expect(await step.run('', {})).toMatchObject({ state: 'degraded', status: 401 });
+    expect(await step.run('test-user=auth0|lab-user', {})).toMatchObject({ state: 'degraded', status: 403 });
+    const result = await step.run('test-user=auth0|lab-operator', {});
+    expect(result.state).toBe('pass');
+    expect(result.detail).toContain('No Discord bot is configured');
   });
 
   it('registers one round-trip step per provider, each degrading without a caller and database', async () => {

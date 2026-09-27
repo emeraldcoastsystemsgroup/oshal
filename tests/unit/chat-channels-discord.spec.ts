@@ -6,8 +6,9 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — Discord DM adapter guards: DM-only Gateway parsing, IDENTIFY over an injected socket, verified channel type when channel_type is omitted, and LINK-before-lookup processing with single dispatch per event.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The link port now returns a ChannelLinkRedemption; the processor's refusals (unlinked sender, invalid code, cross-user rebind) are asserted through the audit hook, and a rebind gets its own reply. The real Postgres + real Gateway protocol acceptance lives in chat-channel-inbound-postgres.spec.ts.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The fake link store reports the owner's verified issuer, as a real link now carries one; a link without one is refused before dispatch (proven against real Postgres in chat-channel-principal-issuer.spec.ts).
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Gateway status: READY marks the listener connected with the bot user it named; a close with 4014 (intents refused) or 4004 (bad token) records the named problem and schedules NO reconnect, while an ordinary close still reconnects after the bounded delay. Tonight's silent failure mode was exactly a 4014 loop nobody could see.
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DISCORD_CHANNEL_PROVIDER,
   parseDiscordGatewayMessage,
@@ -132,5 +133,73 @@ describe('Discord direct-message channel adapter', () => {
     await processDiscordInbound(links, { ...message, text: 'LINK feed0000' }, dispatch, send, hooks);
     expect(calls.at(-1)).toBe(`send:${DISCORD_CHANNEL_REPLIES.rebind}`);
     expect(refusals).toMatchObject([{ reason: 'identity_bound_to_another_user', codeOwnerSub: 'owner-2', boundOwnerSub: 'owner-1' }]);
+  });
+});
+
+describe('Discord Gateway status', () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  /** A fake socket whose handlers the test drives; `made` counts how many the factory produced. */
+  function fakeSockets() {
+    const made: Array<Map<string, (...args: unknown[]) => void>> = [];
+    const factory = () => {
+      const handlers = new Map<string, (...args: unknown[]) => void>();
+      made.push(handlers);
+      const socket = {
+        on(event: string, listener: (...args: unknown[]) => void) { handlers.set(event, listener); return socket; },
+        send() {},
+        close() {},
+      };
+      return socket;
+    };
+    return { made, factory };
+  }
+
+  it('READY marks the listener connected and names the bot user', () => {
+    const { made, factory } = fakeSockets();
+    const seen: string[] = [];
+    const handle = startDiscordGateway(() => undefined, { token: 'd'.repeat(16), socketFactory: factory, onStatus: (s) => seen.push(s.state) });
+    expect(handle.status()).toMatchObject({ state: 'connecting', problem: null, botUserId: null });
+    made[0].get('message')?.(JSON.stringify({ op: 10, d: { heartbeat_interval: 60_000 } }));
+    made[0].get('message')?.(JSON.stringify({ op: 0, t: 'READY', s: 1, d: { user: { id: '123456789012345678', username: 'oshal-fixture-bot' } } }));
+    expect(handle.status()).toMatchObject({ state: 'connected', problem: null, botUserId: '123456789012345678', botUsername: 'oshal-fixture-bot' });
+    expect(handle.status().connectedAt).toBeTruthy();
+    expect(seen).toEqual(['connecting', 'connected']);
+    handle.stop();
+    expect(handle.status().state).toBe('stopped');
+  });
+
+  it('a 4014 close names intent_missing and never reconnects; 4004 names token_invalid', () => {
+    vi.useFakeTimers();
+    const { made, factory } = fakeSockets();
+    const handle = startDiscordGateway(() => undefined, { token: 'd'.repeat(16), socketFactory: factory, reconnectDelayMs: 500 });
+    made[0].get('close')?.(4014, Buffer.from('Disallowed intent(s).'));
+    expect(handle.status()).toMatchObject({ state: 'offline', lastCloseCode: 4014, problem: 'intent_missing' });
+    vi.advanceTimersByTime(5_000);
+    expect(made).toHaveLength(1);
+    handle.stop();
+
+    const bad = fakeSockets();
+    const rejected = startDiscordGateway(() => undefined, { token: 'd'.repeat(16), socketFactory: bad.factory, reconnectDelayMs: 500 });
+    bad.made[0].get('close')?.(4004);
+    expect(rejected.status()).toMatchObject({ state: 'offline', lastCloseCode: 4004, problem: 'token_invalid' });
+    vi.advanceTimersByTime(5_000);
+    expect(bad.made).toHaveLength(1);
+    rejected.stop();
+  });
+
+  it('an ordinary close reconnects after the bounded delay and clears the problem on the next READY', () => {
+    vi.useFakeTimers();
+    const { made, factory } = fakeSockets();
+    const handle = startDiscordGateway(() => undefined, { token: 'd'.repeat(16), socketFactory: factory, reconnectDelayMs: 500 });
+    made[0].get('close')?.(1006);
+    expect(handle.status()).toMatchObject({ state: 'offline', lastCloseCode: 1006, problem: null });
+    vi.advanceTimersByTime(600);
+    expect(made).toHaveLength(2);
+    made[1].get('message')?.(JSON.stringify({ op: 0, t: 'READY', d: { user: { id: '123456789012345678', username: 'oshal-fixture-bot' } } }));
+    expect(handle.status()).toMatchObject({ state: 'connected', lastCloseCode: 1006, problem: null });
+    handle.stop();
+    vi.advanceTimersByTime(5_000);
+    expect(made).toHaveLength(2);
   });
 });

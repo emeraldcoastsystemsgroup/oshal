@@ -24,6 +24,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | SMS is a second channel on the same identity store: mint/unlink endpoints for provider 'sms'. The inbound webhook (POST /api/sms/inbound) redeems the minted code when the user texts LINK <code>, which is the SMS equivalent of Telegram's /start deep link — without a way to MINT one, the caller-scoped inbound dispatch had no binding to resolve. The number is normalized on both sides so one phone cannot become two identities.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The two replies an unlinked chat gets — the greeting and the linking prompt — name the product as it is called today. They were the retired standalone form, and they are the only product name a Telegram user ever sees, read before that person has any other context for what they are talking to.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Denial audit and real-boundary seams. Every refusal on Telegram and Discord (unlinked sender; invalid, expired or other-provider code; identity already bound to another user) is recorded in the refusal ledger through recordChannelRefusal - the Telegram unlinked path previously did not even log. The Telegram handler is exported as processTelegramInbound beside processDiscordInbound, both on one ChannelInboundLinkPort with optional audit/typing hooks, and a refused cross-user rebind gets its own reply instead of 'invalid code'. createChatChannelRoutes takes optional dispatch/provider-send/Gateway seams so the real webhook and the real Gateway protocol can be driven end to end against a real Postgres without a bot node or a provider account; production passes none. WhatsApp: the link mint advertises TWILIO_WHATSAPP_FROM (the sender the user actually messages) when set, and GET / reports the whatsapp configured state.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Discord is configured from the cockpit, not from .env: the router now owns a DiscordChannelConfig (encrypted settings store + in-process Gateway supervisor) booted with the precedence saved-row, then DISCORD_BOT_TOKEN as a seed; /admin/* mounts the operator-only setup routes behind requiresAuth + requiresOperator; the mint route and GET / read configured state, the bot's name/id and the DM link from that config; replies are sent with the token the running Gateway identified with. deps.discord gains identity/validate seams so a spec can point validation at a local fake Discord.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Linked messages carry the owner's verified principal issuer into the bot turn. The owner identity was entered as { sub, isOperator: false } only, so user-bound delegation threw "User-bound delegation requires a verified principal issuer" and every linked Telegram/Discord message answered "Something went wrong reaching your swarm" whenever delegation signing was on. Every mint route now reads the caller's verified issuer with getAuthenticatedPrincipalIssuer (idTokenClaims.iss for a browser session - the OIDC presentation user has no iss) and refuses 403 issuer_required without one; the issuer rides the code onto the link; asOwner enters { sub, principalIssuer } from the link. A legacy link with no recorded issuer is refused before any claim or dispatch, audited (reason link_issuer_missing) and told to re-link - never dispatched with a guessed issuer. dispatchToSwarm no longer re-enters a narrower identity of its own: it always runs inside the owner identity the inbound processor established.
  *
  * @module chat-channel-routes
@@ -32,6 +33,7 @@
 import { Router, type Request, type Response, type RequestHandler } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-issuer';
+import { requiresOperator } from '@/shared/middleware/authz';
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
 import type { AppContext } from '@/app/composition/app-context';
 import { BotNodeClient, createRegistryEndpointResolver } from '@/features/agent-management';
@@ -55,12 +57,16 @@ import {
   sendTelegramTyping,
   registerTelegramWebhook,
   getTelegramBotIdentity,
-  getDiscordBotToken,
   sendDiscordMessage,
-  startDiscordGateway,
+  ChannelProviderSettingsStore,
+  DiscordChannelConfig,
+  DiscordGatewaySupervisor,
+  type DiscordBotIdentity,
   type DiscordGatewayOptions,
+  type DiscordIdentityOptions,
   type InboundDiscordMessage,
 } from '@/features/chat-channels';
+import { createChannelSecretCipher, createChatChannelAdminRoutes } from './chat-channel-admin-routes';
 import { executeBotOrInline } from './inline-bot-execution';
 import { resolveUserLlmConnection } from './free-tier-rotation';
 
@@ -290,8 +296,16 @@ export interface ChatChannelRouteDeps {
   dispatch?: (provider: string, ownerSub: string, chatId: string, text: string) => Promise<string>;
   /** Telegram reply + typing (default: the Bot API). */
   telegram?: { send(chatId: string, text: string): Promise<void>; typing?(chatId: string): Promise<void> };
-  /** Discord reply (default: the REST API) and Gateway options (default: the configured token). */
-  discord?: { send?(channelId: string, text: string): Promise<void>; gateway?: DiscordGatewayOptions };
+  /**
+   * Discord reply (default: the REST API), Gateway options (a `token` here is a spec seam that wins
+   * over the saved settings and the env seed), and the token-validation seams (a local fake Discord).
+   */
+  discord?: {
+    send?(channelId: string, text: string): Promise<void>;
+    gateway?: DiscordGatewayOptions;
+    identity?: DiscordIdentityOptions;
+    validate?: (token: string, options?: DiscordIdentityOptions) => Promise<DiscordBotIdentity>;
+  };
 }
 
 /**
@@ -343,16 +357,19 @@ export function createChatChannelRoutes(ctx: AppContext, requiresAuth: RequestHa
   void links.ensureSchema();
   const dispatch = deps.dispatch ?? ((provider, sub, chatId, text) => dispatchToSwarm(ctx, provider, sub, chatId, text));
   const telegram = deps.telegram ?? { send: sendTelegramMessage, typing: sendTelegramTyping };
-  const discordSend = deps.discord?.send ?? ((channelId: string, text: string) => sendDiscordMessage(channelId, text));
-  startDiscordGateway((message) => processDiscordInbound(
+  const discordSend = deps.discord?.send ?? ((channelId: string, text: string) => sendDiscordMessage(channelId, text, discord.activeToken()));
+  const discord = bootDiscord(ctx, deps, (message) => processDiscordInbound(
     links, message, (ownerSub, m) => dispatch(m.provider, ownerSub, m.channelId, m.text), discordSend,
-  ), deps.discord?.gateway);
+  ));
+
+  // ── OPERATOR-ONLY: the cockpit "Chat channels" setup card (requiresAuth, then requiresOperator) ──
+  router.use('/admin', requiresAuth, requiresOperator, createChatChannelAdminRoutes(discord));
 
   // ── PUBLIC: Telegram delivers updates here (secret-header verified) ─────────
   router.post('/telegram/webhook', telegramWebhook(links, dispatch, telegram));
 
   // ── AUTH-GATED: the cockpit "Channels" card ───────────────────────────────
-  router.get('/', requiresAuth, (req, res) => void listChannels(links, req, res));
+  router.get('/', requiresAuth, (req, res) => void listChannels(links, discord, req, res));
   router.post('/telegram/link', requiresAuth, (req, res) => void mintTelegramLink(links, req, res));
   router.delete('/telegram/:channelUserId', requiresAuth, (req, res) => void unlinkChannel(links, req, res));
   router.post('/telegram/register-webhook', requiresAuth, (req, res) => void doRegisterWebhook(req, res));
@@ -360,10 +377,29 @@ export function createChatChannelRoutes(ctx: AppContext, requiresAuth: RequestHa
   router.delete('/sms/:channelUserId', requiresAuth, (req, res) => void unlinkSms(links, req, res));
   router.post('/whatsapp/link', requiresAuth, (req, res) => void mintWhatsAppLink(links, req, res));
   router.delete('/whatsapp/:channelUserId', requiresAuth, (req, res) => void unlinkWhatsApp(links, req, res));
-  router.post('/discord/link', requiresAuth, (req, res) => void mintDiscordLink(links, req, res));
+  router.post('/discord/link', requiresAuth, (req, res) => void mintDiscordLink(links, discord, req, res));
   router.delete('/discord/:channelUserId', requiresAuth, (req, res) => void unlinkDiscord(links, req, res));
 
   return router;
+}
+
+/**
+ * The deployment's Discord configuration: the encrypted settings store behind the connector-token
+ * cipher, the in-process Gateway supervisor, and the config that applies the boot precedence
+ * (spec seam, saved row, DISCORD_BOT_TOKEN seed). boot() never throws; it is detached on purpose
+ * so a slow settings read never delays the router mount.
+ */
+function bootDiscord(
+  ctx: AppContext, deps: ChatChannelRouteDeps, onMessage: (message: InboundDiscordMessage) => Promise<void>,
+): DiscordChannelConfig {
+  const { token: seamToken, ...gatewayOptions } = deps.discord?.gateway ?? {};
+  const store = new ChannelProviderSettingsStore(ctx.pool as never, createChannelSecretCipher(ctx.pool as never));
+  const supervisor = new DiscordGatewaySupervisor(onMessage, gatewayOptions);
+  const discord = new DiscordChannelConfig(store, supervisor, {
+    seamToken: seamToken ?? null, identity: deps.discord?.identity, validate: deps.discord?.validate,
+  });
+  void discord.boot().catch((err) => logger.error({ err, stack: (err as Error).stack }, 'Discord boot failed'));
+  return discord;
 }
 
 /** The shared deployment number a texter sends their LINK code to (empty when SMS isn't wired). */
@@ -417,12 +453,18 @@ async function unlinkWhatsApp(links: ChannelLinkService, req: Request, res: Resp
   res.json({ removed: await links.unlink(sub, WHATSAPP_CHANNEL_PROVIDER, number) });
 }
 
-async function mintDiscordLink(links: ChannelLinkService, req: Request, res: Response): Promise<void> {
+/** POST /discord/link — mint a one-time code plus the exact DM text and the link that opens the bot's DM. */
+async function mintDiscordLink(links: ChannelLinkService, discord: DiscordChannelConfig, req: Request, res: Response): Promise<void> {
   const caller = callerLinkIdentity(req, res);
   if (!caller) return;
-  if (!getDiscordBotToken()) { res.status(503).json({ error: 'discord_not_configured' }); return; }
+  await discord.ready();
+  if (!discord.isConfigured()) { res.status(503).json({ error: 'discord_not_configured' }); return; }
+  const state = discord.describe();
   const code = await links.mintLinkCode(caller.sub, DISCORD_CHANNEL_PROVIDER, caller.issuer);
-  res.json({ code, message: `DM the Discord bot: LINK ${code}`, expiresInMinutes: 15 });
+  res.json({
+    code, message: `DM the Discord bot: LINK ${code}`, send: `LINK ${code}`, expiresInMinutes: 15,
+    botUsername: state.bot?.username ?? null, botUserId: state.bot?.userId ?? null, dmUrl: state.dmUrl,
+  });
 }
 
 async function unlinkDiscord(links: ChannelLinkService, req: Request, res: Response): Promise<void> {
@@ -433,16 +475,21 @@ async function unlinkDiscord(links: ChannelLinkService, req: Request, res: Respo
   res.json({ removed: await links.unlink(sub, DISCORD_CHANNEL_PROVIDER, channelUserId) });
 }
 
-/** GET / — the caller's linked channels + per-provider setup state (Telegram bot, SMS/WhatsApp numbers, Discord token presence). */
-async function listChannels(links: ChannelLinkService, req: Request, res: Response): Promise<void> {
+/** GET / — the caller's linked channels + per-provider setup state (Telegram bot, SMS/WhatsApp numbers, the Discord bot and its DM link). */
+async function listChannels(links: ChannelLinkService, discord: DiscordChannelConfig, req: Request, res: Response): Promise<void> {
   const sub = callerSub(req);
   if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
   const identity = await getTelegramBotIdentity();
+  await discord.ready();
+  const state = discord.describe();
   res.json({
     telegram: { configured: Boolean(getTelegramBotToken()), bot: identity },
     sms: { configured: Boolean(inboundSmsNumber()), number: inboundSmsNumber() || null },
     whatsapp: { configured: Boolean(whatsAppSenderNumber()), number: whatsAppSenderNumber() ? `whatsapp:${whatsAppSenderNumber()}` : null },
-    discord: { configured: Boolean(getDiscordBotToken()) },
+    discord: {
+      configured: state.configured, connected: state.connection.state === 'connected', problem: state.connection.problem,
+      bot: state.bot ? { userId: state.bot.userId, username: state.bot.username } : null, dmUrl: state.dmUrl,
+    },
     links: await links.listLinks(sub),
   });
 }

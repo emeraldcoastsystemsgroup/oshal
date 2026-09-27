@@ -131,10 +131,19 @@ doubled, so a run spends nothing and messages no real account. The lab link is r
 the occurrence claims and the refusal row stay as permanent receipts (the runtime role can only
 insert them). Without a signed-in caller and the app database each step is degraded.
 
+**Messaging channels — is the Discord bot set up and connected** (`channel-operator-setup`, Tools)
+reads `GET /api/channels/admin/discord` as the caller. The route is operator-only, so a non-operator
+and a missing session degrade rather than fail. For an operator it passes when no bot is configured
+(naming the cockpit card that enables one) or when the bot is configured and the Gateway is
+connected, and fails with the exact fix when the state names a problem: Discord rejected the saved
+token, or the Message Content intent is off in the Developer Portal. It is read-only.
+
 Run the linked suites locally with `npm run test:channels`. The real-boundary suites
 (`tests/unit/chat-channel-inbound-postgres.spec.ts`, `tests/unit/chat-channel-denial-audit.spec.ts`,
-`tests/unit/chat-channel-principal-issuer.spec.ts`, `tests/unit/sms-inbound-dispatch.spec.ts`) start
-their own PostgreSQL. The principal-issuer suite sends each linked message through the real
+`tests/unit/chat-channel-principal-issuer.spec.ts`, `tests/unit/sms-inbound-dispatch.spec.ts`,
+`tests/unit/chat-channel-admin-postgres.spec.ts`) start their own PostgreSQL. The admin suite also
+runs a local HTTP server speaking Discord's identity reads and a local Gateway, and
+`tests/unit/chat-channel-setup-card-browser.spec.ts` drives the cockpit card in headless Chromium. The principal-issuer suite sends each linked message through the real
 controller delegation client and verifies the signed token names the owner and the issuer. Against the non-superuser
 enforcing role under forced RLS they drive the real Telegram webhook over HTTP, the real Discord
 Gateway client over a local WebSocket server, and the real signed Twilio webhook for SMS and
