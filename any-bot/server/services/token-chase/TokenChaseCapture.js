@@ -7,11 +7,13 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Step 2 tail-replay inputs (ADR-046 §1/§8, BACKLOG "workspace-tree tail-replay" + "honest pinned-read tracking"): each open frame additionally records `pins` and a bounded, content-addressed `workspaceTree` in the background writer, so the tail replay can restage the tree a frame saw. Frames captured before this change simply lack them and keep replaying exactly as before.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Bind full declared tool schemas plus optional workspace-commit and encrypted owner-store-version references; preserve an explicit caller-supplied non-replayable decision and hash-verify every redacted workspace object.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Workspace-bound checkpoint (BACKLOG "Workspace-bound checkpoint and tail replay"): the background writer now PRODUCES the provenance seq 3 only accepted. Each open frame commits its redacted snapshot into the private .tokenchase/git repository (workspace-checkpoint.js) and records the commit under context.workspaceCommit — null, never fabricated, when git fails — plus a `checkpoint` block (tree digest, completeness, redacted paths, git error). A configured owner-store snapshotter (configureOwnerStore, wired by the bot-node runtime) copies the owner's CIPHERTEXT into .tokenchase/store-objects and records context.ownerStoreVersion; with no store the version is null and `ownerStore.bound` is false. Pins arrive per frame from turn-provenance.js. finishRun writes .tokenchase/final.json (post-tool tree digest, final commit, store version, trailing pins) as the baseline a no-edit replay compares against, and flush() lets a caller await the background writes. The tree walk moved to workspace-checkpoint.js.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | The owner-store half of each background write is async (regression fix for seq 4: a synchronous whole-store copy held a jarvis bot's event loop 88.8 s before the model call and 33.6 s after it). The workspace checkpoint still runs synchronously at the frame's setImmediate, so the tree and commit keep their moment; the store snapshot and the frame / final.json write then run on a per-workspace promise chain (enqueueWrite), which keeps open -> close merge -> final.json in order without holding the event loop. The snapshotter now owns where objects go (one content-addressed directory per node), so the lane no longer creates .tokenchase/store-objects; a store above the snapshot ceiling is recorded as ownerStore.snapshotSkipped 'too_large' with measuredBytes and a null version, and each summary carries the snapshot's hashed/copied counts. The manifest file holds version, files, complete and warnings only. flush() now also awaits the queued async writes.
  */
 
 'use strict';
 
 const fs = require('fs');
+const fsp = require('fs/promises');
 const path = require('path');
 const logger = require('../../utils/logger');
 const {
@@ -26,9 +28,10 @@ const {
  *    single boolean check returning null/undefined — the caller's behavior is byte-identical.
  *  - When on, the hot path does only cheap, synchronous work (a shallow array copy and an
  *    object literal — microseconds). All heavy work (serialize, mkdir, fs write, the private
- *    git commit, the ciphertext copy) is deferred to setImmediate, which fires *during* the
- *    in-flight LLM await, so it overlaps the seconds-long network/subprocess latency and adds
- *    no wall-clock to the call.
+ *    git commit) is deferred to setImmediate, which fires *during* the in-flight LLM await, so
+ *    it overlaps the seconds-long network/subprocess latency and adds no wall-clock to the call.
+ *    The opt-in owner-store ciphertext copy is async (fs/promises) on a per-workspace write
+ *    queue, so even a large store never holds the event loop.
  *  - Capture is FAIL-OPEN: any error is logged at ERROR (no silent catch) and swallowed so it
  *    can never propagate into the agentic loop.
  *
@@ -44,6 +47,11 @@ const DIRNAME = CAPTURE_DIRNAME;
 // injected by the bot-node runtime so this CommonJS lane never re-implements the exact-subject
 // store safety checks. Null means "no owner store on this node": versions stay null, honestly.
 let ownerStore = null;
+// Background writes for one task workspace land in order (open frame -> its close merge -> final.json).
+// The owner-store half is async, so a later write for the same workspace waits on this chain instead of
+// racing the frame file it merges into. pendingWrites lets flush() await everything queued so far.
+const workspaceQueues = new Map();
+const pendingWrites = new Set();
 
 // Secret redaction. Every frame holds prompts/history/responses that may contain credentials or
 // PII, and frames land in the shared workspace volume — so NOTHING is written raw. The whole
@@ -94,7 +102,8 @@ function isEnabled() {
 
 /**
  * @description Installs (or clears) the owner-store snapshotter the background writer versions the
- * accountable owner's encrypted store with. Duck-typed: anything with `snapshot(ownerSub, objectDir)`.
+ * accountable owner's encrypted store with. Duck-typed: anything with `snapshot(ownerSub)` returning a
+ * manifest (or a promise of one); the snapshotter decides where the ciphertext objects go.
  * @param {{bound?: boolean, snapshot: Function}|null} snapshotter - The snapshotter, or null for none.
  * @returns {void}
  */
@@ -169,7 +178,7 @@ function endFrame(handle, response) {
     response: { content: (response && response.content) || null, blocks: (response && response.contentBlocks) || [] },
     phase: 'closed',
   };
-  setImmediate(() => writeFrame(handle, frame, null));
+  setImmediate(() => enqueueWrite(handle.workspaceDir, () => writeClose(handle, frame)));
 }
 
 /**
@@ -195,12 +204,35 @@ function finishRun(ctx) {
 }
 
 /**
- * @description Resolves after every background write scheduled so far has run (they are FIFO
- * setImmediate callbacks). For callers that must read a frame or final.json they just caused.
+ * @description Resolves after every background write scheduled so far has run: the FIFO setImmediate
+ * callbacks first, then the queued async owner-store writes they started. For callers that must read a
+ * frame or final.json they just caused.
  * @returns {Promise<void>} Settles once the pending writers have executed.
  */
-function flush() {
-  return new Promise((resolve) => setImmediate(resolve));
+async function flush() {
+  await new Promise((resolve) => setImmediate(resolve));
+  while (pendingWrites.size > 0) await Promise.all([...pendingWrites]);
+}
+
+/**
+ * @description Runs a background write after every earlier write for the same workspace has landed.
+ * Fail-open: a rejected job is logged at ERROR, never propagated, and never blocks the next job.
+ * @param {string} workspaceDir - The task workspace the job writes under.
+ * @param {() => (void|Promise<void>)} job - The write to run.
+ * @returns {Promise<void>} Settles when the job has run.
+ */
+function enqueueWrite(workspaceDir, job) {
+  const previous = workspaceQueues.get(workspaceDir) || Promise.resolve();
+  const run = previous.then(job).catch((err) => {
+    logger.error(`[TokenChase] background write failed (workspace=${workspaceDir}): ${err && err.message}`);
+  });
+  workspaceQueues.set(workspaceDir, run);
+  pendingWrites.add(run);
+  run.then(() => {
+    pendingWrites.delete(run);
+    if (workspaceQueues.get(workspaceDir) === run) workspaceQueues.delete(workspaceDir);
+  });
+  return run;
 }
 
 /**
@@ -262,25 +294,28 @@ function checkpointWorkspace(workspaceDir, dir, taskId, seq, parentSeq) {
 }
 
 /**
- * @description Versions the accountable owner's encrypted store: CIPHERTEXT ONLY is copied into
- * <capture>/store-objects and the manifest is written as store-<version>.json. With no snapshotter
- * or no owner the version is null and `bound` is false. A refused or failed snapshot is logged and
- * reported as incomplete — the frame still lands.
+ * @description Versions the accountable owner's encrypted store through the configured snapshotter,
+ * which copies CIPHERTEXT ONLY into the node's content-addressed object directory; the manifest is
+ * written beside the frame as store-<version>.json. With no snapshotter or no owner the version is null
+ * and `bound` is false. A store above the snapshot ceiling is refused (snapshotSkipped 'too_large', the
+ * measured size, null version). A failed snapshot is logged and reported as incomplete — the frame still lands.
  * @param {string} dir - The capture directory.
  * @param {string|null} userSub - The accountable owner, or null for a system call.
- * @returns {{version: string|null, bound: boolean, complete: boolean, reason: string|null, manifest: string|null}} The store binding summary.
+ * @returns {Promise<object>} The store binding summary ({version, bound, complete, reason, manifest, ...}).
  */
-function snapshotOwnerStore(dir, userSub) {
+async function snapshotOwnerStore(dir, userSub) {
   if (!ownerStore) return { version: null, bound: false, complete: false, reason: 'no owner store configured on this node', manifest: null };
   if (!userSub) return { version: null, bound: false, complete: false, reason: 'no accountable owner on this call', manifest: null };
   try {
-    const result = ownerStore.snapshot(userSub, path.join(dir, 'store-objects'));
+    const result = await ownerStore.snapshot(userSub);
+    if (result && result.skipped === 'too_large') return skippedStoreSummary(result);
     const manifestFile = `store-${result.version}.json`;
-    const manifestPath = path.join(dir, manifestFile);
-    if (!fs.existsSync(manifestPath)) {
-      try { fs.writeFileSync(manifestPath, JSON.stringify(result, null, 2), { flag: 'wx' }); } catch (err) { if (err.code !== 'EEXIST') throw err; }
-    }
-    return { version: result.version, bound: true, complete: result.complete !== false, reason: null, manifest: manifestFile };
+    await writeManifestOnce(path.join(dir, manifestFile), result);
+    return {
+      version: result.version, bound: true, complete: result.complete !== false, reason: null, manifest: manifestFile,
+      hashed: typeof result.hashed === 'number' ? result.hashed : null,
+      copied: typeof result.copied === 'number' ? result.copied : null,
+    };
   } catch (err) {
     logger.error(`[TokenChase] owner store snapshot failed: ${err.message}`);
     return { version: null, bound: true, complete: false, reason: err.message, manifest: null };
@@ -288,53 +323,118 @@ function snapshotOwnerStore(dir, userSub) {
 }
 
 /**
- * @description Background writer: persists a frame (and optionally the sent history) as JSON under
- * <workspaceDir>/.tokenchase/. Runs in setImmediate, never on the hot path. Fail-open: logs and swallows.
+ * @description The summary for a store the snapshotter refused as too large: nothing was copied, the
+ * version is null, and the measured size says why.
+ * @param {{measuredBytes?: number, maxTotalBytes?: number}} result - The refused manifest.
+ * @returns {object} The store binding summary.
+ */
+function skippedStoreSummary(result) {
+  const measuredBytes = typeof result.measuredBytes === 'number' ? result.measuredBytes : null;
+  const maxTotalBytes = typeof result.maxTotalBytes === 'number' ? result.maxTotalBytes : null;
+  return {
+    version: null, bound: true, complete: false, manifest: null,
+    snapshotSkipped: 'too_large', measuredBytes, maxTotalBytes,
+    reason: `owner store is ${measuredBytes} bytes, above the ${maxTotalBytes}-byte snapshot ceiling`,
+  };
+}
+
+/**
+ * @description Writes a store manifest once per version (a version names its content, so an existing
+ * file is already right). Only the version identity is persisted, not the per-call counters.
+ * @param {string} file - store-<version>.json under the capture directory.
+ * @param {{version: string, files: object[], complete: boolean, warnings: string[]}} result - The manifest.
+ * @returns {Promise<void>} Settles once the file exists.
+ */
+async function writeManifestOnce(file, result) {
+  const body = JSON.stringify({ version: result.version, files: result.files, complete: result.complete, warnings: result.warnings }, null, 2);
+  try {
+    await fsp.writeFile(file, body, { flag: 'wx' });
+  } catch (err) {
+    if (err.code !== 'EEXIST') throw err;
+  }
+}
+
+/** @description The frame file path without its .json suffix, under the capture directory. */
+function frameBase(handle) {
+  return path.join(handle.workspaceDir, DIRNAME, frameFileName(handle.seq).replace(/\.json$/, ''));
+}
+
+/**
+ * @description Background writer for an open frame. The workspace checkpoint (tree + private-git commit)
+ * runs synchronously HERE, at the frame's setImmediate during the LLM await, so it records the tree the
+ * call saw; the owner-store snapshot and the frame/history files then land on the workspace's write
+ * queue without holding the event loop. Fail-open: logs and swallows.
  * @param {Object} handle - The frame handle (carries workspaceDir + seq).
- * @param {Object} frame - The frame payload to merge/write.
- * @param {Array|null} historySent - The frozen sent history to persist on the open write, or null.
+ * @param {Object} frame - The open frame payload.
+ * @param {Array} historySent - The frozen sent history to persist.
  * @returns {void}
  */
 function writeFrame(handle, frame, historySent) {
+  let checkpointed;
   try {
     const dir = path.join(handle.workspaceDir, DIRNAME);
     fs.mkdirSync(dir, { recursive: true });
-    const base = path.join(dir, frameFileName(handle.seq).replace(/\.json$/, ''));
-    if (historySent) {
-      const { snapshot, commit, checkpoint } = checkpointWorkspace(handle.workspaceDir, dir, handle.taskId, handle.seq, null);
-      const store = snapshotOwnerStore(dir, handle.userSub);
-      const open = {
-        ...frame,
-        context: { ...frame.context, workspaceCommit: commit.workspaceCommit, ownerStoreVersion: store.version },
-        ...(handle.pins ? { pins: handle.pins } : {}),
-        replayable: handle.replayable && !hasUnpinnedRead(handle.pins),
-        workspaceTree: snapshot,
-        checkpoint,
-        ownerStore: store,
-      };
-      writeRedacted(`${base}.json`, open);
-      fs.writeFileSync(`${base}.history.json`, redact(JSON.stringify(historySent)));
-    } else {
-      mergeResponse(`${base}.json`, frame);
-    }
+    checkpointed = { dir, ...checkpointWorkspace(handle.workspaceDir, dir, handle.taskId, handle.seq, null) };
+  } catch (err) {
+    logger.error(`[TokenChase] frame write failed (task=${handle.taskId} seq=${handle.seq}): ${err.message}`);
+    return;
+  }
+  enqueueWrite(handle.workspaceDir, async () => {
+    const { dir, snapshot, commit, checkpoint } = checkpointed;
+    const store = await snapshotOwnerStore(dir, handle.userSub);
+    const open = {
+      ...frame,
+      context: { ...frame.context, workspaceCommit: commit.workspaceCommit, ownerStoreVersion: store.version },
+      ...(handle.pins ? { pins: handle.pins } : {}),
+      replayable: handle.replayable && !hasUnpinnedRead(handle.pins),
+      workspaceTree: snapshot,
+      checkpoint,
+      ownerStore: store,
+    };
+    const base = frameBase(handle);
+    writeRedacted(`${base}.json`, open);
+    fs.writeFileSync(`${base}.history.json`, redact(JSON.stringify(historySent)));
+  });
+}
+
+/**
+ * @description Background writer for a closing frame: merges the response into the open frame file.
+ * Runs on the workspace's write queue, after the open write it merges into. Fail-open.
+ * @param {Object} handle - The frame handle.
+ * @param {Object} frame - The closing frame payload.
+ * @returns {void}
+ */
+function writeClose(handle, frame) {
+  try {
+    fs.mkdirSync(path.join(handle.workspaceDir, DIRNAME), { recursive: true });
+    mergeResponse(`${frameBase(handle)}.json`, frame);
   } catch (err) {
     logger.error(`[TokenChase] frame write failed (task=${handle.taskId} seq=${handle.seq}): ${err.message}`);
   }
 }
 
 /**
- * @description Background writer for the end-of-run checkpoint (final.json). Fail-open like writeFrame.
+ * @description Background writer for the end-of-run checkpoint (final.json). The workspace checkpoint
+ * runs synchronously at finishRun's setImmediate; the store snapshot and the file land on the
+ * workspace's write queue after every frame write before it. Fail-open like writeFrame.
  * @param {string} workspaceDir - The task workspace.
  * @param {Object} record - The closing record from finishRun.
  * @returns {void}
  */
 function writeFinal(workspaceDir, record) {
+  let checkpointed;
   try {
     const dir = path.join(workspaceDir, DIRNAME);
     fs.mkdirSync(dir, { recursive: true });
     const lastSeq = record.turns !== null && record.turns > 0 ? record.turns : null;
-    const { snapshot, commit, checkpoint } = checkpointWorkspace(workspaceDir, dir, record.taskId, 'final', lastSeq);
-    const store = snapshotOwnerStore(dir, record.userSub);
+    checkpointed = { dir, ...checkpointWorkspace(workspaceDir, dir, record.taskId, 'final', lastSeq) };
+  } catch (err) {
+    logger.error(`[TokenChase] final checkpoint write failed (task=${record.taskId}): ${err.message}`);
+    return;
+  }
+  enqueueWrite(workspaceDir, async () => {
+    const { dir, snapshot, commit, checkpoint } = checkpointed;
+    const store = await snapshotOwnerStore(dir, record.userSub);
     writeRedacted(path.join(dir, FINAL_FILE), {
       ...record,
       workspaceTree: snapshot,
@@ -344,9 +444,7 @@ function writeFinal(workspaceDir, record) {
       ownerStore: store,
       replayable: !hasUnpinnedRead(record.pins),
     });
-  } catch (err) {
-    logger.error(`[TokenChase] final checkpoint write failed (task=${record.taskId}): ${err.message}`);
-  }
+  });
 }
 
 /**
