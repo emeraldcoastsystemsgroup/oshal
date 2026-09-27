@@ -165,11 +165,30 @@ same vector in the store (`little-monsters/tests/tutor-renderer.core.spec.mjs`).
 
 The card also carries the JVV-003 delayed-work suite
 (`tests/unit/jarvis-queue-lifecycle.integration.spec.ts`). A Jarvis hand-off files a real approved
-ticket, and one real queue poll routes it by call-out to a loopback bot-node worker through the real
-`BotNodeClient`. The dispatcher then stores the completion and closes the ticket, and Jarvis
+ticket, and one real queue poll dispatches it through the real `BotNodeClient` over loopback HTTP.
+The dispatcher then writes the completion to the message store and closes the ticket, and Jarvis
 summarizes that completion once, persists one immutable visual and returns it to the original
-Discussion. Only the hosted model, the mesh bid transport and the SQL rows are doubles. All of this is
-local evidence. Registration in source does not mean the card has run on the deployed instance.
+Discussion. No test code writes the terminal ticket state.
+
+Real code in the chain: the Jarvis routes, `TicketService`, the queue poll and manifest-worker
+dispatch, the orchestration code of the ADR-083 call-out resolver, and the `BotNodeClient` HTTP
+client. Everything else is a double:
+
+- **Routing decision.** `agentRouter.route` is fixed to return the one worker with strategy `bid`.
+  The resolver's inputs are stubs too: the mesh bid transport, `agentProfileRepository`,
+  `resolveOnlineAgentIds` and `isAgentAccessibleTo`.
+- **Worker.** A canned loopback `node:http` handler for `POST /api/swarm-execute` returns a fixed
+  deliverable. It is not `bot-node-server`.
+- **Stores.** The completion goes to an in-memory `vi.fn` message store, not Postgres. Tickets and
+  tasks use the in-memory stores, and the Jarvis SQL rows are the in-memory `DelayedLifecyclePool`.
+  The database module's pool, bootstrap and RLS helpers are mocked.
+- **Runtime and helpers.** The swarm runtime, the chat orchestrator and `resolveAgentIdByName` are
+  stubs. The hosted model (`executeBotOrInline`), `connector-token-broker`, `free-tier-rotation` and
+  `user-model` are `vi.mock`ed.
+- **Identity.** A header middleware stands in for OIDC, and `applicationAuthorization` is a stub.
+
+All of this is local evidence. Registration in source does not mean the card has run on the deployed
+instance.
 
 ---
 

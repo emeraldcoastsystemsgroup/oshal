@@ -4,10 +4,15 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted verbatim from tests/unit/jarvis-delayed-visual-lifecycle.integration.spec.ts (931 code lines, near the 1000-line cap) so the JVV-003 queue-backed lifecycle spec reuses the same Jarvis task/artifact SQL fake, owner-aware session task store, test user-auth rail and poll helper instead of a drifting copy. No behaviour change.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | JSDoc on every export the move made public (the two row shapes and the message shape, the SQL fake and its query, the auth rail, the owner-aware task store and the poll helper), stating that each is an in-memory test double and what it models. No behaviour change.
  */
 import type { RequestHandler } from 'express';
 import { vi } from 'vitest';
 
+/**
+ * @description One `jarvis_tasks` row as the in-memory SQL fake stores it: the columns the Jarvis
+ * task store reads and writes (owner, session, status, result, visual, delivery flag). Not Postgres.
+ */
 export interface StoredTask {
   id: string;
   user_sub: string;
@@ -28,6 +33,10 @@ export interface StoredTask {
   summarize_started_at: string | null;
 }
 
+/**
+ * @description One `visual_response_artifacts` row as the in-memory SQL fake stores it: the
+ * owner-scoped immutable SVG plus its provenance and source job. Not Postgres.
+ */
 export interface StoredArtifact {
   artifact_id: string;
   mime_type: 'image/svg+xml';
@@ -43,6 +52,10 @@ export interface StoredArtifact {
   source_job_id: string;
 }
 
+/**
+ * @description One message-store entry (the shape the manifest-worker dispatcher saves a
+ * completion as). Specs keep these in an in-memory array; nothing here is durable.
+ */
 export interface StoredMessage {
   taskId: string;
   role: 'user' | 'assistant';
@@ -51,10 +64,22 @@ export interface StoredMessage {
   metadata?: Record<string, unknown>;
 }
 
+/**
+ * @description In-memory stand-in for the Postgres pool the Jarvis routes query. It recognizes the
+ * exact SQL statements the Jarvis task and visual-artifact stores issue, applies owner filters the
+ * way the real queries do, and throws on any unrecognized statement so a new query cannot pass
+ * silently. It is a double: no RLS, schema or transaction is exercised.
+ */
 export class DelayedLifecyclePool {
   readonly tasks = new Map<string, StoredTask>();
   readonly artifacts = new Map<string, StoredArtifact>();
 
+  /**
+   * @description Answer one recognized statement from the in-memory task/artifact maps.
+   * @param sqlValue - The SQL text; whitespace is collapsed before matching.
+   * @param values - Positional parameters, in the order the real statement binds them.
+   * @returns The matching rows and a row count, shaped like a `pg` query result.
+   */
   async query(sqlValue: string, values: unknown[] = []): Promise<{ rows: any[]; rowCount: number }> {
     const sql = String(sqlValue).replace(/\s+/g, ' ').trim();
 
@@ -167,7 +192,14 @@ export class DelayedLifecyclePool {
   }
 }
 
-/** Test-only user-auth rail mirroring the req.oidc shape produced by OIDC and PAT middleware. */
+/**
+ * @description Test-only user-auth rail mirroring the req.oidc shape produced by OIDC and PAT
+ * middleware. The caller's sub comes from the `x-test-authenticated-sub` header; no issuer is set.
+ * @param req - The request; its `x-test-authenticated-sub` header names the caller.
+ * @param res - The response; answered 401 when the header is missing.
+ * @param next - Continues the chain once `req.oidc` is attached.
+ * @returns Nothing; it either responds 401 or calls `next`.
+ */
 export const testUserAuth: RequestHandler = (req, res, next) => {
   const sub = req.header('x-test-authenticated-sub');
   if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
@@ -178,6 +210,12 @@ export const testUserAuth: RequestHandler = (req, res, next) => {
   next();
 };
 
+/**
+ * @description In-memory, owner-aware session task store double: `create` keeps the first owner of
+ * a task id, and `get` returns it, so session ownership checks have something real to read back.
+ * @param initial - Tasks (id and owner) to seed before the spec runs.
+ * @returns The backing map (for assertions) and the `vi.fn`-wrapped store handed to the routes.
+ */
 export function createOwnerAwareTaskStore(initial: Array<{ taskId: string; ownerSub: string }> = []) {
   const tasks = new Map(initial.map((task) => [task.taskId, { ...task }]));
   return {
@@ -198,6 +236,13 @@ export function createOwnerAwareTaskStore(initial: Array<{ taskId: string; owner
   };
 }
 
+/**
+ * @description Poll a reader every 10 ms until it yields a defined value, for asynchronous Jarvis
+ * lifecycle state (job results, task rows) that settles after a request returns.
+ * @param read - Returns the awaited value, or undefined while it is not ready yet.
+ * @param timeoutMs - How long to keep polling before failing the spec.
+ * @returns The first defined value; throws on timeout.
+ */
 export async function waitFor<T>(read: () => T | undefined | Promise<T | undefined>, timeoutMs = 2_000): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {

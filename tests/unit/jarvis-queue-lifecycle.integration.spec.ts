@@ -3,7 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | JVV-003: one queue-backed delayed-lifecycle proof with NO injected terminal worker state. A Jarvis /ask hand-off files a real approved ticket in the real TicketService; one real QueueManagerService poll cycle routes it (chooseDispatchPath -> manifest-worker), the real ADR-083 call-out resolver picks the owner, the real BotNodeClient executes it over HTTP on a loopback bot-node worker, dispatchManifestWorkerTicket persists the completion and marks the ticket complete; only then does Jarvis's /tasks poll read that deliverable, summarize it once, persist one immutable visual and return it to the original Discussion. Doubles are limited to what sits outside that chain: the hosted model (Jarvis's brain), the mesh bid transport and the SQL rows (in-memory harness).
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | JVV-003: one queue-backed delayed-lifecycle proof with NO injected terminal worker state. Real: a Jarvis /ask hand-off files an approved ticket in TicketService; one QueueManagerService poll cycle routes it (chooseDispatchPath -> manifest-worker) through the orchestration code of buildTaskCallOutResolver; BotNodeClient executes it over loopback HTTP; dispatchManifestWorkerTicket writes the completion and marks the ticket complete; only then does Jarvis's /tasks poll read that deliverable, summarize it once, persist one immutable visual and return it to the original Discussion. Doubles: the resolver's routing decision (agentRouter.route fixed to the one worker, strategy 'bid'), its mesh bid transport, agentProfileRepository, resolveOnlineAgentIds and isAgentAccessibleTo; the worker (a canned node:http POST /api/swarm-execute handler, not bot-node-server); the message store (an in-memory vi.fn array, so the completion is dispatcher-written but not durable); InMemoryTicketStore/InMemoryTaskStore and the in-memory DelayedLifecyclePool SQL rows with the database pool/bootstrap/RLS helpers mocked; the swarm runtime, chat orchestrator and resolveAgentIdByName stubs; vi.mocked executeBotOrInline (Jarvis's hosted brain), connector-token-broker, free-tier-rotation and user-model; and a header auth middleware plus a stub applicationAuthorization in place of OIDC.
  */
 
 import type { AddressInfo } from 'node:net';
@@ -53,7 +53,7 @@ const ownerAuth: RequestHandler = (req, res, next) => {
   runWithRequestIdentity({ sub: OWNER, principalIssuer: ISSUER, isOperator: false } as never, next);
 };
 
-/** A loopback bot-node: the remote worker the call-out winner runs on. Records every execution. */
+/** A canned loopback worker answering a bot-node's POST /api/swarm-execute (not bot-node-server); records every execution. */
 async function startWorkerNode(): Promise<{ url: string; calls: Array<Record<string, unknown>>; close: () => Promise<void> }> {
   const calls: Array<Record<string, unknown>> = [];
   const server = http.createServer((req, res) => {
@@ -78,7 +78,7 @@ async function startWorkerNode(): Promise<{ url: string; calls: Array<Record<str
   };
 }
 
-/** The real ADR-083 resolver over an online candidate set; only the mesh bid transport is a double. */
+/** The ADR-083 resolver's real orchestration code; its routing decision, bid transport and candidate inputs are fixed doubles. */
 function callOutResolver() {
   return buildTaskCallOutResolver({
     agentRouter: { route: vi.fn().mockResolvedValue({ winner: { agentId: WORKER, score: 1, reason: 'bid' }, ranked: [], strategy: 'bid' }) } as never,
@@ -124,7 +124,7 @@ describe('JVV-003 queue-backed delayed Jarvis lifecycle', () => {
     else process.env.SWARM_SERVICE_SECRET = originalSecret;
   });
 
-  it('hand-off -> queue call-out winner -> remote worker -> durable completion -> one summary + one artifact in the original Discussion', async () => {
+  it('hand-off -> queue call-out -> loopback worker -> dispatcher-written completion -> one summary + one artifact in the original Discussion', async () => {
     const pool = new DelayedLifecyclePool();
     const messages: StoredMessage[] = [];
     // The real task store: it keeps the owner issuer the session/ticket ownership checks read back.
@@ -188,7 +188,7 @@ describe('JVV-003 queue-backed delayed Jarvis lifecycle', () => {
       expect(completion).toMatchObject({ role: 'assistant', text: DELIVERABLE, metadata: expect.objectContaining({
         source: 'manifest-worker-bot-node', manifestWorkerResult: true }) });
 
-      // Jarvis's own poll reads the durable completion, summarizes ONCE and persists ONE artifact.
+      // Jarvis's own poll reads the dispatcher-written completion, summarizes ONCE and persists ONE artifact.
       await fetch(`${base}/tasks`, { headers });
       const done = await waitFor(() => {
         const row = pool.tasks.get(handedOff.workJobId);

@@ -90,7 +90,7 @@ work is explicit below.
 | Item | Priority | What remains open |
 |---|---:|---|
 | JVV-001 | P0 | Seeded authenticated Gmail worker-to-visual acceptance and unavailable-data fallbacks. |
-| JVV-003 | P0 | Done in automation 2026-09-27 (queue-backed join test); see JVV-003. |
+| JVV-003 | P0 | Automated join landed 2026-09-27 with no injected terminal state; its routing decision, worker and message store are doubles. See JVV-003. |
 | JVV-004 | P0 | Real assistive technology, native zoom/forced colors, long translations, physical iOS/Android, safe areas, and dynamic browser chrome. |
 | JVV-006 | P1 | General trusted image/gallery/document ingestion, map/forms, and separately sandboxed HTML preview; the bounded live-Walmart gallery slice is shipped. |
 | JVV-007 | P1 | Jarvis, chat and Tutor adoption and the pinned same-origin Mermaid shipped 2026-09-27. A desktop or TV consumer and capability negotiation remain open. |
@@ -114,8 +114,8 @@ done-when below.
 | Item | Disposition | Evidence or exact blocker |
 |---|---|---|
 | JVV-001 | Needs operator | A seeded test Gmail mailbox linked to the OSHAL test tenant. The tenant has none, and a personal mailbox is not allowed. With it, run checklist steps 3, 5 and 6. |
-| JVV-003 | Built (automation) | `tests/unit/jarvis-queue-lifecycle.integration.spec.ts`: hand-off → real queue poll → call-out winner → remote bot-node worker over HTTP → dispatcher-written completion → one summary → one artifact → original Discussion, with no injected terminal state. |
-| JVV-004 | Needs operator | Physical matrix: NVDA, JAWS, VoiceOver, native 200% zoom, forced colors, long translations, physical iOS/Android touch, safe areas and dynamic browser chrome. The automated half is complete. |
+| JVV-003 | Built (automation, with named doubles) | `tests/unit/jarvis-queue-lifecycle.integration.spec.ts`: hand-off → real queue poll → call-out resolver (real orchestration, fixed routing decision) → canned loopback worker over real `BotNodeClient` HTTP → completion the dispatcher writes to an in-memory message store → one summary → one artifact → original Discussion, with no injected terminal state. Every double is listed under JVV-003 below. |
+| JVV-004 | Needs operator; automated suites red | Physical matrix: NVDA, JAWS, VoiceOver, native 200% zoom, forced colors, long translations, physical iOS/Android touch, safe areas and dynamic browser chrome. The automated half is **not** green: `tests/jarvis-rich-response-{integration,native-wake,responsive-a11y,visual-trust}.spec.ts` plus `tests/jarvis-shared-response-renderer.spec.ts` give 21 failed / 7 passed, identically with origin/main 4c64f140's `jarvis.html` and fixture helper. All 8 responsive-a11y cases fail. Causes, from the run log: 13 cases time out clicking `#typeToggle` (12) or `#voiceBtn` (1), which now sit inside the collapsed `#assistantOptions` panel ("element is not visible"); 5 find the `.jarvis-ambient` bar hidden or its state label and settings button absent or overlapping; 2 find no `[data-job-read]` offered-visual element; 1 expects a `/code?file=` workspace link where the page renders `#`. Those specs need updating to the current layout before this half can be called complete. |
 | JVV-006 | Deferred | The display-only kinds and the trusted-provenance boundary shipped with JVV-007. The general trusted image/document receipt, the confirmation-form contract and the sandboxed `html-preview` remain open. |
 | JVV-007 | Built (Jarvis, chat, Tutor) | Details and guards under JVV-007 below. Still open: a desktop or TV client consumer, and end-to-end capability negotiation. |
 | JVV-008 | Deferred | Not attempted. For live proof, calendar-event creation needs a connected calendar on the caller's connector. |
@@ -216,7 +216,7 @@ controller defense remains outside this item.
 
 ### JVV-003 — real delayed-task lifecycle test
 
-**Status: done in automation (2026-09-27); originally partial with controller integration (2026-07-10).** The Express-level acceptance
+**Status: automated join with named doubles (2026-09-27); originally partial with controller integration (2026-07-10).** The Express-level acceptance
 test crosses `/ask`, trusted-service identity, durable task/ticket state, completion claiming, Jarvis
 summary, the real renderer/persistence service, original-session Discussion history, owner-scoped
 artifact reads, and byte-identical reload. It proves the hand-off acknowledgement has no visual and
@@ -227,18 +227,37 @@ precedes terminal ticket status and deduplicates retries. Live-provider acceptan
 
 **Joined (2026-09-27):** `tests/unit/jarvis-queue-lifecycle.integration.spec.ts` joins the two
 boundaries in one automated test. A Jarvis `/ask` hand-off files a real `approved` ticket in the real
-`TicketService`. One real `QueueManagerService` poll routes it through `manifest-worker`. The real
-ADR-083 call-out resolver picks the owner, and the real `BotNodeClient` executes it over HTTP on a
-loopback bot-node worker. The dispatcher stores the completion and marks the ticket complete. Jarvis's
-`/tasks` poll then reads that completion, summarizes it once, persists one immutable visual, and
-returns it to the original Discussion. Nothing injects the terminal worker state. The doubles are the
-hosted model (Jarvis's brain), the mesh bid transport and the SQL rows. Mutation checks: a call-out
-that returns nothing, or a dispatcher that does not store the completion, turns the test red.
+`TicketService`. One real `QueueManagerService` poll routes it through `manifest-worker`. The ADR-083
+call-out resolver's orchestration code is real (candidate filtering, ADR-087 role filter, bid
+broadcast call, confident-strategy check), but its routing decision is fixed. The real
+`BotNodeClient` then executes the ticket over loopback HTTP. The dispatcher writes the completion to
+an in-memory message store and marks the ticket complete. Jarvis's `/tasks` poll then reads that
+completion, summarizes it once, persists one immutable visual, and returns it to the original
+Discussion. No test code writes the terminal ticket state.
+
+The doubles, all of them:
+
+- Routing decision: `agentRouter.route` always returns the one worker with strategy `bid`. The mesh
+  bid transport, `agentProfileRepository`, `resolveOnlineAgentIds` and `isAgentAccessibleTo` are
+  stubs.
+- Worker: a canned loopback `node:http` handler for `POST /api/swarm-execute` with a fixed
+  deliverable, not `bot-node-server`.
+- Message store: an in-memory `vi.fn` array, not Postgres. Tickets and tasks use
+  `InMemoryTicketStore` and `InMemoryTaskStore`. The Jarvis SQL rows are the in-memory
+  `DelayedLifecyclePool`, and the database module's pool, bootstrap and RLS helpers are mocked.
+- Runtime: the swarm runtime, the chat orchestrator and `resolveAgentIdByName` are stubs.
+- Mocked modules: the hosted model (`executeBotOrInline`, Jarvis's brain), `connector-token-broker`,
+  `free-tier-rotation` and `user-model`.
+- Identity: a header middleware stands in for OIDC, and `applicationAuthorization` is a stub.
+
+Mutation checks: a call-out resolver that returns nothing, or a dispatcher that does not store the
+completion, turns the test red.
 
 **Done when:** hand-off → call-out winner → remote worker → durable completion → one Jarvis summary →
-one immutable artifact → original Discussion is proven without injecting terminal worker state. Met in
-automation by the test above. A live redacted run is not part of this done-when; the live-provider
-path is JVV-001.
+one immutable artifact → original Discussion is proven without injecting terminal worker state. The
+test above meets the no-injected-terminal-state part in automation. It does not prove a won bid, a
+real bot-node process or a durable (Postgres) completion, because those are the doubles listed
+above. The live-provider path is JVV-001.
 
 ### JVV-004 — accessibility and interaction sign-off
 
