@@ -23,13 +23,14 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | BLEND kind (ADR-095 round 2 — "30% into this strategy, 20% into that one"): components are embedded rotation configs with weightPct; the sim walks each component as an INDEPENDENT sub-book on weight%×100k (component corePct ignored — the blend's remainder IS the core) and sums the curves; forward continuation persists per-component states under WalkState.parts. snapshotConfig resolves per-component universes so blend regressions replay deterministically.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Session-shape metrics for the knob-sweep leaderboard: avgDailyPct (3dp — a real daily mean lives in the hundredths), bestDayPct, worstDayPct, all derived from the `rets` array the Sharpe already builds (no extra passes). Additive only — the regression drift check compares totalReturnPct/maxDrawdownPct/trades, so pre-existing baselines without these fields cannot false-drift.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | earningsGateDays knob (0=off, rotation kind only) — the live TRADING_EARNINGS_GATE as a LAB permutation, so gate-on/gate-off twin rows forward-walk side by side instead of the rule living untested outside the matrix. attachEarningsGate builds a per-session blackout map from world_events (scheduledEventsBetween; session-distance semantics on the walk's own calendar); the rotation branch excludes gated names from the leaderboard (never bought; a HELD printing name drops off and is sold — mirrors live rotateSleeve). Honest limits: calendar exists only from 2026-06-25 (earlier backtest segments are ungated = identical to the gate-off twin; the FORWARD walk is the real A/B), blends zero the knob (blendPartConfig) rather than silently ignoring it, and a calendar-read failure runs ungated exactly like the live gate.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-052 addendum (paper-to-live parity) — two StrategyConfig knobs, each read here AND by the dispatch through the same resolver (marketGapFilterPct / exitPlanSessions; a Lab walk passes mode null, so an absent knob is off here): marketGapFilterPct (percent; null = inherit the book's env default in dispatch) holds a session's ENTRIES when SPY OPENED at or beyond the bar below its prior close — attachSpyOpens carries SPY's daily opens in the aligned window, a rotation rebalance that falls on a held session is deferred to the next unheld one (the live 'slot not consumed' rule at session grain), the ensemble scan skips its buys and keeps its sells, and WalkState.gapHeldSessions counts the holds; exitPlanSessions (sessions; null = inherit) gives every lot its own plan — the stop/take-profit/trailing judge the price the lot was last underwritten at and a lot not re-underwritten for N sessions exits on the clock (WalkState.planExpiries), with a rotation re-selection or an ensemble buy call on a held name re-underwriting it. Blends zero both knobs (blendPartConfig), like earningsGateDays. Honest limits: the Lab judges the gap at the open and fills at the close, where live judges every fire's print; an unarmed walk never reads or writes a new field, so every existing run replays unchanged.
  *
  * @module trading-strategy-lab-sim
  */
 
 import {
-  barsBatchSince, decideSymbol, DEFAULT_UNIVERSE, RISK_POLICIES,
-  sizeEntry, exitsToRun, trailingExits, nextPeaks, rotationBenches,
+  barsBatchSince, barsBatchSinceOhlcv, decideSymbol, DEFAULT_UNIVERSE, RISK_POLICIES,
+  sizeEntry, exitsToRun, trailingExits, nextPeaks, rotationBenches, marketGapBlock, marketGapFilterPct, exitPlanSessions,
 } from '@/features/trading';
 import type {
   DatedClose, Timeframe, RiskPosture, RiskPolicy, NameStrength, Position, BrokerAccount,
@@ -86,10 +87,23 @@ export interface StrategyConfig {
    * where gate-on/gate-off rows genuinely diverge. Sessions with no calendar rows are no-ops.
    */
   earningsGateDays: number;
+  /**
+   * Market-wide gap-down entry filter bar in percent (ADR-052 addendum). A session whose SPY open
+   * sits at or beyond this far below the prior close holds its entries (sells still run). 0 = off;
+   * null/absent = inherit — the dispatch then reads the book's mode-aware env default
+   * (TRADING_MARKET_GAP_FILTER / TRADING_MARKET_GAP_PCT), and a Lab walk, which has no book, runs off.
+   */
+  marketGapFilterPct?: number | null;
+  /**
+   * Per-position exit plan life in sessions (ADR-052 addendum). N > 0 arms plans: each position exits
+   * on the terms it was last underwritten at, and on the clock after N sessions unless re-underwritten.
+   * 0 = off; null/absent = inherit (TRADING_EXIT_PLANS / TRADING_EXIT_PLAN_SESSIONS in dispatch; off in a walk).
+   */
+  exitPlanSessions?: number | null;
 }
 
-/** One open lot in the walk book. */
-export interface LabLot { qty: number; entry: number; peak: number }
+/** One open lot in the walk book. `planEntry`/`planBar` exist only while exit plans are armed. */
+export interface LabLot { qty: number; entry: number; peak: number; planEntry?: number; planBar?: number }
 
 /** Serializable walk state — everything a forward step needs to resume the book. */
 export interface WalkState {
@@ -109,6 +123,12 @@ export interface WalkState {
   lastDate: string;
   /** SPY close at walk start — anchors the benchmark line across backtest + forward segments. */
   spyAnchor: number;
+  /** Market-gap knob only: a rotation rebalance a held session deferred to the next unheld one. */
+  rebalanceDue?: boolean;
+  /** Market-gap knob only: sessions whose entries the filter held. */
+  gapHeldSessions?: number;
+  /** Exit-plan knob only: lots that left on the plan clock. */
+  planExpiries?: number;
 }
 
 /** One point on a strategy's equity timeline (strategy equity + SPY benchmark, both from 100k). */
@@ -181,7 +201,25 @@ export function normalizeConfig(raw: unknown): StrategyConfig {
     warmupDays: Math.round(num(r.warmupDays, 80, 61, 220)),
     windowDays: Math.round(num(r.windowDays, 780, 200, 2000)),
     earningsGateDays: Math.round(num(r.earningsGateDays, 0, 0, 10)),
+    marketGapFilterPct: knobOrNull(r.marketGapFilterPct, 50),
+    exitPlanSessions: knobOrNull(r.exitPlanSessions, 252, true),
   };
+}
+
+/**
+ * @description Normalize an inheritable knob: null/absent/blank stays null (inherit the book's env
+ * default in dispatch); a number is clamped to [0, max] (0 = explicit off); junk is null.
+ * @param v - The raw value.
+ * @param max - The clamp ceiling.
+ * @param whole - Round to a whole number (session counts).
+ * @returns The knob, or null to inherit.
+ */
+function knobOrNull(v: unknown, max: number, whole = false): number | null {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  const c = Math.min(max, Math.max(0, n));
+  return whole ? Math.round(c) : c;
 }
 
 /** Blend validation + derivation: components are embedded rotation configs; the blend's corePct is
@@ -210,6 +248,7 @@ function normalizeBlend(r: Record<string, unknown>, num: (v: unknown, def: numbe
     warmupDays: Math.max(...components.map((c) => c.config.warmupDays)),
     windowDays: Math.round(num(r.windowDays, 780, 200, 2000)),
     earningsGateDays: 0, // blend walks are not gate-instrumented; components carry their own knob
+    marketGapFilterPct: null, exitPlanSessions: null, // a blend book inherits its env default in dispatch
   };
 }
 
@@ -218,7 +257,7 @@ function normalizeBlend(r: Record<string, unknown>, num: (v: unknown, def: numbe
  *  earningsGateDays 0 (blend walks don't attach the calendar map — a component knob would be
  *  silently ignored, which is worse than an honest "not supported in blends"). */
 export function blendPartConfig(c: BlendComponent): StrategyConfig {
-  return { ...c.config, corePct: 0, earningsGateDays: 0 };
+  return { ...c.config, corePct: 0, earningsGateDays: 0, marketGapFilterPct: 0, exitPlanSessions: 0 };
 }
 
 /** Resolved-universe snapshot for regression replay: DEFAULT_UNIVERSE changes between deploys, so
@@ -257,6 +296,55 @@ interface Aligned {
   feed: 'sip' | 'iex';
   /** Session date → symbols in earnings blackout on that session (attachEarningsGate; absent = ungated). */
   gate?: Map<string, Set<string>>;
+  /** SPY's daily open per calendar index (attachSpyOpens; absent = the market-gap knob cannot hold). */
+  spyOpen?: number[];
+}
+
+/**
+ * @description Carry SPY's daily OPENS on the aligned window, so a market-gap twin can judge each
+ * session's gap at the open against the prior close. Fetched only for a config that arms the knob.
+ * Fail-OPEN like the live filter: a failed read leaves the walk unheld and says so.
+ * @param a - The aligned window (mutated: a.spyOpen is set, or left absent on failure).
+ * @param startIso - The window's fetch start.
+ */
+export async function attachSpyOpens(a: Aligned, startIso: string): Promise<void> {
+  try {
+    const bars = (await barsBatchSinceOhlcv(['SPY'], startIso, a.feed)).get('SPY') ?? [];
+    const openOf = new Map(bars.map((b) => [b.d, b.o]));
+    a.spyOpen = a.dates.map((d) => openOf.get(d) ?? Number.NaN);
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, 'SPY open fetch failed — the market-gap twin runs UNHELD (matches the live fail-open)');
+    a.spyOpen = undefined;
+  }
+}
+
+/**
+ * @description Whether session t opened gapped down past the config's market-gap bar — the Lab twin of
+ * the dispatch hold, through the SAME resolver and the same pure verdict.
+ * @param a - The aligned window.
+ * @param cfg - The strategy config.
+ * @param t - Calendar index of the session.
+ * @returns True when the session's entries hold.
+ */
+export function sessionGapHeld(a: Aligned, cfg: StrategyConfig, t: number): boolean {
+  const pct = marketGapFilterPct(cfg.marketGapFilterPct, null);
+  if (pct <= 0 || t < 1 || !a.spyOpen) return false;
+  const open = a.spyOpen[t];
+  return marketGapBlock(Number.isFinite(open) ? open : null, a.spy[t - 1] ?? null, pct).blocked;
+}
+
+/** Positions judged on each lot's own plan basis (exit plans armed): the price it was last underwritten at. */
+function planBasis(state: WalkState, positions: Position[]): Position[] {
+  return positions.map((p) => {
+    const basis = state.lots[p.symbol]?.planEntry;
+    if (!basis) return p;
+    return { ...p, avgEntryPrice: basis, unrealizedPl: p.qty * ((p.currentPrice ?? basis) - basis) };
+  });
+}
+
+/** (Re)underwrite a lot's plan at `px` on this session: a fresh basis and a fresh clock. */
+function underwrite(lot: LabLot | undefined, px: number, bar: number): void {
+  if (lot) { lot.planEntry = px; lot.planBar = bar; }
 }
 
 /**
@@ -411,16 +499,28 @@ export function stepDay(a: Aligned, cfg: StrategyConfig, policy: RiskPolicy, sta
   const positions = bookPositions(a, state, t);
   const peaks = nextPeaks(positions, new Map(Object.entries(state.lots).map(([s, l]) => [s, l.peak])));
   for (const [s, p] of peaks) { const l = state.lots[s]; if (l) l.peak = p; }
-  for (const e of [...exitsToRun(positions, policy), ...trailingExits(positions, peaks, policy)]) {
+  const planN = exitPlanSessions(cfg.exitPlanSessions, null);
+  const judged = planN > 0 ? planBasis(state, positions) : positions;
+  for (const e of [...exitsToRun(judged, policy), ...trailingExits(judged, peaks, policy)]) {
     if (!exiting.has(e.symbol)) sell(e.symbol);
   }
+  if (planN > 0) {
+    for (const [sym, lot] of Object.entries(state.lots)) {
+      if (lot.planBar !== undefined && state.barCount - lot.planBar >= planN && !exiting.has(sym)) { sell(sym); state.planExpiries = (state.planExpiries ?? 0) + 1; }
+    }
+  }
+  const gapHeld = sessionGapHeld(a, cfg, t);
+  if (gapHeld) state.gapHeldSessions = (state.gapHeldSessions ?? 0) + 1;
 
   const eligible = (sym: string): boolean => closesTo(a, sym, t).length >= 60;
   const coreValue = state.coreQty * (priceAt(a, cfg.coreSymbol, t) ?? 0);
 
   if (cfg.kind === 'rotation') {
     // Production rotateSleeve shape: rank on cadence, hold top-N positive, rebalance to goals.
-    if (state.barCount % cfg.cadenceDays === 0) {
+    // A gap-held session defers a due rebalance to the next unheld one (the live slot is not consumed).
+    if (gapHeld && (state.barCount % cfg.cadenceDays === 0 || state.rebalanceDue)) state.rebalanceDue = true;
+    else if (state.barCount % cfg.cadenceDays === 0 || state.rebalanceDue) {
+      delete state.rebalanceDue;
       const barsToT = new Map<string, number[]>();
       for (const sym of universe) { if (eligible(sym)) barsToT.set(sym, closesTo(a, sym, t)); }
       const ranked = rankUniverse(cfg.rank, barsToT, new Set([cfg.coreSymbol]));
@@ -460,6 +560,7 @@ export function stepDay(a: Aligned, cfg: StrategyConfig, policy: RiskPolicy, sta
             if (lot.qty === 0) delete state.lots[r.sym];
           }
         }
+        if (planN > 0) underwrite(state.lots[r.sym], px, state.barCount); // re-selected = re-underwritten
       }
     }
   } else {
@@ -480,7 +581,8 @@ export function stepDay(a: Aligned, cfg: StrategyConfig, policy: RiskPolicy, sta
     const sleeveEquity = equityAt(a, cfg, state, t) - coreValue;
     const account: BrokerAccount = { cash: state.cash, buyingPower: state.cash, equity: sleeveEquity, currency: 'USD' };
     const remaining = bookPositions(a, state, t);
-    const buys = [...decisions.values()].filter((d) => d.action === 'buy' && !state.lots[d.symbol]).sort((x, y) => y.confidence - x.confidence);
+    const buys = gapHeld ? [] : [...decisions.values()].filter((d) => d.action === 'buy' && !state.lots[d.symbol]).sort((x, y) => y.confidence - x.confidence);
+    if (planN > 0 && !gapHeld) for (const [sym, d] of decisions) if (d.action === 'buy' && state.lots[sym]) underwrite(state.lots[sym], priceAt(a, sym, t) ?? state.lots[sym].entry, state.barCount);
     let placed = 0;
     for (const d of buys) {
       if (placed >= 8) break;
@@ -490,6 +592,7 @@ export function stepDay(a: Aligned, cfg: StrategyConfig, policy: RiskPolicy, sta
       if (sized.qty <= 0) continue;
       state.cash -= sized.qty * px;
       state.lots[d.symbol] = { qty: sized.qty, entry: px, peak: px };
+      if (planN > 0) underwrite(state.lots[d.symbol], px, state.barCount);
       remaining.push({ symbol: d.symbol, qty: sized.qty, avgEntryPrice: px, currentPrice: px, marketValue: sized.qty * px, unrealizedPl: 0 });
       placed++;
     }
@@ -572,6 +675,7 @@ export async function runBacktest(cfg: StrategyConfig, win: BacktestWindow = {})
   const startIso = win.fetchStartDate ?? new Date(Date.now() - windowDays * 24 * 3600 * 1000).toISOString().slice(0, 10);
   const a = await fetchAligned(cfg, startIso);
   if (cfg.earningsGateDays > 0) await attachEarningsGate(a, cfg.earningsGateDays);
+  if (marketGapFilterPct(cfg.marketGapFilterPct, null) > 0) await attachSpyOpens(a, startIso);
   let dates = a.dates;
   if (win.endDate) {
     const endDate = win.endDate;
@@ -619,6 +723,7 @@ export async function forwardStep(cfg: StrategyConfig, state: WalkState): Promis
   const startIso = new Date(Date.now() - 550 * 24 * 3600 * 1000).toISOString().slice(0, 10);
   const a = await fetchAligned(cfg, startIso);
   if (cfg.earningsGateDays > 0) await attachEarningsGate(a, cfg.earningsGateDays);
+  if (marketGapFilterPct(cfg.marketGapFilterPct, null) > 0) await attachSpyOpens(a, startIso);
   const points: EquityPoint[] = [];
   for (let t = 0; t < a.dates.length; t++) {
     if (a.dates[t] <= state.lastDate) continue;

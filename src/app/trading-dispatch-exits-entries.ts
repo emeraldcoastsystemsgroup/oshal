@@ -15,6 +15,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — decomposition of trading-schedule-dispatch.ts (890 code lines) along its section seams: MAX_ORDERS_PER_RUN, computeExits, popCatcherConfig and placeEntries move here unchanged; the runAutopilot 2a-pop block becomes placePopCatches (same statements, same order, `book.enabled` read through `book`). Env names unchanged: TRADING_MAX_ORDERS_PER_RUN, TRADING_EXT_DIP_SELL_PCT, TRADING_EXT_SIZE_MULT, TRADING_POP_CATCHER, TRADING_POP_TRANCHE_PCT, TRADING_POP_MAX, TRADING_POP_THRESHOLD. Golden-plan guard: tests/unit/trading-dispatch-golden-plan.spec.ts.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Attach the engine's own cost basis (withEngineCostBasis, book-scoped) before the hard stop/take-profit rule, so a wash-sale artifact cannot trigger a stop-loss. Trailing and cap trims still read the positions exactly as before.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 — the cost-basis attachment moves UP to runAutopilot, which now marks the book ONCE (right after the protected-lot overlay) and hands the same marked positions to the core leg, this one and the rotation leg. Attaching it here reached only the stop/take-profit rule, so trailing and cap trims could not see an unmanaged position and the entry legs ran before it existed. computeExits therefore requires positions that already carry the mark; all three exit rules now read that same array, which is what makes `unmanaged` withhold every exit rather than only the stop. A covered position's plan is unchanged: the marked array differs from the raw one only by the two optional fields.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-052 addendum (paper-to-live parity) — all three functions take the fire's optional ParityControls as a trailing argument; null/absent (every fire while both features are off) takes exactly the pre-existing path. computeExits: with a plan ledger, positions that carry an open plan are judged by splitExitsByPlan on their OWN stored terms (plan-stop / plan-tp / plan-trail / plan-expiry, first in priority) and only unplanned positions reach exitsToRun/trailingExits; the cap trim stays a book-level rule over every position; a failed plan read runs the global rules over the whole book. placeEntries and placePopCatches: a blocked market-wide gap verdict holds the leg before any order and records the would-be buys as 'market-gap' counterfactuals (the scan's are the same wouldBuy set the earnings instrumentation uses, minus the blackout); the scan leg re-underwrites a HELD name's open plan on a fresh buy signal; every buy is placed with the ledger so it stamps its plan.
  *
  * @module trading-dispatch-exits-entries
  */
@@ -31,6 +32,8 @@ import type { WorldIntelligenceService } from '@/features/world-data';
 import { readWorldSignalsBatch, worldRankEnabled } from './trading-world-signals';
 import { WORLD_SENT_VETO, WORLD_SENT_MIN_POINTS, WORLD_SENT_DAYS, WORLD_RANK_WEIGHT, clamp, worldSentiment } from './trading-dispatch-world-gate';
 import { placeManaged, scanDecision, type RunOrder } from './trading-dispatch-rail';
+import { marketGapHolds, type ParityControls } from './trading-dispatch-market-gate';
+import { splitExitsByPlan, reunderwritePlans } from './trading-position-plans';
 import { createChildLogger } from '@/shared/logger';
 
 // Module name kept as the monolith's: the log stream is the watchdog/operator contract.
@@ -67,9 +70,10 @@ function popCatcherConfig(): { enabled: boolean; tranchePct: number; maxPosition
  * @param policy - Active risk policy.
  * @param equity - Account equity (cap-trim base).
  * @param extHours - True in pre/post-market: only the close-anchored dip rule runs.
+ * @param parity - The fire's parity controls; with a plan ledger, planned positions exit on their own plan.
  * @returns The exits to place this fire, one per symbol.
  */
-export async function computeExits(ctx: AppContext, sub: string, bookOrMode: TradingBook | TradingMode, positions: Position[], policy: RiskPolicy, equity: number, extHours: boolean): Promise<ExitOrder[]> {
+export async function computeExits(ctx: AppContext, sub: string, bookOrMode: TradingBook | TradingMode, positions: Position[], policy: RiskPolicy, equity: number, extHours: boolean, parity: ParityControls | null = null): Promise<ExitOrder[]> {
   const book = typeof bookOrMode === 'string' ? legacyBook(sub, bookOrMode) : bookOrMode;
   await ensurePeaksTable(ctx.pool);
   const peaks = nextPeaks(positions, await loadPeaks(ctx.pool, sub, book));
@@ -98,9 +102,13 @@ export async function computeExits(ctx: AppContext, sub: string, bookOrMode: Tra
   // only because the venue reports a wash-sale-adjusted basis — and `unmanaged` where it does not,
   // which withholds all three rules for that name (ADR-159). Both directions only ever SUPPRESS an
   // exit the venue basis already wanted; neither can create one.
+  // ADR-052 addendum: with plans armed, a planned position exits on ITS OWN stored plan (its doors
+  // come first) and only the unplanned rest meet the global rules; null = the whole book, as before.
+  const byPlan = parity?.plans ? await splitExitsByPlan(ctx.pool, parity.plans, positions, peaks) : null;
+  const ruled = byPlan ? byPlan.unplanned : positions;
   // Order = priority: a full stop/TP wins over trailing, and any full exit wins over a partial cap trim
   // (no point trimming a name we're about to flatten this fire).
-  for (const e of [...exitsToRun(positions, policy, stopMult), ...trailingExits(positions, peaks, policy, stopMult), ...rebalanceTrims(positions, equity, policy)]) {
+  for (const e of [...(byPlan?.exits ?? []), ...exitsToRun(ruled, policy, stopMult), ...trailingExits(ruled, peaks, policy, stopMult), ...rebalanceTrims(positions, equity, policy)]) {
     const k = e.symbol.toUpperCase();
     if (!bySym.has(k)) bySym.set(k, e);
   }
@@ -125,13 +133,14 @@ export async function computeExits(ctx: AppContext, sub: string, bookOrMode: Tra
  * @param inFlight - UPPERCASE symbols with a working order (never re-entered).
  * @param extHours - True in pre/post-market (size-down applies).
  * @param noBuy - The earnings blackout set (empty unless armed).
+ * @param parity - The fire's parity controls (market-gap hold, plan ledger); null = both off.
  * @returns Resolves when every eligible entry has been placed or skipped.
  */
 export async function placeEntries(
   ctx: AppContext, sub: string, bookOrMode: TradingBook | TradingMode, scan: Map<string, MtfDecision>,
   held: Map<string, number>, account: BrokerAccount, policy: RiskPolicy, positions: Position[],
   orders: RunOrder[], errors: Array<{ symbol: string; error: string }>, worldSvc: WorldIntelligenceService | null,
-  inFlight: Set<string>, extHours: boolean, noBuy: Set<string> = new Set(),
+  inFlight: Set<string>, extHours: boolean, noBuy: Set<string> = new Set(), parity: ParityControls | null = null,
 ): Promise<void> {
   const book = typeof bookOrMode === 'string' ? legacyBook(sub, bookOrMode) : bookOrMode;
   const mode = book.kind;
@@ -157,6 +166,9 @@ export async function placeEntries(
     const blocked = [...scan.values()].filter((d) => wouldBuy(d) && noBuy.has(d.symbol.toUpperCase()));
     if (blocked.length) void recordGateBlocks(ctx.pool, sub, book, 'earnings', blocked.map((d) => ({ symbol: d.symbol, refPrice: d.price ?? null })));
   }
+  // ADR-052 addendum: a market-wide gap-down holds the whole leg; its would-be buys are the counterfactual.
+  if (marketGapHolds(ctx.pool, sub, book, parity, 'scan', buys.map((d) => ({ symbol: d.symbol, refPrice: d.price ?? null })))) return;
+  if (parity?.plans) await reunderwritePlans(ctx.pool, parity.plans, heldBuySignals(scan, held, noBuy), 'scan');
 
   // World-intelligence RANK + sizing tilt (TRADING_WORLD_RANK, default off). Prefetch a blended
   // smart-money/sentiment score per candidate so the world layer becomes a POSITIVE conviction input —
@@ -204,9 +216,25 @@ export async function placeEntries(
     // Extended-hours size-down (thin/gappy session).
     qty = Math.floor(qty * extSizeMult);
     if (qty < 1) continue; // too small after the ext-hours haircut — skip rather than place a token share
-    await placeManaged(ctx, sub, book, scanDecision(d, 'buy', qty, world), orders, errors);
+    await placeManaged(ctx, sub, book, scanDecision(d, 'buy', qty, world), orders, errors, undefined, parity?.plans);
     entries += 1;
   }
+}
+
+/**
+ * @description A fresh BUY signal on a name the book already holds — the scan's re-underwrite
+ * candidates (ADR-052 addendum). Every buy predicate except "not held" must hold: a breakdown, the
+ * operator blocklist or the earnings blackout is not a signal to re-earn a position.
+ * @param scan - The multi-timeframe scan for this fire.
+ * @param held - UPPERCASE symbol → held qty.
+ * @param noBuy - The earnings blackout set.
+ * @returns Held names with a buy call, at the scan's price.
+ */
+function heldBuySignals(scan: Map<string, MtfDecision>, held: Map<string, number>, noBuy: Set<string>): Array<{ symbol: string; price: number | null }> {
+  return [...scan.values()]
+    .filter((d) => d.action === 'buy' && (held.get(d.symbol.toUpperCase()) || 0) > 0 && !!d.price && !isShortTermBreakdown(d)
+      && !symbolBlocklist().has(d.symbol.toUpperCase()) && !noBuy.has(d.symbol.toUpperCase()))
+    .map((d) => ({ symbol: d.symbol, price: d.price ?? null }));
 }
 
 /**
@@ -227,11 +255,13 @@ export async function placeEntries(
  * @param coreSpent - Cash the core top-up already claimed this fire.
  * @param orders - Run-order accumulator.
  * @param errors - Run-error accumulator.
+ * @param parity - The fire's parity controls (market-gap hold, plan ledger); null = both off.
  * @returns Resolves when every surge has been placed or skipped.
  */
 export async function placePopCatches(
   ctx: AppContext, sub: string, book: TradingBook, scan: Map<string, MtfDecision>, positions: Position[], account: BrokerAccount,
   coreSet: Set<string>, exiting: Set<string>, coreSpent: number, orders: RunOrder[], errors: Array<{ symbol: string; error: string }>,
+  parity: ParityControls | null = null,
 ): Promise<void> {
   const pop = popCatcherConfig();
   if (pop.enabled && book.enabled && account.equity > 0) {
@@ -245,6 +275,7 @@ export async function placePopCatches(
         return !heldNow.has(s) && !coreSet.has(s) && !exiting.has(s) && !symbolBlocklist().has(s) && d.score > 0 && isShortTermPop(d, pop.threshold);
       })
       .sort((a, b) => b.score - a.score); // strongest surge first
+    if (marketGapHolds(ctx.pool, sub, book, parity, 'pop', surges.slice(0, pop.maxPositions).map((d) => ({ symbol: d.symbol, refPrice: d.price ?? null })))) return;
     for (const d of surges) {
       if (placed >= pop.maxPositions) break;
       const notional = Math.min(tranche, popCash);
@@ -258,7 +289,7 @@ export async function placePopCatches(
         symbol: d.symbol, action: 'buy', side: 'buy', qty, confidence: d.confidence,
         rationale: `Pop-catcher — 5-min momentum surge (5m ${fiveScore.toFixed(2)}, overall ${d.score.toFixed(2)}); intraday pull-in from cash.`,
         indicators: { reason: 'pop-catcher', mtfScore: d.score, fiveMin: fiveScore }, price: px, source: 'pop-catcher',
-      }, orders, errors, 'pop');
+      }, orders, errors, 'pop', parity?.plans);
       popCash -= qty * px; placed += 1;
     }
   }

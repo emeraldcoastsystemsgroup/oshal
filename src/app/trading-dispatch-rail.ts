@@ -14,6 +14,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — decomposition of trading-schedule-dispatch.ts (890 code lines) along its section seams: bookBinding, the RunOrder/RunSummary/DecisionInput shapes, persistDecision + placeManaged (the signal → decision → placeDecisionOrder provenance chain), IN_FLIGHT_STATUSES + loadInFlight, the exit/scan/breakdown decision mappers and capAccount move here unchanged. Env names unchanged: TRADING_CAPITAL_CAP_USD. Golden-plan guard: tests/unit/trading-dispatch-golden-plan.spec.ts.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-134 D8 tail — capAccount now routes through settledBuyingPower, so every autopilot sizing read (the dispatcher's opening snapshot and both rotation post-sell re-reads) spends only SETTLED cash on a cash-type book; before this an autonomous BUY that needed unsettled proceeds was sized off total cash and then refused 422 settlement_blocked at the engine. The cap body moves unchanged into the private capToCapital and the clamp runs on its CAPPED output: the cap derives the position value as equity − cash, so clamping first would count unsettled sale proceeds as positions and cut the cap headroom by that amount (a capped cash book's rotation would lose the headroom its own sale freed). Margin books, typeless paper books and policy 'off' are untouched. Guard: tests/unit/trading-settlement-autopilot-clamp.spec.ts.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-052 addendum — placeManaged takes the fire's optional plan ledger as an 8th argument and, after the order is placed, hands the decision to recordPlanOrder: a buy stamps (and supersedes) the name's immutable exit plan at the decision's reference price, a full-exit sell closes it with the door that fired. Absent ledger (every caller today, and every fire while plans are off) = no call, byte-identical. exitDecision carries a plan exit's planId in its indicators, names the plan door in its rationale and journals it under source 'position-plan'; every non-plan exit maps exactly as before.
  *
  * @module trading-dispatch-rail
  */
@@ -25,6 +26,7 @@ import { guardrails, placeDecisionOrder } from './trading-engine';
 import { legacyBook } from './trading-books-store';
 import { WORLD_SENT_MIN_POINTS, type WorldSent } from './trading-dispatch-world-gate';
 import { settledBuyingPower } from './trading-settlement';
+import { recordPlanOrder, type PlanLedger } from './trading-position-plans';
 
 /** Agent id stamped on autopilot-authored decisions/signals (deterministic engine, no LLM). */
 const AUTOPILOT_AGENT = 'mtf-autopilot';
@@ -91,9 +93,10 @@ async function persistDecision(pool: AppContext['pool'], sub: string, bookOrMode
  * @param orders - Run-order accumulator.
  * @param errors - Run-error accumulator.
  * @param reason - Optional journal tag carried on the run order.
+ * @param plans - The fire's exit-plan ledger (ADR-052 addendum); absent/null while plans are off.
  * @returns Resolves when the order is recorded (success or accounted failure).
  */
-export async function placeManaged(ctx: AppContext, sub: string, bookOrMode: TradingBook | TradingMode, d: DecisionInput, orders: RunOrder[], errors: Array<{ symbol: string; error: string }>, reason?: string): Promise<void> {
+export async function placeManaged(ctx: AppContext, sub: string, bookOrMode: TradingBook | TradingMode, d: DecisionInput, orders: RunOrder[], errors: Array<{ symbol: string; error: string }>, reason?: string, plans?: PlanLedger | null): Promise<void> {
   const book = typeof bookOrMode === 'string' ? legacyBook(sub, bookOrMode) : bookOrMode;
   try {
     const decisionId = await persistDecision(ctx.pool, sub, book, d);
@@ -108,6 +111,8 @@ export async function placeManaged(ctx: AppContext, sub: string, bookOrMode: Tra
     // granular requestId → clientOrderId is the idempotency key (UNIQUE user_sub,book_id,client_order_id).
     const r = await placeDecisionOrder(ctx.pool, sub, book, decisionId, requestId, book.kind === 'live');
     orders.push({ symbol: d.symbol, side: d.side, qty: d.qty, status: r.status, id: r.id, reason });
+    // The order stands whatever happens next: recordPlanOrder never throws and logs its own failure.
+    if (plans) await recordPlanOrder(ctx.pool, plans, decisionId, d, r.status, reason);
   } catch (e) {
     errors.push({ symbol: d.symbol, error: (e as Error).message });
   }
@@ -155,7 +160,10 @@ export async function loadInFlight(pool: AppContext['pool'], sub: string, bookOr
  * @returns The decision input for placeManaged.
  */
 export function exitDecision(e: ExitOrder): DecisionInput {
-  const rationale = e.reason === 'rotation'
+  const planned = e.reason.startsWith('plan-');
+  const rationale = planned
+    ? `Plan exit (${e.reason}) — the position's own stored plan${e.planId ? ` ${e.planId}` : ''} opened this door. Position P&L ${e.pnlPct.toFixed(1)}% from the plan's entry.`
+    : e.reason === 'rotation'
     ? `Benched (rotation) — gone cold, capital rotated to a hotter name. Position P&L ${e.pnlPct.toFixed(1)}%.`
     : e.reason === 'cap_trim'
       ? `Cap trim — position grew past the per-name cap; sold the excess to rebalance. Position P&L ${e.pnlPct.toFixed(1)}%.`
@@ -164,7 +172,8 @@ export function exitDecision(e: ExitOrder): DecisionInput {
         : `Risk exit (${e.reason}) — position P&L ${e.pnlPct.toFixed(1)}%.`;
   return {
     symbol: e.symbol, action: 'sell', side: 'sell', qty: e.qty, confidence: 1, rationale,
-    indicators: { reason: e.reason, pnlPct: e.pnlPct }, price: null, source: e.reason === 'rotation' ? 'rotation' : 'risk-exit',
+    indicators: planned ? { reason: e.reason, pnlPct: e.pnlPct, planId: e.planId ?? null } : { reason: e.reason, pnlPct: e.pnlPct },
+    price: null, source: planned ? 'position-plan' : e.reason === 'rotation' ? 'rotation' : 'risk-exit',
   };
 }
 
