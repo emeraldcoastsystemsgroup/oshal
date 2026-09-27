@@ -223,8 +223,8 @@ file, both provider outcomes) driven by `career-stories.test.mjs`.
 
 **D7, where the evidence goes (career-hunter 1.22.0, store `67c20ab`).** Tailored resumes and covers do
 not cite stories through `profile.summary()`. Its per-role `EVIDENCE:` line feeds the scorer
-(`score.py`), not the generator; this record said otherwise until 1.22.0. The generator path is
-`engine/jobhunter/generate.py`:
+(`score.py`), not the generator; this record said otherwise from 2026-09-06 until this correction. The
+generator path is `engine/jobhunter/generate.py`:
 
 - `build_prompt` appends `story_evidence_suffix`, which lists each role's stories with the bullet
   each one supports. It requires a role that holds a story to draw one of its bullets from that story,
