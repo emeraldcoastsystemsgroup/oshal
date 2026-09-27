@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Encrypted owner-store version + ciphertext-only snapshot/restore for Token Chase (ADR-046 §1 "three-part checkpoint", BACKLOG "Workspace-bound checkpoint and tail replay"). The version is sha256 over the sorted (path, sha256(ciphertext)) pairs of the owner's exact-subject store directory (the same AES-256-GCM vault layout the Personal Data Vault uses, resolved through resolveExactSubjectStoreDirectory and the link-free file guards, so a symlinked or aliased store is refused). Snapshot copies the stored bytes as-is into a content-addressed object dir — nothing is ever decrypted, and no plaintext is written. Restore re-binds the owner under an isolated store root with ensureExactSubjectStoreDirectory; key derivation (per-user HKDF) is untouched, so the restored store decrypts for the same owner only. With no configured store root the snapshotter reports bound:false and every version is null.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | versionAt(storeRoot, ownerSub): version the same owner under a different root with this node's tenant and limits — the bot-node tail executor re-versions the ISOLATED restored store with it and compares that to final.json's ownerStoreVersion, so the store comparison uses the one contract instead of a re-derived config.
  */
 
 import crypto from 'node:crypto';
@@ -67,6 +68,8 @@ export interface OwnerStoreSnapshotter {
   snapshot(ownerSub: string, objectDir: string): OwnerStoreManifest;
   /** Materializes a manifest from `objectDir` into an isolated store root, re-bound to the same owner. */
   restore(manifest: OwnerStoreManifest, objectDir: string, isolatedRoot: string, ownerSub: string): OwnerStoreRestoreResult;
+  /** Versions the same owner under a DIFFERENT store root (an isolated replay root) with this node's tenant and limits. */
+  versionAt(storeRoot: string, ownerSub: string): OwnerStoreManifest;
 }
 
 /**
@@ -165,16 +168,18 @@ function readVerifiedObject(objectDir: string, sha256: string): Buffer {
 export function createOwnerStoreSnapshotter(config: OwnerStoreConfig): OwnerStoreSnapshotter {
   const storeRoot = config.storeRoot;
   if (!storeRoot) {
+    const unbound = (): never => { throw new Error('no owner store configured on this node'); };
     return {
       bound: false,
       version: () => ({ version: '', files: [], complete: false, warnings: ['no owner store configured'] }),
-      snapshot: () => { throw new Error('no owner store configured on this node'); },
-      restore: () => { throw new Error('no owner store configured on this node'); },
+      snapshot: unbound,
+      restore: unbound,
+      versionAt: unbound,
     };
   }
 
-  const walk = (ownerSub: string, onObject: ((sha256: string, bytes: Buffer) => void) | null): OwnerStoreManifest => {
-    const resolved = resolveExactSubjectStoreDirectory(storeRoot, config.tenant, ownerSub);
+  const walk = (root: string, ownerSub: string, onObject: ((sha256: string, bytes: Buffer) => void) | null): OwnerStoreManifest => {
+    const resolved = resolveExactSubjectStoreDirectory(root, config.tenant, ownerSub);
     const files: OwnerStoreFile[] = [];
     const warnings: string[] = [];
     if (resolved.exists) walkStoreDirectory(resolved.subjectDir, '', files, warnings, config.maxObjectBytes, onObject);
@@ -183,14 +188,15 @@ export function createOwnerStoreSnapshotter(config: OwnerStoreConfig): OwnerStor
 
   return {
     bound: true,
-    version: (ownerSub) => walk(ownerSub, null),
+    version: (ownerSub) => walk(storeRoot, ownerSub, null),
     snapshot: (ownerSub, objectDir) => {
       fs.mkdirSync(objectDir, { recursive: true });
-      const manifest = walk(ownerSub, (sha256, bytes) => writeStoreObject(objectDir, sha256, bytes));
+      const manifest = walk(storeRoot, ownerSub, (sha256, bytes) => writeStoreObject(objectDir, sha256, bytes));
       logger.debug({ files: manifest.files.length, complete: manifest.complete }, 'Owner store snapshot written');
       return manifest;
     },
     restore: (manifest, objectDir, isolatedRoot, ownerSub) => restoreManifest(manifest, objectDir, isolatedRoot, ownerSub, config.tenant),
+    versionAt: (root, ownerSub) => walk(root, ownerSub, null),
   };
 }
 

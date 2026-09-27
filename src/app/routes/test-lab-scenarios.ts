@@ -92,6 +92,7 @@
  * 40 | maintainer@emeraldcoastsystemsgroup.com   | Registered the LinkedIn content queue card (LINKEDIN_CONTENT_SCENARIOS, test-lab-linkedin-content-scenarios.ts): three read-only steps over the caller's own /api/linkedin-assistant routes (428 confirm gate, queue drafts keep their ticket/citations/audit hash, unknown draft 404) with the real-Postgres ticket-to-publish suite attached. Guard: tests/unit/test-lab-linkedin-content-registration.spec.ts.
  * 41 | maintainer@emeraldcoastsystemsgroup.com   | Registered the shared-response-renderer card (RESPONSE_RENDERER_SCENARIOS, test-lab-response-renderer-scenarios.ts): read-only probes that the running server publishes the renderer bundle with its display-only capability profile and the same-origin pinned Mermaid runtime, plus an in-process hostile-reply render that must stay inert, with the renderer unit suites and the Jarvis/chat Chromium suite attached. Guard: tests/unit/test-lab-response-renderer-registration.spec.ts.
  * 42 | maintainer@emeraldcoastsystemsgroup.com   | Registered the congressional disclosure card (WORLD_SIGNAL_SCENARIOS, test-lab-world-signal-scenarios.ts): one read-only step reporting how many names carry an observed quiver-congress disclosure in world_metrics, the newest disclosure day and the newest observed_at, with the ReportDate/observed_at/idempotence/reserved-namespace suites attached (the TimescaleDB one real-boundary). Guard: tests/unit/world-signal-test-lab.spec.ts.
+ * 43 | maintainer@emeraldcoastsystemsgroup.com   | Registered the Token Chase checkpoint + tail replay card (TOKEN_CHASE_SCENARIOS, test-lab-token-chase-scenarios.ts): one read-only listing of the captured runs visible to the caller, with the workspace-bound checkpoint, ciphertext-only owner-store, per-turn pin, hermetic bot-node tail, controller-delegation and end-to-end suites attached as regressionTests. A test file on disk is not Test Lab registration. No replay step on purpose: a tail replay restores a worktree on a bot node and is an action.
  * @module test-lab-scenarios
  */
 
@@ -116,6 +117,7 @@ import { SOCIAL_SIGNAL_SCENARIOS } from './test-lab-social-signal-scenarios';
 import { LINKEDIN_CONTENT_SCENARIOS } from './test-lab-linkedin-content-scenarios';
 import { RESPONSE_RENDERER_SCENARIOS } from './test-lab-response-renderer-scenarios';
 import { WORLD_SIGNAL_SCENARIOS } from './test-lab-world-signal-scenarios';
+import { TOKEN_CHASE_SCENARIOS } from './test-lab-token-chase-scenarios';
 import { renderCatalogVisual, VISUAL_CATALOG } from './test-lab-visual-catalog';
 import type { AppContext } from '@/app/composition/app-context';
 
@@ -297,6 +299,7 @@ export const SCENARIOS: Scenario[] = [
   ...LINKEDIN_CONTENT_SCENARIOS,
   ...RESPONSE_RENDERER_SCENARIOS,
   ...WORLD_SIGNAL_SCENARIOS,
+  ...TOKEN_CHASE_SCENARIOS,
   // ── Rich visuals — every kind rendered deterministically through the real renderer ──────────
   ...VISUAL_CATALOG.map((entry): Scenario => ({
     id: `visual-${entry.kind}`,

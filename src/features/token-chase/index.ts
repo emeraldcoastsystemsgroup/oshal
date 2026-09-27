@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Export the forward TAIL-replay consumer (ADR-046 §1/§8): TokenChaseTailReplayService.replayForward restages frame N's workspace tree from its content-addressed snapshot, replays N..end on the accountable bot, determinism-gates each frame, and STOPS at the first divergence; pinned reads served, unpinned warned; pre-tail frames single-replay unchanged
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Export the health-qualified variant replay lane, bounded rotation callback, and non-secret selector evidence contracts used by Token Chase's `free:auto` integration.
  * 10 | maintainer@emeraldcoastsystemsgroup.com  | Export the encrypted owner-store snapshotter (createOwnerStoreSnapshotter + readOwnerStoreConfig + its manifest/config types, BACKLOG "Workspace-bound checkpoint and tail replay"): the bot-node runtime installs it on the capture lane so every frame records a ciphertext-only owner-store version, and the tail executor restores from the same contract.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com  | The tail replay delegates to the bot node: RestageResult is gone with the controller-side restage, RefireResult/RefireStatus name the optional prompt re-fire pass, and TokenChaseReadService gained getCaptureDir/getStoreManifest for the on-node restore.
  */
 
 export {
@@ -21,6 +22,7 @@ export {
   type TokenChaseRunSummary,
   type TokenChaseFrameSummary,
   type TokenChaseFrameDetail,
+  type TokenChaseRunFinal,
 } from './services/token-chase-read-service';
 
 export {
@@ -35,7 +37,8 @@ export {
   type TailReplayStatus,
   type TailFrameOutcome,
   type TailFrameStatus,
-  type RestageResult,
+  type RefireResult,
+  type RefireStatus,
   type TailReplayOptions,
   type TailFrameSource,
   type TailReplayer,

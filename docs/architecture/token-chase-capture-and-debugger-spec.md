@@ -65,6 +65,10 @@ without walking git. This is the only new persistence; everything heavy is git o
 
 ## Replay — forward-only (the determinism gate)
 
+> As built (2026-09-27): the no-edit replay runs on the bot node over a restored checkpoint commit and
+> a restored owner-store ciphertext — see "Tail replay — hermetic, on the bot node" below. The worktree
+> sketch that follows is the original design note.
+
 `POST /api/token-chase/runs/:runId/replay { fromFrame, edit? }`:
 1. Spin a **git worktree** off the `fromFrame` SHA (isolated dir, shared object store — cheap fan-out).
 2. Rehydrate the sidecar: restore `history`, systemPrompt, pinned reads, bot-store ref.
@@ -132,12 +136,61 @@ No assessor, corpus, or policy needed — this view is fully powered by steps 1�
 Ship the debugger at the end of step 2. The optimizer (ADR-046 steps 3–5) is a separate effort on this
 same substrate.
 
-## Current provenance contract
+## Current provenance contract (as built, 2026-09-27)
 
-The capture rail writes a bounded `workspaceTree` manifest and redacted content-addressed objects
-under `.tokenchase/objects/<sha256>` in its background writer. It retains the complete declared tool
-schemas (descriptions and parameter shapes, never executable callbacks), plus optional
-`workspaceCommit` and `ownerStoreVersion` references supplied by the caller. A caller-supplied
-unpinned/live-read marker makes the frame `replayable: false`; omitted refs remain an honest source
-gap rather than being fabricated. This is still a source contract: the actual AgenticController
-caller must supply the immutable commit and encrypted store ref before the checkpoint is complete.
+The capture rail (`any-bot/server/services/token-chase/`) binds every frame to:
+
+- a bounded, redacted, content-addressed `workspaceTree` manifest (objects under
+  `.tokenchase/objects/<sha256>`) **and a workspace commit**: the background writer commits those same
+  objects into a private bare repository at `.tokenchase/git` with a private index
+  (`workspace-checkpoint.js`), reachable under `refs/tokenchase/<taskId>/<seq>`, and records the SHA as
+  `context.workspaceCommit`. The task's own `.git` and index are never touched. Any git failure fails
+  open: the commit stays `null` and `checkpoint.error` says why; a SHA is never fabricated.
+  `checkpoint.redactedPaths` names files whose bytes changed under redaction, which a replay cannot
+  reproduce byte for byte;
+- the accountable owner's **encrypted store version** (`context.ownerStoreVersion`): sha256 over the
+  sorted (path, sha256(ciphertext)) pairs of the exact-subject store, with the ciphertext copied into
+  `.tokenchase/store-objects/<sha256>` and the manifest written as `store-<version>.json`
+  (`src/features/token-chase/services/owner-store-snapshot.ts`, installed on the lane by the bot-node
+  server at boot). Nothing is decrypted; a node with no store root records `null` and
+  `ownerStore.bound:false`;
+- **per-turn pins**: every tool result the agentic loop appended since the previous frame becomes
+  `{tool, callId, replayClass, pinned, inputSha256, resultSha256}` (`turn-provenance.js`), stored
+  redacted and content-addressed. `replayClass` is declared on the tool definition
+  (`workspace-read | workspace-write | pure | live-read | side-effect`); an undeclared tool is
+  `live-read`, so an unclassified read fails closed and the frame that consumed it is written
+  `replayable:false`;
+- the full declared tool schema (descriptions and parameter shapes, never executable callbacks).
+
+`final.json` (`finishRun`, called from the loop's `finally` on completion, max-turns and error) records
+the post-tool tree digest, a final commit chained to the last frame, the store version and the trailing
+pins: the baseline a no-edit replay compares against. Frames are numbered from 1 by the loop, and a
+frame carries the pins of the tool results it consumed (the previous response's call).
+
+## Tail replay — hermetic, on the bot node (as built, 2026-09-27)
+
+`POST /api/token-chase/runs/:runId/tail-replay { fromFrame, refire? }` on the controller delegates to
+`POST /api/token-chase/replay-tail` on the bot node that produced the run (`BotNodeTailReplayClient`;
+an agent with no reachable node is `no-endpoint`, fail-closed, with no node call). The controller
+restores, executes and compares nothing. On the node (`src/app/bot-node-token-chase-tail-route.ts` over
+`tail-replay-runner.js`):
+
+1. frame N's `workspaceCommit` is restored into an isolated worktree under the replay root
+   (`TOKEN_CHASE_REPLAY_ROOT`, default `<shared workspace root>/.tokenchase-replays`); a frame with no
+   commit falls back to a digest-verified restage from the objects;
+2. the owner's store ciphertext is restored into an isolated store root, re-bound to the same owner
+   (key derivation untouched, so only that owner can decrypt it);
+3. frames N..end are walked with **no provider call**: each captured response is served verbatim and the
+   tool call it carries is re-executed through the real file-tool handlers, registered under a private
+   registry that holds only `workspace-read`/`workspace-write` tools. A frame flagged `replayable:false`,
+   or a response calling a live-read, side-effect or undeclared tool, stops the tail with the reason
+   before anything runs. Each re-executed result is verified against the next frame's pin digest;
+4. the resulting tree is digested with the capture walk and compared path by path with `final.json`,
+   and the restored store is re-versioned and compared with the final store version. The verdict is
+   `reproduced`, `diverged` (differing paths / store version named), `stopped` or `empty`;
+5. the isolated roots are removed in a `finally`. `paidCalls` and `costUsd` are reported as 0.
+
+The prompt re-fire determinism verdict (`/api/token-chase/replay-call` + `assessDeterminism`) is the
+optional `refire:true` mode and the only part that spends tokens. The Test Lab card
+`token-chase-checkpoint-replay` lists the suites that prove this locally; a provider-backed capture on
+the deployed stack is a separate operator acceptance step.

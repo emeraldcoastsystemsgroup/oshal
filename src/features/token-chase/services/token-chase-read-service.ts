@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read three of the six.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Workspace-bound provenance: expose captured tool schemas, workspace commit/store-version references and the bounded snapshot result used by the tail replay.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | End-of-run checkpoint (BACKLOG "Workspace-bound checkpoint and tail replay"): getFinal() reads the run's final.json (post-tool tree digest, final commit, store version, trailing pins) under the same owner scoping as frames, and a frame's recorded owner rides on TokenChaseFrameDetail.ownerSub so the tail replay can bind the accountable owner when it delegates to the bot node.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Bot-node tail executor inputs: getCaptureDir() hands the traversal-guarded capture directory to the on-node restore (private git repo + object store live there), and getStoreManifest() reads the owner-store manifest the lane wrote for one version (store-<version>.json — paths and ciphertext digests, never plaintext) under the run's owner scoping.
  */
 
 import fsSync from 'node:fs';
@@ -192,6 +193,46 @@ export class TokenChaseReadService {
       pins: Array.isArray(record.pins) ? (record.pins as unknown[]) : [],
       workspaceTree: record.workspaceTree,
     };
+  }
+
+  /**
+   * @description The traversal-guarded capture directory of a run, for the on-node restore that needs
+   * the private checkpoint repository and object store beneath it. Null when the run has no capture dir.
+   * @param runId - The task/workspace folder name.
+   * @returns The absolute `.tokenchase` directory, or null.
+   */
+  getCaptureDir(runId: string): string | null {
+    const dir = this.resolveCaptureDir(runId);
+    return dir && fsSync.existsSync(dir) ? dir : null;
+  }
+
+  /**
+   * @description Reads the owner-store manifest the capture lane wrote for one store version
+   * (`store-<version>.json`: store-relative paths and ciphertext digests, never plaintext), when the
+   * caller may see the run. The version is format-guarded so it can never name another file.
+   * @param runId - The task/workspace folder name.
+   * @param version - The 64-hex owner-store version a frame recorded.
+   * @param access - Owner-scoping context.
+   * @returns The parsed manifest, or null when absent, malformed or not visible.
+   */
+  async getStoreManifest(runId: string, version: string, access: TokenChaseAccess): Promise<Record<string, unknown> | null> {
+    if (!/^[a-f0-9]{64}$/i.test(version)) return null;
+    const dir = this.resolveCaptureDir(runId);
+    if (!dir || !(await this.isRunVisible(dir, access))) return null;
+    return this.readFrame(path.join(dir, `store-${version.toLowerCase()}.json`));
+  }
+
+  /** @description Whether the caller may see a run at all: decided by its first frame's recorded owner. */
+  private async isRunVisible(dir: string, access: TokenChaseAccess): Promise<boolean> {
+    try {
+      const frameFiles = (await fs.readdir(dir)).filter((f) => FRAME_FILE.test(f)).sort();
+      if (frameFiles.length === 0) return false;
+      const first = await this.readFrame(path.join(dir, frameFiles[0]));
+      return first !== null && this.isVisible(first, access);
+    } catch (error) {
+      logger.warn({ err: error, dir }, 'Failed to read Token Chase run for visibility');
+      return false;
+    }
   }
 
   /** @description Builds a run summary for one folder, or null if it has no caller-visible frames. */

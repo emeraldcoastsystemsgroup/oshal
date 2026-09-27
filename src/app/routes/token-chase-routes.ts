@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Keep-winner → re-baseline + judge spend cap (ADR-046 step 4 loop, BACKLOG "auto keep-winner then re-baseline loop + per-run judge budget cap"): (1) mounts the promotion routes (promote/revert/list — see token-chase-promotion-routes.ts); (2) both replay paths load the run's ACTIVE promotions as baseline overrides so a promoted lane IS the frame's cost baseline from now on (the corpus rows then carry it, so the savings report re-baselines automatically); (3) the savings grading loop consults a per-run TokenChaseJudgeBudget BEFORE every judge call — TOKEN_CHASE_JUDGE_BUDGET_USD hard ceiling measured against the judge agent's REAL chat_tasks spend since the run began; on breach remaining frames persist UNGRADED and the response says partiallyGraded honestly; (4) after the loop the OPERATOR-GATED auto keep-winner pass runs (TOKEN_CHASE_AUTO_PROMOTE, default OFF — maybeAutoPromote touches nothing when disabled).
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Tail-replay action (ADR-046 §1/§8): new POST /runs/:runId/tail-replay restages frame N's workspace tree and replays N..end on the accountable bot, determinism-gating each frame and stopping at the first divergence (which frame + why). Read-of-the-run + bot re-fires only; the controller never calls an LLM. Additive — the promotion routes and every existing action are untouched.
  * 10 | maintainer@emeraldcoastsystemsgroup.com  | Wire Token Chase's aggregate `free:auto` selector into variant and savings actions: health-qualified free lanes rotate on classified provider walls, expose exact provider/model evidence, and fail closed without falling through to the bot's paid/default lane.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com  | Tail replay delegated to the bot node (BACKLOG "Workspace-bound checkpoint and tail replay"): POST /runs/:runId/tail-replay no longer restages anything on the controller; TokenChaseTailReplayService asks the producing bot for the hermetic no-edit tail and relays its artifact/store verdict. Body gains optional refire:true for the token-spending prompt re-fire pass; default off.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -341,25 +342,26 @@ function handleReplay(service: TokenChaseReplayService) {
 }
 
 /**
- * @description POST /runs/:runId/tail-replay — the forward TAIL replay (ADR-046 §1/§8). From the
- * start frame `fromFrame` it restages the workspace tree that frame saw (from its content-addressed
- * snapshot, into an isolated root — never the live workspace), then replays every frame from there to
- * the end of the run on the bot node that produced each — never the controller — determinism-gating
- * each replayed frame against its capture and STOPPING at the first divergence with the offending frame
- * and reason. Pinned tool-reads are served from the captured prompt; unpinned reads fall through with a
- * per-frame warning. Body: `{ fromFrame: number }` (accepts legacy `seq`). Owner-scoped.
+ * @description POST /runs/:runId/tail-replay — the forward TAIL replay (ADR-046 §3). The whole
+ * hermetic no-edit tail runs on the bot node that produced the run — never the controller: frame N's
+ * checkpoint commit and the owner's store ciphertext are restored into isolated roots there, every
+ * captured response is served with its workspace tool re-executed, a live tool stops the tail, and the
+ * resulting tree digest + store version are compared with the run's final checkpoint (reproduced /
+ * diverged with the differing paths named). Body: `{ fromFrame: number, refire?: boolean }` (accepts
+ * legacy `seq`); `refire` adds the per-frame prompt re-fire determinism pass, which is the only part that
+ * spends tokens. Owner-scoped.
  */
 function handleTailReplay(service: TokenChaseTailReplayService) {
   return async (req: Request, res: Response): Promise<void> => {
     const runId = String(req.params.runId);
-    const body = (req.body ?? {}) as { fromFrame?: unknown; seq?: unknown };
+    const body = (req.body ?? {}) as { fromFrame?: unknown; seq?: unknown; refire?: unknown };
     const fromFrame = Number.parseInt(String(body.fromFrame ?? body.seq), 10);
     if (!Number.isInteger(fromFrame) || fromFrame < 0) {
       res.status(400).json({ error: 'Body must include a non-negative fromFrame (call sequence)' });
       return;
     }
     try {
-      const result = await service.replayForward(runId, fromFrame, accessOf(req));
+      const result = await service.replayForward(runId, fromFrame, accessOf(req), { refire: body.refire === true });
       if (!result) {
         res.status(404).json({ error: 'Start frame not found' });
         return;
