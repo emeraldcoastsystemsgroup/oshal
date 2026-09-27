@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Supply the installed-package reader the package grant plan needs. The policy slice may not import the application registry directly (layer direction), so composition reads the record here and hands over ONLY the declared dependency tiers and whether the record is active - no manifest, no owner, no business data.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Give the RETURNED readiness the same re-requestable shape. It was a plain promise derived once from the recovered thunk, so the four modules chaining off it - queued ticket provenance, the user directory, Jarvis briefings and Test Lab runs - still inherited the first bootstrap failure forever, and authenticated ticket creation threw for the life of the process.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Resolve a legacy explicit tier on the full principal while retaining the canonical-local meaning of issuer-less assignments.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Forward the AUTH-07 catalog snapshot and migration review reads through the schema-readiness wrapper. Without them the service could never read the catalog an installed package's assignments were granted under, so every catalog change would classify as unrecorded and refuse.
  */
 /** Assemble the control plane without granting it authority over business records. */
 import type { Request } from 'express';
@@ -98,6 +99,8 @@ function readyPolicyStore(ctx: AppContext, ready: () => Promise<unknown>): Autho
   return {
     readPreview: async id => { await ready(); return durable.readPreview(id); },
     readAudit: async input => { await ready(); return durable.readAudit(input); },
+    readCatalogSnapshots: async revisions => { await ready(); return durable.readCatalogSnapshots(revisions); },
+    readCatalogMigrations: async filter => { await ready(); return durable.readCatalogMigrations(filter); },
     publishAppPosture: async (app, protectedApp, agentIds, toolNames) => { await ready(); return durable.publishAppPosture(app, protectedApp, agentIds, toolNames); },
     read: async () => { await ready(); return durable.read(); },
     transaction: async operation => { await ready(); return durable.transaction(operation); },

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Scope and redact applied-change history with actor-bound revision-snapshot cursors.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep reserved global membership events outside delegated application history.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Project the AUTH-07 catalog migration summary (revisions, versions, classification and the opaque assignment ids carried or removed) on catalog-migration entries, so an operator acceptance can prove an upgrade kept every assignment without reading the policy tables.
  */
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -58,5 +59,9 @@ function projectAudit(event: AuthorizationAudit): AuthorizationAuditEntry {
   return { id: event.id, revision: event.revision, at: event.at, actor: { sub: event.actor.sub, issuer: event.actor.issuer },
     app: change.app, action: change.action, tenantId: change.tenantId, targetSub: change.targetSub, targetIssuer: change.targetIssuer,
     group: change.group ? { issuer: change.group.issuer, tenantId: change.group.tenantId, id: change.group.id } : undefined,
-    role: change.role, permission: change.permission };
+    role: change.role, permission: change.permission,
+    ...(event.migration ? { migration: { fromRevisions: [...event.migration.fromRevisions], fromVersions: [...event.migration.fromVersions],
+      toRevision: event.migration.toRevision, toVersion: event.migration.toVersion, classification: event.migration.classification,
+      assignmentIds: [...event.migration.assignmentIds], removedIds: [...event.migration.removedIds],
+      ...(event.migration.reviewId ? { reviewId: event.migration.reviewId } : {}) } } : {}) };
 }

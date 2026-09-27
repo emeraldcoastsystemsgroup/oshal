@@ -8,13 +8,14 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Fixes a RED main, and the cause was the guard, not the code. The bot ceiling MOVED from bot-node-runtime.ts to bot-node-database-pool.ts in a decomposition - the call byte-identical, the behaviour untouched - and this case failed because it pinned a file PATH. It now locates each ceiling by its CALL anywhere under src/ and requires exactly one occurrence, so a move passes, a deletion fails, and a second inconsistent call site fails too.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Walk the tree ONCE. The previous entry's fix called sourceFilesUnder inside the per-call loop, re-walking and re-reading everything four times - 6,212 reads instead of 1,553. Warm that is about 1.6s and green; on a COLD checkout it is 11-23s against vitest's default 5000ms timeout, and a cold checkout is precisely how ci-local.sh runs this: git archive into a purged directory, then test:unit. So a guard added to make main green was itself red the first time the real gate would have seen it, and green every time it was checked by hand.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The BOT fleet had no budget case at all, and it is the one that was actually over: 38 bot-node services against a role capped at 8 connections produced FATAL too many connections for role "oshal_bot" in 24 of 36 containers on a fleet boot - the most widespread failure on the box, and it presents as an authorization refusal rather than as a pool outage. The api's budget was guarded from the start; this adds the bot half, deriving every number from a tracked file (the declared fleet and its per-container ceiling from compose, both role ceilings from the role SQL, max_connections from the database service) so adding a bot service or raising a ceiling past what the server can serve is red instead of discovered at the next boot.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | The bot-fleet budget case parses docker-compose.oshal-local.yml through loadComposeYaml (src/shared/config). A bare js-yaml load fails on the library's default merge-key limit since #869; the shared loader carries the repository's explicit budget and tests/unit/compose-yaml-merge-key-budget.spec.ts pins every compose parse to it.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
-import { load } from 'js-yaml';
+import { loadComposeYaml } from '../../src/shared/config';
 import {
   postgresApplicationName,
   resolvePoolMax,
@@ -92,7 +93,7 @@ describe('local API PostgreSQL role budget', () => {
 
 describe('local bot-fleet PostgreSQL role budget', () => {
   /** The compose file as YAML, so the anchors resolve without starting or configuring anything. */
-  const deployment = load(read('docker-compose.oshal-local.yml')) as {
+  const deployment = loadComposeYaml(read('docker-compose.oshal-local.yml')) as {
     services: Record<string, { command?: string[]; environment?: Record<string, string> }>;
   };
   /** A `${NAME:-default}` expression's default — the value a box with nothing in .env runs on. */

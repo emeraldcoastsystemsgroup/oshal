@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Subprocess proof that Token Chase capture writes bounded content-addressed workspace objects, full tool schemas, provenance refs and caller-declared non-replayable pins.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Workspace-bound checkpoint (BACKLOG "Workspace-bound checkpoint and tail replay"): the background writer now PRODUCES context.workspaceCommit (a real commit in the private .tokenchase/git, reachable under refs/tokenchase/<task>/<seq>), a `checkpoint` block with the tree digest and redacted paths, an honest ownerStore.bound:false + null version on a node with no store, and finishRun writes final.json reflecting the POST-tool tree after a tool-then-complete sequence. The old caller-supplied workspaceCommit/ownerStoreVersion strings are no longer accepted as provenance.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Owner-store plumbing: with a snapshotter configured (configureOwnerStore), the frame records context.ownerStoreVersion + ownerStore.bound:true and the lane writes store-<version>.json beside the frame. The snapshotter in this case is a duck-typed JS double naming what it copied; the REAL ciphertext snapshotter is proven by token-chase-owner-store-snapshot.spec.ts and consumed end-to-end by the bot-node tail route guard.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | The store half is async: the double's snapshot(ownerSub) now resolves later and writes into its own node object directory, and the lane must still land open -> close merge -> final.json in order, record the version, and create NO .tokenchase/store-objects. New case: a store the snapshotter refuses as too large is recorded as ownerStore.snapshotSkipped 'too_large' with measuredBytes and a null version, and no manifest is written. And the ordering race: a close and final.json that arrive while the open frame's store snapshot is still running land after it, so the frame file holds both halves.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -127,14 +128,16 @@ describe('Token Chase capture provenance contract', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'token-chase-store-'));
     tempRoots.push(root);
     fs.writeFileSync(path.join(root, 'a.txt'), 'a');
+    const nodeObjects = path.join(root, 'node-objects');
     captureInChild(root, `
       // Duck-typed snapshotter double (the real one is the TS owner-store-snapshot, proven separately).
-      const copied = [];
-      tokenChase.configureOwnerStore({ bound: true, snapshot(ownerSub, objectDir) {
-        fs.mkdirSync(objectDir, { recursive: true });
-        fs.writeFileSync(path.join(objectDir, 'c'.repeat(64)), 'v1:ciphertext-for-' + ownerSub);
-        copied.push(ownerSub);
-        return { version: 'd'.repeat(64), files: [{ path: 'vault/entities.enc', sha256: 'c'.repeat(64), bytes: 20 }], complete: true, warnings: [] };
+      // It resolves on a later tick, like the real async walk, and owns where its objects go.
+      const nodeObjects = ${JSON.stringify(nodeObjects)};
+      tokenChase.configureOwnerStore({ bound: true, async snapshot(ownerSub) {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        fs.mkdirSync(nodeObjects, { recursive: true });
+        fs.writeFileSync(path.join(nodeObjects, 'c'.repeat(64)), 'v1:ciphertext-for-' + ownerSub);
+        return { version: 'd'.repeat(64), files: [{ path: 'vault/entities.enc', sha256: 'c'.repeat(64), bytes: 20 }], complete: true, warnings: [], hashed: 1, copied: 1 };
       } });
       const h = tokenChase.beginFrame({ taskId: 'task-3', seq: 0, agentId: 'bot-1', workspaceDir: root, providerName: 'p', systemPrompt: 's', history: [], tools: [], userSub: 'owner-3' });
       await yieldTurn();
@@ -145,10 +148,64 @@ describe('Token Chase capture provenance contract', () => {
     const frame = JSON.parse(fs.readFileSync(path.join(dir, 'frame-0000.json'), 'utf8')) as any;
     const final = JSON.parse(fs.readFileSync(path.join(dir, 'final.json'), 'utf8')) as any;
     expect(frame.context.ownerStoreVersion).toBe('d'.repeat(64));
-    expect(frame.ownerStore).toMatchObject({ bound: true, complete: true, version: 'd'.repeat(64), manifest: `store-${'d'.repeat(64)}.json` });
+    expect(frame.ownerStore).toMatchObject({ bound: true, complete: true, version: 'd'.repeat(64), manifest: `store-${'d'.repeat(64)}.json`, hashed: 1, copied: 1 });
+    // The close merge waited for the async open write: the one file holds both halves.
+    expect(frame.phase).toBe('closed');
+    expect(frame.response.content).toBe('done');
+    expect(frame.context.workspaceCommit).toMatch(/^[0-9a-f]{40}$/);
     expect(final.ownerStoreVersion).toBe('d'.repeat(64));
+    expect(final.checkpoint.ref).toBe('refs/tokenchase/task-3/final');
     const manifest = JSON.parse(fs.readFileSync(path.join(dir, `store-${'d'.repeat(64)}.json`), 'utf8')) as any;
-    expect(manifest.files[0].path).toBe('vault/entities.enc');
-    expect(fs.readFileSync(path.join(dir, 'store-objects', 'c'.repeat(64)), 'utf8')).toBe('v1:ciphertext-for-owner-3');
+    expect(manifest).toEqual({ version: 'd'.repeat(64), files: [{ path: 'vault/entities.enc', sha256: 'c'.repeat(64), bytes: 20 }], complete: true, warnings: [] });
+    // Objects live where the snapshotter put them; the lane no longer copies a store per task.
+    expect(fs.readFileSync(path.join(nodeObjects, 'c'.repeat(64)), 'utf8')).toBe('v1:ciphertext-for-owner-3');
+    expect(fs.existsSync(path.join(dir, 'store-objects'))).toBe(false);
+  });
+
+  it('lands a close and final.json that arrive while the open frame store snapshot is still running after it', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'token-chase-store-race-'));
+    tempRoots.push(root);
+    captureInChild(root, `
+      // The store walk outlasts the model call: the response and the run's end arrive mid-snapshot.
+      tokenChase.configureOwnerStore({ bound: true, async snapshot() {
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        return { version: 'e'.repeat(64), files: [], complete: true, warnings: [], hashed: 0, copied: 0 };
+      } });
+      const h = tokenChase.beginFrame({ taskId: 'task-5', seq: 1, agentId: 'bot-1', workspaceDir: root, providerName: 'p', systemPrompt: 's', history: [], tools: [], userSub: 'owner-5' });
+      await new Promise((resolve) => setImmediate(resolve));
+      tokenChase.endFrame(h, { provider: 'p', model: 'm', content: 'answered before the snapshot finished', contentBlocks: [] });
+      tokenChase.finishRun({ taskId: 'task-5', workspaceDir: root, userSub: 'owner-5', turns: 1, outcome: 'completed', pins: [] });
+    `);
+    const dir = path.join(root, '.tokenchase');
+    const frame = JSON.parse(fs.readFileSync(path.join(dir, 'frame-0001.json'), 'utf8')) as any;
+    const final = JSON.parse(fs.readFileSync(path.join(dir, 'final.json'), 'utf8')) as any;
+    expect(frame.phase).toBe('closed');
+    expect(frame.response.content).toBe('answered before the snapshot finished');
+    expect(frame.context.ownerStoreVersion).toBe('e'.repeat(64));
+    expect(frame.context.workspaceCommit).toMatch(/^[0-9a-f]{40}$/);
+    expect(final.ownerStoreVersion).toBe('e'.repeat(64));
+  });
+
+  it('records a store refused as too large with its measured size, a null version and no manifest', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'token-chase-store-big-'));
+    tempRoots.push(root);
+    captureInChild(root, `
+      tokenChase.configureOwnerStore({ bound: true, async snapshot() {
+        return { version: '', files: [], complete: false, warnings: ['too big'], skipped: 'too_large', measuredBytes: 1717986918, maxTotalBytes: 268435456, hashed: 0, copied: 0 };
+      } });
+      const h = tokenChase.beginFrame({ taskId: 'task-4', seq: 1, agentId: 'bot-1', workspaceDir: root, providerName: 'p', systemPrompt: 's', history: [], tools: [], userSub: 'owner-4' });
+      await yieldTurn();
+      tokenChase.endFrame(h, { provider: 'p', model: 'm', content: 'done', contentBlocks: [] });
+    `);
+    const dir = path.join(root, '.tokenchase');
+    const frame = JSON.parse(fs.readFileSync(path.join(dir, 'frame-0001.json'), 'utf8')) as any;
+    expect(frame.context.ownerStoreVersion).toBeNull();
+    expect(frame.ownerStore).toMatchObject({
+      bound: true, complete: false, version: null, manifest: null,
+      snapshotSkipped: 'too_large', measuredBytes: 1717986918, maxTotalBytes: 268435456,
+    });
+    expect(frame.ownerStore.reason).toContain('1717986918 bytes, above the 268435456-byte snapshot ceiling');
+    expect(frame.phase).toBe('closed');
+    expect(fs.readdirSync(dir).filter((name) => name.startsWith('store-'))).toEqual([]);
   });
 });

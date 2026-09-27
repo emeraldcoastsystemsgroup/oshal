@@ -4,12 +4,13 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Pins the controller-only environment keys against the RESOLVED compose, not its source text. OSHAL_STORE_TOKEN was added to the x-bot-env anchor, which merges into the api and all 38 bot-nodes, so a repository read credential reached every bot - and bots are this project's confirmed prompt-injection surface. A source-text guard could not have caught it: a key under the anchor and a key on a service block look identical to a regex, and the whole defect is WHERE the key sits. js-yaml resolves the `<<:` merge, so this asserts what each container would actually receive. The bot floor is what stops it passing vacuously if the services are ever renamed out from under it.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Resolve the compose through loadComposeYaml (@/shared/config). The bare js-yaml load failed on the library's default merge-key limit once #869 took docker-compose.oshal-local.yml past 10000 units; the shared loader carries the repository's explicit budget and still resolves every `<<:` merge, which is what this guard reads.
  */
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import yaml from 'js-yaml';
+import { loadComposeYaml } from '@/shared/config';
 
 const COMPOSE = join(process.cwd(), 'docker-compose.oshal-local.yml');
 
@@ -17,7 +18,7 @@ type Service = { environment?: Record<string, unknown> };
 
 /** The merge key is resolved by the PARSER, which is the point — this is the effective env. */
 function services(): Record<string, Service> {
-  const doc = yaml.load(readFileSync(COMPOSE, 'utf8')) as { services?: Record<string, Service> };
+  const doc = loadComposeYaml(readFileSync(COMPOSE, 'utf8')) as { services?: Record<string, Service> };
   return doc.services ?? {};
 }
 

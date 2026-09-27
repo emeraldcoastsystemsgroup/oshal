@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the BACKLOG entry "Add-a-bot checklist omits the scrape target". Monitoring became inherited on 2026-08-13 (BUG-15): Prometheus discovers every runtime container by the label the compose `x-bot-common` anchor stamps on it, so there is no scrape-target step. Neither add-a-bot surface (docs/building-a-bot.md, the CLAUDE.md bot-registry section) said so, which left the retired hand-listed step as the obvious thing to reinvent. Pins, per surface: (1) one paragraph/list item names `x-bot-common`, says the bot is scraped automatically, and names the discovery label; (2) no sentence tells anyone to edit ops/monitoring/prometheus.yml and no checklist item names that file. Crosses the boundary the docs describe: the label the docs must name is READ from the real worker scrape job's docker_sd filter and the real compose anchor, so renaming the label in config without updating the docs goes red.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Parse the stack compose through loadComposeYaml (@/shared/config). A bare js-yaml load of docker-compose.oshal-local.yml fails on the library's default merge-key limit since #869; the shared loader carries the repository's explicit budget and tests/unit/compose-yaml-merge-key-budget.spec.ts pins every compose parse to it.
  */
 
 /**
@@ -19,6 +20,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
 import { describe, expect, it } from 'vitest';
+import { loadComposeYaml } from '@/shared/config';
 
 const ROOT = process.cwd();
 const read = (rel: string): string => readFileSync(path.join(ROOT, rel), 'utf8');
@@ -95,7 +97,7 @@ describe('add-a-bot docs: monitoring is inherited from x-bot-common', () => {
   const labelForms = [`${labelKey}: ${labelValue}`, `${labelKey}=${labelValue}`];
 
   it('the label the docs must name is the one the real anchor stamps and the worker job discovers', () => {
-    const compose = yaml.load(read(STACK_COMPOSE)) as Record<string, { labels?: Record<string, string> }>;
+    const compose = loadComposeYaml(read(STACK_COMPOSE)) as Record<string, { labels?: Record<string, string> }>;
     const anchorLabels = compose['x-bot-common']?.labels ?? {};
     expect(anchorLabels[labelKey], `x-bot-common must carry ${labelKey}: ${labelValue}`).toBe(labelValue);
   });

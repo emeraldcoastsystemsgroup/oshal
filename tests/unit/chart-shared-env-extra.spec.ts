@@ -8,12 +8,14 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Chart 0.5.0 moved JWT_SECRET and ARANGO_ROOT_* out of the ConfigMap into the oshal-shared-secret Secret, so extraEnv must not become the way a credential gets back into a ConfigMap. For both roles every key the chart keeps in that Secret, set through extraEnv, must fail the render as chart-owned and be named; and every credential name the chart knows (each key of each Secret it renders, plus the *_API_KEY / *_SECRET / *_TOKEN / *AUTHKEY names values.yaml tells an operator to keep in a Secret) must fail as credential-shaped and be named.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The credential-name rule's known false positive is documented, and held true. values.yaml and the README say the rule also refuses a non-secret switch whose name matches it, naming compose's REMOTE_CLIENT_REQUIRE_NODE_TOKEN, and that such a switch goes on the workload that reads it (api.extraEnv). This reads the example out of values.yaml, confirms from the parsed docker-compose.oshal-local.yml that it is a boolean switch set on the oshal-api service alone, and requires that swarm.extraEnv refuses it while api.extraEnv renders it on the api container.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The naming checks (SEQ 2 and 3: each clashing key, each chart Secret key, each credential name) now read helm's own stderr through helmRefusal. They matched the thrown error's message, which also carried the --set list, so `swarm.extraEnv.X` was always found in the test's own argument `swarm.extraEnv.X=guard-...`. With the refusal cut to its first name, or with TOKEN dropped from the credential rule so three names stopped being refused, the checks stayed green.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | The documented-false-positive case parses docker-compose.oshal-local.yml through loadComposeYaml (@/shared/config). A bare js-yaml load fails on the library's default merge-key limit since #869; the shared loader carries the repository's explicit budget and tests/unit/compose-yaml-merge-key-budget.spec.ts pins every compose parse to it.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import yaml from 'js-yaml';
+import { loadComposeYaml } from '@/shared/config';
 import {
   DOCKER_DESKTOP_VALUES, REPO_ROOT, RENDER_TIMEOUT_MS, containerOf, envValue, helmRefusal, helmTemplate, type K8sObject,
 } from '../helpers/helm-template';
@@ -176,7 +178,7 @@ describe('swarm.extraEnv cannot put a credential back into the ConfigMap', () =>
     const valuesText = fs.readFileSync(path.join(REPO_ROOT, 'deploy', 'helm', 'oshal', 'values.yaml'), 'utf8');
     const example = /such as compose's ([A-Z][A-Z0-9_]*)/.exec(valuesText)?.[1];
     expect(example, 'values.yaml no longer names the example the README and this guard rely on').toBeTruthy();
-    const compose = yaml.load(fs.readFileSync(path.join(REPO_ROOT, 'docker-compose.oshal-local.yml'), 'utf8')) as {
+    const compose = loadComposeYaml(fs.readFileSync(path.join(REPO_ROOT, 'docker-compose.oshal-local.yml'), 'utf8')) as {
       services: Record<string, { environment?: Record<string, unknown> | string[] }>;
     };
     const setters = Object.entries(compose.services).flatMap(([name, svc]) => {

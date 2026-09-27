@@ -150,17 +150,30 @@ The capture rail (`any-bot/server/services/token-chase/`) binds every frame to:
   reproduce byte for byte;
 - the accountable owner's **encrypted store version** (`context.ownerStoreVersion`), **only on a node
   that opted in** with `TOKEN_CHASE_OWNER_STORE_SNAPSHOT=on`: sha256 over the sorted
-  (path, sha256(ciphertext)) pairs of the exact-subject store, with the ciphertext copied into
-  `.tokenchase/store-objects/<sha256>` and the manifest written as `store-<version>.json`
-  (`src/features/token-chase/services/owner-store-snapshot.ts`, installed on the lane by the bot-node
-  server at boot). The store root is `TOKEN_CHASE_STORE_ROOT`, else `PI_STORE_ROOT` /
-  `JOBHUNTER_STORE_ROOT`, and is read only after the opt-in: a vault root being present never turns
-  the snapshot on. Nothing is decrypted. A node that did not opt in, or has no store root, records
-  `null` and `ownerStore.bound:false`, and a tail replay of its runs reports `storeBound:false`.
-  **Cost:** each frame and `final.json` hashes and copies the owner's whole store. On the operator's
-  1.6 GB, 19,287-file store that held a jarvis bot's event loop 88.8 s before the model call and
-  33.6 s after it, and wrote 1.2 GB per ask (measured 2026-09-27,
-  [jarvis-own-task-recall.md](jarvis-own-task-recall.md)); do not enable it on a large vault;
+  (path, sha256(ciphertext)) pairs of the exact-subject store, with the ciphertext kept as
+  `<sha256>` objects in the node's one object directory (`TOKEN_CHASE_STORE_OBJECT_DIR`, default
+  `<shared workspace root>/.tokenchase-store-objects`) and the manifest written beside the frame as
+  `store-<version>.json` (`src/features/token-chase/services/owner-store-snapshot.ts`, installed on
+  the lane by the bot-node server at boot). The store root is `TOKEN_CHASE_STORE_ROOT`, else
+  `PI_STORE_ROOT` / `JOBHUNTER_STORE_ROOT`, and is read only after the opt-in: a vault root being
+  present never turns the snapshot on. Nothing is decrypted. A node that did not opt in, or has no
+  store root, records `null` and `ownerStore.bound:false`, and a tail replay of its runs reports
+  `storeBound:false`.
+  **Cost and limits.** The walk uses async fs and yields to the event loop between files; the frame's
+  tree and commit are still taken synchronously at its moment, and the store half, the frame file and
+  `final.json` land in order on a per-workspace write queue. A per-subject stat cache
+  (size, mtime, inode → sha256) means an unchanged file is not re-read; a file modified within the
+  last 2 s is always re-hashed. Objects are written once per node through an atomic rename, so frames
+  and tasks share them (`ownerStore.copied` / `hashed` count this snapshot's work). A store whose
+  files total more than `TOKEN_CHASE_STORE_TOTAL_MAX_BYTES` (default 256 MiB) is refused before
+  anything is read: `ownerStore.snapshotSkipped: 'too_large'`, `measuredBytes`, a `null` version.
+  A file that vanishes mid-walk (a SQLite `-shm` on close) leaves the snapshot incomplete, not failed.
+  Before these limits, the synchronous whole-store copy on the operator's 1.6 GB, 19,287-file store
+  held a jarvis bot's event loop 88.8 s before the model call and 33.6 s after it, and wrote 1.2 GB
+  per ask (measured 2026-09-27, [jarvis-own-task-recall.md](jarvis-own-task-recall.md)). The first
+  snapshot of a store still reads all of it, so do not enable it on a large vault. A run captured
+  before the object directory moved keeps its objects in `.tokenchase/store-objects`, and the tail
+  replay restores from there when that directory exists;
 - **per-turn pins**: every tool result the agentic loop appended since the previous frame becomes
   `{tool, callId, replayClass, pinned, inputSha256, resultSha256}` (`turn-provenance.js`), stored
   redacted and content-addressed. `replayClass` is declared on the tool definition

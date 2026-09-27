@@ -12,8 +12,8 @@ remain the complete enterprise target; foundation completion does not close ever
 AUTH-01 is implemented using `uses: [application-authorization]` as the old-core activation floor.
 AUTH-02 and AUTH-07 have a shared service, UI/tool parity and isolated PostgreSQL/browser
 proofs, including scoped applied-change history, delegated access administrators/auditors and the
-per-user application permission screen. A sensitive approval workflow and catalog migration tooling
-remain. AUTH-03 now covers four things:
+per-user application permission screen. Reviewed catalog migration now has an API; its Access
+Administration screen panel and a sensitive approval workflow remain (see the AUTH-07 section below). AUTH-03 now covers four things:
 - local proof-based setup;
 - established-account and root credential guards;
 - an identity-provider first root, from a proof bound to one exact issuer and subject and redeemed on
@@ -85,6 +85,20 @@ archive (`/app/output/_pkg-backups/<pkg>-pre-<TS>.tgz`), attempt the install onl
 can perform the revoke and the grant, and restore the archive plus the previous `.oshal-install.json`
 sha immediately if activation is refused. A store package cannot avoid this by design: new
 functionality needs new routes, and new routes need bindings.
+
+**Implemented (isolated evidence, not yet live):** the installer classifies a changed catalog against
+the catalog recorded at the assignments' revision. A non-widening change carries the assignments in
+one audited policy transaction with no operator present. A widening or breaking change still refuses,
+now with a stored review that an application-wide administrator approves through
+`GET/POST /api/authorization/catalog-migrations[/apply]`. The next activation applies it, and removed
+grants never revive. See
+[Package upgrades that change the catalog](../security/application-authorization.md#package-upgrades-that-change-the-catalog).
+Still open from the criteria below:
+- the Access Administration screen panel for reviews;
+- reviewer-supplied role mappings (a review is approved or not, and it cannot remap);
+- Test Lab discovery coordination on a refused upgrade;
+- management-browser and live staged-upgrade evidence. After staging, run
+  `node scripts/operations/little-monsters-upgrade-proof.js`.
 
 **Done when:** the existing installer and Access Administration can preview and apply
 this transition without manually restoring package files:

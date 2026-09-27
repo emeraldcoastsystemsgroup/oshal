@@ -18,6 +18,7 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Attach the two guards this PR adds - pool-connection-errors and api-storm-probe - to the scenario that already carries their deploy/pool siblings. A test file on disk is not Test Lab registration (CLAUDE.md), and the review found both unattached.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Attach installer-offlan-refusal to the scenario that already carries the deploy/install-contract guards. It is the same family as deploy-preview-source and deploy-rollback-outcome - a guard that RUNS the shipped script rather than reading it - and it covers the one decision that turns an operator's explicit -OffLan into a join code: with Headscale stopped the installer used to answer an explicit request with a LAN-only OSJOIN1 and say nothing. There is no runnable Lab step for it on purpose: the step would have to install a swarm on the box the Lab is running on. A test file on disk is not Test Lab registration (CLAUDE.md).
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | Attach the ADR-167 core release pipeline guards to the same deploy-contract family: the cut (one build, proved, recorded, tagged), the promote driver (the same image ID moves; production needs a staging receipt), the on-box managed release transaction (capture, history, restore, rollback), the drift check, the live acceptance drill (scripts/operations/core-release-drill.sh), the release name on /api/version and the Dockerfile tail placement of OSHAL_RELEASE. Like deploy-rollback-outcome they run the shipped scripts; no runnable Lab step, because a step would have to build an image or promote a box from inside the Lab.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com   | Attach compose-yaml-merge-key-budget to the deploy/build-contract family. #869 pushed docker-compose.oshal-local.yml past js-yaml's default merge-key limit and the image build died at gen-dist-compose.js; the guard runs that build step on the real file from the files the image has at that point, pins every compose parse to the shared loader, and fails at 80% of the loader's budget.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -96,6 +97,7 @@ export const INSTALLATION_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/update-check.spec.ts' },
     { level: 'unit', path: 'tests/unit/dockerfile-release-identity.spec.ts' },
     { level: 'integration', path: 'tests/unit/core-release-drill.spec.ts' },
+    { level: 'integration', path: 'tests/unit/compose-yaml-merge-key-budget.spec.ts' },
   ],
   steps: [{ id: 'catalog', app: 'test-lab', label: 'Installed package cases', run: installedCatalog }],
 }];

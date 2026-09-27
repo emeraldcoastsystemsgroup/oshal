@@ -27,6 +27,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 round 2 — rotationBenches withholds the bench SELL for a position marked `unmanaged`, the fourth sell rule in this file and the one SEQ 9 missed. The mark is applied to `cold` only, never to `held` or `heldSyms`: those decide which names count as already-held, and a withheld name dropped from them would resurface as a hot BENCH CANDIDATE the caller then buys. Filtering `cold` can only shorten the returned list.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 round 3 — dipExits withholds the extended-hours dip sell for a position marked `unmanaged`: the fifth sell rule in this file, and the one SEQ 9 and SEQ 10 both missed. It is also the one that mattered most, because computeExits RETURNS on it off-hours before exitsToRun, trailingExits and rebalanceTrims are ever reached — so on every pre/post-market fire the only exit rule that ran was the only one still ungated, and a hand-bought share printing TRADING_EXT_DIP_SELL_PCT under its prior regular close was sold out in full against a basis the engine never paid. The rule is close-anchored rather than basis-anchored, but the ORDER it emits is still a full-position sell of a quantity the engine cannot account for. Filtering can only shorten the returned list; a position without the mark is byte-identical to before.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | ADR-168 — MULTI_MARKET_BUCKETS, the single source of the 41-name multi-market extension (developed ex-US, emerging, fixed income, commodities, real estate, currency, digital assets), and SECTOR coverage for every one of those names. Each bucket is NEW: no default-universe name uses it, and the block is spread FIRST into SECTOR so it can never overwrite an existing mapping. A book that trades only DEFAULT_UNIVERSE therefore sizes, caps and tilts exactly as before; the change reaches only a book that holds or scans one of the 41 names, which moves from the shared 'other' bucket to its own market bucket. No dispatch leg reads the extension.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | ADR-052 addendum — ExitOrder's reason union gains the four per-position PLAN doors (plan-stop, plan-tp, plan-trail, plan-expiry) and an optional planId, so an exit taken on a position's own stored plan names the door and the plan it honored on the decision row. Type-only widening: no rule in this file emits a plan door (position-plan.ts does), and every existing exit keeps its exact shape.
  *
  * @module portfolio
  */
@@ -206,8 +207,11 @@ export function unmanagedSymbols(positions: Position[]): Set<string> {
   return new Set(positions.filter((p) => p.qty > 0 && p.unmanaged === true).map((p) => p.symbol.toUpperCase()));
 }
 
-/** A protective exit the manager wants to take right now. */
-export interface ExitOrder { symbol: string; qty: number; reason: 'stop_loss' | 'take_profit' | 'trailing_stop' | 'rotation' | 'cap_trim' | 'ext_dip'; pnlPct: number; }
+/** The four doors of a position's own stored exit plan (ADR-052 addendum; emitted by position-plan.ts). */
+export type PlanExitDoor = 'plan-stop' | 'plan-tp' | 'plan-trail' | 'plan-expiry';
+
+/** A protective exit the manager wants to take right now. `planId` is set only on a plan door. */
+export interface ExitOrder { symbol: string; qty: number; reason: 'stop_loss' | 'take_profit' | 'trailing_stop' | 'rotation' | 'cap_trim' | 'ext_dip' | PlanExitDoor; pnlPct: number; planId?: string; }
 
 /**
  * @description Extended-hours DEFENSIVE exits (the operator's off-hours doctrine, 2026-07-07:

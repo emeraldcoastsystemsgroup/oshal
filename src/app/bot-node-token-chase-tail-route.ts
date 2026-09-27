@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Bot-node tail executor (BACKLOG "Workspace-bound checkpoint and tail replay", ADR-046 §3): POST /api/token-chase/replay-tail, mounted from bot-node-server.ts behind the service-secret gate and the protected-bot transport check exactly like replay-call. On the accountable node it restores frame N's checkpoint commit into an isolated worktree (object restage for pre-commit frames) and the owner's store CIPHERTEXT into an isolated store root, walks frames N..end hermetically through tail-replay-runner.js (captured responses served, workspace tools re-executed, pinned reads verified, live tools refused), re-versions the restored store, and compares the resulting tree digest and store version with final.json. No provider is called (paidCalls stays 0 and is reported); the isolated roots are removed in a finally block. The replay root lives under the shared workspace root (TOKEN_CHASE_REPLAY_ROOT overrides) because the real file-tool handlers only accept a task workspace under the configured workspace roots.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Owner-store objects now live in the node's shared content-addressed directory (ownerStore.objectDir) instead of each run's .tokenchase/store-objects, so the restore reads from there; a run captured before that change still restores from its own store-objects when that directory exists. The store comparison awaits the now-async versionAt.
  */
 
 import fs from 'node:fs';
@@ -124,6 +125,18 @@ function finalForRunner(final: TokenChaseRunFinal | null): RunnerFinal {
 }
 
 /**
+ * @description Where a run's owner-store objects are: its own `.tokenchase/store-objects` when it was
+ * captured before objects moved to the node directory, else the node's shared object directory.
+ * @param captureDir - The run's capture directory.
+ * @param ownerStore - The node's snapshotter.
+ * @returns The directory to restore objects from.
+ */
+function storeObjectDirFor(captureDir: string, ownerStore: OwnerStoreSnapshotter): string {
+  const legacy = path.join(captureDir, 'store-objects');
+  return fs.existsSync(legacy) || !ownerStore.objectDir ? legacy : ownerStore.objectDir;
+}
+
+/**
  * @description Restores the owner's store CIPHERTEXT into the isolated store root when the start frame
  * recorded a version and this node has the store bound. Every refusal is a named reason, never a throw.
  */
@@ -141,7 +154,7 @@ async function restoreStore(
   const manifest = await reader.getStoreManifest(request.runId, version, request.access);
   if (!manifest || !Array.isArray(manifest.files)) return refused('the owner-store manifest is missing from the capture');
   try {
-    const result = deps.ownerStore.restore(manifest as unknown as OwnerStoreManifest, path.join(captureDir, 'store-objects'), storeRoot, start.ownerSub);
+    const result = deps.ownerStore.restore(manifest as unknown as OwnerStoreManifest, storeObjectDirFor(captureDir, deps.ownerStore), storeRoot, start.ownerSub);
     return { bound, restored: true, files: result.restored, version: result.version, reason: null };
   } catch (err) {
     logger.error({ err, runId: request.runId, version }, 'Token Chase owner-store restore failed');
@@ -150,12 +163,12 @@ async function restoreStore(
 }
 
 /** @description Re-versions the restored store and compares it with final.json's version. */
-function compareStore(
+async function compareStore(
   deps: BotNodeTokenChaseTailRouteDeps, store: TailReplayNodeStore, storeRoot: string, ownerSub: string | null, final: TokenChaseRunFinal | null,
-): TailReplayNodeStoreVersion {
+): Promise<TailReplayNodeStoreVersion> {
   const baseline = final?.ownerStoreVersion ?? null;
   if (!store.restored || !ownerSub) return { baseline, replay: null, reproduced: null, bound: store.bound };
-  const replay = deps.ownerStore.versionAt(storeRoot, ownerSub).version;
+  const replay = (await deps.ownerStore.versionAt(storeRoot, ownerSub)).version;
   return { baseline, replay, reproduced: baseline ? replay === baseline : null, bound: true };
 }
 
@@ -189,7 +202,7 @@ export async function executeTailReplayOnNode(
     const tail = await tailRunner.runHermeticTail({
       captureDir: loaded.captureDir, worktreeDir, frames: loaded.frames, final: finalForRunner(loaded.final), redact: tokenChase.redact,
     });
-    const storeVersion = compareStore(deps, store, storeRoot, loaded.start.ownerSub, loaded.final);
+    const storeVersion = await compareStore(deps, store, storeRoot, loaded.start.ownerSub, loaded.final);
     return {
       success: true, runId: request.runId, fromFrame: request.fromFrame, agentId: deps.agentId, ownerSub: loaded.start.ownerSub,
       status: combineStatus(tail.status, storeVersion),

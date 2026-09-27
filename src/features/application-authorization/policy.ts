@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep reserved management roles outside business-role and grant evaluation.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | ADR-157: a non-deny assignment naming ONE catalog permission grants exactly that permission at the narrowest scope, raising the tier only to what the permission itself declares. The management API cannot create such a row (parseAuthorizationChange refuses grant+permission), so this is inert for every assignment an administrator made; the only writer is an ADR-157 service activation, and revoking the activation removes the row.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Export the canonical key-sorted serialization so the AUTH-07 catalog diff compares declarations with exactly the encoding the catalog revision hashes.
  */
 /** Shared deterministic permission semantics; business adapters remain authoritative over records. */
 import { createHash } from 'node:crypto';
@@ -18,7 +19,9 @@ export interface RegisteredAuthorizationApp extends AuthorizationAppRegistration
 export function catalogRevision(app: AuthorizationAppRegistration): string {
   return createHash('sha256').update(canonical({ app: app.app, source: app.source, catalog: app.catalog })).digest('hex');
 }
-function canonical(value: unknown): string {
+/** @description Key-sorted JSON used for catalog revisions and for comparing catalog declarations.
+ * @param value Any JSON value. @returns Its canonical serialization. */
+export function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
   if (value && typeof value === 'object') return `{${Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(',')}}`;
   return JSON.stringify(value);
