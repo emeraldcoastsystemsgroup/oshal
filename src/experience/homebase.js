@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Integration review: the ticket dialog shows Reason and Next action only when metadata.lastStatusTransition describes the ticket's current status, read from that transition itself; the row-level reason/nextAction fields are written at creation and by transitions that carry them, so after a later transition without metadata they can describe an older state (an approved ticket kept its approval-gate reason), and a ticket created in its state has no mirror and shows State alone. Otherwise the dialog shows State alone. "My drafts" names what it reads: the caller's saved Content Studio drafts.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Fix round 1: row 8's reason corrected. Ticket creation also writes the row-level reason/nextAction (ticket-service createTicket, with no lastStatusTransition), so a ticket created directly in approval_required shows State alone; no dialog behaviour changed.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Acceptance fixes: the family and company homes read Little Monsters' read-only home-summary probe first and call /api/education/* only when it answers 200 (those routes can provision a learner row), and send nothing for an entry the plan does not admit; the family home's Little Monsters ribbon profile is gated the same way, because the profile asks the package's visibility route, which provisions too (proven in the acceptance sandbox). The classroom still reads them. A refusal names itself: not admitted reads "Little Monsters is not available to you", no school profile reads "Open Little Monsters once to set up your school profile", anything else shows its status. Due, event and last-active dates are read as the calendar day they name (LIVE.calendarDay). The learner card drops the classwork done/total count and progress bar (assignment status is class-wide, not per learner). Tickets awaiting approval lead the six project rows. A timed calendar event shows its day as well as its time.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | A hosted tool opens in view: after the tool page renders, the tool shell is scrolled to the top of the viewport (smoothly, or at once when the reader prefers reduced motion) and the frame is then focused without a second scroll. Opening a tool from low in a long sidebar kept the old scroll offset and left the frame above the viewport (Business preset, Marketing: frame top at -908px).
  */
 (() => {
   'use strict';
@@ -194,12 +195,23 @@
   const hostGroups = () => { const groups = []; navTools().forEach(t => { let g = groups.find(x => x.host === t.host); if (!g) { g = { host: t.host, kicker: t.kicker, tools: [] }; groups.push(g); } g.tools.push(t); }); return groups; };
   /** The URL a hosted tool opens with: its own surface plus this preset's audience view, as a request (a view id is never authority). */
   const hostedUrl = t => { const u = new URL(t.href, location.origin); if (preset.audience && !u.searchParams.has('audience')) u.searchParams.set('audience', preset.audience); return u.pathname + u.search + u.hash; };
-  /** @description Open an admitted tool in place. Anything not admitted for this caller is refused with a notice, never fetched. */
+  /** Whether the reader asked for reduced motion: a hosted tool then jumps into place instead of gliding there. */
+  const reducedMotion = () => Boolean(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  /**
+   * @description Open an admitted tool in place. The page scrolls so the tool shell starts at the top of the viewport
+   * before the frame takes focus: opening a tool from low in a long sidebar kept the old scroll offset, which left the
+   * frame above the viewport, and focusing a frame does not reliably bring it into view. Anything not admitted for this
+   * caller is refused with a notice, never fetched.
+   * @param {string} id The admitted tool's id.
+   * @returns {void}
+   */
   function openTool(id) {
     const t = toolById(id);
     if (!t) { notice('That view is not available to you here.'); return; }
     state.page = 'tool'; state.tool = t.id; render();
-    const frame = document.getElementById('tool-frame'); if (frame) frame.focus();
+    const toolShell = root.querySelector('.tool-shell');
+    if (toolShell) toolShell.scrollIntoView({ block: 'start', behavior: reducedMotion() ? 'auto' : 'smooth' });
+    const frame = document.getElementById('tool-frame'); if (frame) frame.focus({ preventScroll: true });
   }
   /** @description Navigation requests from the hosted tool, in the shapes the cockpit ribbon honours. Only the frame this home opened is heard, same origin only, and only admitted tools open. */
   function onSurfaceMessage(e) {

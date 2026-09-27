@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The hero, headings and escape are neutral elements with heading roles: a page's own `header { ... }` / `h1 { ... }` rules boxed the CAD Studio hero, and a shared view must not inherit the host page's tag styling.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | AppView.day(value) formats a date-only field whose value is 'YYYY-MM-DD' or exactly UTC midnight (how a Postgres DATE reaches JSON from a UTC server) as that calendar day, so DATE columns such as Payroll's pay dates no longer print a day early in US zones; other values format as AppView.date does.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | A tile, list item or table row may carry `target: '_blank'`: its href then opens in a new tab with `noopener` and the framed view stays where it is. Before, an item href always navigated the frame (only hero and section actions honoured `target`), so a store view could not hand a reader to an outside page (a playlist, a source article) without leaving the shell; everything else is unchanged.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | AppView.when reads 'just now' within 60 seconds either side of now: a timestamp equal to the reader's clock (a record saved this instant) returned 'soon', so a just-saved record read "Written soon.". A future time more than a minute ahead within the hour still reads 'soon', and earlier within the hour still reads 'just now'.
  * -----------------------------------------------------------------------------
  *
  * Usage (in a store page, after the theme bootstrap):
@@ -114,14 +115,20 @@
     return m ? date(new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))) : date(value);
   }
 
-  /** @returns {string} A relative phrase (today · tomorrow · in 3 days · 2 h ago · Mar 4 beyond two weeks). */
+  /**
+   * @description A relative phrase for a timestamp. Within a minute either side of now reads 'just now': a record saved
+   * this instant carries a timestamp equal to (or, with clock skew, a moment ahead of) the reader's clock, and 'soon'
+   * made it read "Written soon.". Later within the hour reads 'soon'; earlier within the hour reads 'just now'.
+   * @param {string|number|Date|null|undefined} value The timestamp, or a 'YYYY-MM-DD' calendar day.
+   * @returns {string} just now · soon · in 3 h · 2 h ago · today · tomorrow · in 3 days · Mar 4 beyond two weeks; an em dash when unreadable.
+   */
   function when(value) {
     var d = toDate(value); if (!value || isNaN(d.getTime())) return '—';
     var dayOnly = typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value), now = new Date();
     var diffMs = d.getTime() - now.getTime(), hours = Math.round(diffMs / 36e5);
     // A date-only value is a calendar day: compare days from the start of today, never hours.
     var days = dayOnly ? Math.round((d.getTime() - new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()) / 864e5) : Math.round(diffMs / 864e5);
-    if (!dayOnly && Math.abs(diffMs) < 36e5) return diffMs >= 0 ? 'soon' : 'just now';
+    if (!dayOnly && Math.abs(diffMs) < 36e5) return diffMs > 6e4 ? 'soon' : 'just now';
     if (!dayOnly && Math.abs(hours) < 24) return hours > 0 ? 'in ' + hours + ' h' : Math.abs(hours) + ' h ago';
     if (days === 0) return 'today';
     if (days === 1) return 'tomorrow';

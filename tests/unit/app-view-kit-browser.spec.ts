@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | No header/h1/h2/h3 inside the kit root (heading roles instead) so host-page tag rules cannot restyle a view
  * 4 | maintainer@emeraldcoastsystemsgroup.com | AppView.day under America/Chicago: a UTC-midnight DATE value ('YYYY-MM-DDT00:00:00(.000)Z') and a plain 'YYYY-MM-DD' print as their own day, while AppView.date of the same instant shows the day before (the precondition)
  * 5 | maintainer@emeraldcoastsystemsgroup.com | The classroom grammar: a classroom request paints a data-audience="classroom" root whose tiles, buttons, list rows and escape are at least 48px tall (also at phone width, one tile per row, no horizontal overflow); an item carrying target '_blank' opens a new page with no opener from a click or Enter while the frame and the top window stay where they are, and an item without one is still handled on the page. The "requested but not provided" case now narrows the synthetic page's builders with ?provides=.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | AppView.when within a minute either side of now reads 'just now' (now, a Date equal to now, 1 s and 45 s ahead or behind), a time 90 s or 30 min ahead still reads 'soon', and 20 min ago still reads 'just now': a just-saved record read "Written soon.".
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -189,6 +190,18 @@ describe('shared audience-view kit', () => {
       function localDay(offsetDays: number) { const d = new Date(); d.setDate(d.getDate() + offsetDays); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
     });
     expect(out).toEqual(['$1,235', '$12.00', '—', '12.4k', '2.5M', '42', '26%', '80%', 'in 3 days', '2 h ago', '—', '—', 'Sep 15', 'Jan 2, 2025', 'today', 'tomorrow', '3 days ago']);
+  });
+
+  it('AppView.when reads a timestamp within a minute either side of now as "just now", and later this hour as "soon"', async () => {
+    await open('');
+    const out = await page.evaluate(() => {
+      const AV = (window as unknown as { AppView: { when(v: unknown): string } }).AppView;
+      const at = (offsetMs: number) => new Date(Date.now() + offsetMs).toISOString();
+      // A record saved this instant, or stamped a moment ahead of the reader's clock, is 'just now' (it read "Written soon.").
+      return [AV.when(new Date()), AV.when(at(0)), AV.when(at(1000)), AV.when(at(45_000)), AV.when(at(-1000)), AV.when(at(-45_000)),
+        AV.when(at(90_000)), AV.when(at(30 * 60_000)), AV.when(at(-20 * 60_000))];
+    });
+    expect(out).toEqual(['just now', 'just now', 'just now', 'just now', 'just now', 'just now', 'soon', 'soon', 'just now']);
   });
 
   it('AppView.day prints a UTC-midnight DATE value as its own day for a reader in a US zone', async () => {
