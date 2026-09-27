@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Studio, Jarvis, Orbit and Commons shells rendered over the live swarm: installed applications and suites, the caller's tickets and Jarvis tasks, per-app summaries, device-local pins and the real Jarvis thread (Commons keeps one thread per room). The prototype's scene picker, example people, sample replies and hardcoded launch map are gone; every count, name and status on screen comes from the signed-in session.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Each layout hosts applications with its audience (studio, orbit and commons ask for company, Jarvis for family) through the shell's shared helper and Summary view / Full application switch; the Studio selected-workspace aside and the Orbit inspector list declared assistants and member / Required / Optional relationships from the package record instead of calling everything an integration source; the Commons Game room uses the shell's shared games predicate; Commons shows the swarm roster (or the caller alone when the directory refuses) as a roster, not room membership; the Jarvis aside renders agenda rows from the overview calendar feed plus the caller's Little Monsters calendar when that package is installed, naming each source and its empty or refused state.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Integration review: the Jarvis agenda no longer provisions a Little Monsters learner. The calendar route resolves the caller without readOnly (it can create or link a learner row), so the package's read-only home-summary probe is read first and the calendar only when that probe answers 200; a 403/404 probe says to open Little Monsters once and sends no /api/education request. Agenda copy names the source as the Little Monsters calendar (classes and personal events) and an absent package as not in your catalog. The Orbit inspector lists the declared assistants beside its relationships, as the Studio aside does.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Acceptance fixes: a Little Monsters entry the caller's plan does not admit is not available to them, so the agenda sends neither the probe nor a calendar read and says so, instead of "could not be checked (HTTP unreachable)" (a listed-only entry has no probe). A probe refusal is named from its code: an application-authorization refusal reads "not available to you", the package's no-school-profile refusal says to open Little Monsters once to set up the profile, anything else could not be checked. Class event dates come through LIVE.calendarDay (they were already read as local days; the helper is now the one rule for date-only fields).
  */
 (() => {
   'use strict';
@@ -57,13 +58,15 @@
    * @description Jarvis agenda: the caller's Little Monsters calendar, read without provisioning anyone. The calendar route
    * resolves the caller as a learner (it can create or link a learner row), so the package's own read-only home-summary
    * probe goes first and the calendar is read only when that probe answers 200; otherwise no /api/education request is sent.
+   * An entry the authorized plan does not admit (listed, not in the plan) is not available to the caller: no probe either.
    * @returns {Promise<void>} Resolves once the agenda slot is painted.
    */
   async function loadAgenda() {
     const lm = shell.byId('little-monsters');
     if (!lm) { agendaClass = { installed: false }; paintAgenda(); return; }
+    if (!lm.inPlan && snapshot.sources.plan === 200) { agendaClass = { installed: true, refusal: 'not-granted', ok: false, status: 0, events: [] }; paintAgenda(); return; }
     const probe = await shell.summaryFor(lm);
-    if (probe.status !== 200) { agendaClass = { installed: true, probe: probe.status || 0, ok: false, status: 0, events: [] }; paintAgenda(); return; }
+    if (probe.status !== 200) { agendaClass = { installed: true, probe: probe.status || 0, refusal: LIVE.littleMonstersRefusal(probe.status, probe.error), ok: false, status: 0, events: [] }; paintAgenda(); return; }
     const r = await LIVE.packages.education.agenda(new Date());
     agendaClass = Object.assign({ installed: true, probe: 200 }, r); paintAgenda();
   }
@@ -124,11 +127,12 @@
     return `${feed} ${classSource(agendaClass)}`;
   }
   const CLASS_SOURCE = 'Little Monsters calendar (classes and personal events)';
-  /** The Little Monsters half of the agenda's source line: not in the catalog, probe refused or failed, calendar refused, empty or read. */
+  /** The Little Monsters half of the agenda's source line: not in the catalog, not admitted, no school profile yet, probe failed, calendar refused, empty or read. */
   function classSource(c) {
     if (!c) return 'Reading your Little Monsters calendar…';
     if (!c.installed) return 'Little Monsters is not in your catalog, so its calendar is not read.';
-    if (c.probe === 403 || c.probe === 404) return 'Open Little Monsters once to see its calendar here.';
+    if (c.refusal === 'not-granted') return 'Little Monsters is not available to you, so its calendar is not read.';
+    if (c.refusal === 'no-profile') return 'Open Little Monsters once to set up your school profile; its calendar then shows here.';
     if (c.probe !== 200) return `Little Monsters could not be checked (HTTP ${c.probe || 'unreachable'}), so its calendar is not read.`;
     if (!c.ok) return `${CLASS_SOURCE} ${[401, 403, 404].includes(c.status) ? 'refused' : 'unavailable'} (HTTP ${c.status || 'unreachable'}).`;
     return c.events.length ? `${CLASS_SOURCE}, this month and next.` : `${CLASS_SOURCE}: nothing this month or next.`;

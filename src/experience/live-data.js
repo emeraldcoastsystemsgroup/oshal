@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com | JSDoc for the background-work client members (markDelivered, cancelWork)
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Integration review: one same-origin guard, localHref, resolves a server-provided link against the page origin the way the browser will (tab/CR/LF stripped, a backslash read as a slash) and keeps only a path that stays on this origin, so '//host', '/\host' and a tab-split '/<TAB>/host' can never become a link. ask()'s poll-limit result carries code 'poll_limit' so a caller can say the page stopped checking instead of calling the request failed. The roster read keeps the route's refusal code (roster_scope_denied vs roster_administrator_required). markDelivered is removed: the Jarvis page stays the one surface that announces and marks results.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Fix round 1: localHref checks the path it returns as well as the URL it resolved. Dot segments normalise '/..//host', '/.//host' and '/%2e%2e//host' to a pathname that starts with '//', which the guard returned as a protocol-relative link that opens another origin; now a returned path must not start with '//' and must itself resolve to the page origin. The admitted navigation href from GET /api/ui/workspaces goes through the same guard and falls back to the cockpit link when refused, so every catalog Open link stays on this origin.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Acceptance fixes: calendarDay reads a date-only field ('YYYY-MM-DD' or exactly UTC midnight, how a Postgres DATE reaches JSON) as that local calendar day, so a Little Monsters due date no longer prints a day early west of Greenwich (due_date was the only field read through `new Date(iso)`); event and last-active dates were already read as local days and now share the helper, as do the agenda's class events. probeSummary carries the first probe's refusal code as `error`, and littleMonstersRefusal names an application-authorization refusal (403 app_access_* / authorization_*) apart from the package's no-school-profile sentence, so a shell stops telling an unadmitted caller to open Little Monsters.
  */
 (function attach(root, factory) {
   'use strict';
@@ -214,8 +215,8 @@
       (r && r.ok && r.body && Array.isArray(r.body.events) ? r.body.events : []).forEach(function (e) {
         if (!e || !e.event_id || seen[e.event_id]) return;
         seen[e.event_id] = true;
-        var when = new Date(String(e.event_date || '').slice(0, 10) + 'T' + (e.event_time || '00:00:00'));
-        if (isNaN(when.getTime())) return;
+        var when = calendarDay(e.event_date, e.event_time);
+        if (!when) return;
         rows.push({ id: String(e.event_id), title: String(e.title || 'Event'), when: when, timed: Boolean(e.event_time), className: e.class_name ? String(e.class_name) : '' });
       });
     });
@@ -252,6 +253,49 @@
   }
 
   function parseDate(value) { if (!value) return null; var d = new Date(value); return isNaN(d.getTime()) ? null : d; }
+
+  /** A date-only value: 'YYYY-MM-DD', or exactly UTC midnight ('YYYY-MM-DDT00:00:00Z', optional .0-.000), the form a Postgres DATE column takes in JSON when the server runs in UTC. */
+  var DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})(?:T00:00:00(?:\.0{1,3})?Z)?$/;
+  var CLOCK = /^(\d{1,2}):(\d{2})(?::(\d{2}))?/;
+  /**
+   * @description The local calendar day a date-only field names. `new Date('2026-09-29T00:00:00.000Z')` is UTC
+   * midnight, which every zone west of Greenwich prints as Sep 28; a due date or an event date is a day, not an
+   * instant, so a date-only value becomes local midnight of that same Y-M-D. Any other value is an instant and
+   * yields the local day it falls on. An optional wall-clock time ('HH:MM[:SS]', e.g. a Little Monsters event_time)
+   * is applied to that day.
+   * @param {string|Date|null|undefined} value The field as the route sent it.
+   * @param {string} [time] Optional local time of day.
+   * @returns {Date|null} Local midnight of the day (or that day at `time`), or null when the value is not a date.
+   */
+  function calendarDay(value, time) {
+    var m = DATE_ONLY.exec(String(value === null || value === undefined ? '' : value).trim());
+    var day = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : parseDate(value);
+    if (!day || isNaN(day.getTime())) return null;
+    if (m && (day.getFullYear() !== Number(m[1]) || day.getMonth() !== Number(m[2]) - 1 || day.getDate() !== Number(m[3]))) return null;
+    day = new Date(day.getFullYear(), day.getMonth(), day.getDate());
+    var t = CLOCK.exec(String(time || ''));
+    if (t) day.setHours(Number(t[1]), Number(t[2]), Number(t[3] || 0), 0);
+    return day;
+  }
+
+  /** Little Monsters' read-only probe refuses a caller with no school profile with this sentence (resolveAuthedStudent readOnly); the package sends no machine code, so the sentence is its contract. */
+  var LM_SETUP_REQUIRED = 'Open Little Monsters to complete school setup';
+  /**
+   * @description Name a Little Monsters refusal from the status and the route's `error` field. The platform's
+   * application authorization refuses with 403 and a machine code (`app_access_denied` / `app_access_identity_required`
+   * / `app_readonly` from the app-access gate, `authorization_*` from the catalog runtime): the caller is not admitted.
+   * The package's own 403 with its setup sentence means the caller is admitted but has no school profile yet. Anything
+   * else is an ordinary refusal or failure the caller shows with its status.
+   * @param {number} status HTTP status.
+   * @param {string} [error] The response body's `error` string.
+   * @returns {'not-granted'|'no-profile'|''} The refusal kind, or '' for any other outcome.
+   */
+  function littleMonstersRefusal(status, error) {
+    var code = typeof error === 'string' ? error : '';
+    if (status !== 403) return '';
+    if (/^(app_access_|app_readonly$|authorization_)/.test(code)) return 'not-granted';
+    return code === LM_SETUP_REQUIRED ? 'no-profile' : '';
+  }
 
   /** @description Human relative time; the absolute value stays available for titles. */
   function relativeTime(date, now) {
@@ -432,11 +476,13 @@
 
     /** @description Ask the app's own home-summary probes in the viewer's session; cached briefly per app. */
     async function probeSummary(app) {
-      if (!app || !app.probes.length) return { tiles: [], items: [], ok: false, none: true, status: 0, partial: false, asOf: '' };
+      if (!app || !app.probes.length) return { tiles: [], items: [], ok: false, none: true, status: 0, error: '', partial: false, asOf: '' };
       var cached = summaryCache.get(app.id);
       if (cached && Date.now() - cached.at < 60000) return cached.value;
       var responses = await Promise.all(app.probes.map(function (probe) { return getJson(probe.path, { timeoutMs: 8000 }).then(function (r) { return { probe: probe, res: r }; }); }));
-      var out = { tiles: [], items: [], ok: false, none: false, status: responses[0] ? responses[0].res.status : 0, partial: false, asOf: '' };
+      var first = responses[0] ? responses[0].res : null;
+      // The first probe's refusal code travels with its status, so a shell can tell "not admitted" from "not set up yet".
+      var out = { tiles: [], items: [], ok: false, none: false, status: first ? first.status : 0, error: first && !first.ok && first.body && typeof first.body.error === 'string' ? first.body.error : '', partial: false, asOf: '' };
       responses.forEach(function (entry) {
         if (!entry.res.ok || !entry.res.body) return;
         var s = normalizeSummary(entry.res.body, entry.probe);
@@ -680,7 +726,7 @@
     SUITE_META: SUITE_META, SUITE_ORDER: SUITE_ORDER, statusOf: statusOf, initials: initials, deriveIdentity: deriveIdentity,
     mergeApps: mergeApps, buildSuites: buildSuites, mergeWork: mergeWork, normalizeTicket: normalizeTicket, normalizeTask: normalizeTask,
     atPointer: atPointer, normalizeSummary: normalizeSummary, relativeTime: relativeTime, clockTime: clockTime, parseDate: parseDate,
-    dependencyTiers: dependencyTiers, declaredAssistants: declaredAssistants, directoryPeople: directoryPeople, classEvents: classEvents,
+    calendarDay: calendarDay, littleMonstersRefusal: littleMonstersRefusal, dependencyTiers: dependencyTiers, declaredAssistants: declaredAssistants, directoryPeople: directoryPeople, classEvents: classEvents,
     localHref: localHref, createClient: createClient
   };
   if (typeof window !== 'undefined' && typeof fetch === 'function') {

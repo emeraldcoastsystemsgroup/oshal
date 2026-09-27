@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com | The ticket action reads 'Approve': the route moves Approval Required to Approved, and what follows depends on the ticket (dispatch, resume), so the label names only the transition
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Integration review: the ticket dialog shows Reason and Next action only when metadata.lastStatusTransition describes the ticket's current status, read from that transition itself; the row-level reason/nextAction fields are written at creation and by transitions that carry them, so after a later transition without metadata they can describe an older state (an approved ticket kept its approval-gate reason), and a ticket created in its state has no mirror and shows State alone. Otherwise the dialog shows State alone. "My drafts" names what it reads: the caller's saved Content Studio drafts.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Fix round 1: row 8's reason corrected. Ticket creation also writes the row-level reason/nextAction (ticket-service createTicket, with no lastStatusTransition), so a ticket created directly in approval_required shows State alone; no dialog behaviour changed.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Acceptance fixes: the family and company homes read Little Monsters' read-only home-summary probe first and call /api/education/* only when it answers 200 (those routes can provision a learner row), and send nothing for an entry the plan does not admit; the family home's Little Monsters ribbon profile is gated the same way, because the profile asks the package's visibility route, which provisions too (proven in the acceptance sandbox). The classroom still reads them. A refusal names itself: not admitted reads "Little Monsters is not available to you", no school profile reads "Open Little Monsters once to set up your school profile", anything else shows its status. Due, event and last-active dates are read as the calendar day they name (LIVE.calendarDay). The learner card drops the classwork done/total count and progress bar (assignment status is class-wide, not per learner). Tickets awaiting approval lead the six project rows. A timed calendar event shows its day as well as its time.
  */
 (() => {
   'use strict';
@@ -45,6 +46,11 @@
   const teachableClasses = edu => edu && edu.me && ['teacher', 'admin'].includes(edu.me.role) ? edu.classes.filter(c => edu.me.role === 'admin' || c.teacher_student_id === edu.me.studentId) : [];
   const canConfigure = () => !me().guest;
   const refusal = r => r && r.body && typeof r.body.error === 'string' ? `: ${r.body.error}` : '';
+  const errorOf = r => r && !r.ok && r.body && typeof r.body.error === 'string' ? r.body.error : '';
+  /** The sentence for a Little Monsters read that did not answer: not admitted, no school profile yet, or the module's own wording (`other`) for any other refusal. */
+  const eduRefusal = (edu, other) => edu.refusal === 'not-granted' ? 'Little Monsters is not available to you.' : edu.refusal === 'no-profile' ? 'Open Little Monsters once to set up your school profile.' : other;
+  /** A Little Monsters date-only field (due_date) as the local calendar day it names, never UTC midnight shifted into the day before. */
+  const dueOn = v => { const d = LIVE.calendarDay(v); return d ? d.toLocaleDateString() : String(v); };
   const human = s => String(s).replace(/_/g, ' ');
   // The package's allowed assignment types (the lm_assignments CHECK constraint), with display labels.
   const CLASSWORK_TYPES = [['homework', 'Homework'], ['reading', 'Reading'], ['project', 'Project'], ['lab', 'Lab'], ['quiz-prep', 'Quiz prep'], ['test', 'Test']];
@@ -69,13 +75,17 @@
 
   /* ── live sources ────────────────────────────────────────────── */
   async function loadEducation() {
-    if (!has('little-monsters')) { data.edu = { installed: false }; return; }
+    const lm = app('little-monsters');
+    if (!lm) { data.edu = { installed: false }; return; }
+    // The classroom is Little Monsters itself and reads its routes; any other home asks the read-only probe first.
+    const gate = key === 'classroom' ? null : await educationGate(lm);
+    if (gate) { data.edu = gate; return; }
     const E = LIVE.packages.education, now = new Date(), next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
     const [meRes, classes, assignments, cal1, cal2] = await Promise.all([E.me(), E.classes(), E.assignments(), E.calendar(isoDay(now).slice(0, 7)), E.calendar(isoDay(next).slice(0, 7))]);
-    const edu = { installed: true, ok: meRes.ok, status: meRes.status, me: meRes.ok ? meRes.body : null, classes: classes.ok && classes.body ? classes.body.classes || [] : [], assignments: assignments.ok && assignments.body ? assignments.body.assignments || [] : [], events: [], rosters: new Map(), activity: new Map() };
+    const edu = { ...refusedEdu(meRes.status, errorOf(meRes), meRes.ok ? '' : undefined), ok: meRes.ok, me: meRes.ok ? meRes.body : null, classes: classes.ok && classes.body ? classes.body.classes || [] : [], assignments: assignments.ok && assignments.body ? assignments.body.assignments || [] : [] };
     const events = [].concat(cal1.ok && cal1.body ? cal1.body.events || [] : [], cal2.ok && cal2.body ? cal2.body.events || [] : []);
     const seen = new Set();
-    edu.events = events.filter(e => e && e.event_id && !seen.has(e.event_id) && seen.add(e.event_id)).map(e => ({ ...e, when: new Date(`${String(e.event_date).slice(0, 10)}T${e.event_time || '00:00:00'}`) })).filter(e => !isNaN(e.when.getTime())).sort((a, b) => a.when - b.when);
+    edu.events = events.filter(e => e && e.event_id && !seen.has(e.event_id) && seen.add(e.event_id)).map(e => ({ ...e, when: LIVE.calendarDay(e.event_date, e.event_time) })).filter(e => e.when).sort((a, b) => a.when - b.when);
     if (edu.me && ['teacher', 'admin'].includes(edu.me.role)) {
       const mine = teachableClasses(edu);
       edu.classes.forEach(c => { if (!mine.includes(c)) edu.rosters.set(c.class_id, { status: 403, students: null }); });
@@ -86,6 +96,30 @@
       }));
     }
     data.edu = edu;
+  }
+  /**
+   * @description Little Monsters state for a read that did not answer 200: its status, the route's error string and the
+   * refusal kind (not admitted, no school profile yet, or '' for any other refusal), with empty class data.
+   * @param {number} status HTTP status (0 when nothing was asked).
+   * @param {string} error The response's `error` string, or ''.
+   * @param {string} [refusal] A known kind; omitted, it is read from the status and error.
+   * @returns {object} The education state the modules render.
+   */
+  function refusedEdu(status, error, refusal) {
+    return { installed: true, ok: false, status, error, refusal: refusal === undefined ? LIVE.littleMonstersRefusal(status, error) : refusal, me: null, classes: [], assignments: [], events: [], rosters: new Map(), activity: new Map() };
+  }
+  /**
+   * @description Family and company homes are not Little Monsters, and its /api/education/* routes can create or link a
+   * learner row (and promote a role) for a caller with no school profile. So, as the Jarvis agenda does, the package's
+   * read-only home-summary probe is read first and the education routes only after it answers 200. An entry the
+   * authorized plan does not admit is not available to the caller: no probe and no education request.
+   * @param {object} lm The Little Monsters catalog entry.
+   * @returns {Promise<object|null>} The state to show instead of reading, or null when the probe answered 200.
+   */
+  async function educationGate(lm) {
+    if (!lm.inPlan && snapshot.sources.plan === 200) return refusedEdu(0, '', 'not-granted');
+    const probe = await LIVE.probeSummary(lm);
+    return probe.status === 200 ? null : refusedEdu(probe.status, probe.error || '');
   }
   /** @description One class's analytics answer kept as activity per learner id plus the package's class summary; a refusal keeps only its status. */
   function activityOf(r) {
@@ -129,7 +163,7 @@
   async function loadTools() {
     const hosts = (preset.hosts || []).filter(h => has(h.app));
     if (!hosts.length) { data.tools = null; return; }
-    const results = await Promise.all(hosts.map(async h => ({ host: h, r: await LIVE.packages.profile(h.app) })));
+    const results = await Promise.all(hosts.map(async h => ({ host: h, r: await hostProfile(h) })));
     const seen = new Set(), items = [];
     for (const { host, r } of results) {
       const list = r.ok && r.body && r.body.profile && r.body.profile.ribbon && Array.isArray(r.body.profile.ribbon.items) ? r.body.profile.ribbon.items : [];
@@ -140,6 +174,17 @@
       }
     }
     data.tools = { items, hosts: hosts.map(h => h.app), statuses: results.map(x => x.r.status) };
+  }
+  /**
+   * @description One host's ribbon profile. Outside the classroom, Little Monsters' profile is read only after the same
+   * probe gate as its education routes: the profile asks the package's visibility route, which can create a learner row
+   * for a caller with no school profile. A gated host lists no tools (status 0, nothing asked).
+   * @param {{app: string}} h The preset's host entry.
+   * @returns {Promise<{ok: boolean, status: number, body: object|null}>} The profile answer, or an empty one when gated.
+   */
+  async function hostProfile(h) {
+    if (h.app === 'little-monsters' && key !== 'classroom' && await educationGate(app(h.app))) return { ok: false, status: 0, body: null };
+    return LIVE.packages.profile(h.app);
   }
   const admittedTools = () => data.tools ? data.tools.items : [];
   /** Tools offered in the rails: the preset's hidden prefixes stay out (per-class tools and off-audience tiles have their own place). */
@@ -185,9 +230,18 @@
     const today = new Date(); today.setHours(0, 0, 0, 0);
     return edu.events.filter(e => e.when >= today).slice(0, 6);
   }
+  /** Today, or the short weekday and date, for the day an event falls on. */
+  const eventDay = d => isoDay(d) === isoDay(new Date()) ? 'Today' : d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  /** @description One calendar row: a timed event shows its time and, beneath it, the day it falls on; an untimed event shows its day. */
+  function eventRow(e) {
+    const time = e.event_time
+      ? `${esc(LIVE.clockTime(e.when).replace(/\s?[AP]M$/i, ''))}<small>${e.when.getHours() >= 12 ? 'PM' : 'AM'}</small><small class="event-day">${esc(eventDay(e.when))}</small>`
+      : `${esc(isoDay(e.when) === isoDay(new Date()) ? 'Today' : e.when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))}<small></small>`;
+    return `<div class="event"><div class="event-time">${time}</div><div><strong>${esc(e.title)}</strong><p>${esc(e.class_name ? `${e.class_name}${e.subject ? ` · ${e.subject}` : ''}` : 'Personal')}${e.event_type && e.event_type !== 'custom' ? ` · ${esc(e.event_type)}` : ''}</p></div>${pill(e.class_name ? 'Class' : 'Personal')}</div>`;
+  }
   function calendar() {
     const edu = data.edu, events = upcomingEvents(), canAdd = Boolean(edu && edu.ok);
-    const body = !edu ? '<p class="subtle">Reading the calendar…</p>' : !edu.installed ? '<p class="subtle">No application on this swarm contributes a shared calendar yet. Little Monsters adds class and personal events when it is installed.</p>' : !edu.ok ? `<p class="subtle">The calendar could not be read (HTTP ${edu.status}). ${edu.status === 403 || edu.status === 404 ? 'Open Little Monsters once to create your learner profile.' : ''}</p>` : events.length ? events.map(e => `<div class="event"><div class="event-time">${esc(e.event_time ? LIVE.clockTime(e.when).replace(/\s?[AP]M$/i, '') : isoDay(e.when) === isoDay(new Date()) ? 'Today' : e.when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))}<small>${esc(e.event_time ? (e.when.getHours() >= 12 ? 'PM' : 'AM') : '')}</small></div><div><strong>${esc(e.title)}</strong><p>${esc(e.class_name ? `${e.class_name}${e.subject ? ` · ${e.subject}` : ''}` : 'Personal')}${e.event_type && e.event_type !== 'custom' ? ` · ${esc(e.event_type)}` : ''}</p></div>${pill(e.class_name ? 'Class' : 'Personal')}</div>`).join('') : '<p class="subtle">Nothing scheduled in the next weeks. Add a moment below or open Little Monsters.</p>';
+    const body = !edu ? '<p class="subtle">Reading the calendar…</p>' : !edu.installed ? '<p class="subtle">No application on this swarm contributes a shared calendar yet. Little Monsters adds class and personal events when it is installed.</p>' : !edu.ok ? `<p class="subtle">${esc(eduRefusal(edu, `The calendar could not be read (HTTP ${edu.status}${edu.error ? `: ${edu.error}` : ''}).`))}</p>` : events.length ? events.map(eventRow).join('') : '<p class="subtle">Nothing scheduled in the next weeks. Add a moment below or open Little Monsters.</p>';
     return `<section class="panel" data-module="calendar">${head(preset.calendarHeading, canAdd ? btn('+ Add', 'event', 'text-button') : '')}${config.week ? weekStrip() : ''}${body}<p class="subtle" style="margin-top:17px">${edu && edu.ok ? `Class events from ${edu.classes.length} class${edu.classes.length === 1 ? '' : 'es'} plus your personal events, read from Little Monsters.` : 'Calendar source: Little Monsters class and personal events.'}</p></section>`;
   }
   function shopping() {
@@ -225,16 +279,24 @@
     const edu = data.edu, lm = app('little-monsters');
     if (!edu) return `<section class="panel feature-card" data-module="learning-loading"><div class="panel-kicker">JUST FOR ${esc(displayName().toUpperCase())}</div><p>Reading your learning space…</p></section>`;
     if (!edu.installed) return `<section class="panel feature-card" data-module="learning"><div class="panel-kicker">JUST FOR ${esc(displayName().toUpperCase())}</div><h2>A little progress, every day.</h2><p>Little Monsters is not installed on this swarm, so there is no learning space to show.</p></section>`;
-    if (!edu.ok) return `<section class="panel feature-card" data-module="learning"><div class="panel-kicker">JUST FOR ${esc(displayName().toUpperCase())}</div><h2>Your learning space is waiting.</h2><p>Open Little Monsters once to create your learner profile; your classes and classwork will appear here.</p>${lm ? link('Open Little Monsters ↗', lm.href, 'button') : ''}</section>`;
+    if (!edu.ok) return learningRefused(edu, lm);
     if (isTeacher()) return `<section class="panel feature-card" data-module="learning"><div class="panel-kicker">JUST FOR ${esc(displayName().toUpperCase())}</div><h2>You teach ${edu.me.classCount || edu.classes.length} class${(edu.me.classCount || edu.classes.length) === 1 ? '' : 'es'}.</h2><p>${assignmentsOpen().length} open classwork item${assignmentsOpen().length === 1 ? '' : 's'} across them.</p>${lm ? link('Open Little Monsters ↗', lm.href, 'button') : ''}</section>`;
-    const open = assignmentsOpen(), total = edu.assignments.length, done = total - open.length, next = open[0];
-    return `<section class="panel feature-card" data-module="learning"><div class="panel-kicker">JUST FOR ${esc(displayName().toUpperCase())}</div><h2>A little progress, every day.</h2><p>${edu.classes.length} class${edu.classes.length === 1 ? '' : 'es'} · ${open.length} open classwork item${open.length === 1 ? '' : 's'}.</p><div class="focus-count">${done}<span style="font:13px 'Segoe UI',sans-serif"> / ${total} classwork done</span></div><div class="progress-track" role="progressbar" aria-label="Classwork completed" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${done}"><span style="width:${total ? done / total * 100 : 0}%"></span></div><p>${next ? `Next: ${esc(next.title)}${next.class_name ? ` · ${esc(next.class_name)}` : ''}${next.due_date ? ` · due ${esc(new Date(next.due_date).toLocaleDateString())}` : ''}` : 'Nothing is due right now.'}</p>${btn('Open my checklist', 'learning', 'button')}</section>`;
+    // Open classwork only: assignment status is class-wide, and Little Monsters records no per-learner completion to count.
+    const open = assignmentsOpen(), next = open[0];
+    return `<section class="panel feature-card" data-module="learning"><div class="panel-kicker">JUST FOR ${esc(displayName().toUpperCase())}</div><h2>A little progress, every day.</h2><p>${edu.classes.length} class${edu.classes.length === 1 ? '' : 'es'} · ${open.length} open classwork item${open.length === 1 ? '' : 's'}.</p><p>${next ? `Next: ${esc(next.title)}${next.class_name ? ` · ${esc(next.class_name)}` : ''}${next.due_date ? ` · due ${esc(dueOn(next.due_date))}` : ''}` : 'Nothing is due right now.'}</p>${btn('Open my checklist', 'learning', 'button')}</section>`;
+  }
+  /** @description The learning card when Little Monsters did not answer: not admitted (no way in offered), no school profile yet (open it once), or the refusal as read. */
+  function learningRefused(edu, lm) {
+    const kicker = `<div class="panel-kicker">JUST FOR ${esc(displayName().toUpperCase())}</div>`;
+    if (edu.refusal === 'not-granted') return `<section class="panel feature-card" data-module="learning">${kicker}<h2>${esc(eduRefusal(edu, ''))}</h2><p>An administrator manages that access; choosing this home does not change it.</p></section>`;
+    const text = eduRefusal(edu, `Your learning space could not be read (HTTP ${edu.status}${edu.error ? `: ${edu.error}` : ''}).`);
+    return `<section class="panel feature-card" data-module="learning">${kicker}<h2>Your learning space is waiting.</h2><p>${esc(text)}${edu.refusal === 'no-profile' ? ' Your classes and classwork then appear here.' : ''}</p>${lm ? link('Open Little Monsters ↗', lm.href, 'button') : ''}</section>`;
   }
   function requirements() {
     const edu = data.edu, lm = app('little-monsters'), open = assignmentsOpen(), next = open[0];
     if (!edu) return `<section class="panel ${state.page === 'home' ? 'quest-card' : ''}" data-module="requirements-loading"><div class="panel-kicker">CLASSWORK</div><p>Reading classwork…</p></section>`;
-    if (!edu.installed || !edu.ok) return `<section class="panel ${state.page === 'home' ? 'quest-card' : ''}" data-module="requirements"><div class="panel-kicker">CLASSWORK</div><h2>${!edu || !edu.installed ? 'Little Monsters is not installed.' : 'Open Little Monsters to join a class.'}</h2><p>Classwork appears here once you belong to a class.</p></section>`;
-    return `<section class="panel ${state.page === 'home' ? 'quest-card' : ''}" data-module="requirements"><div class="panel-kicker">CLASSWORK / ${open.length} OPEN</div><h2>${next ? esc(next.title) : 'No open classwork.'}</h2><p style="margin:12px 0 16px">${next ? esc(next.description || `${next.class_name || 'Class'}${next.assignment_type ? ` · ${next.assignment_type}` : ''}`) : 'When a teacher publishes an assignment it appears here with its due date.'}</p>${open.length ? `<ol class="requirement-list">${open.slice(0, 4).map((a, i) => `<li><span class="step-num">${i + 1}</span><span>${esc(a.title)}${a.class_name ? ` <small class="subtle">· ${esc(a.class_name)}</small>` : ''}${a.due_date ? ` <small class="subtle">· due ${esc(new Date(a.due_date).toLocaleDateString())}</small>` : ''}</span></li>`).join('')}</ol>` : ''}<div class="quest-footer">${isTeacher() ? `${btn('Add classwork', 'classwork', 'button primary')}${lm ? link('Manage classwork in Little Monsters ↗', lm.href, 'button') : ''}` : btn('Open my checklist', 'learning', 'button primary')}${pill(`${edu.classes.length} class${edu.classes.length === 1 ? '' : 'es'} · shared with your class`)}</div></section>`;
+    if (!edu.installed || !edu.ok) return `<section class="panel ${state.page === 'home' ? 'quest-card' : ''}" data-module="requirements"><div class="panel-kicker">CLASSWORK</div><h2>${esc(!edu.installed ? 'Little Monsters is not installed.' : eduRefusal(edu, 'Open Little Monsters to join a class.'))}</h2><p>${edu.refusal === 'not-granted' ? 'An administrator manages that access.' : 'Classwork appears here once you belong to a class.'}</p></section>`;
+    return `<section class="panel ${state.page === 'home' ? 'quest-card' : ''}" data-module="requirements"><div class="panel-kicker">CLASSWORK / ${open.length} OPEN</div><h2>${next ? esc(next.title) : 'No open classwork.'}</h2><p style="margin:12px 0 16px">${next ? esc(next.description || `${next.class_name || 'Class'}${next.assignment_type ? ` · ${next.assignment_type}` : ''}`) : 'When a teacher publishes an assignment it appears here with its due date.'}</p>${open.length ? `<ol class="requirement-list">${open.slice(0, 4).map((a, i) => `<li><span class="step-num">${i + 1}</span><span>${esc(a.title)}${a.class_name ? ` <small class="subtle">· ${esc(a.class_name)}</small>` : ''}${a.due_date ? ` <small class="subtle">· due ${esc(dueOn(a.due_date))}</small>` : ''}</span></li>`).join('')}</ol>` : ''}<div class="quest-footer">${isTeacher() ? `${btn('Add classwork', 'classwork', 'button primary')}${lm ? link('Manage classwork in Little Monsters ↗', lm.href, 'button') : ''}` : btn('Open my checklist', 'learning', 'button primary')}${pill(`${edu.classes.length} class${edu.classes.length === 1 ? '' : 'es'} · shared with your class`)}</div></section>`;
   }
   /** @description One learner's activity pill from the teacher analytics row: level, daily streak, quiz average and flashcards reviewed. It is activity; Little Monsters records no per-learner classwork completion. */
   function activityPill(a) {
@@ -253,8 +315,8 @@
   }
   const activityNote = act => !act ? '' : act.status === 403 ? 'Only this class’s teacher sees its learners’ activity.' : act.status === 404 ? 'This class’s activity was not found (HTTP 404).' : !act.byId ? `Learner activity unavailable (HTTP ${act.status}).` : '';
   function learnerRow(s, act) {
-    const a = act && act.byId ? act.byId.get(s.student_id) : null, last = a && a.last_active_date ? new Date(`${String(a.last_active_date).slice(0, 10)}T00:00:00`) : null;
-    return `<div class="learner-row" data-learner="${esc(s.student_id)}"><div class="member-line">${avatar(LIVE.initials(s.name), 0)}<span>${esc(s.name)}<small>enrolled ${esc(LIVE.relativeTime(LIVE.parseDate(s.enrolled_at)))}${last && !isNaN(last.getTime()) ? ` · last active ${esc(last.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))}` : ''}</small></span></div>${a ? activityPill(a) : ''}</div>`;
+    const a = act && act.byId ? act.byId.get(s.student_id) : null, last = a && a.last_active_date ? LIVE.calendarDay(a.last_active_date) : null;
+    return `<div class="learner-row" data-learner="${esc(s.student_id)}"><div class="member-line">${avatar(LIVE.initials(s.name), 0)}<span>${esc(s.name)}<small>enrolled ${esc(LIVE.relativeTime(LIVE.parseDate(s.enrolled_at)))}${last ? ` · last active ${esc(last.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))}` : ''}</small></span></div>${a ? activityPill(a) : ''}</div>`;
   }
   function rosterClass(c) {
     const edu = data.edu, r = edu.rosters.get(c.class_id), act = edu.activity.get(c.class_id), note = activityNote(act);
@@ -265,9 +327,13 @@
     const edu = data.edu; if (!edu || !edu.ok || !isTeacher()) return '';
     return `<section class="panel" data-module="teacher-roster">${head('A moment for each learner.', pill('Teacher view'))}${edu.classes.map(rosterClass).join('') || '<p class="subtle">You are not attached to a class yet.</p>'}<p class="subtle" style="margin-top:16px">Rosters and activity come from Little Monsters and are visible only to each class’s teacher. Students never see this panel. Activity (level, streak, quizzes, flashcards) is not classwork completion; Little Monsters records no per-learner completion.</p></section>`;
   }
+  /** A ticket parked at approval_required: it waits on a person, so it must not fall below the newest rows. */
+  const awaitsApproval = w => w.kind === 'ticket' && String(w.status.raw || '').trim().toLowerCase().replace(/[\s-]+/g, '_') === 'approval_required';
   function projects() {
     const open = shell.openWork(), apps = new Set(open.map(w => w.appName));
-    return `<section class="panel" data-module="projects">${head('The work we share.', pill(`${open.length} open`))}${open.slice(0, 6).map((w, i) => `<div class="project-row">${avatar(LIVE.initials(w.appName), i)}<div><strong>${esc(w.title)}</strong><small>${esc(w.appName)} · ${esc(w.typeLabel)} · ${esc(LIVE.relativeTime(w.at))}</small></div>${btn(`${esc(w.status.label)} ↗`, 'project', 'button', `data-work="${esc(w.id)}"`)}</div>`).join('') || '<p class="subtle">No open tickets or tasks. Ask the assistant for something and it lands here.</p>'}<div class="summary-line"><div><strong>${open.length}</strong><small>Open items</small></div><div><strong>${apps.size}</strong><small>Applications involved</small></div><div><strong>${snapshot.botsOnline}</strong><small>Assistants online</small></div></div></section>`;
+    // Tickets awaiting approval lead; everything else keeps the work list's newest-first order.
+    const shown = open.filter(awaitsApproval).concat(open.filter(w => !awaitsApproval(w))).slice(0, 6);
+    return `<section class="panel" data-module="projects">${head('The work we share.', pill(`${open.length} open`))}${shown.map((w, i) => `<div class="project-row">${avatar(LIVE.initials(w.appName), i)}<div><strong>${esc(w.title)}</strong><small>${esc(w.appName)} · ${esc(w.typeLabel)} · ${esc(LIVE.relativeTime(w.at))}</small></div>${btn(`${esc(w.status.label)} ↗`, 'project', 'button', `data-work="${esc(w.id)}"`)}</div>`).join('') || '<p class="subtle">No open tickets or tasks. Ask the assistant for something and it lands here.</p>'}<div class="summary-line"><div><strong>${open.length}</strong><small>Open items</small></div><div><strong>${apps.size}</strong><small>Applications involved</small></div><div><strong>${snapshot.botsOnline}</strong><small>Assistants online</small></div></div></section>`;
   }
   function personal() {
     if (key === 'classroom') return learning();
@@ -357,12 +423,12 @@
     if (kind === 'drafts') return draftsDialog();
     if (kind === 'configure') return ['Make this home your own', `<p>A preset supplies the starting point; a skin supplies the look. What you may see is decided by this swarm’s authorization, independently.</p><div class="config-flow"><span>${key} preset</span> → <span>your authorized modules</span> → <span>chosen skin</span></div><form id="config-form"><label class="field">Visual skin<select id="skin-choice">${window.OSHAL_STYLE_SWITCHER.FLAT_SKINS.map(s => `<option value="${s.id}" ${(document.body.dataset.skin || preset.skin) === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select></label><label class="field">Density<select id="density-choice"><option value="comfortable" ${config.density === 'comfortable' ? 'selected' : ''}>Comfortable</option><option value="compact" ${config.density === 'compact' ? 'selected' : ''}>Compact</option></select></label><label class="config-check"><input id="show-updates" type="checkbox" ${config.updates ? 'checked' : ''}>Show the activity panel</label><label class="config-check"><input id="show-week" type="checkbox" ${config.week ? 'checked' : ''}>Show the calendar week strip</label><p>Changing a skin never grants Finance, reveals student records, installs an app or enrolls anyone in anything.</p><div class="dialog-actions"><button type="submit" class="button primary">Save on this device</button>${config.previous ? btn('Restore previous', 'restore') : ''}</div></form><p>Version ${config.revision} · saved in this browser only. No server setting changes.</p>`];
     if (kind === 'event') return ['Add a shared moment', data.edu && data.edu.ok ? `<p>This adds a personal event to your Little Monsters calendar${isTeacher() ? '; class-wide events are published from a class in Little Monsters' : ''}. No invitation is sent.</p><form id="event-form"><label class="field">Event title<input id="event-title" maxlength="200" required placeholder="A moment to make time for"></label><label class="field">Date<input id="event-date" type="date" value="${isoDay(new Date())}" required></label><label class="field">Time (optional)<input id="event-time" type="time"></label><div class="dialog-actions"><button class="button primary" type="submit">Add event</button></div></form>` : '<p>No calendar source accepts events here yet.</p>'];
-    if (kind === 'learning') return [`${displayName()}’s learning space`, data.edu && data.edu.ok ? `<p>Your open classwork from Little Monsters. Nothing is submitted from here: Little Monsters keeps no per-learner submission record.</p><div class="list-items">${assignmentsOpen().map(a => `<div class="list-item"><span><span class="item-title">${esc(a.title)}</span><small>${esc(a.class_name || '')}${a.due_date ? ` · due ${esc(new Date(a.due_date).toLocaleDateString())}` : ''}${a.assignment_type ? ` · ${esc(a.assignment_type)}` : ''}</small></span></div>`).join('') || '<p class="subtle">Nothing open right now.</p>'}</div><div class="dialog-actions">${toolById('tool-lm-myday') ? btn('Open My Day here', 'tool', 'button primary', 'data-tool="tool-lm-myday"') : ''}${lm ? link('Open Little Monsters ↗', lm.href, toolById('tool-lm-myday') ? 'button' : 'button primary') : ''}</div>` : '<p>Open Little Monsters once to create your learner profile.</p>'];
+    if (kind === 'learning') return [`${displayName()}’s learning space`, data.edu && data.edu.ok ? `<p>Your open classwork from Little Monsters. Nothing is submitted from here: Little Monsters keeps no per-learner submission record.</p><div class="list-items">${assignmentsOpen().map(a => `<div class="list-item"><span><span class="item-title">${esc(a.title)}</span><small>${esc(a.class_name || '')}${a.due_date ? ` · due ${esc(dueOn(a.due_date))}` : ''}${a.assignment_type ? ` · ${esc(a.assignment_type)}` : ''}</small></span></div>`).join('') || '<p class="subtle">Nothing open right now.</p>'}</div><div class="dialog-actions">${toolById('tool-lm-myday') ? btn('Open My Day here', 'tool', 'button primary', 'data-tool="tool-lm-myday"') : ''}${lm ? link('Open Little Monsters ↗', lm.href, toolById('tool-lm-myday') ? 'button' : 'button primary') : ''}</div>` : `<p>${esc(!data.edu ? 'Reading your learning space…' : !data.edu.installed ? 'Little Monsters is not installed on this swarm.' : eduRefusal(data.edu, `Your learning space could not be read (HTTP ${data.edu.status}).`))}</p>`];
     if (kind === 'app') { const a = app(id); if (!a) return ['', '']; const sm = shell.state.summaries.get(a.id); return [a.name, `<p>${esc(a.description)}</p><p class="pill">${esc(shell.suiteOf(a.suite).name)}${a.version ? ` · v${esc(a.version)}` : ''} · ${a.navigable ? 'available to you' : 'not available in your workspace'}</p><div id="app-summary-slot">${shell.summaryMarkup(a, sm || null)}</div><div class="dialog-actions">${a.navigable ? link(`Open ${esc(a.name)} ↗`, a.href, 'button primary') : ''}${btn('Review access', 'policy', 'button')}</div>`]; }
     if (kind === 'project') return projectDialog(id);
     if (kind === 'policy') return ['The same home, different access', `<p>Signed in as ${esc(displayName())}${data.edu && data.edu.me ? ` · ${esc(data.edu.me.role)} in Little Monsters` : ''}.</p><ul class="policy-list"><li>Applications appear only when this swarm’s authorization admits you to them.</li><li>Personal records require explicit, server-enforced access; a parent, teacher or admin label alone grants nothing.</li><li>Only a swarm administrator installs applications.</li><li>Class rosters are visible to each class’s teacher; students never see them.</li><li>Skins, density and pins are saved on this device and never change permissions.</li></ul>`];
     if (kind === 'ask') return [key === 'classroom' ? 'Ask your study companion' : 'Ask your assistant', `<p>Answered by your own Jarvis, in the same thread the cockpit uses.</p><form id="ask-form"><label class="field">Your question<input id="ask-input" maxlength="600" required placeholder="What should I focus on today?"${thread.busy ? ' disabled' : ''}></label><button class="button primary" type="submit"${thread.busy ? ' disabled' : ''}>Ask</button></form><div id="ask-answer" role="status">${thread.turns.slice(-4).map(t => t.role === 'user' ? `<p><strong>${esc(t.text)}</strong></p>` : t.pending ? `<p class="subtle">${esc(t.text)}</p>` : S.answerHtml(t.text)).join('')}</div>`];
-    if (kind === 'about') { const e = data.edu || {}, s = data.shop || {}, f = data.fin || {}; return ['What this home reads', `<ul class="policy-list"><li>Applications, suites and availability: your authorized home plan and installed listing (HTTP ${snapshot.sources.plan}/${snapshot.sources.apps}).</li><li>Work items: your tickets (HTTP ${snapshot.sources.tickets}) and Jarvis tasks (HTTP ${snapshot.sources.tasks}).</li><li>Calendar, classes, classwork and rosters: Little Monsters ${e.installed ? `(HTTP ${e.status})` : '(not installed)'}.</li><li>Shopping list: Purchasing ${s.installed ? `(HTTP ${s.status})` : '(not installed)'}.</li><li>Money: Finance ${f.installed ? (f.available ? `(HTTP ${f.status})` : '(not available to you)') : '(not installed)'}.</li><li>Assistant: your Jarvis thread <code>${esc(thread.sessionId.slice(0, 18))}…</code>.</li></ul><p>No check-in, location or presence source exists on this swarm, so no such module is shown.</p>`]; }
+    if (kind === 'about') { const e = data.edu || {}, s = data.shop || {}, f = data.fin || {}; return ['What this home reads', `<ul class="policy-list"><li>Applications, suites and availability: your authorized home plan and installed listing (HTTP ${snapshot.sources.plan}/${snapshot.sources.apps}).</li><li>Work items: your tickets (HTTP ${snapshot.sources.tickets}) and Jarvis tasks (HTTP ${snapshot.sources.tasks}).</li><li>Calendar, classes, classwork and rosters: Little Monsters ${e.installed ? (e.refusal === 'not-granted' && !e.status ? '(not available to you)' : `(HTTP ${e.status})`) : '(not installed)'}.</li><li>Shopping list: Purchasing ${s.installed ? `(HTTP ${s.status})` : '(not installed)'}.</li><li>Money: Finance ${f.installed ? (f.available ? `(HTTP ${f.status})` : '(not available to you)') : '(not installed)'}.</li><li>Assistant: your Jarvis thread <code>${esc(thread.sessionId.slice(0, 18))}…</code>.</li></ul><p>No check-in, location or presence source exists on this swarm, so no such module is shown.</p>`]; }
     return ['', ''];
   }
   function openDialog(kind, id) {

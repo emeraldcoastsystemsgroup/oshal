@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Full-swarm gap closure: audience-aware hosting in Studio, Jarvis, Orbit and Commons (one shared helper, the Summary view / Full application switch remembered per layout), declared assistants and member / Required / Optional relationships read lazily from the package record (group members read one by one, 404 and failure states), the shared games predicate behind the directory chip and the Game room, the Commons swarm roster with the non-admin fallback, and the Jarvis agenda from the overview feed plus the Little Monsters calendar with empty, refused and not-installed states. Adapter reads are proven headlessly; the shells run in Chromium over the real static routes and the synthetic fixture.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | A dependency absent from the viewer catalog reads 'not in your catalog'
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Integration review: the Jarvis agenda reads Little Monsters' read-only home-summary probe first and sends zero /api/education requests when it answers 403 (or fails), reading the calendar only on 200; agenda copy names the Little Monsters calendar (classes and personal events) and an absent package as not in your catalog; Orbit's inspector shows the declared assistants; the Games chip reads 'Looks like a game'; a roster_scope_denied refusal is told apart from the admin requirement, and the roster read keeps the refusal code.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Acceptance fixes: calendarDay and the agenda's class events read UTC-midnight DATE values as their own day under America/Chicago; littleMonstersRefusal and the probe's carried code; an agenda for a caller whose plan does not admit Little Monsters, or whose probe is refused by authorization, says "not available to you" and sends no education request; the no-profile copy says to open Little Monsters once to set up the school profile.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
@@ -82,6 +83,40 @@ describe('full-swarm gap reads in the adapter', () => {
     expect(agenda.events.map((e: any) => [e.id, e.title, e.timed, e.className])).toEqual([['e1', 'Synthetic first', true, 'Synthetic Class'], ['e2', 'Synthetic later', false, '']]);
     const refused = LIVE.createClient({ fetch: fakeFetch({ '/api/education/calendar': { status: 403, body: { error: 'no' } } }).fetch, storage: memoryStorage() });
     expect(await refused.packages.education.agenda(now)).toEqual({ ok: false, status: 403, events: [] });
+  });
+
+  it('reads a date-only Little Monsters field as the day it names in a US zone, agenda rows included', () => {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    process.env.TZ = 'America/Chicago';
+    try {
+      // Precondition: in this zone the instant form of a DATE column is the evening before, the defect this guards.
+      expect(new Date('2026-09-29T00:00:00.000Z').getDate()).toBe(28);
+      const parts = (d: Date | null) => d && [d.getFullYear(), d.getMonth() + 1, d.getDate(), d.getHours(), d.getMinutes()];
+      expect(parts(LIVE.calendarDay('2026-09-29T00:00:00.000Z'))).toEqual([2026, 9, 29, 0, 0]);
+      expect(parts(LIVE.calendarDay('2026-09-29T00:00:00Z'))).toEqual([2026, 9, 29, 0, 0]);
+      expect(parts(LIVE.calendarDay('2026-09-29'))).toEqual([2026, 9, 29, 0, 0]);
+      expect(parts(LIVE.calendarDay('2026-09-29T00:00:00.000Z', '17:30:00'))).toEqual([2026, 9, 29, 17, 30]);
+      expect(LIVE.calendarDay('2026-02-30')).toBeNull(); expect(LIVE.calendarDay('not a date')).toBeNull(); expect(LIVE.calendarDay(null)).toBeNull();
+      const rows = LIVE.classEvents([{ ok: true, body: { events: [
+        { event_id: 'e2', title: 'Synthetic lab', event_date: '2026-09-30T00:00:00.000Z', event_time: '17:00:00' },
+        { event_id: 'e1', title: 'Synthetic due', event_date: '2026-09-29T00:00:00.000Z', event_time: null },
+      ] } }]);
+      expect(rows.map((r: any) => [r.id, parts(r.when), r.timed])).toEqual([['e1', [2026, 9, 29, 0, 0], false], ['e2', [2026, 9, 30, 17, 0], true]]);
+    } finally { process.env.TZ = zone; }
+  });
+
+  it('names a Little Monsters refusal by its code and carries the probe’s code with its status', async () => {
+    expect(LIVE.littleMonstersRefusal(403, 'app_access_denied')).toBe('not-granted');
+    expect(LIVE.littleMonstersRefusal(403, 'app_access_identity_required')).toBe('not-granted');
+    expect(LIVE.littleMonstersRefusal(403, 'authorization_tier_denied')).toBe('not-granted');
+    expect(LIVE.littleMonstersRefusal(403, 'Open Little Monsters to complete school setup')).toBe('no-profile');
+    expect(LIVE.littleMonstersRefusal(403, 'School identity configuration requires review')).toBe('');
+    expect(LIVE.littleMonstersRefusal(503, 'authorization_app_unavailable')).toBe('');
+    expect(LIVE.littleMonstersRefusal(404, 'Open Little Monsters to complete school setup')).toBe('');
+    const client = LIVE.createClient({ fetch: fakeFetch({ '/api/little-monsters/home-summary': { status: 403, body: { error: 'app_access_denied', app: 'little-monsters', tier: 'deny' } } }).fetch, storage: memoryStorage() });
+    const probe = await client.probeSummary({ id: 'little-monsters', probes: [{ path: '/api/little-monsters/home-summary', tilesPointer: '/tiles', itemsPointer: '/items' }] });
+    expect(probe).toMatchObject({ ok: false, status: 403, error: 'app_access_denied' });
+    expect(await client.probeSummary({ id: 'none', probes: [] })).toMatchObject({ none: true, status: 0, error: '' });
   });
 });
 
@@ -349,7 +384,7 @@ describe('games chip, Commons people and the Jarvis agenda', () => {
     await page.waitForFunction(() => (document.querySelector('[data-agenda-slot]')?.textContent || '').includes('Open Little Monsters once'));
     await page.waitForLoadState('networkidle');
     const agenda = await page.locator('.live-agenda').innerText();
-    expect(agenda).toContain('Open Little Monsters once to see its calendar here.');
+    expect(agenda).toContain('Open Little Monsters once to set up your school profile; its calendar then shows here.');
     expect(agenda).not.toContain('Science circle');
     expect(callsTo('GET /api/little-monsters/home-summary')).toBeGreaterThanOrEqual(1);
     expect(educationCalls()).toEqual([]);
@@ -388,5 +423,28 @@ describe('games chip, Commons people and the Jarvis agenda', () => {
     expect(agenda).toContain('Little Monsters is not in your catalog, so its calendar is not read.');
     expect(callsTo('GET /api/education/calendar')).toBe(0);
     expect(callsTo('GET /api/little-monsters/home-summary')).toBe(0);
+  });
+
+  it('a Little Monsters outside the caller’s plan, or a probe refused by authorization, is not available: no education request, no "could not be checked"', async () => {
+    const educationCalls = () => fixture.state.calls.filter(c => c.includes('/api/education/'));
+    const lm = fixture.state.apps.find(a => a.summary.name === 'little-monsters')!, plan = lm.plan;
+    lm.plan = null;
+    await open('/jarvis', '.full-jarvis');
+    await page.waitForFunction(() => (document.querySelector('[data-agenda-slot]')?.textContent || '').includes('not available to you'));
+    await page.waitForLoadState('networkidle');
+    let agenda = await page.locator('.live-agenda').innerText();
+    expect(agenda).toContain('Little Monsters is not available to you, so its calendar is not read.');
+    expect(agenda).not.toMatch(/could not be checked|unreachable|Open Little Monsters once/);
+    expect(callsTo('GET /api/little-monsters/home-summary')).toBe(0);
+    expect(educationCalls()).toEqual([]);
+    lm.plan = plan;
+    fixture.state.calls.length = 0;
+    await page.route('**/api/little-monsters/home-summary', route => route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: 'authorization_permission_denied', decisionId: 'synthetic-decision' }) }));
+    await page.reload(); await page.waitForFunction(() => (document.querySelector('[data-agenda-slot]')?.textContent || '').includes('not available to you'));
+    await page.waitForLoadState('networkidle');
+    agenda = await page.locator('.live-agenda').innerText();
+    expect(agenda).toContain('Little Monsters is not available to you, so its calendar is not read.');
+    expect(educationCalls()).toEqual([]);
+    expect(errors).toEqual([]);
   });
 });

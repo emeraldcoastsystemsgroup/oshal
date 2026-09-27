@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove the shared audience-view kit in headless Chromium over the real /shared/ui mounts: a page keeps its full UI without a request, ignores an audience it does not provide, renders the family and company grammars from one model with text-only nodes, hides the full UI, keeps one escape that navigates the top window out of a frame, and turns a failed read into a retryable notice instead of a blank frame.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Date-only strings format as the reader's calendar day (Sep 15 stays Sep 15; a date-only today is 'today')
  * 3 | maintainer@emeraldcoastsystemsgroup.com | No header/h1/h2/h3 inside the kit root (heading roles instead) so host-page tag rules cannot restyle a view
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | AppView.day under America/Chicago: a UTC-midnight DATE value ('YYYY-MM-DDT00:00:00(.000)Z') and a plain 'YYYY-MM-DD' print as their own day, while AppView.date of the same instant shows the day before (the precondition)
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -129,6 +130,22 @@ describe('shared audience-view kit', () => {
       function localDay(offsetDays: number) { const d = new Date(); d.setDate(d.getDate() + offsetDays); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
     });
     expect(out).toEqual(['$1,235', '$12.00', '—', '12.4k', '2.5M', '42', '26%', '80%', 'in 3 days', '2 h ago', '—', '—', 'Sep 15', 'Jan 2, 2025', 'today', 'tomorrow', '3 days ago']);
+  });
+
+  it('AppView.day prints a UTC-midnight DATE value as its own day for a reader in a US zone', async () => {
+    await context.close();
+    context = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: 'reduce', timezoneId: 'America/Chicago', locale: 'en-US' });
+    await context.route('**/*', route => new URL(route.request().url()).origin === fixture.origin ? route.continue() : route.abort());
+    page = await context.newPage();
+    await open('');
+    const year = new Date().getFullYear();
+    const out = await page.evaluate(y => {
+      const AV = (window as unknown as { AppView: Record<string, (v: unknown) => string> }).AppView;
+      // The instant form first: in this zone `date()` of UTC midnight is the evening before, the defect `day()` exists for.
+      return [AV.date(y + '-09-15T00:00:00.000Z'), AV.day(y + '-09-15T00:00:00.000Z'), AV.day(y + '-09-15T00:00:00Z'), AV.day(y + '-09-15'),
+        AV.day('2025-01-02T00:00:00.000Z'), AV.day(y + '-09-15T05:00:00.000Z'), AV.day(null), AV.day('nonsense')];
+    }, year);
+    expect(out).toEqual(['Sep 14', 'Sep 15', 'Sep 15', 'Sep 15', 'Jan 2, 2025', 'Sep 15', '—', '—']);
   });
 
   it('escapes from a frame by navigating the top window to the full application', async () => {
