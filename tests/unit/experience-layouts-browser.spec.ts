@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Drive the real experience shells in headless Chromium through the real static route registration over an isolated synthetic swarm: auth gating, live catalog and work rendering, directory/pins/app panel, the Jarvis ask flow with thread roll and refusal, room-scoped Commons threads, the three homebase presets (list, money, calendar, roster, role-driven views, honest finance states), the central assistant, the portal chooser and per-layout skins.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Home and Business host their application assemblies: per-host sidebar sections and tile groups, hosted pages opened with the preset audience view (`?view=`), hidden tool prefixes honoured, and a refused tool is a notice never a fetch
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Hosted pages carry `?audience=` instead of `?view=`
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | The Studio app panel's relationship to Synthetic finance is now a declared app dependency read from the package record (waited for, never labelled an integration source), and its in-place frame requests the Studio's company audience
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -85,11 +86,12 @@ describe('experience shells over the real routes', () => {
     expect((await page.locator('.catalog-card [data-action="pin"]').getAttribute('aria-pressed')) === 'true').toBe(!pinnedBefore);
     await page.locator('.catalog-card .catalog-main').click();
     await page.waitForSelector('[data-summary-slot="ledger"] .run-strip');
+    await page.waitForSelector('#full-dialog [data-detail-part="relations"] .dependency-row');
     const panel = await page.locator('#full-dialog').innerText();
     expect(panel).toContain('Reported items'); expect(panel).toContain('Update from ledger'); expect(panel).toContain('Available in your workspace');
-    expect(panel).toContain('Synthetic finance');
+    expect(panel).toContain('Synthetic finance'); expect(panel).not.toContain('Integration source');
     await page.locator('#full-dialog').getByRole('button', { name: 'Open here' }).click();
-    expect(await page.locator('#full-dialog iframe.embed-frame').getAttribute('src')).toBe('/fixture/surface/ledger');
+    expect(await page.locator('#full-dialog iframe.embed-frame').getAttribute('src')).toBe('/fixture/surface/ledger?audience=company');
     await page.keyboard.press('Escape');
     await page.keyboard.press('Control+k');
     await page.fill('#app-search', 'unadmitted');

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Two-phase snapshot: identity and catalog first (readyCore) so a home can paint at once; work, tasks and overview merge into the same snapshot afterwards (ready). Adds the ribbon-profile read an experience uses to host an application's admitted tools.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Live data adapter for the experience shells. Joins the caller-scoped home plan, active app listing and admitted navigation into one catalog, merges tickets and Jarvis tasks into work items, wraps Jarvis ask/result polling on the shared browser thread, reads per-package home-summary probes with the Home view's pointer caps, and exposes Little Monsters, Purchasing, Finance and voice reads. It replaces every fixture the design prototypes rendered; nothing here invents data when a source is unavailable, callers get the HTTP status and render the honest state.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Catalog `related` now means a group's installed required members (plan.members), not the plan's integrationSources, which list surfaces and outbound offers rather than a dependency. Adds the viewer-scoped app-detail read (GET /api/swarm/apps/:name) with two pure readers over it: dependencyTiers (the two-form rule of scripts/oshal-app-dependencies.js, a mixed block yields no tiers) and declaredAssistants (manifest bots by name, the explicit chatBot as concierge, online state only where the agentId joins the overview roster). Adds the swarm roster read over GET /api/user-directory (label without its account parenthetical, account source and sign-in status, never presence) and the Little Monsters agenda read (this month and next from /api/education/calendar, de-duplicated and dated) so Commons and Jarvis share them without touching the homebase.
  */
 (function attach(root, factory) {
   'use strict';
@@ -91,11 +92,106 @@
       connectors: summary.connectors && typeof summary.connectors === 'object' ? summary.connectors : { required: [], optional: [] },
       probes: plan && Array.isArray(plan.summary) ? plan.summary : [],
       todos: plan && Array.isArray(plan.todos) ? plan.todos : [],
-      related: plan && Array.isArray(plan.integrationSources)
-        ? plan.integrationSources.map(function (s) { return s && s.app; }).filter(function (a, i, arr) { return a && a !== name && arr.indexOf(a) === i; })
+      // A group's members are its installed REQUIRED app dependencies (the plan filters them); a plain app has none.
+      related: plan && plan.kind === 'group' && Array.isArray(plan.members)
+        ? plan.members.filter(function (m, i, arr) { return typeof m === 'string' && m && m !== name && arr.indexOf(m) === i; })
         : []
     };
   }
+
+  var DEPENDENCY_KINDS = ['apps', 'tools', 'connectors'];
+  function isMapping(value) { return Boolean(value) && typeof value === 'object' && !Array.isArray(value); }
+  function dependencyLists(value) {
+    var lists = { apps: [], tools: [], connectors: [] };
+    if (!isMapping(value)) return lists;
+    DEPENDENCY_KINDS.forEach(function (kind) {
+      if (Array.isArray(value[kind])) lists[kind] = value[kind].filter(function (entry) { return typeof entry === 'string'; });
+    });
+    return lists;
+  }
+
+  /**
+   * @description Read a manifest's `dependencies` block into its two tiers with the same two-form rule the
+   * installer uses (scripts/oshal-app-dependencies.js): tiered `required`/`optional` keys give the tiers, a
+   * legacy flat block is all required, and a block that mixes both forms is refused there, so it yields no
+   * tiers here and the shell says so instead of guessing.
+   * @param {object} manifest The package manifest from GET /api/swarm/apps/:name (body.app.manifest).
+   * @returns {{form: string, required: object, optional: object}} form is none | flat | tiered | mixed | invalid; each tier holds apps/tools/connectors lists.
+   */
+  function dependencyTiers(manifest) {
+    var value = manifest ? manifest.dependencies : undefined;
+    var result = { form: 'none', required: dependencyLists(null), optional: dependencyLists(null) };
+    if (value === undefined || value === null) return result;
+    if (!isMapping(value)) { result.form = 'invalid'; return result; }
+    var keys = Object.keys(value);
+    var tiered = keys.some(function (k) { return k === 'required' || k === 'optional'; });
+    if (tiered && keys.some(function (k) { return DEPENDENCY_KINDS.indexOf(k) >= 0; })) { result.form = 'mixed'; return result; }
+    if (tiered) return { form: 'tiered', required: dependencyLists(value.required), optional: dependencyLists(value.optional) };
+    return { form: 'flat', required: dependencyLists(value), optional: dependencyLists(null) };
+  }
+
+  /**
+   * @description The assistants a package declares, by name, from its manifest. Only an explicit `chatBot`
+   * is marked as the concierge (the runtime defaults are not inferred), and online state appears only when
+   * the declared agentId joins the swarm overview roster; otherwise the row says it is a declaration.
+   * @param {object} record The application record from GET /api/swarm/apps/:name (body.app).
+   * @param {Array} bots The overview roster (snapshot.bots: agentId, online, active).
+   * @param {string} concierge The concierge name to mark; defaults to the record's own manifest.chatBot.
+   * @returns {Array<{name: string, role: string, agentId: string, concierge: boolean, state: string}>} state is working | online | offline | declared.
+   */
+  function declaredAssistants(record, bots, concierge) {
+    var manifest = record && isMapping(record.manifest) ? record.manifest : {};
+    var chat = typeof concierge === 'string' ? concierge : (typeof manifest.chatBot === 'string' ? manifest.chatBot : '');
+    var roster = Array.isArray(bots) ? bots : [];
+    var declared = (Array.isArray(manifest.bots) ? manifest.bots : []).filter(function (b) { return b && typeof b.name === 'string' && b.name; });
+    return declared.map(function (b) {
+      var live = b.agentId ? roster.filter(function (r) { return r && r.agentId === b.agentId; })[0] : null;
+      return {
+        name: b.name, role: typeof b.role === 'string' ? b.role : '', agentId: typeof b.agentId === 'string' ? b.agentId : '',
+        concierge: Boolean(chat) && b.name === chat, state: live ? (live.active ? 'working' : live.online ? 'online' : 'offline') : 'declared'
+      };
+    });
+  }
+
+  var ACCOUNT_SOURCES = { 'local-account': 'Local account', 'verified-sign-in': 'Verified sign-in', 'access-assignment': 'Access assignment' };
+  var SIGN_IN_STATES = { active: 'account active', disabled: 'account disabled', 'awaiting-sign-in': 'awaiting first sign-in', 'provider-disabled': 'sign-in provider disabled' };
+  /**
+   * @description The swarm roster from GET /api/user-directory as display rows: the label without its account
+   * parenthetical, and the account source plus sign-in status. It is a roster of accounts, never presence.
+   * @param {{ok: boolean, status: number, body: object}} res The directory read.
+   * @param {string} selfSub The caller's subject, so the caller's own row can be told apart.
+   * @returns {{ok: boolean, status: number, people: Array<{sub: string, name: string, detail: string, self: boolean}>}}
+   */
+  function directoryPeople(res, selfSub) {
+    var users = res && res.ok && res.body && Array.isArray(res.body.users) ? res.body.users : [];
+    var people = users.filter(function (u) { return u && typeof u.sub === 'string' && u.sub; }).map(function (u) {
+      var source = ACCOUNT_SOURCES[u.source] || (u.source ? String(u.source).replace(/-/g, ' ') : '');
+      var signIn = u.signIn && u.signIn !== u.source ? (SIGN_IN_STATES[u.signIn] || String(u.signIn).replace(/-/g, ' ')) : '';
+      return { sub: u.sub, name: String(u.label || '').replace(/\s*\([^)]*\)\s*$/, '').trim() || 'Member', detail: [source, signIn].filter(Boolean).join(' · '), self: Boolean(selfSub) && u.sub === selfSub };
+    });
+    return { ok: Boolean(res && res.ok), status: res ? res.status : 0, people: people };
+  }
+
+  /**
+   * @description Little Monsters calendar responses as dated agenda rows: de-duplicated by event id, dated from
+   * event_date plus event_time (untimed events are all-day), and sorted. Rows keep the class they belong to.
+   * @param {Array<{ok: boolean, body: object}>} responses One GET /api/education/calendar?month= read per month.
+   * @returns {Array<{id: string, title: string, when: Date, timed: boolean, className: string}>}
+   */
+  function classEvents(responses) {
+    var seen = {}, rows = [];
+    (responses || []).forEach(function (r) {
+      (r && r.ok && r.body && Array.isArray(r.body.events) ? r.body.events : []).forEach(function (e) {
+        if (!e || !e.event_id || seen[e.event_id]) return;
+        seen[e.event_id] = true;
+        var when = new Date(String(e.event_date || '').slice(0, 10) + 'T' + (e.event_time || '00:00:00'));
+        if (isNaN(when.getTime())) return;
+        rows.push({ id: String(e.event_id), title: String(e.title || 'Event'), when: when, timed: Boolean(e.event_time), className: e.class_name ? String(e.class_name) : '' });
+      });
+    });
+    return rows.sort(function (a, b) { return a.when.getTime() - b.when.getTime(); });
+  }
+  function monthKey(date) { return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0'); }
 
   /** @description Join the three caller-scoped catalog reads. Plan entries carry authority; listed-but-unadmitted apps stay visible as unavailable. */
   function mergeApps(input) {
@@ -402,13 +498,23 @@
       set: function (key, value) { try { storage.setItem('oshal-experience:' + key, JSON.stringify(value)); return true; } catch (_) { return false; } }
     };
 
+    function educationCalendar(month) { return getJson('/api/education/calendar' + (month ? '?month=' + encodeURIComponent(month) : '')); }
+    /** The caller's Little Monsters calendar for this month and next; the first refused month names the status. */
+    async function educationAgenda(now) {
+      var d = now || new Date(), next = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+      var reads = await Promise.all([educationCalendar(monthKey(d)), educationCalendar(monthKey(next))]);
+      var refused = reads.filter(function (r) { return !r.ok; })[0];
+      return { ok: !refused, status: (refused || reads[0]).status, events: classEvents(reads) };
+    }
+
     var packages = {
       education: {
         me: function () { return getJson('/api/education/me'); },
         classes: function () { return getJson('/api/education/classes'); },
         students: function (id) { return getJson('/api/education/classes/' + encodeURIComponent(id) + '/students'); },
         assignments: function () { return getJson('/api/education/assignments'); },
-        calendar: function (month) { return getJson('/api/education/calendar' + (month ? '?month=' + encodeURIComponent(month) : '')); },
+        calendar: educationCalendar,
+        agenda: educationAgenda,
         addEvent: function (payload) { return sendJson('/api/education/calendar', 'POST', payload); }
       },
       purchasing: {
@@ -426,8 +532,12 @@
         tasks: function () { return getJson('/api/jarvis/tasks'); }
       },
       directory: function () { return getJson('/api/user-directory'); },
+      /** The swarm roster as display rows (swarm admins only; anyone else gets the route's refusal status). */
+      people: function (selfSub) { return getJson('/api/user-directory').then(function (r) { return directoryPeople(r, selfSub); }); },
       /** The caller-scoped ribbon profile of one application: the admitted surfaces the cockpit ribbon itself renders. */
-      profile: function (name) { return getJson('/api/ui/profile?name=' + encodeURIComponent(name)); }
+      profile: function (name) { return getJson('/api/ui/profile?name=' + encodeURIComponent(name)); },
+      /** One application's record as this viewer may see it (404 when it is not visible): manifest bots, chatBot, dependencies. */
+      appDetail: function (name) { return getJson('/api/swarm/apps/' + encodeURIComponent(name)); }
     };
 
     return {
@@ -440,6 +550,7 @@
     SUITE_META: SUITE_META, SUITE_ORDER: SUITE_ORDER, statusOf: statusOf, initials: initials, deriveIdentity: deriveIdentity,
     mergeApps: mergeApps, buildSuites: buildSuites, mergeWork: mergeWork, normalizeTicket: normalizeTicket, normalizeTask: normalizeTask,
     atPointer: atPointer, normalizeSummary: normalizeSummary, relativeTime: relativeTime, clockTime: clockTime, parseDate: parseDate,
+    dependencyTiers: dependencyTiers, declaredAssistants: declaredAssistants, directoryPeople: directoryPeople, classEvents: classEvents,
     createClient: createClient
   };
   if (typeof window !== 'undefined' && typeof fetch === 'function') {

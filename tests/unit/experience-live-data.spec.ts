@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove the experience adapter's joins and Jarvis ask flow headlessly: catalog authority order, suite grouping, work merging, summary caps, identity derivation, session roll on a refused thread, poll-to-terminal states and honest source reporting when a read fails.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | `related` is a group's installed required members from the plan, no longer the plan's integrationSources (a plain app relates to nothing through them)
  */
 import { describe, expect, it } from 'vitest';
 import { createRequire } from 'node:module';
@@ -46,13 +47,16 @@ describe('experience adapter: pure joins', () => {
 
   it('lets the authorized plan lead the catalog, keeps unadmitted apps visible as unavailable, and derives relationships', () => {
     const apps = LIVE.mergeApps({
-      plan: [{ name: 'a', displayName: 'A', suite: 'ai-home', firstSurfaceUrl: '/api/a/', summary: [{ app: 'a', path: '/api/a/home-summary' }], todos: [], integrationSources: [{ app: 'b' }, { app: 'a' }] }],
+      plan: [{ name: 'a', displayName: 'A', suite: 'ai-home', firstSurfaceUrl: '/api/a/', summary: [{ app: 'a', path: '/api/a/home-summary' }], todos: [], integrationSources: [{ app: 'b' }, { app: 'a' }] },
+        { name: 'g', displayName: 'G', kind: 'group', suite: 'ai-home', members: ['b', 'c', 'b'], summary: [], todos: [], integrationSources: [{ app: 'b' }, { app: 'c' }] }],
       apps: [{ name: 'a', displayName: 'Listing A', description: 'from listing', version: '1.2.3', suite: 'ai-home', botCount: 2, ticketType: 'A-Type' }, { name: 'b', displayName: 'B', suite: null }],
       workspaces: [{ name: 'a', href: '/cockpit/?app=a', theme: 'ocean' }],
     });
-    expect(apps.map((x: any) => x.id)).toEqual(['a', 'b']);
-    expect(apps[0]).toMatchObject({ name: 'A', description: 'from listing', version: '1.2.3', navigable: true, inPlan: true, theme: 'ocean', ticketType: 'a-type', botCount: 2, related: ['b'] });
-    expect(apps[1]).toMatchObject({ suite: 'platform', navigable: false, inPlan: false, href: '/cockpit/?app=b' });
+    expect(apps.map((x: any) => x.id)).toEqual(['a', 'b', 'g']);
+    // integrationSources list surfaces and outbound offers, not a dependency: a plain app relates to nothing, a group to its installed required members.
+    expect(apps[0]).toMatchObject({ name: 'A', description: 'from listing', version: '1.2.3', navigable: true, inPlan: true, theme: 'ocean', ticketType: 'a-type', botCount: 2, related: [] });
+    expect(apps[1]).toMatchObject({ suite: 'platform', navigable: false, inPlan: false, href: '/cockpit/?app=b', related: [] });
+    expect(apps[2]).toMatchObject({ kind: 'group', related: ['b', 'c'] });
   });
 
   it('always lists the six canonical suites and adds Platform only when populated', () => {
