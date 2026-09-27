@@ -4,6 +4,8 @@ As-built notes for the ADR-164 experience layouts served under `src/experience/`
 describes what the shipped code does today; the design record and its open items stay in
 [ADR-164](../adr/164-configurable-experience-skins-and-application-views.md).
 
+The prototypes these shells were built from are packaged, with their checks and previews, as the [ADR-164 design collection](../assets/experience-shells/README.md); they are fixture-only studies, and [ADR-164](../adr/164-configurable-experience-skins-and-application-views.md) links each one.
+
 ## What ships
 
 Eight selectable experiences over one unchanged backend:

@@ -1,0 +1,401 @@
+<style>
+#finished-home { color-scheme:light; --fh-ink:#111c43; --fh-muted:#586788; --fh-paper:#fff; --fh-bg:#fcfaf6; --fh-line:#ece9e2; --fh-orange:#d3440c; --fh-warm:#fff0dc; --fh-blue:#1262d7; --fh-font:'Segoe UI',Arial,sans-serif; font:15px/1.48 var(--fh-font); color:var(--fh-ink); container-type:inline-size; background:transparent; }
+#finished-home * { box-sizing:border-box; font-family:var(--fh-font); }
+#finished-home button,#finished-home input,#finished-home select,#finished-home textarea { font:inherit; color:var(--fh-ink); }
+#finished-home button { border:0; background:none; padding:0; text-align:left; }
+#finished-home button:disabled { opacity:.45; cursor:not-allowed; }
+#finished-home h1,#finished-home h2,#finished-home h3,#finished-home h4,#finished-home p { margin:0; }
+#finished-home h1 { font-size:29px; line-height:1.2; letter-spacing:-.8px; font-weight:700; }
+#finished-home h2 { font-size:21px; line-height:1.3; letter-spacing:-.55px; font-weight:650; }
+#finished-home h3 { font-size:16px; font-weight:650; line-height:1.35; }
+#finished-home h4 { font-size:14px; font-weight:650; }
+#finished-home svg { width:21px; height:21px; flex-shrink:0; vertical-align:middle; }
+#finished-home .fh-ic { display:inline-flex; justify-content:center; align-items:center; flex-shrink:0; }
+#finished-home .fh-small { font-size:12px; }
+#finished-home .fh-muted { color:var(--fh-muted); }
+#finished-home .fh-eyebrow { font-size:11px; text-transform:uppercase; letter-spacing:1px; color:var(--fh-muted); font-weight:600; }
+#finished-home .fh-sr { position:absolute; width:1px; height:1px; padding:0; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+#finished-home .fh-previewbar { display:flex; justify-content:space-between; gap:12px; padding:0 4px 9px; font-size:11px; color:var(--fh-muted); flex-wrap:wrap; }
+#finished-home .fh-shell { background:var(--fh-bg); border:1px solid var(--fh-line); border-radius:16px; display:grid; grid-template-columns:190px minmax(0,1fr); overflow:clip; min-height:870px; }
+#finished-home .fh-rail { padding:20px 9px 18px; display:flex; flex-direction:column; gap:5px; border-right:1px solid var(--fh-line); background:linear-gradient(120deg,#f8f5ee,#fdfbf7); }
+#finished-home .fh-brand { font-size:33px; letter-spacing:-1.8px; font-weight:750; padding:0 13px 22px; line-height:1.2; }
+#finished-home .fh-navitem { display:flex; align-items:center; gap:13px; padding:14px 14px; border-radius:12px; min-height:50px; width:100%; color:var(--fh-muted); }
+#finished-home .fh-navitem svg { width:23px; height:23px; color:var(--fh-ink); }
+#finished-home .fh-navitem:hover { background:#f2ede4; }
+#finished-home .fh-navitem[aria-current=page] { color:#b73609; background:var(--fh-warm); font-weight:600; }
+#finished-home .fh-navitem[aria-current=page] svg { color:var(--fh-orange); }
+#finished-home .fh-navspacer { flex:1; min-height:85px; }
+#finished-home .fh-main { padding:16px 22px 16px; min-width:0; }
+#finished-home .fh-top { display:flex; gap:16px; align-items:center; justify-content:space-between; flex-wrap:wrap; margin-bottom:10px; }
+#finished-home .fh-titlegroup { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+#finished-home .fh-space { display:flex; gap:9px; align-items:center; position:relative; }
+#finished-home .fh-space select { max-width:255px; border:0; background:transparent; font-size:28px; font-weight:700; letter-spacing:-.8px; padding:0 24px 0 0; }
+#finished-home .fh-scope { display:inline-flex; align-items:center; gap:7px; padding:6px 12px; border-radius:30px; background:#ffecd0; color:#b83d07; font-size:12px; font-weight:650; white-space:nowrap; }
+#finished-home .fh-scope svg { width:17px; height:17px; }
+#finished-home .fh-topright { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+#finished-home .fh-search { display:flex; gap:8px; align-items:center; border:1px solid #e1dfdc; background:#fbfaf8; border-radius:9px; padding:5px 9px; width:250px; max-width:100%; }
+#finished-home .fh-search input { width:100%; min-width:0; background:transparent; border:0; padding:5px 0; font-size:13px; }
+#finished-home .fh-search button { display:flex; align-items:center; justify-content:center; width:25px; height:29px; color:var(--fh-muted); }
+#finished-home .fh-account { display:flex; align-items:center; justify-content:center; border-radius:50%; width:40px; height:40px; background:#747098; color:white; font-size:20px; }
+#finished-home .fh-btn { display:inline-flex; align-items:center; justify-content:center; gap:8px; padding:9px 13px; min-height:39px; border:1px solid #d8dce5; background:white; border-radius:9px; font-size:14px; }
+#finished-home .fh-btn:hover { background:#f3f7ff; border-color:#8eb1f4; }
+#finished-home .fh-btn.blue { color:#0863e7; border-color:#83b0ff; }
+#finished-home .fh-btn.primary { color:white; background:#d64b15; border-color:#d64b15; }
+#finished-home .fh-btn.soft { border-color:transparent; background:#f7f3eb; }
+#finished-home .fh-btn.round { border-radius:24px; padding:7px 14px; min-height:35px; }
+#finished-home .fh-link { color:var(--fh-blue); display:inline-flex; align-items:center; gap:6px; min-height:32px; font-size:13px; }
+#finished-home .fh-link:hover { text-decoration:underline; }
+#finished-home .fh-iconbtn { display:inline-flex; align-items:center; justify-content:center; width:34px; height:34px; border-radius:8px; }
+#finished-home .fh-iconbtn:hover { background:#f7f3eb; }
+#finished-home .fh-tabs { display:flex; gap:22px; align-items:center; flex-wrap:wrap; border-bottom:1px solid var(--fh-line); margin-bottom:17px; }
+#finished-home .fh-tab { padding:11px 8px 12px; position:relative; color:#425275; font-size:14px; }
+#finished-home .fh-tab[aria-current=page] { color:#bc3808; font-weight:600; }
+#finished-home .fh-tab[aria-current=page]:after { content:''; height:3px; position:absolute; bottom:-1px; left:4px; right:4px; background:#ec5b1a; border-radius:3px; }
+#finished-home .fh-customize { margin-left:auto; font-size:12px; color:var(--fh-muted); display:flex; gap:6px; align-items:center; padding:7px 0; min-height:36px; }
+#finished-home .fh-customize svg { width:16px; height:16px; }
+#finished-home .fh-grid { display:grid; grid-template-columns:minmax(0,1fr) 355px; gap:22px; align-items:start; }
+#finished-home .fh-center,#finished-home .fh-side { min-width:0; display:flex; flex-direction:column; gap:18px; }
+#finished-home .fh-people { padding:13px 14px; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; border:1px solid var(--fh-line); border-radius:13px; background:white; }
+#finished-home .fh-person { display:flex; gap:9px; align-items:center; min-width:0; }
+#finished-home .fh-person .fh-muted { margin-top:2px; font-size:12px; }
+#finished-home .fh-art { position:relative; display:block; overflow:hidden; flex-shrink:0; }
+#finished-home .fh-art img { position:absolute; max-width:none; height:auto; width:calc(1586 / var(--cw) * 100%); left:calc(var(--x) / var(--cw) * -100%); top:calc(var(--y) / var(--ch) * -100%); }
+#finished-home .fh-face { width:55px; height:55px; border-radius:50%; }
+#finished-home .fh-person h3 { font-size:15px; }
+#finished-home .fh-avatarwrap { position:relative; flex-shrink:0; }
+#finished-home .fh-dot { position:absolute; bottom:0; right:0; width:12px; height:12px; border-radius:50%; background:#12b769; border:2px solid white; }
+#finished-home .fh-message { display:flex; gap:14px; align-items:flex-start; padding:3px 13px 0; }
+#finished-home .fh-message .fh-face { width:46px; height:46px; }
+#finished-home .fh-messagebody { flex:1; min-width:0; }
+#finished-home .fh-messageby { display:flex; align-items:center; gap:10px; margin-bottom:5px; font-size:13px; }
+#finished-home .fh-messageby strong { font-weight:650; }
+#finished-home .fh-bubble { background:#f5f0e6; border-radius:0 16px 16px 16px; padding:14px 17px; width:fit-content; max-width:100%; }
+#finished-home .fh-bubble p { font-size:16px; line-height:1.55; font-weight:500; }
+#finished-home .fh-actions { display:flex; gap:9px; align-items:center; flex-wrap:wrap; margin-top:11px; }
+#finished-home .fh-card { padding:18px; background:white; border:1px solid #eeebe5; border-radius:15px; box-shadow:0 3px 14px #a0865910; }
+#finished-home .fh-cardhead { display:flex; gap:13px; align-items:center; margin-bottom:16px; }
+#finished-home .fh-cardhead p { color:var(--fh-muted); margin-top:3px; font-size:13px; }
+#finished-home .fh-cardhead .fh-iconbtn { margin-left:auto; }
+#finished-home .fh-square { height:44px; width:44px; border-radius:11px; display:flex; align-items:center; justify-content:center; flex-shrink:0; color:white; background:linear-gradient(135deg,#ff7764,#f34c3d); box-shadow:0 4px 8px #fd706528; }
+#finished-home .fh-square svg { width:26px; height:26px; }
+#finished-home .fh-plangrid { display:grid; grid-template-columns:1.16fr .97fr 1fr; gap:10px; align-items:stretch; }
+#finished-home .fh-minicard { border:1px solid #e9eaf0; border-radius:10px; overflow:clip; min-width:0; background:white; }
+#finished-home .fh-agenda { padding:11px 10px; }
+#finished-home .fh-agenda h3 { font-size:14px; margin:0 0 7px; }
+#finished-home .fh-agenda h3:not(:first-child) { margin-top:16px; }
+#finished-home .fh-event { display:grid; grid-template-columns:55px 29px minmax(0,1fr); align-items:center; gap:7px; width:100%; padding:9px 0; font-size:13px; border-bottom:1px solid #f1f0ef; }
+#finished-home .fh-event:last-child { border-bottom:0; }
+#finished-home .fh-event:hover { background:#f9f6f0; border-radius:6px; }
+#finished-home .fh-event time { font-size:12px; color:#37486b; }
+#finished-home .fh-emoji { width:29px; height:29px; display:inline-flex; align-items:center; justify-content:center; font-size:20px; border-radius:50%; background:#e7f4ed; }
+#finished-home .fh-parkart { width:100%; aspect-ratio:257/226; }
+#finished-home .fh-placebody { padding:12px; }
+#finished-home .fh-placebody p { color:var(--fh-muted); font-size:12px; margin:5px 0 12px; }
+#finished-home .fh-placebody .fh-btn { width:100%; padding:7px; font-size:12px; }
+#finished-home .fh-list { padding:11px; }
+#finished-home .fh-list h3 { display:flex; gap:7px; align-items:center; font-size:14px; margin-bottom:7px; }
+#finished-home .fh-list h3 svg { color:var(--fh-blue); }
+#finished-home .fh-item { display:flex; gap:8px; align-items:center; min-height:38px; border-bottom:1px solid #f1f0ef; font-size:13px; }
+#finished-home .fh-item input { appearance:auto; width:15px; height:15px; accent-color:#de5b27; margin:0; flex-shrink:0; }
+#finished-home .fh-item .fh-food { font-size:22px; width:24px; text-align:center; flex-shrink:0; }
+#finished-home .fh-item:has(input:checked) .fh-itemtext { color:#7c8396; text-decoration:line-through; }
+#finished-home .fh-list .fh-btn { width:100%; margin-top:9px; min-height:34px; font-size:12px; padding:6px; }
+#finished-home .fh-insert { display:flex; gap:7px; align-items:center; margin:10px 0 0; flex-wrap:wrap; }
+#finished-home .fh-insert input { min-width:0; flex:1; width:100%; border:1px solid #d8dce5; border-radius:8px; padding:8px; font-size:13px; background:white; }
+#finished-home .fh-insert .fh-btn { width:auto; margin:0; }
+#finished-home .fh-righthead { display:flex; gap:10px; justify-content:space-between; align-items:center; margin-bottom:14px; }
+#finished-home .fh-righthead h2 { font-size:19px; }
+#finished-home .fh-rightsection { border:1px solid #ebeaf0; border-radius:10px; padding:12px; margin-top:12px; }
+#finished-home .fh-rightsection h3 { display:flex; gap:9px; align-items:center; font-size:15px; }
+#finished-home .fh-rightsection .fh-righthead { margin-bottom:10px; }
+#finished-home .fh-dateday { display:grid; grid-template-columns:53px minmax(0,1fr); gap:9px; padding:10px 0; }
+#finished-home .fh-dateday + .fh-dateday { border-top:1px solid var(--fh-line); }
+#finished-home .fh-date { background:#f7f7f8; border-radius:7px; padding:6px; font-size:12px; }
+#finished-home .fh-date b { display:block; }
+#finished-home .fh-date span { display:block; margin-top:2px; color:var(--fh-muted); }
+#finished-home .fh-calrow { display:flex; gap:7px; align-items:baseline; width:100%; padding:5px 0; font-size:12px; }
+#finished-home .fh-calrow .fh-bullet { height:7px; width:7px; background:#176aee; border-radius:50%; display:inline-block; flex-shrink:0; }
+#finished-home .fh-calrow time { margin-left:auto; font-size:11px; color:var(--fh-muted); white-space:nowrap; }
+#finished-home .fh-foodrow { display:flex; gap:9px; align-items:center; flex-wrap:wrap; font-size:25px; }
+#finished-home .fh-foodrow .fh-small { margin-left:auto; }
+#finished-home .fh-adminlink { display:flex; align-items:center; gap:12px; width:100%; padding:14px; background:white; border:1px solid #e8e9f0; border-radius:10px; margin-top:11px; }
+#finished-home .fh-adminlink:hover { background:#faf7f0; }
+#finished-home .fh-adminlink > .fh-ic:first-child svg { width:27px; height:27px; }
+#finished-home .fh-adminlink > .fh-ic:last-child { margin-left:auto; }
+#finished-home .fh-adminlink small { display:block; color:var(--fh-muted); font-size:12px; margin-top:3px; }
+#finished-home .fh-composer { display:flex; gap:11px; align-items:center; background:white; border:1px solid var(--fh-line); border-radius:15px; padding:12px; box-shadow:0 2px 8px #8b755b0a; }
+#finished-home .fh-composer .fh-face { width:36px; height:36px; }
+#finished-home .fh-composer input { width:100%; min-width:0; flex:1; background:#faf9f8; border:1px solid #dfdfe4; border-radius:12px; padding:13px; font-size:13px; }
+#finished-home .fh-send { width:46px; height:46px; flex-shrink:0; display:flex; justify-content:center; align-items:center; border-radius:50%; background:linear-gradient(135deg,#faaa73,#ff5d13); color:white; }
+#finished-home .fh-foot { display:flex; gap:12px; justify-content:space-between; flex-wrap:wrap; margin-top:15px; color:#687792; font-size:11px; }
+#finished-home .fh-status { color:#405577; font-size:12px; margin-top:8px; min-height:18px; }
+#finished-home .fh-status:empty { display:none; }
+#finished-home .fh-panel { padding:20px; border:1px solid #eadcc8; border-radius:14px; background:white; box-shadow:0 4px 22px #9d795015; }
+#finished-home .fh-panel h2 { font-size:20px; }
+#finished-home fieldset { padding:0; margin:19px 0 0; border:0; min-width:0; }
+#finished-home legend { padding:0; margin:0 0 8px; font-size:13px; font-weight:650; }
+#finished-home .fh-option { display:flex; align-items:center; gap:9px; padding:10px; margin-bottom:6px; border:1px solid #e9e7e2; border-radius:9px; font-size:13px; }
+#finished-home .fh-option:has(input:checked) { background:#fff3e3; border-color:#e9c79e; }
+#finished-home .fh-check { display:flex; gap:8px; align-items:center; min-height:35px; font-size:13px; }
+#finished-home input[type=checkbox],#finished-home input[type=radio] { accent-color:#d65017; }
+#finished-home .fh-fieldlabel { display:block; margin:19px 0 7px; font-size:13px; font-weight:650; }
+#finished-home .fh-select { border:1px solid #dedfe4; border-radius:9px; background:white; width:100%; padding:9px; font-size:13px; }
+#finished-home .fh-privacy { display:flex; gap:9px; padding:12px; background:#f7f4ec; border-radius:10px; font-size:12px; margin:16px 0; }
+#finished-home .fh-rule { height:1px; border:0; background:var(--fh-line); margin:18px 0; }
+#finished-home .fh-member { display:flex; gap:10px; align-items:center; padding:13px 0; border-bottom:1px solid var(--fh-line); }
+#finished-home .fh-member .fh-face { width:39px; height:39px; }
+#finished-home .fh-member .fh-small { margin-left:auto; }
+#finished-home .fh-detail { padding:23px; }
+#finished-home .fh-detail h2 { font-size:25px; margin:10px 0; }
+#finished-home .fh-detail p { margin:8px 0; }
+#finished-home .fh-detail .fh-parkart { max-width:300px; border-radius:11px; margin:18px 0; }
+#finished-home .fh-field { background:white; border:1px solid #d9dde4; border-radius:9px; padding:10px; max-width:100%; }
+#finished-home textarea.fh-field { width:100%; min-height:140px; resize:vertical; font-size:14px; }
+#finished-home .fh-file { width:100%; display:flex; gap:12px; align-items:center; padding:16px 0; border-bottom:1px solid var(--fh-line); }
+#finished-home .fh-file .fh-ic { background:#fff1de; color:#c54d17; border-radius:10px; width:41px; height:45px; }
+#finished-home .fh-file small { display:block; color:var(--fh-muted); margin-top:3px; }
+#finished-home .fh-appgrid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+#finished-home .fh-app { display:flex; flex-direction:column; gap:12px; align-items:flex-start; border:1px solid var(--fh-line); border-radius:12px; padding:18px; min-width:0; }
+#finished-home .fh-app:hover { background:#fff7ec; }
+#finished-home .fh-app .fh-ic { width:44px; height:44px; background:#fff0db; border-radius:11px; color:#c9571e; }
+#finished-home .fh-app small { font-size:12px; color:var(--fh-muted); }
+#finished-home .fh-privatehero { background:linear-gradient(120deg,#fff3dc,#fbf7ef); padding:25px; border-radius:13px; margin-bottom:17px; }
+#finished-home .fh-privatehero h2 { font-size:28px; margin:5px 0 10px; }
+#finished-home .fh-agendarow { display:flex; gap:16px; padding:15px 0; border-bottom:1px solid var(--fh-line); width:100%; align-items:center; }
+#finished-home .fh-agendarow time { font-size:13px; width:63px; flex-shrink:0; color:var(--fh-muted); }
+#finished-home .fh-empty { padding:18px; background:#f8f6f1; border-radius:10px; color:var(--fh-muted); font-size:13px; }
+#finished-home .fh-compact .fh-people { padding:9px 12px; }
+#finished-home .fh-compact .fh-card { padding:14px; }
+@container (max-width:1300px) {
+ #finished-home .fh-shell { grid-template-columns:155px minmax(0,1fr); }
+ #finished-home .fh-main { padding:16px; }
+ #finished-home .fh-grid { grid-template-columns:minmax(0,1fr) 272px; gap:16px; }
+ #finished-home .fh-plangrid { grid-template-columns:1.15fr 1fr; }
+ #finished-home .fh-shopping { grid-column:1/-1; }
+ #finished-home .fh-shopping .fh-listitems { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:15px; }
+ #finished-home .fh-shopping .fh-actions { margin:0; }
+ #finished-home .fh-shopping .fh-btn { width:auto; padding:7px 11px; }
+ #finished-home .fh-person { flex-direction:column; align-items:flex-start; gap:5px; }
+ #finished-home .fh-card { padding:14px; }
+ #finished-home .fh-navitem { gap:10px; padding:13px 9px; font-size:13px; }
+ #finished-home .fh-space select { font-size:25px; }
+ #finished-home .fh-calrow time { display:none; }
+}
+@container (max-width:1050px) {
+ #finished-home .fh-grid { grid-template-columns:minmax(0,1fr); }
+ #finished-home .fh-side { display:grid; grid-template-columns:1.2fr 1fr; align-items:start; }
+ #finished-home .fh-panel { grid-column:1/-1; }
+ #finished-home .fh-grid:has(.fh-panel) .fh-side { grid-row:1; }
+ #finished-home .fh-person { flex-direction:row; align-items:center; }
+ #finished-home .fh-tabs { gap:13px; }
+ #finished-home .fh-plangrid { grid-template-columns:1.16fr 1fr 1fr; }
+ #finished-home .fh-shopping { grid-column:auto; }
+ #finished-home .fh-shopping .fh-listitems { display:block; }
+ #finished-home .fh-shopping .fh-btn { width:100%; }
+ #finished-home .fh-message { padding:0; }
+}
+@container (max-width:800px) {
+ #finished-home .fh-shell { grid-template-columns:1fr; min-height:0; }
+ #finished-home .fh-rail { flex-direction:row; align-items:center; padding:11px; border-right:0; border-bottom:1px solid var(--fh-line); flex-wrap:wrap; gap:4px; }
+ #finished-home .fh-brand { font-size:26px; padding:0 15px 0 1px; }
+ #finished-home .fh-navitem { width:auto; font-size:12px; min-height:37px; padding:8px; gap:5px; }
+ #finished-home .fh-navitem svg { width:17px; height:17px; }
+ #finished-home .fh-navspacer,#finished-home .fh-low { display:none; }
+ #finished-home .fh-topright { margin-left:auto; }
+ #finished-home .fh-plangrid { grid-template-columns:1.1fr 1fr; }
+ #finished-home .fh-shopping { grid-column:1/-1; }
+ #finished-home .fh-shopping .fh-listitems { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:15px; }
+ #finished-home .fh-shopping .fh-btn { width:auto; }
+ #finished-home .fh-people { gap:8px; }
+ #finished-home .fh-person { flex-direction:column; align-items:center; text-align:center; }
+ #finished-home .fh-people .fh-person h3 { font-size:12px; }
+}
+@container (max-width:510px) {
+ #finished-home .fh-main { padding:13px; }
+ #finished-home .fh-brand { width:100%; padding:1px 5px 7px; }
+ #finished-home .fh-navitem { flex:1; flex-direction:column; font-size:11px; padding:6px 3px; }
+ #finished-home .fh-topright { margin-left:0; width:100%; }
+ #finished-home .fh-search { width:100%; }
+ #finished-home .fh-account { margin-left:auto; }
+ #finished-home .fh-space select { font-size:25px; max-width:244px; }
+ #finished-home .fh-titlegroup { gap:9px; }
+ #finished-home .fh-tabs { gap:10px; }
+ #finished-home .fh-tab { padding:9px 4px; font-size:13px; }
+ #finished-home .fh-customize { width:100%; justify-content:flex-end; padding-top:0; }
+ #finished-home .fh-plangrid { grid-template-columns:1fr; }
+ #finished-home .fh-shopping { grid-column:auto; }
+ #finished-home .fh-shopping .fh-listitems { display:block; }
+ #finished-home .fh-people { padding:10px 7px; gap:4px; }
+ #finished-home .fh-person .fh-muted { font-size:11px; }
+ #finished-home .fh-face { width:43px; height:43px; }
+ #finished-home .fh-message { gap:9px; }
+ #finished-home .fh-message > .fh-avatarwrap .fh-face { width:34px; height:34px; }
+ #finished-home .fh-bubble { padding:12px; }
+ #finished-home .fh-bubble p { font-size:14px; }
+ #finished-home .fh-messageby { font-size:12px; }
+ #finished-home .fh-side { grid-template-columns:1fr; }
+ #finished-home .fh-composer { padding:9px; gap:7px; }
+ #finished-home .fh-composer > .fh-avatarwrap { display:none; }
+ #finished-home .fh-composer input { font-size:16px; padding:10px; }
+ #finished-home .fh-send { width:38px; height:38px; }
+ #finished-home .fh-appgrid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+ #finished-home .fh-detail { padding:16px; }
+ #finished-home .fh-event { grid-template-columns:60px 32px minmax(0,1fr); font-size:14px; padding:11px 0; }
+ #finished-home .fh-event time { font-size:12px; }
+ #finished-home .fh-calrow { font-size:12px; }
+}
+@media (pointer:coarse) { #finished-home button,#finished-home select,#finished-home .fh-check,#finished-home .fh-item { min-height:44px; } }
+</style>
+<div id="finished-home" aria-label="Illustrated home prototype">
+ <div class="fh-previewbar"><span>Interactive prototype · sample people and data</span><span>No live accounts connected</span></div>
+ <div id="fh-product"></div>
+ <div id="fh-status" class="fh-status" role="status" aria-live="polite"></div>
+</div>
+<script>
+(() => {
+ const root=document.getElementById('finished-home');
+ const product=root.querySelector('#fh-product');
+ const status=root.querySelector('#fh-status');
+ const ART='__APPROVED_ART__';
+ const esc=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+ const ic=n=>'<span class="fh-ic"><i data-lucide="'+n+'" aria-hidden="true"></i></span>';
+ const button=(label,action,extra='',classes='')=>'<button type="button" class="fh-btn cursor-interaction '+classes+'" data-do="'+action+'" '+extra+'>'+label+'</button>';
+ const coords={bot:[256,129,64,64],dad:[486,129,66,66],mom:[696,129,66,66],emma:[915,129,65,65],park:[576,462,257,226]};
+ function art(who,label='') {const [x,y,w,h]=coords[who];return '<span class="fh-art '+(who==='park'?'fh-parkart':'fh-face')+'" style="--x:'+x+';--y:'+y+';--cw:'+w+';--ch:'+h+'"><img src="'+ART+'" alt="'+esc(label)+'" draggable="false"></span>';}
+ function avatar(who,online=false){return '<span class="fh-avatarwrap">'+art(who)+(online?'<span class="fh-dot" aria-hidden="true"></span>':'')+'</span>';}
+ const familyEvents=[
+  {id:'breakfast',day:0,time:'09:00',title:'Pancake breakfast at home',short:'Pancake breakfast',emoji:'🍴',place:'At home'},
+  {id:'park',day:0,time:'11:00',title:'Visit Riverside Park',short:'Riverside Park',emoji:'🌳',place:'Riverside Park · example outing'},
+  {id:'soccer',day:0,time:'16:00',title:'Emma’s soccer game',short:'Emma’s soccer game',emoji:'⚽',place:'North field'},
+  {id:'movie',day:0,time:'19:00',title:'Family movie night',short:'Family movie night',emoji:'🎬',place:'At home'},
+  {id:'bike',day:1,time:'10:00',title:'Bike ride at the lake',short:'Bike ride at the lake',emoji:'🚲',place:'Lakeside trail'},
+  {id:'garden',day:1,time:'14:00',title:'Garden & yard time',short:'Garden & yard time',emoji:'🌿',place:'Back garden'},
+  {id:'dinner',day:1,time:'18:00',title:'Cook dinner together',short:'Cook dinner together',emoji:'🍲',place:'At home'}
+ ];
+ const fixtures={
+  family:{name:'Family home',scope:'Shared family view',sharing:'Shared with the family',admin:'Family admin',members:[['dad','Dad','Online'],['mom','Mom','Online'],['emma','Emma','Online']],title:'Weekend plan',sub:'Plan together · Sat, Apr 26 – Sun, Apr 27',list:'Family shopping list',source:'Household calendar',message:'Soccer is at 4. Shall I add snacks to the shared list?',action:'Yes, add snacks',foods:[['🍌','Bananas'],['🥛','Milk'],['🍞','Sandwich bread'],['🍎','Apples'],['🧃','Juice boxes'],['🍇','Grapes']],events:familyEvents,notes:'Bring the picnic blanket to the park. Emma’s boots are by the door.',files:['Weekend plan','Picnic checklist','Household guide'],task:['Pack the picnic blanket','Charge the bike lights','Choose a movie together']},
+  personal:{name:'My private space',scope:'Only me',sharing:'Just for you',admin:'My space',members:[['dad','Taylor','Your private preview']],title:'A little space for you',sub:'Your plans, your work, your own pace',list:'My next steps',source:'My calendar',message:'You have a clear hour this afternoon. Shall I draft a short focus plan?',action:'Prepare my focus plan',foods:[['📝','Choose three projects'],['📷','Review portfolio photos'],['📖','Read a chapter']],events:[{id:'health',day:0,time:'10:30',title:'Health appointment',short:'Health appointment',emoji:'🗓️',place:'Personal calendar · sample only'},{id:'focus',day:0,time:'14:00',title:'Portfolio focus time',short:'Portfolio focus time',emoji:'📝',place:'My workspace'}],notes:'Write a short introduction for the portfolio.',files:['Portfolio introduction','Project shortlist'],task:['Choose the lead project','Draft my introduction']},
+  team:{name:'Studio team',scope:'Shared team view',sharing:'Shared with the team',admin:'Team admin',members:[['dad','You','Online'],['mom','Alex','Online'],['emma','Jordan','Online']],title:'Launch, together',sub:'Collection launch · review the work, make the next decision',list:'Before we launch',source:'Team calendar',message:'The launch draft is ready. Shall I prepare the two open decisions for review?',action:'Prepare the review',foods:[['🖼️','Choose the lead image'],['📝','Review product copy'],['🗓️','Confirm launch date']],events:[{id:'review',day:0,time:'09:30',title:'Creative review',short:'Creative review',emoji:'🎨',place:'Studio team'},{id:'launch',day:0,time:'14:00',title:'Launch check-in',short:'Launch check-in',emoji:'🚀',place:'Collection project'}],notes:'Lead image and launch date need a decision before Friday.',files:['Launch brief','Product copy','Image shortlist'],task:['Review lead image','Approve product copy','Confirm Friday launch']}
+ };
+ const defaults=()=>({lead:'room',calendar:true,list:true,people:true,bot:'suggest'});
+ const state={space:'family',page:'room',panel:'',detail:'',query:'',prefs:{family:defaults(),personal:defaults(),team:defaults()},lists:{},notes:{},checks:{},times:{},replies:{},snacks:false,add:false,editing:false,draft:false,dismissed:false,scheduled:{},compact:false,returnPage:'room'};
+ const data=()=>fixtures[state.space];
+ const pref=()=>state.prefs[state.space];
+ const listItems=()=>state.lists[state.space]||(state.lists[state.space]=data().foods.map(v=>[...v]));
+ const events=()=>data().events.map(e=>({...e,time:state.times[state.space+':'+e.id]||e.time}));
+ const pretty=t=>{const [h,m]=t.split(':').map(Number);return (h%12||12)+':'+String(m).padStart(2,'0')+(h>=12?' PM':' AM');};
+ function restore(saved){
+  const m=saved?.modelContent;if(m?.kind!=='finished-home-v2')return;
+  if(Object.hasOwn(fixtures,m.space))state.space=m.space;
+  for(const key of Object.keys(fixtures)){const p=m.prefs?.[key];if(!p)continue;for(const k of ['calendar','list','people'])if(typeof p[k]==='boolean')state.prefs[key][k]=p[k];if(['room','day','work'].includes(p.lead))state.prefs[key].lead=p.lead;if(['ask','suggest','draft'].includes(p.bot))state.prefs[key].bot=p.bot;}
+  if(typeof saved.privateContent?.compact==='boolean')state.compact=saved.privateContent.compact;
+ }
+ restore(window.openai?.widgetState);
+ function remember(){try{window.openai?.setWidgetState?.({modelContent:{kind:'finished-home-v2',space:state.space,prefs:state.prefs},privateContent:{compact:state.compact}})?.catch(()=>{});}catch{}}
+ function announce(t){status.textContent=t;}
+ function members(){return '<section class="fh-people" aria-label="People in this space"><div class="fh-person">'+avatar('bot',true)+'<div><h3>Home Bot</h3><p class="fh-muted">Room host</p></div></div>'+data().members.map(([a,n,s])=>'<div class="fh-person">'+avatar(a,s==='Online')+'<div><h3>'+esc(n)+'</h3><p class="fh-muted">'+esc(s)+'</p></div></div>').join('')+'</section>';}
+ function botMessage(){
+  let message=state.replies[state.space]||(state.space==='family'?'Soccer is at '+pretty(events().find(e=>e.id==='soccer').time)+'. Shall I add snacks to the shared list?':data().message);
+  if(!state.replies[state.space]&&pref().bot==='ask')message='I’m here when you need me. What would you like to do in this space?';
+  if(!state.replies[state.space]&&pref().bot==='draft')message='I can prepare the next step for your review. Nothing is added or sent without your approval.';
+  if(state.dismissed&&!state.replies[state.space])message='No problem. I’m here if you need a hand with the plan.';
+  const action=state.space==='family'?'snacks':'draft';
+  const controls=state.replies[state.space]||state.dismissed?'':button(esc(pref().bot==='ask'?'Help me get started':data().action),pref().bot==='draft'?'draft':action,'','blue round')+button('Not now','dismiss','','round');
+  return '<section class="fh-message" aria-label="Home Bot suggestion">'+avatar('bot')+'<div class="fh-messagebody"><div class="fh-messageby"><strong>Home Bot</strong><span class="fh-muted">'+(state.replies[state.space]?'Just now':'10:14 AM')+'</span></div><div class="fh-bubble"><p>'+esc(message)+'</p>'+(state.draft?'<div class="fh-actions">'+button('Approve draft','approve','','blue round')+button('Discard','discard','','round')+'</div>':controls?'<div class="fh-actions">'+controls+'</div>':'')+'</div></div></section>';
+ }
+ function agenda(){return '<div class="fh-minicard fh-agenda">'+[0,1].filter(day=>events().some(e=>e.day===day)).map(day=>'<h3>'+(day?'Sunday, Apr 27':'Saturday, Apr 26')+'</h3>'+events().filter(e=>e.day===day).map(e=>'<button class="fh-event cursor-interaction" data-do="event" data-id="'+e.id+'"><time>'+pretty(e.time)+'</time><span class="fh-emoji" aria-hidden="true">'+e.emoji+'</span><span>'+esc(e.title)+'</span></button>').join('')).join('')+'</div>';}
+ function shopping(full=false){return '<section class="'+(full?'fh-card':'fh-minicard fh-shopping')+' fh-list" data-part="shopping"><h3>'+ic('shopping-cart')+esc(data().list)+'</h3><div class="fh-listitems">'+listItems().map(([emoji,label],index)=>'<label class="fh-item cursor-interaction"><input aria-label="'+esc(label)+'" type="checkbox" data-check="list:'+index+'" '+(state.checks[state.space+':list:'+index]?'checked':'')+'><span class="fh-food" aria-hidden="true">'+emoji+'</span><span class="fh-itemtext">'+esc(label)+'</span></label>').join('')+'</div>'+(state.add?'<div class="fh-insert"><input id="fh-new-item" aria-label="New list item" maxlength="70" placeholder="What do we need?"><button type="button" class="fh-btn blue cursor-interaction" data-do="save-item">Add</button></div>':'<div class="fh-actions">'+button(ic('plus')+(state.space==='personal'?'Add to my list':'Add to shared list'),'add-item','','blue')+button(ic('users')+(state.space==='personal'?'My planning note':'Plan together'),'notes','','blue')+'</div>')+'</section>';}
+ function place(){return '<section class="fh-minicard">'+art('park','Illustrated Riverside Park from the approved concept; not a navigation map')+'<div class="fh-placebody"><h3>Riverside Park</h3><p>Picnic, fresh air, a little exploring.</p>'+button('Outing details '+ic('arrow-up-right'),'event','data-id="park"','blue')+'</div></section>';}
+ function plan(){
+  if(state.space!=='family')return '<section class="fh-card" data-part="plan"><div class="fh-privatehero"><div class="fh-eyebrow">'+(state.space==='personal'?'Pick up where you left off':'Shared project')+'</div><h2>'+esc(data().title)+'</h2><p class="fh-muted">'+esc(data().sub)+'</p><div class="fh-actions">'+button('Open '+(state.space==='personal'?'my portfolio':'launch brief'),'file','data-index="0"','blue')+'</div></div><div class="fh-plangrid">'+agenda()+(pref().list?shopping():'')+'</div></section>';
+  return '<section class="fh-card" data-part="plan"><div class="fh-cardhead"><span class="fh-square">'+ic('calendar-days')+'</span><div><h2>Weekend plan</h2><p>Plan together · Sat, Apr 26 – Sun, Apr 27</p></div><button class="fh-iconbtn cursor-interaction" data-do="calendar" aria-label="Open weekend calendar">'+ic('arrow-up-right')+'</button></div><div class="fh-plangrid">'+agenda()+place()+(pref().list?shopping():'')+'</div></section>';
+ }
+ function calendarSummary(){return '<section class="fh-rightsection" data-part="calendar"><div class="fh-righthead"><h3>'+ic('calendar-days')+esc(data().source)+'</h3><button class="fh-link cursor-interaction" data-do="calendar">View all</button></div>'+[0,1].filter(day=>events().some(e=>e.day===day)).map(day=>'<div class="fh-dateday"><div class="fh-date"><b>Apr '+(day?'27':'26')+'</b><span>'+(day?'Sun':'Sat')+'</span></div><div>'+events().filter(e=>e.day===day).map(e=>'<button class="fh-calrow cursor-interaction" data-do="event" data-id="'+e.id+'"><span class="fh-bullet"></span><span>'+esc(e.short)+'</span><time>'+pretty(e.time)+'</time></button>').join('')+'</div></div>').join('')+'</section>';}
+ function summaries(){return '<section class="fh-card"><div class="fh-righthead"><h2>'+esc(data().sharing)+'</h2><button class="fh-iconbtn cursor-interaction" data-do="sources" aria-label="Sources in this space">'+ic('ellipsis')+'</button></div>'+(pref().calendar?calendarSummary():'')+(pref().list?'<section class="fh-rightsection"><div class="fh-righthead"><h3>'+ic('shopping-cart')+(state.space==='family'?'Grocery list':'To do')+'</h3><button class="fh-link cursor-interaction" data-do="lists">View list</button></div><div class="fh-foodrow">'+listItems().slice(0,6).map(([e])=>'<span aria-hidden="true">'+e+'</span>').join('')+'<span class="fh-small">'+listItems().length+' items</span></div></section>':'')+(!pref().calendar&&!pref().list?'<p class="fh-muted fh-small">Your home is set to a quieter view.</p>':'')+'</section>';}
+ function adminSummary(){return '<section class="fh-card"><div class="fh-righthead"><h2>'+ic('settings')+' '+esc(data().admin)+'</h2></div><button class="fh-adminlink cursor-interaction" data-do="admin">'+ic('users')+'<span><h3>'+(state.space==='personal'?'My access':'People & roles')+'</h3><small>'+(state.space==='family'?'Manage family members':'Access within this space')+'</small></span>'+ic('chevron-right')+'</button><button class="fh-adminlink cursor-interaction" data-do="devices">'+ic('monitor')+'<span><h3>Devices</h3><small>Display and device access</small></span>'+ic('chevron-right')+'</button></section>';}
+ function composer(){return '<section class="fh-composer" aria-label="Ask Home Bot">'+avatar('bot')+'<input id="fh-chat" aria-label="Message Home Bot" maxlength="300" autocomplete="off" placeholder="Ask Home Bot about this space…"><button class="fh-send cursor-interaction" data-do="send" aria-label="Send sample message">'+ic('arrow-up')+'</button></section>';}
+ function panelHeader(title){return '<div class="fh-righthead"><h2>'+title+'</h2><button class="fh-iconbtn cursor-interaction" data-do="close" aria-label="Close panel">'+ic('x')+'</button></div>';}
+ function options(){return '<aside class="fh-panel" aria-label="Make this home yours">'+panelHeader('Make it yours')+'<p class="fh-small fh-muted">Your view of '+esc(data().name)+'.</p><fieldset><legend>What greets you?</legend>'+[['room','The room · people and Home Bot'],['day','My day · calendar first'],['work','The plan · work in progress']].map(([v,l])=>'<label class="fh-option cursor-interaction"><input type="radio" name="fh-lead" data-pref="lead" value="'+v+'" '+(pref().lead===v?'checked':'')+'>'+l+'</label>').join('')+'</fieldset><fieldset><legend>Keep close at hand</legend>'+[['people','People in this space'],['calendar','Calendar summary'],['list',data().list]].map(([v,l])=>'<label class="fh-check cursor-interaction"><input type="checkbox" data-pref="'+v+'" '+(pref()[v]?'checked':'')+'>'+esc(l)+'</label>').join('')+'</fieldset><label class="fh-fieldlabel" for="fh-bot-style">Home Bot helps by</label><select id="fh-bot-style" class="fh-select cursor-interaction" data-pref="bot">'+[['ask','Waiting for me to ask'],['suggest','Suggesting a next step'],['draft','Preparing drafts to review']].map(([v,l])=>'<option value="'+v+'" '+(pref().bot===v?'selected':'')+'>'+l+'</option>').join('')+'</select><div class="fh-privacy">'+ic('lock-keyhole')+'<span>These choices change your home, not anyone’s access.</span></div><button class="fh-link cursor-interaction" data-do="sources">Sources for this space '+ic('arrow-up-right')+'</button><hr class="fh-rule"><div class="fh-righthead"><span class="fh-small fh-muted">Preview updates instantly</span>'+button('Done','close','','primary')+'</div></aside>';}
+ function sourcePanel(){return '<aside class="fh-panel">'+panelHeader('Sources in this space')+'<p class="fh-small fh-muted">Example sources, not connected accounts.</p>'+[data().source,data().list,state.space==='personal'?'My files':'Shared files'].map(v=>'<div class="fh-member">'+ic('folder-check')+'<span>'+esc(v)+'</span><span class="fh-small fh-muted">Sample</span></div>').join('')+'<div class="fh-privacy">'+ic('shield-check')+'<span>'+(state.space==='personal'?'A real private view requires your verified personal session.':'Only explicitly shared sources belong here. A real implementation must enforce that in the API, including Home Bot.')+'</span></div>'+button('Back to options','options')+'</aside>';}
+ function privatePanel(){return '<aside class="fh-panel">'+panelHeader('Your space is yours')+avatar('dad')+'<h3 style="margin-top:12px">Switch to a private session</h3><p class="fh-small fh-muted" style="margin-top:10px">In the real product, this requires your own verified sign-in. Family-admin access is not enough.</p><div class="fh-privacy">'+ic('lock-keyhole')+'<span>This prototype can only demonstrate the journey with sample data.</span></div>'+button('Preview my private space','enter-private','','primary')+'</aside>';}
+ function calendarPage(){return '<section class="fh-card fh-detail" data-part="day"><div class="fh-eyebrow">'+esc(data().source)+'</div><h2>'+(state.space==='family'?'The weekend, together.':'Your day, at a glance.')+'</h2>'+events().map(e=>'<button class="fh-agendarow cursor-interaction" data-do="event" data-id="'+e.id+'"><time>'+pretty(e.time)+'</time><span class="fh-emoji" aria-hidden="true">'+e.emoji+'</span><span><h3>'+esc(e.title)+'</h3><span class="fh-small fh-muted">'+(e.day?'Sunday':'Saturday')+' · '+esc(e.place)+'</span></span></button>').join('')+'</section>';}
+ function detailPage(){const e=events().find(v=>v.id===state.detail);if(!e){state.page='room';return plan();}return '<section class="fh-card fh-detail"><button class="fh-link cursor-interaction" data-do="back">'+ic('arrow-left')+' Back to '+(state.returnPage==='calendar'?'calendar':'the room')+'</button><h2>'+esc(e.title)+'</h2><p>'+esc(e.place)+'</p><p class="fh-muted">'+(e.day?'Sunday, Apr 27':'Saturday, Apr 26')+' · '+pretty(e.time)+'</p>'+(e.id==='park'?art('park','Decorative illustration of the example park')+'<p class="fh-small fh-muted">Illustrative location only; not live directions.</p>':'')+(state.editing?'<label class="fh-fieldlabel" for="fh-event-time">Start time</label><input class="fh-field" id="fh-event-time" aria-label="Start time" type="time" value="'+e.time+'"><div class="fh-actions">'+button('Save time','save-time','','primary')+button('Cancel','cancel-time')+'</div>':'<div class="fh-actions">'+button('Change time','edit-time','','blue')+'</div>')+'<div class="fh-privacy">'+ic(state.space==='personal'?'lock-keyhole':'users')+'<span>'+esc(data().scope)+' · sample event</span></div></section>';}
+ function tasksPage(){return '<section class="fh-card fh-detail"><div class="fh-eyebrow">'+esc(data().scope)+'</div><h2>A few things to take care of.</h2>'+data().task.map((v,i)=>'<label class="fh-item cursor-interaction" style="padding:14px 0;font-size:15px"><input type="checkbox" data-check="task:'+i+'" '+(state.checks[state.space+':task:'+i]?'checked':'')+'><span class="fh-itemtext">'+esc(v)+'</span></label>').join('')+'</section>';}
+ function filesPage(){return '<section class="fh-card fh-detail"><div class="fh-eyebrow">'+esc(data().scope)+'</div><h2>Everything for the plan.</h2>'+data().files.map((f,i)=>'<button class="fh-file cursor-interaction" data-do="file" data-index="'+i+'">'+ic('file-text')+'<span>'+esc(f)+'<small>Sample document · open to preview</small></span></button>').join('')+'</section>';}
+ function filePage(){return '<section class="fh-card fh-detail"><button class="fh-link cursor-interaction" data-do="files">'+ic('arrow-left')+' Back to files</button><h2>'+esc(data().files[Number(state.detail)]||data().files[0])+'</h2><p>'+esc(data().notes)+'</p><hr class="fh-rule">'+data().task.map(t=>'<p>• '+esc(t)+'</p>').join('')+'<div class="fh-privacy">'+ic('users')+'<span>'+esc(data().scope)+' · sample document</span></div></section>';}
+ function notesPage(){return '<section class="fh-card fh-detail"><div class="fh-eyebrow">'+esc(data().scope)+'</div><h2>Leave a little context.</h2><label class="fh-fieldlabel" for="fh-note">'+(state.space==='personal'?'My note':'Shared note')+'</label><textarea id="fh-note" class="fh-field" maxlength="1500">'+esc(state.notes[state.space]??data().notes)+'</textarea><div class="fh-actions">'+button('Save note','save-note','','primary')+'</div><p class="fh-small fh-muted">Saved for this preview session only. Use sample text.</p></section>';}
+ function adminPage(){return '<section class="fh-card fh-detail"><div class="fh-eyebrow">'+esc(data().admin)+'</div><h2>People & roles</h2>'+data().members.map(([a,n],i)=>'<div class="fh-member">'+avatar(a)+'<span><h3>'+esc(n)+'</h3><span class="fh-small fh-muted">'+(i===0?'You':'Member of this space')+'</span></span><span class="fh-small fh-muted">'+(i===0?'Admin':'Member')+'</span></div>').join('')+'<div class="fh-privacy">'+ic('shield-check')+'<span>Managing members and devices does not grant access to another adult’s private calendar, files, or conversations.</span></div><p class="fh-small fh-muted">Roles are illustrative. This preview cannot change access.</p></section>';}
+ function devicesPage(){return '<section class="fh-card fh-detail"><div class="fh-eyebrow">'+esc(data().admin)+'</div><h2>Choose where this home lives.</h2><div class="fh-member">'+ic('monitor')+'<span><h3>Kitchen display</h3><span class="fh-small fh-muted">Shared family view · example device</span></span></div><div class="fh-member">'+ic('laptop')+'<span><h3>Personal laptop</h3><span class="fh-small fh-muted">Private session required</span></span></div><div class="fh-privacy">'+ic('lock-keyhole')+'<span>A shared screen must receive shared-only data. Hiding a card does not protect a private account.</span></div></section>';}
+ function routinesPage(){return '<section class="fh-card fh-detail"><div class="fh-eyebrow">For this space</div><h2>A calmer start to the weekend.</h2><p class="fh-muted">Home Bot can prepare a brief from this space’s plan.</p><div class="fh-member">'+ic('sun')+'<span><h3>Weekend morning brief</h3><span class="fh-small fh-muted">Saturday · 08:30 · '+esc(data().source)+'</span></span></div><div class="fh-actions">'+button(state.scheduled[state.space]?'Turn off in preview':'Enable in preview','routine-toggle','','blue')+'</div><p class="fh-small fh-muted">'+(state.scheduled[state.space]?'Enabled in this preview only. No scheduled job was created.':'Example routine. Nothing runs in the background.')+'</p></section>';}
+ function appsPage(){return '<section class="fh-card fh-detail"><h2>Your apps, in this space.</h2><p class="fh-muted">Open a tool; keep Home Bot and your context with you.</p><div class="fh-appgrid" style="margin-top:18px">'+[['calendar-days','Calendar','calendar','Plans and appointments'],['list-checks','Lists','lists','The things to take care of'],['notebook-pen','Notes','notes','Ideas and shared context'],['folder-open','Files','files','Everything for the plan'],['house','Routines','routines','A little help on a schedule'],['users','People','admin','Access and membership']].map(([i,n,a,s])=>'<button class="fh-app cursor-interaction" data-do="'+a+'">'+ic(i)+'<span>'+n+'</span><small>'+s+'</small></button>').join('')+'</div></section>';}
+ function searchPage(){
+  const q=state.query.toLocaleLowerCase();
+  const results=[...events().map(e=>({title:e.title,kind:data().source,action:'event',extra:'data-id="'+e.id+'"'})),...listItems().map(([,title])=>({title,kind:data().list,action:'lists',extra:''})),...data().files.map((title,i)=>({title,kind:'Files',action:'file',extra:'data-index="'+i+'"'}))].filter(v=>v.title.toLocaleLowerCase().includes(q));
+  return '<section class="fh-card fh-detail" data-part="search"><div class="fh-eyebrow">Search in '+esc(data().name)+'</div><h2>'+results.length+' '+(results.length===1?'match':'matches')+'</h2><p class="fh-small fh-muted">For “'+esc(state.query)+'” · this space only</p>'+results.map(r=>'<button class="fh-file cursor-interaction" data-do="'+r.action+'" '+r.extra+'>'+ic('search')+'<span>'+esc(r.title)+'<small>'+esc(r.kind)+'</small></span></button>').join('')+(!results.length?'<div class="fh-empty" style="margin-top:15px">No matches in this space.</div>':'')+'</section>';
+ }
+ function content(){
+  if(state.page==='room'){
+   let components=pref().lead==='day'?[calendarPage(),botMessage(),plan()]:pref().lead==='work'?[plan(),botMessage()]:[botMessage(),plan()];
+   if(pref().people)components.unshift(members());
+   return components.join('');
+  }
+  if(state.page==='search')return searchPage()+botMessage();
+  const views={calendar:calendarPage,lists:()=>shopping(true),tasks:tasksPage,files:filesPage,file:filePage,notes:notesPage,admin:adminPage,devices:devicesPage,routines:routinesPage,apps:appsPage,event:detailPage};
+  if(state.page==='notifications'){const e=events().find(e=>e.id==='soccer')||events()[0];return '<section class="fh-card fh-detail"><h2>Just the things that matter.</h2><p>'+esc(e.title)+' is at '+pretty(e.time)+'.</p><p class="fh-small fh-muted">Example notification from this space.</p></section>'+botMessage();}
+  return (views[state.page]||plan)()+botMessage();
+ }
+ function navItem(label,icon,action,low=false){return '<button class="fh-navitem cursor-interaction '+(low?'fh-low':'')+'" data-do="'+action+'" '+(state.page===action?'aria-current="page"':'')+'>'+ic(icon)+'<span>'+label+'</span></button>';}
+ function render(focus=''){
+  const d=data();const panel=state.panel==='options'?options():state.panel==='sources'?sourcePanel():state.panel==='private'?privatePanel():'';
+  product.innerHTML='<div class="fh-shell '+(state.compact?'fh-compact':'')+'"><nav class="fh-rail" aria-label="Main navigation"><span class="fh-brand">oshal</span>'+navItem('Home','house','room')+navItem('Calendar','calendar-days','calendar')+navItem('Lists','circle-check','lists')+navItem('Routines','house','routines')+navItem(state.space==='family'?'Family admin':state.space==='team'?'Team admin':'My access','users','admin')+navItem('All apps','layout-grid','apps')+'<span class="fh-navspacer"></span>'+navItem('Notifications','bell','notifications',true)+navItem('Help','circle-help','help',true)+navItem('Settings','settings','options',true)+'</nav><main class="fh-main"><header class="fh-top"><div class="fh-titlegroup"><div class="fh-space"><label for="fh-space" class="fh-sr">Choose space</label><select id="fh-space" aria-label="Choose space">'+Object.entries(fixtures).map(([k,v])=>'<option value="'+k+'" '+(k===state.space?'selected':'')+'>'+v.name+'</option>').join('')+'</select></div><span class="fh-scope">'+ic(state.space==='personal'?'lock-keyhole':'users')+esc(d.scope)+'</span></div><div class="fh-topright">'+button(ic(state.space==='personal'?'users':'lock-keyhole')+(state.space==='personal'?'Back to family':'My private space'),state.space==='personal'?'family':'private')+'<span class="fh-account" aria-label="Sample profile Taylor">T</span></div></header><nav class="fh-tabs" aria-label="Room sections">'+[['room','Room'],['tasks','Tasks'],['files','Files'],['notes','Notes']].map(([k,v])=>'<button class="fh-tab cursor-interaction" data-do="'+k+'" '+(state.page===k?'aria-current="page"':'')+'>'+v+'</button>').join('')+'<button class="fh-customize cursor-interaction" data-do="options" aria-expanded="'+(state.panel==='options')+'">'+ic('sliders-horizontal')+' Make it yours</button></nav><div class="fh-grid"><div class="fh-center">'+content()+composer()+'</div><aside class="fh-side">'+(panel||summaries()+adminSummary())+'</aside></div><footer class="fh-foot"><button class="fh-link cursor-interaction" data-do="sources">'+ic('link')+' Sources & connections</button><span>Design study · '+(state.space==='personal'?'personal sample content':'shared sample content only')+'</span></footer></main></div>';
+  product.querySelector('.fh-topright').insertAdjacentHTML('afterbegin','<div class="fh-search" role="search"><button type="button" class="cursor-interaction" data-do="search" aria-label="Search this space">'+ic('search')+'</button><input id="fh-search" aria-label="Search this space" placeholder="Search in this room…" maxlength="100" value="'+esc(state.page==='search'?state.query:'')+'"></div>');
+  globalThis.lucide?.createIcons({attrs:{width:21,height:21}});
+  if(focus)root.querySelector(focus)?.focus({preventScroll:true});
+ }
+ function changeSpace(space){state.space=space;state.page='room';state.panel='';state.detail='';state.query='';state.add=false;state.draft=false;state.dismissed=false;state.editing=false;render('#fh-space');announce('Showing '+data().name+' sample data.');remember();}
+ function addSnacks(){const items=listItems();for(const v of [['🍪','Snack packs'],['🧃','Water bottles']])if(!items.some(x=>x[1]===v[1]))items.push(v);state.snacks=true;pref().list=true;state.replies[state.space]='Snacks and water are on the shared list. You’re all set for the game.';state.draft=false;render();announce('Added snacks to the sample shared list. No live data changed.');}
+ function send(){const input=root.querySelector('#fh-chat');const query=input?.value.trim();if(!query)return;state.draft=false;
+  if(/private|appointment|health|prostate|medical/i.test(query)&&state.space!=='personal')state.replies[state.space]='This shared view has only the shared plan. Personal appointments and private conversations are outside this context.';
+  else if(/snack|list|shopping/i.test(query)&&state.space==='family'){state.replies[state.space]='I can add snack packs and water bottles to the shared list. Shall I go ahead?';state.draft=true;}
+  else if(/see|access|source/i.test(query))state.replies[state.space]='This sample response uses '+data().source.toLowerCase()+', the list, and files belonging to this space. No live accounts are connected.';
+  else state.replies[state.space]=state.space==='family'?'From the shared plan: the park is at '+pretty(events().find(e=>e.id==='park').time)+' and soccer is at '+pretty(events().find(e=>e.id==='soccer').time)+'. Would you like help with the list?':state.space==='team'?'The shared launch brief needs a lead image and a launch date. I can prepare a review checklist.':'Your portfolio is ready for another pass. I can prepare a short focus plan for your review.';
+  render('#fh-chat');announce('Sample Home Bot response shown; no live message was sent.');
+ }
+ root.addEventListener('click',event=>{
+  const t=event.target.closest('[data-do]');if(!t)return;const a=t.dataset.do;
+  if(a==='search'){const q=root.querySelector('#fh-search').value.trim();if(!q){root.querySelector('#fh-search').focus();return;}state.query=q;state.page='search';state.panel='';render('#fh-search');announce('Searched sample content in '+data().name+'.');return;}
+  if(['options','sources','private'].includes(a)){state.panel=a;render('[data-do="close"]');return;}
+  if(a==='close'){state.panel='';render('.fh-customize');return;}
+  if(a==='enter-private'){changeSpace('personal');return;}
+  if(a==='family'){changeSpace('family');return;}
+  if(a==='snacks'){addSnacks();return;}
+  if(a==='dismiss'){state.dismissed=true;render();announce('Suggestion dismissed for this preview.');return;}
+  if(a==='draft'){state.draft=true;state.replies[state.space]=state.space==='family'?'Draft: add snack packs and water bottles for the game.':state.space==='personal'?'Draft focus plan: choose one project, write its short story, then save it for review.':'Draft review: choose the lead image and confirm the launch date.';render('[data-do="approve"]');return;}
+  if(a==='approve'){if(state.space==='family'){addSnacks();return;}state.draft=false;state.replies[state.space]='Draft approved in this preview. Nothing has been sent or published.';render();announce('Sample draft approved.');return;}
+  if(a==='discard'){state.draft=false;delete state.replies[state.space];render();return;}
+  if(a==='add-item'){state.add=true;render('#fh-new-item');return;}
+  if(a==='save-item'){const input=root.querySelector('#fh-new-item');const value=input?.value.trim();if(!value){announce('Enter an item to add.');return;}listItems().push(['🛍️',value]);state.add=false;render();announce('Added '+value+' to this preview’s list.');return;}
+  if(a==='event'){state.returnPage=state.page==='calendar'?'calendar':'room';state.page='event';state.detail=t.dataset.id;state.editing=false;render();return;}
+  if(a==='back'){state.page=state.returnPage;state.editing=false;render();return;}
+  if(a==='edit-time'){state.editing=true;render('#fh-event-time');return;}
+  if(a==='cancel-time'){state.editing=false;render();return;}
+  if(a==='save-time'){const time=root.querySelector('#fh-event-time')?.value;if(!/^\d{2}:\d{2}$/.test(time||'')){announce('Choose a valid time.');return;}state.times[state.space+':'+state.detail]=time;state.editing=false;render();announce('Sample event updated; the room calendar uses the same time.');return;}
+  if(a==='file'){state.page='file';state.detail=t.dataset.index;render();return;}
+  if(a==='save-note'){state.notes[state.space]=root.querySelector('#fh-note').value;announce('Note saved in this preview session only.');return;}
+  if(a==='routine-toggle'){state.scheduled[state.space]=!state.scheduled[state.space];render();announce('Routine changed in the preview only. Nothing was scheduled.');return;}
+  if(a==='send'){send();return;}
+  if(a==='help'){state.replies[state.space]='Try the plan, check an item off the list, open a file, or choose Make it yours. All changes stay in this sample preview.';state.page='room';render();return;}
+  if(['room','calendar','lists','tasks','files','notes','admin','devices','routines','apps','notifications'].includes(a)){state.page=a;state.panel='';state.add=false;state.editing=false;render();announce('Opened '+a+' in '+data().name+'.');}
+ });
+ root.addEventListener('change',event=>{
+  const t=event.target;
+  if(t.id==='fh-space'){if(t.value==='personal'&&state.space!=='personal'){state.panel='private';render('[data-do="enter-private"]');}else changeSpace(t.value);return;}
+  if(t.dataset.pref){const k=t.dataset.pref;pref()[k]=t.type==='checkbox'?t.checked:t.value;if(k==='bot'){delete state.replies[state.space];state.draft=false;state.dismissed=false;}render('[data-pref="'+k+'"]'+(t.type==='radio'?'[value="'+t.value+'"]':''));announce('Home updated. Access permissions are unchanged.');remember();return;}
+  if(t.dataset.check){state.checks[state.space+':'+t.dataset.check]=t.checked;announce('Updated the sample checklist.');}
+ });
+ root.addEventListener('keydown',event=>{if(event.key==='Enter'&&event.target.id==='fh-chat'){event.preventDefault();send();}if(event.key==='Enter'&&event.target.id==='fh-new-item'){event.preventDefault();root.querySelector('[data-do="save-item"]').click();}if(event.key==='Enter'&&event.target.id==='fh-search'){event.preventDefault();root.querySelector('[data-do="search"]').click();}if(event.key==='Escape'&&state.panel){state.panel='';render('.fh-customize');}});
+ window.addEventListener('openai:set_globals',event=>{if(event.detail?.globals?.widgetState){const previousSpace=state.space;const before=JSON.stringify([state.space,state.prefs,state.compact]);restore(event.detail.globals.widgetState);if(before===JSON.stringify([state.space,state.prefs,state.compact]))return;if(previousSpace!==state.space){state.page='room';state.panel='';state.draft=false;state.detail='';}render();}});
+ render();
+ if(globalThis.Tweak){const tweak=new Tweak({container:root,onChange:()=>{render();remember();}});tweak.addToggle(state,'compact',{label:'Compact spacing'});}
+})();
+</script>
