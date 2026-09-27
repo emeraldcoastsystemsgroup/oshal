@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Homebase shells (Home, Little Monsters classroom, Business) over live data: the signed-in person, Little Monsters identity/classes/assignments/roster/calendar, the Purchasing list, the Finance snapshot (a calm personal picture at home, a dense account table at work), Smart Home facts, open tickets as projects, application summaries as the noticeboard, and the real Jarvis thread. The role switcher, fixture people and sample records of the prototype are gone; teacher and learner views follow the caller's actual classroom role, and display choices are saved on this device only.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | A preset hosts an assembly of applications: one ribbon profile per host, tools tagged with their host and grouped per host in the sidebar and the tile row, the preset's audience view requested on every hosted page (`?view=`), hidden prefixes curating off-audience tiles; teacher-only gating left the client because the profile now arrives filtered per caller.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | A preset can host its application: the classroom lists Little Monsters' admitted tools (from the same ribbon profile the cockpit renders, per-class tools kept out of the navigation, teacher-only tools shown to teachers) and opens them in place in a frame that follows the skin; the frame's navigation messages (the cockpit's own shapes) switch tools, and only admitted tools ever open. The home paints from identity and catalog (readyCore) and fills work in when it arrives.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Paint the preset skin on load when the device remembers none: the style switcher initialises before this script selects the preset, so the default was never applied to the document.
  */
@@ -103,23 +104,34 @@
     return lead.concat(fill);
   }
 
-  /** @description The host application's admitted surfaces for this caller, from the ribbon profile the cockpit itself renders. */
+  /** @description The hosted applications' admitted surfaces for this caller: one ribbon profile per host (the contract the cockpit renders, already filtered per caller), each tool tagged with its host and curated by the preset's hidden prefixes. */
   async function loadTools() {
-    if (!preset.host || !has(preset.host)) { data.tools = null; return; }
-    const r = await LIVE.packages.profile(preset.host);
-    const items = r.ok && r.body && r.body.profile && r.body.profile.ribbon && Array.isArray(r.body.profile.ribbon.items) ? r.body.profile.ribbon.items : [];
-    data.tools = { status: r.status, items: items.filter(i => i && i.id && i.toolUi && typeof i.toolUi.iframeUrl === 'string' && i.toolUi.iframeUrl.startsWith('/')).map(i => ({ id: String(i.id), label: String(i.label || i.id), href: i.toolUi.iframeUrl, section: String(i.section || 'top') })) };
+    const hosts = (preset.hosts || []).filter(h => has(h.app));
+    if (!hosts.length) { data.tools = null; return; }
+    const results = await Promise.all(hosts.map(async h => ({ host: h, r: await LIVE.packages.profile(h.app) })));
+    const seen = new Set(), items = [];
+    for (const { host, r } of results) {
+      const list = r.ok && r.body && r.body.profile && r.body.profile.ribbon && Array.isArray(r.body.profile.ribbon.items) ? r.body.profile.ribbon.items : [];
+      for (const i of list) {
+        if (!(i && i.id && i.toolUi && typeof i.toolUi.iframeUrl === 'string' && i.toolUi.iframeUrl.startsWith('/'))) continue;
+        const id = String(i.id); if (seen.has(id)) continue; seen.add(id);
+        items.push({ id, host: host.app, kicker: host.kicker || app(host.app).name.toUpperCase(), hidden: (host.hiddenTools || []).some(p => id.startsWith(p)), label: String(i.label || id), href: i.toolUi.iframeUrl, section: String(i.section || 'top') });
+      }
+    }
+    data.tools = { items, hosts: hosts.map(h => h.app), statuses: results.map(x => x.r.status) };
   }
   const admittedTools = () => data.tools ? data.tools.items : [];
-  const teacherOnly = id => (preset.teacherTools || []).includes(id);
-  /** Tools offered in the navigation: hidden prefixes stay out (per-class tools have their own place) and teacher-only tools show to teachers. */
-  const navTools = () => admittedTools().filter(t => !(preset.hiddenTools || []).some(p => t.id.startsWith(p)) && (isTeacher() || !teacherOnly(t.id)));
+  /** Tools offered in the rails: the preset's hidden prefixes stay out (per-class tools and off-audience tiles have their own place). */
+  const navTools = () => admittedTools().filter(t => !t.hidden);
   const toolById = id => admittedTools().find(t => t.id === id) || null;
+  /** The offered tools grouped by host, in host order. */
+  const hostGroups = () => { const groups = []; navTools().forEach(t => { let g = groups.find(x => x.host === t.host); if (!g) { g = { host: t.host, kicker: t.kicker, tools: [] }; groups.push(g); } g.tools.push(t); }); return groups; };
+  /** The URL a hosted tool opens with: its own surface plus this preset's audience view, as a request (a view id is never authority). */
+  const hostedUrl = t => { const u = new URL(t.href, location.origin); if (preset.view && !u.searchParams.has('view')) u.searchParams.set('view', preset.view); return u.pathname + u.search + u.hash; };
   /** @description Open an admitted tool in place. Anything not admitted for this caller is refused with a notice, never fetched. */
   function openTool(id) {
     const t = toolById(id);
     if (!t) { notice('That view is not available to you here.'); return; }
-    if (!isTeacher() && teacherOnly(t.id)) { notice('That view is for teachers.'); return; }
     state.page = 'tool'; state.tool = t.id; render();
     const frame = document.getElementById('tool-frame'); if (frame) frame.focus();
   }
@@ -137,9 +149,9 @@
     if (id) openTool(id);
   }
   function toolPanel() {
-    const t = toolById(state.tool), host = app(preset.host);
+    const t = toolById(state.tool), host = t ? app(t.host) : null;
     if (!t) return `<section class="panel" data-module="tool"><h2>That tool is not available to you here.</h2>${btn('Back to ' + esc(preset.nav[0][1].toLowerCase()), 'page', 'button', 'data-page="home"')}</section>`;
-    return `<section class="tool-shell" data-module="tool"><div class="tool-head"><div><div class="panel-kicker">${esc((host ? host.name : preset.name).toUpperCase())} / ${esc(t.label.toUpperCase())}</div><h2>${esc(t.label)}</h2></div><div class="tool-actions">${host && host.navigable ? link('Open in the cockpit ↗', host.href, 'text-button', 'target="_blank" rel="noopener"') : ''}${btn('← Back to ' + esc(preset.nav[0][1].toLowerCase()), 'page', 'button', 'data-page="home"')}</div></div><iframe class="tool-frame" id="tool-frame" src="${esc(t.href)}" title="${esc(t.label)}" allow="microphone; camera; fullscreen"></iframe></section>`;
+    return `<section class="tool-shell" data-module="tool"><div class="tool-head"><div><div class="panel-kicker">${esc((host ? host.name : preset.name).toUpperCase())} / ${esc(t.label.toUpperCase())}</div><h2>${esc(t.label)}</h2></div><div class="tool-actions">${host && host.navigable ? link('Open in the cockpit ↗', host.href, 'text-button', 'target="_blank" rel="noopener"') : ''}${btn('← Back to ' + esc(preset.nav[0][1].toLowerCase()), 'page', 'button', 'data-page="home"')}</div></div><iframe class="tool-frame" id="tool-frame" src="${esc(hostedUrl(t))}" title="${esc(t.label)}" allow="microphone; camera; fullscreen"></iframe></section>`;
   }
 
   /* ── modules ─────────────────────────────────────────────────── */
@@ -235,8 +247,8 @@
     return `<section class="panel">${head(key === 'family' ? 'Our people' : key === 'classroom' ? 'Your classroom' : 'Your team')}<div class="side-section">${rows.map(memberLine).join('')}</div><p class="subtle" style="margin-top:20px">${note}</p><p class="subtle">${snapshot.botsOnline} of ${snapshot.bots.length} swarm assistants are online.</p></section>`;
   }
   function apps() {
-    const tools = navTools(), host = app(preset.host);
-    if (tools.length) return `<section><div class="section-heading"><h2>${esc(preset.appsHeading)}</h2>${btn('About access', 'policy', 'text-button')}</div><div class="apps-row tools-row">${tools.slice(0, 8).map(t => btn(`<span class="app-icon" aria-hidden="true">${esc(t.label.slice(0, 1))}</span><strong>${esc(t.label)}</strong><small>${esc(host ? host.name : preset.name)} · opens here</small>`, 'tool', 'app-tile', `data-tool="${esc(t.id)}"`)).join('')}</div></section>`;
+    const groups = hostGroups();
+    if (groups.length) return `<section><div class="section-heading"><h2>${esc(preset.appsHeading)}</h2>${btn('About access', 'policy', 'text-button')}</div>${groups.map(g => `<div class="tool-group"><div class="side-kicker">${esc(g.kicker)}</div><div class="apps-row tools-row">${g.tools.slice(0, 4).map(t => btn(`<span class="app-icon" aria-hidden="true">${esc(t.label.slice(0, 1))}</span><strong>${esc(t.label)}</strong><small>${esc(app(t.host).name)} · opens here</small>`, 'tool', 'app-tile', `data-tool="${esc(t.id)}"`)).join('')}</div></div>`).join('')}</section>`;
     const list = featuredApps().slice(0, 4);
     return `<section><div class="section-heading"><h2>${esc(preset.appsHeading)}</h2>${btn('About access', 'policy', 'text-button')}</div><div class="apps-row">${list.map(a => btn(`<span class="app-icon" aria-hidden="true">${esc(LIVE.initials(a.name))}</span><strong>${esc(a.name)}</strong><small>${esc(shell.suiteOf(a.suite).name)}${a.version ? ` · v${esc(a.version)}` : ''}</small>`, 'app', 'app-tile', `data-app="${esc(a.id)}"`)).join('') || '<p class="subtle">No applications from these suites are available in your workspace.</p>'}</div></section>`;
   }
@@ -244,8 +256,8 @@
   /* ── page composition ────────────────────────────────────────── */
   function sidebar() {
     const lm = key === 'classroom' && data.edu && data.edu.installed;
-    const people = peopleList().slice(0, 6), tools = navTools();
-    const toolSection = tools.length ? `<div class="side-section"><div class="side-kicker">${esc(preset.toolsKicker || 'TOOLS')}</div><div class="tool-nav">${tools.map(t => btn(`<span class="nav-symbol" aria-hidden="true">${esc(t.label.slice(0, 1))}</span>${esc(t.label)}`, 'tool', 'nav-link', `data-tool="${esc(t.id)}" ${state.page === 'tool' && state.tool === t.id ? 'aria-current="page"' : ''}`)).join('')}</div></div>` : '';
+    const people = peopleList().slice(0, 6);
+    const toolSection = hostGroups().map(g => `<div class="side-section"><div class="side-kicker">${esc(g.kicker)}</div><div class="tool-nav">${g.tools.slice(0, 6).map(t => btn(`<span class="nav-symbol" aria-hidden="true">${esc(t.label.slice(0, 1))}</span>${esc(t.label)}`, 'tool', 'nav-link', `data-tool="${esc(t.id)}" ${state.page === 'tool' && state.tool === t.id ? 'aria-current="page"' : ''}`)).join('')}</div></div>`).join('');
     return `<aside class="home-sidebar"><div><div class="wordmark ${key === 'classroom' ? 'class-brand' : ''}">${lm ? '<img class="monster-logo" src="/api/education/logo-96.png" alt="">' : `<span class="brand-glyph">${preset.mark}</span>`}${preset.short}</div><p class="workspace-label">${esc(displayName())}’s ${key === 'family' ? 'home' : key === 'classroom' ? 'classroom' : 'company swarm'} · ${snapshot.apps.length} apps</p></div><nav class="side-nav" aria-label="Homebase navigation">${preset.nav.map(([id, label], i) => btn(`<span class="nav-symbol" aria-hidden="true">${['⌂', '▦', '☷', '◎', '◇'][i]}</span>${esc(label)}`, 'page', 'nav-link', `data-page="${id}" ${id === state.page ? 'aria-current="page"' : ''}`)).join('')}</nav><div class="side-section"><div class="side-kicker">${preset.peopleKicker}</div>${people.map(memberLine).join('')}</div>${toolSection}<div class="side-section"><div class="side-kicker">YOUR APPLICATIONS</div>${featuredApps().slice(0, 5).map(a => btn(`<span class="nav-symbol" aria-hidden="true">${esc(a.name.slice(0, 1))}</span>${esc(a.name)}`, 'app', 'nav-link', `data-app="${esc(a.id)}"`)).join('')}${btn('<span class="nav-symbol" aria-hidden="true">…</span>All applications', 'all-apps', 'nav-link')}</div><div class="sidebar-note"><strong>${esc(preset.sidebarNote[0])}</strong>${esc(preset.sidebarNote[1])}${btn('Configure this home', 'configure', 'button sidebar-config')}</div></aside>`;
   }
   function hero() {
