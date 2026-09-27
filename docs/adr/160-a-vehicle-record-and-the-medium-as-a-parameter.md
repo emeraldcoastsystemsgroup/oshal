@@ -1,8 +1,13 @@
 # ADR-160: A vehicle is a record with a computed stage, and the medium it runs in is a parameter
 
 Date: 2026-09-15
-Status: **Proposed — nothing here is built.** No code exists for any decision below. The slices are
-listed in "Implementation" and tracked in [BACKLOG](../BACKLOG.md).
+Status: **Proposed — S1 landed, S2–S5 open.** S1 ("the boat falls") shipped in the store repo at
+commit `0bb5d69` (embodied 0.16.0, PR #208): the medium record with its three implementations and one committed
+property row per medium (`embodied/src-routes/engine/medium/`), the MJCF `<option>` fed from the chosen medium,
+the explorer hull as one solid that falls at g in air and is refused by name in seawater, and the refusal cases in
+`embodied/tests/engine-medium.test.js`; the fall was also reproduced on the real MuJoCo plant
+(`engine/tests/test_hull_fall.py`, 3/3). S2, S3, S4 and S5 are not built. The slices are listed in
+"Implementation" and tracked in [BACKLOG](../BACKLOG.md).
 
 Related: [ADR-085](085-remote-app-packages-and-registries.md) (store packages own their domain),
 [ADR-036](036-bot-owned-application-architecture.md) (the owner of a domain owns its state),
@@ -489,7 +494,8 @@ produced a plausible float would have disproved its own contract.
 
 ## Implementation
 
-Nothing below is built. Store-repo work in `ocean-lab`, `aero-lab` and `embodied`; no core code.
+S1 is built (store `0bb5d69`, embodied 0.16.0); S2–S5 are not. Store-repo work in `ocean-lab`, `aero-lab`
+and `embodied`; no core code.
 
 | Slice | What lands | What the operator opens, and does | Cost |
 |---|---|---|---|
