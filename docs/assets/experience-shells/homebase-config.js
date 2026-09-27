@@ -3,7 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-164 design-study artifact (docs/assets/experience-shells), packaged from the 2026-09-25 home-design prototypes: fixture presets (family, classroom, company) for the configurable homebase prototype; people, records and permissions are demonstration data. The example signed-in person and household were renamed to the fictional Taylor Brooks / the Brooks home when packaged.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-164 design-study artifact (docs/assets/experience-shells), packaged from the 2026-09-25 home-design prototypes: fixture presets (family, classroom, company) for the configurable homebase prototype; people, records and permissions are demonstration data. The example household was renamed to the fictional Brooks home when packaged; the people in these presets are fictional.
  */
 // Proposed experience presets. All people, records and permissions below are demonstration fixtures.
 window.HOMEBASE_PRESETS = {
