@@ -282,6 +282,18 @@ each is what core's own admission rule reports.
 These suites are not live acceptance. Signed-in multi-user acceptance on an installed swarm, and
 directory-group rights from a real identity-provider tenant, have not been run.
 
+Once the package is installed, one automated, read-only check confirms the installed registration. It reads
+the live Test Lab catalog as the operator, using the operator's own PAT; the PAT is read by name and never
+printed. The check asserts two things: `authorization-management` registers the installer-root suites, and
+Little Monsters 1.4.5 or later lists all four pilot cases. It writes nothing. Exit codes are 0 for pass,
+1 for fail and 2 for missing input. Run it from the host:
+
+```text
+OSHAL_VERIFY_BASE_URL=http://localhost:35457 OSHAL_VERIFY_OPERATOR_PAT=... node scripts/operations/verify-authorization-registration.js
+```
+
+Its guard is `tests/unit/verify-authorization-registration.spec.ts`.
+
 Migration 145 keys coarse application access by subject, application and issuer. A legacy NULL issuer
 and `urn:oshal:local-auth` identify the same local principal; different external issuers remain separate,
 including explicit denies and clears. Owner reads require the subject and verified issuer in the
