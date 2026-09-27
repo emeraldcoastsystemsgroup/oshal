@@ -24,6 +24,17 @@ export function posix(p: string): string {
 }
 
 /**
+ * @description Git Bash's own absolute path form (`/c/...` on Windows): the scripts' trust walks
+ * and remote-path patterns require a path that starts with `/`.
+ * @param p a native path
+ * @returns the POSIX absolute path Git Bash uses for it
+ */
+export function msys(p: string): string {
+  const slashed = posix(p);
+  return process.platform === 'win32' ? slashed.replace(/^([A-Za-z]):\//, (_m, d: string) => `/${d.toLowerCase()}/`) : slashed;
+}
+
+/**
  * @description Locate Git Bash without falling into Windows' WSL launcher (another filesystem
  * namespace, which would judge a different tree than the one a case built).
  * @returns the bash executable to run

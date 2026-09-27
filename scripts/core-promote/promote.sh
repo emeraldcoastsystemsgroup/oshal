@@ -6,11 +6,14 @@
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-167: the one documented command that moves a cut core release onto a managed box. It never builds on the box: it ships the SAME image the cut verified (docker save | ssh docker load, or a pull by registry digest), proves the box holds that exact image ID, and only then runs the box's own managed-core-release.sh transaction. Production refuses an image ID that has no staging receipt, and a staging receipt is written only by a verified staging promote of that image ID - so production can only receive bytes staging already ran. --rollback and --status drive the same box helper.
 # -----------------------------------------------------------------------------
 #
-# Usage:  bash scripts/core-promote/promote.sh --target <name> --release <core-...> [--registry <repo>] [--dry-run]
+# Usage:  bash scripts/core-promote/promote.sh --target <name> --release <core-...> [--registry <repo>] [--bootstrap] [--dry-run]
 #         bash scripts/core-promote/promote.sh --target <name> --rollback
 #         bash scripts/core-promote/promote.sh --target <name> --status
 #   --registry <repo>  pull <repo>@sha256:<digest> on the box instead of streaming the image; only
 #                      when this machine's copy of the release image carries that repo digest
+#   --bootstrap        first promote on a box whose release dir predates the helper: stage the
+#                      helper from the release commit's own git objects in <release dir>/.release-bootstrap
+#                      for this one run, and remove it afterwards
 #   --dry-run          local checks + the plan; nothing is sent to the box
 #
 # Target file ${OSHAL_CORE_RELEASE_HOME:-$HOME/.oshal-core-release}/targets/<name>.conf -
@@ -35,7 +38,7 @@ source "$SELF_DIR/../lib/core-image-verify.sh" || { echo "promote: image identit
 
 RELEASE_HOME="${OSHAL_CORE_RELEASE_HOME:-$HOME/.oshal-core-release}"
 RECORDS_DIR="$RELEASE_HOME/records"
-TARGET=''; RELEASE=''; REGISTRY=''; MODE=promote; DRY_RUN=0
+TARGET=''; RELEASE=''; REGISTRY=''; MODE=promote; DRY_RUN=0; BOOTSTRAP=0
 SSH_DEST=''; RELEASE_ROOT=''; ENV_FILE=''; CHANNEL=''; SSH_KEY=''; SSH_PORT=''
 COMMIT=''; IMAGE_ID=''; HELPER=''
 declare -a SSH=()
@@ -51,6 +54,7 @@ parse_args() {
       --registry) [ $# -ge 2 ] || refuse "--registry needs a value"; REGISTRY="$2"; shift 2 ;;
       --rollback) MODE=rollback; shift ;;
       --status) MODE=status; shift ;;
+      --bootstrap) BOOTSTRAP=1; shift ;;
       --dry-run) DRY_RUN=1; shift ;;
       *) refuse "unknown argument '$1'" ;;
     esac
@@ -59,7 +63,7 @@ parse_args() {
   if [ "$MODE" = promote ]; then
     oshal_core_release_name_ok "$RELEASE" || refuse "--release must name a cut release (core-YYYY.MM.DD[.N])"
   else
-    [ -z "$RELEASE" ] && [ -z "$REGISTRY" ] || refuse "--$MODE takes only --target"
+    [ -z "$RELEASE" ] && [ -z "$REGISTRY" ] && [ "$BOOTSTRAP" -eq 0 ] || refuse "--$MODE takes only --target"
   fi
   [ -z "$REGISTRY" ] || [[ "$REGISTRY" =~ ^[a-z0-9][a-z0-9._/-]*[a-z0-9]$ ]] || refuse "--registry must be a repository like ghcr.io/<org>/oshal-bot"
 }
@@ -161,6 +165,25 @@ place_artifact() {
   say "the box holds image ${IMAGE_ID:7:12}"
 }
 
+# A release dir that predates the helper cannot run it from scripts/. Stage the helper and its
+# library from the release commit's own objects (the same bytes the checkout will bring) into an
+# untracked directory of the release dir - its parent must be the release dir for the helper's
+# trust walk - for this one run.
+stage_bootstrap_helper() {
+  local dir="$RELEASE_ROOT/.release-bootstrap" rc
+  say "bootstrap: staging managed-core-release.sh from ${COMMIT:0:12}'s objects into $dir"
+  "${SSH[@]}" "git -C $RELEASE_ROOT fetch --quiet --no-tags origin +refs/heads/main:refs/remotes/origin/main && rm -rf -- $dir && mkdir -p -- $dir/lib && git -C $RELEASE_ROOT show $COMMIT:scripts/managed-core-release.sh >$dir/managed-core-release.sh && git -C $RELEASE_ROOT show $COMMIT:scripts/lib/core-image-verify.sh >$dir/lib/core-image-verify.sh"
+  rc=$?
+  [ "$rc" -ne 255 ] || { say "cannot reach $SSH_DEST (ssh 255)"; exit 4; }
+  [ "$rc" -eq 0 ] || refuse "staging the bootstrap helper from $COMMIT failed on the box - is the commit on origin/main?"
+  HELPER="bash $dir/managed-core-release.sh $ENV_FILE"
+}
+
+remove_bootstrap_helper() {
+  "${SSH[@]}" "rm -rf -- $RELEASE_ROOT/.release-bootstrap" \
+    || say "WARNING: remove $RELEASE_ROOT/.release-bootstrap on the box by hand"
+}
+
 write_receipt() {
   local receipt="$RECORDS_DIR/$RELEASE.$CHANNEL.json" tmp
   tmp="$receipt.tmp.$$"
@@ -185,18 +208,20 @@ run_promote() {
   check_staging_receipt
   if [ "$DRY_RUN" -eq 1 ]; then
     say "DRY RUN - $CHANNEL target $TARGET ($SSH_DEST): ship image ${IMAGE_ID:7:12} (${REGISTRY:-docker save | ssh docker load}),"
-    say "DRY RUN - then: $HELPER promote $COMMIT $IMAGE_ID $RELEASE $CHANNEL. Nothing was sent."
+    say "DRY RUN - then$([ "$BOOTSTRAP" -eq 0 ] || printf ' (bootstrap helper from %s)' "${COMMIT:0:12}"): $HELPER promote $COMMIT $IMAGE_ID $RELEASE $CHANNEL. Nothing was sent."
     exit 0
   fi
   place_artifact
+  [ "$BOOTSTRAP" -eq 0 ] || stage_bootstrap_helper
   say "running the box transaction on $SSH_DEST"
   "${SSH[@]}" "$HELPER promote $COMMIT $IMAGE_ID $RELEASE $CHANNEL"
   local rc=$?
+  [ "$BOOTSTRAP" -eq 0 ] || remove_bootstrap_helper
   case "$rc" in
     0) say "PROMOTED $RELEASE to $CHANNEL target $TARGET"; write_receipt; exit 0 ;;
     1) say "the box's promote failed and it restored its prior release (verified serving)"; exit 1 ;;
     2) say "the box refused the promote - nothing changed there"; exit 2 ;;
-    127) refuse "the box has no $RELEASE_ROOT/scripts/managed-core-release.sh - bootstrap it (runbook: first promote on a box)" ;;
+    127) refuse "the box has no $RELEASE_ROOT/scripts/managed-core-release.sh - its first promote needs --bootstrap" ;;
     255) say "the connection dropped during the box transaction - its state is unknown; run --status"; exit 3 ;;
     *) say "the box transaction ended with exit $rc - it needs hands; run --status"; exit 3 ;;
   esac

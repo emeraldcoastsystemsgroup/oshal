@@ -9,7 +9,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { REPO_ROOT, posix, readOr, runScript, scratchDir, writeExec, type Run } from '../helpers/core-release-harness';
+import { createHash } from 'node:crypto';
+import {
+  REPO_ROOT, git, makeRepo, msys, posix, readOr, runScript, scratchDir, writeExec, type Run,
+} from '../helpers/core-release-harness';
 
 /** Each case spawns Git Bash and a pipeline of stand-ins: slow on a loaded Windows host. */
 const SHELL_CASE_TIMEOUT_MS = 120_000;
@@ -56,6 +59,12 @@ const SSH_SHIM = [
   '  "docker pull "*)',
   '    printf \'%s\\n\' "${SHIM_LOADED_ID:-$SHIM_ARTIFACT_ID}" >"$state/remote-image"; exit 0 ;;',
   '  "bash /opt/customer/oshal/scripts/managed-core-release.sh /opt/customer/crm.env "*)',
+  '    exit "${SHIM_HELPER_RC:-0}" ;;',
+  // The bootstrap staging and cleanup run FOR REAL against the fixture release repo.
+  '  "git -C "*|"rm -rf -- "*) bash -c "$cmd"; exit $? ;;',
+  '  "bash "*"/.release-bootstrap/managed-core-release.sh /opt/customer/crm.env promote "*)',
+  '    staged="${cmd#bash }"; staged="${staged%%/managed-core-release.sh *}"',
+  '    sha256sum "$staged/managed-core-release.sh" "$staged/lib/core-image-verify.sh" | cut -c1-64 >"$state/staged-hashes"',
   '    exit "${SHIM_HELPER_RC:-0}" ;;',
   'esac',
   'exit 97',
@@ -158,6 +167,44 @@ describe('promote.sh — the verified artifact moves, is proved on the box, then
   });
 });
 
+describe('promote.sh --bootstrap — the first promote on a release dir that predates the helper', { timeout: SHELL_CASE_TIMEOUT_MS }, () => {
+  it('stages the helper from the release commit\'s own objects for one run, then removes it', () => {
+    const root = scratchDir('oshal-promote-bootstrap-', cleanup);
+    const { origin, work } = makeRepo(root, { 'README.md': 'a release dir from before the pipeline\n' });
+    const old = git(work, 'rev-parse', 'HEAD');
+    const helperSrc = fs.readFileSync(path.join(REPO_ROOT, 'scripts/managed-core-release.sh'));
+    const libSrc = fs.readFileSync(path.join(REPO_ROOT, 'scripts/lib/core-image-verify.sh'));
+    fs.mkdirSync(path.join(work, 'scripts/lib'), { recursive: true });
+    fs.writeFileSync(path.join(work, 'scripts/managed-core-release.sh'), helperSrc);
+    fs.writeFileSync(path.join(work, 'scripts/lib/core-image-verify.sh'), libSrc);
+    git(work, 'add', '-A');
+    git(work, 'commit', '-q', '-m', 'the release that brings the helper');
+    git(work, 'push', '-q', 'origin', 'HEAD:main');
+    const commit = git(work, 'rev-parse', 'HEAD');
+    const rel = path.join(root, 'release');
+    git(root, 'clone', '-q', posix(origin), rel);
+    git(rel, 'checkout', '-q', '--detach', old);
+    // This release's record and local artifact name the real commit.
+    fs.writeFileSync(path.join(e.state, 'local-image'), `${ID}|${commit}|${commit}|${RELEASE}\n`);
+    fs.writeFileSync(path.join(e.home, 'records', `${RELEASE}.json`),
+      `{\n  "release": "${RELEASE}",\n  "commit": "${commit}",\n  "imageId": "${ID}"\n}\n`);
+    fs.writeFileSync(path.join(e.home, 'targets', 'fresh.conf'), ['SSH_DEST=root@192.168.50.30', `RELEASE_ROOT=${msys(rel)}`,
+      'ENV_FILE=/opt/customer/crm.env', 'CHANNEL=staging', ''].join('\n'));
+
+    const r = promote(e, ['--target', 'fresh', '--release', RELEASE, '--bootstrap']);
+    expect(r.status, r.out).toBe(0);
+    const sha = (b: Buffer) => createHash('sha256').update(b).digest('hex');
+    expect(readOr(path.join(e.state, 'staged-hashes')).trim().split('\n')).toEqual([sha(helperSrc), sha(libSrc)]);
+    const log = sshLog(e).map((l) => l.split(' | ')[1]);
+    expect(log.findIndex((l) => l.startsWith(`git -C ${msys(rel)} fetch`)))
+      .toBeLessThan(log.findIndex((l) => l.startsWith('bash ') && l.includes('.release-bootstrap/managed-core-release.sh')));
+    expect(log.slice(-1)[0]).toBe(`rm -rf -- ${msys(rel)}/.release-bootstrap`);
+    expect(fs.existsSync(path.join(rel, '.release-bootstrap'))).toBe(false);
+    expect(git(rel, 'status', '--porcelain')).toBe('');
+    expect(fs.existsSync(receipt(e, 'staging'))).toBe(true);
+  });
+});
+
 describe('promote.sh — nothing reaches the box helper unless the artifact is proved', { timeout: SHELL_CASE_TIMEOUT_MS }, () => {
   it('refuses when this machine no longer holds the cut artifact', () => {
     fs.writeFileSync(path.join(e.state, 'local-image'), `${OTHER}|${COMMIT}|${COMMIT}|${RELEASE}\n`);
@@ -202,7 +249,7 @@ describe('promote.sh — the box helper\'s outcome decides the exit code', { tim
     ['2', 2, 'the box refused the promote'],
     ['3', 3, 'it needs hands'],
     ['255', 3, 'the connection dropped during the box transaction'],
-    ['127', 2, 'bootstrap it'],
+    ['127', 2, 'its first promote needs --bootstrap'],
   ])('helper exit %s -> promote exit %i, no staging receipt', (helperRc, status, message) => {
     const r = promote(e, ['--target', 'staging', '--release', RELEASE], { SHIM_HELPER_RC: helperRc });
     expect(r.status, r.out).toBe(status);

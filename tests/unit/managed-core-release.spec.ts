@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import {
-  REPO_ROOT, commitChange, git, makeRepo, posix, readOr, runProgram, runScript, scratchDir, writeExec, type Run,
+  REPO_ROOT, commitChange, git, makeRepo, msys, posix, readOr, runProgram, runScript, scratchDir, writeExec, type Run,
 } from '../helpers/core-release-harness';
 
 /** Each case spawns Git Bash and several git processes: slow on a loaded Windows host. */
@@ -24,12 +24,6 @@ const ID1 = `sha256:${'1'.repeat(64)}`;
 const ID2 = `sha256:${'2'.repeat(64)}`;
 const SECRET = 'postgresql://doadmin:fixture-bootstrap-secret@db.oshal.example.com:25060/oshal';
 const PG = `postgres:18-alpine@sha256:${'d'.repeat(64)}`;
-
-/** Git Bash's own path form: the helper's trust walk needs an absolute POSIX path. */
-function msys(p: string): string {
-  const slashed = posix(p);
-  return process.platform === 'win32' ? slashed.replace(/^([A-Za-z]):\//, (_m, d: string) => `/${d.toLowerCase()}/`) : slashed;
-}
 
 /** The managed launcher stand-in, committed into the release repo: it brings the stack to the pin. */
 const LAUNCHER = [
@@ -310,6 +304,24 @@ describe('managed-core-release.sh rollback and status — against the recorded h
     const drift = helper(b, ['status']);
     expect(drift.status, drift.out).toBe(1);
     expect(drift.out).toContain('the env file pins image');
+  });
+
+  it('locates its release dir from the --bootstrap copy and loads the library beside it', () => {
+    const dir = path.join(b.rel, '.release-bootstrap');
+    fs.mkdirSync(path.join(dir, 'lib'), { recursive: true });
+    fs.copyFileSync(HELPER, path.join(dir, 'managed-core-release.sh'));
+    fs.copyFileSync(path.join(REPO_ROOT, 'scripts/lib/core-image-verify.sh'), path.join(dir, 'lib', 'core-image-verify.sh'));
+    const r = runProgram([
+      `source '${msys(HELPER)}'`,
+      `mcr_locate '${msys(path.join(dir, 'managed-core-release.sh'))}'`,
+      'echo "root=$MCR_REPO_ROOT"',
+      `oshal_core_release_name_ok ${RELEASE} && echo library-loaded`,
+    ].join('\n'), b.bin, shimEnv(b));
+    expect(r.status, r.out).toBe(0);
+    expect(r.out).toContain(`root=${msys(b.rel)}`);
+    expect(r.out).toContain('library-loaded');
+    // The staged copy is untracked, so the clean-release-dir rule still holds.
+    expect(git(b.rel, 'status', '--porcelain', '--untracked-files=no')).toBe('');
   });
 
   it('refuses to run as a non-root user before reading anything (the real entrypoint)', () => {
