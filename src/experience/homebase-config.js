@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Classroom: names the application whose admitted tools the preset hosts in place, which tool ids stay out of the navigation (per-class tools) and which are teacher-only presentation.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Display configuration for the three homebase presets (Home, Little Monsters classroom, Business). Presets choose labels, navigation, which suites and applications lead, and which modules compose the page. They carry no people, records or permissions: every person, event, list item, assignment and balance comes from the signed-in session at render time.
  */
 window.HOMEBASE_PRESETS = {
@@ -24,7 +25,10 @@ window.HOMEBASE_PRESETS = {
     suites: ['ai-home', 'ai-knowledge', 'ai-creative'], featured: ['little-monsters', 'games'],
     peopleKicker: 'LEARNING TOGETHER', appsHeading: 'Tools for curious minds.', updatesHeading: 'On our noticeboard',
     calendarHeading: 'Our day of discovery.', assistantPrompt: 'One question is a great start.', assistantLabel: 'Your study companion',
-    sidebarNote: ['A little room to grow.', 'Classwork is shared with your class. Your personal learning stays in your space.']
+    sidebarNote: ['A little room to grow.', 'Classwork is shared with your class. Your personal learning stays in your space.'],
+    // The application whose admitted tools open inside this home (read from the caller's ribbon profile).
+    host: 'little-monsters', toolsKicker: 'LITTLE MONSTERS',
+    hiddenTools: ['tool-lm-class-'], teacherTools: ['tool-lm-teacher', 'tool-lm-recorder']
   },
   company: {
     id: 'company', skin: 'company', name: 'Business', short: 'workspace', mark: 'w',

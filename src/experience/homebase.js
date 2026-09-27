@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Homebase shells (Home, Little Monsters classroom, Business) over live data: the signed-in person, Little Monsters identity/classes/assignments/roster/calendar, the Purchasing list, the Finance snapshot (a calm personal picture at home, a dense account table at work), Smart Home facts, open tickets as projects, application summaries as the noticeboard, and the real Jarvis thread. The role switcher, fixture people and sample records of the prototype are gone; teacher and learner views follow the caller's actual classroom role, and display choices are saved on this device only.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | A preset can host its application: the classroom lists Little Monsters' admitted tools (from the same ribbon profile the cockpit renders, per-class tools kept out of the navigation, teacher-only tools shown to teachers) and opens them in place in a frame that follows the skin; the frame's navigation messages (the cockpit's own shapes) switch tools, and only admitted tools ever open. The home paints from identity and catalog (readyCore) and fills work in when it arrives.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Paint the preset skin on load when the device remembers none: the style switcher initialises before this script selects the preset, so the default was never applied to the document.
  */
 (() => {
@@ -26,7 +27,7 @@
   const isoDay = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
   let snapshot, shell, data = {}, thread, dialogKind = null, opener = null, timer, config;
-  const state = { page: 'home' };
+  const state = { page: 'home', tool: null };
   const defaultConfig = () => ({ density: 'comfortable', updates: true, week: true, revision: 1, previous: null });
   const me = () => snapshot.me;
   const app = id => shell.byId(id);
@@ -37,7 +38,7 @@
   const notice = s => { clearTimeout(timer); const t = document.getElementById('toast'); if (t) { t.textContent = s; timer = setTimeout(() => { t.textContent = ''; }, 4000); } };
 
   root.innerHTML = '<div class="experience"><div class="home-shell"><main class="home-main"><section class="hero"><div><div class="eyebrow">CONNECTING</div><h1>Reading your home…</h1></div></section></main></div></div>';
-  LIVE.ready.then(boot).catch(err => { root.innerHTML = `<div class="experience"><main class="home-main"><section class="hero"><div><h1>This home could not load.</h1><p>${esc(err && err.message ? err.message : String(err))}</p></div></section></main></div>`; });
+  LIVE.readyCore.then(boot).catch(err => { root.innerHTML = `<div class="experience"><main class="home-main"><section class="hero"><div><h1>This home could not load.</h1><p>${esc(err && err.message ? err.message : String(err))}</p></div></section></main></div>`; });
 
   async function boot(loaded) {
     snapshot = loaded;
@@ -47,8 +48,10 @@
     thread = shell.createThread(LIVE.sessionId(), preset.assistantLabel);
     bind();
     render();
-    await Promise.all([loadEducation(), loadShopping(), loadFinance(), loadHome(), loadDirectory(), loadUpdates()]);
-    render();
+    // Work, tasks and the overview arrive in the second phase; repaint then unless a tool is open (a repaint would reload its frame).
+    LIVE.ready.then(() => { if (state.page !== 'tool') render(); }).catch(() => { /* a home paints without work */ });
+    await Promise.all([loadEducation(), loadTools(), loadShopping(), loadFinance(), loadHome(), loadDirectory(), loadUpdates()]);
+    if (state.page !== 'tool') render();
   }
 
   /* ── live sources ────────────────────────────────────────────── */
@@ -98,6 +101,45 @@
     const lead = preset.featured.map(app).filter(a => a && a.navigable);
     const fill = preset.suites.flatMap(id => (shell.suiteOf(id).apps || []).filter(a => a.navigable && !lead.includes(a)));
     return lead.concat(fill);
+  }
+
+  /** @description The host application's admitted surfaces for this caller, from the ribbon profile the cockpit itself renders. */
+  async function loadTools() {
+    if (!preset.host || !has(preset.host)) { data.tools = null; return; }
+    const r = await LIVE.packages.profile(preset.host);
+    const items = r.ok && r.body && r.body.profile && r.body.profile.ribbon && Array.isArray(r.body.profile.ribbon.items) ? r.body.profile.ribbon.items : [];
+    data.tools = { status: r.status, items: items.filter(i => i && i.id && i.toolUi && typeof i.toolUi.iframeUrl === 'string' && i.toolUi.iframeUrl.startsWith('/')).map(i => ({ id: String(i.id), label: String(i.label || i.id), href: i.toolUi.iframeUrl, section: String(i.section || 'top') })) };
+  }
+  const admittedTools = () => data.tools ? data.tools.items : [];
+  const teacherOnly = id => (preset.teacherTools || []).includes(id);
+  /** Tools offered in the navigation: hidden prefixes stay out (per-class tools have their own place) and teacher-only tools show to teachers. */
+  const navTools = () => admittedTools().filter(t => !(preset.hiddenTools || []).some(p => t.id.startsWith(p)) && (isTeacher() || !teacherOnly(t.id)));
+  const toolById = id => admittedTools().find(t => t.id === id) || null;
+  /** @description Open an admitted tool in place. Anything not admitted for this caller is refused with a notice, never fetched. */
+  function openTool(id) {
+    const t = toolById(id);
+    if (!t) { notice('That view is not available to you here.'); return; }
+    if (!isTeacher() && teacherOnly(t.id)) { notice('That view is for teachers.'); return; }
+    state.page = 'tool'; state.tool = t.id; render();
+    const frame = document.getElementById('tool-frame'); if (frame) frame.focus();
+  }
+  /** @description Navigation requests from the hosted tool, in the shapes the cockpit ribbon honours. Only the frame this home opened is heard, same origin only, and only admitted tools open. */
+  function onSurfaceMessage(e) {
+    const frame = document.getElementById('tool-frame');
+    if (!frame || e.source !== frame.contentWindow || e.origin !== location.origin) return;
+    const d = e.data;
+    if (d === 'lm-classes-changed' || (d && typeof d === 'object' && d.type === 'app-tools-changed')) { Promise.all([loadEducation(), loadTools()]).then(() => { if (state.page !== 'tool') render(); }); return; }
+    if (!d || typeof d !== 'object') return;
+    let id = null;
+    if (d.type === 'app-navigate' && d.tool) id = 'tool-' + String(d.tool);
+    else if (d.type === 'lm-navigate' && d.view) { const view = String(d.view); id = view.startsWith('class-') ? 'tool-lm-class-' + view.slice('class-'.length, 'class-'.length + 8) : 'tool-lm-' + view; }
+    else if (d.type === 'lm-open-class' && d.classId) id = 'tool-lm-class-' + String(d.classId).slice(0, 8);
+    if (id) openTool(id);
+  }
+  function toolPanel() {
+    const t = toolById(state.tool), host = app(preset.host);
+    if (!t) return `<section class="panel" data-module="tool"><h2>That tool is not available to you here.</h2>${btn('Back to ' + esc(preset.nav[0][1].toLowerCase()), 'page', 'button', 'data-page="home"')}</section>`;
+    return `<section class="tool-shell" data-module="tool"><div class="tool-head"><div><div class="panel-kicker">${esc((host ? host.name : preset.name).toUpperCase())} / ${esc(t.label.toUpperCase())}</div><h2>${esc(t.label)}</h2></div><div class="tool-actions">${host && host.navigable ? link('Open in the cockpit ↗', host.href, 'text-button', 'target="_blank" rel="noopener"') : ''}${btn('← Back to ' + esc(preset.nav[0][1].toLowerCase()), 'page', 'button', 'data-page="home"')}</div></div><iframe class="tool-frame" id="tool-frame" src="${esc(t.href)}" title="${esc(t.label)}" allow="microphone; camera; fullscreen"></iframe></section>`;
   }
 
   /* ── modules ─────────────────────────────────────────────────── */
@@ -193,6 +235,8 @@
     return `<section class="panel">${head(key === 'family' ? 'Our people' : key === 'classroom' ? 'Your classroom' : 'Your team')}<div class="side-section">${rows.map(memberLine).join('')}</div><p class="subtle" style="margin-top:20px">${note}</p><p class="subtle">${snapshot.botsOnline} of ${snapshot.bots.length} swarm assistants are online.</p></section>`;
   }
   function apps() {
+    const tools = navTools(), host = app(preset.host);
+    if (tools.length) return `<section><div class="section-heading"><h2>${esc(preset.appsHeading)}</h2>${btn('About access', 'policy', 'text-button')}</div><div class="apps-row tools-row">${tools.slice(0, 8).map(t => btn(`<span class="app-icon" aria-hidden="true">${esc(t.label.slice(0, 1))}</span><strong>${esc(t.label)}</strong><small>${esc(host ? host.name : preset.name)} · opens here</small>`, 'tool', 'app-tile', `data-tool="${esc(t.id)}"`)).join('')}</div></section>`;
     const list = featuredApps().slice(0, 4);
     return `<section><div class="section-heading"><h2>${esc(preset.appsHeading)}</h2>${btn('About access', 'policy', 'text-button')}</div><div class="apps-row">${list.map(a => btn(`<span class="app-icon" aria-hidden="true">${esc(LIVE.initials(a.name))}</span><strong>${esc(a.name)}</strong><small>${esc(shell.suiteOf(a.suite).name)}${a.version ? ` · v${esc(a.version)}` : ''}</small>`, 'app', 'app-tile', `data-app="${esc(a.id)}"`)).join('') || '<p class="subtle">No applications from these suites are available in your workspace.</p>'}</div></section>`;
   }
@@ -200,10 +244,12 @@
   /* ── page composition ────────────────────────────────────────── */
   function sidebar() {
     const lm = key === 'classroom' && data.edu && data.edu.installed;
-    const people = peopleList().slice(0, 6);
-    return `<aside class="home-sidebar"><div><div class="wordmark ${key === 'classroom' ? 'class-brand' : ''}">${lm ? '<img class="monster-logo" src="/api/education/logo-96.png" alt="">' : `<span class="brand-glyph">${preset.mark}</span>`}${preset.short}</div><p class="workspace-label">${esc(displayName())}’s ${key === 'family' ? 'home' : key === 'classroom' ? 'classroom' : 'company swarm'} · ${snapshot.apps.length} apps</p></div><nav class="side-nav" aria-label="Homebase navigation">${preset.nav.map(([id, label], i) => btn(`<span class="nav-symbol" aria-hidden="true">${['⌂', '▦', '☷', '◎', '◇'][i]}</span>${esc(label)}`, 'page', 'nav-link', `data-page="${id}" ${id === state.page ? 'aria-current="page"' : ''}`)).join('')}</nav><div class="side-section"><div class="side-kicker">${preset.peopleKicker}</div>${people.map(memberLine).join('')}</div><div class="side-section"><div class="side-kicker">YOUR APPLICATIONS</div>${featuredApps().slice(0, 5).map(a => btn(`<span class="nav-symbol" aria-hidden="true">${esc(a.name.slice(0, 1))}</span>${esc(a.name)}`, 'app', 'nav-link', `data-app="${esc(a.id)}"`)).join('')}${btn('<span class="nav-symbol" aria-hidden="true">…</span>All applications', 'all-apps', 'nav-link')}</div><div class="sidebar-note"><strong>${esc(preset.sidebarNote[0])}</strong>${esc(preset.sidebarNote[1])}${btn('Configure this home', 'configure', 'button sidebar-config')}</div></aside>`;
+    const people = peopleList().slice(0, 6), tools = navTools();
+    const toolSection = tools.length ? `<div class="side-section"><div class="side-kicker">${esc(preset.toolsKicker || 'TOOLS')}</div><div class="tool-nav">${tools.map(t => btn(`<span class="nav-symbol" aria-hidden="true">${esc(t.label.slice(0, 1))}</span>${esc(t.label)}`, 'tool', 'nav-link', `data-tool="${esc(t.id)}" ${state.page === 'tool' && state.tool === t.id ? 'aria-current="page"' : ''}`)).join('')}</div></div>` : '';
+    return `<aside class="home-sidebar"><div><div class="wordmark ${key === 'classroom' ? 'class-brand' : ''}">${lm ? '<img class="monster-logo" src="/api/education/logo-96.png" alt="">' : `<span class="brand-glyph">${preset.mark}</span>`}${preset.short}</div><p class="workspace-label">${esc(displayName())}’s ${key === 'family' ? 'home' : key === 'classroom' ? 'classroom' : 'company swarm'} · ${snapshot.apps.length} apps</p></div><nav class="side-nav" aria-label="Homebase navigation">${preset.nav.map(([id, label], i) => btn(`<span class="nav-symbol" aria-hidden="true">${['⌂', '▦', '☷', '◎', '◇'][i]}</span>${esc(label)}`, 'page', 'nav-link', `data-page="${id}" ${id === state.page ? 'aria-current="page"' : ''}`)).join('')}</nav><div class="side-section"><div class="side-kicker">${preset.peopleKicker}</div>${people.map(memberLine).join('')}</div>${toolSection}<div class="side-section"><div class="side-kicker">YOUR APPLICATIONS</div>${featuredApps().slice(0, 5).map(a => btn(`<span class="nav-symbol" aria-hidden="true">${esc(a.name.slice(0, 1))}</span>${esc(a.name)}`, 'app', 'nav-link', `data-app="${esc(a.id)}"`)).join('')}${btn('<span class="nav-symbol" aria-hidden="true">…</span>All applications', 'all-apps', 'nav-link')}</div><div class="sidebar-note"><strong>${esc(preset.sidebarNote[0])}</strong>${esc(preset.sidebarNote[1])}${btn('Configure this home', 'configure', 'button sidebar-config')}</div></aside>`;
   }
   function hero() {
+    if (state.page === 'tool') return '';
     const learner = isLearner();
     const heading = learner ? `Ready to explore, ${displayName().split(' ')[0]}?` : preset.title;
     const badgeText = key === 'family' ? `${snapshot.apps.length} apps · ${shell.openWork().length} open items` : key === 'classroom' ? (data.edu && data.edu.ok ? `${isTeacher() ? 'Teacher' : 'Student'} · ${data.edu.classes.length} class${data.edu.classes.length === 1 ? '' : 'es'}` : 'Classroom') : `${shell.openWork().length} open items · ${snapshot.botsOnline} assistants online`;
@@ -211,6 +257,7 @@
     return `<section class="hero ${key === 'company' ? 'professional-hero' : ''}"><div><div class="eyebrow">${esc(preset.eyebrow)}</div><h1>${esc(heading)}</h1><p>${learner ? 'Your own learning space, with the shared moments close by.' : esc(preset.subtitle)}</p><div class="hero-cta">${pill(badgeText)}</div></div>${art}</section>`;
   }
   function content() {
+    if (state.page === 'tool') return `<div class="home-content is-tool">${toolPanel()}</div>`;
     let main = [], aside = [];
     if (state.page === 'home') {
       if (key === 'family') { main = [calendar(), homeFacts(), apps()]; aside = [personal(), shopping(), updates()]; }
@@ -226,7 +273,7 @@
     return `<div class="home-content"><div class="main-column">${main.join('')}<div class="assistant"><span class="assistant-orb" aria-hidden="true"></span><div>${esc(preset.assistantPrompt)}<small>${esc(preset.assistantLabel)} · answered by your Jarvis${last ? ` · last reply ${esc(String(last.text).slice(0, 60))}…` : ''}</small></div>${btn('Ask', 'ask', 'text-button')}</div></div><aside class="aside-column">${aside.join('')}</aside></div>`;
   }
   function render() {
-    root.innerHTML = `<div class="experience" data-skin="${esc(document.body.dataset.skin || preset.skin)}" data-density="${esc(config.density)}"><div class="preview-bar"><a href="/cockpit/">← Cockpit</a><span class="demo-tag">LIVE · ${esc(displayName().toUpperCase())}</span><div class="preview-selects"><label>Experience ${S.pickerMarkup(key)}</label><label>Style ${S.skinPicker()}</label></div></div><div class="home-shell">${sidebar()}<main class="home-main"><header class="main-top"><div class="breadcrumb">${esc(preset.name)} / ${esc((preset.nav.find(n => n[0] === state.page) || [])[1] || 'Home')}</div><div class="top-controls"><span class="date-chip">${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</span>${btn('Configure home', 'configure')}${btn('My access', 'policy')}${avatar(me().initials, 0)}</div></header>${hero()}${content()}<footer class="page-footer"><span>One platform · ${key} preset · ${esc(document.body.dataset.skin || preset.skin)} skin · display choices saved on this device (v${config.revision})<br>Access follows this swarm’s authorization; appearance never changes it.</span>${btn('About this data', 'about', 'text-button')}</footer></main></div><div id="dialog-host"></div><div class="toast" id="toast" role="status" aria-live="polite"></div></div>`;
+    root.innerHTML = `<div class="experience" data-skin="${esc(document.body.dataset.skin || preset.skin)}" data-density="${esc(config.density)}"><div class="preview-bar"><a href="/cockpit/">← Cockpit</a><span class="demo-tag">LIVE · ${esc(displayName().toUpperCase())}</span><div class="preview-selects"><label>Experience ${S.pickerMarkup(key)}</label><label>Style ${S.skinPicker()}</label></div></div><div class="home-shell">${sidebar()}<main class="home-main"><header class="main-top"><div class="breadcrumb">${esc(preset.name)} / ${esc(state.page === 'tool' && toolById(state.tool) ? toolById(state.tool).label : (preset.nav.find(n => n[0] === state.page) || [])[1] || 'Home')}</div><div class="top-controls"><span class="date-chip">${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</span>${btn('Configure home', 'configure')}${btn('My access', 'policy')}${avatar(me().initials, 0)}</div></header>${hero()}${content()}<footer class="page-footer"><span>One platform · ${key} preset · ${esc(document.body.dataset.skin || preset.skin)} skin · display choices saved on this device (v${config.revision})<br>Access follows this swarm’s authorization; appearance never changes it.</span>${btn('About this data', 'about', 'text-button')}</footer></main></div><div id="dialog-host"></div><div class="toast" id="toast" role="status" aria-live="polite"></div></div>`;
     if (window.OSHAL_STYLE_SWITCHER) { const exp = root.querySelector('.experience'); const def = window.OSHAL_STYLE_SWITCHER.FLAT_SKINS.find(s => s.id === (document.body.dataset.skin || preset.skin)); if (exp && def) exp.dataset.skin = def.alias || def.id; }
     if (dialogKind) openDialog(dialogKind);
   }
@@ -257,10 +304,12 @@
   /* ── events ──────────────────────────────────────────────────── */
   function saveConfig(next) { config = { ...next, revision: config.revision + 1, previous: { ...config, previous: null } }; LIVE.prefs.set(`homebase:${key}`, config); }
   function bind() {
+    window.addEventListener('message', onSurfaceMessage);
     root.addEventListener('click', e => {
       const b = e.target.closest('[data-action]'); if (!b) return; const a = b.dataset.action;
       if (a === 'close') return close();
-      if (a === 'page') { state.page = b.dataset.page; render(); return; }
+      if (a === 'page') { state.page = b.dataset.page; state.tool = null; render(); return; }
+      if (a === 'tool') { openTool(b.dataset.tool); return; }
       if (a === 'all-apps') { location.href = '/portal#catalog-directory'; return; }
       if (a === 'restore' && config.previous) { const prev = config.previous; config = { ...prev, revision: config.revision + 1, previous: null }; LIVE.prefs.set(`homebase:${key}`, config); close(); render(); notice('Previous display choices restored.'); return; }
       if (a === 'project') return open('project', b.dataset.work);
