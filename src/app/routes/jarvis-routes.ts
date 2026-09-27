@@ -62,6 +62,7 @@
  * 28 | maintainer@emeraldcoastsystemsgroup.com   | Preflight protected-result admission before registering a fresh Jarvis session, while retaining the post-write owner/read-back guard.
  * 29 | maintainer@emeraldcoastsystemsgroup.com   | Report a selected-file model timeout with only the caller-visible compatible destinations and an explicit no-send/no-work receipt; preserve the selected-file handoff guard.
  * 30 | maintainer@emeraldcoastsystemsgroup.com   | Serve fixed Jarvis files from a trusted hidden install directory; Express otherwise treats a dot-prefixed parent as a hidden file and returns 404.
+ * 31 | maintainer@emeraldcoastsystemsgroup.com   | Late answers and honest infra errors. A conversational turn that outlives the decision window no longer answers "my model provider did not respond in time" while the bot is still working (live 2026-09-27: the recall turn's real answer landed ~2 min after that text and reached nobody). The job stays pending with a still-working note and the SAME turn's answer takes the ordinary path into the same thread when it lands; a real failure the turn reports still reaches the job as its own error. The selected-file and work-filing timeout branches are unchanged. The /ask session gate and /ask/result now tell a store that could not answer (a pool connect timeout) apart from a refusal: a retryable 503 instead of 404 session_not_found or 'expired'.
  */
 
 import { getJarvisBriefingDelivery } from './jarvis-briefing-delivery';
@@ -142,7 +143,7 @@ import { getApplicationAuthorizationActor, runWithApplicationAuthorizationActor 
 import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-issuer';
 import { runWithRemoteExecutionResults } from '@/shared/remote-execution-results';
 import { persistProtectedResultTask } from './protected-result-persistence';
-import { canReadJarvisSession, canStartJarvisSession, filterJarvisResultRows, hasProtectedJarvisSource } from './jarvis-result-access';
+import { canReadJarvisSession, canStartJarvisSession, filterJarvisResultRows, hasProtectedJarvisSource, jarvisSessionAccess } from './jarvis-result-access';
 import { buildBots, buildComms, buildActivity, buildCalendar } from './jarvis-overview';
 import {
   ensureJarvisSchema,
@@ -158,8 +159,9 @@ import {
   storedFiles,
 } from './jarvis-task-store';
 import { deriveTicketEscalationDetail } from '@/entities/ticket';
-import { threadTicketKey, ensureSessionTask, ensureThreadChatTicket, closeThreadChatTicket } from './jarvis-thread-tickets';
+import { threadTicketKey, gateAskSession, refuseAskSession, ensureThreadChatTicket, closeThreadChatTicket } from './jarvis-thread-tickets';
 import { describeJarvisAskFailure } from './jarvis-no-brain-notice';
+import { ASK_JOB_TTL_MS, JARVIS_STILL_WORKING_NOTE, stillWorkingFields } from './jarvis-late-answer';
 
 // ── Re-exports: keep the public surface the unit tests + external importers resolve from here. ──
 export {
@@ -288,6 +290,8 @@ interface AskJob {
   // Machine code for a failure the surface answers specifically (today only NO_HOSTED_BRAIN): it lets
   // the page SPEAK what is wrong instead of a contentless apology. Absent for ordinary failures.
   code?: string;
+  // Set once a conversational turn outlives the decision window: the job is still pending on that turn.
+  progress?: string;
   createdAt: number;
   finishedAt?: number;
 }
@@ -343,7 +347,7 @@ async function dispatchHandoffs(
 // after 60 min. The surface lists them via GET /ask/jobs and dismisses via POST /ask/dismiss.
 function gcAskJobs(): void {
   const now = Date.now();
-  for (const [id, job] of askJobs) { if (now - job.createdAt > 60 * 60 * 1000) askJobs.delete(id); }
+  for (const [id, job] of askJobs) { if (now - job.createdAt > ASK_JOB_TTL_MS) askJobs.delete(id); }
   for (const [key, pending] of pendingWeatherClarifications) {
     if (now - pending.createdAt > PENDING_WEATHER_TTL_MS) pendingWeatherClarifications.delete(key);
   }
@@ -682,19 +686,12 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
     gcAskJobs();
     // Check the would-be task before writing it: a protected-result refusal must not strand a fresh
     // `created` row. Accepted threads are then registered before their FK-backed persistence writes.
-    const ownsSession = await ensureSessionTask(ctx, sub, issuer, sessionId, message,
-      () => canStartJarvisSession(sub, sessionId, JARVIS_AGENT_ID, () => resultActor(req)));
-    const readsSession = ownsSession
-      && await canReadJarvisSession(ctx, sub, issuer, sessionId, () => resultActor(req));
-    if (!readsSession) {
-      // The refusal is correct either way and its wording stays deliberately uninformative to the
-      // caller. The LOG is where the two halves separate: `ownership` means the session task could
-      // not be written owner-bound (a foreign owner, or a store that answered nothing), `read-back`
-      // means it was written and then would not read back. Answering 404 with no record at all is
-      // how an ownership fault becomes indistinguishable from an empty conversation.
-      logger.warn({ sessionId, refusedBy: ownsSession ? 'read-back' : 'ownership' }, 'jarvis /ask refused: session_not_found');
-      res.status(404).json({ error: 'session_not_found' }); return;
-    }
+    // A refusal stays the uninformative 404 (the log names the refusing half); a store that could not
+    // answer is a retryable 503, never "not found" for the caller's own thread.
+    const gate = await gateAskSession(ctx, sub, issuer, sessionId, message,
+      () => canStartJarvisSession(sub, sessionId, JARVIS_AGENT_ID, () => resultActor(req)),
+      () => jarvisSessionAccess(ctx, sub, issuer, sessionId, () => resultActor(req)));
+    if (gate !== 'admitted') { refuseAskSession(res, sessionId, gate); return; }
     await markJarvisSessionTaskStatus(ctx, sessionId, 'processing');
     // Quick push on send: open (or reuse) this thread's chat-ticket before we ack — one fast insert.
     const chatTicketId = await ensureThreadChatTicket(ctx, sub, sessionId, message);
@@ -922,35 +919,28 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
         // DOWN, and that inference filed "Hi" as an escalated build ticket three times, plus
         // "what is 9 times 9" and "what screen am i on" — every one of them while the operator's
         // codex lane sat on `You've hit your usage limit`. A greeting or a question is never a
-        // build, so on those a timeout is reported as what it is.
+        // build, so on those the route keeps waiting for the same turn: a brain that is really down
+        // fails the turn itself, and that failure is what the job reports.
         let answer: string;
         let brainFallback: BrainFallbackMarker | undefined;
+        const turn = runJarvisBot(ctx, sub, botMessage, sessionId, true, message);
         try {
-          const raced = await Promise.race([
-            runJarvisBot(ctx, sub, botMessage, sessionId, true, message),
+          ({ answer, brainFallback } = await Promise.race([
+            turn,
             new Promise<never>((_, rej) => setTimeout(() => rej(new Error('DECISION_TIMEOUT')), DECISION_TIMEOUT_MS)),
-          ]);
-          answer = raced.answer;
-          brainFallback = raced.brainFallback;
+          ]));
         } catch (e) {
           if ((e as Error).message !== 'DECISION_TIMEOUT') throw e;
 
-          // A greeting or a question that timed out is an unavailable assistant, not a build.
-          // Filing it produces a ticket nobody asked for, titled with the user's small talk, that
-          // then escalates — and tells them something untrue about their own message.
-          // A selected-file turn is never a build either, even when the operator's words look
-          // imperative. Its already-filtered destination menu remains useful on a model timeout.
-          if (artifactSelection || !looksLikeWorkRequest(message)) {
-            const unavailable = artifactSelection
-              ? 'I could not choose a destination because my model provider did not respond in time. '
-                + 'Nothing was sent or filed. '
-                + (artifactActions.length
-                  ? `Compatible destinations: ${artifactActions.map(action => action.label).join('; ')}. `
-                  : 'No compatible destinations are currently available. ')
-                + 'Try again when Jarvis is available.'
-              : 'I could not get an answer just now — my model provider did not '
-                + 'respond in time. Nothing was filed. Try again shortly, or pick a different '
-                + 'provider in Settings → AI Providers.';
+          // A selected-file turn is never a build, even when the operator's words look imperative.
+          // Its already-filtered destination menu remains useful on a model timeout.
+          if (artifactSelection) {
+            const unavailable = 'I could not choose a destination because my model provider did not respond in time. '
+              + 'Nothing was sent or filed. '
+              + (artifactActions.length
+                ? `Compatible destinations: ${artifactActions.map(action => action.label).join('; ')}. `
+                : 'No compatible destinations are currently available. ')
+              + 'Try again when Jarvis is available.';
             await persistJarvisTurn(ctx, sessionId, 'assistant', unavailable);
             await markJarvisSessionTaskStatus(ctx, sessionId, 'active');
             const prior = askJobs.get(jobId);
@@ -960,30 +950,40 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
               result: { answer: unavailable, routed: [], handoffs: [], dispatched: [] },
             });
             logger.warn(
-              { sessionId, messageLength: message.length, selectedArtifact: Boolean(artifactSelection) },
+              { sessionId, messageLength: message.length, selectedArtifact: true },
               'jarvis: decision timeout without work filing — reported as unavailable',
             );
             return;
           }
 
-          // Filed through the SAME claim-guarded path as the deterministic hand-off, so a message
-          // that was already filed (a resend, or a directive the fast path took first) reuses that
-          // claim instead of opening a second ticket and a second swarm build.
-          const filed = await fileBuildHandoff(ctx, sub, sessionId, {
-            request: message, title: message.slice(0, 120),
-          });
-          const { workJobId } = filed;
-          const ack = filed.ack;
-          // A timeout acknowledgement contains no completed data. Never materialize a generic image
-          // for it, even if the timed-out model later emits a stale visual directive.
-          await persistJarvisTurn(ctx, sessionId, 'assistant', ack);
-          await markJarvisSessionTaskStatus(ctx, sessionId, 'active');
-          const j = askJobs.get(jobId);
-          askJobs.set(jobId, {
-            sub, issuer, label, taskId: sessionId, kind: 'chat', status: 'done', createdAt: j?.createdAt ?? Date.now(), finishedAt: Date.now(),
-            result: { answer: ack, routed: [], handoffs: [], dispatched: [{ workJobId, title: message.slice(0, 120) }] },
-          });
-          return;
+          if (looksLikeWorkRequest(message)) {
+            // Filed through the SAME claim-guarded path as the deterministic hand-off, so a message
+            // that was already filed (a resend, or a directive the fast path took first) reuses that
+            // claim instead of opening a second ticket and a second swarm build.
+            const filed = await fileBuildHandoff(ctx, sub, sessionId, {
+              request: message, title: message.slice(0, 120),
+            });
+            const { workJobId, ack } = filed;
+            // A timeout acknowledgement contains no completed data. Never materialize a generic image
+            // for it, even if the timed-out model later emits a stale visual directive.
+            await persistJarvisTurn(ctx, sessionId, 'assistant', ack);
+            await markJarvisSessionTaskStatus(ctx, sessionId, 'active');
+            const j = askJobs.get(jobId);
+            askJobs.set(jobId, {
+              sub, issuer, label, taskId: sessionId, kind: 'chat', status: 'done', createdAt: j?.createdAt ?? Date.now(), finishedAt: Date.now(),
+              result: { answer: ack, routed: [], handoffs: [], dispatched: [{ workJobId, title: message.slice(0, 120) }] },
+            });
+            return;
+          }
+
+          // A greeting or a question that outlived the window is neither a build nor an outage: the
+          // turn is still running. Say exactly that and wait for THIS turn - its answer then takes the
+          // ordinary path below into the same thread, and a failure it reports reaches the job as its
+          // own error. Claiming the provider "did not respond" here was false (2026-09-27).
+          const pending = askJobs.get(jobId);
+          if (pending) pending.progress = JARVIS_STILL_WORKING_NOTE;
+          logger.info({ sessionId, windowMs: DECISION_TIMEOUT_MS }, 'jarvis: turn outlived the decision window; waiting for its answer');
+          ({ answer, brainFallback } = await turn);
         }
 
         const packageReply = await resolveJarvisPackageToolDirective(answer, packageTools, getApplicationAuthorizationActor(), sessionId, offeredPackageTools);
@@ -1120,9 +1120,12 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
     const sub = callerSub(req);
     if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
     const job = askJobs.get(String(req.query.jobId || ''));
-    if (!job || job.sub !== sub || job.issuer !== resultIssuer(req)
-      || !await canReadJarvisSession(ctx, sub, job.issuer, job.taskId, () => resultActor(req))) { res.json({ status: 'expired' }); return; }
-    if (job.status === 'pending') { res.json({ status: 'pending', label: job.label }); return; }
+    const access = job && job.sub === sub && job.issuer === resultIssuer(req)
+      ? await jarvisSessionAccess(ctx, sub, job.issuer, job.taskId, () => resultActor(req)) : 'denied';
+    // A session read that could not be completed is not an expired job: the surface keeps polling.
+    if (access === 'unavailable') { res.status(503).json({ error: 'result_unavailable', retryable: true }); return; }
+    if (!job || access !== 'allowed') { res.json({ status: 'expired' }); return; }
+    if (job.status === 'pending') { res.json({ status: 'pending', label: job.label, ...stillWorkingFields(job) }); return; }
     if (job.status === 'error') {
       res.json({ status: 'error', error: job.error, ...(job.code ? { code: job.code } : {}), label: job.label, taskId: job.taskId });
       return;

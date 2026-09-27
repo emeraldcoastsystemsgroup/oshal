@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The Jarvis cross-conversation recall card is registered exactly once, is explicit-only so "Run live scenarios" never spends its model turn, keeps every attached suite on disk, and the case module it requires ships in the api image (scripts/lib is both allowlisted and copied), which is what lets the deployed card and the staged live proof run the same code.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The card and 'jarvis-routing' both carry the Antigravity host-tool-loop guard, the fix for the defect this card's first live run found.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The card judges delivery into the new thread and carries jarvis-late-answer; 'jarvis-routing' carries the late-answer route guard and the real-PostgreSQL session-gate guard.
  */
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -26,6 +27,12 @@ describe('Jarvis cross-conversation recall Test Lab card', () => {
     expect(routing?.regressionTests?.map((t) => t.path)).toContain('tests/unit/antigravity-host-tool-loop.spec.ts');
     for (const test of scenario.regressionTests!) expect(existsSync(test.path), test.path).toBe(true);
     expect(scenario.description).toContain('ONE real model turn');
+    expect(scenario.description).toContain('written into that new thread');
+    expect(scenario.regressionTests!.map((t) => t.path)).toContain('tests/unit/jarvis-late-answer.spec.ts');
+    for (const path of ['tests/unit/jarvis-late-answer.spec.ts', 'tests/unit/jarvis-ask-session-gate-postgres.spec.ts']) {
+      expect(routing?.regressionTests?.map((t) => t.path)).toContain(path);
+      expect(existsSync(path), path).toBe(true);
+    }
   });
 
   it('never runs from a run-all, only from its own card', () => {

@@ -103,6 +103,74 @@ permission scope of every mode as a closed set. Both are attached to `jarvis-rou
 `jarvis-cross-thread-recall`. **Not yet live-proven:** the deployed bot node answering the case.
 Run `node scripts/operations/jarvis-recall-live-proof.js` after the next deploy.
 
+## Late answers, honest errors and where a turn's time goes (as built, 2026-09-27)
+
+After the host-tool-loop fix was deployed (core `078ec127`, image `df9357df0bc9`), the automated case
+recalled correctly and still went red. `conversation_query` and `conversation_fetch` each ran once,
+and the bot's own frames held the codeword. But `/api/jarvis/ask` had already answered at its 75 s
+decision window: "I could not get an answer just now — my model provider did not respond in time."
+That sentence was false. The bot had not failed and was still working. Its answer reached the api at
+20:11:39.674, 196 s after the ask registered its thread (20:08:23.967), and then reached no one.
+
+**What changed.** A conversational turn (not a work request, no selected file) that outlives the
+window now keeps its ask job `pending`. `/ask/result` adds `progress` ("Still working on it — the
+answer will appear here when it is ready.") and `expiresInMs` (how long the job is still kept). The
+route keeps awaiting the SAME turn. When the turn returns, its answer takes the normal success path
+into the same thread (`persistJarvisTurn` on the asked session) and becomes the job's answer. If the
+turn fails, the job reports that failure's own message. The page keeps following a turn that
+carries `progress` for `expiresInMs` instead of stopping after ~5 minutes, and the answer replaces the
+note in the same bubble. The selected-file branch and the work-request filing branch did not change.
+
+The `/ask` session gate now separates a store that could not answer from a refusal. A thrown task
+store (live: `Connection terminated due to connection timeout` during the 36-bot cold start) returns
+a retryable `503 session_unavailable` with `Retry-After: 5` and writes nothing. A foreign-owner or
+read-back refusal still returns 404 `session_not_found`. `/ask/result` does the same: `503
+result_unavailable`, not `expired`. On the same box a result poll hit `timeout exceeded when trying to
+connect` at 20:08:39.603. `jarvis-cross-thread-recall` now judges delivery into thread B (see
+docs/test-lab.md). Guards: `tests/unit/jarvis-late-answer.spec.ts`,
+`tests/unit/jarvis-ask-session-gate-postgres.spec.ts` (the store's own pool exhausted on a private
+PostgreSQL, so pg-pool's acquire timeout fires), `tests/unit/jarvis-ask-session-ownership.spec.ts`,
+and the still-working case in `tests/unit/jarvis-dashboard-browser.spec.ts`.
+
+**Where the deploy-verify ask's time went.** Read-only `docker logs --timestamps` of
+`oshal-local-api` and `oshal-local-jarvis-bot`, for task `deploy-verify-dc674760-…`. The question was
+"Reply with the single word ready."
+
+| Stage | From → to (UTC) | Time | Evidence |
+|---|---|---|---|
+| api turn assembly (tools, catalog, open work, brain, Haven) | 20:05:27.808 → 20:05:32.868 | 5.1 s | `Task created (postgres)` → `Dispatching work to bot node` |
+| transport + delegation | → 20:05:33.701 | 0.8 s | `HTTP delegation authorized`, `Executing envelope` |
+| bot event loop held before the model call | 20:05:34.154 → 20:07:02.939 | 88.8 s | first `[ADR-127] DEMO_MODE: launching antigravity-cli` (provider entry) → second (wrapper entry); `[TokenChase] owner store snapshot failed: ENOENT … .db-shm` at 20:07:02.902 |
+| agy + model | 20:07:02.939 → 20:07:23.810 | 20.9 s | `Turn 1 metrics: 35369 tokens`, one call, no tools |
+| bot event loop held after the answer | 20:07:23.892 → 20:07:57.468 | 33.6 s | `Any-bot execution completed` carries pino time 20:07:23.892 but reached docker at 20:07:57.468; the api logged `bot-node-client … durationMs 143902` at 20:07:57.524 |
+
+The bot spent 20.9 s of its 143.9 s in the model. Two stretches account for 122.4 s: 88.8 s before
+the model call and 33.6 s after the answer. In both, the event loop did nothing else, and nothing
+was logged or sent. The only code between the two launch lines is the model-gateway check, which
+has a 3 s socket timeout, and the prompt join. Token Chase capture is on
+(`TOKEN_CHASE_CAPTURE=true`). Its open-frame and final writers run in `setImmediate`. The final
+writer runs after `finishRun` and before the response is flushed. Each writer copies the caller's
+encrypted owner store into the run's `.tokenchase/store-objects` with synchronous file reads, hashes
+and writes (`src/features/token-chase/services/owner-store-snapshot.ts`, `walkStoreDirectory`). The
+operator's store (`/app/api-data/career-hunter-data/default/<sub>`) is 1.6 GB in 19,287 files. The
+deploy-verify ask's `store-objects` holds 1.2 GB in 19,279 objects, and so does its
+`jarvis-summary-…` follow-up. The frame-1 snapshot still ended incomplete (`ENOENT` on the SQLite
+`-shm` file).
+
+The recall ask on the same box shows the same pattern. Its model calls took 13.6 s, 9.7 s and 4.6 s,
+and its tools about 2 s. The gap before the first call was 81 s, overlapping the first frame of a
+concurrent `jarvis-summary` run on the same bot. Later gaps were 3.9 s and 4.6 s, when the objects
+already existed. The final writer took 6.1 s. `bot-node-client` logged `durationMs 130184`.
+
+One more fact from the same logs. The deploy-verify question has no question marker, so
+`looksLikeWorkRequest` classified it as work. At 20:06:46.224 the window filed it with the swarm
+(`jarvis-build-handoff … build handed to the swarm without a model turn`). The verify's "Jarvis
+answered in 79s" was that acknowledgement, not an answer.
+
+No change was made to the turn's latency here. Nearly all of it is the Token Chase checkpoint writer
+(ADR-046), and bounding or moving that changes the capture and replay contract. That is outside this
+route.
+
 ## Invariant preamble cache (as built, 2026-09-27)
 
 Every Jarvis conversation used to re-send the same invariant preamble, the system prompt and the

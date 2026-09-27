@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Give the automatic derived-answer path the lineage it was withheld for. recordDerivedJarvisResultLineage re-asserts the owner's current rights on the SOURCE ticket, binds every contributing execution to the conversation and shelf task the summary will be written to, and stamps that lineage on them - so the derived answer answers to exactly the same authority as the work product it came from. canReadDerivedJarvisSources is the re-check the background summarizer runs against the captured actor before it publishes anything. Nothing here widens who may read: the destinations inherit the source's checks, and a caller who cannot read the source records nothing.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Check fresh Jarvis sessions against the protected-result boundary before their task row can be persisted.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Distinguish unbindable lineage from access denial in recordDerivedJarvisResultLineage so unbindable results can be handled honestly.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | jarvisSessionAccess answers allowed / denied / unavailable. A task store that could not answer (a pool connect timeout while 36 bots cold-started, 2026-09-27) is not a denial, and /ask and /ask/result must be able to say "busy, try again" instead of "not found". canReadJarvisSession keeps its boolean contract on top of it, so every other caller still fails closed exactly as before.
  */
 import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '../composition-root';
@@ -52,17 +53,36 @@ export async function canStartJarvisSession(sub: string, taskId: string, agentId
  */
 export async function canReadJarvisSession(ctx: AppContext, sub: string, issuer: string | null, taskId: string,
   resolveActor: () => Promise<AuthorizationActor>): Promise<boolean> {
+  return (await jarvisSessionAccess(ctx, sub, issuer, taskId, resolveActor)) === 'allowed';
+}
+
+/** @description Whether a Jarvis session may be read: decided either way, or not decidable right now. */
+export type JarvisSessionAccess = 'allowed' | 'denied' | 'unavailable';
+
+/**
+ * @description The same owner/issuer/protected-result decision as canReadJarvisSession, with the one
+ * case a boolean cannot carry kept apart: a store or authority that THREW decided nothing. Callers that
+ * answer a person use it to say "busy, try again" instead of "not found"; it still never allows.
+ * @param ctx - Canonical task store.
+ * @param sub - Authenticated caller subject.
+ * @param issuer - Verified issuer, or null only for legacy test/controller compatibility.
+ * @param taskId - Actual conversation task.
+ * @param resolveActor - Existing server-owned actor resolver.
+ * @returns allowed, denied, or unavailable when the check could not be completed.
+ */
+export async function jarvisSessionAccess(ctx: AppContext, sub: string, issuer: string | null, taskId: string,
+  resolveActor: () => Promise<AuthorizationActor>): Promise<JarvisSessionAccess> {
   try {
     const task = await ctx.taskStore.get(taskId);
-    if (!task || task.ownerSub !== sub) return false;
+    if (!task || task.ownerSub !== sub) return 'denied';
     const storedIssuer = readOwnerPrincipalIssuer(task.metadata);
-    if (storedIssuer ? storedIssuer !== issuer : Boolean(issuer && ctx.applicationAuthorization)) return false;
-    return canReadProtectedResult(task, resolveActor);
+    if (storedIssuer ? storedIssuer !== issuer : Boolean(issuer && ctx.applicationAuthorization)) return 'denied';
+    return await canReadProtectedResult(task, resolveActor) ? 'allowed' : 'denied';
   } catch (err) {
     // Fail closed, but never silently: a thrown store/authority error is NOT a denial, and a
-    // caller that renders `false` as an empty history would otherwise hide a real outage.
+    // caller that renders it as one would hide a real outage behind "not found".
     logger.error({ err, taskId }, 'jarvis session access undetermined; failing closed');
-    return false;
+    return 'unavailable';
   }
 }
 

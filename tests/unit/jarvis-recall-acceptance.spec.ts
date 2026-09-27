@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the Jarvis cross-conversation recall acceptance case's own logic: fixture shape (the codeword lives only in thread A and the question trips none of Jarvis's deterministic intercepts), verdicts (codeword + owner-stamped recall pins = pass; missing/wrong codeword, no recall pin, foreign frame = fail; no capture = degraded), exact cleanup (any residue is red, ids never occupied), the signed-in Test Lab adapter's refusals and port wiring, and the live-proof runner's by-name PAT forwarding. The real store/RLS boundary is jarvis-recall-acceptance-postgres.spec.ts.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The fake server now answers like the fixed route: the answer is written into the asked thread and read back through /api/jarvis/history. New cases: a late answer that lands after the job reported "still working" passes; one that never reaches thread B within the delivery budget fails even though the job answered with the codeword; one written into thread A fails; and the route's old timeout sentence with no delivery fails after the budget.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -38,6 +39,10 @@ afterEach(() => {
 
 interface WorldOptions {
   answer?: (codeword: string | null) => string;
+  /** Polls of /ask/result that report "still working" before the answer lands. */
+  lateAfterPolls?: number;
+  /** Where the answer is written: thread B (default), thread A, or nowhere at all. */
+  landIn?: 'B' | 'A' | 'nowhere';
   pins?: Array<{ tool: string; success: boolean }>;
   noCapture?: boolean;
   frameOwner?: string;
@@ -51,7 +56,9 @@ interface WorldOptions {
 interface WorldState {
   root: string;
   options: WorldOptions;
-  tasks: Map<string, { ownerSub: string; messages: Array<{ text: string }> }>;
+  tasks: Map<string, { ownerSub: string; messages: Array<{ role: string; text: string }> }>;
+  polls: number;
+  landed: boolean;
   tickets: Map<string, string>;
   calls: string[];
 }
@@ -76,6 +83,14 @@ function writeCapture(state: WorldState, threadB: string): void {
   writeFileSync(path.join(dir, 'final.json'), JSON.stringify({ userSub: owner, pins: [] }));
 }
 
+/** Write the answer where this world's route writes it: thread B, thread A, or nowhere. Once. */
+function landAnswer(state: WorldState, answer: string): void {
+  if (state.landed || state.options.landIn === 'nowhere') return;
+  state.landed = true;
+  const prefix = state.options.landIn === 'A' ? 'testlab-recall-a-' : 'testlab-recall-b-';
+  for (const [id, task] of state.tasks) if (id.startsWith(prefix)) task.messages.push({ role: 'assistant', text: answer });
+}
+
 /** GET /api/token-chase/runs/:id and /frames/:seq, in the real routes' response shapes. */
 function captureRoute(state: WorldState, route: string) {
   const parts = route.split('/');
@@ -93,14 +108,21 @@ function routes(state: WorldState) {
     state.calls.push(`${method} ${route.split('?')[0]}`);
     if (method === 'POST' && route === '/api/jarvis/ask') {
       if (options.askStatus) return { status: options.askStatus, json: { error: 'session_not_found' } };
-      tasks.set(body!.sessionId, { ownerSub: OWNER, messages: [{ text: body!.message }] });
+      tasks.set(body!.sessionId, { ownerSub: OWNER, messages: [{ role: 'user', text: body!.message }] });
       tickets.set('ticket-b', body!.sessionId);
       if (!options.noCapture) writeCapture(state, body!.sessionId);
       return { status: 202, json: { jobId: 'job-1', sessionId: body!.sessionId, chatTicketId: 'ticket-b' } };
     }
     if (route.startsWith('/api/jarvis/ask/result')) {
+      if (++state.polls <= (options.lateAfterPolls ?? 0)) return { status: 200, json: { status: 'pending', progress: 'Still working on it' } };
       const cw = codewordOfA(state);
-      return { status: 200, json: { status: 'done', answer: options.answer ? options.answer(cw) : `The codeword was **${cw}**.` } };
+      const answer = options.answer ? options.answer(cw) : `The codeword was **${cw}**.`;
+      landAnswer(state, answer);
+      return { status: 200, json: { status: 'done', answer } };
+    }
+    if (route.startsWith('/api/jarvis/history?sessionId=')) {
+      const task = tasks.get(decodeURIComponent(route.slice('/api/jarvis/history?sessionId='.length)));
+      return { status: 200, json: { turns: (task?.messages ?? []).map((m) => ({ role: m.role === 'user' ? 'user' : 'jarvis', text: m.text })) } };
     }
     if (route.startsWith('/api/token-chase/runs/')) return captureRoute(state, route);
     if (route === '/api/jarvis/thread/close' || route === '/api/jarvis/ask/dismiss') return { status: 200, json: { ok: true } };
@@ -118,7 +140,7 @@ function routes(state: WorldState) {
 function world(options: WorldOptions = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'recall-ws-'));
   scratch.push(root);
-  const state: WorldState = { root, options, tasks: new Map(), tickets: new Map(), calls: [] };
+  const state: WorldState = { root, options, tasks: new Map(), tickets: new Map(), calls: [], polls: 0, landed: false };
   const { tasks, tickets } = state;
   let clock = 0;
   const ports = {
@@ -128,8 +150,8 @@ function world(options: WorldOptions = {}) {
       tasks.set(input.taskId, { ownerSub: input.ownerSub, messages: [] });
       return { ownerSub: input.ownerSub, metadata: input.metadata };
     }) },
-    messageStore: { save: vi.fn(async (message: { taskId: string; text: string }) => {
-      tasks.get(message.taskId)!.messages.push({ text: message.text });
+    messageStore: { save: vi.fn(async (message: { taskId: string; role: string; text: string }) => {
+      tasks.get(message.taskId)!.messages.push({ role: message.role, text: message.text });
       return message;
     }) },
     query: vi.fn(async (_sql: string, params: [string, string[]]) => {
@@ -197,13 +219,54 @@ describe('runJarvisRecallAcceptance', () => {
     expect(w.calls).toEqual(expect.arrayContaining(['POST /api/jarvis/thread/close', 'DELETE /api/tickets/ticket-b', 'POST /api/jarvis/ask/dismiss']));
   });
 
-  it('fails when the answer lacks the codeword and says when the bot wrote it too late', async () => {
-    const w = world({ answer: () => 'I could not get an answer just now.', codewordInFrame: true });
+  it('fails when the codeword never reaches thread B within the budget, and says the bot wrote it', async () => {
+    const w = world({ answer: () => 'I could not get an answer just now — my model provider did not respond in time.', codewordInFrame: true });
+    const result = await acceptance.runJarvisRecallAcceptance(w.ports, { deliveryBudgetMs: 30_000 });
+    expect(result.state).toBe('fail');
+    expect(result.detail).toContain('did not deliver the other thread\'s codeword into thread B within 30s');
+    expect(result.detail).toContain('DID write the codeword');
+    expect(result.evidence).toMatchObject({ deliveredSeconds: null, askStatus: 'done' });
+    expect(w.tasks.size).toBe(0);
+  });
+
+  it('passes on a late answer that lands in thread B after the job reported it was still working', async () => {
+    const w = world({ lateAfterPolls: 3 });
+    const result = await acceptance.runJarvisRecallAcceptance(w.ports);
+    expect(result.state, result.detail).toBe('pass');
+    expect(result.detail).toContain('after the route reported the turn was still working');
+    expect(result.evidence).toMatchObject({ stillWorkingSeen: true, strayInThreadA: 0 });
+    expect(result.evidence.deliveredSeconds).toBeGreaterThan(0);
+  });
+
+  it('fails when the job answered with the codeword but it was never written into thread B', async () => {
+    const w = world({ landIn: 'nowhere' });
+    const result = await acceptance.runJarvisRecallAcceptance(w.ports, { deliveryBudgetMs: 30_000 });
+    expect(result.state).toBe('fail');
+    expect(result.detail).toContain('The ask result carried the codeword, but it was never written into thread B.');
+  });
+
+  it('fails when the answer lands in the other thread instead of thread B', async () => {
+    const w = world({ landIn: 'A' });
+    const result = await acceptance.runJarvisRecallAcceptance(w.ports, { deliveryBudgetMs: 30_000 });
+    expect(result.state).toBe('fail');
+    expect(result.detail).toContain('did not deliver the other thread\'s codeword into thread B');
+    expect(w.tasks.size).toBe(0);
+  });
+
+  it('fails when the answer reaches thread B AND is also written into thread A', async () => {
+    const w = world();
+    const real = w.ports.api;
+    w.ports.api = vi.fn(async (method: string, route: string, body?: Record<string, string>) => {
+      const reply = await real(method, route, body);
+      if (route.startsWith('/api/jarvis/ask/result')) {
+        for (const [id, task] of w.tasks) if (id.startsWith('testlab-recall-a-') && task.messages.length === 2) task.messages.push({ role: 'assistant', text: 'stray' });
+      }
+      return reply;
+    }) as typeof real;
     const result = await acceptance.runJarvisRecallAcceptance(w.ports);
     expect(result.state).toBe('fail');
-    expect(result.detail).toContain('did not answer with the other thread\'s codeword');
-    expect(result.detail).toContain('DID write the codeword');
-    expect(w.tasks.size).toBe(0);
+    expect(result.detail).toContain('thread A gained 1 message(s)');
+    expect(result.evidence).toMatchObject({ strayInThreadA: 1 });
   });
 
   it('keeps polling through a transient "expired" (a session read that lost its database connection) until the job settles', async () => {
@@ -223,7 +286,7 @@ describe('runJarvisRecallAcceptance', () => {
     const w = world({ answer: () => 'It was TESTLAB-RECALL-FFFFFFFF.' });
     const result = await acceptance.runJarvisRecallAcceptance(w.ports);
     expect(result.state).toBe('fail');
-    expect(result.detail).toContain('TESTLAB-RECALL-FFFFFFFF instead');
+    expect(result.detail).toContain('Thread B names TESTLAB-RECALL-FFFFFFFF instead');
   });
 
   it('fails when the capture shows no successful recall tool call', async () => {

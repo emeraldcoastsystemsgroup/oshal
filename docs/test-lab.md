@@ -183,7 +183,10 @@ from its own card and never from "Run live scenarios", because it spends one rea
 caller's configured brain. It seeds one owner-bound thread (`testlab-recall-a-<uuid>`) through the real
 task and message stores, holding a random `TESTLAB-RECALL-<8 hex>` codeword, then asks Jarvis for that
 codeword from a new thread (`testlab-recall-b-<uuid>`) through the real `POST /api/jarvis/ask`, naming
-only the other thread's title. It passes only when the answer carries the codeword AND the Token Chase
+only the other thread's title. It passes only when the codeword is written into the new thread, read
+through the caller's own `/api/jarvis/history`, within `deliveryBudgetMs` (300 s by default; an answer
+that lands after Jarvis's 75 s decision window counts) and thread A still holds only its seeded
+messages, AND the Token Chase
 capture of that ask, read through the caller's own `/api/token-chase/runs/<thread>` routes, shows
 `conversation_query` and/or `conversation_fetch` ran successfully in frames stamped for the caller. No
 capture on the deployment is degraded, not green. Both threads, their messages, the chat ticket, the ask
@@ -193,7 +196,8 @@ come back empty; anything left is red.
 The same case (`scripts/lib/jarvis-recall-acceptance.js`) runs against a deployed box as the operator
 automation identity, including an image that predates the card:
 `node scripts/operations/jarvis-recall-live-proof.js` (reads `OSHAL_VERIFY_OPERATOR_PAT` by name from
-the environment or `.env`, stages itself into the api container and forwards the token by name only).
+the environment or `.env`, stages itself into the api container and forwards the token by name only;
+`OSHAL_RECALL_DELIVERY_BUDGET_MS` overrides the delivery budget).
 Suites: `npx vitest run tests/unit/jarvis-recall-acceptance.spec.ts
 tests/unit/jarvis-recall-acceptance-postgres.spec.ts tests/unit/test-lab-jarvis-recall-registration.spec.ts`.
 The PostgreSQL suite is the real boundary: the seed goes through the real stores as the app role, and

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the recall acceptance case over a real PostgreSQL with the shipped chat schema and row-level security: the seed goes through the REAL task and message stores as the owner-scoped app role (the same classes the Test Lab card and the live proof use), the REAL conversation_query/conversation_fetch tools running as the bot role find that thread and its codeword for the owner and nothing for another owner, and the case's own residue read over the same policies proves exact cleanup and turns a surviving row red.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The stand-in server writes Jarvis's answer into thread B through the REAL message store as the owner and serves it back through /api/jarvis/history, because the case now judges delivery into the thread (read through the owner's own row-level policies) rather than the job's first answer.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
@@ -205,6 +206,8 @@ describe('recall acceptance over the real stores and row-level security', () => 
  */
 function recallingServer(owner: string, options: { leaveTicket?: boolean; fileWorkItem?: boolean } = {}) {
   let answer = '';
+  let threadB = '';
+  let delivered = false;
   return async (method: string, route: string, body?: unknown): Promise<{ status: number; json: Record<string, unknown> }> => {
     const input = (body ?? {}) as { sessionId?: string; message?: string };
     if (method === 'POST' && route === '/api/jarvis/ask') {
@@ -222,9 +225,22 @@ function recallingServer(owner: string, options: { leaveTicket?: boolean; fileWo
       const other = list.conversations.find((c) => c.taskId !== input.sessionId);
       const fetched = other ? await runTool(BOT_NODE_CONVERSATION_FETCH_TOOL, owner, { taskId: other.taskId }) as { conversation: { messages: Array<{ text: string }> } } : null;
       answer = `The codeword was ${acceptance.extractCodewords(fetched?.conversation.messages.map((m) => m.text).join(' '))[0] ?? 'unknown'}.`;
+      threadB = input.sessionId!;
       return { status: 202, json: { jobId: 'job-1', sessionId: input.sessionId!, chatTicketId: 'unused' } };
     }
-    if (route.startsWith('/api/jarvis/ask/result')) return { status: 200, json: { status: 'done', answer } };
+    if (route.startsWith('/api/jarvis/ask/result')) {
+      // Like the route, the answer lands in the asked thread (once) before the job reports it.
+      if (answer && !delivered) {
+        delivered = true;
+        await runWithRequestIdentity({ sub: owner, isOperator: false }, () => messageStore.save({ taskId: threadB, role: 'assistant', type: 'say', text: answer, contentBlocks: [], metadata: {} }));
+      }
+      return { status: 200, json: { status: 'done', answer } };
+    }
+    if (route.startsWith('/api/jarvis/history?sessionId=')) {
+      const taskId = decodeURIComponent(route.slice('/api/jarvis/history?sessionId='.length));
+      const messages = await runWithRequestIdentity({ sub: owner, isOperator: false }, () => messageStore.getByTask(taskId));
+      return { status: 200, json: { turns: messages.map((m) => ({ role: m.role === 'user' ? 'user' : 'jarvis', text: m.text })) } };
+    }
     if (route.startsWith('/api/token-chase/')) return { status: 200, json: { frames: [] } };
     if (method === 'DELETE' && route.startsWith('/api/tasks/')) {
       await deleteThread(owner, decodeURIComponent(route.slice(11)));

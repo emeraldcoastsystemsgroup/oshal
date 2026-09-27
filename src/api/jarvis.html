@@ -23,6 +23,7 @@
   5 | maintainer@emeraldcoastsystemsgroup.com | Load and mount the Manage Voices → Ambient Recall bridge: every voice row in the Voice & Speakers panel opens that voice's profile page.
   7 | maintainer@emeraldcoastsystemsgroup.com | Prefer the shared response-renderer bundle for live, durable and resumed answers with the existing escaped renderer retained as the unavailable-bundle fallback.
   8 | maintainer@emeraldcoastsystemsgroup.com | Render typed answers with the shared DISPLAY_ONLY_RESPONSE_CAPABILITIES profile (a model-authored oshal:gallery/oshal:download now degrades to escaped text instead of loading a remote image or rendering an arbitrary link; a bundle without the profile falls back to the escaped renderer), hydrate the shared [data-mermaid] diagram output as well as the legacy .mermaid blocks, and load Mermaid from the same-origin lock-pinned build copy under /dist/vendor/mermaid instead of the floating mermaid@11 jsDelivr import (JVV-007).
+  9 | maintainer@emeraldcoastsystemsgroup.com | Follow a turn the server reports as still working (2026-09-27): once /ask/result carries a progress note, the thinking bubble shows it and polling continues for as long as the server keeps the job (expiresInMs) instead of giving up after ~5 minutes, so the late answer replaces the note in the same bubble. A turn nobody reported as still working keeps the old ceiling and message.
 -->
 <html lang="en" data-theme="midnight">
 <head>
@@ -1549,7 +1550,9 @@ async function handleInput(text) {
         : (j0.message || j0.error || ('HTTP ' + r.status)));
     }
     seenDone.add(j0.jobId);   // handled inline here — keep the shelf from re-announcing it
-    const d = await waitForResult(j0.jobId);
+    const d = await waitForResult(j0.jobId, (note) => {
+      bubble.innerHTML = `<div style="opacity:.6">${esc(note)}</div>`; setStatus(note);
+    });
     if (d.status === 'error') {
       const failure = askFailureLines(d);
       bubble.innerHTML = `<span class="err">${esc(failure.text)}</span>`;
@@ -1609,17 +1612,27 @@ function askFailureLines(result){
   return { text: text || "That didn't work.", speech: "Sorry, that didn't work." };
 }
 /* Poll one job to completion. Async because a tool-using turn can outlast Cloudflare's ~100s edge
-   timeout if a connection is held open; returns the final {status:'done'|'error', ...} payload. */
-async function waitForResult(jobId) {
-  for (let i = 0; i < 200; i++) {   // ~5 min ceiling at 1.5s cadence
+   timeout if a connection is held open; returns the final {status:'done'|'error', ...} payload.
+   A turn the server reports as still working (pending + progress) is followed for as long as the
+   server keeps its job (expiresInMs), and onProgress shows the note; its answer lands in this same
+   bubble. Any other turn keeps the ~5 min ceiling. */
+async function waitForResult(jobId, onProgress) {
+  let followUntil = 0;
+  for (let i = 0; followUntil ? Date.now() < followUntil : i < 200; i++) {   // ~5 min ceiling at 1.5s cadence
     try {
       const r = await fetch('/api/jarvis/ask/result?jobId=' + encodeURIComponent(jobId), { credentials: 'include' });
       const d = await r.json();
       if (d.status && d.status !== 'pending') return d;
+      if (d.progress) {
+        if (!followUntil && onProgress) onProgress(String(d.progress));
+        followUntil = Date.now() + Math.max(0, Number(d.expiresInMs) || 0);
+      }
     } catch (_) { /* transient network blip — keep polling */ }
-    await new Promise((res) => setTimeout(res, 1500));
+    await new Promise((res) => setTimeout(res, followUntil ? 3000 : 1500));
   }
-  return { status: 'error', error: 'This is taking unusually long — it may still finish; check the shelf.' };
+  return { status: 'error', error: followUntil
+    ? 'Jarvis is still working on this. The answer is saved to this conversation when it lands; reopen the conversation to see it.'
+    : 'This is taking unusually long — it may still finish; check the shelf.' };
 }
 
 /* ================= Session-manager shelf ================= */

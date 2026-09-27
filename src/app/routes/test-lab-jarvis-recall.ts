@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the signed-in Test Lab adapter for the Jarvis cross-conversation recall acceptance case. The case itself lives once in scripts/lib/jarvis-recall-acceptance.js (the live proof drives the same code with the operator PAT); this file only binds its ports to the running server: the initiating session cookie for loopback calls, the app's own task and message stores for the seed, the request-identity pool for the residue read, and the shared workspace root for the ask's capture.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Budget override renamed with the case: deliveryBudgetMs bounds the wait for the codeword to land in thread B.
  */
 import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 import { OWNER_PRINCIPAL_ISSUER_METADATA_KEY } from '@/shared/security/owner-principal-issuer';
@@ -60,7 +61,7 @@ async function call(base: string, cookie: string, method: string, path: string, 
  * run-all). Without a cookie, a verified issuer or a persistent store it writes nothing.
  * @param cookie - The initiating session cookie.
  * @param runtime - Server-derived run context (owner, issuer, stores, loopback base).
- * @param options - Optional budget overrides (answerBudgetMs, settleBudgetMs, pollMs); tests only.
+ * @param options - Optional budget overrides (deliveryBudgetMs, settleBudgetMs, pollMs); tests only.
  * @returns The Lab step result; `output` carries the case's evidence summary.
  */
 export async function runJarvisCrossThreadRecall(

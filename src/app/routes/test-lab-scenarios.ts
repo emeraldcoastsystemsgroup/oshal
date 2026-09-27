@@ -98,6 +98,7 @@
  * 46 | maintainer@emeraldcoastsystemsgroup.com   | Registered the Jarvis cross-conversation recall card (JARVIS_RECALL_SCENARIOS, test-lab-jarvis-recall-scenarios.ts): it seeds a tagged owner-bound thread with a random codeword, asks for it from a new thread through the real /api/jarvis/ask, and requires the answer plus the owner-scoped capture of conversation_query/conversation_fetch, with exact cleanup. It spends one real model turn, so Scenario gained `explicitOnly` and the run-all selection moved into scenariosForRun(), which leaves explicit-only cards out of 'all'. Guard: tests/unit/test-lab-jarvis-recall-registration.spec.ts.
  * 47 | maintainer@emeraldcoastsystemsgroup.com   | Attached antigravity-host-tool-loop and antigravity-bot-runtime to 'jarvis-routing' regressionTests. The automated recall case found a Jarvis ask on the Antigravity brain dying on a headless read_file denial after 10 min 45 s; the fix runs agy with no native tools inside the host loop for interactive turns. The seam guard drives the real handler marker, AgenticController loop, provider, wrapper and a real child process; the runtime spec pins the permission scope as a closed set per mode. Same Jarvis turn, same scenario; a spec on disk is not Test Lab registration.
  * 48 | maintainer@emeraldcoastsystemsgroup.com   | Registered the ADR-168 trading-sleeves card (TRADING_SLEEVES_SCENARIOS, test-lab-trading-sleeves-scenarios.ts): one credential-free readback of the multi-market universe this image carries (bucketed, deduplicated, default universe unchanged as its prefix, no swing-leg overlap; a core symbol of this node among the 41 new names = degraded), with the four trading specs that prove the list, its sector coverage and the blend path attached. It never claims the sleeve's paper proof. Guard: tests/unit/test-lab-trading-sleeves-registration.spec.ts.
+ * 49 | maintainer@emeraldcoastsystemsgroup.com   | Attached jarvis-late-answer and jarvis-ask-session-gate-postgres to 'jarvis-routing' regressionTests: a conversational turn that outlives the decision window stays pending and lands its own answer in the same thread instead of the false "provider did not respond", and a task-store pool timeout during the /ask session gate is a retryable 503 over a real PostgreSQL store, never 404 session_not_found. Same Jarvis turn, same scenario; a spec on disk is not Test Lab registration.
  * @module test-lab-scenarios
  */
 
@@ -481,6 +482,8 @@ export const SCENARIOS: Scenario[] = [
     description: 'Fire each command at Jarvis and confirm it answers or dispatches.',
     regressionTests: [
       { level: 'integration', path: 'tests/unit/jarvis-ask-session-ownership.spec.ts' },
+      { level: 'integration', path: 'tests/unit/jarvis-ask-session-gate-postgres.spec.ts' },
+      { level: 'integration', path: 'tests/unit/jarvis-late-answer.spec.ts' },
       { level: 'integration', path: 'tests/unit/jarvis-provider-intent-routing.spec.ts' },
       { level: 'integration', path: 'tests/unit/jarvis-build-handoff.spec.ts' },
       { level: 'unit', path: 'tests/unit/jarvis-task-complete-notify.spec.ts' },
