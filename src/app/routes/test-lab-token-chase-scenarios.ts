@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Registered the Token Chase checkpoint + tail replay card (BACKLOG "Workspace-bound checkpoint and tail replay", ADR-046): one read-only step listing the captured runs visible to the caller through the owner-scoped read route, with the workspace-bound checkpoint, owner-store, hermetic tail, bot-route and end-to-end suites attached as regressionTests. No replay is fired from the Lab on purpose: a tail replay restores a worktree on a bot node and is an action, not a probe.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Attached the owner-store opt-in regression suite: a node with a vault root and no TOKEN_CHASE_OWNER_STORE_SNAPSHOT=on stays unbound and a captured run writes no store objects.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -58,6 +59,7 @@ export const TOKEN_CHASE_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/token-chase-turn-provenance.spec.ts' },
     { level: 'integration', path: 'tests/unit/token-chase-workspace-checkpoint.spec.ts' },
     { level: 'integration', path: 'tests/unit/token-chase-owner-store-snapshot.spec.ts' },
+    { level: 'integration', path: 'tests/unit/token-chase-owner-store-opt-in.spec.ts' },
     { level: 'integration', path: 'tests/unit/token-chase-capture-contract.spec.ts' },
     { level: 'unit', path: 'tests/unit/token-chase-tail-replay.spec.ts' },
     { level: 'integration', path: 'tests/unit/token-chase-bot-tail-route.spec.ts' },

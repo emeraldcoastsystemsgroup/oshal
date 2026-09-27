@@ -159,6 +159,9 @@ x-bot-env: &bot-env
   # to <task-workspace>/.tokenchase/. Zero hot-path cost: capture is async + fail-open. Set
   # TOKEN_CHASE_CAPTURE=false in .env to kill it. Owner-scoped reads via the api (/api/token-chase).
   TOKEN_CHASE_CAPTURE: ${TOKEN_CHASE_CAPTURE:-true}
+  # Owner-store snapshot per captured frame: OFF unless 'on' (expensive on a large vault — every
+  # frame hashes and copies the owner's whole encrypted store). See .env.example.
+  TOKEN_CHASE_OWNER_STORE_SNAPSHOT: ${TOKEN_CHASE_OWNER_STORE_SNAPSHOT:-off}
   # ── Auth / OIDC ──
   # FAIL-CLOSED default (SECURITY-HARDENING 9, 2026-07-31): auth is never mocked unless
   # .env says so. The installer writes MOCK_OIDC=true for a local dev box, so the

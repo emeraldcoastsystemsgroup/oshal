@@ -322,7 +322,10 @@ that a provider-backed production acceptance run has occurred:
   is bound to a workspace commit in a private repository under `.tokenchase/git` (built from the same
   redacted content-addressed objects, reachable under `refs/tokenchase/<task>/<seq>`; a git failure
   fails open to `null`, never a fabricated SHA), to the accountable owner's encrypted store version
-  (sha256 over the ciphertext manifest; ciphertext only is copied, nothing is decrypted), to per-turn
+  (sha256 over the ciphertext manifest; ciphertext only is copied, nothing is decrypted; **opt-in per
+  node** with `TOKEN_CHASE_OWNER_STORE_SNAPSHOT=on`, because each frame hashes and copies the whole
+  store, which on a gigabyte-scale vault costs minutes and gigabytes per turn; off, the version is
+  `null` and `ownerStore.bound` is false), to per-turn
   replay pins (`replayClass` declared on tool definitions; an undeclared tool is live, so the frame that
   consumed it is `replayable:false`), and to the full tool schema. `final.json` records the post-tool
   tree and store version. `POST /api/token-chase/runs/:runId/tail-replay` delegates to the producing

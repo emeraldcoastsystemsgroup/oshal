@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Encrypted owner-store version + ciphertext-only snapshot/restore for Token Chase (ADR-046 §1 "three-part checkpoint", BACKLOG "Workspace-bound checkpoint and tail replay"). The version is sha256 over the sorted (path, sha256(ciphertext)) pairs of the owner's exact-subject store directory (the same AES-256-GCM vault layout the Personal Data Vault uses, resolved through resolveExactSubjectStoreDirectory and the link-free file guards, so a symlinked or aliased store is refused). Snapshot copies the stored bytes as-is into a content-addressed object dir — nothing is ever decrypted, and no plaintext is written. Restore re-binds the owner under an isolated store root with ensureExactSubjectStoreDirectory; key derivation (per-user HKDF) is untouched, so the restored store decrypts for the same owner only. With no configured store root the snapshotter reports bound:false and every version is null.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | versionAt(storeRoot, ownerSub): version the same owner under a different root with this node's tenant and limits — the bot-node tail executor re-versions the ISOLATED restored store with it and compares that to final.json's ownerStoreVersion, so the store comparison uses the one contract instead of a re-derived config.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Explicit opt-in (regression fix for seq 1): readOwnerStoreConfig bound the snapshotter to PI_STORE_ROOT / JOBHUNTER_STORE_ROOT whenever either was set, so every captured bot turn on a node holding a vault hashed and copied that owner's whole store (measured on a jarvis bot: a 1.6 GB, 19,287-file store, the event loop held 88.8 s before the model call and 33.6 s after, 1.2 GB of store-objects per ask), with no way to turn it off. The store root is now read only when TOKEN_CHASE_OWNER_STORE_SNAPSHOT is on (isOwnerStoreSnapshotEnabled); otherwise storeRoot is null and the snapshotter is unbound, so frames record ownerStoreVersion null and ownerStore.bound false.
  */
 
 import crypto from 'node:crypto';
@@ -72,15 +73,33 @@ export interface OwnerStoreSnapshotter {
   versionAt(storeRoot: string, ownerSub: string): OwnerStoreManifest;
 }
 
+/** @description The environment switch that opts a node in to per-frame owner-store snapshots. */
+export const OWNER_STORE_SNAPSHOT_FLAG = 'TOKEN_CHASE_OWNER_STORE_SNAPSHOT';
+const OPT_IN_VALUE = /^(?:on|true)$/i;
+
 /**
- * @description Reads the owner-store location from the environment the way the vault services do:
- * TOKEN_CHASE_STORE_ROOT overrides, else PI_STORE_ROOT / JOBHUNTER_STORE_ROOT; tenant from PI_TENANT.
+ * @description Whether this node opted in to owner-store snapshots. Off unless the flag is exactly
+ * `on` (or `true`): a snapshot hashes and copies the owner's whole encrypted store on every captured
+ * frame, which on a large vault costs minutes and gigabytes per turn, so it is never implied by a
+ * vault root being present.
  * @param env - The environment to read (defaults to process.env).
- * @returns The config; `storeRoot` is null when no store is configured on this node.
+ * @returns True only when TOKEN_CHASE_OWNER_STORE_SNAPSHOT is on.
+ */
+export function isOwnerStoreSnapshotEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return OPT_IN_VALUE.test(String(env[OWNER_STORE_SNAPSHOT_FLAG] ?? '').trim());
+}
+
+/**
+ * @description Reads the owner-store location from the environment. Nothing binds unless the node
+ * opted in (isOwnerStoreSnapshotEnabled); then TOKEN_CHASE_STORE_ROOT overrides, else the vault
+ * services' PI_STORE_ROOT / JOBHUNTER_STORE_ROOT; tenant from PI_TENANT.
+ * @param env - The environment to read (defaults to process.env).
+ * @returns The config; `storeRoot` is null when the node did not opt in or has no store root.
  */
 export function readOwnerStoreConfig(env: NodeJS.ProcessEnv = process.env): OwnerStoreConfig {
-  const root = [env.TOKEN_CHASE_STORE_ROOT, env.PI_STORE_ROOT, env.JOBHUNTER_STORE_ROOT]
-    .find((value) => typeof value === 'string' && value.trim().length > 0);
+  const root = !isOwnerStoreSnapshotEnabled(env) ? undefined
+    : [env.TOKEN_CHASE_STORE_ROOT, env.PI_STORE_ROOT, env.JOBHUNTER_STORE_ROOT]
+      .find((value) => typeof value === 'string' && value.trim().length > 0);
   const max = Number.parseInt(String(env.TOKEN_CHASE_STORE_OBJECT_MAX_BYTES ?? ''), 10);
   return {
     storeRoot: root ? root.trim() : null,
