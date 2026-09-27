@@ -295,6 +295,3 @@ export function createImapMailReader(pool: Pool, dependencies: ImapMailReaderDep
     }
   };
 }
-
-// Pure helpers exported for focused boundary tests.
-export const imapMailReaderInternals = { clampLimit, formatAddress };
