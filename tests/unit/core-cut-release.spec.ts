@@ -15,6 +15,8 @@ import {
   type FixtureRepo, type Run,
 } from '../helpers/core-release-harness';
 
+/** Each case spawns Git Bash and several git processes: slow on a loaded Windows host. */
+const SHELL_CASE_TIMEOUT_MS = 120_000;
 const cleanup: string[] = [];
 afterAll(() => { for (const dir of cleanup) fs.rmSync(dir, { recursive: true, force: true }); });
 
@@ -85,9 +87,9 @@ const tags = (f: Fixture) => git(f.repo.work, 'tag', '--list', 'core-*').split('
 const builds = (f: Fixture) => readOr(path.join(f.state, 'docker.log')).split('\n').filter((l) => l.startsWith('build'));
 
 let f: Fixture;
-beforeEach(() => { f = fixture(); });
+beforeEach(() => { f = fixture(); }, SHELL_CASE_TIMEOUT_MS);
 
-describe('cut-release.sh — one build, proved, recorded, tagged', () => {
+describe('cut-release.sh — one build, proved, recorded, tagged', { timeout: SHELL_CASE_TIMEOUT_MS }, () => {
   it('builds the published main tip once, runs the deploy probes, records the image ID and tags the commit', () => {
     const sha = git(f.repo.work, 'rev-parse', 'HEAD');
     const r = cut(f);
@@ -137,7 +139,7 @@ describe('cut-release.sh — one build, proved, recorded, tagged', () => {
   });
 });
 
-describe('cut-release.sh — refusals leave no build, no record, no tag', () => {
+describe('cut-release.sh — refusals leave no build, no record, no tag', { timeout: SHELL_CASE_TIMEOUT_MS }, () => {
   const refusedBeforeBuild = (r: Run, message: string) => {
     expect(r.status, r.out).toBe(2);
     expect(r.out).toContain(message);
@@ -202,7 +204,7 @@ describe('cut-release.sh — refusals leave no build, no record, no tag', () => 
   });
 });
 
-describe('release-name scheme — the shell rule and the /api/version rule are one rule', () => {
+describe('release-name scheme — the shell rule and the /api/version rule are one rule', { timeout: SHELL_CASE_TIMEOUT_MS }, () => {
   it('classifies every sample identically in scripts/lib/core-image-verify.sh and CORE_RELEASE_PATTERN', () => {
     const samples = ['core-2026.09.27', 'core-2026.09.27.2', 'core-2026.09.27.12', 'core-2026.09.27.0',
       'core-2026.9.27', 'v2.1.0-beta.1', 'core-2026.09.27-rc1', 'unreleased', '', 'core-2026.09.27.2.3'];

@@ -13,6 +13,8 @@ import {
   REPO_ROOT, commitChange, git, makeRepo, posix, runScript, scratchDir, writeExec, type Run,
 } from '../helpers/core-release-harness';
 
+/** Each case spawns Git Bash and several git processes: slow on a loaded Windows host. */
+const SHELL_CASE_TIMEOUT_MS = 120_000;
 const cleanup: string[] = [];
 afterAll(() => { for (const dir of cleanup) fs.rmSync(dir, { recursive: true, force: true }); });
 
@@ -79,9 +81,9 @@ function check(b: Box, args: string[] = [], env: Record<string, string> = {}): R
 }
 
 let b: Box;
-beforeEach(() => { b = box(); });
+beforeEach(() => { b = box(); }, SHELL_CASE_TIMEOUT_MS);
 
-describe('core-drift-check.sh — the four legs and the verdict', () => {
+describe('core-drift-check.sh — the four legs and the verdict', { timeout: SHELL_CASE_TIMEOUT_MS }, () => {
   it('reports in sync (exit 0) and how far the running commit is behind main, which is not drift', () => {
     const r = check(b, ['--env-file', posix(b.env), '--expect-image-id', ID1, '--expect-release', 'core-2026.09.27']);
     expect(r.status, r.out).toBe(0);
@@ -128,7 +130,7 @@ describe('core-drift-check.sh — the four legs and the verdict', () => {
   });
 });
 
-describe('core-drift-check.sh — an unreadable leg is unverified, never "in sync"', () => {
+describe('core-drift-check.sh — an unreadable leg is unverified, never "in sync"', { timeout: SHELL_CASE_TIMEOUT_MS }, () => {
   it.each([
     ['docker unreachable', () => ({ SHIM_DOCKER_INFO_RC: '1' }), 'docker is not reachable'],
     ['no api container', () => { fs.rmSync(path.join(b.state, 'ctr-oshal-local-api-image')); return {}; }, 'is not running or unreadable'],
