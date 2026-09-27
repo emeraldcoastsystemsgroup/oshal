@@ -57,6 +57,52 @@ other-user access or real-history fetch is claimed. Enable only those two read-o
 through the normal tool-control grant after operator approval, then repeat the signed-in
 two-thread check before closing the backlog item.
 
+## On a CLI brain: the Antigravity host tool loop (as built, 2026-09-27)
+
+The recall tools are bot-node registry tools. A CLI brain does not receive them as native tools
+or through the controller MCP bridge. The Antigravity wrapper provisions that bridge only for a
+protected application execution, and the bridge lists no `system` tool, which both recall tools
+are. They reach the turn through the agentic host loop in
+`any-bot/server/controllers/AgenticController.js`: the prompt lists them in the XML tool format, the
+model replies with one XML call, the loop runs it through the request-scoped registry for the
+caller and sends the fenced result back in the next provider call.
+
+The automated case `jarvis-cross-thread-recall` found this failing on the Antigravity brain
+(2026-09-27 18:00 UTC). The single agy turn ran 10 min 45 s and ended with `jetski: no output
+produced - a tool required the "read_file" permission that headless mode cannot prompt for`.
+The recall tools never ran. agy is an agent with its own tools (file, command, browser and web), and
+it answered the host prompt with those tools instead of an XML call. The prompt's Cline section also
+tells a model to `read_file` under `/app/server`. A local run with the wrapper's argument vector and
+an invocation-private HOME showed the pattern. On the host prompt, agy's first step was a native
+`run_command`. A native `view_file` outside `--add-dir` returns the live error word for word. The
+denied path from the live run cannot be recovered, because the wrapper then discarded the
+stream-json step events and removed the private HOME, which held agy's log.
+
+For a direct (interactive) dispatch, the bot-node handler now sets `hostToolsOnly`. The agentic loop
+forwards that flag to its provider call and to no other call. `AntigravityCLIWrapper` then runs agy
+as a custom agent that exists only in the invocation's private HOME,
+(`~/.gemini/config/agents/oshal-host-tools/agent.md`: `excludeDefaultComponents: true`,
+`inheritCustomizations: false`, no `tools`). The run passes `--agent oshal-host-tools` and an empty
+permission allow list, and omits `--mode accept-edits`. `--sandbox` and the single `--add-dir <task
+workspace>` stay. agy then has no native tool to use, so the host loop's tools are the only way to
+run one. Ticket (non-direct) turns keep their existing workspace shape, and protected executions
+keep the MCP bridge. A failed turn's diagnostic now names each denied tool and its target.
+
+Measured on the operator workstation with agy 1.2.8 (the same version the image pins) and
+`gemini-3.8-flash-low`: the three calls of a two-tool recall took 6.8 s
+(`conversation_query`), 8.1 s (`conversation_fetch`) and 9.9 s (`attempt_completion` with the
+codeword), 24.8 s in total. Jarvis's decision window is 75 s. The same prompt without the agent
+spent 22,463 input tokens on its first call and went straight to a native command; with the agent
+it spent 9,794. Asked outright to use `view_file`, `run_command` and `search_web`, the agent called
+none and said that none was available.
+
+**Locally proven:** `tests/unit/antigravity-host-tool-loop.spec.ts` runs the real handler marker,
+AgenticController loop, provider and wrapper against a real child process, over a real registry, and
+completes the two-tool recall for the caller. `tests/unit/antigravity-bot-runtime.spec.ts` pins the
+permission scope of every mode as a closed set. Both are attached to `jarvis-routing` and
+`jarvis-cross-thread-recall`. **Not yet live-proven:** the deployed bot node answering the case.
+Run `node scripts/operations/jarvis-recall-live-proof.js` after the next deploy.
+
 ## Invariant preamble cache (as built, 2026-09-27)
 
 Every Jarvis conversation used to re-send the same invariant preamble, the system prompt and the

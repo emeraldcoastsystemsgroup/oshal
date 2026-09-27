@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Expose the configured-provider router as a direct generateResponse facade. Protected queued work is deliberately reasoning-only, so TaskController takes its direct path; the bot-node runtime passes this router as that path's LLM, and without the facade every configured CLI brain returned direct_mode_unsupported before reaching its provider. Delegation resolves the live configured provider at call time, preserving one provider-selection path across direct and agentic execution.
  * 10 | maintainer@emeraldcoastsystemsgroup.com  | Route execution-bound framework-tool bridge credentials only to providers that explicitly support the bridge.
  * 11 | maintainer@emeraldcoastsystemsgroup.com  | Token Chase workspace-bound checkpoint (BACKLOG "Workspace-bound checkpoint and tail replay"): the loop now PRODUCES the provenance the capture lane previously only accepted from options nobody set. Each executed (or failed) tool call is recorded through turn-provenance.js and drained into the next frame's per-frame `pins`, so a live read marks that frame non-replayable; the run-level options.workspaceCommit/ownerStoreVersion pass-through is gone (the capture lane commits the tree and versions the store itself); and a finally block writes the end-of-run checkpoint (final.json) on completion, max-turns and error alike. Every addition is a no-op with TOKEN_CHASE_CAPTURE off.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com  | Forward the caller's hostToolsOnly marker to the provider call of this loop (and only this call). This loop brokers every tool it offers - the model answers with an XML call, the loop runs it through the request-scoped registry and returns the result - so an interactive (direct) turn needs nothing native from a CLI brain. AntigravityProvider uses it to run agy with no native tools; every other provider ignores it.
  */
 
 /**
@@ -450,6 +451,9 @@ class AgenticController {
             extraEnv: options.extraEnv,
             enforceToolBoundary: true,
             authorizedScopes: options.authorizedScopes,
+            // This loop brokers every tool it offers; the CLI brain needs none of its own for an
+            // interactive turn (bot-node-execution-handler sets the marker for direct dispatches).
+            hostToolsOnly: options.hostToolsOnly === true,
           });
         } catch (llmError) {
           // If Bedrock failed for dashboard chat AND cline-cli is available, fall back

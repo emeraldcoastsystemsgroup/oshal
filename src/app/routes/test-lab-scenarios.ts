@@ -96,6 +96,7 @@
  * 44 | maintainer@emeraldcoastsystemsgroup.com   | Registered the Token Chase checkpoint + tail replay card (TOKEN_CHASE_SCENARIOS, test-lab-token-chase-scenarios.ts): one read-only listing of the captured runs visible to the caller, with the workspace-bound checkpoint, ciphertext-only owner-store, per-turn pin, hermetic bot-node tail, controller-delegation and end-to-end suites attached as regressionTests. A test file on disk is not Test Lab registration. No replay step on purpose: a tail replay restores a worktree on a bot node and is an action.
  * 45 | maintainer@emeraldcoastsystemsgroup.com   | Registered the market-data stream card (MARKET_STREAM_SCENARIOS, test-lab-market-stream-scenarios.ts): one credential-free readback of the kernel's ADR-143 stream status (unarmed = degraded and names the operator step; entitlement refusal = fail; authenticated with a print = pass, never claiming the regular-hours observation), with the real-local-WebSocketServer kernel suite and the compose default-off pin attached as regressionTests. Guard: tests/unit/test-lab-market-stream-registration.spec.ts.
  * 46 | maintainer@emeraldcoastsystemsgroup.com   | Registered the Jarvis cross-conversation recall card (JARVIS_RECALL_SCENARIOS, test-lab-jarvis-recall-scenarios.ts): it seeds a tagged owner-bound thread with a random codeword, asks for it from a new thread through the real /api/jarvis/ask, and requires the answer plus the owner-scoped capture of conversation_query/conversation_fetch, with exact cleanup. It spends one real model turn, so Scenario gained `explicitOnly` and the run-all selection moved into scenariosForRun(), which leaves explicit-only cards out of 'all'. Guard: tests/unit/test-lab-jarvis-recall-registration.spec.ts.
+ * 47 | maintainer@emeraldcoastsystemsgroup.com   | Attached antigravity-host-tool-loop and antigravity-bot-runtime to 'jarvis-routing' regressionTests. The automated recall case found a Jarvis ask on the Antigravity brain dying on a headless read_file denial after 10 min 45 s; the fix runs agy with no native tools inside the host loop for interactive turns. The seam guard drives the real handler marker, AgenticController loop, provider, wrapper and a real child process; the runtime spec pins the permission scope as a closed set per mode. Same Jarvis turn, same scenario; a spec on disk is not Test Lab registration.
  * @module test-lab-scenarios
  */
 
@@ -491,6 +492,9 @@ export const SCENARIOS: Scenario[] = [
       { level: 'unit', path: 'tests/unit/gemini-context-cache.spec.ts' },
       { level: 'integration', path: 'tests/unit/invariant-prompt-cache-protocol-seam.spec.ts' },
       { level: 'unit', path: 'tests/unit/invariant-prompt-cache-usage-accounting.spec.ts' },
+      // A Jarvis turn on the Antigravity brain: agy runs tool-less inside the host loop.
+      { level: 'integration', path: 'tests/unit/antigravity-host-tool-loop.spec.ts' },
+      { level: 'unit', path: 'tests/unit/antigravity-bot-runtime.spec.ts' },
     ],
     steps: [
       { id: 'j-jobs', app: 'jarvis', label: '"What are my top job opportunities right now?"', run: (c) => jarvisStep(c, 'top jobs', 'What are my top job opportunities right now?') },
