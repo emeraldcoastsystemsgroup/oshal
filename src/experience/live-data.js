@@ -6,6 +6,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Two-phase snapshot: identity and catalog first (readyCore) so a home can paint at once; work, tasks and overview merge into the same snapshot afterwards (ready). Adds the ribbon-profile read an experience uses to host an application's admitted tools.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Live data adapter for the experience shells. Joins the caller-scoped home plan, active app listing and admitted navigation into one catalog, merges tickets and Jarvis tasks into work items, wraps Jarvis ask/result polling on the shared browser thread, reads per-package home-summary probes with the Home view's pointer caps, and exposes Little Monsters, Purchasing, Finance and voice reads. It replaces every fixture the design prototypes rendered; nothing here invents data when a source is unavailable, callers get the HTTP status and render the honest state.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Catalog `related` now means a group's installed required members (plan.members), not the plan's integrationSources, which list surfaces and outbound offers rather than a dependency. Adds the viewer-scoped app-detail read (GET /api/swarm/apps/:name) with two pure readers over it: dependencyTiers (the two-form rule of scripts/oshal-app-dependencies.js, a mixed block yields no tiers) and declaredAssistants (manifest bots by name, the explicit chatBot as concierge, online state only where the agentId joins the overview roster). Adds the swarm roster read over GET /api/user-directory (label without its account parenthetical, account source and sign-in status, never presence) and the Little Monsters agenda read (this month and next from /api/education/calendar, de-duplicated and dated) so Commons and Jarvis share them without touching the homebase.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Central-assistant gap closure over existing contracts only. ask() takes an AbortSignal threaded through the POST, every /ask/result poll and the sleep between them, so a page that stops, starts over or goes home ends the wait at once (status 'aborted') instead of polling a request nobody is watching; a refused /ask now carries the route's machine `code` (the 503 ai_disabled posture), and a done payload passes through the well-formed `dispatched` hand-offs and the `packageToolProposal` the route already returns. New helpers: transcribe() posts one recording as multipart field `audio` to /api/voice/transcribe and folds the route's envelope into text / unconfigured / empty / failed; jarvis.markDelivered() and jarvis.cancelWork() reach POST /api/jarvis/tasks/:id/delivered and the owner-checked PUT /api/tickets/:ticketId/cancel.
  */
 (function attach(root, factory) {
   'use strict';
@@ -311,7 +312,31 @@
     if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
     return Date.now().toString(16) + '-' + Math.random().toString(16).slice(2);
   }
-  function defaultSleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+  /**
+   * @description Wait between polls, waking early when the caller aborts, so a stopped request does not hold the page for another poll interval.
+   * @param {number} ms Poll interval.
+   * @param {AbortSignal|null} signal The request's abort signal, when the caller supplied one.
+   * @returns {Promise<void>} Resolves after the interval or on abort, whichever comes first.
+   */
+  function abortableSleep(ms, signal) {
+    return new Promise(function (done) {
+      if (signal && signal.aborted) { done(); return; }
+      var timer = setTimeout(finish, ms);
+      function finish() { clearTimeout(timer); if (signal) signal.removeEventListener('abort', finish); done(); }
+      if (signal) signal.addEventListener('abort', finish);
+    });
+  }
+
+  /**
+   * @description Keep only the well-formed hand-off records of a done /ask/result payload ({ workJobId, title }, the shape dispatchHandoffs returns); anything else is dropped rather than guessed at.
+   * @param {unknown} raw The payload's `dispatched` field.
+   * @returns {Array<{workJobId: string, title: string}>} The background work items the page may track on GET /api/jarvis/tasks.
+   */
+  function dispatchedList(raw) {
+    return (Array.isArray(raw) ? raw : []).filter(function (d) { return d && typeof d.workJobId === 'string' && d.workJobId.length > 0; })
+      .map(function (d) { return { workJobId: d.workJobId, title: String(d.title || 'Background work').slice(0, 200) }; });
+  }
 
   /** @description Build the adapter over an injectable fetch and storage so tests can drive it headlessly. */
   function createClient(options) {
@@ -322,18 +347,21 @@
 
     async function getJson(path, extra) {
       var timeoutMs = extra && extra.timeoutMs ? extra.timeoutMs : 12000;
+      var outer = extra && extra.signal ? extra.signal : null;
       var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
       var timer = controller ? setTimeout(function () { controller.abort(); }, timeoutMs) : null;
+      var relay = function () { if (controller) controller.abort(); };
+      if (outer) { if (outer.aborted) relay(); else outer.addEventListener('abort', relay); }
       try {
         var res = await fetchImpl(path, { credentials: 'same-origin', headers: { Accept: 'application/json' }, signal: controller ? controller.signal : undefined });
         var body = null; try { body = await res.json(); } catch (_) { body = null; }
         return { ok: res.ok, status: res.status, body: body };
       } catch (err) { return { ok: false, status: 0, body: null, error: err }; }
-      finally { if (timer) clearTimeout(timer); }
+      finally { if (timer) clearTimeout(timer); if (outer) outer.removeEventListener('abort', relay); }
     }
-    async function sendJson(path, method, payload) {
+    async function sendJson(path, method, payload, extra) {
       try {
-        var res = await fetchImpl(path, { method: method, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: payload === undefined ? undefined : JSON.stringify(payload) });
+        var res = await fetchImpl(path, { method: method, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: payload === undefined ? undefined : JSON.stringify(payload), signal: extra && extra.signal ? extra.signal : undefined });
         var body = null; try { body = await res.json(); } catch (_) { body = null; }
         return { ok: res.ok, status: res.status, body: body };
       } catch (err) { return { ok: false, status: 0, body: null, error: err }; }
@@ -401,38 +429,71 @@
       if (d.status === 'error') return { status: 'error', error: String(d.error || 'That did not work.'), code: d.code || '', jobId: jobId, taskId: d.taskId || '', sessionId: session };
       return {
         status: 'done', answer: String(d.answer || ''), handoffs: Array.isArray(d.handoffs) ? d.handoffs : [], files: Array.isArray(d.files) ? d.files : [],
-        visual: d.visual || null, brainFallback: d.brainFallback || null, taskId: d.taskId || '', label: d.label || '', jobId: jobId, sessionId: session
+        visual: d.visual || null, brainFallback: d.brainFallback || null, taskId: d.taskId || '', label: d.label || '', jobId: jobId, sessionId: session,
+        dispatched: dispatchedList(d.dispatched), packageToolProposal: d.packageToolProposal && typeof d.packageToolProposal === 'object' ? d.packageToolProposal : null
       };
     }
+    function abortedAsk(jobId, session) { return { status: 'aborted', error: 'Stopped waiting.', jobId: jobId || '', sessionId: session }; }
 
-    /** @description POST /api/jarvis/ask and poll /ask/result to a terminal state. Mirrors the Jarvis page: a refused persisted thread rolls to a fresh id once. */
-    async function ask(message, config) {
-      var c = config || {}, onPhase = c.onPhase || function () {}, sleep = c.sleep || defaultSleep;
-      var text = String(message || '').trim();
-      if (!text) return { status: 'error', error: 'Say what you need first.' };
+    /** @description POST the turn, rolling a refused persisted thread to a fresh id once; returns the final response and the session it went out on. */
+    async function postAsk(text, c, onPhase, signal) {
       var session = c.sessionId || sessionId();
       onPhase({ phase: 'sending', sessionId: session });
       var payload = { message: text, sessionId: session };
-      var r = await sendJson('/api/jarvis/ask', 'POST', payload);
-      if (r.status === 404 && r.body && r.body.error === 'session_not_found' && !c.sessionId) {
+      var r = await sendJson('/api/jarvis/ask', 'POST', payload, { signal: signal });
+      if (r.status === 404 && r.body && r.body.error === 'session_not_found' && !c.sessionId && !(signal && signal.aborted)) {
         session = rollSession(); payload.sessionId = session; onPhase({ phase: 'rolled', sessionId: session });
-        r = await sendJson('/api/jarvis/ask', 'POST', payload);
+        r = await sendJson('/api/jarvis/ask', 'POST', payload, { signal: signal });
       }
+      return { r: r, session: session };
+    }
+
+    /** @description POST /api/jarvis/ask and poll /ask/result to a terminal state. Mirrors the Jarvis page: a refused persisted thread rolls to a fresh id once. `config.signal` ends the wait at any point with status 'aborted'; the job itself is not cancelled (no such route exists). */
+    async function ask(message, config) {
+      var c = config || {}, onPhase = c.onPhase || function () {}, sleep = c.sleep || abortableSleep, signal = c.signal || null;
+      var stopped = function () { return Boolean(signal && signal.aborted); };
+      var text = String(message || '').trim();
+      if (!text) return { status: 'error', error: 'Say what you need first.' };
+      var sent = await postAsk(text, c, onPhase, signal), r = sent.r, session = sent.session;
+      if (stopped()) return abortedAsk('', session);
       if (!r.ok || !r.body || !r.body.jobId) {
         var reason = r.status === 0 ? 'The swarm could not be reached.' : (r.body && (r.body.message || r.body.error)) ? String(r.body.message || r.body.error) : 'HTTP ' + r.status;
-        return { status: 'error', error: reason, httpStatus: r.status, sessionId: session };
+        return { status: 'error', error: reason, httpStatus: r.status, code: r.body && typeof r.body.code === 'string' ? r.body.code : '', sessionId: session };
       }
       var jobId = r.body.jobId;
       onPhase({ phase: 'accepted', jobId: jobId, sessionId: session });
       var maxPolls = c.maxPolls || 200, pollMs = c.pollMs || 1500;
       for (var i = 0; i < maxPolls; i++) {
-        var p = await getJson('/api/jarvis/ask/result?jobId=' + encodeURIComponent(jobId));
+        if (stopped()) return abortedAsk(jobId, session);
+        var p = await getJson('/api/jarvis/ask/result?jobId=' + encodeURIComponent(jobId), { signal: signal });
+        if (stopped()) return abortedAsk(jobId, session);
         var d = p.ok && p.body ? p.body : null;
         if (d && d.status && d.status !== 'pending') return finishAsk(d, jobId, session);
         onPhase({ phase: 'waiting', jobId: jobId, sessionId: session, poll: i + 1 });
-        await sleep(pollMs);
+        await sleep(pollMs, signal);
       }
+      if (stopped()) return abortedAsk(jobId, session);
       return { status: 'error', error: 'This is taking unusually long. It may still finish; check Jarvis later.', jobId: jobId, sessionId: session };
+    }
+
+    /**
+     * @description Send one recorded clip to the swarm's speech-to-text route (POST /api/voice/transcribe, multipart field `audio`) and fold the route's envelope ({ success, data: { text } | { fallback, message } }) into one outcome the page can say honestly: 'text', 'unconfigured' (no server recognizer; the route's 'browser' fallback means the deployment chose in-browser recognition), 'empty' (the server heard no words) or 'failed'.
+     * @param {Blob} blob The recording, typed with a base audio MIME type the route accepts.
+     * @param {{filename?: string, signal?: AbortSignal}} [config] Upload name and optional abort signal.
+     * @returns {Promise<{outcome: string, status: number, text: string, fallback: string}>} The outcome; the text is never sent anywhere by this helper.
+     */
+    async function transcribe(blob, config) {
+      var c = config || {}, res, body = null;
+      var form = new FormData(); form.append('audio', blob, c.filename || 'speech.webm');
+      try { res = await fetchImpl('/api/voice/transcribe', { method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json' }, body: form, signal: c.signal }); }
+      catch (_) { return { outcome: 'failed', status: 0, text: '', fallback: '' }; }
+      try { body = await res.json(); } catch (_) { body = null; }
+      var d = body && body.data && typeof body.data === 'object' ? body.data : {};
+      var text = typeof d.text === 'string' ? d.text.trim() : '';
+      if (res.ok && text) return { outcome: 'text', status: res.status, text: text, fallback: '' };
+      if (res.ok && (d.fallback === 'unconfigured' || d.fallback === 'browser')) return { outcome: 'unconfigured', status: res.status, text: '', fallback: d.fallback };
+      if (res.ok && !d.fallback) return { outcome: 'empty', status: res.status, text: '', fallback: '' };
+      return { outcome: 'failed', status: res.status, text: '', fallback: typeof d.fallback === 'string' ? d.fallback : '' };
     }
 
     /** @description Speak text through the swarm's voice route, falling back to the browser engine. Level callbacks are amplitude when an analyser is available, lifecycle pulses otherwise. */
@@ -529,7 +590,11 @@
       },
       jarvis: {
         history: function (sid) { return getJson('/api/jarvis/history' + (sid ? '?sessionId=' + encodeURIComponent(sid) : '')); },
-        tasks: function () { return getJson('/api/jarvis/tasks'); }
+        tasks: function () { return getJson('/api/jarvis/tasks'); },
+        /** Mark one settled shelf task announced (POST /api/jarvis/tasks/:id/delivered); the route itself only flips rows that are not briefing-sourced. */
+        markDelivered: function (id) { return sendJson('/api/jarvis/tasks/' + encodeURIComponent(id) + '/delivered', 'POST'); },
+        /** Cancel the ticket behind a handed-off task through the owner-checked PUT /api/tickets/:ticketId/cancel; a refusal comes back with its status. */
+        cancelWork: function (ticketId) { return sendJson('/api/tickets/' + encodeURIComponent(ticketId) + '/cancel', 'PUT'); }
       },
       directory: function () { return getJson('/api/user-directory'); },
       /** The swarm roster as display rows (swarm admins only; anyone else gets the route's refusal status). */
@@ -541,7 +606,7 @@
     };
 
     return {
-      load: load, loadCore: loadCore, loadWork: loadWork, get snapshot() { return snapshot; }, probeSummary: probeSummary, ask: ask, speak: speak,
+      load: load, loadCore: loadCore, loadWork: loadWork, get snapshot() { return snapshot; }, probeSummary: probeSummary, ask: ask, speak: speak, transcribe: transcribe,
       sessionId: sessionId, rollSession: rollSession, prefs: prefs, packages: packages, getJson: getJson, sendJson: sendJson
     };
   }
