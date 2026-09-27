@@ -1,5 +1,14 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add Change Log header. ADR-168: the multi-market universe is DEFAULT_UNIVERSE followed by the 41-name extension (the default list itself unchanged and still its prefix), roughly 200 names, deduplicated, frozen, every symbol in the shape the default list and the Strategy Lab accept, and free of SPY, the swing leg's ETFs and the T-bill funds reserved for the idle-cash yield sleeve.
+ */
 import { describe, expect, it } from 'vitest';
-import { decideSymbol, isShortTermBreakdown, DEFAULT_UNIVERSE } from '../../src/features/trading/services/multi-timeframe';
+import { decideSymbol, isShortTermBreakdown, DEFAULT_UNIVERSE, MULTI_MARKET_UNIVERSE, MULTI_MARKET_EXTENSION } from '../../src/features/trading/services/multi-timeframe';
+import { MULTI_MARKET_BUCKETS } from '../../src/features/trading/services/portfolio';
+import { DEFAULT_SWING_UNIVERSE } from '../../src/app/trading-swing-dispatch';
 import type { Timeframe } from '../../src/features/trading/services/market-data';
 
 /** A clean rising series (each bar up `step`) — every trend algo reads "up". */
@@ -92,5 +101,43 @@ describe('multi-timeframe trading decision', () => {
     expect(DEFAULT_UNIVERSE.length).toBeGreaterThanOrEqual(95);
     expect(new Set(DEFAULT_UNIVERSE).size).toBe(DEFAULT_UNIVERSE.length);
     for (const sym of DEFAULT_UNIVERSE) expect(sym).toMatch(/^[A-Z]{1,5}$/);
+  });
+});
+
+describe('ADR-168 multi-market universe', () => {
+  it('is DEFAULT_UNIVERSE, unchanged and in order, followed by the extension', () => {
+    expect(MULTI_MARKET_UNIVERSE.slice(0, DEFAULT_UNIVERSE.length)).toEqual(DEFAULT_UNIVERSE);
+    expect(MULTI_MARKET_UNIVERSE.slice(DEFAULT_UNIVERSE.length)).toEqual([...MULTI_MARKET_EXTENSION]);
+    expect(MULTI_MARKET_EXTENSION).toEqual(Object.values(MULTI_MARKET_BUCKETS).flat());
+  });
+
+  it('is roughly 200 names with no duplicates, and the extension adds no default name', () => {
+    expect(MULTI_MARKET_EXTENSION).toHaveLength(41);
+    expect(MULTI_MARKET_UNIVERSE.length).toBeGreaterThanOrEqual(190);
+    expect(MULTI_MARKET_UNIVERSE.length).toBeLessThanOrEqual(215);
+    expect(new Set(MULTI_MARKET_UNIVERSE).size).toBe(MULTI_MARKET_UNIVERSE.length);
+    const defaults = new Set(DEFAULT_UNIVERSE);
+    expect(MULTI_MARKET_EXTENSION.filter((s) => defaults.has(s))).toEqual([]);
+  });
+
+  it('uses the symbol shape the default list and the Strategy Lab both accept', () => {
+    for (const sym of MULTI_MARKET_UNIVERSE) {
+      expect(sym).toMatch(/^[A-Z]{1,5}$/);
+      expect(sym).toMatch(/^[A-Z.]{1,6}$/); // trading-strategy-lab-sim.ts normalizeConfig universe filter
+    }
+  });
+
+  it('leaves out SPY, the swing leg ETFs and the T-bill funds another sleeve owns', () => {
+    const universe = new Set(MULTI_MARKET_UNIVERSE);
+    expect(universe.has('SPY')).toBe(false); // benchmark and the Lab default core symbol
+    expect(DEFAULT_SWING_UNIVERSE.filter((s) => universe.has(s))).toEqual([]);
+    // Cash-like funds (scripts/oshal-trading-knob-sweep.ts shelter row) stay with the idle-cash yield sleeve.
+    expect(['SGOV', 'BIL', 'SHV', 'USFR', 'SHY'].filter((s) => universe.has(s))).toEqual([]);
+  });
+
+  it('is frozen, so no caller can widen a book by mutating the shared list', () => {
+    expect(Object.isFrozen(MULTI_MARKET_UNIVERSE)).toBe(true);
+    expect(Object.isFrozen(MULTI_MARKET_EXTENSION)).toBe(true);
+    expect(() => (MULTI_MARKET_UNIVERSE as string[]).push('ZZZZ')).toThrow();
   });
 });

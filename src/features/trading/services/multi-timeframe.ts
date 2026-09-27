@@ -27,12 +27,14 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Add SKHY (SK Hynix ADR, Nasdaq IPO 2026-07-10) to DEFAULT_UNIVERSE per operator request — note it stays HOLD until enough bar history accumulates for the multi-timeframe ensemble (weekly/quarterly regimes need months).
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Universe 106 → 140 (operator request): +34 liquid up-and-comers (AI/semis, growth software, fintech, consumer growth, defense/space, AI-power) — the momentum pool the gravity rotation ranks. Sector map + world-pulse press names updated in the same commit.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Universe 140 → 159 (operator regime-change reweight): +9 materials/mining, +5 data-storage (memory/NAND supercycle pool beside MU/SKHY), +3 Buffett-13F gaps (MCO/VRSN/KHC), +2 politician-disclosure gaps (TEM/AB). Sector map (new materials + storage buckets) + press names updated in the same commit.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-168 — MULTI_MARKET_EXTENSION (the 41 names of portfolio.ts MULTI_MARKET_BUCKETS, in bucket order) and MULTI_MARKET_UNIVERSE = DEFAULT_UNIVERSE + that extension (200 names today), both frozen. DEFAULT_UNIVERSE is untouched and no dispatch leg reads either new constant: they exist so a Strategy Lab rotation or blend component (ADR-095) can name the multi-market sleeve's universe for its paper proof without changing any live universe (ADR-136 D10: un-pinned advisors follow DEFAULT_UNIVERSE).
  *
  * @module multi-timeframe
  */
 
 import { scoreSymbol, ensemble, type AlgoSignal, type StrategyParams } from './algorithms';
 import { barsBatch, type Timeframe } from './market-data';
+import { MULTI_MARKET_BUCKETS } from './portfolio';
 
 /** Per-timeframe weight (sums to 1.0). Longer trends carry more of the combined conviction. */
 const TF_WEIGHTS: ReadonlyArray<{ tf: Timeframe; weight: number }> = [
@@ -234,3 +236,19 @@ export const DEFAULT_UNIVERSE: string[] = [
   'MCO', 'VRSN', 'KHC',
   'TEM', 'AB',
 ];
+
+/**
+ * ADR-168 multi-market extension — the 41 US-listed instruments beyond the default universe's US
+ * single names (developed ex-US, emerging, fixed income, commodities, real estate, currency, digital
+ * assets), in portfolio.ts MULTI_MARKET_BUCKETS order. Derived from that record so every name here
+ * has a sector bucket by construction. Proposed, not ratified: no dispatch leg reads it.
+ */
+export const MULTI_MARKET_EXTENSION: readonly string[] = Object.freeze(Object.values(MULTI_MARKET_BUCKETS).flat());
+
+/**
+ * ADR-168 multi-market universe: DEFAULT_UNIVERSE followed by MULTI_MARKET_EXTENSION (200 names
+ * today). It is a separate constant on purpose — DEFAULT_UNIVERSE is what every un-pinned live
+ * advisor scans (ADR-136 D10), so the wider list reaches a book only when a Strategy Lab rotation or
+ * blend component names it and that strategy is applied to a book (ADR-095). Paper first.
+ */
+export const MULTI_MARKET_UNIVERSE: readonly string[] = Object.freeze([...DEFAULT_UNIVERSE, ...MULTI_MARKET_EXTENSION]);

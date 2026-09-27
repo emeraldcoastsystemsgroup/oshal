@@ -4,11 +4,12 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-095 round-2 blend math: normalizeBlend validation/derivation, conservative composite policy, union universe, and blendRotationPlan (weight-share budgets, per-component caps + ranks, merged-goal summation with the conservative book cap, blocklist + negative-score exclusion).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-168: the multi-market long sleeve is expressible with no new kernel code — a solo rotation over MULTI_MARKET_UNIVERSE keeps all of its names through normalizeConfig and snapshotConfig, and a blend of the incumbent (default universe) with a multi-market component normalizes to the weighted shares plus core remainder, scans exactly the multi-market union, and pins both component universes for replay.
  */
 import { describe, it, expect } from 'vitest';
 import { blendRotationPlan, blendUnionUniverse, conservativeBlendPolicy } from '../../src/app/trading-blend';
 import { normalizeConfig, policyFor, snapshotConfig, type BlendComponent, type StrategyConfig } from '../../src/app/trading-strategy-lab-sim';
-import { DEFAULT_UNIVERSE, RISK_POLICIES } from '../../src/features/trading';
+import { DEFAULT_UNIVERSE, MULTI_MARKET_UNIVERSE, MULTI_MARKET_EXTENSION, RISK_POLICIES } from '../../src/features/trading';
 
 const rotation = (over: Partial<StrategyConfig> = {}): StrategyConfig => ({
   kind: 'rotation', posture: 'active', corePct: 0, coreSymbol: 'SPY', takeProfitPct: null,
@@ -130,3 +131,26 @@ describe('blendRotationPlan', () => {
     expect(blendRotationPlan([A, B], 0, 100_000, bars, new Set(), new Set(), rank).targetSet.size).toBe(0);
   });
 });
+
+describe('ADR-168 multi-market long sleeve through the existing blend rail', () => {
+  it('a solo rotation over MULTI_MARKET_UNIVERSE keeps every name and pins them for replay', () => {
+    const cfg = normalizeConfig({ kind: 'rotation', universe: [...MULTI_MARKET_UNIVERSE] });
+    expect(cfg.universe).toEqual([...MULTI_MARKET_UNIVERSE]);
+    expect(snapshotConfig(cfg).universe).toEqual([...MULTI_MARKET_UNIVERSE]);
+  });
+
+  it('a blend of the incumbent and a multi-market component carries its shares and scans the union', () => {
+    const cfg = normalizeConfig({ kind: 'blend', components: [
+      { name: 'incumbent', weightPct: 30, config: rotation() },
+      { name: 'multi-market', weightPct: 10, config: rotation({ universe: [...MULTI_MARKET_EXTENSION] }) },
+    ] });
+    expect(cfg.corePct).toBe(60); // the unallocated remainder parks in the core, as ADR-095 round 2 defines
+    expect(cfg.components?.map((c) => c.weightPct)).toEqual([30, 10]);
+    expect(cfg.components?.[1].config.universe).toEqual([...MULTI_MARKET_EXTENSION]);
+    expect(new Set(blendUnionUniverse(cfg.components ?? []))).toEqual(new Set(MULTI_MARKET_UNIVERSE));
+    const snap = snapshotConfig(cfg);
+    expect(snap.components?.[0].config.universe).toEqual([...DEFAULT_UNIVERSE]);
+    expect(snap.components?.[1].config.universe).toEqual([...MULTI_MARKET_EXTENSION]);
+  });
+});
+
