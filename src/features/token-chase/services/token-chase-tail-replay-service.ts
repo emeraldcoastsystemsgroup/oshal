@@ -4,14 +4,23 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Token Chase tail-replay consumer (ADR-046 §1/§8, the "Still Proposed" forward-only tail replay): from a chosen frame N, restage the workspace tree as-of that frame from its content-addressed snapshot, then replay frames N..end each on the accountable bot node (replayCall), determinism-gate each replayed frame against its capture, and STOP at the first divergence reporting WHICH frame + why. Pinned tool-reads are served from the captured history (they ride in the sent prompt); unpinned reads fall through with an explicit per-frame warning. Frames captured before the pins/workspaceTree fields landed still single-replay unchanged (backward compat).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The controller no longer restores or replays anything (BACKLOG "Workspace-bound checkpoint and tail replay"): replayForward delegates the whole hermetic no-edit tail — worktree restore from frame N's checkpoint commit, owner-store restore, captured responses served with their workspace tools re-executed, live tools refused, artifact tree + store version compared with final.json — to the bot node that produced the run through BotNodeTailReplayClient (POST /api/token-chase/replay-tail) and relays its verdict. The controller-side restage (restageTree/stageOne, the manifest normalizers and the OS-temp replay root) is gone; 'no-endpoint' stays fail-closed with NO node call. The per-frame prompt re-fire determinism verdict (replayCall + assessDeterminism) is kept as the optional `refire` mode, off by default so a plain tail replay spends nothing.
  */
 
-import crypto from 'node:crypto';
-import fs from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
 import { createChildLogger } from '@/shared/logger';
-import { BotNodeClient, createRegistryEndpointResolver } from '@/features/agent-management';
+import {
+  BotNodeClient,
+  BotNodeTailReplayClient,
+  createRegistryEndpointResolver,
+  type TailReplayNodeArtifacts,
+  type TailReplayNodeFrame,
+  type TailReplayNodeRequest,
+  type TailReplayNodeResponse,
+  type TailReplayNodeRestore,
+  type TailReplayNodeStatus,
+  type TailReplayNodeStore,
+  type TailReplayNodeStoreVersion,
+} from '@/features/agent-management';
 import {
   TokenChaseReadService,
   type TokenChaseAccess,
@@ -22,11 +31,11 @@ import type { ReplayStatus } from './token-chase-replay-service';
 
 const logger = createChildLogger({ module: 'token-chase-tail-replay-service' });
 
-/** @description The per-frame outcome status inside a tail replay — the single-call determinism
- *  verdict widened with the tail's stop pre-conditions (reuses the step-2 status union). */
+/** @description The per-frame outcome status of the optional prompt re-fire mode — the single-call
+ *  determinism verdict widened with the tail's stop pre-conditions (reuses the step-2 status union). */
 export type TailFrameStatus = ReplayStatus;
 
-/** @description The freshly re-fired response's accountable metrics, echoed back per replayed frame. */
+/** @description The freshly re-fired response's accountable metrics, echoed back per re-fired frame. */
 export interface TailReplayCallResponse {
   success: boolean;
   content: string;
@@ -38,44 +47,25 @@ export interface TailReplayCallResponse {
   error?: string;
 }
 
-/** @description The narrow bot-node contract the tail replay depends on — re-fire one captured prompt
- *  on the accountable node, never the controller. The real BotNodeClient satisfies it structurally. */
+/** @description The narrow bot-node contract the tail replay depends on: the hermetic tail runs on the
+ *  accountable node (replayTail), and the optional prompt re-fire lands there too (replayCall). Never the
+ *  controller. The real clients satisfy it structurally. */
 export interface TailReplayer {
   hasEndpoint(agentId: string): boolean;
+  replayTail(agentId: string, request: TailReplayNodeRequest): Promise<TailReplayNodeResponse>;
   replayCall(
     agentId: string,
     request: { history: unknown[]; systemPrompt: string | null; taskId?: string; seq?: number },
   ): Promise<TailReplayCallResponse>;
 }
 
-/** @description The narrow frame-store contract the tail replay reads — ordered frame summaries, one
- *  full frame (incl. pins/workspaceTree/history), and one content-addressed tree object. */
+/** @description The narrow frame-store contract the controller reads — ordered frame summaries and one full frame. */
 export interface TailFrameSource {
   getFrames(runId: string, access: TokenChaseAccess): Promise<Array<{ seq: number }>>;
   getFrame(runId: string, seq: number, access: TokenChaseAccess): Promise<TokenChaseFrameDetail | null>;
-  readTreeObject(runId: string, sha256: string): Promise<Buffer | null>;
 }
 
-/** @description One normalized workspace-tree manifest entry: a relative path bound to a content hash. */
-interface TreeEntry {
-  path: string;
-  sha256: string;
-}
-
-/** @description The result of restaging frame N's workspace tree into an isolated replay root. */
-export interface RestageResult {
-  /** True when frame N carried a (non-empty) workspaceTree manifest to restage. */
-  attempted: boolean;
-  /** The isolated directory the tree was materialized into (null when nothing was restaged). */
-  root: string | null;
-  filesStaged: number;
-  filesTotal: number;
-  /** `ok` = every manifest object staged + hash-verified; `partial` = some missing/mismatched; `none` = nothing to stage. */
-  integrity: 'ok' | 'partial' | 'none';
-  warnings: string[];
-}
-
-/** @description The outcome of replaying one frame in the tail: its determinism verdict + any warnings. */
+/** @description The outcome of re-firing one frame's prompt in refire mode: its determinism verdict + warnings. */
 export interface TailFrameOutcome {
   seq: number;
   status: TailFrameStatus;
@@ -87,117 +77,181 @@ export interface TailFrameOutcome {
   replay: { model: string | null; provider: string | null; tokensOut: number | null; costUsd: number | null; latencyMs: number | null } | null;
 }
 
-/** @description The overall tail-replay disposition. */
-export type TailReplayStatus = 'completed' | 'stopped' | 'empty';
+/** @description The disposition of the optional prompt re-fire pass. */
+export type RefireStatus = 'completed' | 'stopped' | 'empty';
 
-/** @description The full result of a forward tail replay from a chosen frame. */
-export interface TailReplayResult {
-  runId: string;
-  fromFrame: number;
-  status: TailReplayStatus;
-  restage: RestageResult;
-  framesInTail: number;
+/** @description The optional prompt re-fire pass over the tail: each frame's prompt re-fired on the node and graded. */
+export interface RefireResult {
+  status: RefireStatus;
   outcomes: TailFrameOutcome[];
-  /** The frame the tail stopped at (divergence / unreplayable), or null when it ran to the end. */
   stoppedAtFrame: number | null;
   stopReason: string | null;
   totalCostUsd: number;
 }
 
-/** @description Options for a tail replay (mainly the restage root, overridable for tests/isolation). */
-export interface TailReplayOptions {
-  /** Root under which each replay restages frame N's tree; defaults to an OS-temp subtree so a restage
-   *  never writes into the live workspace volume. Env override: TOKEN_CHASE_REPLAY_ROOT. */
-  replayRoot?: string;
+/** @description The overall tail-replay verdict, as the bot node returned it. */
+export type TailReplayStatus = TailReplayNodeStatus;
+
+/** @description The full result of a forward tail replay from a chosen frame. */
+export interface TailReplayResult {
+  runId: string;
+  fromFrame: number;
+  agentId: string | null;
+  status: TailReplayStatus;
+  restore: TailReplayNodeRestore;
+  store: TailReplayNodeStore;
+  framesInTail: number;
+  frames: TailReplayNodeFrame[];
+  /** The frame the tail stopped at (live tool / non-replayable / no node), or null when it ran to the end. */
+  stoppedAtFrame: number | null;
+  stopReason: string | null;
+  toolCalls: number;
+  artifacts: TailReplayNodeArtifacts;
+  storeVersion: TailReplayNodeStoreVersion;
+  paidCalls: number;
+  totalCostUsd: number;
+  /** Present only when the caller asked for the prompt re-fire determinism pass. */
+  refire: RefireResult | null;
 }
 
-/** @description Statuses that faithfully reproduced the baseline and let the tail continue forward. */
+/** @description Options for a tail replay. */
+export interface TailReplayOptions {
+  /** Also re-fire each tail frame's prompt on the node and grade determinism (spends tokens). Default false. */
+  refire?: boolean;
+}
+
+/** @description Statuses that faithfully reproduced the baseline and let the re-fire pass continue forward. */
 const CONTINUE_STATUSES: ReadonlySet<TailFrameStatus> = new Set(['deterministic', 'equivalent']);
 
+/** @description Builds the production replayer: both calls resolve the agent through the live registry. */
+function createDefaultTailReplayer(): TailReplayer {
+  const resolver = createRegistryEndpointResolver();
+  const tailClient = new BotNodeTailReplayClient(resolver);
+  const botClient = new BotNodeClient(resolver);
+  return {
+    hasEndpoint: (agentId) => tailClient.hasEndpoint(agentId),
+    replayTail: (agentId, request) => tailClient.replayTail(agentId, request),
+    replayCall: (agentId, request) => botClient.replayCall(agentId, request),
+  };
+}
+
+/** @description The fail-closed result when the producing agent has no reachable bot node: nothing ran anywhere. */
+function noEndpointResult(runId: string, fromFrame: number, agentId: string | null): TailReplayResult {
+  const reason = `No reachable bot node for agent ${agentId ?? '(unknown)'} — replay must run on an accountable node.`;
+  return {
+    runId, fromFrame, agentId, status: 'stopped',
+    restore: { source: 'none', workspaceCommit: null, filesRestored: 0, integrity: 'none', treeSha: null, warnings: [] },
+    store: { bound: false, restored: false, files: 0, version: null, reason },
+    framesInTail: 0, frames: [], stoppedAtFrame: fromFrame, stopReason: reason, toolCalls: 0,
+    artifacts: { baselineTreeSha: null, replayTreeSha: null, reproduced: null, differingPaths: [], redactedPaths: [], complete: false, warnings: [] },
+    storeVersion: { baseline: null, replay: null, reproduced: null, bound: false },
+    paidCalls: 0, totalCostUsd: 0, refire: null,
+  };
+}
+
 /**
- * @description The Token Chase forward-only TAIL replay (ADR-046 §1/§8 — the piece the ADR marks
- * "Still Proposed"). Given a run and a start frame N it (1) restages the workspace tree the frame saw
- * from its content-addressed snapshot into an isolated root, then (2) replays frames N..end, each on
- * the bot node that produced it — never the controller — grading every replayed frame against its
- * captured baseline and STOPPING at the first divergence with the offending frame + reason. Pinned
- * tool-reads are served from the captured history (their content is already in the sent prompt);
- * unpinned reads fall through with an explicit per-frame warning. Frames captured before the
- * pins/workspaceTree fields existed simply single-replay unchanged.
+ * @description The Token Chase forward-only TAIL replay (ADR-046 §3). Given a run and a start frame N it
+ * asks the bot node that produced the run to restore frame N's checkpoint (worktree + owner store) into
+ * isolated roots and walk frames N..end hermetically — captured responses served, their workspace tools
+ * re-executed, live tools refused — then compare the resulting artifacts and store version with the run's
+ * final checkpoint. The controller does no restore, no execution and no provider call: it relays the
+ * node's verdict. With `refire` it additionally re-fires each frame's prompt on the node and grades
+ * determinism, which is the only part that spends tokens.
  */
 export class TokenChaseTailReplayService {
   private readonly reader: TailFrameSource;
   private readonly botClient: TailReplayer;
-  private readonly replayRoot: string;
 
   /**
-   * @description Builds the tail-replay service over a frame source and the swarm→bot HTTP client.
-   * @param reader - Frame store (ordered frames + full frame + tree objects). Defaults to the read service.
-   * @param botClient - Client that re-fires a captured prompt on the owning bot node. Defaults to a
-   *   registry-resolved BotNodeClient so every replay lands on a real, cost-tracked node.
-   * @param options - Optional restage root override (else TOKEN_CHASE_REPLAY_ROOT / OS temp).
+   * @description Builds the tail-replay service over a frame source and the swarm→bot clients.
+   * @param reader - Frame store (ordered frames + full frame). Defaults to the read service.
+   * @param botClient - Client pair that runs the tail / re-fires a prompt on the owning bot node. Defaults
+   *   to registry-resolved clients so every replay lands on a real, accountable node.
    */
-  constructor(reader?: TailFrameSource, botClient?: TailReplayer, options: TailReplayOptions = {}) {
+  constructor(reader?: TailFrameSource, botClient?: TailReplayer) {
     this.reader = reader ?? new TokenChaseReadService();
-    this.botClient = botClient ?? new BotNodeClient(createRegistryEndpointResolver());
-    this.replayRoot =
-      options.replayRoot ??
-      (process.env.TOKEN_CHASE_REPLAY_ROOT && process.env.TOKEN_CHASE_REPLAY_ROOT.trim().length > 0
-        ? path.resolve(process.env.TOKEN_CHASE_REPLAY_ROOT)
-        : path.join(os.tmpdir(), 'oshal-token-chase-replays'));
+    this.botClient = botClient ?? createDefaultTailReplayer();
   }
 
   /**
-   * @description Runs a forward tail replay from frame `fromFrame` to the end of the run.
+   * @description Runs a forward tail replay from frame `fromFrame` to the end of the run on the producing bot node.
    * @param runId - The captured run (task workspace) id.
-   * @param fromFrame - The frame to restage-from and start replaying at (inclusive).
+   * @param fromFrame - The frame to restore-from and start replaying at (inclusive).
    * @param access - Owner-scoping context; a caller may only replay frames they can read.
+   * @param options - `refire` adds the prompt re-fire determinism pass.
    * @returns The tail-replay result, or null when the start frame is absent / not visible to the caller.
    */
-  async replayForward(runId: string, fromFrame: number, access: TokenChaseAccess): Promise<TailReplayResult | null> {
+  async replayForward(
+    runId: string, fromFrame: number, access: TokenChaseAccess, options: TailReplayOptions = {},
+  ): Promise<TailReplayResult | null> {
+    const startedAt = Date.now();
     const start = await this.reader.getFrame(runId, fromFrame, access);
     if (!start) return null;
+    const agentId = start.agentId;
+    if (!agentId || !this.botClient.hasEndpoint(agentId)) {
+      logger.warn({ runId, fromFrame, agentId }, 'Tail replay refused: no accountable bot node for the producing agent');
+      return noEndpointResult(runId, fromFrame, agentId);
+    }
+    logger.info({ runId, fromFrame, agentId, refire: options.refire === true }, 'Tail replay delegated to the bot node');
+    const node = await this.botClient.replayTail(agentId, {
+      runId, fromFrame, access: { callerSub: access.callerSub, isAdmin: access.isAdmin },
+    });
+    const refire = options.refire ? await this.refireTail(runId, fromFrame, start, access) : null;
+    const result: TailReplayResult = {
+      runId, fromFrame, agentId, status: node.status,
+      restore: node.restore, store: node.store,
+      framesInTail: node.framesInTail, frames: node.frames,
+      stoppedAtFrame: node.stoppedAtFrame, stopReason: node.stopReason, toolCalls: node.toolCalls,
+      artifacts: node.artifacts, storeVersion: node.storeVersion,
+      paidCalls: node.paidCalls + (refire ? refire.outcomes.filter((o) => o.replay !== null).length : 0),
+      totalCostUsd: node.costUsd + (refire?.totalCostUsd ?? 0),
+      refire,
+    };
+    logger.info({ runId, fromFrame, status: result.status, stoppedAtFrame: result.stoppedAtFrame, durationMs: Date.now() - startedAt }, 'Tail replay finished');
+    return result;
+  }
 
-    const tail = (await this.reader.getFrames(runId, access))
-      .map((f) => f.seq)
-      .filter((seq) => seq >= fromFrame)
-      .sort((a, b) => a - b);
-
-    const restage = await this.restageTree(runId, fromFrame, start);
-    logger.info({ runId, fromFrame, tailFrames: tail.length, restaged: restage.attempted }, 'Tail replay starting');
-
+  /**
+   * @description The optional prompt re-fire pass: every tail frame's exact captured prompt is re-fired on
+   * the producing node and graded against its captured response; stops at the first non-continuing frame.
+   * @param runId - The run id.
+   * @param fromFrame - The first frame of the tail.
+   * @param start - The already-loaded start frame.
+   * @param access - Owner-scoping context.
+   * @returns The re-fire pass result.
+   */
+  private async refireTail(runId: string, fromFrame: number, start: TokenChaseFrameDetail, access: TokenChaseAccess): Promise<RefireResult> {
+    const tail = (await this.reader.getFrames(runId, access)).map((f) => f.seq).filter((seq) => seq >= fromFrame).sort((a, b) => a - b);
     const outcomes: TailFrameOutcome[] = [];
     let totalCostUsd = 0;
     let stoppedAtFrame: number | null = null;
     let stopReason: string | null = null;
-
     for (const seq of tail) {
       const frame = seq === fromFrame ? start : await this.reader.getFrame(runId, seq, access);
-      const outcome = await this.replayOneFrame(runId, seq, frame);
+      const outcome = await this.refireOneFrame(runId, seq, frame);
       outcomes.push(outcome);
       totalCostUsd += outcome.replay?.costUsd ?? 0;
       if (!CONTINUE_STATUSES.has(outcome.status)) {
         stoppedAtFrame = seq;
-        stopReason = outcome.reason ?? `Frame ${seq} graded ${outcome.status} — tail cannot continue forward.`;
-        logger.info({ runId, seq, status: outcome.status }, 'Tail replay stopped');
+        stopReason = outcome.reason ?? `Frame ${seq} graded ${outcome.status} — the re-fire pass cannot continue forward.`;
+        logger.info({ runId, seq, status: outcome.status }, 'Tail re-fire pass stopped');
         break;
       }
     }
-
-    const status: TailReplayStatus = tail.length === 0 ? 'empty' : stoppedAtFrame !== null ? 'stopped' : 'completed';
-    return { runId, fromFrame, status, restage, framesInTail: tail.length, outcomes, stoppedAtFrame, stopReason, totalCostUsd };
+    const status: RefireStatus = tail.length === 0 ? 'empty' : stoppedAtFrame !== null ? 'stopped' : 'completed';
+    return { status, outcomes, stoppedAtFrame, stopReason, totalCostUsd };
   }
 
   /**
-   * @description Replays one frame and grades it against its captured baseline. Excludes frames that
-   * cannot be a controlled experiment (in flight, no reachable node) before spending tokens; classifies
-   * the frame's pinned/unpinned reads into per-frame warnings; and re-fires the exact captured prompt on
-   * the owning node, grading determinism.
+   * @description Re-fires one frame and grades it against its captured baseline. Excludes frames that
+   * cannot be a controlled experiment (in flight, non-replayable, no reachable node) before spending
+   * tokens; classifies the frame's pinned/unpinned reads into per-frame warnings.
    * @param runId - The run id (for the replay call's taskId).
-   * @param seq - The frame sequence being replayed.
+   * @param seq - The frame sequence being re-fired.
    * @param frame - The full captured frame, or null when it became unreadable.
-   * @returns The per-frame outcome (status drives whether the tail continues).
+   * @returns The per-frame outcome (status drives whether the pass continues).
    */
-  private async replayOneFrame(runId: string, seq: number, frame: TokenChaseFrameDetail | null): Promise<TailFrameOutcome> {
+  private async refireOneFrame(runId: string, seq: number, frame: TokenChaseFrameDetail | null): Promise<TailFrameOutcome> {
     const { pinnedReads, unpinnedReads, warnings } = classifyPins(frame?.pins);
     const base: TailFrameOutcome = { seq, status: 'replay-error', verdict: null, reason: null, warnings, pinnedReads, unpinnedReads, replay: null };
 
@@ -225,69 +279,9 @@ export class TokenChaseTailReplayService {
         replay: { model: res.model, provider: res.provider, tokensOut: res.usage.outputTokens, costUsd: res.cost, latencyMs: res.latencyMs },
       };
     } catch (error) {
-      logger.error({ err: error, runId, seq }, 'Tail frame replay failed');
+      logger.error({ err: error, runId, seq }, 'Tail frame re-fire failed');
       return { ...base, reason: error instanceof Error ? error.message : `Replay dispatch failed for frame ${seq}.` };
     }
-  }
-
-  /**
-   * @description Restages frame N's workspace tree from its content-addressed snapshot into a fresh,
-   * isolated root (never the live workspace). Each object is read from the run's store, hash-verified,
-   * and written at its manifest path. Frames without a workspaceTree restage nothing (backward compat).
-   * @param runId - The run id (resolves the object store).
-   * @param fromFrame - The start frame (names the restage directory).
-   * @param frame - The full start frame carrying the (optional) workspaceTree manifest.
-   * @returns The restage result (attempted flag, root, staged counts, integrity, warnings).
-   */
-  private async restageTree(runId: string, fromFrame: number, frame: TokenChaseFrameDetail): Promise<RestageResult> {
-    const entries = normalizeWorkspaceTree(frame.workspaceTree);
-    if (entries.length === 0) return { attempted: false, root: null, filesStaged: 0, filesTotal: 0, integrity: 'none', warnings: [] };
-
-    const safeRun = String(runId).replaceAll(/[^a-zA-Z0-9-_]/g, '_');
-    const root = path.join(this.replayRoot, `${safeRun}-from${fromFrame}-${Date.now()}`);
-    const warnings: string[] = [];
-    let staged = 0;
-
-    await fs.mkdir(root, { recursive: true });
-    for (const entry of entries) {
-      const staged1 = await this.stageOne(runId, root, entry, warnings);
-      if (staged1) staged += 1;
-    }
-
-    const integrity: RestageResult['integrity'] = staged === entries.length ? 'ok' : 'partial';
-    logger.info({ runId, fromFrame, root, staged, total: entries.length, integrity }, 'Restaged workspace tree');
-    return { attempted: true, root, filesStaged: staged, filesTotal: entries.length, integrity, warnings };
-  }
-
-  /**
-   * @description Stages one manifest object under the restage root: path-guards the destination, reads
-   * the content-addressed blob, verifies its sha256, and writes it. Records a warning (never throws) on
-   * any per-file failure so a single bad object degrades restage integrity to `partial` rather than aborting.
-   * @param runId - The run id (resolves the object store).
-   * @param root - The restage root the file is written under.
-   * @param entry - The manifest entry (relative path + content hash).
-   * @param warnings - The restage warning list to append per-file problems to.
-   * @returns True when the object was staged and hash-verified, else false.
-   */
-  private async stageOne(runId: string, root: string, entry: TreeEntry, warnings: string[]): Promise<boolean> {
-    const dest = path.resolve(root, entry.path);
-    if (dest !== path.join(root, entry.path) || !dest.startsWith(`${root}${path.sep}`)) {
-      warnings.push(`Skipped unsafe manifest path: ${entry.path}`);
-      return false;
-    }
-    const bytes = await this.reader.readTreeObject(runId, entry.sha256);
-    if (!bytes) {
-      warnings.push(`Missing tree object ${entry.sha256} for ${entry.path} — restage is partial.`);
-      return false;
-    }
-    const actual = crypto.createHash('sha256').update(bytes).digest('hex');
-    if (actual !== entry.sha256.toLowerCase()) {
-      warnings.push(`Object hash mismatch for ${entry.path} (manifest ${entry.sha256}, actual ${actual}) — skipped.`);
-      return false;
-    }
-    await fs.mkdir(path.dirname(dest), { recursive: true });
-    await fs.writeFile(dest, bytes);
-    return true;
   }
 }
 
@@ -295,7 +289,7 @@ export class TokenChaseTailReplayService {
  * @description Normalizes a frame's recorded `pins` into pinned/unpinned counts + per-unpinned warnings.
  * Tolerant of the recorded shape: an array of read records where each is pinned unless it explicitly says
  * otherwise (`pinned:false`, `status:'unpinned'`, or `unpinned:true`). Non-array/absent pins yield zeroes
- * (a pre-tail frame simply has no pin signal — it still replays).
+ * (a pre-tail frame simply has no pin signal — it still re-fires).
  * @param raw - The raw `pins` value off the frame.
  * @returns Counts and the human-readable per-frame warnings for any unpinned reads.
  */
@@ -316,44 +310,4 @@ function classifyPins(raw: unknown): { pinnedReads: number; unpinnedReads: numbe
     }
   }
   return { pinnedReads, unpinnedReads, warnings };
-}
-
-/**
- * @description Normalizes a frame's recorded `workspaceTree` manifest into a list of `{path, sha256}`
- * entries the restager can materialize. Tolerant of the recorded shape: accepts `{files:[...]}`,
- * `{entries:[...]}`, a bare array, or a plain `{ path: sha256 }` map. Entries missing a path or a valid
- * 64-hex sha256, or with an absolute / traversing path, are dropped. Absent/malformed → empty list.
- * @param raw - The raw `workspaceTree` value off the frame.
- * @returns The validated, safe manifest entries (possibly empty).
- */
-function normalizeWorkspaceTree(raw: unknown): TreeEntry[] {
-  const rows = collectTreeRows(raw);
-  const out: TreeEntry[] = [];
-  for (const row of rows) {
-    const rel = typeof row.path === 'string' ? row.path.trim() : '';
-    const sha = typeof row.sha256 === 'string' ? row.sha256.trim().toLowerCase() : '';
-    if (!rel || !/^[a-f0-9]{64}$/.test(sha)) continue;
-    if (path.isAbsolute(rel) || rel.split(/[/\\]/).includes('..')) continue;
-    out.push({ path: rel, sha256: sha });
-  }
-  return out;
-}
-
-/**
- * @description Collects raw {path, sha256}-ish rows from any of the accepted workspaceTree shapes.
- * @param raw - The raw `workspaceTree` value.
- * @returns Loosely-typed rows for {@link normalizeWorkspaceTree} to validate.
- */
-function collectTreeRows(raw: unknown): Array<{ path?: unknown; sha256?: unknown }> {
-  if (Array.isArray(raw)) return raw as Array<{ path?: unknown; sha256?: unknown }>;
-  if (raw && typeof raw === 'object') {
-    const obj = raw as Record<string, unknown>;
-    const list = obj.files ?? obj.entries;
-    if (Array.isArray(list)) return list as Array<{ path?: unknown; sha256?: unknown }>;
-    // Plain map form: { "<path>": "<sha256>" }.
-    return Object.entries(obj)
-      .filter(([, v]) => typeof v === 'string')
-      .map(([k, v]) => ({ path: k, sha256: v }));
-  }
-  return [];
 }

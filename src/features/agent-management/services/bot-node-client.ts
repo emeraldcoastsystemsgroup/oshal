@@ -31,6 +31,7 @@
  * 26 | maintainer@emeraldcoastsystemsgroup.com   | Emit the unrecordable protected-dispatch denial as a typed RefusalError so callers can preserve its exact code, detail and reviewed remedy without parsing text.
  * 27 | maintainer@emeraldcoastsystemsgroup.com   | Preserve trusted in-process RefusalError results through protected send sanitization so exact persistence/owner refusals reach the manifest terminal sink; ambiguous remote failures remain generic.
  * 28 | maintainer@emeraldcoastsystemsgroup.com   | Retain completed work from configured failover (BACKLOG #1660): add fallbackOrder to BotNodeRequest so dispatch carries the accepted fallback chain.
+ * 29 | maintainer@emeraldcoastsystemsgroup.com   | Export postJsonNoUndiciCeiling (+ RawHttpResponse) so the Token Chase tail-replay client (bot-node-tail-replay-client.ts) shares the one node:http POST instead of re-deriving the undici header-ceiling workaround. No behaviour change in this file.
  */
 import { runWithApplicationExecution } from '@/shared/application-authorization-execution';
 import { getApplicationAuthorizationActor } from '@/shared/application-authorization-context';
@@ -77,7 +78,7 @@ const logger = createChildLogger({ module: 'bot-node-client' });
 const CONTROLLER_INLINE_CONTAINERS = new Set(['oshal-api', 'oshal-local-api']);
 
 /** Minimal response shape from {@link postJsonNoUndiciCeiling}. */
-interface RawHttpResponse {
+export interface RawHttpResponse {
   ok: boolean;
   status: number;
   text: string;
@@ -96,7 +97,7 @@ interface RawHttpResponse {
  * @param timeoutMs - Overall runaway backstop; on elapse the request is destroyed.
  * @returns The status + full response text.
  */
-function postJsonNoUndiciCeiling(
+export function postJsonNoUndiciCeiling(
   url: string,
   body: string,
   headers: Record<string, string>,

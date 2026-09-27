@@ -7,6 +7,8 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Tail-replay inputs (ADR-046 §1/§8): surface the additive capture fields the forward-replay consumer needs — a frame's `pins` (per-tool-read pinned/unpinned classification) and `workspaceTree` (content-addressed manifest) now ride on TokenChaseFrameDetail, and readTreeObject() serves one content-addressed blob from <capture>/objects/<sha256> so the tail replay can restage the tree a frame saw. Both additive: pre-tail frames simply lack the fields and behave exactly as before.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read three of the six.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Workspace-bound provenance: expose captured tool schemas, workspace commit/store-version references and the bounded snapshot result used by the tail replay.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | End-of-run checkpoint (BACKLOG "Workspace-bound checkpoint and tail replay"): getFinal() reads the run's final.json (post-tool tree digest, final commit, store version, trailing pins) under the same owner scoping as frames, and a frame's recorded owner rides on TokenChaseFrameDetail.ownerSub so the tail replay can bind the accountable owner when it delegates to the bot node.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Bot-node tail executor inputs: getCaptureDir() hands the traversal-guarded capture directory to the on-node restore (private git repo + object store live there), and getStoreManifest() reads the owner-store manifest the lane wrote for one version (store-<version>.json — paths and ciphertext digests, never plaintext) under the run's owner scoping.
  */
 
 import fsSync from 'node:fs';
@@ -18,6 +20,7 @@ import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 const logger = createChildLogger({ module: 'token-chase-read-service' });
 const CAPTURE_DIR = '.tokenchase';
 const FRAME_FILE = /^frame-\d+\.json$/;
+const FINAL_FILE = 'final.json';
 
 /**
  * @description Access context for owner-scoped reads. A frame is visible when the caller is an
@@ -72,6 +75,32 @@ export interface TokenChaseFrameDetail extends TokenChaseFrameSummary {
   workspaceCommit: string | null;
   /** Optional encrypted owner-store snapshot ref; plaintext store bytes never enter a frame. */
   ownerStoreVersion: string | null;
+  /** The accountable owner the capture recorded (null for a system/internal call). */
+  ownerSub: string | null;
+}
+
+/**
+ * @description The end-of-run checkpoint the capture lane writes as `final.json`: the workspace tree
+ * and owner-store version AFTER the last tool ran, the final commit, and the trailing pins no frame
+ * consumed. This is the baseline a no-edit tail replay compares its artifacts and store against.
+ */
+export interface TokenChaseRunFinal {
+  taskId: string | null;
+  outcome: string;
+  turns: number | null;
+  at: string | null;
+  workspaceCommit: string | null;
+  ownerStoreVersion: string | null;
+  /** Whether an owner store was bound on the capturing node (false = no store, version is null honestly). */
+  storeBound: boolean;
+  /** The tree digest of the final manifest, or null when the checkpoint could not be taken. */
+  treeSha: string | null;
+  checkpointComplete: boolean;
+  redactedPaths: string[];
+  replayable: boolean;
+  pins: unknown[];
+  /** The raw recorded manifest (files + digest), for consumers that diff paths. */
+  workspaceTree: unknown;
 }
 
 /**
@@ -133,6 +162,77 @@ export class TokenChaseReadService {
     if (!frame || !this.isVisible(frame, access)) return null;
     const history = await this.readFrame(`${base}.history.json`);
     return { ...this.toSummary(frame), ...this.toDetail(frame), history: Array.isArray(history) ? history : [] };
+  }
+
+  /**
+   * @description Reads the run's end-of-run checkpoint (final.json) if the caller may see the run.
+   * @param runId - The task/workspace folder name.
+   * @param access - Owner-scoping context (the record carries the owner the capture stamped).
+   * @returns The checkpoint, or null when absent or not visible to the caller.
+   */
+  async getFinal(runId: string, access: TokenChaseAccess): Promise<TokenChaseRunFinal | null> {
+    const dir = this.resolveCaptureDir(runId);
+    if (!dir) return null;
+    const record = await this.readFrame(path.join(dir, FINAL_FILE));
+    if (!record || !this.isVisible(record, access)) return null;
+    const checkpoint = (record.checkpoint as Record<string, unknown>) ?? {};
+    const store = (record.ownerStore as Record<string, unknown>) ?? {};
+    const tree = (record.workspaceTree as Record<string, unknown>) ?? {};
+    return {
+      taskId: (record.taskId as string) ?? null,
+      outcome: (record.outcome as string) ?? 'unknown',
+      turns: typeof record.turns === 'number' ? record.turns : null,
+      at: (record.at as string) ?? null,
+      workspaceCommit: (record.workspaceCommit as string) ?? null,
+      ownerStoreVersion: (record.ownerStoreVersion as string) ?? null,
+      storeBound: store.bound === true,
+      treeSha: (checkpoint.treeSha as string) ?? (tree.treeSha as string) ?? null,
+      checkpointComplete: checkpoint.complete === true,
+      redactedPaths: Array.isArray(checkpoint.redactedPaths) ? (checkpoint.redactedPaths as string[]) : [],
+      replayable: record.replayable !== false,
+      pins: Array.isArray(record.pins) ? (record.pins as unknown[]) : [],
+      workspaceTree: record.workspaceTree,
+    };
+  }
+
+  /**
+   * @description The traversal-guarded capture directory of a run, for the on-node restore that needs
+   * the private checkpoint repository and object store beneath it. Null when the run has no capture dir.
+   * @param runId - The task/workspace folder name.
+   * @returns The absolute `.tokenchase` directory, or null.
+   */
+  getCaptureDir(runId: string): string | null {
+    const dir = this.resolveCaptureDir(runId);
+    return dir && fsSync.existsSync(dir) ? dir : null;
+  }
+
+  /**
+   * @description Reads the owner-store manifest the capture lane wrote for one store version
+   * (`store-<version>.json`: store-relative paths and ciphertext digests, never plaintext), when the
+   * caller may see the run. The version is format-guarded so it can never name another file.
+   * @param runId - The task/workspace folder name.
+   * @param version - The 64-hex owner-store version a frame recorded.
+   * @param access - Owner-scoping context.
+   * @returns The parsed manifest, or null when absent, malformed or not visible.
+   */
+  async getStoreManifest(runId: string, version: string, access: TokenChaseAccess): Promise<Record<string, unknown> | null> {
+    if (!/^[a-f0-9]{64}$/i.test(version)) return null;
+    const dir = this.resolveCaptureDir(runId);
+    if (!dir || !(await this.isRunVisible(dir, access))) return null;
+    return this.readFrame(path.join(dir, `store-${version.toLowerCase()}.json`));
+  }
+
+  /** @description Whether the caller may see a run at all: decided by its first frame's recorded owner. */
+  private async isRunVisible(dir: string, access: TokenChaseAccess): Promise<boolean> {
+    try {
+      const frameFiles = (await fs.readdir(dir)).filter((f) => FRAME_FILE.test(f)).sort();
+      if (frameFiles.length === 0) return false;
+      const first = await this.readFrame(path.join(dir, frameFiles[0]));
+      return first !== null && this.isVisible(first, access);
+    } catch (error) {
+      logger.warn({ err: error, dir }, 'Failed to read Token Chase run for visibility');
+      return false;
+    }
   }
 
   /** @description Builds a run summary for one folder, or null if it has no caller-visible frames. */
@@ -204,6 +304,7 @@ export class TokenChaseReadService {
       toolSchema: Array.isArray(context.toolSchema) ? (context.toolSchema as unknown[]) : [],
       workspaceCommit: (context.workspaceCommit as string) ?? null,
       ownerStoreVersion: (context.ownerStoreVersion as string) ?? null,
+      ownerSub: (frame.userSub as string) ?? null,
       // Additive tail-replay inputs — passed through raw (undefined on pre-tail frames).
       pins: frame.pins,
       workspaceTree: frame.workspaceTree,

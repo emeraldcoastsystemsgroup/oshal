@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | yq no longer reaches a shell: yqCommand now goes through cli-argv.js (cliArgsToArgv + executeCLIArgv), which spawns the binary with an argument vector (execFile, shell:false) and writes `input` to the child's stdin, instead of building `echo '<yaml>' | yq <args>` for child_process.exec. Model-supplied text can no longer be command syntax on this tool, and cli_yq advertises a preferred `argv` array so a caller that already has separate arguments never has to round-trip them through a string. Every other executeCLI caller still builds a command string; of those, cli_cline, cli_jq and cli_fzf are the three declared requiresApproval:false.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | cli_yq is registered requiresApproval:true. SEQ 2 closed the shell hole but left the tool unapproved, and adding it to NEVER_AUTO_APPROVE did not refuse it: all three consumers of the approval policy test `requiresApproval && !approved` BEFORE they consult that set (AgenticController.js, dispatch-tool-executor.js, ToolRegistry.execute), so for a tool declared false the refusal branch is never entered and the auto-approve answer is never read. Driving the real unattended dispatch channel proved cli_yq still ran. The registration flag is the gate; the policy entry is belt-and-braces against that flag being flipped back. An approved caller still runs the tool.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | cline, jq and fzf no longer reach a shell: clineCommand, jqCommand and fzfCommand now execute through cli-argv.js (cliArgsToArgv + executeCLIArgv) with an argument vector and stdin instead of command strings handed to child_process.exec, and are registered requiresApproval:true. All CLI tools registered in this file now require approval.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Declare Token Chase replayClass side-effect on every CLI registration (BACKLOG "Workspace-bound checkpoint and tail replay"): a CLI call reaches infrastructure outside the checkpointed workspace, so a frame that consumed one is marked non-replayable and a hermetic tail stops there instead of re-running it.
  */
 
 /**
@@ -658,6 +659,7 @@ function registerCLITools(registry) {
       },
     },
     handler: gitCommand,
+    replayClass: 'side-effect', // Token Chase: a CLI reaches beyond the checkpointed workspace; never replayed hermetically
     requiresApproval: true,
     timeout: 60000,
   });
@@ -678,6 +680,7 @@ function registerCLITools(registry) {
       },
     },
     handler: kubectlCommand,
+    replayClass: 'side-effect', // Token Chase: a CLI reaches beyond the checkpointed workspace; never replayed hermetically
     requiresApproval: true,
     timeout: 120000,
   });
@@ -698,6 +701,7 @@ function registerCLITools(registry) {
       },
     },
     handler: helmCommand,
+    replayClass: 'side-effect', // Token Chase: a CLI reaches beyond the checkpointed workspace; never replayed hermetically
     requiresApproval: true,
     timeout: 120000,
   });
@@ -718,6 +722,7 @@ function registerCLITools(registry) {
       },
     },
     handler: terraformCommand,
+    replayClass: 'side-effect', // Token Chase: a CLI reaches beyond the checkpointed workspace; never replayed hermetically
     requiresApproval: true,
     timeout: 300000,
   });
@@ -743,6 +748,7 @@ function registerCLITools(registry) {
       },
     },
     handler: ansibleCommand,
+    replayClass: 'side-effect', // Token Chase: a CLI reaches beyond the checkpointed workspace; never replayed hermetically
     requiresApproval: true,
     timeout: 300000,
   });
@@ -763,6 +769,7 @@ function registerCLITools(registry) {
       },
     },
     handler: awsCommand,
+    replayClass: 'side-effect', // Token Chase: a CLI reaches beyond the checkpointed workspace; never replayed hermetically
     requiresApproval: true,
     timeout: 120000,
   });
@@ -783,6 +790,7 @@ function registerCLITools(registry) {
       },
     },
     handler: azureCommand,
+    replayClass: 'side-effect', // Token Chase: a CLI reaches beyond the checkpointed workspace; never replayed hermetically
     requiresApproval: true,
     timeout: 120000,
   });
@@ -803,6 +811,7 @@ function registerCLITools(registry) {
       },
     },
     handler: gcloudCommand,
+    replayClass: 'side-effect', // Token Chase: a CLI reaches beyond the checkpointed workspace; never replayed hermetically
     requiresApproval: true,
     timeout: 120000,
   });
@@ -823,6 +832,7 @@ function registerCLITools(registry) {
       },
     },
     handler: argocdCommand,
+    replayClass: 'side-effect', // Token Chase: a CLI reaches beyond the checkpointed workspace; never replayed hermetically
     requiresApproval: true,
     timeout: 120000,
   });
@@ -847,6 +857,7 @@ function registerCLITools(registry) {
       },
     },
     handler: clineCommand,
+    replayClass: 'side-effect', // Token Chase: a CLI reaches beyond the checkpointed workspace; never replayed hermetically
     requiresApproval: true,
     timeout: 180000,
   });
@@ -879,6 +890,7 @@ function registerCLITools(registry) {
       },
     },
     handler: jqCommand,
+    replayClass: 'side-effect', // Token Chase: a CLI reaches beyond the checkpointed workspace; never replayed hermetically
     requiresApproval: true,
     timeout: 30000,
   });
@@ -912,6 +924,7 @@ function registerCLITools(registry) {
     // (AgenticController.js, dispatch-tool-executor.js, ToolRegistry.execute), so for a tool
     // declared false the NEVER_AUTO_APPROVE entry is never reached and refuses nothing. An
     // approved caller (options.approved === true) still runs it; this is a gate, not a removal.
+    replayClass: 'side-effect', // Token Chase: a CLI reaches beyond the checkpointed workspace; never replayed hermetically
     requiresApproval: true,
     timeout: 30000,
   });
@@ -941,6 +954,7 @@ function registerCLITools(registry) {
       },
     },
     handler: fzfCommand,
+    replayClass: 'side-effect', // Token Chase: a CLI reaches beyond the checkpointed workspace; never replayed hermetically
     requiresApproval: true,
     timeout: 30000,
   });
@@ -964,6 +978,7 @@ function registerCLITools(registry) {
       },
     },
     handler: nodeCommand,
+    replayClass: 'side-effect', // Token Chase: a CLI reaches beyond the checkpointed workspace; never replayed hermetically
     requiresApproval: true,
     timeout: 60000,
   });
@@ -984,6 +999,7 @@ function registerCLITools(registry) {
       },
     },
     handler: npmCommand,
+    replayClass: 'side-effect', // Token Chase: a CLI reaches beyond the checkpointed workspace; never replayed hermetically
     requiresApproval: true,
     timeout: 300000,
   });
@@ -1004,6 +1020,7 @@ function registerCLITools(registry) {
       },
     },
     handler: vaultCommand,
+    replayClass: 'side-effect', // Token Chase: a CLI reaches beyond the checkpointed workspace; never replayed hermetically
     requiresApproval: true,
     timeout: 120000,
   });
