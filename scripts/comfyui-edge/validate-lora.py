@@ -7,7 +7,8 @@
 #   score    = 0.6*identity + 0.4*quality      (mirrors src/features/lora-studio/scorecard.ts)
 # Because the matrix + seeds + hero + CLIP model are fixed, score(vN) is directly comparable to
 # score(v1) - the objective "is it better" number. Writes a scorecard JSON + an index.html gallery
-# and POSTs the scorecard back to the controller's /api/lora/ingest (x-service-secret).
+# and POSTs the scorecard back to the controller's /api/lora/ingest (signed with the dispatch's
+# callback grant, lora_callback.py).
 #
 # Usage (on the GPU box, ComfyUI running on :8188) - the identity arguments come from the
 # controller's `oshal_lora_characters` row, never from a constant in this file:
@@ -34,6 +35,9 @@
 #     validated. The single-eye guard is now that character's declared structural pair and is
 #     simply absent for a character that declares none - validating a two-eyed character against a
 #     cyclops guard halved its quality score on every cell.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Sign the scorecard and every cell-thumbnail
+#     callback with the dispatch's callback grant (OSHAL_LORA_CALLBACK_GRANT) through
+#     lora_callback.py, each with its own nonce, instead of sending the fleet SWARM_SERVICE_SECRET.
 #
 # Free-first: CLIP scoring is local ($0). The optional LLM-vision judge is a separate, metered,
 # opt-in step on the controller - never the primary score here.
@@ -43,6 +47,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 from character_config import add_character_arguments, character_config  # noqa: E402
+from lora_callback import load_grant, post_bytes, post_json  # noqa: E402
 
 # Bounds for the per-cell thumbnails the controller hosts. The route refuses anything above
 # MAX_CELL_IMAGE_BYTES (lora/src-routes/lora-cell-images.ts), so the encoder aims well under it and
@@ -299,7 +304,7 @@ def main():
     """Validate one version of one character and report its scorecard to the controller."""
     a = build_parser().parse_args()
     cfg = character_config(a)
-    secret = os.environ.get("SWARM_SERVICE_SECRET", "")
+    grant = load_grant()
     os.makedirs(cfg.validate_dir, exist_ok=True)
 
     clip = Clip()
@@ -315,13 +320,13 @@ def main():
     log("==== VALIDATION v%d: overall %.3f (id %.3f / q %.3f), %d cells, %d weak ===="
         % (a.version, overall, identity_mean, quality_mean, len(cells), len(weak)))
 
-    if a.controller and secret and a.owner_sub_b64:
-        post_ingest(a.controller, secret, a.owner_sub_b64, scorecard)
+    if a.controller and grant and a.owner_sub_b64:
+        post_ingest(a.controller, grant, a.owner_sub_b64, scorecard)
         # The scorecard lands first: a cell thumbnail is an illustration of a score that already
         # exists, so losing one must never cost the run its numbers.
-        post_cell_images(a.controller, secret, a.owner_sub_b64, a.character, a.version, meta)
+        post_cell_images(a.controller, grant, a.owner_sub_b64, a.character, a.version, meta)
     else:
-        log("no complete controller/secret/owner binding given; scorecard saved locally only")
+        log("no complete controller/grant/owner binding given; scorecard saved locally only")
 
 
 def write_gallery(cfg, a, sc, meta):
@@ -375,10 +380,10 @@ def thumbnail_bytes(path):
         return None
 
 
-def post_cell_image(controller, secret, owner_sub_b64, character, version, cell_index, filename, data, content_type):
-    """POST one bounded thumbnail. Same guard pair as the scorecard callback: the fleet secret from
-    this process's environment plus the separately encoded exact owner. The body is the raw image -
-    the controller's global JSON limit is 100kb, which a matrix of base64 cells would blow past."""
+def post_cell_image(controller, grant, owner_sub_b64, character, version, cell_index, filename, data, content_type):
+    """POST one bounded thumbnail, signed under the dispatch's callback grant with its own nonce.
+    The body is the raw image - the controller's global JSON limit is 100kb, which a matrix of
+    base64 cells would blow past - and its hash is part of the signature."""
     url = "%s/api/lora/ingest/cell-image?character=%s&version=%d&cell=%d&filename=%s" % (
         controller.rstrip("/"),
         urllib.parse.quote(str(character), safe=""),
@@ -386,18 +391,14 @@ def post_cell_image(controller, secret, owner_sub_b64, character, version, cell_
         urllib.parse.quote(str(filename or ""), safe=""),
     )
     try:
-        req = urllib.request.Request(
-            url, data=data,
-            headers={"Content-Type": content_type, "x-service-secret": secret,
-                     "x-oshal-user-sub-b64": owner_sub_b64})
-        urllib.request.urlopen(req, timeout=30).read()
+        post_bytes(url, grant, owner_sub_b64, data, content_type)
         return True
     except Exception as e:
         log("cell %d image POST FAILED (%r) - the scorecard is unaffected" % (cell_index, e))
         return False
 
 
-def post_cell_images(controller, secret, owner_sub_b64, character, version, meta):
+def post_cell_images(controller, grant, owner_sub_b64, character, version, meta):
     """Copy every scored cell's render to the controller as a bounded thumbnail. Best-effort per
     cell: a failure costs that one image, never the scorecard that already landed."""
     posted = 0
@@ -406,21 +407,16 @@ def post_cell_images(controller, secret, owner_sub_b64, character, version, meta
         if not made:
             continue
         data, content_type = made
-        if post_cell_image(controller, secret, owner_sub_b64, character, version, cell_index, m["f"], data, content_type):
+        if post_cell_image(controller, grant, owner_sub_b64, character, version, cell_index, m["f"], data, content_type):
             posted += 1
     log("posted %d/%d cell thumbnails to the controller" % (posted, len(meta)))
     return posted
 
 
-def post_ingest(controller, secret, owner_sub_b64, scorecard):
-    url = controller.rstrip("/") + "/api/lora/ingest"
+def post_ingest(controller, grant, owner_sub_b64, scorecard):
+    """Report the scorecard under the dispatch's callback grant; a failure keeps it locally."""
     try:
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(scorecard).encode(),
-            headers={"Content-Type": "application/json", "x-service-secret": secret,
-                     "x-oshal-user-sub-b64": owner_sub_b64})
-        r = json.loads(urllib.request.urlopen(req, timeout=30).read())
+        r = post_json(controller, grant, owner_sub_b64, scorecard)
         log("ingest ok: %s" % r)
     except Exception as e:
         log("ingest FAILED (%r) - scorecard is saved locally; re-post later" % e)

@@ -2,7 +2,8 @@
 # paired <name>.png/.txt with the trigger word), trains an SD1.5 LoRA with kohya/sd-scripts on the
 # GPU (free), writes oshbrainrot_v{N}.safetensors + a metrics JSON, copies the model into ComfyUI's
 # models/loras so validate-lora.py can load it, and POSTs the metrics to the controller's
-# /api/lora/ingest (x-service-secret). This script is launched ONLY by the OSHAL worker node's gated
+# /api/lora/ingest (signed with the dispatch's callback grant, lora_callback.py). This script is
+# launched ONLY by the OSHAL worker node's gated
 # shell.exec, dispatched from a queue-manager ticket (ADR-070 privilege rule) - never a direct call.
 #
 # Prereq: run setup-kohya.ps1 once (installs ~/kohya_ss + venv). 8GB-safe hyperparameters are baked in.
@@ -34,7 +35,15 @@
 #     dataset folder is staged through its curation.json so only survivors reach kohya, the report
 #     itself never becomes a training file, an unjudged folder is refused rather than trained on,
 #     and the refusal happens before the previous staging directory is destroyed.
-import argparse, json, os, re, shutil, subprocess, time, zipfile, glob, urllib.request
+# 5 | maintainer@emeraldcoastsystemsgroup.com   | Sign the metrics callback with the dispatch's
+#     callback grant (OSHAL_LORA_CALLBACK_GRANT) through lora_callback.py instead of sending the
+#     fleet SWARM_SERVICE_SECRET; a run with no grant keeps its metrics locally.
+import argparse, json, os, re, shutil, subprocess, sys, time, zipfile, glob
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+from lora_callback import load_grant, post_json  # noqa: E402
 
 HOME = os.path.expanduser("~")
 COMFY = os.path.join(HOME, "oshal-comfyui", "ComfyUI_windows_portable", "ComfyUI")
@@ -178,10 +187,10 @@ def base_checkpoint(base_name):
     return p
 
 
-def train(character, version, dataset_zip, base_name, controller, secret, owner_sub_b64,
+def train(character, version, dataset_zip, base_name, controller, grant, owner_sub_b64,
           parent_version, resolution=512, epochs=EPOCHS, rank=NETWORK_DIM, allow_unjudged=False):
     if not os.path.exists(VENV_PY) or not os.path.exists(TRAIN_PY):
-        fail(character, version, controller, secret, owner_sub_b64,
+        fail(character, version, controller, grant, owner_sub_b64,
              "kohya not installed (%s missing) - run setup-kohya.ps1 first" % VENV_PY)
         return 2
     os.makedirs(MODELS, exist_ok=True); os.makedirs(LORA_DIR, exist_ok=True)
@@ -190,7 +199,7 @@ def train(character, version, dataset_zip, base_name, controller, secret, owner_
             dataset_zip, character, version, character, allow_unjudged)
     except DatasetRefused as exc:
         # A refused dataset is a FAILED run, not a crash: the controller has to see why.
-        fail(character, version, controller, secret, owner_sub_b64, str(exc))
+        fail(character, version, controller, grant, owner_sub_b64, str(exc))
         return 2
     base_ckpt = base_checkpoint(base_name)
     out_name = "%s_v%d" % (character, version)
@@ -234,7 +243,7 @@ def train(character, version, dataset_zip, base_name, controller, secret, owner_
 
     out_path = os.path.join(MODELS, out_name + ".safetensors")
     if rc != 0 or not os.path.exists(out_path):
-        fail(character, version, controller, secret, owner_sub_b64,
+        fail(character, version, controller, grant, owner_sub_b64,
              "kohya exited rc=%s, no model at %s" % (rc, out_path))
         return rc or 1
 
@@ -254,29 +263,24 @@ def train(character, version, dataset_zip, base_name, controller, secret, owner_
     json.dump(metrics, open(os.path.join(MODELS, out_name + ".json"), "w"), indent=2)
     log("DONE %s in %ds (loss %s, %s steps) -> %s" % (out_name, duration, final_loss, steps, out_path))
     print("OSHAL_TRAIN_RESULT " + json.dumps(metrics), flush=True)   # captured by shell.exec
-    if controller and secret and owner_sub_b64:
-        post_ingest(controller, secret, owner_sub_b64, metrics)
+    if controller and grant and owner_sub_b64:
+        post_ingest(controller, grant, owner_sub_b64, metrics)
     return 0
 
 
-def fail(character, version, controller, secret, owner_sub_b64, msg):
+def fail(character, version, controller, grant, owner_sub_b64, msg):
     log("TRAIN FAILED: " + msg)
     payload = {"kind": "training", "character": character, "version": version, "status": "failed",
                "metrics": {"error": msg}}
     print("OSHAL_TRAIN_RESULT " + json.dumps(payload), flush=True)
-    if controller and secret and owner_sub_b64:
-        post_ingest(controller, secret, owner_sub_b64, payload)
+    if controller and grant and owner_sub_b64:
+        post_ingest(controller, grant, owner_sub_b64, payload)
 
 
-def post_ingest(controller, secret, owner_sub_b64, payload):
-    url = controller.rstrip("/") + "/api/lora/ingest"
+def post_ingest(controller, grant, owner_sub_b64, payload):
+    """Report metrics under the dispatch's callback grant; a failure keeps them locally."""
     try:
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json", "x-service-secret": secret,
-                     "x-oshal-user-sub-b64": owner_sub_b64})
-        r = json.loads(urllib.request.urlopen(req, timeout=30).read())
+        r = post_json(controller, grant, owner_sub_b64, payload)
         log("ingest ok: %s" % r)
     except Exception as e:
         log("ingest FAILED (%r) - metrics saved locally; re-post later" % e)
@@ -298,9 +302,9 @@ def main():
     ap.add_argument("--controller", default=os.environ.get("OSHAL_CONTROLLER", ""))
     ap.add_argument("--owner-sub-b64", default=os.environ.get("OSHAL_USER_SUB_B64", ""))
     a = ap.parse_args()
-    secret = os.environ.get("SWARM_SERVICE_SECRET", "")
+    grant = load_grant()
     raise SystemExit(train(a.character, a.version, os.path.expanduser(a.dataset), a.base,
-                           a.controller, secret, a.owner_sub_b64, a.parent_version,
+                           a.controller, grant, a.owner_sub_b64, a.parent_version,
                            a.resolution, a.epochs, a.rank, a.allow_unjudged_dataset))
 
 
