@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add casState — a compare-and-swap state write (WHERE also pins the expected from-state) so publishNow can atomically claim a scheduled draft before the live LinkedIn POST; two concurrent publishes can no longer both fire a UGC post (review gap-list round2).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Wrapped the lazy-DDL ensureSchema chain in runWithSystemIdentity — it fires detached at boot with no request in scope; under OSHAL_DB_GUC_STRICT=deny the identity-less CREATE TABLE/INDEX would be RLS-scoped to nothing. This was the final identity-less site the SQL-logging audit named (its stack was fully detached).
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Add queue provenance: bounded source citations and source ticket id are persisted and owner-scoped, with an idempotent lookup for a retried queue dispatch.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Publish provenance: published_post_id and publish_params_hash (migration 169, mirrored in the lazy DDL) are read on every row and written by recordPublishProvenance, owner-scoped like every other write, so a draft joins its connector_action_audit rows on (user_sub, params_hash).
  */
 
 import type { Pool } from 'pg';
@@ -35,6 +36,8 @@ interface DraftRow {
   state: string;
   scheduled_for: string | null;
   publish_error: string | null;
+  published_post_id: string | null;
+  publish_params_hash: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -58,6 +61,12 @@ export interface GradeUpdate {
   judgeMode: string;
   rationale: string;
   refined: boolean;
+}
+
+/** What one publish attempt left behind: the post id (success only) and the audited params hash. */
+export interface PublishProvenance {
+  postId: string | null;
+  paramsHash: string | null;
 }
 
 /**
@@ -90,13 +99,15 @@ function mapRow(row: DraftRow): SocialContentDraft {
     state: (DRAFT_STATES as readonly string[]).includes(row.state) ? (row.state as DraftState) : 'draft',
     scheduledFor: row.scheduled_for,
     publishError: row.publish_error,
+    publishedPostId: row.published_post_id ?? null,
+    publishParamsHash: row.publish_params_hash ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
 }
 
 const SELECT_COLS =
-  'id, user_sub, topic, goal, tone, source_url, source_citations, source_ticket_id, body, score, dimensions, judge_mode, rationale, refined, state, scheduled_for, publish_error, created_at, updated_at';
+  'id, user_sub, topic, goal, tone, source_url, source_citations, source_ticket_id, body, score, dimensions, judge_mode, rationale, refined, state, scheduled_for, publish_error, published_post_id, publish_params_hash, created_at, updated_at';
 
 /**
  * @description Per-user Postgres store for LinkedIn content drafts. Owns table creation and all
@@ -117,7 +128,8 @@ export class ContentDraftStore {
   /**
    * @description Create the social_content_drafts table + index if absent (idempotent, run once
    * per process, cached). Self-applying like content-routes so a fresh DB works without a manual
-   * migration step; the canonical DDL is scripts/migrations/085-social-content-drafts.sql.
+   * migration step; the canonical DDL is scripts/migrations/085-social-content-drafts.sql plus
+   * 169-social-content-draft-publish-provenance.sql.
    * @returns Resolves when the schema is present.
    */
   async ensureSchema(): Promise<void> {
@@ -156,6 +168,8 @@ export class ContentDraftStore {
           ),
         )
         .then(() => this.pool.query('ALTER TABLE social_content_drafts ADD COLUMN IF NOT EXISTS source_ticket_id TEXT'))
+        .then(() => this.pool.query('ALTER TABLE social_content_drafts ADD COLUMN IF NOT EXISTS published_post_id TEXT'))
+        .then(() => this.pool.query('ALTER TABLE social_content_drafts ADD COLUMN IF NOT EXISTS publish_params_hash TEXT'))
         .then(() =>
           this.pool.query(
             'CREATE INDEX IF NOT EXISTS idx_social_content_drafts_user_state ON social_content_drafts (user_sub, state, updated_at DESC)',
@@ -291,6 +305,30 @@ export class ContentDraftStore {
                updated_at=now()
          WHERE user_sub=$1 AND id=$2 RETURNING ${SELECT_COLS}`,
         [userSub, id, state, opts.scheduledFor ?? null, opts.publishError ?? null],
+      )
+    ).rows[0];
+    return row ? mapRow(row) : null;
+  }
+
+  /**
+   * @description Record what a publish attempt left behind: the post id LinkedIn returned (success
+   * only) and the canonical params hash the connector executor audited. A null leaves the stored
+   * value in place, so a later attempt that never reached the executor cannot erase the hash that
+   * joins the draft to its audit rows. Owner-scoped like every other write.
+   * @param userSub - Owner OIDC sub.
+   * @param id - Draft id.
+   * @param provenance - The post id and params hash to record.
+   * @returns The updated draft, or null when the id isn't the caller's.
+   */
+  async recordPublishProvenance(userSub: string, id: number, provenance: PublishProvenance): Promise<SocialContentDraft | null> {
+    const row = (
+      await this.pool.query<DraftRow>(
+        `UPDATE social_content_drafts
+           SET published_post_id = COALESCE($3, published_post_id),
+               publish_params_hash = COALESCE($4, publish_params_hash),
+               updated_at = now()
+         WHERE user_sub=$1 AND id=$2 RETURNING ${SELECT_COLS}`,
+        [userSub, id, provenance.postId, provenance.paramsHash],
       )
     ).rows[0];
     return row ? mapRow(row) : null;

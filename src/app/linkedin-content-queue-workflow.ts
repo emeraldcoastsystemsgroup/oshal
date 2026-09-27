@@ -4,19 +4,27 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Bind the LinkedIn content queue to the existing owner-scoped assistant draft lifecycle. Queue work produces a graded pending-approval draft with bounded citations and ticket provenance; it never publishes.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Write the draft id and its citations back onto the source ticket (fresh draft, lost insert race and retried dispatch alike), so a queue ticket names the draft it produced. The ticket-type constant moved to linkedin-content-ticket-provenance.ts (re-exported here); the bind closure was split into ticket validation and draft persistence helpers to stay under the function-size limit.
  */
 
 import type { Pool } from 'pg';
+import type { InternalTicket } from '@/entities/ticket';
 import type { TaskOrchestrator } from '@/features/chat-orchestration';
 import { JudgeService, QUALITY_JUDGE_AGENT_ID } from '@/features/quality-judge';
 import {
   ContentDraftStore,
   LINKEDIN_RUBRIC,
   type GradeResult,
+  type SocialContentDraft,
 } from '@/features/linkedin-assistant';
 import type { BindManifestWorker } from '@/features/swarm-orchestration';
+import {
+  LINKEDIN_CONTENT_QUEUE_WORKFLOW,
+  recordQueueDraftOnTicket,
+  type LinkedInTicketWriter,
+} from './linkedin-content-ticket-provenance';
 
-export const LINKEDIN_CONTENT_QUEUE_WORKFLOW = 'linkedin-content-post';
+export { LINKEDIN_CONTENT_QUEUE_WORKFLOW };
 export const LINKEDIN_CONTENT_QUEUE_WORKER = 'social-writer';
 export const LINKEDIN_CONTENT_QUEUE_AGENT_ID = 'a0000000-0000-0000-0000-000000000040';
 
@@ -27,6 +35,15 @@ interface QueueMetadata {
   tone?: unknown;
   sourceUrl?: unknown;
   sourceCitations?: unknown;
+}
+
+/** The validated request a queue ticket carries into the draft. */
+interface QueueRequest {
+  ownerSub: string;
+  meta: QueueMetadata;
+  topic: string;
+  sourceUrl?: string;
+  links: string[];
 }
 
 function text(value: unknown, max = 1000): string | undefined {
@@ -53,8 +70,79 @@ function queuePrompt(ticket: { title: string; description: string }, meta: Queue
   ].filter(Boolean).join('\n');
 }
 
-/** @description Build the queue binding over the same judge lane used by the interactive assistant. */
-export function bindLinkedInContentWorker(pool: Pool, orchestrator: TaskOrchestrator): BindManifestWorker {
+/**
+ * @description Refuse anything but an owner's queue ticket running on the registered Social
+ * workflow and the social-writer identity. A forged provider intent or target is refused too.
+ * @param ticket - The dispatched ticket.
+ * @param workflow - The registered workflow it was routed with.
+ * @param agentId - The resolved worker identity.
+ * @returns The validated request.
+ */
+function admitQueueTicket(ticket: InternalTicket, workflow: Parameters<BindManifestWorker>[1], agentId: string): QueueRequest {
+  const meta = (ticket.metadata ?? {}) as QueueMetadata & Record<string, unknown>;
+  if (!ticket.ownerSub || workflow.ticketType !== LINKEDIN_CONTENT_QUEUE_WORKFLOW
+    || workflow.workerBot !== LINKEDIN_CONTENT_QUEUE_WORKER || workflow.pipeline !== 'manifest-worker'
+    || agentId !== LINKEDIN_CONTENT_QUEUE_AGENT_ID || meta.source !== 'linkedin-content-queue'
+    || Object.hasOwn(meta, 'providerIntent') || Object.hasOwn(meta, 'targetAgentId')) {
+    throw new Error('Invalid bound LinkedIn content ticket');
+  }
+  const sourceUrl = text(meta.sourceUrl, 2000);
+  const links = [...new Set([...(sourceUrl ? [sourceUrl] : []), ...citations(meta.sourceCitations)])].slice(0, 8);
+  return { ownerSub: ticket.ownerSub, meta, topic: text(meta.topic, 500) ?? ticket.title, sourceUrl, links };
+}
+
+/**
+ * @description Persist the worker's body as a graded pending-approval draft, or reuse the draft a
+ * concurrent attempt already persisted for this ticket (the unique owner/ticket index is the
+ * final race fence).
+ * @param store - The owner-scoped draft store.
+ * @param makeJudge - Builds the owner's judge.
+ * @param ticketId - The queue ticket.
+ * @param request - The validated request.
+ * @param body - The worker's draft body.
+ * @returns The persisted draft.
+ */
+async function persistQueueDraft(
+  store: ContentDraftStore,
+  makeJudge: (ownerSub: string) => JudgeService,
+  ticketId: string,
+  request: QueueRequest,
+  body: string,
+): Promise<SocialContentDraft> {
+  const { ownerSub, meta, topic, sourceUrl, links } = request;
+  let draft: SocialContentDraft;
+  try {
+    draft = await store.insertDraft(ownerSub, {
+      topic, goal: text(meta.goal, 500) ?? null, tone: text(meta.tone, 200) ?? null,
+      sourceUrl: sourceUrl ?? links[0] ?? null, sourceCitations: links, sourceTicketId: ticketId, body,
+    });
+  } catch (error) {
+    // A retry that lost the insert race reuses the already persisted draft instead of escalating a
+    // successfully completed item.
+    const duplicate = await store.getBySourceTicket(ownerSub, ticketId);
+    if (!duplicate) throw error;
+    return duplicate;
+  }
+  const grade: GradeResult = await makeJudge(ownerSub).grade({
+    task: `Write a LinkedIn post about: ${topic}${text(meta.goal, 500) ? `\nGoal: ${text(meta.goal, 500)}` : ''}`,
+    output: body, rubric: [...LINKEDIN_RUBRIC],
+  });
+  const updated = await store.applyGrade(ownerSub, draft.id, {
+    body, score: grade.score, dimensions: grade.dimensions, judgeMode: grade.mode,
+    rationale: grade.rationale, refined: false,
+  });
+  if (!updated) throw new Error('LinkedIn queue draft was not available after grading');
+  return updated;
+}
+
+/**
+ * @description Build the queue binding over the same judge lane used by the interactive assistant.
+ * @param pool - Postgres pool for the owner-scoped draft store.
+ * @param orchestrator - Runs the quality-judge concierge for the ticket owner.
+ * @param tickets - Writes the draft id back onto the source ticket.
+ * @returns The manifest-worker binding for `linkedin-content-post` tickets.
+ */
+export function bindLinkedInContentWorker(pool: Pool, orchestrator: TaskOrchestrator, tickets: LinkedInTicketWriter): BindManifestWorker {
   const store = new ContentDraftStore(pool);
   const makeJudge = (ownerSub: string): JudgeService => new JudgeService({
     invoker: async (taskId, prompt) => {
@@ -69,56 +157,23 @@ export function bindLinkedInContentWorker(pool: Pool, orchestrator: TaskOrchestr
 
   return async (ticket, workflow, agentId) => {
     if (ticket.ticketType !== LINKEDIN_CONTENT_QUEUE_WORKFLOW) return undefined;
-    const meta = (ticket.metadata ?? {}) as QueueMetadata & Record<string, unknown>;
-    if (!ticket.ownerSub || workflow.ticketType !== LINKEDIN_CONTENT_QUEUE_WORKFLOW
-      || workflow.workerBot !== LINKEDIN_CONTENT_QUEUE_WORKER || workflow.pipeline !== 'manifest-worker'
-      || agentId !== LINKEDIN_CONTENT_QUEUE_AGENT_ID || meta.source !== 'linkedin-content-queue'
-      || Object.hasOwn(meta, 'providerIntent') || Object.hasOwn(meta, 'targetAgentId')) {
-      throw new Error('Invalid bound LinkedIn content ticket');
-    }
-    const topic = text(meta.topic, 500) ?? ticket.title;
-    const sourceUrl = text(meta.sourceUrl, 2000);
-    const sourceCitations = citations(meta.sourceCitations);
-    const links = [...new Set([...(sourceUrl ? [sourceUrl] : []), ...sourceCitations])].slice(0, 8);
-    const existing = await store.getBySourceTicket(ticket.ownerSub, ticket.ticketId);
+    const request = admitQueueTicket(ticket, workflow, agentId);
+    const existing = await store.getBySourceTicket(request.ownerSub, ticket.ticketId);
     if (existing) {
+      await recordQueueDraftOnTicket(tickets, ticket.ticketId, request.ownerSub, existing);
       return {
         prompt: '', reasonOnly: true, alreadyComplete: true,
         complete: async () => undefined, fail: async () => undefined,
       };
     }
-    let createdId: number | null = null;
-    const fail = async (): Promise<void> => undefined;
+    let created: SocialContentDraft | null = null;
     const complete = async (response: string): Promise<void> => {
-      if (createdId !== null) return;
+      if (created) return;
       const body = response.trim();
       if (!body || body.length > 12000) throw new Error('LinkedIn queue worker returned an empty or oversized draft');
-      let draft;
-      try {
-        draft = await store.insertDraft(ticket.ownerSub!, {
-          topic, goal: text(meta.goal, 500) ?? null, tone: text(meta.tone, 200) ?? null,
-          sourceUrl: sourceUrl ?? links[0] ?? null, sourceCitations: links,
-          sourceTicketId: ticket.ticketId, body,
-        });
-      } catch (error) {
-        // The unique owner/ticket index is the final race fence. A retry that lost that race
-        // reuses the already persisted draft instead of escalating a successfully completed item.
-        const duplicate = await store.getBySourceTicket(ticket.ownerSub!, ticket.ticketId);
-        if (!duplicate) throw error;
-        createdId = duplicate.id;
-        return;
-      }
-      createdId = draft.id;
-      const grade: GradeResult = await makeJudge(ticket.ownerSub!).grade({
-        task: `Write a LinkedIn post about: ${topic}${text(meta.goal, 500) ? `\nGoal: ${text(meta.goal, 500)}` : ''}`,
-        output: body, rubric: [...LINKEDIN_RUBRIC],
-      });
-      const updated = await store.applyGrade(ticket.ownerSub!, draft.id, {
-        body, score: grade.score, dimensions: grade.dimensions, judgeMode: grade.mode,
-        rationale: grade.rationale, refined: false,
-      });
-      if (!updated) throw new Error('LinkedIn queue draft was not available after grading');
+      created = await persistQueueDraft(store, makeJudge, ticket.ticketId, request, body);
+      await recordQueueDraftOnTicket(tickets, ticket.ticketId, request.ownerSub, created);
     };
-    return { prompt: queuePrompt(ticket, meta, links), reasonOnly: true, complete, fail };
+    return { prompt: queuePrompt(ticket, request.meta, request.links), reasonOnly: true, complete, fail: async () => undefined };
   };
 }

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Types barrel for the linkedin-assistant feature — re-exports the draft domain types + rubric so consumers import from '@/features/linkedin-assistant', never a deep path.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export PublishContext, the provenance the publisher receives.
  */
 
 export {
@@ -14,4 +15,5 @@ export {
   type GradeResult,
   type SocialContentDraft,
   type PublishOutcome,
+  type PublishContext,
 } from './draft';

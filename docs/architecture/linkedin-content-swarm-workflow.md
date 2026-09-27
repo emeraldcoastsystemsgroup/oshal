@@ -66,6 +66,43 @@ The publish rail remains the declared LinkedIn connector action and its caller-s
 This is source/package acceptance only: installed queue execution and a real provider receipt remain
 open evidence for the backlog item.
 
+### Registration and publish provenance (2026-09-27)
+
+The queue binding admits a ticket only when the registered workflow names
+`pipeline: manifest-worker` and `workerBot: social-writer`. Social 1.5.0 declared no pipeline, so every
+installed ticket failed at the binding. Social 1.5.1 declares it, and a store test pins the manifest
+shape.
+
+Provenance now crosses the publish boundary:
+
+- The publisher receives the draft id, the source ticket and the citations (`PublishContext`). The
+  approved body is still sent verbatim; the context only says which draft and ticket a write belongs to.
+- Each outcome that reached the connector executor carries the canonical params hash that
+  `connector_action_audit.params_hash` stores. The draft records it in `publish_params_hash`, and
+  `published_post_id` on success (migration 169, mirrored in the store's lazy DDL). A draft joins its
+  audit rows on `(user_sub, params_hash)` with `connector_id = 'linkedin'` and `action = 'create-post'`.
+  The shared audit table is not widened. The hash covers the author urn and the text
+  (`hashConnectorActionParams`), so two drafts with the same text by the same author share a hash; their
+  audit rows are then told apart by `ts`.
+- The source ticket's `metadata.linkedinContent` holds the draft id and citations once the queue worker
+  persists the draft. After a publish attempt it also holds the outcome: `published`, `skipped` or
+  `failed`, with the post id, the params hash and the reason. Only the owner's own
+  `linkedin-content-post` ticket is written, and the metadata is merged. Ticket write-back after a publish
+  is best-effort and logged. The draft row is the authoritative record, and a live post is never
+  reported as a failure.
+
+`tests/unit/linkedin-content-queue-postgres.spec.ts` drives one ticket through the real registry,
+dispatcher, binding, owner-scoped draft store, approval, the 428 confirm gate and a confirmed publish
+on the caller's brokered token. It uses a disposable PostgreSQL with a NOSUPERUSER NOBYPASSRLS role, and
+the shipped `create-post` action is pointed at a local provider double. It also proves:
+
+- retry idempotency through the real unique index;
+- the cross-owner, anonymous, unapproved, missing-connection and provider-rejection paths;
+- refusal of a forged ticket and of a workflow registered without the pipeline.
+
+The bot node, the judge brain and LinkedIn itself are doubled. Installed execution and one real
+public post are still operator steps.
+
 ## Participating Bots
 
 ### Future `linkedin-content-orchestrator`

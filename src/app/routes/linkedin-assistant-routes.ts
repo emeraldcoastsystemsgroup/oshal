@@ -22,6 +22,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review gap-list round2: publisher now resolves the author-id urn from the SAME personal∪shared connection row (resolveConnectionRow) the broker token comes from, instead of a caller-only `WHERE user_sub` query — a user on a household-shared LinkedIn grant now gets a consistent token + author id rather than a misleading "missing author id" skip.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Publish now runs through the CONNECTOR WRITE-ACTION EXECUTOR (runConnectorAction against the create-post action on swarm-apps/connectors/linkedin.yaml) instead of a bespoke fetch() to /v2/ugcPosts. Same brokered caller token, same clean no-connection skip, but the params are validated against the declared schema before any HTTP, the risky-write confirm gate is the shared one, and every attempt writes a connector_action_audit row (migration 083) — a public post on someone's behalf now leaves a trail. The confirm signal is passed because approval already happened upstream: the surface only reaches publish from an APPROVED draft.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Queue-created drafts may retain a bounded citation list and originating ticket provenance; interactive drafts continue to use the same owner-scoped assistant lifecycle.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Publish provenance: the publisher receives the draft id, source ticket and citations, returns the canonical params hash of the create-post call (the value connector_action_audit stores) on every outcome that reached the executor, and logs one line joining draft, ticket and audit hash. A queue-created draft's outcome is written back to its source ticket. The router and publisher accept an injected LinkedIn connector spec so a real-boundary spec can point the declared action at a local provider double; production loads swarm-apps/connectors/linkedin.yaml as before.
  * ---------------------------------------------------------------------------
  * @module linkedin-assistant-routes
  */
@@ -41,12 +42,14 @@ import {
   type DraftPublisher,
   type Grader,
   type GradeResult,
+  type PublishContext,
   type PublishOutcome,
 } from '@/features/linkedin-assistant';
 import {
-  loadConnectorSpec, resolveConnectorActionCreds, runConnectorAction,
-  type ConnectorActionAuditPool, type ConnectorSpec,
+  hashConnectorActionParams, loadConnectorSpec, resolveConnectorActionCreds, runConnectorAction,
+  type ConnectorActionAuditPool, type ConnectorSpec, type SpecRouteResult,
 } from '@/app/connectors/runtime';
+import { createTicketPublishRecorder } from '@/app/linkedin-content-ticket-provenance';
 import { getValidAccessToken } from './connectors-routes';
 import { resolveConnectionRow } from './connector-tenancy';
 import { executeBotOrInline } from './inline-bot-execution';
@@ -173,6 +176,39 @@ function linkedinConnectorSpec(): ConnectorSpec | null {
 }
 
 /**
+ * @description Options for {@link buildPublisher}. `spec` replaces the LinkedIn connector definition
+ * loaded from swarm-apps/connectors/linkedin.yaml. Production passes nothing; the real-boundary
+ * integration spec passes the SAME loaded definition with its baseUrl pointed at a local provider
+ * double, so the declared action, schema, headers, confirm gate and audit trail all stay real.
+ */
+export interface LinkedInPublisherOptions {
+  spec?: ConnectorSpec | null;
+}
+
+/** The skip a caller with no usable LinkedIn connection gets: nothing is sent, nothing is faked. */
+const NOT_CONNECTED: PublishOutcome = {
+  ok: false, skipped: true, code: 409, message: 'Connect LinkedIn at /utilities to publish. Your draft stays scheduled.',
+};
+
+/**
+ * @description Map the executor's result onto the assistant's publish outcome. Every outcome here
+ * reached the executor, so each carries the params hash its connector_action_audit rows hold.
+ * @param result - What runConnectorAction returned.
+ * @param paramsHash - Canonical hash of the params the call was made with.
+ * @returns The publish outcome.
+ */
+function publishOutcomeFrom(result: SpecRouteResult, paramsHash: string): PublishOutcome {
+  const body = result.body as { ok?: boolean; code?: string; error?: string; data?: { id?: string } };
+  if (result.status === 200 && body.ok) {
+    return { ok: true, postId: body.data?.id ?? null, paramsHash };
+  }
+  // The executor's own not-connected outcome maps to the SAME clean skip, so the two paths that can
+  // discover a missing credential (row lookup, broker resolution inside) behave identically.
+  if (body.code === 'not_connected') return { ...NOT_CONNECTED, paramsHash };
+  return { ok: false, code: result.status >= 400 ? result.status : 502, message: body.error || 'LinkedIn rejected the post.', paramsHash };
+}
+
+/**
  * @description Build the LinkedIn publisher bound to a caller — sends the EXACT approved text to the
  * caller's own LinkedIn through the connector WRITE-ACTION EXECUTOR (the `create-post` action on
  * swarm-apps/connectors/linkedin.yaml), not a bespoke fetch. The executor is the sanctioned home for
@@ -185,16 +221,20 @@ function linkedinConnectorSpec(): ConnectorSpec | null {
  * a draft the person already approved, and the route itself is confirm-gated. Re-prompting here would
  * ask the same human the same question twice.
  *
+ * The publish context names the draft, its queue ticket and its citations. It never changes the
+ * text; it is logged with the params hash so one line joins draft, ticket and audit rows.
+ *
  * A missing connection (or missing author id) still returns a clean SKIP the surface shows as
  * "connect LinkedIn to publish" — never a faked success.
  * Exported for its guard (tests/unit/connectors/connector-write-actions.spec.ts): the fail-closed
  * audit property can only be proven by driving the real publisher.
  * @param ctx - App context (pool for the broker + the audit trail).
+ * @param options - Optional connector spec override (see {@link LinkedInPublisherOptions}).
  * @returns A {@link DraftPublisher}.
  */
-export function buildPublisher(ctx: AppContext): DraftPublisher {
-  return async (sub, text): Promise<PublishOutcome> => {
-    const spec = linkedinConnectorSpec();
+export function buildPublisher(ctx: AppContext, options: LinkedInPublisherOptions = {}): DraftPublisher {
+  return async (sub: string, text: string, context: PublishContext): Promise<PublishOutcome> => {
+    const spec = options.spec ?? linkedinConnectorSpec();
     if (!spec) {
       return { ok: false, code: 502, message: 'LinkedIn connector definition is unavailable — publish is disabled until it loads.' };
     }
@@ -202,9 +242,7 @@ export function buildPublisher(ctx: AppContext): DraftPublisher {
     // token uses, and take the author id (urn) from THAT row — otherwise a user whose only LinkedIn
     // grant is household-shared gets a token but no author id and a misleading skip.
     const conn = await resolveConnectionRow(ctx.pool, sub, 'linkedin');
-    if (!conn) {
-      return { ok: false, skipped: true, code: 409, message: 'Connect LinkedIn at /utilities to publish. Your draft stays scheduled.' };
-    }
+    if (!conn) return { ...NOT_CONNECTED };
     if (!conn.account_id) {
       return { ok: false, skipped: true, code: 409, message: 'Reconnect LinkedIn at /utilities (missing author id). Your draft stays scheduled.' };
     }
@@ -223,16 +261,12 @@ export function buildPublisher(ctx: AppContext): DraftPublisher {
       params,
       requestBody: { confirm: true },
     });
-    const body = result.body as { ok?: boolean; code?: string; error?: string; data?: { id?: string } };
-    if (result.status === 200 && body.ok) {
-      return { ok: true, postId: body.data?.id ?? null };
-    }
-    // The executor's own not-connected outcome maps to the SAME clean skip, so the two paths that can
-    // discover a missing credential (row lookup above, broker resolution inside) behave identically.
-    if (body.code === 'not_connected') {
-      return { ok: false, skipped: true, code: 409, message: 'Connect LinkedIn at /utilities to publish. Your draft stays scheduled.' };
-    }
-    return { ok: false, code: result.status >= 400 ? result.status : 502, message: body.error || 'LinkedIn rejected the post.' };
+    const outcome = publishOutcomeFrom(result, hashConnectorActionParams(params));
+    logger.info({
+      sub, draftId: context.draftId, sourceTicketId: context.sourceTicketId, citationCount: context.sourceCitations.length,
+      paramsHash: outcome.paramsHash, status: result.status, ok: outcome.ok,
+    }, 'LinkedIn publish attempt settled through the connector write-action executor');
+    return outcome;
   };
 }
 
@@ -262,18 +296,21 @@ function statusForError(err: unknown): number {
 /**
  * @description Build the auth-gated LinkedIn assistant router. Mount:
  * `app.use('/api/linkedin-assistant', requiresAuth, createLinkedInAssistantRoutes(ctx, apiDir))`.
- * @param ctx - App context (orchestrator + Postgres pool).
+ * @param ctx - App context (orchestrator + Postgres pool + ticket service for queue write-back).
  * @param apiDir - Directory holding the HTML surfaces.
+ * @param options - Optional publisher options (see {@link LinkedInPublisherOptions}).
  * @returns The Express router.
  */
-export function createLinkedInAssistantRoutes(ctx: AppContext, apiDir: string): Router {
+export function createLinkedInAssistantRoutes(ctx: AppContext, apiDir: string, options: LinkedInPublisherOptions = {}): Router {
   const router = Router();
   const store = new ContentDraftStore(ctx.pool);
   store.ensureSchema().catch((err) => logger.error({ err }, 'linkedin-assistant schema bootstrap failed'));
-  const publisher = buildPublisher(ctx);
+  const publisher = buildPublisher(ctx, options);
+  const recordPublishOutcome = createTicketPublishRecorder(ctx.ticketService);
 
-  const serviceFor = (sub: string): LinkedInContentService =>
-    new LinkedInContentService({ store, generator: buildGenerator(ctx, sub), grader: buildGrader(ctx, sub), publisher });
+  const serviceFor = (sub: string): LinkedInContentService => new LinkedInContentService({
+    store, generator: buildGenerator(ctx, sub), grader: buildGrader(ctx, sub), publisher, recordPublishOutcome,
+  });
 
   router.get('/panel', servePage(apiDir, 'linkedin-assistant.html'));
 

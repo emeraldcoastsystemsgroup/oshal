@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The LinkedIn AI Content Assistant orchestration: generate a draft on the accountable social-writer bot -> grade it on the shared quality-judge against the LinkedIn rubric -> if it misses the bar (SOCIAL_JUDGE_BAR) run exactly ONE refine pass and keep the better version -> persist as a pending-approval draft. Plus the approve->schedule / reject / publish-now transitions, all funneled through the pure state machine so publish is impossible unless approved and a rejected draft is terminal. LLM transport (bot draft, judge) and the LinkedIn publish are injected so the whole flow is unit-testable under noop with zero cost.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review gap-list round2: (1) publishNow now atomically CLAIMS the scheduled draft (casState scheduled->published) BEFORE the live LinkedIn POST so two concurrent publishes can't both fire a UGC post; on skip/error/throw it releases the claim back to scheduled. (2) createDraft wraps the best-effort refine pass in try/catch — a refine bot/judge failure now keeps the already-graded first version and still persists pending-approval instead of orphaning an ungraded 'draft' row.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Carry interactive source citations into the persisted draft record; queue-originated drafts use the same store fields plus sourceTicketId.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Publish provenance through the publish boundary: the publisher receives the draft id, source ticket and citations (PublishContext); the returned post id and audited params hash are persisted on the draft (success) or the params hash alone (a failed attempt that reached the executor); and an injected recorder writes the outcome back to the queue ticket that produced the draft. The write-back is best-effort and logged, because the draft row already holds the authoritative record and a live post cannot be reported as failed.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -13,6 +14,7 @@ import {
   LINKEDIN_RUBRIC,
   type DraftGenerationInput,
   type GradeResult,
+  type PublishContext,
   type PublishOutcome,
   type SocialContentDraft,
 } from '../types';
@@ -43,8 +45,17 @@ export type Grader = (args: { task: string; output: string; rubric: readonly str
 /**
  * @description Publishes approved text to the caller's LinkedIn via their broker token. Injected
  * so the app layer owns the connector call and returns a clean skip when LinkedIn isn't connected.
+ * The text is sent verbatim; `context` is provenance only (which draft, queue ticket and citations
+ * the write belongs to). An outcome that reached the connector executor carries its params hash.
  */
-export type DraftPublisher = (userSub: string, text: string) => Promise<PublishOutcome>;
+export type DraftPublisher = (userSub: string, text: string, context: PublishContext) => Promise<PublishOutcome>;
+
+/**
+ * @description Writes a publish outcome back to the queue ticket that produced the draft. Injected
+ * so the app layer owns ticket access (this feature cannot import ticketing). Called only for a
+ * draft with a sourceTicketId.
+ */
+export type PublishOutcomeRecorder = (userSub: string, draft: SocialContentDraft, outcome: PublishOutcome) => Promise<void>;
 
 /** Construction dependencies for {@link LinkedInContentService}. */
 export interface LinkedInContentServiceDeps {
@@ -52,6 +63,8 @@ export interface LinkedInContentServiceDeps {
   generator: DraftGenerator;
   grader: Grader;
   publisher: DraftPublisher;
+  /** Optional queue-ticket write-back for drafts that came from a ticket. */
+  recordPublishOutcome?: PublishOutcomeRecorder;
   /** Raw SOCIAL_JUDGE_BAR value (default resolves to 75). */
   judgeBar?: string;
   /** Raw SOCIAL_POST_SLOT_HOUR value (default resolves to 9). */
@@ -78,6 +91,7 @@ export class LinkedInContentService {
   private readonly generator: DraftGenerator;
   private readonly grader: Grader;
   private readonly publisher: DraftPublisher;
+  private readonly recordPublishOutcome?: PublishOutcomeRecorder;
   private readonly bar: number;
   private readonly slotHour: number;
 
@@ -90,6 +104,7 @@ export class LinkedInContentService {
     this.generator = deps.generator;
     this.grader = deps.grader;
     this.publisher = deps.publisher;
+    this.recordPublishOutcome = deps.recordPublishOutcome;
     this.bar = resolveJudgeBar(deps.judgeBar ?? process.env.SOCIAL_JUDGE_BAR);
     this.slotHour = Number(deps.slotHour ?? process.env.SOCIAL_POST_SLOT_HOUR);
   }
@@ -177,7 +192,9 @@ export class LinkedInContentService {
    * @description Publish an approved draft now. Publish is legal ONLY from `scheduled`
    * (assertTransition enforces "not approved → can't publish"). On a clean skip (LinkedIn not
    * connected) the draft STAYS scheduled and the skip message is recorded — nothing is faked. On
-   * success it moves to `published`. On a hard error it stays scheduled with the error recorded.
+   * success it moves to `published` and records the post id and the audited params hash. On a hard
+   * error it stays scheduled with the error recorded. A queue-originated draft also gets the
+   * outcome written back to its source ticket.
    * @param userSub - Owner OIDC sub.
    * @param id - Draft id.
    * @returns The publish outcome + the resulting draft (or null when the id isn't the caller's).
@@ -199,24 +216,81 @@ export class LinkedInContentService {
         draft: current ?? draft,
       };
     }
+    const context: PublishContext = { draftId: draft.id, sourceTicketId: draft.sourceTicketId, sourceCitations: draft.sourceCitations };
     let outcome: PublishOutcome;
     try {
-      outcome = await this.publisher(userSub, draft.body);
+      outcome = await this.publisher(userSub, draft.body, context);
     } catch (err) {
       // Publisher threw — release the claim back to scheduled with the error, then rethrow so the
       // route surfaces a 502 and the draft is not left stranded in 'published' with no live post.
-      await this.store.casState(userSub, id, 'published', 'scheduled', { publishError: (err as Error)?.message ?? 'publish failed' });
+      const message = (err as Error)?.message ?? 'publish failed';
+      const released = await this.store.casState(userSub, id, 'published', 'scheduled', { publishError: message });
       logger.error({ err, stack: (err as Error)?.stack, userSub, draftId: id }, 'Publisher threw — draft released back to scheduled');
+      await this.noteSourceTicket(userSub, released ?? draft, { ok: false, message });
       throw err;
     }
+    const settled = await this.settlePublish(userSub, draft, claimed, outcome);
+    await this.noteSourceTicket(userSub, settled, outcome);
+    return { outcome, draft: settled };
+  }
+
+  /**
+   * @description Persist what a finished publish attempt produced. Success keeps the claimed
+   * `published` state and records the post id plus the audited params hash; a skip or failure
+   * releases the claim back to `scheduled` with the reason, and still records the params hash when
+   * the attempt reached the connector executor (its audit rows carry that hash). A provenance write
+   * that fails after a live post is logged, never reported as a failed publish.
+   * @param userSub - Owner OIDC sub.
+   * @param draft - The draft as read before the claim.
+   * @param claimed - The draft as claimed (state `published`).
+   * @param outcome - What the publisher returned.
+   * @returns The draft as it now stands.
+   */
+  private async settlePublish(
+    userSub: string,
+    draft: SocialContentDraft,
+    claimed: SocialContentDraft,
+    outcome: PublishOutcome,
+  ): Promise<SocialContentDraft> {
+    const id = draft.id;
+    let current: SocialContentDraft = claimed;
     if (outcome.ok) {
-      logger.info({ userSub, draftId: id, postId: outcome.postId }, 'Draft published to LinkedIn');
-      return { outcome, draft: claimed };
+      logger.info({ userSub, draftId: id, postId: outcome.postId, paramsHash: outcome.paramsHash }, 'Draft published to LinkedIn');
+    } else {
+      const kept = await this.store.casState(userSub, id, 'published', 'scheduled', { publishError: outcome.message ?? 'publish failed' });
+      logger.warn({ userSub, draftId: id, skipped: outcome.skipped, message: outcome.message }, 'Publish not completed — draft released back to scheduled');
+      current = kept ?? draft;
     }
-    // Skip or clean failure: release the claim back to scheduled, record the reason so the operator can act.
-    const kept = await this.store.casState(userSub, id, 'published', 'scheduled', { publishError: outcome.message ?? 'publish failed' });
-    logger.warn({ userSub, draftId: id, skipped: outcome.skipped, message: outcome.message }, 'Publish not completed — draft released back to scheduled');
-    return { outcome, draft: kept ?? draft };
+    const postId = outcome.ok ? outcome.postId ?? null : null;
+    const paramsHash = outcome.paramsHash ?? null;
+    if (postId === null && paramsHash === null) return current;
+    try {
+      return (await this.store.recordPublishProvenance(userSub, id, { postId, paramsHash })) ?? current;
+    } catch (err) {
+      logger.error({ err, stack: (err as Error)?.stack, userSub, draftId: id, ok: outcome.ok }, 'Publish provenance could not be recorded on the draft');
+      return current;
+    }
+  }
+
+  /**
+   * @description Write the outcome back to the queue ticket that produced the draft. Best-effort:
+   * the draft row is the authoritative record, so a failed write-back is logged at ERROR and never
+   * changes the publish result.
+   * @param userSub - Owner OIDC sub.
+   * @param draft - The draft as it now stands.
+   * @param outcome - What the publish attempt produced.
+   * @returns Resolves once the write-back finished or was logged as failed.
+   */
+  private async noteSourceTicket(userSub: string, draft: SocialContentDraft, outcome: PublishOutcome): Promise<void> {
+    if (!draft.sourceTicketId || !this.recordPublishOutcome) return;
+    try {
+      await this.recordPublishOutcome(userSub, draft, outcome);
+    } catch (err) {
+      logger.error(
+        { err, stack: (err as Error)?.stack, userSub, draftId: draft.id, sourceTicketId: draft.sourceTicketId },
+        'Publish outcome could not be written back to the source ticket',
+      );
+    }
   }
 
   /**
