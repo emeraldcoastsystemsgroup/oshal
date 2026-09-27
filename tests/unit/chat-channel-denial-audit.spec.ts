@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for BACKLOG "Chat-channel adapter core" (denial audit + cross-user rebind). The claim is about two database boundaries, so both are real here: the channel identity store runs as a NOSUPERUSER NOBYPASSRLS role over the GUC-stamped pool with migration 112's forced owner RLS on channel_links/channel_link_codes, and every refusal lands through the production chokepoint in the real PostgresRefusalStore (migration 155). Only the bot turn and the provider send are doubled. It proves one refusal row per denial on Telegram, Discord, SMS and WhatsApp (unlinked sender, refused code, cross-user rebind), that no raw channel identity is stored, that the rows are operator-only, that a bound identity is never moved by another user's code (it used to be silently re-pointed, and under forced RLS the same upsert raised), and that a same-user relink still works.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Link codes are minted with the owner's verified issuer, as the auth-gated route now requires.
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -38,6 +39,7 @@ const ROLE = 'oshal_app';
 const ALICE = 'auth0|channel-alice';
 const BOB = 'auth0|channel-bob';
 const OSHAL_NUMBER = '+15559990000';
+const ISSUER = 'https://identity.oshal.example.com';
 
 const fixture = new DisposablePostgres({
   purpose: 'chat-channel-denial-audit',
@@ -88,7 +90,7 @@ async function deliver(provider: Provider, text: string, identity = IDENTITY[pro
 
 /** Mint a code as the signed-in owner, exactly as the auth-gated route does. */
 function mint(sub: string, provider: Provider): Promise<string> {
-  return runWithRequestIdentity({ sub, isOperator: false }, () => links.mintLinkCode(sub, provider));
+  return runWithRequestIdentity({ sub, principalIssuer: ISSUER, isOperator: false }, () => links.mintLinkCode(sub, provider, ISSUER));
 }
 
 /** The link command each provider's user sends. */

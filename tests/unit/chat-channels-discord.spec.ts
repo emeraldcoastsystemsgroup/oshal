@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — Discord DM adapter guards: DM-only Gateway parsing, IDENTIFY over an injected socket, verified channel type when channel_type is omitted, and LINK-before-lookup processing with single dispatch per event.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The link port now returns a ChannelLinkRedemption; the processor's refusals (unlinked sender, invalid code, cross-user rebind) are asserted through the audit hook, and a rebind gets its own reply. The real Postgres + real Gateway protocol acceptance lives in chat-channel-inbound-postgres.spec.ts.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The fake link store reports the owner's verified issuer, as a real link now carries one; a link without one is refused before dispatch (proven against real Postgres in chat-channel-principal-issuer.spec.ts).
  */
 import { describe, expect, it } from 'vitest';
 import {
@@ -98,7 +99,7 @@ describe('Discord direct-message channel adapter', () => {
       },
       async resolveLink(provider: string, userId: string) {
         calls.push(`resolve:${provider}:${userId}`);
-        return owner ? { userSub: owner } : null;
+        return owner ? { userSub: owner, userIssuer: 'https://identity.oshal.example.com' } : null;
       },
       async claimInboundMessage(sub: string, provider: string, eventId: string) {
         calls.push(`claim:${sub}:${provider}:${eventId}`);

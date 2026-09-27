@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for BACKLOG "Twilio policy, fallback, and inbound messaging" — the inbound leg. Inbound SMS previously reached only a log sink, so nothing mapped a phone number to a user and nothing dispatched. The claim is an IDENTITY claim about a row, so the binding is exercised against a real Postgres through the real ChannelLinkService and the real signed webhook over real HTTP: only a doubled bot node and a doubled Twilio reply stand in, because neither is the boundary that failed. The negative cases are what keep it honest — an unlinked number must reach NOBODY, a forged signature must not dispatch or write a link, one user's number must never resolve to another's sub, and a consumed code must not bind a second number.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | BACKLOG "Chat-channel adapter core": WhatsApp over the same real signed webhook (From/To whatsapp:+E164) — link, dispatch and a reply that leaves from the WhatsApp sender the user messaged; SMS and WhatsApp bindings never authorize each other; a retried MessageSid runs once; an unlinked WhatsApp sender is refused with a refusal-ledger row (real PostgresRefusalStore, migration 155); and a number bound to one user is not moved by another user's code — on this owner connection (no RLS) the old upsert silently re-pointed it.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Link codes are minted with the owner's verified issuer, as the auth-gated route now requires.
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -43,6 +44,7 @@ const ALICE_PHONE = '+15551110001';
 const BOB_PHONE = '+15552220002';
 const STRANGER_PHONE = '+15553330003';
 const WHATSAPP_SENDER = '+14155238886';
+const ISSUER = 'https://identity.oshal.example.com';
 
 /** One recorded swarm turn: who it ran for, and whose identity was ambient while it ran. */
 interface DispatchRecord {
@@ -159,14 +161,14 @@ async function ownerOf(number: string, provider = SMS_CHANNEL_PROVIDER): Promise
 
 /** Bind a number to a user the way the product does: mint a code, text it in. */
 async function linkNumber(userSub: string, number: string): Promise<void> {
-  const code = await links.mintLinkCode(userSub, SMS_CHANNEL_PROVIDER);
+  const code = await links.mintLinkCode(userSub, SMS_CHANNEL_PROVIDER, ISSUER);
   const res = await postInbound(payload(number, `LINK ${code}`));
   expect(res.body).toContain(SMS_LINKED_REPLY);
 }
 
 describe('inbound SMS binds a number to a user through the channel adapter', () => {
   it('redeems a minted code over the real signed webhook and writes the binding to Postgres', async () => {
-    const code = await links.mintLinkCode(ALICE, SMS_CHANNEL_PROVIDER);
+    const code = await links.mintLinkCode(ALICE, SMS_CHANNEL_PROVIDER, ISSUER);
     const res = await postInbound(payload(ALICE_PHONE, `LINK ${code}`));
     expect(res.status).toBe(200);
     expect(res.body).toContain(SMS_LINKED_REPLY);
@@ -175,7 +177,7 @@ describe('inbound SMS binds a number to a user through the channel adapter', () 
   });
 
   it('refuses a code that was already consumed, so a second number cannot claim it', async () => {
-    const code = await links.mintLinkCode(ALICE, SMS_CHANNEL_PROVIDER);
+    const code = await links.mintLinkCode(ALICE, SMS_CHANNEL_PROVIDER, ISSUER);
     await postInbound(payload(ALICE_PHONE, `LINK ${code}`));
     const second = await postInbound(payload(BOB_PHONE, `LINK ${code}`));
     expect(second.body).toContain(SMS_LINK_FAILED_REPLY);
@@ -183,7 +185,7 @@ describe('inbound SMS binds a number to a user through the channel adapter', () 
   });
 
   it('normalizes the number on both sides, so a separated form is the same identity', async () => {
-    const code = await links.mintLinkCode(ALICE, SMS_CHANNEL_PROVIDER);
+    const code = await links.mintLinkCode(ALICE, SMS_CHANNEL_PROVIDER, ISSUER);
     await postInbound(payload('+1 (555) 111-0001', `link ${code}`));
     expect(await ownerOf(ALICE_PHONE)).toBe(ALICE);
 
@@ -283,7 +285,7 @@ describe('a forged webhook reaches nothing', () => {
   });
 
   it('rejects an unsigned link attempt and writes no binding', async () => {
-    const code = await links.mintLinkCode(ALICE, SMS_CHANNEL_PROVIDER);
+    const code = await links.mintLinkCode(ALICE, SMS_CHANNEL_PROVIDER, ISSUER);
     const response = await fetch(`${baseUrl}/api/sms/inbound`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -296,7 +298,7 @@ describe('a forged webhook reaches nothing', () => {
 
 describe('WhatsApp over the same signed webhook', () => {
   it('links, dispatches as the owner, and answers from the WhatsApp sender the user messaged', async () => {
-    const code = await links.mintLinkCode(ALICE, WHATSAPP_CHANNEL_PROVIDER);
+    const code = await links.mintLinkCode(ALICE, WHATSAPP_CHANNEL_PROVIDER, ISSUER);
     const linked = await postInbound(whatsapp(ALICE_PHONE, `LINK ${code}`));
     expect(linked.body).toContain(SMS_LINKED_REPLY);
     expect(await ownerOf(ALICE_PHONE, WHATSAPP_CHANNEL_PROVIDER)).toBe(ALICE);
@@ -315,7 +317,7 @@ describe('WhatsApp over the same signed webhook', () => {
     const onWhatsApp = await postInbound(whatsapp(ALICE_PHONE, 'hello'));
     expect(onWhatsApp.body).toContain(SMS_UNLINKED_REPLY);
 
-    await postInbound(whatsapp(BOB_PHONE, `LINK ${await links.mintLinkCode(BOB, WHATSAPP_CHANNEL_PROVIDER)}`));
+    await postInbound(whatsapp(BOB_PHONE, `LINK ${await links.mintLinkCode(BOB, WHATSAPP_CHANNEL_PROVIDER, ISSUER)}`));
     const onSms = await postInbound(payload(BOB_PHONE, 'hello'));
     expect(onSms.body).toContain(SMS_UNLINKED_REPLY);
     await settle();
@@ -325,13 +327,13 @@ describe('WhatsApp over the same signed webhook', () => {
   });
 
   it('an SMS code cannot link WhatsApp', async () => {
-    const res = await postInbound(whatsapp(ALICE_PHONE, `LINK ${await links.mintLinkCode(ALICE, SMS_CHANNEL_PROVIDER)}`));
+    const res = await postInbound(whatsapp(ALICE_PHONE, `LINK ${await links.mintLinkCode(ALICE, SMS_CHANNEL_PROVIDER, ISSUER)}`));
     expect(res.body).toContain(SMS_LINK_FAILED_REPLY);
     expect(await ownerOf(ALICE_PHONE, WHATSAPP_CHANNEL_PROVIDER)).toBeNull();
   });
 
   it('runs a retried WhatsApp MessageSid once', async () => {
-    await postInbound(whatsapp(ALICE_PHONE, `LINK ${await links.mintLinkCode(ALICE, WHATSAPP_CHANNEL_PROVIDER)}`));
+    await postInbound(whatsapp(ALICE_PHONE, `LINK ${await links.mintLinkCode(ALICE, WHATSAPP_CHANNEL_PROVIDER, ISSUER)}`));
     const repeated = whatsapp(ALICE_PHONE, 'summarize my day', 'SMwhatsapprepeat');
     await postInbound(repeated);
     await postInbound(repeated);
@@ -360,7 +362,7 @@ describe('WhatsApp over the same signed webhook', () => {
 describe('a bound number is never moved by another user\'s code', () => {
   it('refuses the rebind, keeps the owner, and audits both subjects', async () => {
     await linkNumber(ALICE, ALICE_PHONE);
-    const res = await postInbound(payload(ALICE_PHONE, `LINK ${await links.mintLinkCode(BOB, SMS_CHANNEL_PROVIDER)}`));
+    const res = await postInbound(payload(ALICE_PHONE, `LINK ${await links.mintLinkCode(BOB, SMS_CHANNEL_PROVIDER, ISSUER)}`));
     expect(res.body).toContain(SMS_REBIND_REFUSED_REPLY);
     expect(await ownerOf(ALICE_PHONE)).toBe(ALICE);
     const { rows } = await pool.query('SELECT code, metadata FROM oshal_refusals');
