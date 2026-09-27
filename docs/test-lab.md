@@ -129,18 +129,20 @@ Jarvis) has three read-only steps:
   and stay on escaped text, so a missing or older bundle is reported as a deployment gap;
 - the same-origin Mermaid runtime is served from `/dist/vendor/mermaid` at an exact version
   (a gap when the image predates the vendoring);
-- a hostile reply (remote gallery image, arbitrary download link, forged `oshal:provider-record`
-  and `artifact:image` fences) rendered in the server process through that profile produces no
-  image, link or URL-bearing attribute, keeps the gallery and download as visible escaped
-  fallbacks, and never parses a forged fence as a trusted block.
+- the renderer's own conformance reply, `SHARED_UNTRUSTED_RESPONSE` (remote gallery image,
+  arbitrary download link, forged `oshal:provider-record` and `artifact:image` fences), rendered in
+  the server process through that profile produces no image, link or URL-bearing attribute and
+  exactly its expected block sequence: the gallery and download stay visible escaped fallbacks and
+  no forged fence parses as a trusted block.
 
 Run the linked suites locally with `npm run test:response-renderer`. The Chromium suite
 (`tests/unit/shared-response-surfaces-browser.spec.ts`) loads the unmodified `jarvis.html` and the
 real chat bubble module, bundles the renderer from source and vendors Mermaid with the build's own
-step. It proves that one shared reply (`tests/fixtures/shared-untrusted-response.json`) renders to
-the identical block sequence on both surfaces, that nothing requests the hostile host or any CDN,
-and that the diagram hydrates same-origin or stays readable text when the runtime is missing. That
-is local evidence. Registration in source does not mean the card has run on the deployed instance.
+step. It proves that the same conformance reply renders to the identical block sequence on both
+surfaces, that nothing requests the hostile host or any CDN, and that the diagram hydrates
+same-origin or stays readable text when the runtime is missing. The Little Monsters Tutor runs the
+same vector in the store (`little-monsters/tests/tutor-renderer.core.spec.mjs`). That is local
+evidence. Registration in source does not mean the card has run on the deployed instance.
 
 ---
 

@@ -3,16 +3,16 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for DISPLAY_ONLY_RESPONSE_CAPABILITIES, the profile Jarvis, the chat bubble and the Tutor pass for untrusted model text: it is a subset of the standard registry, every registered kind is explicitly classified (a new kind cannot silently join), no display-only component emits a URL-bearing attribute, link, image, form or action, and the shared untrusted fixture renders to the expected block sequence with its hostile gallery/download inert — while the same reply WITHOUT the profile does load the hostile image, proving the profile is what closes it.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for DISPLAY_ONLY_RESPONSE_CAPABILITIES, the profile Jarvis, the chat bubble and the Tutor pass for untrusted model text: it is a subset of the standard registry, every registered kind is explicitly classified (a new kind cannot silently join), no display-only component emits a URL-bearing attribute, link, image, form or action, and the shared SHARED_UNTRUSTED_RESPONSE conformance vector renders to its expected block sequence (summarizeRenderedBlocks) with its hostile gallery/download inert — while the same reply WITHOUT the profile does load the hostile image, proving the profile is what closes it.
  */
 
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   DISPLAY_ONLY_RESPONSE_CAPABILITIES,
+  SHARED_UNTRUSTED_RESPONSE,
   createStandardResponseRegistry,
   renderResponseHtml,
+  summarizeRenderedBlocks,
   type RenderableResponseBlock,
 } from '../../src/shared/ui/response-renderer';
 
@@ -29,26 +29,6 @@ const SAMPLE_BLOCKS: Record<string, RenderableResponseBlock> = {
   'oshal:map': { type: 'oshal', kind: 'map', data: { markers: [{ lat: 30.4, lon: -87.2, label: 'https://attacker.example' }] }, raw: '{}' },
   'oshal:doc': { type: 'oshal', kind: 'doc', data: { title: 'T', sections: [{ heading: 'H', paragraphs: ['https://attacker.example/x'] }] }, raw: '{}' },
 };
-
-function sharedFixture(): { text: string; hostileHost: string; expectedBlocks: Array<{ role: string; kind: string | null }> } {
-  const raw = JSON.parse(readFileSync(path.resolve(__dirname, '../fixtures/shared-untrusted-response.json'), 'utf8'));
-  return { text: raw.lines.join('\n'), hostileHost: raw.hostileHost, expectedBlocks: raw.expectedBlocks };
-}
-
-/** Top-level block roles in rendered order, read from the composed HTML string. */
-function roles(html: string): Array<{ role: string; kind: string | null }> {
-  const out: Array<{ role: string; kind: string | null }> = [];
-  const open = /<(?:div|pre|figure|article) class="([^"]*\brr-block\b[^"]*)"(?:\s+data-oshal-kind="([^"]*)")?/g;
-  let match: RegExpExecArray | null;
-  while ((match = open.exec(html)) !== null) {
-    const classes = match[1].split(/\s+/);
-    const role = classes.includes('rr-fallback')
-      ? 'fallback'
-      : (classes.find((c) => c.startsWith('rr-') && c !== 'rr-block') || 'unknown').slice(3);
-    out.push({ role, kind: match[2] ?? null });
-  }
-  return out;
-}
 
 describe('DISPLAY_ONLY_RESPONSE_CAPABILITIES', () => {
   it('is a frozen subset of the standard registry and excludes every URL-bearing kind', () => {
@@ -76,15 +56,15 @@ describe('DISPLAY_ONLY_RESPONSE_CAPABILITIES', () => {
 
 describe('shared untrusted fixture through the display-only profile', () => {
   it('renders the expected block sequence with hostile gallery/download as escaped fallbacks', async () => {
-    const shared = sharedFixture();
+    const shared = SHARED_UNTRUSTED_RESPONSE;
     const { html } = await renderResponseHtml(shared.text, { capabilities: DISPLAY_ONLY_RESPONSE_CAPABILITIES });
-    expect(roles(html)).toEqual(shared.expectedBlocks);
+    expect(summarizeRenderedBlocks(html)).toEqual(shared.expectedBlocks);
     expect(html).not.toMatch(/<img|<a[\s>]|href=|src=/);
     expect(html).toContain(`${shared.hostileHost}/beacon.png`); // visible as escaped text only
   });
 
   it('WITHOUT the profile the same reply would load the hostile image and link (the profile is load-bearing)', async () => {
-    const shared = sharedFixture();
+    const shared = SHARED_UNTRUSTED_RESPONSE;
     const { html } = await renderResponseHtml(shared.text);
     expect(html).toContain(`src="https://${shared.hostileHost}/beacon.png`);
     expect(html).toContain(`href="https://${shared.hostileHost}/payload.exe"`);

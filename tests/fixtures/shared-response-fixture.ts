@@ -3,13 +3,14 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Shared-response-renderer browser fixture: the one untrusted reply every consumer renders (tests/fixtures/shared-untrusted-response.json), the REAL renderer bundled from source the way vite.config.ts bundles it, the REAL vendored mermaid runtime produced by vite.config.ts's own vendorMermaidRuntime into a temp dir, a same-origin chat harness around the REAL swarmbot-messages.js bubble module, and the in-page block normalizer both surfaces are compared with.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Shared-response-renderer browser fixture: the one untrusted reply every consumer renders (the renderer's own SHARED_UNTRUSTED_RESPONSE conformance vector), the REAL renderer bundled from source the way vite.config.ts bundles it, the REAL vendored mermaid runtime produced by vite.config.ts's own vendorMermaidRuntime into a temp dir, a same-origin chat harness around the REAL swarmbot-messages.js bubble module, and the in-page block normalizer both surfaces are compared with.
  */
 import { build } from 'esbuild';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Locator, Route } from 'playwright';
+import { SHARED_UNTRUSTED_RESPONSE } from '../../src/shared/ui/response-renderer';
 import { vendorMermaidRuntime } from '../../vite.config';
 
 const ROOT = path.resolve(__dirname, '../..');
@@ -28,15 +29,13 @@ export interface SharedUntrustedResponse {
 }
 
 /**
- * @description Load the shared untrusted reply. It is a data file (not TS) so the store's Tutor
- * proof reads the very same bytes through OSHAL_CORE_DIR.
- * @returns The joined reply text, the hostile host and the expected block sequence.
+ * @description The shared untrusted reply — the renderer's own published conformance vector, so
+ * this guard and the store's Tutor proof (which reads it from the served bundle) use the same bytes.
+ * @returns The reply text, the hostile host and the expected block sequence.
  */
 export function loadSharedUntrustedResponse(): SharedUntrustedResponse {
-  const raw = JSON.parse(readFileSync(path.join(ROOT, 'tests/fixtures/shared-untrusted-response.json'), 'utf8')) as {
-    lines: string[]; hostileHost: string; expectedBlocks: ExpectedBlock[];
-  };
-  return { text: raw.lines.join('\n'), hostileHost: raw.hostileHost, expectedBlocks: raw.expectedBlocks };
+  const { text, hostileHost, expectedBlocks } = SHARED_UNTRUSTED_RESPONSE;
+  return { text, hostileHost, expectedBlocks: expectedBlocks.map((block) => ({ ...block })) };
 }
 
 /**
