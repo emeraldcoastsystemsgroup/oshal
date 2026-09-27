@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Home and Business host their application assemblies: per-host sidebar sections and tile groups, hosted pages opened with the preset audience view (`?view=`), hidden tool prefixes honoured, and a refused tool is a notice never a fetch
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Hosted pages carry `?audience=` instead of `?view=`
  * 4 | maintainer@emeraldcoastsystemsgroup.com | The Studio app panel's relationship to Synthetic finance is now a declared app dependency read from the package record (waited for, never labelled an integration source), and its in-place frame requests the Studio's company audience
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | The learner view is recognised by its open classwork count: the classwork done/total count was removed (Little Monsters records no per-learner completion)
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -185,9 +186,10 @@ describe('experience shells over the real routes', () => {
     expect(text).toContain('Learner One'); expect(text).toContain('Observe a seed'); expect(text).toContain('Manage classwork in Little Monsters');
     expect(await page.locator('img.monster-logo').getAttribute('src')).toBe('/api/education/logo-96.png');
     fixture.state.education.me = { ...fixture.state.education.me, role: 'student' };
-    await page.reload(); await page.waitForFunction(() => document.body.innerText.includes('classwork done'));
+    await page.reload(); await page.waitForFunction(() => document.body.innerText.includes('open classwork item'));
     text = await bodyText();
-    expect(text).not.toContain('A moment for each learner'); expect(text).toContain('classwork done'); expect(text).toContain('Open my checklist');
+    expect(text).not.toContain('A moment for each learner'); expect(text).toContain('1 open classwork item'); expect(text).toContain('Open my checklist');
+    expect(text).not.toContain('classwork done');
     fixture.state.education.meStatus = 404;
     await page.reload(); await page.waitForFunction(() => document.body.innerText.includes('Open Little Monsters to join a class'));
   });

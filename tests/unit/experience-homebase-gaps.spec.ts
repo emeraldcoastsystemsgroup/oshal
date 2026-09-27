@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Drive the homebase gap closure in headless Chromium through the real static route registration over the isolated synthetic swarm: learner activity pills and the class summary from the teacher analytics read (and its 403/404 notes), teacher classwork posted to assignments-with-events with the class picker limited to taught classes and refusals rendered as text, the learner checklist opening My Day in place, the ticket project dialog's approval transition with its refusal and no-approval states, the caller's saved drafts and newest finished Jarvis task with empty and failure states, and "Configure home" hidden for guests.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Integration review: the ticket dialog's Reason and Next action rows appear only when metadata.lastStatusTransition describes the current status (after an approval, and for a mirror of an older state, only State shows); the drafts dialog names Content Studio drafts in its heading, empty and failure copy.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Acceptance fixes: family and company send no /api/education request, and Home no Little Monsters ribbon-profile read, unless Little Monsters' read-only probe answers 200 (and none for an entry outside the plan) while the classroom still reads; authorization refusals read "not available to you", the no-profile refusal says to open Little Monsters once, other refusals show their status; UTC-midnight due and event dates show their own day in America/Chicago; the learner card has no completion count or progress bar; an approval_required ticket leads the six project rows; a timed event shows its day. The context setup moved into openContext so a case can choose a zone and locale.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -22,9 +23,13 @@ const APPROVAL_ID = '33333333-3333-4333-8333-333333333333';
 
 beforeAll(async () => { browser = await chromium.launch({ headless: true }); });
 afterAll(async () => { await browser?.close(); });
-beforeEach(async () => {
-  fixture = await startExperienceBrowserFixture();
-  context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
+/**
+ * @description A browser context over the fixture only (every other origin aborted) with speech stubbed, and its page.
+ * @param zone Optional timezoneId/locale, so a case can read the page as a reader in a US zone would.
+ * @returns Nothing; sets the shared context and page.
+ */
+async function openContext(zone: { timezoneId?: string; locale?: string } = {}) {
+  context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce', ...zone });
   await context.route('**/*', route => new URL(route.request().url()).origin === fixture.origin ? route.continue() : route.abort());
   await context.addInitScript(() => {
     // window.speechSynthesis is a read-only accessor: a plain assignment leaves the real engine in place.
@@ -33,6 +38,10 @@ beforeEach(async () => {
   });
   page = await context.newPage();
   page.setDefaultTimeout(20000);
+}
+beforeEach(async () => {
+  fixture = await startExperienceBrowserFixture();
+  await openContext();
 });
 afterEach(async () => { await context?.close(); await fixture?.close(); });
 
@@ -261,6 +270,144 @@ describe('homebase gap closure over the real routes', () => {
     await page.reload(); await page.waitForSelector('.home-shell'); await page.waitForLoadState('networkidle');
     expect(await page.getByRole('button', { name: /Configure/ }).count()).toBe(0);
     expect(await page.getByRole('button', { name: 'My access' }).count()).toBe(1);
+    expect(errors).toEqual([]);
+  });
+});
+
+/** @description Every request the page sent to a Little Monsters education route, as the fixture's request log saw it. */
+const educationCalls = () => fixture.state.calls.filter(c => c.includes('/api/education/'));
+/** @description Answer a path in the browser with an application-authorization refusal, shaped as the platform's app-access gate writes it. */
+const refuseAsAuthorization = (glob: string) => page.route(glob, route => route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: 'app_access_denied', app: 'little-monsters', tier: 'deny' }) }));
+/** @description A Y-M-D as an en-US reader's calendar prints it, built from its own parts (never through an instant). */
+const onCalendar = (ymd: string, options?: Intl.DateTimeFormatOptions) => { const [y, m, d] = ymd.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString('en-US', options); };
+const moduleText = (name: string) => page.locator(`[data-module="${name}"]`).innerText();
+/** @description Wait until a module's text contains a phrase. */
+const moduleHas = (name: string, text: string) => page.waitForFunction(([n, t]) => (document.querySelector(`[data-module="${n}"]`)?.textContent || '').includes(t), [name, text]);
+
+describe('acceptance fixes: Little Monsters reads, dates, the learner card, projects and the calendar', () => {
+  it('family and company read the Little Monsters probe first and send no /api/education request (nor its ribbon profile) unless it answers 200; the classroom still reads', async () => {
+    // The ribbon profile asks the package's visibility route, which can provision a learner too; the request log drops the query, so watch the browser.
+    const profiles: string[] = [];
+    page.on('request', req => { const u = new URL(req.url()); if (u.pathname === '/api/ui/profile') profiles.push(u.searchParams.get('name') || ''); });
+    fixture.state.status['lm-home-summary'] = 403;
+    for (const preset of ['family', 'company']) {
+      fixture.state.calls.length = 0;
+      await open(`/homebase?preset=${preset}`, '[data-module="calendar"]');
+      await moduleHas('calendar', 'school profile');
+      expect(await moduleText('calendar')).toContain('Open Little Monsters once to set up your school profile.');
+      expect(fixture.state.calls).toContain('GET /api/little-monsters/home-summary');
+      expect(educationCalls()).toEqual([]);
+      if (preset === 'family') expect(await page.locator('.home-sidebar .side-kicker', { hasText: 'LITTLE MONSTERS' }).count()).toBe(0);
+    }
+    expect(profiles).toContain('home'); expect(profiles).not.toContain('little-monsters');
+    fixture.state.calls.length = 0;
+    await open('/homebase?preset=classroom', '[data-module="teacher-roster"]');
+    expect(educationCalls()).toEqual(expect.arrayContaining(['GET /api/education/me', 'GET /api/education/classes', 'GET /api/education/assignments', 'GET /api/education/calendar']));
+    expect(profiles).toContain('little-monsters');
+    // A 200 probe is what lets the family home read the calendar and host the tools, and it is asked first.
+    fixture.state.status['lm-home-summary'] = 200;
+    fixture.state.calls.length = 0; profiles.length = 0;
+    await open('/homebase?preset=family', '[data-module="calendar"] .event');
+    const calls = fixture.state.calls, probeAt = calls.indexOf('GET /api/little-monsters/home-summary');
+    expect(probeAt).toBeGreaterThanOrEqual(0);
+    expect(probeAt).toBeLessThan(calls.findIndex(c => c.includes('/api/education/')));
+    expect(await moduleText('calendar')).toContain('Science circle');
+    expect(profiles).toContain('little-monsters');
+    expect(errors).toEqual([]);
+  });
+
+  it('an authorization refusal or an entry outside the plan reads "not available to you", never "open Little Monsters once"', async () => {
+    await refuseAsAuthorization('**/api/little-monsters/home-summary');
+    fixture.state.calls.length = 0;
+    await open('/homebase?preset=family', '[data-module="calendar"]');
+    await moduleHas('calendar', 'not available to you');
+    expect(await moduleText('calendar')).toContain('Little Monsters is not available to you.');
+    expect(await moduleText('calendar')).not.toMatch(/Open Little Monsters once|learner profile|HTTP 403/);
+    expect(educationCalls()).toEqual([]);
+    await page.unroute('**/api/little-monsters/home-summary');
+    const lm = fixture.state.apps.find(a => a.summary.name === 'little-monsters')!;
+    lm.plan = null;
+    fixture.state.calls.length = 0;
+    await open('/homebase?preset=company', '[data-module="calendar"]');
+    await moduleHas('calendar', 'not available to you');
+    expect(await moduleText('calendar')).toContain('Little Monsters is not available to you.');
+    expect(fixture.state.calls).not.toContain('GET /api/little-monsters/home-summary');
+    expect(educationCalls()).toEqual([]);
+    await page.getByRole('button', { name: 'About this data' }).click();
+    expect(await dialogText()).toContain('Calendar, classes, classwork and rosters: Little Monsters (not available to you).');
+    expect(errors).toEqual([]);
+  });
+
+  it('in the classroom an authorization refusal offers no way in; any other refusal shows its status', async () => {
+    await refuseAsAuthorization('**/api/education/**');
+    await open('/homebase?preset=classroom', '[data-module="learning"]');
+    expect(await moduleText('requirements')).toContain('Little Monsters is not available to you.');
+    expect(await moduleText('calendar')).toContain('Little Monsters is not available to you.');
+    expect(await moduleText('learning')).toContain('Little Monsters is not available to you.');
+    expect(await page.locator('[data-module="learning"] a', { hasText: 'Open Little Monsters' }).count()).toBe(0);
+    expect(await page.evaluate(() => document.body.innerText)).not.toMatch(/Open Little Monsters once|learner profile/);
+    await page.unroute('**/api/education/**');
+    fixture.state.status['lm-home-summary'] = 500;
+    await open('/homebase?preset=family', '[data-module="calendar"]');
+    await moduleHas('calendar', 'could not be read');
+    expect(await moduleText('calendar')).toContain('The calendar could not be read (HTTP 500: Synthetic summary unavailable).');
+  });
+
+  it('date-only due and event dates show the day they name for a reader in a US zone', async () => {
+    const due = `${day(3)}T00:00:00.000Z`, edu = fixture.state.education;
+    edu.me = { ...edu.me, role: 'student' };
+    edu.assignments = [{ assignment_id: 'a9', class_id: 'c1', title: 'Synthetic weather chart', description: 'Synthetic.', status: 'open', due_date: due, class_name: 'Synthetic Science', assignment_type: 'homework' }];
+    edu.events = [
+      { event_id: 'e8', class_id: 'c1', student_id: null, title: 'Synthetic field trip', event_date: `${day(4)}T00:00:00.000Z`, event_time: null as unknown as string, event_type: 'field-trip', class_name: 'Synthetic Science', subject: 'Science' },
+      { event_id: 'e9', class_id: 'c1', student_id: null, title: 'Synthetic lab night', event_date: `${day(5)}T00:00:00.000Z`, event_time: '17:00:00', event_type: 'lab', class_name: 'Synthetic Science', subject: 'Science' },
+    ];
+    await context.close();
+    await openContext({ timezoneId: 'America/Chicago', locale: 'en-US' });
+    await open('/homebase?preset=classroom', '[data-module="learning"]');
+    // Precondition: in this zone the instant form of the due date is the evening before, the defect this guards.
+    expect(await page.evaluate(v => new Date(v).toLocaleDateString('en-US'), due)).not.toBe(onCalendar(day(3)));
+    expect(await moduleText('requirements')).toContain(`due ${onCalendar(day(3))}`);
+    expect(await moduleText('learning')).toContain(`due ${onCalendar(day(3))}`);
+    const trip = page.locator('[data-module="calendar"] .event', { hasText: 'Synthetic field trip' }), lab = page.locator('[data-module="calendar"] .event', { hasText: 'Synthetic lab night' });
+    expect((await trip.locator('.event-time').innerText()).trim()).toBe(onCalendar(day(4), { month: 'short', day: 'numeric' }));
+    expect((await lab.locator('.event-time').innerText()).replace(/\s+/g, ' ').trim()).toBe(`5:00 PM ${onCalendar(day(5), { weekday: 'short', month: 'short', day: 'numeric' })}`);
+    await page.getByRole('button', { name: 'Open my checklist' }).first().click();
+    expect(await dialogText()).toContain(`due ${onCalendar(day(3))}`);
+    expect(errors).toEqual([]);
+  });
+
+  it('the learner card counts open classwork and claims no per-learner completion', async () => {
+    const edu = fixture.state.education;
+    edu.me = { ...edu.me, role: 'student' };
+    edu.assignments.push({ assignment_id: 'a2', class_id: 'c1', title: 'Synthetic finished item', description: '', status: 'completed', due_date: day(-1), class_name: 'Synthetic Science', assignment_type: 'homework' });
+    await open('/homebase?preset=classroom', '[data-module="learning"]');
+    const card = await moduleText('learning');
+    expect(card).toContain('1 class · 1 open classwork item.'); expect(card).toContain('Next: Observe a seed · Synthetic Science · due');
+    expect(card).not.toContain('classwork done'); expect(card).not.toMatch(/\d+ \/ \d+/);
+    expect(await page.locator('[data-module="learning"] :is([role="progressbar"], .progress-track, .focus-count)').count()).toBe(0);
+    expect(errors).toEqual([]);
+  });
+
+  it('a ticket awaiting approval leads the six project rows; the rest stay newest first', async () => {
+    const approval = approvalTicket('operator_approve_to_resume', 'approval_gate');
+    approval.updatedAt = iso(-10 * HOUR);
+    const newer = Array.from({ length: 6 }, (_, i) => ({ ticketId: `5555555${i}-5555-4555-8555-555555555555`, title: `Synthetic newer ${i}`, status: 'in_process', ticketType: 'ledger-review', updatedAt: iso(-(i + 1) * 60_000), description: '' }));
+    fixture.state.tickets.push(...newer);
+    await open('/homebase?preset=company', '[data-module="projects"] .project-row');
+    const rows = await page.locator('[data-module="projects"] .project-row [data-work]').evaluateAll(els => els.map(e => e.getAttribute('data-work')));
+    expect(rows).toEqual([`ticket:${APPROVAL_ID}`, ...newer.slice(0, 5).map(t => `ticket:${t.ticketId}`)]);
+    expect(await moduleText('projects')).toContain('8 open');
+    expect(errors).toEqual([]);
+  });
+
+  it('a timed calendar event shows the day it falls on beside its time', async () => {
+    fixture.state.education.events.push({ event_id: 'e5', class_id: 'c1', student_id: null, title: 'Synthetic recital', event_date: day(3), event_time: '14:30:00', event_type: 'custom', class_name: 'Synthetic Science', subject: 'Science' });
+    await context.close();
+    await openContext({ locale: 'en-US' });
+    await open('/homebase?preset=family', '[data-module="calendar"] .event');
+    const time = (title: string) => page.locator('[data-module="calendar"] .event', { hasText: title }).locator('.event-time').innerText().then(t => t.replace(/\s+/g, ' ').trim());
+    expect(await time('Science circle')).toBe('9:00 AM Today');
+    expect(await time('Synthetic recital')).toBe(`2:30 PM ${onCalendar(day(3), { weekday: 'short', month: 'short', day: 'numeric' })}`);
     expect(errors).toEqual([]);
   });
 });

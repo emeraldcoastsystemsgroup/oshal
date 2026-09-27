@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Shared audience-view kit (ADR-164 D6): a store page renders its family or company view from one declarative model (hero, stats, tiles, lists, tables, progress, timeline) over the tokens the skin paints, so every application in a Home or Business assembly shares one grammar per audience. The audience is read from `?audience=` as a request the page may honour (D5), never authority: data still comes from the page's own routes under the caller's session. Every view keeps one escape to the full application in the cockpit.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Date-only strings (YYYY-MM-DD, what pay dates, statement dates and transaction dates arrive as) format as that calendar day: `new Date('2026-09-15')` is UTC midnight, which the reader's local zone west of Greenwich showed as Sep 14 in every table.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The hero, headings and escape are neutral elements with heading roles: a page's own `header { ... }` / `h1 { ... }` rules boxed the CAD Studio hero, and a shared view must not inherit the host page's tag styling.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | AppView.day(value) formats a date-only field whose value is 'YYYY-MM-DD' or exactly UTC midnight (how a Postgres DATE reaches JSON from a UTC server) as that calendar day, so DATE columns such as Payroll's pay dates no longer print a day early in US zones; other values format as AppView.date does.
  * -----------------------------------------------------------------------------
  *
  * Usage (in a store page, after the theme bootstrap):
@@ -94,6 +95,19 @@
     var d = toDate(value); if (!value || isNaN(d.getTime())) return '—';
     var opts = { month: 'short', day: 'numeric' }; if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
     try { return d.toLocaleDateString(undefined, opts); } catch (_) { return d.toDateString(); }
+  }
+
+  /**
+   * @description Format a date-only field (a pay date, a period start) as the calendar day it names. A Postgres DATE
+   * reaches JSON as UTC midnight ('2026-09-29T00:00:00.000Z') when the server runs in UTC, and `new Date()` of that
+   * prints Sep 28 west of Greenwich; so 'YYYY-MM-DD' or exactly 'YYYY-MM-DDT00:00:00(.000)Z' is read as that local
+   * day. Any other value is formatted as `date()` formats it.
+   * @param {string|Date|null|undefined} value The field as the route sent it.
+   * @returns {string} A short absolute date (as `date()`), or an em dash.
+   */
+  function day(value) {
+    var m = typeof value === 'string' && value.trim().match(/^(\d{4})-(\d{2})-(\d{2})(?:T00:00:00(?:\.0{1,3})?Z)?$/);
+    return m ? date(new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))) : date(value);
   }
 
   /** @returns {string} A relative phrase (today · tomorrow · in 3 days · 2 h ago · Mar 4 beyond two weeks). */
@@ -302,5 +316,5 @@
     return ctx;
   }
 
-  window.AppView = { AUDIENCES: AUDIENCES, audience: audience, active: active, isHosted: isHosted, boot: boot, mount: mount, skeleton: skeleton, failure: failure, el: el, badge: badge, money: money, num: num, pct: pct, date: date, when: when, open: open, escapeFor: escapeFor, toDate: toDate };
+  window.AppView = { AUDIENCES: AUDIENCES, audience: audience, active: active, isHosted: isHosted, boot: boot, mount: mount, skeleton: skeleton, failure: failure, el: el, badge: badge, money: money, num: num, pct: pct, date: date, day: day, when: when, open: open, escapeFor: escapeFor, toDate: toDate };
 })();
