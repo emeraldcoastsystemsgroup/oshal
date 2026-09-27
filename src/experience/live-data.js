@@ -7,6 +7,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Live data adapter for the experience shells. Joins the caller-scoped home plan, active app listing and admitted navigation into one catalog, merges tickets and Jarvis tasks into work items, wraps Jarvis ask/result polling on the shared browser thread, reads per-package home-summary probes with the Home view's pointer caps, and exposes Little Monsters, Purchasing, Finance and voice reads. It replaces every fixture the design prototypes rendered; nothing here invents data when a source is unavailable, callers get the HTTP status and render the honest state.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Catalog `related` now means a group's installed required members (plan.members), not the plan's integrationSources, which list surfaces and outbound offers rather than a dependency. Adds the viewer-scoped app-detail read (GET /api/swarm/apps/:name) with two pure readers over it: dependencyTiers (the two-form rule of scripts/oshal-app-dependencies.js, a mixed block yields no tiers) and declaredAssistants (manifest bots by name, the explicit chatBot as concierge, online state only where the agentId joins the overview roster). Adds the swarm roster read over GET /api/user-directory (label without its account parenthetical, account source and sign-in status, never presence) and the Little Monsters agenda read (this month and next from /api/education/calendar, de-duplicated and dated) so Commons and Jarvis share them without touching the homebase.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Central-assistant gap closure over existing contracts only. ask() takes an AbortSignal threaded through the POST, every /ask/result poll and the sleep between them, so a page that stops, starts over or goes home ends the wait at once (status 'aborted') instead of polling a request nobody is watching; a refused /ask now carries the route's machine `code` (the 503 ai_disabled posture), and a done payload passes through the well-formed `dispatched` hand-offs and the `packageToolProposal` the route already returns. New helpers: transcribe() posts one recording as multipart field `audio` to /api/voice/transcribe and folds the route's envelope into text / unconfigured / empty / failed; jarvis.markDelivered() and jarvis.cancelWork() reach POST /api/jarvis/tasks/:id/delivered and the owner-checked PUT /api/tickets/:ticketId/cancel.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Package adapters for the homebase gap closure over existing routes only: Little Monsters class activity (teacher analytics) and classwork creation through the route that also writes the class calendar event, a ticket read and its status transition, and the caller's saved content drafts. Each returns the route's own answer, refusals included.
  */
 (function attach(root, factory) {
   'use strict';
@@ -576,7 +577,41 @@
         assignments: function () { return getJson('/api/education/assignments'); },
         calendar: educationCalendar,
         agenda: educationAgenda,
-        addEvent: function (payload) { return sendJson('/api/education/calendar', 'POST', payload); }
+        addEvent: function (payload) { return sendJson('/api/education/calendar', 'POST', payload); },
+        /**
+         * @description One class's learner activity (level, streak, quiz average, cards reviewed) and class summary, the teacher-only analytics read. It is activity, never classwork completion.
+         * @param {string} id Little Monsters class id the caller teaches.
+         * @returns {Promise<{ok:boolean,status:number,body:any}>} The package's answer; 403/404 when the caller does not teach the class.
+         */
+        analytics: function (id) { return getJson('/api/education/teacher/classes/' + encodeURIComponent(id) + '/analytics'); },
+        /**
+         * @description Post classwork through the package route that also puts a dated item on the class calendar, so the shell never writes two records itself.
+         * @param {{classId:string,title:string,assignmentType?:string,dueDate?:string,description?:string}} payload Body the package validates and authorizes.
+         * @returns {Promise<{ok:boolean,status:number,body:any}>} 201 with assignmentId/eventId, or the package's refusal.
+         */
+        addClasswork: function (payload) { return sendJson('/api/education/assignments-with-events', 'POST', payload); }
+      },
+      tickets: {
+        /**
+         * @description Read one ticket as the ticket route answers it (current status plus the reason/nextAction mirror in metadata); the route refuses non-owners with 404.
+         * @param {string} id Ticket id.
+         * @returns {Promise<{ok:boolean,status:number,body:any}>} The ticket or the route's refusal.
+         */
+        get: function (id) { return getJson('/api/tickets/' + encodeURIComponent(id)); },
+        /**
+         * @description Ask the ticket route for one exact state transition; the server enforces ownership and the transition table, the shell only names the state.
+         * @param {string} id Ticket id.
+         * @param {string} status Canonical next state.
+         * @returns {Promise<{ok:boolean,status:number,body:any}>} The route's answer, including its refusal.
+         */
+        setStatus: function (id, status) { return sendJson('/api/tickets/' + encodeURIComponent(id) + '/status', 'PUT', { status: status }); }
+      },
+      content: {
+        /**
+         * @description The caller's saved content drafts (topic, take, draft, created_at), newest first; the route reads only the caller's own rows.
+         * @returns {Promise<{ok:boolean,status:number,body:any}>} The drafts list or the route's refusal.
+         */
+        drafts: function () { return getJson('/api/content/drafts'); }
       },
       purchasing: {
         lists: function () { return getJson('/api/purchasing/lists'); },

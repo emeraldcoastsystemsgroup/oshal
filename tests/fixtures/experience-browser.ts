@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | fullSwarmGapRoutes: the viewer-scoped app record (GET /api/swarm/apps/:name with manifest bots, chatBot and dependencies, 404 when not visible or when `detail:<name>` says so), a controllable Little Monsters calendar status (`edu-calendar`) and overview calendar events. It is registered ahead of the swarm and package routes because packageRoutes ends in the `/api` 404 catch-all; every path it does not answer falls through untouched.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Central-assistant gap routes (nexusGapRoutes, controlled through `state.nexusGap`): a scripted refusal of POST /api/jarvis/ask (the 503 ai_disabled body), held and per-job /ask/result outcomes for the stale-completion cases, POST /api/jarvis/tasks/:id/delivered, the owner-checked PUT /api/tickets/:ticketId/cancel with refusals, POST /api/voice/transcribe recording what the multipart upload carried, and the owner-checked /api/jarvis/visuals image. The lane router runs ahead of the shared `/api` catch-all and falls through to the default synthetic routes unless the lane state asks for it
  * 6 | maintainer@emeraldcoastsystemsgroup.com | One request log registered first, then every lane's override routes, then the default synthetic routes with their `/api` 404 catch-all last: the lanes had each worked around the catch-all living inside packageRoutes (a router splice, lane-local logging); the order now makes both unnecessary
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Homebase gap routes (`homebaseGapRoutes`): Little Monsters teacher analytics (pg-shaped counts, server-side summary), classwork through assignments-with-events (teacher-of-class check, calendar event on a due date), a ticket read and its status transition (only approval_required to approved), and the caller's saved content drafts, each with a controllable status. They are seated ahead of packageRoutes' `/api` catch-all, which is registered first and would otherwise answer them with 404.
  */
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -185,7 +186,7 @@ export async function startExperienceBrowserFixture(options: { denyAuth?: boolea
   // One request log for every case, then each lane's override routes (they answer only what their case state asks
   // for and fall through otherwise), then the default synthetic routes, whose `/api` 404 catch-all stays last.
   app.use((req, _res, next) => { state.calls.push(`${req.method} ${req.path}`); next(); });
-  fullSwarmGapRoutes(app, state); nexusGapRoutes(app, state);
+  fullSwarmGapRoutes(app, state); nexusGapRoutes(app, state); homebaseGapRoutes(app, state);
   swarmRoutes(app, state); packageRoutes(app, state);
   app.use('/shared/ui/js', express.static(resolve(ROOT, 'src/shared/ui/js')));
   registerCockpitStaticRoutes({ app, requiresAuth, cockpitDir: resolve(ROOT, 'src/pages/cockpit'), uiEnhancedDir: resolve(ROOT, 'any-bot/ui-enhanced'),
@@ -284,4 +285,60 @@ function nexusGapRoutes(app: express.Application, state: ExperienceState) {
     res.type('image/svg+xml').send('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20" fill="gray"/></svg>');
   });
   app.use(router);
+}
+
+/**
+ * @description Synthetic contracts for the homebase gap closure, each with a controllable status (`homebase:analytics`, `homebase:classwork`,
+ * `homebase:ticket`, `homebase:ticket-status`, `homebase:drafts`): Little Monsters teacher analytics shaped like the package's pg rows (counts as
+ * strings, the summary computed server-side), classwork through assignments-with-events, one ticket's read and status transition, and the caller's
+ * saved content drafts (seeded through their own POST route). Registered with the other lane routes ahead of the defaults (see
+ * startExperienceBrowserFixture); none of its paths overlaps a default route.
+ * @param app The fixture application.
+ * @param state The synthetic swarm state these routes read and change.
+ * @returns Nothing; the routes are registered on `app`.
+ */
+function homebaseGapRoutes(app: express.Application, state: ExperienceState) {
+  const edu = state.education, gap = express.Router(), drafts: Array<{ id: number; topic: string | null; take: string | null; draft: string; created_at: string }> = [];
+  const refused = (res: express.Response, key: string, errors: Record<number, string>) => { const status = statusOr(state, key); if (status === 200) return false; res.status(status).json({ error: errors[status] ?? 'Synthetic refusal' }); return true; };
+  const count = (v: unknown) => String(Number(v ?? 0));
+  gap.get('/api/education/teacher/classes/:classId/analytics', (req, res) => {
+    const roster = edu.students[req.params.classId] as Array<Record<string, unknown>> | undefined;
+    if (refused(res, 'homebase:analytics', { 403: 'You do not teach this class', 404: 'Class not found' })) return;
+    if (!roster) { res.status(403).json({ error: 'You do not teach this class' }); return; }
+    const students = roster.map(s => ({ student_id: s.student_id, name: s.name, email: s.email ?? null, xp: Number(s.xp ?? 0), level: Number(s.level ?? 1), streak_days: Number(s.streak_days ?? 0),
+      last_active_date: s.last_active_date ?? null, quiz_average: count(s.quiz_average), quiz_count: count(s.quiz_count), cards_reviewed: count(s.cards_reviewed) }));
+    const quizzed = students.filter(s => Number(s.quiz_count) > 0);
+    res.json({ class: { class_id: req.params.classId }, students, summary: { studentCount: students.length, classQuizAverage: quizzed.length ? Math.round(quizzed.reduce((n, s) => n + Number(s.quiz_average), 0) / quizzed.length) : null,
+      studentsWithActivity: students.filter(s => Number(s.quiz_count) > 0 || Number(s.cards_reviewed) > 0).length, totalCardsReviewed: students.reduce((n, s) => n + Number(s.cards_reviewed), 0) } });
+  });
+  gap.post('/api/education/assignments-with-events', express.json(), (req, res) => {
+    const body = req.body || {}, title = String(body.title ?? '').trim(), cls = edu.classes.find(c => c.class_id === String(body.classId ?? ''));
+    if (refused(res, 'homebase:classwork', { 403: 'You do not teach this class', 409: 'Class authorization changed' })) return;
+    if (!title || title.length > 500) { res.status(400).json({ error: 'title must contain 1-500 characters' }); return; }
+    if (!cls || !(edu.me.role === 'admin' || (edu.me.role === 'teacher' && cls.teacher_student_id === edu.me.studentId))) { res.status(403).json({ error: 'You do not teach this class' }); return; }
+    const assignmentId = `a${edu.assignments.length + 1}`, dueDate = body.dueDate ? String(body.dueDate) : null, type = String(body.assignmentType || 'homework');
+    (edu.assignments as unknown[]).push({ assignment_id: assignmentId, class_id: cls.class_id, title, description: String(body.description || ''), status: 'open', due_date: dueDate, class_name: cls.name, assignment_type: type });
+    const eventId = dueDate ? `e${edu.events.length + 1}` : null;
+    if (dueDate) (edu.events as unknown[]).push({ event_id: eventId, class_id: cls.class_id, student_id: null, title: `${cls.name}: ${title}`, event_date: dueDate, event_time: '17:00:00', event_type: type === 'test' ? 'test' : type === 'quiz-prep' ? 'quiz' : 'assignment', class_name: cls.name, subject: cls.subject });
+    res.status(201).json({ assignmentId, eventId, dueDate });
+  });
+  gap.get('/api/tickets/:ticketId', (req, res) => {
+    const ticket = state.tickets.find(t => t.ticketId === req.params.ticketId);
+    if (refused(res, 'homebase:ticket', { 404: 'Ticket not found' })) return;
+    if (ticket) res.json(ticket); else res.status(404).json({ error: 'Ticket not found' });
+  });
+  gap.put('/api/tickets/:ticketId/status', express.json(), (req, res) => {
+    const ticket = state.tickets.find(t => t.ticketId === req.params.ticketId), next = String(req.body?.status ?? '');
+    if (refused(res, 'homebase:ticket-status', { 400: 'Invalid state transition', 404: 'Ticket not found' })) return;
+    if (!ticket) { res.status(404).json({ error: 'Ticket not found' }); return; }
+    if (!(ticket.status === 'approval_required' && next === 'approved')) { res.status(400).json({ error: `Invalid state transition: ${ticket.status} -> ${next}` }); return; }
+    ticket.status = next; ticket.updatedAt = iso(0);
+    res.json({ status: 'updated', newStatus: next });
+  });
+  gap.get('/api/content/drafts', (_req, res) => { if (!refused(res, 'homebase:drafts', { 401: 'not_authenticated' })) res.json({ drafts: [...drafts].reverse() }); });
+  gap.post('/api/content/drafts', express.json(), (req, res) => {
+    if (!String(req.body?.draft ?? '').trim()) { res.status(400).json({ error: 'draft required' }); return; }
+    drafts.push({ id: drafts.length + 1, topic: req.body.topic || null, take: req.body.take || null, draft: String(req.body.draft), created_at: iso(0) }); res.json({ ok: true });
+  });
+  app.use(gap);
 }

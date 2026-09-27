@@ -15,9 +15,9 @@ Eight selectable experiences over one unchanged backend:
 | Orbit | `/orbit` | Suites as connected worlds around Jarvis; drill into a suite, inspect an app and its declared relationships; hosts apps with the `company` view requested |
 | Commons | `/commons` | Suite rooms (plus a Game room) with applications, declared assistants, a work board, one Jarvis thread per room and the swarm roster; hosts apps with the `company` view requested |
 | Home · family homebase | `/homebase?preset=family` | Calendar, shopping list, Smart Home facts, people, personal finance; hosts Smart Home, Shopping, Money and Little Monsters in place with the `family` view requested |
-| Little Monsters · classroom | `/homebase?preset=classroom` | Classwork, class calendar, teacher roster or learner checklist by real role; the Little Monsters tools the caller is admitted to open in place |
-| Business · company swarm | `/homebase?preset=company` | Open tickets as projects, team calendar, people, dense account table; hosts Presentations, Finance, Communications, Payroll, Payments, Identity and Engineering in place with the `company` view requested |
 | Central assistant | `/nexus` | Intent composer with push-to-talk dictation, a "Request progress" ledger of observed phases, a typed answer workspace (answer, owner-checked visual, handoffs, background work, approval card, fallback provider), lifecycle states (running, ready, partial, failed, setup needed, stopped waiting), speaking core |
+| Little Monsters · classroom | `/homebase?preset=classroom` | Classwork, class calendar, teacher roster with each learner's activity (level, streak, quiz average, cards reviewed) or learner checklist by real role; teachers post classwork from the shell; the learner checklist opens My Day in place; the Little Monsters tools the caller is admitted to open in place |
+| Business · company swarm | `/homebase?preset=company` | Open tickets as projects (a ticket awaiting a human approval can be approved from its dialog), team calendar, people, dense account table, and, where Finance is not installed, a personal workspace card whose "My drafts" lists the caller's saved drafts and newest finished Jarvis task; hosts Presentations, Finance, Communications, Payroll, Payments, Identity and Engineering in place with the `company` view requested |
 
 `/portal` (also `/experience`) is the chooser. The cockpit header's **Experiences** menu links the
 same eight entries, every shell carries an experience picker in its top bar, and `/little-monsters`
@@ -40,7 +40,9 @@ own session:
 | Jarvis agenda | the overview calendar feed plus, when Little Monsters is installed, `GET /api/education/calendar?month=` for this month and next; each source and its empty, refused or not-installed state is named on screen |
 | Per-application facts | each app's own `home-summary` probe from the plan, with the Home view's ADR-145 caps |
 | Conversation | `GET /api/jarvis/history`, `POST /api/jarvis/ask`, `GET /api/jarvis/ask/result` on the browser's shared `jarvisSessionId`; Commons rooms use `jarvis-room-<suite>-<sub>` |
-| Classroom | Little Monsters `/api/education/me`, `/classes`, `/classes/:id/students` (only classes the caller teaches), `/assignments`, `/calendar`; personal events are created through `POST /api/education/calendar` |
+| Classroom | Little Monsters `/api/education/me`, `/classes`, `/classes/:id/students` and `/teacher/classes/:id/analytics` (only classes the caller teaches), `/assignments`, `/calendar`; personal events are created through `POST /api/education/calendar`; a teacher's classwork is posted through `POST /api/education/assignments-with-events` (title, type from the package's allowed set, optional due date and description; a due date also writes the class calendar event), then the class data is re-read. The roster pill is activity from the analytics row (level, streak, quiz average when a quiz was taken, cards reviewed) with the class summary line; 403/404 show a note instead of pills |
+| Ticket approval | The project dialog of a ticket reads `GET /api/tickets/:ticketId` (state, and the `metadata.reason` / `metadata.nextAction` mirror when present). Only a ticket in `approval_required` whose next action is not `none_children_dispatch_independently` offers **Approve and resume**, which sends `PUT /api/tickets/:ticketId/status` with `approved`; the route's refusal (404 for a non-owner, 400 for an invalid transition) is shown as text, and success reloads the work list |
+| Personal drafts | `GET /api/content/drafts` (topic, take, the first lines of the draft, saved time) and the newest `done` row of `GET /api/jarvis/tasks` (title, finished time, files as download links); each has its own empty and failure state, and **Open Jarvis ↗** stays |
 | Hosted tools | `GET /api/ui/profile?name=<host app>` per host: the same caller-scoped ribbon profile the cockpit renders, already filtered per caller by the app's own visibility answer. Each preset names the applications it hosts (`hosts` in `homebase-config.js`, with hidden tool prefixes that keep off-audience tiles out of the rails), lists their admitted tools grouped per host in its sidebar and tile row, and opens a tool in an iframe that follows the skin through the shared theme bootstrap, with the preset's audience view appended as `?audience=family|classroom|company` (a request the page may honour, never authority). The frame's navigation messages are the shapes the cockpit ribbon already honours (`app-navigate`, `app-tools-changed`, and the Little Monsters literals); only the frame the home opened is heard, same origin only, and only an admitted tool ever opens |
 | Shopping list | Purchasing `/api/purchasing/lists` and `/lists/:id/items`; add and remove use the package's own routes |
 | Money | Finance `/api/finance/summary` and `/api/finance/home-summary` |
@@ -62,7 +64,9 @@ provenance panel and the module renders its unavailable state. No module substit
   account list and each room thread is the caller's own Jarvis conversation.
 - No calendar beyond what Little Monsters contributes; the swarm overview's calendar feed is empty
   by design until an application contributes events (the Jarvis agenda says so when it is empty).
-- No role switcher. Teacher and learner views follow `/api/education/me`.
+- No role switcher and no "Preview as" picker (ADR-164 D9). Teacher and learner views follow `/api/education/me`.
+- No per-learner classwork completion or submission: Little Monsters has no route or field for it, so the roster shows activity only and the learner checklist is read-only (it opens My Day in place). Posted classwork cannot be edited or removed: the package has no route for either.
+- No "reviewed" flag or lead role on projects: the only project action is the ticket's own approval transition.
 - No blocking on work data: a homebase paints from identity and the catalog (`readyCore`) and fills tickets, tasks and the overview in when they answer (`ready`), so a slow queue never delays the first screen.
 
 ## Device-local preferences
@@ -70,7 +74,7 @@ provenance panel and the module renders its unavailable state. No module substit
 Pins per layout, skin per layout, the in-place Summary view / Full application choice per layout
 (`embed-view:<layout>`), homebase density and module toggles, the central assistant's
 display name and auto-speak are stored in `localStorage` under `oshal-experience:*`. They are
-visible as device-only choices in the UI and never reach a server setting or a permission.
+visible as device-only choices in the UI and never reach a server setting or a permission. "Configure home" is not shown to a guest session (`/api/auth/user` `guestMode`).
 
 ## Packaging and serving
 
@@ -99,6 +103,10 @@ stylesheets under `/experience/…`, so the strict CSP applies unchanged.
   code, hand-off pass-through, transcription outcomes, delivered and cancel calls) and, in Chromium over the
   same fixture, the typed result cards, partial background work, setup and failed states with readback, the
   stale-completion guard across Stop / New / Home, and push-to-talk dictation.
+- `tests/unit/experience-homebase-gaps.spec.ts`: the same harness for learner activity pills and their refusal notes,
+  teacher classwork (taught classes only, refusals rendered as text), the learner checklist opening My Day, the ticket
+  approval transition with its refusal and no-approval states, the drafts dialog with empty and failure states, and
+  "Configure home" hidden for guests.
 - AI Test Lab card `experience-shells` (`test-lab-experience-scenarios.ts`): a read-only step over
   the entry pages and the feeds they join, classified as gap when the running image predates
   `src/experience`.
@@ -106,8 +114,7 @@ stylesheets under `/experience/…`, so the strict CSP applies unchanged.
 Run locally:
 
 ```sh
-npx vitest run tests/unit/experience-live-data.spec.ts tests/unit/test-lab-experience-scenarios.spec.ts tests/unit/experience-layouts-browser.spec.ts tests/unit/experience-full-swarm-gaps.spec.ts tests/unit/experience-dependency-tiers.spec.ts
-npx vitest run tests/unit/experience-live-data.spec.ts tests/unit/test-lab-experience-scenarios.spec.ts tests/unit/experience-layouts-browser.spec.ts tests/unit/experience-nexus-gaps.spec.ts
+npx vitest run tests/unit/experience-live-data.spec.ts tests/unit/test-lab-experience-scenarios.spec.ts tests/unit/experience-layouts-browser.spec.ts tests/unit/experience-full-swarm-gaps.spec.ts tests/unit/experience-dependency-tiers.spec.ts tests/unit/experience-nexus-gaps.spec.ts tests/unit/experience-homebase-gaps.spec.ts tests/unit/app-view-kit-browser.spec.ts
 ```
 
 ## Audience views: what a hosted page renders for a shell (ADR-164 D6)
