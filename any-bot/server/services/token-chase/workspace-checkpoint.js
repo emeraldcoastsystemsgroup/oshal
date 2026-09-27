@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Workspace-bound checkpoint (ADR-046 §1, BACKLOG "Workspace-bound checkpoint and tail replay"): the bounded redacted tree walk moved here from TokenChaseCapture.js and gained a real git commit built from the SAME redacted content-addressed objects, in a private bare repository under <workspace>/.tokenchase/git with a private index, so the task's own .git and index are never touched and no raw secret enters history. Commits are deterministic (fixed identity and date, message from task/seq/tree) and reachable under refs/tokenchase/<taskId>/<seq>. Every git call is bounded by a timeout and FAILS OPEN: workspaceCommit stays null and the caller flags the checkpoint incomplete; a SHA is never fabricated. restoreCheckpoint materializes a commit into an isolated directory through read-tree + checkout-index with a throwaway index, and digestWorkspaceTree computes the same manifest/tree digest without writing objects so a replay can compare artifacts.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | restageFromObjects: the object-store fallback the bot-node tail executor uses for a frame captured before the private-git checkpoint existed (or whose commit failed open to null) — each manifest entry is path-guarded, read from .tokenchase/objects, digest-verified and written under the isolated target; a bad entry degrades the restage with a named warning instead of aborting. This moved off the controller, which no longer restages anything.
  */
 
 'use strict';
@@ -235,6 +236,44 @@ function commitCheckpoint(input) {
   }
 }
 
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+
+/** @description A manifest path is safe when it is relative, POSIX and never leaves the target. */
+function safeManifestPath(relative) {
+  if (typeof relative !== 'string' || relative.length === 0 || path.isAbsolute(relative) || relative.includes('\\')) return null;
+  const segments = relative.split('/');
+  return segments.some((segment) => segment === '' || segment === '.' || segment === '..') ? null : relative;
+}
+
+/**
+ * @description Restage a captured manifest from the content-addressed object store into an isolated
+ * directory — the fallback for frames that carry a workspaceTree but no checkpoint commit. Every
+ * object is digest-verified before it is written; an unsafe path, a missing object or a digest
+ * mismatch is recorded as a warning and skipped, never written.
+ * @param {{files: Array<{path: string, sha256: string}>, objectDir: string, targetDir: string}} input - The manifest, the object store and the isolated target.
+ * @returns {{restored: number, total: number, warnings: string[]}} How many objects landed and what could not.
+ */
+function restageFromObjects(input) {
+  const targetDir = path.resolve(input.targetDir);
+  fs.mkdirSync(targetDir, { recursive: true });
+  const files = Array.isArray(input.files) ? input.files : [];
+  const warnings = [];
+  let restored = 0;
+  for (const entry of files) {
+    const relative = safeManifestPath(entry && entry.path);
+    const sha = entry && typeof entry.sha256 === 'string' ? entry.sha256.toLowerCase() : '';
+    if (!relative || !SHA256_PATTERN.test(sha)) { warnings.push(`skipped unsafe manifest entry: ${String(entry && entry.path)}`); continue; }
+    let bytes;
+    try { bytes = fs.readFileSync(path.join(input.objectDir, sha)); } catch { warnings.push(`missing tree object for ${relative}`); continue; }
+    if (crypto.createHash('sha256').update(bytes).digest('hex') !== sha) { warnings.push(`object digest mismatch for ${relative}`); continue; }
+    const destination = path.join(targetDir, ...relative.split('/'));
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.writeFileSync(destination, bytes);
+    restored += 1;
+  }
+  return { restored, total: files.length, warnings };
+}
+
 /**
  * @description Materialize one checkpoint commit into an isolated directory (the replay worktree). Uses a
  * throwaway index so neither the task's index nor the capture repository's state is touched. Throws when
@@ -269,6 +308,7 @@ module.exports = {
   digestTree,
   digestWorkspaceTree,
   frameFileName,
+  restageFromObjects,
   restoreCheckpoint,
   snapshotWorkspaceTree,
   writeObject,
