@@ -6,10 +6,12 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the chat-channel identity store: maps a messaging identity (Telegram chat/user id, later Discord) to exactly one OSHAL user_sub via a short-lived one-time link code the signed-in user generates in the cockpit and sends to the bot. This is the isolation boundary for the inbound channel surface — a shared demo bot must never leak one user's data into another's DM. Every read/write is user_sub-scoped; a migration should later fold these tables into the RLS policy set (query-level scoping is the v1 guard, matching the jarvis_tasks runtime-table pattern).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Machine-write identity (BACKLOG "Machine-write identity: audit every un-migrated identity-less WRITE"). The Telegram webhook is a machine caller with no session, and chat-channel-routes.ts wraps only the SWARM DISPATCH in the linked user's identity — the LINKING write itself (and the resolveLink lookup that finds the owner in the first place) ran with the ambient anonymous non-operator context. The tables carry no RLS policy today, which is exactly why nothing surfaced it; the SEQ-1 note above already promises to fold them into the policy set, and on that day an unscoped INSERT into channel_links would fail the way the ADR-119 alert intake did. Identity is now established explicitly: the code claim and the owner lookup run under runWithSystemIdentity (proof-of-possession / bootstrap reads that MUST precede knowing the owner — the rail cli-token-routes established for the same chicken-and-egg), and the binding INSERT runs under runWithRequestIdentity({ sub: userSub, isOperator: false }) so the row is written as the user who owns it.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | A redeemed code no longer moves an identity that is already bound to a DIFFERENT user. The upsert overwrote user_sub on conflict, so an identity linked to user A that sent user B's code was silently re-pointed at B's swarm (and under forced RLS the same statement raised instead, so the sender got no answer at all). The conflict update is now guarded to the same owner: a same-user relink still refreshes chat_id and display name, a cross-user rebind returns 'bound_to_another_user' with both subjects so the caller can refuse and audit it, and the identity must be unlinked by its owner first. redeemLinkCode returns a ChannelLinkRedemption instead of string|null so an invalid code and a refused rebind are distinguishable.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | A link now carries the linking user's VERIFIED principal issuer. User-bound bot delegation refuses a subject without one ("User-bound delegation requires a verified principal issuer"), and the inbound webhook/Gateway has no session to read it from, so every linked Telegram/Discord/SMS/WhatsApp message failed whenever delegation signing was on. mintLinkCode now requires the issuer the auth-gated mint route read from the caller's verified session and stores it on the code (user_issuer); only a code that carries one is redeemable; redemption copies it onto channel_links.user_issuer (a same-user relink refreshes it); resolveLink returns it as userIssuer so dispatch can enter { sub, principalIssuer }. Legacy rows keep a NULL issuer and are refused at dispatch with a re-link instruction, never a guessed issuer. Column added by migration 170 and mirrored here for a box that has not applied it.
  */
 
 import * as crypto from 'crypto';
 import { createChildLogger } from '@/shared/logger';
+import { normalizePrincipalIssuer } from '@/shared/middleware/principal-issuer';
 import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap } from '@/shared/services/database';
 import { runWithRequestIdentity, runWithSystemIdentity } from '@/shared/services/database/request-identity';
 
@@ -26,9 +28,14 @@ export interface ChannelLink {
   channelUserId: string;
   chatId: string;
   userSub: string;
+  /** The verified issuer of the session that minted the link code; null on a legacy (pre-issuer) link. */
+  userIssuer: string | null;
   displayName: string | null;
   linkedAt: string;
 }
+
+/** Every column a ChannelLink is read from, shared by the owner lookup and the cockpit list. */
+const LINK_COLUMNS = 'provider, channel_user_id, chat_id, user_sub, user_issuer, display_name, linked_at';
 
 /**
  * The outcome of presenting a link code from a channel identity. `linked` also covers a same-user
@@ -82,6 +89,9 @@ export class ChannelLinkService {
           consumed_at TIMESTAMPTZ
         )`,
         'CREATE INDEX IF NOT EXISTS idx_channel_link_codes_user ON channel_link_codes (user_sub)',
+        // Migration 170 mirror: the verified issuer of the linking session (NULL = legacy link).
+        'ALTER TABLE channel_links ADD COLUMN IF NOT EXISTS user_issuer TEXT',
+        'ALTER TABLE channel_link_codes ADD COLUMN IF NOT EXISTS user_issuer TEXT',
         `CREATE TABLE IF NOT EXISTS channel_inbound_events (
           provider TEXT NOT NULL,
           event_id TEXT NOT NULL,
@@ -92,8 +102,8 @@ export class ChannelLinkService {
         ...buildOwnerRlsPolicyStatements('channel_inbound_events', 'owner_sub'),
       ],
       requirements: [
-        { table: 'channel_links', columns: ['provider', 'channel_user_id', 'chat_id', 'user_sub', 'display_name', 'linked_at'] },
-        { table: 'channel_link_codes', columns: ['code', 'user_sub', 'provider', 'expires_at', 'consumed_at'] },
+        { table: 'channel_links', columns: ['provider', 'channel_user_id', 'chat_id', 'user_sub', 'user_issuer', 'display_name', 'linked_at'] },
+        { table: 'channel_link_codes', columns: ['code', 'user_sub', 'user_issuer', 'provider', 'expires_at', 'consumed_at'] },
         { table: 'channel_inbound_events', columns: ['provider', 'event_id', 'owner_sub', 'claimed_at'] },
       ],
     });
@@ -101,19 +111,27 @@ export class ChannelLinkService {
   }
 
   /**
-   * @description Mints a fresh one-time link code for a signed-in user to send to the bot.
+   * @description Mints a fresh one-time link code for a signed-in user to send to the bot. The
+   * code carries the caller's verified principal issuer because the channel message that later
+   * runs as this user arrives with no session, and user-bound delegation refuses a subject without
+   * its issuer. The issuer must come from the verified session (getAuthenticatedPrincipalIssuer),
+   * never from a body, header or guess.
    * @param userSub - The authenticated caller's OIDC sub.
    * @param provider - The channel provider (e.g. 'telegram').
+   * @param userIssuer - The caller's verified principal issuer.
    * @returns The code string the user sends to the bot as `/start <code>`.
+   * @throws Error when no usable issuer is supplied; nothing is written.
    */
-  async mintLinkCode(userSub: string, provider: string): Promise<string> {
+  async mintLinkCode(userSub: string, provider: string, userIssuer: string): Promise<string> {
+    const issuer = normalizePrincipalIssuer(userIssuer);
+    if (!issuer) throw new Error('A channel link code requires the caller\'s verified principal issuer');
     await this.ensureSchema();
     // 8 hex chars from 4 random bytes — short enough to type, ample entropy for a 15-min TTL.
     const code = crypto.randomBytes(4).toString('hex');
     const expiresAt = new Date(Date.now() + LINK_CODE_TTL_MS).toISOString();
     await this.pool.query(
-      `INSERT INTO channel_link_codes (code, user_sub, provider, expires_at) VALUES ($1, $2, $3, $4)`,
-      [code, userSub, provider, expiresAt],
+      `INSERT INTO channel_link_codes (code, user_sub, user_issuer, provider, expires_at) VALUES ($1, $2, $3, $4, $5)`,
+      [code, userSub, issuer, provider, expiresAt],
     );
     logger.info({ userSub, provider }, 'channel link code minted');
     return code;
@@ -137,20 +155,23 @@ export class ChannelLinkService {
     // The CODE CLAIM is the chicken-and-egg step: it is what TELLS us the owner, so it cannot
     // already be running as them. Trusted-system, exactly like the cli-token hash lookup — safe
     // because it is pure proof-of-possession, keyed on a single-use 15-minute code, and returns
-    // only that one row.
+    // only that one row. A code minted before codes carried an issuer is not redeemable: binding it
+    // would create a link that can never dispatch.
     const claimed = await runWithSystemIdentity(() => this.pool.query(
       `UPDATE channel_link_codes SET consumed_at = NOW()
         WHERE code = $1 AND provider = $2 AND consumed_at IS NULL AND expires_at > NOW()
-        RETURNING user_sub`,
+          AND user_issuer IS NOT NULL
+        RETURNING user_sub, user_issuer`,
       [code.trim(), provider],
     ));
-    const row = claimed.rows[0] as { user_sub?: string } | undefined;
+    const row = claimed.rows[0] as { user_sub?: string; user_issuer?: unknown } | undefined;
     if (!row?.user_sub) {
       logger.warn({ provider }, 'channel link code invalid/expired/consumed');
       return { status: 'invalid_code' };
     }
     const userSub = String(row.user_sub);
-    if (await this.bindAsOwner(provider, channelUserId, chatId, userSub, displayName)) {
+    const owner = { userSub, userIssuer: normalizePrincipalIssuer(row.user_issuer) };
+    if (await this.bindAsOwner(provider, channelUserId, chatId, owner, displayName)) {
       logger.info({ provider, userSub }, 'channel identity linked');
       return { status: 'linked', userSub };
     }
@@ -164,25 +185,31 @@ export class ChannelLinkService {
    * The BINDING is owner-scoped work and the owner is now known — write it as them, never as
    * operator. The conflict update is guarded to the SAME owner: PostgreSQL evaluates the DO UPDATE
    * WHERE before the RLS conflict check, so a row bound to someone else is left untouched (no
-   * rebind, no RLS error) and RETURNING is empty. That emptiness is the refusal signal.
+   * rebind, no RLS error) and RETURNING is empty. That emptiness is the refusal signal. A same-user
+   * relink refreshes the issuer too, which is how a legacy NULL-issuer link is repaired.
    */
   private async bindAsOwner(
-    provider: string, channelUserId: string, chatId: string, userSub: string, displayName: string | null,
+    provider: string, channelUserId: string, chatId: string,
+    owner: { userSub: string; userIssuer: string | null }, displayName: string | null,
   ): Promise<boolean> {
-    const bound = await runWithRequestIdentity({ sub: userSub, isOperator: false }, () => this.pool.query(
-      `INSERT INTO channel_links (provider, channel_user_id, chat_id, user_sub, display_name)
-       VALUES ($1, $2, $3, $4, $5)
+    const bound = await runWithRequestIdentity({ sub: owner.userSub, principalIssuer: owner.userIssuer, isOperator: false }, () => this.pool.query(
+      `INSERT INTO channel_links (provider, channel_user_id, chat_id, user_sub, user_issuer, display_name)
+       VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (provider, channel_user_id)
-       DO UPDATE SET chat_id = EXCLUDED.chat_id, display_name = EXCLUDED.display_name, linked_at = NOW()
+       DO UPDATE SET chat_id = EXCLUDED.chat_id, user_issuer = EXCLUDED.user_issuer,
+         display_name = EXCLUDED.display_name, linked_at = NOW()
        WHERE channel_links.user_sub = EXCLUDED.user_sub
        RETURNING user_sub`,
-      [provider, channelUserId, chatId, userSub, displayName],
+      [provider, channelUserId, chatId, owner.userSub, owner.userIssuer, displayName],
     ));
     return bound.rows.length > 0;
   }
 
   /**
-   * @description Resolves which OSHAL user owns an inbound channel identity.
+   * @description Resolves which OSHAL user owns an inbound channel identity, with the verified
+   * issuer recorded when it was linked (null on a legacy link, which the caller must refuse).
+   * @param provider - The channel provider.
+   * @param channelUserId - The sender's provider identity.
    * @returns The link, or null when the identity has not been linked yet.
    */
   async resolveLink(provider: string, channelUserId: string): Promise<ChannelLink | null> {
@@ -192,8 +219,7 @@ export class ChannelLinkService {
     // them. Trusted-system, keyed on the exact (provider, channel_user_id) pair and returning that
     // one row — the caller immediately re-enters the resolved user's identity for everything after.
     const res = await runWithSystemIdentity(() => this.pool.query(
-      `SELECT provider, channel_user_id, chat_id, user_sub, display_name, linked_at
-         FROM channel_links WHERE provider = $1 AND channel_user_id = $2`,
+      `SELECT ${LINK_COLUMNS} FROM channel_links WHERE provider = $1 AND channel_user_id = $2`,
       [provider, channelUserId],
     ));
     return res.rows[0] ? this.mapRow(res.rows[0]) : null;
@@ -220,8 +246,7 @@ export class ChannelLinkService {
   async listLinks(userSub: string): Promise<ChannelLink[]> {
     await this.ensureSchema();
     const res = await this.pool.query(
-      `SELECT provider, channel_user_id, chat_id, user_sub, display_name, linked_at
-         FROM channel_links WHERE user_sub = $1 ORDER BY linked_at DESC`,
+      `SELECT ${LINK_COLUMNS} FROM channel_links WHERE user_sub = $1 ORDER BY linked_at DESC`,
       [userSub],
     );
     return res.rows.map((r) => this.mapRow(r));
@@ -248,6 +273,7 @@ export class ChannelLinkService {
       channelUserId: String(r.channel_user_id),
       chatId: String(r.chat_id),
       userSub: String(r.user_sub),
+      userIssuer: normalizePrincipalIssuer(r.user_issuer),
       displayName: r.display_name == null ? null : String(r.display_name),
       linkedAt: String(r.linked_at),
     };

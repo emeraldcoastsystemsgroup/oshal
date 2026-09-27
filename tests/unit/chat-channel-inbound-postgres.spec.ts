@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Real-boundary inbound acceptance for BACKLOG "Chat-channel adapter core". Telegram arrives through the REAL createChatChannelRoutes webhook over real HTTP with the derived secret header; Discord arrives through the REAL Gateway client speaking the Gateway protocol (HELLO, IDENTIFY, MESSAGE_CREATE) to a local WebSocket server; link codes are minted through the REAL auth-gated routes. The identity store runs as a NOSUPERUSER NOBYPASSRLS role under forced owner RLS and refusals land in the real refusal ledger. Only the accountable bot turn and the provider send are doubled. Covers link, one owner-bound dispatch per occurrence, redelivery refused, unlinked refused and audited, two users isolated, codes never crossing providers, the WhatsApp sender advertisement, and the executable Test Lab round trip for every provider.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | A link code now requires the caller's verified issuer. The cookie session is shaped like express-openid-connect's (presentation user WITHOUT iss, idTokenClaims WITH iss) and enters the issuer beside the sub; the Telegram store-level mint passes it. Issuer propagation into delegation is proven in chat-channel-principal-issuer.spec.ts.
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -29,6 +30,7 @@ const CAROL = 'auth0|inbound-lab-carol';
 const TELEGRAM_TOKEN = '123456:fixture-telegram-token'; // obviously-fake; never a real credential
 const DISCORD_TOKEN = 'fixture-discord-token'; // obviously-fake; never a real credential
 const WHATSAPP_SENDER = '+14155238886';
+const ISSUER = 'https://identity.oshal.example.com';
 
 const fixture = new DisposablePostgres({ purpose: 'chat-channel-inbound', roles: [ROLE], migrations: ['155-refusal-ledger.sql'] });
 
@@ -60,8 +62,8 @@ const settle = () => new Promise((r) => setTimeout(r, 400));
 const cookieIdentity: RequestHandler = (req, _res, next) => {
   const sub = /(?:^|;\s*)test-user=([^;]+)/.exec(req.headers.cookie || '')?.[1];
   if (!sub) { next(); return; }
-  Object.assign(req, { oidc: { isAuthenticated: () => true, user: { sub } } });
-  runWithRequestIdentity({ sub, isOperator: false }, () => next());
+  Object.assign(req, { oidc: { isAuthenticated: () => true, user: { sub }, idTokenClaims: { sub, iss: ISSUER } } });
+  runWithRequestIdentity({ sub, principalIssuer: ISSUER, isOperator: false }, () => next());
 };
 const requiresAuth: RequestHandler = (req, res, next) => {
   if (!(req as { oidc?: { user?: { sub?: string } } }).oidc?.user?.sub) { res.status(401).json({ error: 'unauthorized' }); return; }
@@ -98,7 +100,7 @@ async function mintViaRoute(sub: string, provider: 'discord' | 'whatsapp' | 'sms
 }
 /** Telegram's mint route needs the live getMe; the code store itself is the same service. */
 function mintTelegram(sub: string): Promise<string> {
-  return runWithRequestIdentity({ sub, isOperator: false }, () => new ChannelLinkService(runtime as never).mintLinkCode(sub, 'telegram'));
+  return runWithRequestIdentity({ sub, principalIssuer: ISSUER, isOperator: false }, () => new ChannelLinkService(runtime as never).mintLinkCode(sub, 'telegram', ISSUER));
 }
 async function ownerOf(provider: string, identity: string): Promise<string | null> {
   return (await admin.query('SELECT user_sub FROM channel_links WHERE provider=$1 AND channel_user_id=$2', [provider, identity])).rows[0]?.user_sub ?? null;

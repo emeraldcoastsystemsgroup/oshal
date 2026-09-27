@@ -10,7 +10,8 @@
  *   2. redeems it from a synthetic, lab-prefixed channel identity,
  *   3. sends one message from that identity twice with the same occurrence id,
  *   4. sends one message from a second, never-linked synthetic identity,
- *   5. checks exactly one bot turn ran, for the caller, under the caller's non-operator identity,
+ *   5. checks exactly one bot turn ran, for the caller, under the caller's non-operator identity
+ *      carrying the caller's verified issuer (user-bound delegation refuses a turn without it),
  *      the duplicate was refused, and the stranger was refused with a COMMITTED ledger row,
  *   6. unlinks the lab identity. The occurrence claims and the refusal row are permanent receipts
  *      by design (migration 166 grants the runtime role SELECT/INSERT only on the claims), so they
@@ -21,6 +22,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — one deterministic, self-unlinking inbound round-trip step per chat provider (link, owner-bound single dispatch, duplicate refused, stranger refused and audited) over the real identity store, processors and refusal ledger, with only the bot turn and provider send doubled.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The code is minted with the caller's server-derived verified issuer (a link code now requires one), the step degrades without it, and the verdict also requires the bot turn's ambient identity to carry that issuer — the property whose absence made every live linked channel message fail user-bound delegation.
  *
  * @module routes/test-lab-channel-round-trip
  */
@@ -45,7 +47,9 @@ export type LabChannelProvider = 'telegram' | 'discord' | 'sms' | 'whatsapp';
 
 /** What one round trip observed through its doubles. */
 interface RoundTripProbe {
-  turns: Array<{ ownerSub: string; ambientSub: string | null | undefined; ambientOperator: boolean | undefined }>;
+  turns: Array<{
+    ownerSub: string; ambientSub: string | null | undefined; ambientIssuer: string | null | undefined; ambientOperator: boolean | undefined;
+  }>;
   replies: string[];
   refusals: Array<{ reason: ChannelRefusalInput['reason']; committed: boolean }>;
 }
@@ -68,7 +72,7 @@ async function deliver(
   };
   const turn = async (ownerSub: string): Promise<string> => {
     const ambient = getRequestIdentity();
-    probe.turns.push({ ownerSub, ambientSub: ambient?.sub, ambientOperator: ambient?.isOperator });
+    probe.turns.push({ ownerSub, ambientSub: ambient?.sub, ambientIssuer: ambient?.principalIssuer, ambientOperator: ambient?.isOperator });
     return 'lab answer';
   };
   const send = async (_chat: string, reply: string): Promise<void> => { probe.replies.push(reply); };
@@ -93,12 +97,13 @@ async function deliver(
 }
 
 /** Judge what the doubles saw against the round-trip contract; null means it held. */
-function verdict(probe: RoundTripProbe, ownerSub: string): string | null {
+function verdict(probe: RoundTripProbe, ownerSub: string, issuer: string): string | null {
   if (probe.turns.length !== 1) return `expected exactly one bot turn (the duplicate refused), saw ${probe.turns.length}.`;
   const [turn] = probe.turns;
   if (turn.ownerSub !== ownerSub || turn.ambientSub !== ownerSub || turn.ambientOperator !== false) {
     return 'the bot turn did not run for you under your own non-operator identity.';
   }
+  if (turn.ambientIssuer !== issuer) return 'the bot turn did not carry your verified sign-in issuer, so user-bound delegation would refuse it.';
   if (!probe.replies.includes('lab answer')) return 'the answer never came back on the channel.';
   const refused = probe.refusals.filter((r) => r.reason === 'unlinked_identity');
   if (probe.refusals.length !== 1 || refused.length !== 1) return `expected one refusal (the stranger), saw ${probe.refusals.length}.`;
@@ -116,7 +121,9 @@ export async function runChannelRoundTrip(provider: LabChannelProvider, runtime?
   const label = `${provider} inbound round trip (bot turn and provider send doubled)`;
   const result = (state: StepResult['state'], detail: string): StepResult => ({ app: APP, label, state, detail });
   if (!runtime?.ownerSub || !runtime.ctx?.pool) return result('degraded', 'A signed-in caller and the app database are required; nothing was linked.');
+  if (!runtime.issuer) return result('degraded', 'Your session carries no verified sign-in issuer, so no link code can be minted; nothing was linked.');
   const owner = runtime.ownerSub;
+  const issuer = runtime.issuer;
   const links = new ChannelLinkService(runtime.ctx.pool as never);
   const probe: RoundTripProbe = { turns: [], replies: [], refusals: [] };
   const linked = labIdentity(provider);
@@ -124,12 +131,12 @@ export async function runChannelRoundTrip(provider: LabChannelProvider, runtime?
   while (stranger === linked) stranger = labIdentity(provider);
   const run = randomUUID().replace(/-/g, '');
   try {
-    const code = await runWithRequestIdentity({ sub: owner, isOperator: false }, () => links.mintLinkCode(owner, provider));
+    const code = await runWithRequestIdentity({ sub: owner, principalIssuer: issuer, isOperator: false }, () => links.mintLinkCode(owner, provider, issuer));
     await deliver(provider, links, probe, linked, provider === 'telegram' ? `/start ${code}` : `LINK ${code}`, `testlab-${run}-link`);
     await deliver(provider, links, probe, linked, 'Test Lab round trip', `testlab-${run}-ask`);
     await deliver(provider, links, probe, linked, 'Test Lab round trip', `testlab-${run}-ask`);
     await deliver(provider, links, probe, stranger, 'Test Lab round trip', `testlab-${run}-stranger`);
-    const problem = verdict(probe, owner);
+    const problem = verdict(probe, owner, issuer);
     return problem ? result('fail', `${provider}: ${problem}`)
       : result('pass', `${provider}: a lab identity linked to you, one bot turn ran as you and its answer came back, the duplicate was refused, and a never-linked identity was refused with a committed refusal-ledger row. The lab link was removed.`);
   } catch (err) {
