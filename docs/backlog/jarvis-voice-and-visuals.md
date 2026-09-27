@@ -40,9 +40,10 @@ grounded-spec match before refetching mutable CDN bytes.
 
 Model-authored Markdown image syntax is inert and does not initiate an image request. Automatic
 materialization and Discussion replay require exact same-origin metadata for the owner-scoped SVG
-artifact URL. A DOM-free response registry foundation now provides exact-key dispatch, validation,
-capability filtering, cancellation, ordered failure isolation, and safe fallback descriptors; wiring
-Jarvis and non-Jarvis surfaces to it remains open.
+artifact URL. A DOM-free response registry provides exact-key dispatch, validation, capability
+filtering, cancellation, ordered failure isolation, and safe fallback descriptors. Jarvis, the
+swarm-bot chat bubble and the Little Monsters Tutor render untrusted replies through it with one
+shared display-only capability profile (2026-09-27; see JVV-007).
 
 The orb also exposes opt-in ambient listening with a configurable assistant name and wake phrases,
 text transcript retention, daily extractive review, confirmation-only follow-up proposals, and the
@@ -89,10 +90,10 @@ work is explicit below.
 | Item | Priority | What remains open |
 |---|---:|---|
 | JVV-001 | P0 | Seeded authenticated Gmail worker-to-visual acceptance and unavailable-data fallbacks. |
-| JVV-003 | P0 | One queue-backed lifecycle proof without injected terminal worker state. |
+| JVV-003 | P0 | Automated join landed 2026-09-27 with no injected terminal state; its routing decision, worker and message store are doubles. See JVV-003. |
 | JVV-004 | P0 | Real assistive technology, native zoom/forced colors, long translations, physical iOS/Android, safe areas, and dynamic browser chrome. |
 | JVV-006 | P1 | General trusted image/gallery/document ingestion, map/forms, and separately sandboxed HTML preview; the bounded live-Walmart gallery slice is shipped. |
-| JVV-007 | P1 | Wire the shared registry into Jarvis/other surfaces and replace the floating Mermaid CDN import with a reviewed vendored or exact-pinned asset. |
+| JVV-007 | P1 | Jarvis, chat and Tutor adoption and the pinned same-origin Mermaid shipped 2026-09-27. A desktop or TV consumer and capability negotiation remain open. |
 | JVV-008 | P1 | Audited preview/confirm workflows for reminders, events, and tasks. |
 | JVV-009 | P1 | Privacy-safe response metrics and an explicit artifact-retention policy. |
 | JVV-010 | P1 | Calibrated speaker attribution and full unknown-person/profile review acceptance. |
@@ -102,6 +103,27 @@ work is explicit below.
 
 JVV-002 (provider-field grounding) and JVV-005 (server-owned visual eligibility, including the narrow
 explicit structural exception) are complete.
+
+### Disposition of every open item (2026-09-27)
+
+Recorded for BACKLOG "Shared response-renderer completion", whose done-when requires live evidence or
+an explicit disposition for each item above. "Needs operator" names the exact missing input; an agent
+cannot supply it. "Deferred" means not attempted in that change; the item stays open with its own
+done-when below.
+
+| Item | Disposition | Evidence or exact blocker |
+|---|---|---|
+| JVV-001 | Needs operator | A seeded test Gmail mailbox linked to the OSHAL test tenant. The tenant has none, and a personal mailbox is not allowed. With it, run checklist steps 3, 5 and 6. |
+| JVV-003 | Built (automation, with named doubles) | `tests/unit/jarvis-queue-lifecycle.integration.spec.ts`: hand-off → real queue poll → call-out resolver (real orchestration, fixed routing decision) → canned loopback worker over real `BotNodeClient` HTTP → completion the dispatcher writes to an in-memory message store → one summary → one artifact → original Discussion, with no injected terminal state. Every double is listed under JVV-003 below. |
+| JVV-004 | Needs operator; automated suites red | Physical matrix: NVDA, JAWS, VoiceOver, native 200% zoom, forced colors, long translations, physical iOS/Android touch, safe areas and dynamic browser chrome. The automated half is **not** green: `tests/jarvis-rich-response-{integration,native-wake,responsive-a11y,visual-trust}.spec.ts` plus `tests/jarvis-shared-response-renderer.spec.ts` give 21 failed / 7 passed, identically with origin/main 4c64f140's `jarvis.html` and fixture helper. All 8 responsive-a11y cases fail. Causes, from the run log: 13 cases time out clicking `#typeToggle` (12) or `#voiceBtn` (1), which now sit inside the collapsed `#assistantOptions` panel ("element is not visible"); 5 find the `.jarvis-ambient` bar hidden or its state label and settings button absent or overlapping; 2 find no `[data-job-read]` offered-visual element; 1 expects a `/code?file=` workspace link where the page renders `#`. Those specs need updating to the current layout before this half can be called complete. |
+| JVV-006 | Deferred | The display-only kinds and the trusted-provenance boundary shipped with JVV-007. The general trusted image/document receipt, the confirmation-form contract and the sandboxed `html-preview` remain open. |
+| JVV-007 | Built (Jarvis, chat, Tutor) | Details and guards under JVV-007 below. Still open: a desktop or TV client consumer, and end-to-end capability negotiation. |
+| JVV-008 | Deferred | Not attempted. For live proof, calendar-event creation needs a connected calendar on the caller's connector. |
+| JVV-009 | Deferred | Not attempted. |
+| JVV-010 | Needs operator | A consented, labeled evaluation corpus of real speakers across microphones, rooms, overlap, short turns and accents. |
+| JVV-011 | Needs operator | The Windows release-signing certificate, a SmartScreen-signed installer, and the physical-microphone false-wake/sleep/network matrix on target hardware. |
+| JVV-012 | Needs operator | The provider/voice selection slice shipped on 2026-08-01. The private-voice path needs recording consent, a rights review and license records. The Imagination Soft connector waits on a vendor API contract. |
+| JVV-013 | Deferred by design | Needs its own privacy/threat review and an approved signed native client before any implementation (see JVV-013). |
 
 ## Return-session acceptance checklist
 
@@ -194,7 +216,7 @@ controller defense remains outside this item.
 
 ### JVV-003 — real delayed-task lifecycle test
 
-**Status: partial / controller integration complete (2026-07-10).** The Express-level acceptance
+**Status: automated join with named doubles (2026-09-27); originally partial with controller integration (2026-07-10).** The Express-level acceptance
 test crosses `/ask`, trusted-service identity, durable task/ticket state, completion claiming, Jarvis
 summary, the real renderer/persistence service, original-session Discussion history, owner-scoped
 artifact reads, and byte-identical reload. It proves the hand-off acknowledgement has no visual and
@@ -203,11 +225,39 @@ in-memory adapters; the worker completion is injected rather than won and execut
 queue call-out. A separate manifest-worker boundary suite proves remote bot-node result persistence
 precedes terminal ticket status and deduplicates retries. Live-provider acceptance remains JVV-001.
 
-**Next:** join those two boundaries in one automated queue-backed test, or capture a redacted live
-run that proves the generic call-out winner executes and lands the same durable Discussion artifact.
+**Joined (2026-09-27):** `tests/unit/jarvis-queue-lifecycle.integration.spec.ts` joins the two
+boundaries in one automated test. A Jarvis `/ask` hand-off files a real `approved` ticket in the real
+`TicketService`. One real `QueueManagerService` poll routes it through `manifest-worker`. The ADR-083
+call-out resolver's orchestration code is real (candidate filtering, ADR-087 role filter, bid
+broadcast call, confident-strategy check), but its routing decision is fixed. The real
+`BotNodeClient` then executes the ticket over loopback HTTP. The dispatcher writes the completion to
+an in-memory message store and marks the ticket complete. Jarvis's `/tasks` poll then reads that
+completion, summarizes it once, persists one immutable visual, and returns it to the original
+Discussion. No test code writes the terminal ticket state.
+
+The doubles, all of them:
+
+- Routing decision: `agentRouter.route` always returns the one worker with strategy `bid`. The mesh
+  bid transport, `agentProfileRepository`, `resolveOnlineAgentIds` and `isAgentAccessibleTo` are
+  stubs.
+- Worker: a canned loopback `node:http` handler for `POST /api/swarm-execute` with a fixed
+  deliverable, not `bot-node-server`.
+- Message store: an in-memory `vi.fn` array, not Postgres. Tickets and tasks use
+  `InMemoryTicketStore` and `InMemoryTaskStore`. The Jarvis SQL rows are the in-memory
+  `DelayedLifecyclePool`, and the database module's pool, bootstrap and RLS helpers are mocked.
+- Runtime: the swarm runtime, the chat orchestrator and `resolveAgentIdByName` are stubs.
+- Mocked modules: the hosted model (`executeBotOrInline`, Jarvis's brain), `connector-token-broker`,
+  `free-tier-rotation` and `user-model`.
+- Identity: a header middleware stands in for OIDC, and `applicationAuthorization` is a stub.
+
+Mutation checks: a call-out resolver that returns nothing, or a dispatcher that does not store the
+completion, turns the test red.
 
 **Done when:** hand-off → call-out winner → remote worker → durable completion → one Jarvis summary →
-one immutable artifact → original Discussion is proven without injecting terminal worker state.
+one immutable artifact → original Discussion is proven without injecting terminal worker state. The
+test above meets the no-injected-terminal-state part in automation. It does not prove a won bid, a
+real bot-node process or a durable (Postgres) completion, because those are the doubles listed
+above. The live-provider path is JVV-001.
 
 ### JVV-004 — accessibility and interaction sign-off
 
@@ -276,8 +326,8 @@ text-only.
 
 ### JVV-007 — portable renderer across OSHAL surfaces
 
-**Status: registry foundation implemented; Jarvis adapter shipped, broader surface adoption open
-(2026-09-25).** The shared DOM-free
+**Status: Jarvis, chat and one app consumer shipped (2026-09-27); a desktop or TV consumer and capability
+negotiation remain open.** The shared DOM-free
 registry normalizes exact bounded keys, rejects duplicates and wildcard/path-like identifiers,
 validates blocks, filters per-surface capabilities, preserves source order across async rendering,
 isolates component failures, supports cancellation, and returns safe fallback descriptors. It does
@@ -286,14 +336,30 @@ bundle for typed blocks in live, durable and resumed answers, while its establis
 renderer remains in place for ordinary answers and as the unavailable-bundle fallback; a real
 browser guard exercises a bounded `oshal:doc` block.
 
-Next, remove the floating diagram dependency from Jarvis, then add one cockpit concierge,
-Electron/native shell, and TV fallback consumer. Define end-to-end capability negotiation so a TV can request a simpler
-artifact without changing the authoritative answer or its provenance.
+**Shipped 2026-09-27 (Jarvis, chat and one app):**
 
-As part of the Jarvis adapter, remove the current floating `mermaid@11` jsDelivr module import. Serve
-a reviewed vendored build or an exact version/hash under the application security policy, retain
-Mermaid's strict mode, and prove offline/text fallback. The typed visual-artifact path itself does not
-execute Mermaid, but Discussion should not depend on an unpinned third-party module at render time.
+- **One display-only profile.** `DISPLAY_ONLY_RESPONSE_CAPABILITIES` covers markdown, code, mermaid
+  and `oshal:chart`/`table`/`map`/`doc`. Jarvis and the swarm-bot chat bubble render typed replies
+  with it; the Tutor passes its own subset of it (no map). A model-authored `oshal:gallery` (remote
+  image) or `oshal:download` (arbitrary link) degrades to escaped text. A bundle that does not
+  publish the profile is refused, and the surface stays on its escaped renderer.
+- **Trusted-provenance boundary.** An `artifact:*`, `provider:*`, `trusted:*` or reserved `oshal:`
+  fence parses as inert code. Reserved kinds cannot be registered. An `artifact` block resolves
+  only with server-channel provenance (provider, record refs, capture time, owner-scoped artifact
+  id) bound to its own artifact.
+- **One conformance reply.** `SHARED_UNTRUSTED_RESPONSE` ships with the renderer, and Jarvis, the
+  chat bubble and the Tutor render it to the identical block sequence in Chromium. Guards:
+  `tests/unit/shared-response-surfaces-browser.spec.ts` and the store's
+  `little-monsters/tests/tutor-renderer.core.spec.mjs`.
+- **No floating diagram module.** The `mermaid@11` jsDelivr import is gone. `npm run build:chat`
+  vendors the package-lock-pinned Mermaid ESM runtime into `/dist/vendor/mermaid`, and Jarvis loads
+  it same-origin in strict mode. It hydrates both the legacy `.mermaid` blocks and the shared
+  `[data-mermaid]` output. When the runtime is unavailable, the diagram stays readable text, and no
+  CDN request is made (`tests/unit/jarvis-mermaid-vendored.spec.ts` and the Chromium suite above).
+- **Test Lab.** The card is `shared-response-renderer`.
+
+Still open: a desktop or TV client consumer, and end-to-end capability negotiation, so that a simpler
+client can request a simpler artifact without changing the authoritative answer or its provenance.
 
 **Done when:** one typed response fixture renders equivalently in Jarvis, one app concierge, the
 desktop shell, and a TV/client fallback, with the same source/provenance semantics.

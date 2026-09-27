@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Prove exact registry dispatch, guarded/capability fallbacks, ordered async isolation, and cancellation.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Trusted-provenance binding: an artifact block resolves only with server-channel provenance bound to its own artifact id (missing, wrong-channel, mismatched, malformed or oversized provenance falls back before any component runs), and reserved trusted oshal kinds can be neither normalized, registered nor dispatched.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -15,6 +16,20 @@ import {
   type MarkdownBlock,
   type RenderableResponseBlock,
 } from '../../src/shared/ui/response-renderer';
+
+const ARTIFACT_ID = '11111111-1111-4111-8111-111111111111';
+
+/** A server-supplied trusted block: provenance copied from the control plane, bound to its artifact. */
+function trustedArtifact(provenance: Record<string, unknown> = {}): RenderableResponseBlock {
+  return {
+    type: 'artifact', kind: 'image',
+    artifact: { type: 'image', url: `/api/jarvis/visuals/${ARTIFACT_ID}`, alt: 'Weather for Pensacola', artifactId: ARTIFACT_ID },
+    provenance: {
+      channel: 'server', provider: 'nws', recordRefs: ['nws:forecast:KPNS:2026-09-26T12'],
+      capturedAt: '2026-09-26T12:00:00.000Z', artifactId: ARTIFACT_ID, ...provenance,
+    },
+  } as RenderableResponseBlock;
+}
 
 describe('ResponseComponentRegistry', () => {
   it('normalizes only fixed keys and exact bounded oshal kinds', () => {
@@ -31,9 +46,7 @@ describe('ResponseComponentRegistry', () => {
     expect(responseRendererKeyForBlock({ type: 'markdown', text: 'hello' })).toBe('markdown');
     expect(responseRendererKeyForBlock({ type: 'code', lang: 'ts', code: 'x' })).toBe('code');
     expect(responseRendererKeyForBlock({ type: 'mermaid', code: 'A-->B' })).toBe('mermaid');
-    expect(responseRendererKeyForBlock({
-      type: 'artifact', kind: 'image', artifact: { type: 'image', url: '/a', alt: 'A' },
-    })).toBe('artifact:image');
+    expect(responseRendererKeyForBlock(trustedArtifact())).toBe('artifact:image');
     expect(responseRendererKeyForBlock({
       type: 'oshal', kind: 'Map', data: {}, raw: '{}',
     })).toBe('oshal:map');
@@ -195,5 +208,47 @@ describe('ResponseComponentRegistry', () => {
     expect(during.map((result) => result.status === 'fallback' && result.reason)).toEqual([
       'aborted', 'aborted',
     ]);
+  });
+});
+
+describe('trusted provenance binding', () => {
+  it('dispatches a trusted artifact block only with provenance bound to its own artifact', async () => {
+    const render = vi.fn(() => 'trusted');
+    const registry = createResponseComponentRegistry<void, string>().register('artifact:image', { render });
+    const { provenance: _drop, ...withoutProvenance } = trustedArtifact() as unknown as Record<string, unknown>;
+    const forged: RenderableResponseBlock[] = [
+      withoutProvenance as unknown as RenderableResponseBlock,
+      trustedArtifact({ channel: 'model' }),
+      trustedArtifact({ artifactId: '22222222-2222-4222-8222-222222222222' }),
+      trustedArtifact({ provider: 'NWS <script>' }),
+      trustedArtifact({ recordRefs: [] }),
+      trustedArtifact({ recordRefs: Array.from({ length: 17 }, (_, i) => `ref-${i}`) }),
+      trustedArtifact({ recordRefs: ['ok', 'line\nbreak'] }),
+      trustedArtifact({ capturedAt: 'yesterday' }),
+    ];
+
+    const results = await registry.renderBlocks([...forged, trustedArtifact()], undefined);
+
+    expect(render).toHaveBeenCalledOnce();
+    expect(results.slice(0, forged.length).map((result) => [result.status, result.key])).toEqual(
+      forged.map(() => ['fallback', null]),
+    );
+    expect(results[forged.length]).toMatchObject({ status: 'rendered', key: 'artifact:image', value: 'trusted' });
+  });
+
+  it('refuses reserved trusted oshal kinds as keys, registrations and dispatch targets', async () => {
+    for (const key of ['oshal:provider-record', 'oshal:artifact-image', 'OSHAL:Visual', 'oshal:trusted', 'oshal:receipt-png', 'oshal:grounded-weather']) {
+      expect(normalizeResponseRendererKey(key)).toBeNull();
+      expect(() => createResponseComponentRegistry<void, string>().register(key, { render: () => 'x' }))
+        .toThrow(/Invalid response renderer key/);
+    }
+    // Non-reserved kinds that merely CONTAIN a stem stay ordinary.
+    expect(normalizeResponseRendererKey('oshal:weather-provider')).toBe('oshal:weather-provider');
+    expect(normalizeResponseRendererKey('oshal:providers')).toBe('oshal:providers');
+
+    const results = await createResponseComponentRegistry<void, string>().renderBlocks([
+      { type: 'oshal', kind: 'provider-record', data: {}, raw: '{}' },
+    ], undefined);
+    expect(results).toMatchObject([{ status: 'fallback', key: null, reason: 'invalid_block' }]);
   });
 });

@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Concrete component set: proves the standard registry registration, per-component output shapes (markdown/code/mermaid data-mermaid fallback/oshal:chart SVG/oshal:table), golden-ish chart geometry for a known input, fail-closed chart/table normalization, the renderResponseHtml end-to-end pipeline with visible fallbacks, and that <script>/attribute-breakout payloads never land unescaped in any component's output.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Update the standard-registry key-set assertion for the added oshal:map/oshal:gallery/oshal:download kinds (their own coverage lives in response-renderer-media-kinds.spec.ts).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Add oshal:doc registration, bounded display-only normalization, end-to-end rendering and hostile-input coverage.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Give the renderFallbackHtml image-artifact fixture the now-required server provenance (bound to its artifactId) so the spec typechecks against ImageArtifactBlock.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -229,8 +230,14 @@ describe('renderResponseHtml — end-to-end pipeline', () => {
   it('renders fallbacks for every block shape via renderFallbackHtml', () => {
     expect(renderFallbackHtml({ type: 'code', lang: 'js', code: 'x<y' })).toContain('x&lt;y');
     expect(renderFallbackHtml({ type: 'markdown', text: 'hey' })).toContain('hey');
+    const artifactId = '11111111-1111-4111-8111-111111111111';
     expect(renderFallbackHtml({
-      type: 'artifact', kind: 'image', artifact: { type: 'image', url: '/a', alt: 'An image' },
+      type: 'artifact', kind: 'image',
+      artifact: { type: 'image', url: `/api/jarvis/visuals/${artifactId}`, alt: 'An image', artifactId },
+      provenance: {
+        channel: 'server', provider: 'oshal-visual', recordRefs: ['visual:fixture'],
+        capturedAt: '2026-09-26T12:00:00.000Z', artifactId,
+      },
     })).toContain('An image');
   });
 });

@@ -12,6 +12,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial barrel for the concrete response-renderer components.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export the oshal:map / oshal:gallery / oshal:download components and their normalize/render helpers + safeUrl allowlist.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Export the bounded oshal:doc component and its normalize/render helpers.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Export the shared DISPLAY_ONLY_RESPONSE_CAPABILITIES profile.
  *
  * @module shared/ui/response-renderer/components
  */
@@ -34,6 +35,7 @@ export type { DownloadFile, DownloadSpec } from './download-component';
 export { docComponent, normalizeDocData, renderDocHtml } from './doc-component';
 export type { DocSection, DocSpec } from './doc-component';
 export {
+  DISPLAY_ONLY_RESPONSE_CAPABILITIES,
   createStandardResponseRegistry,
   renderFallbackHtml,
   renderResponseHtml,

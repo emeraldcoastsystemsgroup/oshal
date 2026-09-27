@@ -10,6 +10,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial exact-key registry with validation, capability filtering, ordered async isolation, and AbortSignal support.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Refuse reserved trusted `oshal:` kinds as keys (never registrable, never dispatched) and resolve an `artifact` block only when it carries server-channel provenance bound to its own artifact id.
  *
  * @module shared/ui/response-renderer/component-registry
  */
@@ -24,6 +25,7 @@ import type {
   ResponseRenderFallbackReason,
   ResponseRenderOptions,
 } from './types';
+import { isReservedOshalKind, isValidResponseProvenance } from './trusted-provenance';
 
 const FIXED_KEYS = new Set<ResponseRendererKey>([
   'markdown',
@@ -44,7 +46,8 @@ type StoredComponent<TContext, TOutput> = ResponseBlockComponent<
 
 /**
  * Normalize one registry/capability key. Only the four fixed keys and one exact `oshal:<kind>`
- * form are valid. Returning null is fail-closed; callers must not guess a component.
+ * form are valid, and a kind reserved for the trusted channel (trusted-provenance.ts) is not.
+ * Returning null is fail-closed; callers must not guess a component.
  */
 export function normalizeResponseRendererKey(value: string): ResponseRendererKey | null {
   if (typeof value !== 'string') return null;
@@ -52,7 +55,7 @@ export function normalizeResponseRendererKey(value: string): ResponseRendererKey
   if (FIXED_KEYS.has(normalized as ResponseRendererKey)) return normalized as ResponseRendererKey;
   if (!normalized.startsWith('oshal:')) return null;
   const kind = normalized.slice('oshal:'.length);
-  return OSHAL_KIND.test(kind) ? `oshal:${kind}` : null;
+  return OSHAL_KIND.test(kind) && !isReservedOshalKind(kind) ? `oshal:${kind}` : null;
 }
 
 /** Resolve a block to its one exact registry key, or null for an invalid runtime shape. */
@@ -67,10 +70,12 @@ export function responseRendererKeyForBlock(
   if (block.type === 'mermaid') return typeof block.code === 'string' ? 'mermaid' : null;
   if (block.type === 'artifact') {
     const artifact = block.artifact;
+    // A trusted block exists only with provenance bound to the very artifact it renders.
     return block.kind === 'image'
       && artifact?.type === 'image'
       && typeof artifact.url === 'string'
       && typeof artifact.alt === 'string'
+      && isValidResponseProvenance(block.provenance, artifact.artifactId)
       ? 'artifact:image'
       : null;
   }
