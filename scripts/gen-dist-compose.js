@@ -5,6 +5,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — derive the codebase-free "dist" compose from the canonical docker-compose.oshal-local.yml. A registry install has no repo checkout, so: build: sections drop, our three images point at GHCR (registry/tag env-overridable), and repo-relative bind mounts drop because the image bakes the same trees at the same /app paths (./config-seed is the ONE kept relative bind — the installer creates it beside the compose file). Generated at image build and baked as /app/compose.dist.yml so it can never drift from the real topology by hand-editing.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Parse the canonical compose through scripts/lib/compose-yaml.js instead of a bare js-yaml load. #869 took docker-compose.oshal-local.yml to 10040 merge-key units, past js-yaml 4.3.2's default limit of 10000, and this script - run at image build - failed with `merge keys exceeded maxTotalMergeKeys`, so main could not be built. The shared loader carries the repository's explicit, finite budget; tests/unit/compose-yaml-merge-key-budget.spec.ts runs this script on the real file.
  */
 
 'use strict';
@@ -12,6 +13,7 @@
 const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
+const { loadComposeYaml } = require('./lib/compose-yaml');
 
 /** Default registry namespace; the emitted file keeps these overridable at run time. */
 const REGISTRY_EXPR = '${OSHAL_REGISTRY:-ghcr.io/emeraldcoastsystemsgroup}';
@@ -80,7 +82,7 @@ function main() {
     console.error('usage: gen-dist-compose.js <canonical-compose.yml> <out-compose.yml>');
     process.exit(2);
   }
-  const doc = yaml.load(fs.readFileSync(inFile, 'utf8'));
+  const doc = loadComposeYaml(fs.readFileSync(inFile, 'utf8'));
   const stats = { buildsDropped: 0, mountsDropped: 0, dropped: new Set() };
   for (const [name, svc] of Object.entries(doc.services || {})) transformService(name, svc, stats);
 

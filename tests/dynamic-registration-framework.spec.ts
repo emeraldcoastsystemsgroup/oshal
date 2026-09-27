@@ -4,12 +4,12 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Regression tests for dynamic tool execution, prompt exposure, and bot compose registration
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Read the generated dynamic compose file through loadComposeYaml (src/shared/config), the repository's one compose loader with an explicit js-yaml merge-key budget; tests/unit/compose-yaml-merge-key-budget.spec.ts refuses a bare js-yaml parse of any compose file.
  */
 
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import yaml from 'js-yaml';
 import { test, expect } from '@playwright/test';
 import { StreamManager } from '../src/features/streaming';
 import { ToolExecutorService } from '../src/features/chat-orchestration/services/tool-executor-service';
@@ -17,6 +17,7 @@ import { DynamicToolExecutorRegistry } from '../src/features/tool-registry';
 import { createToolResolver } from '../src/app/composition/tool-runtime-context';
 import { DynamicComposeService } from '../src/features/agent-management/services/dynamic-compose-service';
 import { AuthMode, InstallMethod, ToolType, type Tool } from '../src/shared/types/tool';
+import { loadComposeYaml } from '../src/shared/config';
 
 test.describe('Dynamic registration framework', () => {
   test('executes a runtime-registered CLI tool through the server-side executor', async () => {
@@ -92,7 +93,7 @@ test.describe('Dynamic registration framework', () => {
       });
       expect(result.success).toBeTruthy();
 
-      const doc = yaml.load(fs.readFileSync(composePath, 'utf8')) as any;
+      const doc = loadComposeYaml(fs.readFileSync(composePath, 'utf8')) as any;
       const worker = doc.services['runtime-test-agent'];
       expect(worker.image).toBe('oshal-bot:test');
       expect(worker.environment.BOT_RUNTIME).toBe('bot-node');

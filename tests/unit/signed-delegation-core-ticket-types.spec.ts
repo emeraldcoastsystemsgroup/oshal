@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards BACKLOG "Signed delegation refuses every ticket whose worker bot runs inline": with OSHAL_DELEGATION_SIGNING_* configured, dispatch-manifest-worker throws 'Signed HTTP delegation requires a dedicated bot-node endpoint' for any worker with no dedicated node, and the incident path rethrows 'No endpoint found for agent ...'. The core ticket types are enumerated from the TREE (WORKFLOW_PIPELINES plus every swarm-apps/*.yaml on disk), never from a list typed here, so a new kernel manifest that points a ticket type at a controller-inline bot goes red without editing this file. Each manifest-worker type is dispatched through the REAL dispatchManifestWorkerTicket, the REAL registry, the REAL resolveBotNodeEndpoint and a REAL BotNodeClient holding a locally generated Ed25519 signing key, over a REAL loopback bot node that records the signed token. The negative case registers a controller-inline worker and proves the same assertions go red on a refusal.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The container-reality case parses docker-compose.oshal-local.yml through loadComposeYaml (@/shared/config). A bare js-yaml load fails on the library's default merge-key limit since #869; the shared loader carries the repository's explicit budget and tests/unit/compose-yaml-merge-key-budget.spec.ts pins every compose parse to it.
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -12,6 +13,7 @@ import * as path from 'path';
 import * as http from 'http';
 import { generateKeyPairSync } from 'crypto';
 import * as yaml from 'js-yaml';
+import { loadComposeYaml } from '@/shared/config';
 
 // Deep module imports, not the slice barrel: the barrel pulls the whole orchestration graph and
 // WORKFLOW_PIPELINES comes back undefined under the spec transform (circular re-export).
@@ -238,7 +240,7 @@ describe('a resolved endpoint names a container that is really there', () => {
   // http://<container>:5000 for anything flagged requiresOwnNode, whether or not that service
   // exists. A fabricated container name passed this file's other cases, which is the whole risk of
   // moving a bot onto a node - the refusal becomes an opaque connect error instead.
-  const compose = yaml.load(
+  const compose = loadComposeYaml(
     fs.readFileSync(path.resolve(__dirname, '../../docker-compose.oshal-local.yml'), 'utf8'),
   ) as { services?: Record<string, { container_name?: string; profiles?: string[] }> };
   // Docker answers to BOTH: a service is reachable by its compose key and by its container_name,

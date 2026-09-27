@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Dynamic compose service — generates docker-compose.dynamic.yml
  *                     |                             | for agents created at runtime, then hands off to
  *                     |                             | BotContainerSpawnerService to start the container.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | readComposeDoc parses through loadComposeYaml (@/shared/config), the repository's one compose loader with an explicit, finite js-yaml merge-key budget, instead of relying on js-yaml 4.3.2's default limit of 10000 (which the stack compose crossed with #869 and broke the image build). The parse failure it falls back from is now logged with the file path: it used to be swallowed, and the fresh document it falls back to is what the next upsert writes over the file.
  */
 
 /**
@@ -32,6 +33,7 @@ import { readFileSync, writeFileSync, existsSync } from 'fs';
 import path from 'path';
 import yaml from 'js-yaml';
 import { createChildLogger } from '@/shared/logger';
+import { loadComposeYaml } from '@/shared/config';
 
 const logger = createChildLogger({ module: 'dynamic-compose-service' });
 
@@ -175,9 +177,10 @@ export class DynamicComposeService {
     }
     try {
       const raw = readFileSync(this.dynamicFile, 'utf8');
-      return (yaml.load(raw) as Record<string, any>) ?? { services: {}, volumes: {} };
-    } catch {
+      return (loadComposeYaml(raw) as Record<string, any>) ?? { services: {}, volumes: {} };
+    } catch (error) {
       // File is corrupt or empty — start fresh
+      logger.error({ err: error, file: this.dynamicFile }, 'Dynamic compose file could not be parsed; starting from an empty document');
       return { services: {}, volumes: {} };
     }
   }

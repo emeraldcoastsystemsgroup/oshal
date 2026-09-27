@@ -5,17 +5,18 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | K5 guard (BACKLOG kernel audit 2026-07-29): worker bots inherited the SUPERUSER database URL while the api ran least-privilege oshal_app — and Postgres exempts superuser/BYPASSRLS roles from row-level security, so every bot node was an RLS bypass around the per-user isolation the platform is sold on. This spec pins the whole fix: (1) no compose DATABASE_URL defaults to the superuser `oshal` role; (2) bots read their OWN interpolation var (BOT_DATABASE_URL) so a legacy .env pointing DATABASE_URL at the superuser can never leak back into bot containers — exactly ONE `${DATABASE_URL:-…}` remains, the api's oshal_app runtime DSN; (3) migration 099 creates oshal_bot NOSUPERUSER+NOBYPASSRLS+NOCREATEROLE, grants DML only, and never grants ownership — the attributes that make RLS actually enforce on a bot-path connection. The remaining live leg (two-user RLS test with bots up) is a deploy-time step recorded in the BACKLOG.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Verify parsed controller/worker DSN parity against the real provisioner and preserve managed initializer credential isolation.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Parse the deployment compose through loadComposeYaml (@/shared/config). A bare js-yaml load of docker-compose.oshal-local.yml fails on the library's default merge-key limit since #869; the shared loader carries the repository's explicit budget and tests/unit/compose-yaml-merge-key-budget.spec.ts pins every compose parse to it.
  */
 
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { load } from 'js-yaml';
+import { loadComposeYaml } from '@/shared/config';
 import { runtimeCredentials } from '../../scripts/governance/provision-app-role.mjs';
 
 const compose = fs.readFileSync(path.resolve(process.cwd(), 'docker-compose.oshal-local.yml'), 'utf8');
 const migration = fs.readFileSync(path.resolve(process.cwd(), 'scripts/migrations/099-bot-db-role.sql'), 'utf8');
-const deployment = load(compose) as { services: Record<string, { environment?: Record<string, string> }> };
+const deployment = loadComposeYaml(compose) as { services: Record<string, { environment?: Record<string, string> }> };
 const apiEnvironment = deployment.services['oshal-api'].environment!;
 
 /** @description Resolve only the closed default-value expressions used by this database fixture.

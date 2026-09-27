@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial (ADR-129) — the chart fleet lists are GENERATED, never hand-typed (anti-drift rule 2): parse docker-compose.oshal-local.yml, derive the k8s-eligible bot-node fleet (kernel + full presets), and write/verify the marker-fenced block in deploy/helm/oshal/values.yaml. Exclusions are LOGGED, not silent (no-silent-caps): docker-socket bots (self-healing has no docker daemon to heal on k8s) and compose-profile services (a `full` install never started them either). Guard: tests/unit/chart-fleet-parity.spec.ts runs check() and goes red on drift.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | deriveFleet parses the compose through scripts/lib/compose-yaml.js, the repository's one compose loader with an explicit, finite js-yaml merge-key budget. The bare load hit js-yaml 4.3.2's default limit of 10000 once #869 took docker-compose.oshal-local.yml to 10040 units. Pinned by tests/unit/compose-yaml-merge-key-budget.spec.ts.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -11,7 +12,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const yaml = require('js-yaml');
+const { loadComposeYaml } = require('./lib/compose-yaml.js');
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const COMPOSE_PATH = path.join(ROOT, 'docker-compose.oshal-local.yml');
@@ -36,7 +37,7 @@ export const KERNEL_BOTS = ['general-bot', 'jarvis-bot', 'oshal-developer', 'sec
  *   excluded: every compose bot service NOT carried to k8s, with the reason why
  */
 export function deriveFleet(composeText) {
-  const doc = yaml.load(composeText);
+  const doc = loadComposeYaml(composeText);
   const services = doc?.services ?? {};
   const bots = [];
   const excluded = [];
