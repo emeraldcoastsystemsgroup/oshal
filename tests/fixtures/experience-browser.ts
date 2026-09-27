@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Serve the real experience shells through the real static route registration over an isolated, explicitly synthetic swarm: home plan, listing, navigation, tickets, Jarvis shelf/history/ask, package summaries, Little Monsters, Purchasing, Finance and the user directory, with controllable statuses so honest setup, denial and failure states can be proven in Chromium.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | The synthetic ribbon profile answers per application (Little Monsters role-filtered; every other host a home and a more page) so the multi-host presets are exercised against 19 installed applications
  */
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -35,6 +36,8 @@ export function experienceState() {
     syntheticApp('forge', 'ai-engineering'), syntheticApp('bot-only', 'ai-engineering', { navigable: false, summary: false }),
     syntheticApp('stage', 'ai-creative'), syntheticApp('arcade-games', 'ai-creative'), syntheticApp('deck', 'ai-productivity'), syntheticApp('purchasing', 'ai-productivity'),
     syntheticApp('hearth', 'ai-home'), syntheticApp('home', 'ai-home'), syntheticApp('little-monsters', 'ai-home'), syntheticApp('atlas', 'ai-knowledge'),
+    syntheticApp('presentations', 'ai-productivity'), syntheticApp('switchboard', 'ai-productivity'), syntheticApp('payroll', 'ai-finance'),
+    syntheticApp('payments', 'ai-productivity'), syntheticApp('identity', 'ai-productivity'), syntheticApp('cad-studio', 'ai-engineering'),
     syntheticApp('unadmitted', 'ai-knowledge', { inPlan: false, navigable: false }),
   ];
   return {
@@ -116,8 +119,16 @@ function swarmRoutes(app: express.Application, state: ExperienceState) {
 function packageRoutes(app: express.Application, state: ExperienceState) {
   const edu = state.education, shop = state.purchasing, fin = state.finance;
   app.get('/api/ui/profile', (req, res) => {
-    if (String(req.query.name || '') !== 'little-monsters') { res.status(404).json({ error: 'Synthetic profile unavailable' }); return; }
-    res.status(statusOr(state, 'profile')).json({ profile: { name: 'little-monsters', displayName: 'Little Monsters', theme: 'little-monsters', defaultView: 'lm-dashboard', ribbon: { items: edu.tools } } });
+    const name = String(req.query.name || '');
+    const record = state.apps.find(a => a.summary.name === name);
+    if (!record) { res.status(404).json({ error: 'Synthetic profile unavailable' }); return; }
+    // Little Monsters answers like the real app: the profile arrives already filtered per caller (teacher-only tools only for teachers/admins).
+    const teacher = ['teacher', 'admin'].includes(edu.me.role);
+    const items = name === 'little-monsters'
+      ? edu.tools.filter(t => teacher || !['tool-lm-teacher', 'tool-lm-recorder'].includes(t.id))
+      : [{ id: `tool-${name}-home`, label: `${record.summary.displayName} home`, icon: 'codicon codicon-circle-outline', section: 'top', toolUi: { iframeUrl: `/fixture/surface/${name}` } },
+        { id: `tool-${name}-more`, label: `${record.summary.displayName} more`, icon: 'codicon codicon-circle-outline', section: 'bottom', toolUi: { iframeUrl: `/fixture/surface/${name}-more` } }];
+    res.status(statusOr(state, 'profile')).json({ profile: { name, displayName: record.summary.displayName, theme: 'midnight', defaultView: items[0]?.id, ribbon: { items } } });
   });
   app.get('/api/education/me', (_req, res) => edu.meStatus === 200 ? res.json(edu.me) : res.status(edu.meStatus).json({ error: 'Synthetic learner missing' }));
   app.get('/api/education/classes', (_req, res) => res.json({ classes: edu.classes }));

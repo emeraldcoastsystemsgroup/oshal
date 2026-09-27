@@ -153,20 +153,20 @@ body[data-theme="cozy"], [data-theme="cozy"] {
 body[data-skin="classroom"], [data-layout][data-skin="classroom"], .experience[data-skin="classroom"], [data-skin="classroom"],
 body[data-skin="playful"], [data-layout][data-skin="playful"], .experience[data-skin="playful"], [data-skin="playful"],
 body[data-theme="playful"], [data-theme="playful"] {
-  --bg: #f7f3fc;
+  --bg: #fbf8f5;
   --surface: #fffcff;
-  --surface-2: #f0e6fa;
+  --surface-2: #f4eef9;
   --chrome: #fffcff;
-  --ink: #382c50;
-  --muted: #756684;
-  --line: #e5daed;
-  --accent: #8952a5;
+  --ink: #342845;
+  --muted: #796694;
+  --line: #ebdff5;
+  --accent: #6c4f97;
   --on-accent: #ffffff;
-  --soft: #f0e6fa;
+  --soft: #f4eef9;
   --paper: #fffcff;
   --on: #ffffff;
   --feature: #eee0f5;
-  --teal: #8952a5;
+  --teal: #6c4f97;
   --gold: #f2c94c;
   --radius-custom: 24px;
   --radius: 24px;
@@ -178,20 +178,20 @@ body[data-theme="playful"], [data-theme="playful"] {
 body[data-skin="company"], [data-layout][data-skin="company"], .experience[data-skin="company"], [data-skin="company"],
 body[data-skin="professional"], [data-layout][data-skin="professional"], .experience[data-skin="professional"], [data-skin="professional"],
 body[data-theme="company"], [data-theme="company"], body[data-theme="professional"], [data-theme="professional"] {
-  --bg: #f3f5f7;
+  --bg: #f4f6f8;
   --surface: #ffffff;
-  --surface-2: #e5f1f1;
+  --surface-2: #eaf0f4;
   --chrome: #ffffff;
-  --ink: #182d3e;
-  --muted: #637584;
-  --line: #dce3e9;
-  --accent: #256c78;
+  --ink: #1e293b;
+  --muted: #64748b;
+  --line: #d5e0e8;
+  --accent: #1f6b75;
   --on-accent: #ffffff;
-  --soft: #e5f1f1;
+  --soft: #eaf0f4;
   --paper: #ffffff;
   --on: #ffffff;
   --feature: #173b4a;
-  --teal: #256c78;
+  --teal: #1f6b75;
   --gold: #d4ac73;
   --radius-custom: 12px;
   --radius: 12px;
