@@ -89,7 +89,8 @@
  * 37 | maintainer@emeraldcoastsystemsgroup.com   | Registered the experience-shells card (EXPERIENCE_SCENARIOS): a read-only step over the ADR-164 entry pages and the caller-scoped feeds they join, with its adapter unit, classification unit and Chromium regression suites.
  * 38 | maintainer@emeraldcoastsystemsgroup.com   | Registered the social-signals card (SOCIAL_SIGNAL_SCENARIOS, test-lab-social-signal-scenarios.ts): four deterministic steps over the caller's own /api/content/subscriptions routes (unregistered bot refused, own list, foreign delivery audit 404, own delivery audit) with the unit, real-boundary Postgres/Redis and schema guards attached. Guard: tests/unit/test-lab-social-signal-registration.spec.ts.
  * 39 | maintainer@emeraldcoastsystemsgroup.com   | Attached the Jarvis own-task recall guards to 'jarvis-routing' regressionTests: jarvis-persona-recall pins that the persona reaches for conversation_query/conversation_fetch before it defers to an app, and bot-statement-privilege-contract runs the shipped recall statements (now including the Jarvis work-item list/fetch) as the real oshal_bot role. The owner-scope Postgres sibling already attached here now also proves the work-item reads and the protected-result boundary. A spec on disk is not Test Lab registration.
- * 40 | maintainer@emeraldcoastsystemsgroup.com   | Registered the shared-response-renderer card (RESPONSE_RENDERER_SCENARIOS, test-lab-response-renderer-scenarios.ts): read-only probes that the running server publishes the renderer bundle with its display-only capability profile and the same-origin pinned Mermaid runtime, plus an in-process hostile-reply render that must stay inert, with the renderer unit suites and the Jarvis/chat Chromium suite attached. Guard: tests/unit/test-lab-response-renderer-registration.spec.ts.
+ * 40 | maintainer@emeraldcoastsystemsgroup.com   | Registered the LinkedIn content queue card (LINKEDIN_CONTENT_SCENARIOS, test-lab-linkedin-content-scenarios.ts): three read-only steps over the caller's own /api/linkedin-assistant routes (428 confirm gate, queue drafts keep their ticket/citations/audit hash, unknown draft 404) with the real-Postgres ticket-to-publish suite attached. Guard: tests/unit/test-lab-linkedin-content-registration.spec.ts.
+ * 41 | maintainer@emeraldcoastsystemsgroup.com   | Registered the shared-response-renderer card (RESPONSE_RENDERER_SCENARIOS, test-lab-response-renderer-scenarios.ts): read-only probes that the running server publishes the renderer bundle with its display-only capability profile and the same-origin pinned Mermaid runtime, plus an in-process hostile-reply render that must stay inert, with the renderer unit suites and the Jarvis/chat Chromium suite attached. Guard: tests/unit/test-lab-response-renderer-registration.spec.ts.
  * @module test-lab-scenarios
  */
 
@@ -111,6 +112,7 @@ import { CHANNEL_SCENARIOS } from './test-lab-channel-scenarios';
 import { DEVICE_SCENARIOS } from './test-lab-device-scenarios';
 import { STORYBOARD_SCENARIOS } from './test-lab-storyboard-scenarios';
 import { SOCIAL_SIGNAL_SCENARIOS } from './test-lab-social-signal-scenarios';
+import { LINKEDIN_CONTENT_SCENARIOS } from './test-lab-linkedin-content-scenarios';
 import { RESPONSE_RENDERER_SCENARIOS } from './test-lab-response-renderer-scenarios';
 import { renderCatalogVisual, VISUAL_CATALOG } from './test-lab-visual-catalog';
 import type { AppContext } from '@/app/composition/app-context';
@@ -290,6 +292,7 @@ export const SCENARIOS: Scenario[] = [
   ...DEVICE_SCENARIOS,
   ...STORYBOARD_SCENARIOS,
   ...SOCIAL_SIGNAL_SCENARIOS,
+  ...LINKEDIN_CONTENT_SCENARIOS,
   ...RESPONSE_RENDERER_SCENARIOS,
   // ── Rich visuals — every kind rendered deterministically through the real renderer ──────────
   ...VISUAL_CATALOG.map((entry): Scenario => ({

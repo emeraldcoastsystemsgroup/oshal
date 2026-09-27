@@ -19,6 +19,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — bespoke-write-goes-through-executor (audit-down refuses the post, both audit rows land, params hash matches, skip paths preserved), the declared-action confirm gate, and the caller-scoped audit read.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | A connector's declared headers must travel on the WRITE: linkedin.yaml requires X-Restli-Protocol-Version on UGC Posts and the executor sent none, so the declared-action rail would have dropped what the bespoke fetch was sending.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The publisher now takes a publish context (draft id, source ticket, citations) and returns the params hash its audit rows carry: the success and provider-rejection cases assert the returned hash equals the audited one, and the pre-executor skips return none (they leave no audit row to join).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import path from 'node:path';
@@ -29,6 +30,8 @@ import { readConnectorActionAudit } from '../../../src/app/routes/connector-acti
 import { encryptToken } from '../../../src/app/routes/connector-token-crypto';
 
 const SUB = 'auth0|publisher';
+/** Provenance only: which draft/ticket the write belongs to. It never changes the posted text. */
+const CONTEXT = { draftId: 41, sourceTicketId: '33333333-3333-4333-8333-333333333333', sourceCitations: ['https://example.test/source'] };
 const LINKEDIN_SPEC = path.join(process.cwd(), 'swarm-apps/connectors/linkedin.yaml');
 
 interface AuditInsert { sql: string; params: unknown[] }
@@ -91,7 +94,7 @@ describe('bespoke-write-goes-through-executor', () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
     const { pool } = await poolFor({ auditFails: true });
-    const outcome = await buildPublisher(ctxFor(pool))(SUB, 'a post nobody should see');
+    const outcome = await buildPublisher(ctxFor(pool))(SUB, 'a post nobody should see', CONTEXT);
     expect(outcome.ok).toBe(false);
     // The whole point: a provider mutation with no persistent record is worse than a refused one.
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -106,7 +109,7 @@ describe('bespoke-write-goes-through-executor', () => {
       return new Response(JSON.stringify({ id: 'urn:li:share:999' }), { status: 201, headers: { 'content-type': 'application/json' } });
     }));
     const { pool, inserts } = await poolFor();
-    const outcome = await buildPublisher(ctxFor(pool))(SUB, 'hello world');
+    const outcome = await buildPublisher(ctxFor(pool))(SUB, 'hello world', CONTEXT);
     expect(outcome.ok).toBe(true);
     expect(outcome.postId).toBe('urn:li:share:999');
 
@@ -125,6 +128,8 @@ describe('bespoke-write-goes-through-executor', () => {
       visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' },
     });
     expect(inserts[0].params[3]).toBe(expectedHash);
+    // The outcome hands the same hash back, so the draft can join these two audit rows.
+    expect(outcome.paramsHash).toBe(expectedHash);
     expect(JSON.stringify(inserts.map((i) => i.params))).not.toContain('hello world');
 
     // And it really did hit the declared endpoint with the declared body.
@@ -147,7 +152,7 @@ describe('bespoke-write-goes-through-executor', () => {
       return new Response(JSON.stringify({ id: 'urn:li:share:hdr' }), { status: 201, headers: { 'content-type': 'application/json' } });
     }));
     const { pool } = await poolFor();
-    const outcome = await buildPublisher(ctxFor(pool))(SUB, 'header guard');
+    const outcome = await buildPublisher(ctxFor(pool))(SUB, 'header guard', CONTEXT);
     expect(outcome.ok).toBe(true);
     expect(sent).toHaveLength(1);
 
@@ -167,9 +172,10 @@ describe('bespoke-write-goes-through-executor', () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
     const { pool, inserts } = await poolFor({ connected: false });
-    const outcome = await buildPublisher(ctxFor(pool))(SUB, 'text');
+    const outcome = await buildPublisher(ctxFor(pool))(SUB, 'text', CONTEXT);
     expect(outcome).toMatchObject({ ok: false, skipped: true, code: 409 });
     expect(outcome.message).toMatch(/Connect LinkedIn/);
+    expect(outcome.paramsHash).toBeUndefined();
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(inserts).toEqual([]);
   });
@@ -178,7 +184,7 @@ describe('bespoke-write-goes-through-executor', () => {
     vi.stubEnv('SESSION_SECRET', 'write-action-guard-secret');
     vi.stubGlobal('fetch', vi.fn());
     const { pool } = await poolFor({ accountId: null });
-    const outcome = await buildPublisher(ctxFor(pool))(SUB, 'text');
+    const outcome = await buildPublisher(ctxFor(pool))(SUB, 'text', CONTEXT);
     expect(outcome).toMatchObject({ ok: false, skipped: true });
     expect(outcome.message).toMatch(/Reconnect LinkedIn/);
   });
@@ -187,9 +193,10 @@ describe('bespoke-write-goes-through-executor', () => {
     vi.stubEnv('SESSION_SECRET', 'write-action-guard-secret');
     vi.stubGlobal('fetch', vi.fn(async () => new Response('nope', { status: 422 })));
     const { pool, inserts } = await poolFor();
-    const outcome = await buildPublisher(ctxFor(pool))(SUB, 'text');
+    const outcome = await buildPublisher(ctxFor(pool))(SUB, 'text', CONTEXT);
     expect(outcome.ok).toBe(false);
     expect(inserts.map((i) => i.params[5])).toEqual(['attempt', 'error']);
+    expect(outcome.paramsHash).toBe(inserts[0].params[3]);
   });
 });
 

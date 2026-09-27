@@ -15,7 +15,7 @@ Eight selectable experiences over one unchanged backend:
 | Orbit | `/orbit` | Suites as connected worlds around Jarvis; drill into a suite, inspect an app |
 | Commons | `/commons` | Suite rooms with applications, declared assistants, a work board and one Jarvis thread per room |
 | Home · family homebase | `/homebase?preset=family` | Calendar, shopping list, Smart Home facts, people, personal finance |
-| Little Monsters · classroom | `/homebase?preset=classroom` | Classwork, class calendar, teacher roster or learner checklist by real role |
+| Little Monsters · classroom | `/homebase?preset=classroom` | Classwork, class calendar, teacher roster or learner checklist by real role; the Little Monsters tools the caller is admitted to open in place |
 | Business · company swarm | `/homebase?preset=company` | Open tickets as projects, team calendar, people, dense account table |
 | Central assistant | `/nexus` | Intent composer, real ask ledger, answer workspace with handoffs, speaking core |
 
@@ -37,6 +37,7 @@ own session:
 | Per-application facts | each app's own `home-summary` probe from the plan, with the Home view's ADR-145 caps |
 | Conversation | `GET /api/jarvis/history`, `POST /api/jarvis/ask`, `GET /api/jarvis/ask/result` on the browser's shared `jarvisSessionId`; Commons rooms use `jarvis-room-<suite>-<sub>` |
 | Classroom | Little Monsters `/api/education/me`, `/classes`, `/classes/:id/students` (only classes the caller teaches), `/assignments`, `/calendar`; personal events are created through `POST /api/education/calendar` |
+| Hosted tools | `GET /api/ui/profile?name=<host app>`: the same caller-scoped ribbon profile the cockpit renders. The classroom preset names its host application (`homebase-config.js`), lists the admitted tools in its sidebar and tile row (per-class tools stay out of that list; teacher-only tools show to teachers as a presentation choice, the server still decides), and opens a tool in an iframe that follows the skin through the shared theme bootstrap. The frame's navigation messages are the shapes the cockpit ribbon already honours (`app-navigate`, `app-tools-changed`, and the Little Monsters literals); only the frame the home opened is heard, same origin only, and only an admitted tool ever opens |
 | Shopping list | Purchasing `/api/purchasing/lists` and `/lists/:id/items`; add and remove use the package's own routes |
 | Money | Finance `/api/finance/summary` and `/api/finance/home-summary` |
 | Voice | `POST /api/voice/synthesize`, falling back to the browser engine |
@@ -53,6 +54,7 @@ provenance panel and the module renders its unavailable state. No module substit
 - No calendar beyond what Little Monsters contributes; the swarm overview's calendar feed is empty
   by design until an application contributes events.
 - No role switcher. Teacher and learner views follow `/api/education/me`.
+- No blocking on work data: a homebase paints from identity and the catalog (`readyCore`) and fills tickets, tasks and the overview in when they answer (`ready`), so a slow queue never delays the first screen.
 
 ## Device-local preferences
 

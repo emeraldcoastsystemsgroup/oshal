@@ -93,6 +93,26 @@ the stream event. That is local evidence. Registration in source does not mean t
 on the deployed instance, and nothing here claims a live provider capture or a bot consuming the
 lane.
 
+### LinkedIn content queue
+
+**LinkedIn content queue — ticket to confirmed publish** (`linkedin-content-queue`, Tools) runs
+three read-only steps over the signed-in caller's own `/api/linkedin-assistant` routes:
+
+- a publish without explicit confirmation answers `428`. It is probed on draft id 0, which a SERIAL key
+  never issues, so even a regressed gate finds nothing to post;
+- the caller's queue-created drafts name their source ticket and carry a citation list. Published
+  ones are counted with the params hash that joins their connector audit rows. With no queue draft
+  yet this step is degraded, not failed;
+- an unknown draft id answers `404`, exactly as another owner's does.
+
+A run drafts, approves and publishes nothing. Run the linked suites locally with
+`npm run test:linkedin-content`. The real-boundary suite
+(`tests/unit/linkedin-content-queue-postgres.spec.ts`) starts its own PostgreSQL and a local LinkedIn
+protocol double. It takes one queue ticket through the real dispatcher to a confirmed publish on the
+caller's brokered token, and proves the audit join, the ticket write-back and the denial paths. That is
+local evidence. It does not show that a deployed Social package ran a ticket, or that a real LinkedIn
+post was made.
+
 ### Messaging channels
 
 **Messaging channels — what can reach your swarm** (`channel-inbound-bindings`, Tools) reads the

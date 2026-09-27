@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register the ADR-164 experience shells in the AI Test Lab: a read-only step that opens every experience entry page with the initiating operator's cookie and reads the caller-scoped feeds those pages join, classifying a missing page as a deployment gap and a refused feed as degraded rather than a pass.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Type-only repair so the committed-HEAD typecheck passes (it failed on origin/main b2c0d916 and blocked every push containing main): classifyExperienceProbe now takes the page type that carries its root marker (what experienceShellsStep and the spec already pass) instead of PageProbe, which has no marker (TS2339), and the request headers are an explicit Record<string, string> instead of a {cookie} | {} union fetch rejects (TS2769 x2). No behaviour change; tests/unit/test-lab-experience-scenarios.spec.ts is unchanged and green.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Scenario text names the classroom homebase hosting the Little Monsters tools in place (ribbon profile); the browser suite it references now covers hosted tools and the two-phase paint.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -60,7 +61,7 @@ export async function experienceShellsStep(cookie: string, fetchImpl: typeof fet
 
 export const EXPERIENCE_SCENARIOS: Scenario[] = [{
   id: 'experience-shells', title: 'Experience shells over the live swarm', group: 'tool',
-  description: 'Open the eight experience entry pages (Studio, Jarvis, Orbit, Commons, the Home, Little Monsters and Business homebases, the central assistant) with the initiating session and read the caller-scoped feeds they join. Local suites prove the adapter joins and the Chromium behaviour over an isolated synthetic swarm: catalog and work rendering, pins, the Jarvis ask flow with thread roll and refusal, room threads, homebase modules and honest setup/denial states.',
+  description: 'Open the eight experience entry pages (Studio, Jarvis, Orbit, Commons, the Home, Little Monsters and Business homebases, the central assistant) with the initiating session and read the caller-scoped feeds they join. Local suites prove the adapter joins and the Chromium behaviour over an isolated synthetic swarm: catalog and work rendering, pins, the Jarvis ask flow with thread roll and refusal, room threads, homebase modules and honest setup/denial states. The classroom homebase also lists the Little Monsters tools the caller is admitted to (the ribbon profile) and opens them in place.',
   regressionTests: [
     { level: 'unit', path: 'tests/unit/experience-live-data.spec.ts' },
     { level: 'unit', path: 'tests/unit/test-lab-experience-scenarios.spec.ts' },
