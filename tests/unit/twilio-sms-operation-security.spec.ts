@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 regression guard for the caller-owned, schema-bounded Twilio SMS operation: exact endpoints and form, credential confinement to HTTP Basic auth, input short-circuiting, sanitized output, and fail-closed connector credential parsing.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | WhatsApp reply sender: with the sender the user messaged, one exact Messages request leaves From whatsapp:<that sender> To whatsapp:<user> and the IncomingPhoneNumbers lookup is skipped; without it the owner-number fallback stands; SMS never honors the override; a malformed override is refused before any credential is read.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -17,7 +18,7 @@ vi.mock('@/app/routes/connectors-routes', () => ({
   getValidAccessToken: tokenBroker.getValidAccessToken,
 }));
 
-import { sendUserTwilioSms } from '@/app/routes/twilio-sms-operation';
+import { sendUserTwilioMessage, sendUserTwilioSms } from '@/app/routes/twilio-sms-operation';
 
 const OWNER_SUB = 'oidc|twilio-owner';
 const ACCOUNT_SID = `AC${'a'.repeat(32)}`;
@@ -26,6 +27,7 @@ const CONNECTOR_SECRET = `${ACCOUNT_SID}:${AUTH_TOKEN}`;
 const FROM_NUMBER = '+15550001111';
 const TO_NUMBER = '+15557654321';
 const MESSAGE_SID = `SM${'c'.repeat(32)}`;
+const WHATSAPP_SENDER = '+14155238886';
 const API_BASE = 'https://api.twilio.com/2010-04-01';
 const pool = { query: vi.fn() } as unknown as AppContext['pool'];
 
@@ -155,4 +157,52 @@ describe('fixed per-user Twilio SMS operation', () => {
     expect(tokenBroker.getValidAccessToken).toHaveBeenCalledWith(pool, OWNER_SUB, 'twilio');
     expect(fetchMock).not.toHaveBeenCalled();
   });
+});
+
+describe('WhatsApp reply sender', () => {
+  /** Capture every request; answer the number lookup and the send like Twilio does. */
+  function captureTwilio(): CapturedRequest[] {
+    const captured: CapturedRequest[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init: RequestInit = {}) => {
+      captured.push({ url: String(input), init });
+      return String(input).includes('IncomingPhoneNumbers')
+        ? jsonResponse({ incoming_phone_numbers: [{ phone_number: FROM_NUMBER }] })
+        : jsonResponse({ sid: MESSAGE_SID });
+    }));
+    return captured;
+  }
+  const formOf = (request: CapturedRequest) => Object.fromEntries(new URLSearchParams(String(request.init.body)).entries());
+
+  it('leaves from the WhatsApp sender the user messaged, in one exact request', async () => {
+    const captured = captureTwilio();
+    const result = await sendUserTwilioMessage(pool, OWNER_SUB, TO_NUMBER, 'hello', 'whatsapp', WHATSAPP_SENDER);
+    expect(result).toEqual({ delivered: true, id: MESSAGE_SID });
+    expect(captured.map(({ url }) => url)).toEqual([`${API_BASE}/Accounts/${ACCOUNT_SID}/Messages.json`]);
+    expect(formOf(captured[0])).toEqual({ From: `whatsapp:${WHATSAPP_SENDER}`, To: `whatsapp:${TO_NUMBER}`, Body: 'hello' });
+  });
+
+  it('falls back to the owner number when no sender is known', async () => {
+    const captured = captureTwilio();
+    await sendUserTwilioMessage(pool, OWNER_SUB, TO_NUMBER, 'hello', 'whatsapp');
+    expect(captured).toHaveLength(2);
+    expect(formOf(captured[1])).toEqual({ From: `whatsapp:${FROM_NUMBER}`, To: `whatsapp:${TO_NUMBER}`, Body: 'hello' });
+  });
+
+  it('never applies the override to SMS', async () => {
+    const captured = captureTwilio();
+    await sendUserTwilioMessage(pool, OWNER_SUB, TO_NUMBER, 'hello', 'sms', WHATSAPP_SENDER);
+    expect(captured).toHaveLength(2);
+    expect(formOf(captured[1])).toEqual({ From: FROM_NUMBER, To: TO_NUMBER, Body: 'hello' });
+  });
+
+  it.each([`whatsapp:${WHATSAPP_SENDER}`, '14155238886', 'not-a-number'])(
+    'refuses a malformed sender %s before reading a credential', async (sender) => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      await expect(sendUserTwilioMessage(pool, OWNER_SUB, TO_NUMBER, 'hello', 'whatsapp', sender))
+        .resolves.toEqual({ delivered: false, error: 'twilio_sender_invalid' });
+      expect(tokenBroker.getValidAccessToken).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
 });

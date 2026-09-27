@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1   | maintainer@emeraldcoastsystemsgroup.com   | Classify the complete source-derived refusal-code census so a new code cannot silently escape Stage 3 review and a retired code cannot leave stale remedy policy behind.
  * 2   | maintainer@emeraldcoastsystemsgroup.com   | Extend the census across tracked production JavaScript, JSX, MJS, TypeScript and TSX; distinguish three internal UI/fallback reason tokens as explicit non-refusal lexical hits.
+ * 3   | maintainer@emeraldcoastsystemsgroup.com   | Classify the three inbound chat-channel refusals: a cross-user rebind attempt is hard-security (an identity bound to one account must never be moved by another account's code); an unlinked identity and a refused link code are user-action (the remedy is linking from the cockpit with a fresh code), never operator-remediable.
  */
 
 /** The six Stage 3 review outcomes. Only operator-remediable entries belong in the remedy catalog. */
@@ -57,6 +58,7 @@ export const REFUSAL_CODES_BY_DISPOSITION = Object.freeze({
     'authorization_tier_denied',
     'briefing_access_denied',
     'briefing_identity_required',
+    'channel_identity_rebind_denied',
     'delegation_forbidden',
     'delegation_required',
     'embedded_tool_denied',
@@ -92,6 +94,8 @@ export const REFUSAL_CODES_BY_DISPOSITION = Object.freeze({
   'validation-or-user-action': Object.freeze([
     'authorization_service_class_required',
     'browser_speech_unavailable',
+    'channel_link_code_refused',
+    'channel_link_required',
     'confirmation_required',
     'issuer_required',
     'json_required',

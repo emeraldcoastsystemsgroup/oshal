@@ -93,6 +93,32 @@ the stream event. That is local evidence. Registration in source does not mean t
 on the deployed instance, and nothing here claims a live provider capture or a bot consuming the
 lane.
 
+### Messaging channels
+
+**Messaging channels — what can reach your swarm** (`channel-inbound-bindings`, Tools) reads the
+caller's own `GET /api/channels` and fails unless the surface reports a wired/not-wired state for
+Telegram, SMS, WhatsApp and Discord plus the caller's linked identities. It is read-only.
+
+**Messaging channels — one message in, one answer out, strangers refused**
+(`channel-inbound-round-trip`, Tools) has one step per provider (Telegram, Discord, SMS, WhatsApp).
+Each step runs as the signed-in caller through the real identity store, the provider's real inbound
+processor and the real refusal ledger. It mints a code, links a lab-prefixed synthetic identity (a
+fictional 555-01xx number for SMS and WhatsApp), sends one message twice with the same occurrence
+id, and sends one from a never-linked identity. It passes only when exactly one bot turn ran for the
+caller under the caller's non-operator identity, the answer came back, the duplicate was refused, and
+the stranger was refused with a committed refusal-ledger row. The bot turn and the provider send are
+doubled, so a run spends nothing and messages no real account. The lab link is removed afterwards;
+the occurrence claims and the refusal row stay as permanent receipts (the runtime role can only
+insert them). Without a signed-in caller and the app database each step is degraded.
+
+Run the linked suites locally with `npm run test:channels`. The real-boundary suites
+(`tests/unit/chat-channel-inbound-postgres.spec.ts`, `tests/unit/chat-channel-denial-audit.spec.ts`,
+`tests/unit/sms-inbound-dispatch.spec.ts`) start their own PostgreSQL. Against the non-superuser
+enforcing role under forced RLS they drive the real Telegram webhook over HTTP, the real Discord
+Gateway client over a local WebSocket server, and the real signed Twilio webhook for SMS and
+WhatsApp. That is local evidence: registration in source does not mean the card has run on the
+deployed instance, and nothing here is a real Telegram, Discord or WhatsApp message.
+
 ---
 
 ## Application-installed smoke cases

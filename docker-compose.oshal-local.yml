@@ -43,6 +43,7 @@
 # 35 | maintainer@emeraldcoastsystemsgroup.com | P8: forward OSHAL_CONCIERGE_COVERAGE_MODE to the controller API with the migration-safe warn default. Without the explicit compose mapping, setting enforce in .env changes nothing and surface packages continue to load without an accountable concierge.
 # 36 | maintainer@emeraldcoastsystemsgroup.com | Complete the P8 rollout after the store backfill: the controller now defaults OSHAL_CONCIERGE_COVERAGE_MODE to fail-closed enforce; warn remains an explicit temporary observation/rollback override.
 # 37 | maintainer@emeraldcoastsystemsgroup.com | Add an optional dedicated Futures research worker with package-owned persona and no CLI credential mounts.
+# 38 | maintainer@emeraldcoastsystemsgroup.com | Forward the inbound chat-channel settings to the api only: DISCORD_BOT_TOKEN (without it the Discord DM Gateway never starts on this stack and POST /api/channels/discord/link answers 503), TWILIO_INBOUND_NUMBER (the number SMS users text their LINK code to), TWILIO_INBOUND_PUBLIC_URL (the exact public URL the Twilio signature is verified against; unforwarded, the api falls back to the URL it reconstructs from the request, sms-inbound-routes requestUrl) and TWILIO_WHATSAPP_FROM (the WhatsApp sender users message). All four were read by the api and never forwarded. The Discord token stays off x-bot-env so no bot container carries it. Guard: tests/unit/compose-env-passthrough.spec.ts.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -1293,6 +1294,13 @@ services:
       TWILIO_FROM_NUMBER: ${TWILIO_FROM_NUMBER:-}
       TWILIO_TO_NUMBER: ${TWILIO_TO_NUMBER:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      # Inbound chat channels (chat-channel-routes, sms-inbound-routes): the Discord DM Gateway
+      # token, the number SMS users text their LINK code to, the exact public URL the Twilio
+      # signature is computed over, and the WhatsApp sender users message. API only.
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+      TWILIO_INBOUND_NUMBER: ${TWILIO_INBOUND_NUMBER:-}
+      TWILIO_INBOUND_PUBLIC_URL: ${TWILIO_INBOUND_PUBLIC_URL:-}
+      TWILIO_WHATSAPP_FROM: ${TWILIO_WHATSAPP_FROM:-}
       # ADR-119 alert triage: the receiver is FAIL-CLOSED, so an unforwarded token means
       # Alertmanager can never reach it — the whole ladder is unreachable and looks 'quiet'.
       ALERT_WEBHOOK_TOKEN: ${ALERT_WEBHOOK_TOKEN:-}

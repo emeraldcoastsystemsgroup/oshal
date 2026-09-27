@@ -16,6 +16,7 @@
  * 2026-09-23 00:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin OSHAL_CONCIERGE_COVERAGE_MODE to the controller: an unforwarded enforce setting leaves the P8 manifest gate in its warn default while the operator believes the package corpus is fail-closed.
  * 2026-09-23 18:45:00 | maintainer@emeraldcoastsystemsgroup.com   | P8 rollout close-out: the gate now defaults to enforce, and forwarding remains necessary so an explicit temporary warn override reaches the controller.
  * 2026-09-24 00:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin OSHAL_ROUTING_URL, OSHAL_GEOCODER_URL, and OSHAL_GEOCODE_CACHE_PATH to oshal-api and rides-bot — operator-owned geocode/routing overrides and durable address cache for rideshare routing.
+ * 2026-09-27 00:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin the four inbound chat-channel settings (DISCORD_BOT_TOKEN, TWILIO_INBOUND_NUMBER, TWILIO_INBOUND_PUBLIC_URL, TWILIO_WHATSAPP_FROM) to the api, and keep the Discord bot token on the controller only.
  */
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
@@ -101,6 +102,15 @@ const REQUIRED_ON_API: ReadonlyArray<{ name: string; readBy: string }> = [
   { name: 'OSHAL_ROUTING_URL', readBy: 'scripts/oshal-uber-rides + rides service routing override' },
   { name: 'OSHAL_GEOCODER_URL', readBy: 'scripts/oshal-uber-rides + rides geocoding endpoint' },
   { name: 'OSHAL_GEOCODE_CACHE_PATH', readBy: 'scripts/oshal-uber-rides durable geocode cache path' },
+  // 2026-09-27, chat-channel adapter core: the inbound channels read these and compose never
+  // forwarded them. Unset, the Discord DM Gateway is an explicit no-op, the SMS link mint answers
+  // 503 unless TWILIO_FROM_NUMBER is set, the Twilio signature is verified against the URL the api
+  // reconstructs from the request instead of the configured public URL, and the WhatsApp link
+  // advertises the SMS number instead of the WhatsApp sender.
+  { name: 'DISCORD_BOT_TOKEN', readBy: 'discord-channel-adapter startDiscordGateway + chat-channel-routes /discord/link' },
+  { name: 'TWILIO_INBOUND_NUMBER', readBy: 'chat-channel-routes inboundSmsNumber — the number SMS users text LINK <code> to' },
+  { name: 'TWILIO_INBOUND_PUBLIC_URL', readBy: 'sms-inbound-routes — the exact URL the Twilio signature is verified against' },
+  { name: 'TWILIO_WHATSAPP_FROM', readBy: 'chat-channel-routes whatsAppSenderNumber + twilio-whatsapp transport sender' },
 ];
 
 // This list is CURATED, not exhaustive, and that is a deliberate trade rather than laziness:
@@ -156,6 +166,13 @@ describe('compose forwards every env var the api actually reads', () => {
       expect(sharedAnchor).not.toMatch(new RegExp(`^[ \\t]+${name}:[ \\t]`, 'm'));
     },
   );
+
+  it('keeps the Discord bot token on the controller only', () => {
+    const mappings = compose.match(/^[ \t]+DISCORD_BOT_TOKEN:[ \t]/gm) || [];
+    expect(mappings, 'DISCORD_BOT_TOKEN must have one compose mapping, owned only by oshal-api').toHaveLength(1);
+    expect(apiBlock).toMatch(/^[ \t]+DISCORD_BOT_TOKEN:[ \t]/m);
+    expect(sharedAnchor).not.toMatch(/^[ \t]+DISCORD_BOT_TOKEN:[ \t]/m);
+  });
 
   it('declares rides routing and geocoding knobs on rides-bot', () => {
     const ridesBotStart = compose.indexOf('\n  rides-bot:');

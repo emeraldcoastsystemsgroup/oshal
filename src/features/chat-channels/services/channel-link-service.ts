@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the chat-channel identity store: maps a messaging identity (Telegram chat/user id, later Discord) to exactly one OSHAL user_sub via a short-lived one-time link code the signed-in user generates in the cockpit and sends to the bot. This is the isolation boundary for the inbound channel surface — a shared demo bot must never leak one user's data into another's DM. Every read/write is user_sub-scoped; a migration should later fold these tables into the RLS policy set (query-level scoping is the v1 guard, matching the jarvis_tasks runtime-table pattern).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Machine-write identity (BACKLOG "Machine-write identity: audit every un-migrated identity-less WRITE"). The Telegram webhook is a machine caller with no session, and chat-channel-routes.ts wraps only the SWARM DISPATCH in the linked user's identity — the LINKING write itself (and the resolveLink lookup that finds the owner in the first place) ran with the ambient anonymous non-operator context. The tables carry no RLS policy today, which is exactly why nothing surfaced it; the SEQ-1 note above already promises to fold them into the policy set, and on that day an unscoped INSERT into channel_links would fail the way the ADR-119 alert intake did. Identity is now established explicitly: the code claim and the owner lookup run under runWithSystemIdentity (proof-of-possession / bootstrap reads that MUST precede knowing the owner — the rail cli-token-routes established for the same chicken-and-egg), and the binding INSERT runs under runWithRequestIdentity({ sub: userSub, isOperator: false }) so the row is written as the user who owns it.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | A redeemed code no longer moves an identity that is already bound to a DIFFERENT user. The upsert overwrote user_sub on conflict, so an identity linked to user A that sent user B's code was silently re-pointed at B's swarm (and under forced RLS the same statement raised instead, so the sender got no answer at all). The conflict update is now guarded to the same owner: a same-user relink still refreshes chat_id and display name, a cross-user rebind returns 'bound_to_another_user' with both subjects so the caller can refuse and audit it, and the identity must be unlinked by its owner first. redeemLinkCode returns a ChannelLinkRedemption instead of string|null so an invalid code and a refused rebind are distinguishable.
  */
 
 import * as crypto from 'crypto';
@@ -28,6 +29,15 @@ export interface ChannelLink {
   displayName: string | null;
   linkedAt: string;
 }
+
+/**
+ * The outcome of presenting a link code from a channel identity. `linked` also covers a same-user
+ * relink; a code is consumed on every outcome except `invalid_code`.
+ */
+export type ChannelLinkRedemption =
+  | { status: 'linked'; userSub: string }
+  | { status: 'invalid_code' }
+  | { status: 'bound_to_another_user'; codeOwnerSub: string; boundOwnerSub: string | null };
 
 /** How long a freshly-minted link code stays redeemable. */
 const LINK_CODE_TTL_MS = 15 * 60 * 1000;
@@ -111,12 +121,18 @@ export class ChannelLinkService {
 
   /**
    * @description Redeems a link code sent by a user through the channel, binding that channel
-   * identity to the code's owner. Idempotent per identity: re-linking updates chat_id/name.
-   * @returns The resolved user_sub on success, or null when the code is unknown/expired/consumed.
+   * identity to the code's owner. A same-user relink refreshes chat_id/name; an identity already
+   * bound to a DIFFERENT user is never moved (it must be unlinked by its owner first).
+   * @param provider - The channel provider the code was minted for.
+   * @param code - The one-time code the sender presented.
+   * @param channelUserId - The sender's provider identity.
+   * @param chatId - Where replies for this identity go.
+   * @param displayName - The sender's provider display name, when known.
+   * @returns `linked` with the owner, `invalid_code`, or `bound_to_another_user` with both subjects.
    */
   async redeemLinkCode(
     provider: string, code: string, channelUserId: string, chatId: string, displayName: string | null,
-  ): Promise<string | null> {
+  ): Promise<ChannelLinkRedemption> {
     await this.ensureSchema();
     // The CODE CLAIM is the chicken-and-egg step: it is what TELLS us the owner, so it cannot
     // already be running as them. Trusted-system, exactly like the cli-token hash lookup — safe
@@ -130,22 +146,39 @@ export class ChannelLinkService {
     ));
     const row = claimed.rows[0] as { user_sub?: string } | undefined;
     if (!row?.user_sub) {
-      logger.warn({ provider, channelUserId }, 'channel link code invalid/expired/consumed');
-      return null;
+      logger.warn({ provider }, 'channel link code invalid/expired/consumed');
+      return { status: 'invalid_code' };
     }
     const userSub = String(row.user_sub);
-    // The BINDING is owner-scoped work and the owner is now known — write it as them, never as
-    // operator. This is the row that decides whose swarm an inbound message reaches.
-    await runWithRequestIdentity({ sub: userSub, isOperator: false }, () => this.pool.query(
+    if (await this.bindAsOwner(provider, channelUserId, chatId, userSub, displayName)) {
+      logger.info({ provider, userSub }, 'channel identity linked');
+      return { status: 'linked', userSub };
+    }
+    const bound = await this.resolveLink(provider, channelUserId);
+    logger.warn({ provider, codeOwnerSub: userSub, boundOwnerSub: bound?.userSub ?? null },
+      'channel identity already bound to another user — rebind refused');
+    return { status: 'bound_to_another_user', codeOwnerSub: userSub, boundOwnerSub: bound?.userSub ?? null };
+  }
+
+  /**
+   * The BINDING is owner-scoped work and the owner is now known — write it as them, never as
+   * operator. The conflict update is guarded to the SAME owner: PostgreSQL evaluates the DO UPDATE
+   * WHERE before the RLS conflict check, so a row bound to someone else is left untouched (no
+   * rebind, no RLS error) and RETURNING is empty. That emptiness is the refusal signal.
+   */
+  private async bindAsOwner(
+    provider: string, channelUserId: string, chatId: string, userSub: string, displayName: string | null,
+  ): Promise<boolean> {
+    const bound = await runWithRequestIdentity({ sub: userSub, isOperator: false }, () => this.pool.query(
       `INSERT INTO channel_links (provider, channel_user_id, chat_id, user_sub, display_name)
        VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (provider, channel_user_id)
-       DO UPDATE SET chat_id = EXCLUDED.chat_id, user_sub = EXCLUDED.user_sub,
-                     display_name = EXCLUDED.display_name, linked_at = NOW()`,
+       DO UPDATE SET chat_id = EXCLUDED.chat_id, display_name = EXCLUDED.display_name, linked_at = NOW()
+       WHERE channel_links.user_sub = EXCLUDED.user_sub
+       RETURNING user_sub`,
       [provider, channelUserId, chatId, userSub, displayName],
     ));
-    logger.info({ provider, channelUserId, userSub }, 'channel identity linked');
-    return userSub;
+    return bound.rows.length > 0;
   }
 
   /**

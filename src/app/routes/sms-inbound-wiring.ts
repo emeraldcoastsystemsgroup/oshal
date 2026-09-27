@@ -16,6 +16,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — createWiredSmsInboundRoutes: ChannelLinkService over the app pool as the identity store, the accountable Jarvis bot as the dispatch, and the per-user fixed Twilio SMS operation as the reply rail.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pass the address the user messaged into the Twilio operation so a WhatsApp answer leaves from the WhatsApp sender the user wrote to.
  *
  * @module sms-inbound-wiring
  */
@@ -66,8 +67,9 @@ export function createWiredSmsInboundRoutes(ctx: AppContext): Router {
         return String(result.response || '').trim();
       },
       /** The owner's OWN Twilio account carries the answer; no connected account = no reply. */
-      async reply(userSub, to, body, provider: TwilioChannelProvider = SMS_CHANNEL_PROVIDER) {
-        const sent = await sendUserTwilioMessage(ctx.pool, userSub, to, body, provider === WHATSAPP_CHANNEL_PROVIDER ? WHATSAPP_CHANNEL_PROVIDER : SMS_CHANNEL_PROVIDER);
+      async reply(userSub, to, body, provider: TwilioChannelProvider = SMS_CHANNEL_PROVIDER, sender?: string) {
+        const channel = provider === WHATSAPP_CHANNEL_PROVIDER ? WHATSAPP_CHANNEL_PROVIDER : SMS_CHANNEL_PROVIDER;
+        const sent = await sendUserTwilioMessage(ctx.pool, userSub, to, body, channel, sender);
         if (!sent.delivered) logger.warn({ userSub, error: sent.error }, 'inbound SMS reply not delivered');
         return { delivered: sent.delivered, ...(sent.error ? { error: sent.error } : {}) };
       },

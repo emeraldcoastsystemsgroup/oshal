@@ -24,6 +24,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — createSmsInboundSink: normalize the sender, redeem a LINK <code> handshake, refuse+guide an unlinked number, and dispatch a linked number's message to the accountable Jarvis bot under the OWNER's identity with the reply returned out of band. Injected link store / dispatch / reply / defer so the whole path is testable against a real Postgres without a bot node or Twilio.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Denial audit + WhatsApp reply sender. An unlinked sender, a refused link code and a refused cross-user rebind are now recorded in the refusal ledger (injectable `audit`, default recordChannelRefusal) for SMS and WhatsApp alike, and a rebind attempt gets its own reply instead of 'invalid code'. The reply leg now carries the address the user messaged (the inbound To), so a WhatsApp answer can leave from the WhatsApp sender the user wrote to instead of the owner's first SMS number.
  *
  * @module sms-inbound-dispatch
  */
@@ -34,6 +35,10 @@ import {
   boundSmsReply,
   parseTwilioChannelAddress,
   parseSmsLinkCommand,
+  recordChannelRefusal,
+  redeemChannelCode,
+  type ChannelLinkRedeemer,
+  type ChannelRefusalRecorder,
   type TwilioChannelProvider,
 } from '@/features/chat-channels';
 import type { InboundSms } from '@/features/notifications';
@@ -52,13 +57,14 @@ export const SMS_LINKED_REPLY =
 export const SMS_LINK_FAILED_REPLY =
   'That link code is invalid or expired. Generate a fresh one in your cockpit under Channels.';
 
+/** What the texter sees when the number is already bound to a different account. */
+export const SMS_REBIND_REFUSED_REPLY =
+  'This number is already connected to a different oshal account. Unlink it from that account first, then text a fresh code.';
+
 /** The subset of ChannelLinkService this sink uses; injected so a spec can supply the real one. */
-export interface SmsChannelLinkPort {
+export interface SmsChannelLinkPort extends ChannelLinkRedeemer {
   resolveLink(provider: string, channelUserId: string): Promise<{ userSub: string } | null>;
   claimInboundMessage(userSub: string, provider: string, eventId: string): Promise<boolean>;
-  redeemLinkCode(
-    provider: string, code: string, channelUserId: string, chatId: string, displayName: string | null,
-  ): Promise<string | null>;
 }
 
 /** Everything the sink needs from the app layer, injected so none of it is imported here. */
@@ -67,8 +73,15 @@ export interface SmsInboundSinkDeps {
   links: SmsChannelLinkPort;
   /** Runs one message on the owner's accountable bot. Called INSIDE the owner's identity. */
   dispatch(userSub: string, threadKey: string, text: string): Promise<string>;
-  /** Sends the out-of-band answer back to the texter. Called INSIDE the owner's identity. */
-  reply(userSub: string, to: string, body: string, provider?: TwilioChannelProvider): Promise<{ delivered: boolean; error?: string }>;
+  /**
+   * Sends the out-of-band answer back to the texter. Called INSIDE the owner's identity. `sender`
+   * is the E.164 address the user messaged (the inbound To), when Twilio supplied a usable one.
+   */
+  reply(
+    userSub: string, to: string, body: string, provider?: TwilioChannelProvider, sender?: string,
+  ): Promise<{ delivered: boolean; error?: string }>;
+  /** Records a refused inbound message (the platform refusal ledger by default). */
+  audit?: ChannelRefusalRecorder;
   /**
    * How deferred work is scheduled. Production fires and forgets so the webhook answers inside
    * Twilio's budget; a spec collects the promise and awaits it instead of racing a timer.
@@ -110,6 +123,8 @@ export function createSmsInboundSink(deps: SmsInboundSinkDeps): SmsInboundSink {
     if (!link?.userSub) {
       logger.warn({ messageSid: sms.messageSid, provider: address.provider },
         'inbound Twilio channel message from an unlinked number — refused, no swarm dispatch');
+      await (deps.audit ?? recordChannelRefusal)({
+        provider: address.provider, channelUserId: from, reason: 'unlinked_identity', eventId: sms.messageSid });
       return SMS_UNLINKED_REPLY;
     }
 
@@ -124,12 +139,15 @@ export function createSmsInboundSink(deps: SmsInboundSinkDeps): SmsInboundSink {
 /** The `LINK <code>` handshake: bind this number to the code's owner, answer in the TwiML body. */
 async function handleLink(deps: SmsInboundSinkDeps, sms: InboundSms, from: string, provider: TwilioChannelProvider): Promise<string> {
   const code = parseSmsLinkCommand(sms.body) as string;
-  const userSub = await deps.links.redeemLinkCode(provider, code, from, from, null);
-  if (!userSub) {
+  const outcome = await redeemChannelCode(deps.links, {
+    provider, code, channelUserId: from, chatId: from, displayName: null, eventId: sms.messageSid,
+  }, deps.audit ?? recordChannelRefusal);
+  if (outcome.status === 'bound_to_another_user') return SMS_REBIND_REFUSED_REPLY;
+  if (outcome.status !== 'linked') {
     logger.warn({ messageSid: sms.messageSid }, 'inbound SMS link code invalid/expired/consumed');
     return SMS_LINK_FAILED_REPLY;
   }
-  logger.info({ messageSid: sms.messageSid, userSub }, 'SMS number linked to an owner');
+  logger.info({ messageSid: sms.messageSid, userSub: outcome.userSub, provider }, 'Twilio channel number linked to an owner');
   return SMS_LINKED_REPLY;
 }
 
@@ -150,7 +168,8 @@ async function runOwnerTurn(deps: SmsInboundSinkDeps, userSub: string, from: str
       answer = 'Something went wrong reaching your swarm. Please try again in a moment.';
     }
     if (!answer) answer = '(no reply)';
-    const sent = await deps.reply(userSub, from, answer, provider);
+    const sender = parseTwilioChannelAddress(sms.to);
+    const sent = await deps.reply(userSub, from, answer, provider, sender?.provider === provider ? sender.number : undefined);
     logger.info(
       { userSub, messageSid: sms.messageSid, delivered: sent.delivered, error: sent.error, durationMs: Date.now() - startedAt },
       'inbound SMS answered',

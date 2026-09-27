@@ -69,7 +69,17 @@ uses, with `provider = 'sms'` and the sender's E.164 number as the identity:
 
 An **unlinked** number is refused: it gets linking guidance in the TwiML reply and reaches no swarm.
 A number is normalized on both sides of the binding, so a separated form is the same identity. A
-forged or unsigned POST is rejected at the signature before any of this runs.
+forged or unsigned POST is rejected at the signature before any of this runs. A number already bound
+to one user is not moved by another user's code; the texter is told to unlink it from the owning
+account first. Every refusal (unlinked number, invalid/expired/other-provider code, refused rebind)
+is written to the refusal ledger under a pseudonymous actor (`channel:sms:<truncated SHA-256>`), never
+the raw number, and those rows are visible to operators only.
+
+Settings the api must receive (forwarded by `docker-compose.oshal-local.yml`):
+`TWILIO_AUTH_TOKEN` (signature verification), `TWILIO_INBOUND_NUMBER` (the number users text; falls
+back to `TWILIO_FROM_NUMBER`), and `TWILIO_INBOUND_PUBLIC_URL` (the exact public URL configured in the
+Twilio console, which the signature is verified against; unset, the api uses the URL it reconstructs
+from the request).
 
 Posture: **locally tested**, against a real Postgres with the real signed webhook
 (`tests/unit/sms-inbound-dispatch.spec.ts`). It has NOT been exercised against live Twilio on this
@@ -88,8 +98,31 @@ what "Twilio absent" looks like. It deliberately does NOT fall back for an expli
 hours, for email itself, or for a channel that was attempted and failed (a provider that reports a
 failure may still have queued the message).
 
-## Still not built
+## Inbound WhatsApp → your swarm (built; not yet live-proven)
 
-Inbound **WhatsApp** chat routing: the inbound webhook accepts only E.164 senders, so a
-`whatsapp:+1…` sender is refused rather than guessed into an SMS identity. See
-[BACKLOG.md → Twilio as a pluggable notification transport](../BACKLOG.md).
+WhatsApp arrives on the same signed webhook (`POST /api/sms/inbound`) with `whatsapp:`-prefixed
+`From`/`To` addresses. The sender is stored under its own provider key, `provider = 'whatsapp'`, so an
+SMS binding never authorizes the same number on WhatsApp and a code minted for one cannot link the
+other.
+
+1. `POST /api/channels/whatsapp/link` (auth-gated) mints a one-time code and returns
+   `textTo: "whatsapp:<sender>"`. The sender is `TWILIO_WHATSAPP_FROM` when it is set (E.164, the
+   `whatsapp:` prefix is added for you), otherwise the inbound SMS number.
+2. The user sends `LINK <code>` to that WhatsApp sender.
+3. From then on a WhatsApp message runs on the user's Jarvis as that user, each `MessageSid` runs
+   once, and the answer leaves **from the WhatsApp sender the user messaged** (the inbound `To`)
+   through the fixed per-user Twilio operation. Without a usable inbound `To`, it falls back to the
+   owner's first Twilio number.
+
+Refusals are audited exactly as for SMS (`channel:whatsapp:<truncated SHA-256>` actor).
+`GET /api/channels` reports `whatsapp.configured` and the advertised sender.
+
+Operator prerequisites for a live exchange: a WhatsApp-enabled Twilio sender whose inbound webhook is
+`TWILIO_INBOUND_PUBLIC_URL`, and the replying user's own Twilio connector connected, because the
+answer is sent over that account.
+
+Posture: locally tested over the real signed webhook and a real PostgreSQL
+(`tests/unit/sms-inbound-dispatch.spec.ts`, `tests/unit/chat-channel-denial-audit.spec.ts`,
+`tests/unit/twilio-sms-operation-security.spec.ts`), and runnable from the AI Test Lab card
+`channel-inbound-round-trip` with the bot turn and the Twilio send doubled. No live WhatsApp message
+has reached a deployment yet.

@@ -1,10 +1,19 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — Discord DM adapter guards: DM-only Gateway parsing, IDENTIFY over an injected socket, verified channel type when channel_type is omitted, and LINK-before-lookup processing with single dispatch per event.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The link port now returns a ChannelLinkRedemption; the processor's refusals (unlinked sender, invalid code, cross-user rebind) are asserted through the audit hook, and a rebind gets its own reply. The real Postgres + real Gateway protocol acceptance lives in chat-channel-inbound-postgres.spec.ts.
+ */
 import { describe, expect, it } from 'vitest';
 import {
   DISCORD_CHANNEL_PROVIDER,
   parseDiscordGatewayMessage,
   startDiscordGateway,
 } from '@/features/chat-channels';
-import { processDiscordInbound } from '@/app/routes/chat-channel-routes';
+import { DISCORD_CHANNEL_REPLIES, processDiscordInbound } from '@/app/routes/chat-channel-routes';
+import type { ChannelLinkRedemption, ChannelRefusalInput } from '@/features/chat-channels';
 
 describe('Discord direct-message channel adapter', () => {
   it('accepts a human DM and refuses guild, group, bot, and non-message events', () => {
@@ -77,12 +86,15 @@ describe('Discord direct-message channel adapter', () => {
     const calls: string[] = [];
     let owner: string | null = null;
     const seen = new Set<string>();
+    const refusals: ChannelRefusalInput[] = [];
+    const hooks = { audit: async (input: ChannelRefusalInput) => { refusals.push(input); return true; } };
     const links = {
-      async redeemLinkCode(provider: string, code: string, userId: string, channelId: string) {
+      async redeemLinkCode(provider: string, code: string, userId: string, channelId: string): Promise<ChannelLinkRedemption> {
         calls.push(`redeem:${provider}:${code}:${userId}:${channelId}`);
-        if (code !== 'abcd1234') return null;
+        if (code === 'feed0000') return { status: 'bound_to_another_user', codeOwnerSub: 'owner-2', boundOwnerSub: 'owner-1' };
+        if (code !== 'abcd1234') return { status: 'invalid_code' };
         owner = 'owner-1';
-        return owner;
+        return { status: 'linked', userSub: owner };
       },
       async resolveLink(provider: string, userId: string) {
         calls.push(`resolve:${provider}:${userId}`);
@@ -98,16 +110,26 @@ describe('Discord direct-message channel adapter', () => {
     const send = async (_channelId: string, text: string) => { calls.push(`send:${text}`); };
     const dispatch = async (sub: string) => { calls.push(`dispatch:${sub}`); return 'done'; };
     const message = { provider: DISCORD_CHANNEL_PROVIDER, eventId: '333333333', channelUserId: '987654321', channelId: '123456789', text: 'task', displayName: 'Roger' } as const;
-    await processDiscordInbound(links, message, dispatch, send);
+    await processDiscordInbound(links, message, dispatch, send, hooks);
     expect(calls).not.toContain('dispatch:owner-1');
     expect(calls.at(-1)).toContain('not linked');
+    expect(refusals).toEqual([{ provider: DISCORD_CHANNEL_PROVIDER, channelUserId: '987654321', reason: 'unlinked_identity', eventId: '333333333' }]);
+    calls.length = 0; refusals.length = 0;
+    await processDiscordInbound(links, { ...message, text: 'LINK 00000000' }, dispatch, send, hooks);
+    expect(calls.at(-1)).toBe(`send:${DISCORD_CHANNEL_REPLIES.invalid}`);
+    expect(refusals.map((r) => r.reason)).toEqual(['invalid_link_code']);
+    calls.length = 0; refusals.length = 0;
+    await processDiscordInbound(links, { ...message, text: 'LINK ABCD1234' }, dispatch, send, hooks);
+    expect(calls).toEqual(['redeem:discord:abcd1234:987654321:123456789', `send:${DISCORD_CHANNEL_REPLIES.linked}`]);
+    expect(refusals).toEqual([]);
     calls.length = 0;
-    await processDiscordInbound(links, { ...message, text: 'LINK ABCD1234' }, dispatch, send);
-    expect(calls).toEqual(['redeem:discord:abcd1234:987654321:123456789', 'send:Connected. You can now message your swarm from this DM.']);
-    calls.length = 0;
-    await processDiscordInbound(links, message, dispatch, send);
-    await processDiscordInbound(links, message, dispatch, send);
+    await processDiscordInbound(links, message, dispatch, send, hooks);
+    await processDiscordInbound(links, message, dispatch, send, hooks);
     expect(calls.filter((entry) => entry === 'dispatch:owner-1')).toHaveLength(1);
     expect(calls.filter((entry) => entry === 'send:done')).toHaveLength(1);
+    calls.length = 0;
+    await processDiscordInbound(links, { ...message, text: 'LINK feed0000' }, dispatch, send, hooks);
+    expect(calls.at(-1)).toBe(`send:${DISCORD_CHANNEL_REPLIES.rebind}`);
+    expect(refusals).toMatchObject([{ reason: 'identity_bound_to_another_user', codeOwnerSub: 'owner-2', boundOwnerSub: 'owner-1' }]);
   });
 });

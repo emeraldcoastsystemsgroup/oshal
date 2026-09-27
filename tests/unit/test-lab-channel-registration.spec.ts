@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Test Lab registration guard for the messaging-channels card: the card is in SCENARIOS, every suite it names exists on disk, and its live step — driven over real HTTP against the REAL /api/channels router — passes with each channel's wired state in its detail, degrades (not fails) without a session, and fails when the surface omits a channel's state. A card whose suites are named but absent, or whose step passes against a payload missing the state it claims to read, is registration in name only.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The bindings step now requires all four channel states (telegram, sms, whatsapp, discord), and the round-trip card is registered with one step per provider that degrades - never passes, never writes - without a signed-in caller and the app database. Its pass path runs against real Postgres in chat-channel-inbound-postgres.spec.ts.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -76,6 +77,23 @@ describe('messaging channels Test Lab registration', () => {
   it('degrades (never fails) when the caller has no session', async () => {
     const result = await CHANNEL_SCENARIOS[0].steps[0].run('');
     expect(result).toMatchObject({ state: 'degraded', status: 401 });
+  });
+
+  it('names all four channel states when the surface reports them', async () => {
+    const result = await CHANNEL_SCENARIOS[0].steps[0].run('test-user=auth0|lab-user', {});
+    expect(result.detail).toMatch(/Wired on this deployment: (?:.*sms.*|none)/);
+    const response = await fetch(`http://127.0.0.1:${process.env.PORT}/api/channels`, { headers: { cookie: 'test-user=auth0|lab-user' } });
+    const payload = await response.json() as Record<string, { configured?: unknown }>;
+    for (const channel of ['telegram', 'sms', 'whatsapp', 'discord']) expect(typeof payload[channel]?.configured, channel).toBe('boolean');
+  });
+
+  it('registers one round-trip step per provider, each degrading without a caller and database', async () => {
+    const card = CHANNEL_SCENARIOS.find((s) => s.id === 'channel-inbound-round-trip');
+    expect(card?.steps.map((s) => s.id)).toEqual(['round-trip-telegram', 'round-trip-discord', 'round-trip-sms', 'round-trip-whatsapp']);
+    for (const step of card?.steps ?? []) {
+      const result = await step.run('', {});
+      expect(result.state, step.id).toBe('degraded');
+    }
   });
 
   it('fails when the surface omits a channel wired/not-wired state', async () => {

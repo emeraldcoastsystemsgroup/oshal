@@ -7,11 +7,16 @@ bot the cockpit uses, so per-user data access and cost capture (`chat_tasks`, AD
 
 | Channel | Status | Guide |
 | --- | --- | --- |
-| Telegram | Built (single shared demo bot) | [telegram.md](telegram.md) |
-| Discord | Backlog (interactions webhook / gateway) | — |
-| Twilio (SMS / voice) | Built as an OUTBOUND bot capability (per-user BYO connector + comms-bot CLI); inbound webhook exists, but SMS→Jarvis channel routing still backlog | [twilio.md](twilio.md) |
-| WhatsApp-via-Twilio | Built as an OUTBOUND notification transport; inbound WhatsApp chat channel still backlog | [twilio.md](twilio.md) |
+| Telegram | Built (single shared demo bot); locally tested, no live DM receipt yet | [telegram.md](telegram.md) |
+| Discord | Built (DM-only Gateway listener, single shared bot); locally tested, needs `DISCORD_BOT_TOKEN` and a live DM receipt | [discord.md](discord.md) |
+| Twilio (SMS / voice) | Outbound per-user operation built; inbound SMS → Jarvis built and locally tested, not live-proven | [twilio.md](twilio.md) |
+| WhatsApp-via-Twilio | Outbound notification transport built; inbound WhatsApp → Jarvis built and locally tested, not live-proven | [twilio.md](twilio.md) |
 
-See [BACKLOG.md → Chat-channel surfaces](../BACKLOG.md) for the roadmap, the provider asymmetry
-(Telegram trivial, inbound WhatsApp chat still needs a staged provider path), and the skill-import
-"absorb" plan.
+Every inbound channel shares one identity store (`channel_links`, one row per provider identity),
+claims each provider occurrence once before any bot turn (`channel_inbound_events`), and records every
+refusal — unlinked sender, refused link code, refused cross-user rebind — in the refusal ledger under
+a pseudonymous actor. The AI Test Lab card `channel-inbound-round-trip` exercises all four providers
+on a deployment with the bot turn and the provider send doubled.
+
+See [BACKLOG.md → Chat-channel surfaces](../BACKLOG.md) for what is still open (live receipts per
+provider, provider enable/BYO configuration, proactive push over linked channels).
