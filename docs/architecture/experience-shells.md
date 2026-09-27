@@ -17,7 +17,7 @@ Eight selectable experiences over one unchanged backend:
 | Home · family homebase | `/homebase?preset=family` | Calendar, shopping list, Smart Home facts, people, personal finance; hosts Smart Home, Shopping, Money and Little Monsters in place with the `family` view requested |
 | Little Monsters · classroom | `/homebase?preset=classroom` | Classwork, class calendar, teacher roster or learner checklist by real role; the Little Monsters tools the caller is admitted to open in place |
 | Business · company swarm | `/homebase?preset=company` | Open tickets as projects, team calendar, people, dense account table; hosts Presentations, Finance, Communications, Payroll, Payments, Identity and Engineering in place with the `company` view requested |
-| Central assistant | `/nexus` | Intent composer, real ask ledger, answer workspace with handoffs, speaking core |
+| Central assistant | `/nexus` | Intent composer with push-to-talk dictation, a "Request progress" ledger of observed phases, a typed answer workspace (answer, owner-checked visual, handoffs, background work, approval card, fallback provider), lifecycle states (running, ready, partial, failed, setup needed, stopped waiting), speaking core |
 
 `/portal` (also `/experience`) is the chooser. The cockpit header's **Experiences** menu links the
 same eight entries, every shell carries an experience picker in its top bar, and `/little-monsters`
@@ -40,7 +40,9 @@ own session:
 | Hosted tools | `GET /api/ui/profile?name=<host app>` per host: the same caller-scoped ribbon profile the cockpit renders, already filtered per caller by the app's own visibility answer. Each preset names the applications it hosts (`hosts` in `homebase-config.js`, with hidden tool prefixes that keep off-audience tiles out of the rails), lists their admitted tools grouped per host in its sidebar and tile row, and opens a tool in an iframe that follows the skin through the shared theme bootstrap, with the preset's audience view appended as `?audience=family|classroom|company` (a request the page may honour, never authority). The frame's navigation messages are the shapes the cockpit ribbon already honours (`app-navigate`, `app-tools-changed`, and the Little Monsters literals); only the frame the home opened is heard, same origin only, and only an admitted tool ever opens |
 | Shopping list | Purchasing `/api/purchasing/lists` and `/lists/:id/items`; add and remove use the package's own routes |
 | Money | Finance `/api/finance/summary` and `/api/finance/home-summary` |
-| Voice | `POST /api/voice/synthesize`, falling back to the browser engine |
+| Central assistant results | The done `GET /api/jarvis/ask/result` payload as returned: `answer` (escaped), `visual` (shown only when its URL is exactly the owner-checked `/api/jarvis/visuals/<artifactId>`, labelled by `kind`), `handoffs[].deepLink` (only `/`-prefixed links become chips), `dispatched[]`, `packageToolProposal` (an approval card that points at the Jarvis page, where the Approve button lives; the shell never approves or runs a tool) and `brainFallback` ("Answered by <providerUsed>"). Setup needed is the job code `NO_HOSTED_BRAIN` or the `/ask` 503 with `code: ai_disabled`. Stop, New and Home abort the poll and move a per-request generation on, so a late completion never reopens the workspace; "stopped waiting" never claims the job was cancelled. No calendar, comparison, source or per-tool receipt card exists: the result contract carries no such fields |
+| Background work | Each `dispatched[].workJobId` is followed on `GET /api/jarvis/tasks` (status, files, ticket) until it is done or failed; a settled, non-briefing row is marked once through `POST /api/jarvis/tasks/:id/delivered`, and a row with a ticket can be cancelled through the owner-checked `PUT /api/tickets/:ticketId/cancel`, whose refusal is shown as returned |
+| Voice | `POST /api/voice/synthesize`, falling back to the browser engine; the readback is offered on every terminal text (answer, failure, setup). The central assistant's push-to-talk records with `MediaRecorder` and posts field `audio` to `POST /api/voice/transcribe`: the words fill the composer without sending, and "not set up", "denied", "no words" and "failed" are said as such. The microphone never drives the core |
 
 Apps the listing shows but the plan does not admit stay visible as "not available in your
 workspace"; nothing is hidden and nothing is widened. A read that fails shows its HTTP status in the
@@ -78,6 +80,10 @@ stylesheets under `/experience/…`, so the strict CSP applies unchanged.
   gating, live rendering without fixture text, directory and pins, app panel and embed, the ask
   flow, room threads, the three presets, honest finance states, the central assistant, the portal
   and per-layout skins.
+- `tests/unit/experience-nexus-gaps.spec.ts`: the central assistant's kit helpers (abortable ask, refusal
+  code, hand-off pass-through, transcription outcomes, delivered and cancel calls) and, in Chromium over the
+  same fixture, the typed result cards, partial background work, setup and failed states with readback, the
+  stale-completion guard across Stop / New / Home, and push-to-talk dictation.
 - AI Test Lab card `experience-shells` (`test-lab-experience-scenarios.ts`): a read-only step over
   the entry pages and the feeds they join, classified as gap when the running image predates
   `src/experience`.
@@ -85,7 +91,7 @@ stylesheets under `/experience/…`, so the strict CSP applies unchanged.
 Run locally:
 
 ```sh
-npx vitest run tests/unit/experience-live-data.spec.ts tests/unit/test-lab-experience-scenarios.spec.ts tests/unit/experience-layouts-browser.spec.ts
+npx vitest run tests/unit/experience-live-data.spec.ts tests/unit/test-lab-experience-scenarios.spec.ts tests/unit/experience-layouts-browser.spec.ts tests/unit/experience-nexus-gaps.spec.ts
 ```
 
 ## Audience views: what a hosted page renders for a shell (ADR-164 D6)

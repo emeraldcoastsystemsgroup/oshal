@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Serve the real experience shells through the real static route registration over an isolated, explicitly synthetic swarm: home plan, listing, navigation, tickets, Jarvis shelf/history/ask, package summaries, Little Monsters, Purchasing, Finance and the user directory, with controllable statuses so honest setup, denial and failure states can be proven in Chromium.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | The synthetic ribbon profile answers per application (Little Monsters role-filtered; every other host a home and a more page) so the multi-host presets are exercised against 19 installed applications
  * 3 | maintainer@emeraldcoastsystemsgroup.com | A synthetic application page under the shared audience-view kit (`/fixture/app-view`, its data with a controllable status, and a host page that frames it) so the kit is proven in Chromium: full page by default, audience views on request, hidden full UI, text-only rendering, failure with retry, and the escape that navigates the top window
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Central-assistant gap routes (nexusGapRoutes, controlled through `state.nexusGap`): a scripted refusal of POST /api/jarvis/ask (the 503 ai_disabled body), held and per-job /ask/result outcomes for the stale-completion cases, POST /api/jarvis/tasks/:id/delivered, the owner-checked PUT /api/tickets/:ticketId/cancel with refusals, POST /api/voice/transcribe recording what the multipart upload carried, and the owner-checked /api/jarvis/visuals image. The lane router runs ahead of the shared `/api` catch-all and falls through to the default synthetic routes unless the lane state asks for it
  */
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -181,6 +182,7 @@ export async function startExperienceBrowserFixture(options: { denyAuth?: boolea
   const app = express(), state = experienceState();
   const requiresAuth: express.RequestHandler = options.denyAuth ? (_req, res) => { res.status(401).json({ error: 'unauthorized' }); } : (_req, _res, next) => next();
   swarmRoutes(app, state); packageRoutes(app, state);
+  nexusGapRoutes(app, state);
   app.use('/shared/ui/js', express.static(resolve(ROOT, 'src/shared/ui/js')));
   registerCockpitStaticRoutes({ app, requiresAuth, cockpitDir: resolve(ROOT, 'src/pages/cockpit'), uiEnhancedDir: resolve(ROOT, 'any-bot/ui-enhanced'),
     codiconFontsDir: resolve(ROOT, 'node_modules/@vscode/codicons/dist'), sharedUiCssDir: resolve(ROOT, 'src/shared/ui/css'), sharedUiJsDir: resolve(ROOT, 'src/shared/ui/js') });
@@ -188,4 +190,62 @@ export async function startExperienceBrowserFixture(options: { denyAuth?: boolea
   await new Promise<void>(done => server.once('listening', done));
   return { origin: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, state,
     close: async () => { server.closeAllConnections(); await new Promise<void>((done, reject) => server.close(error => error ? reject(error) : done())); } };
+}
+
+/**
+ * @description Central-assistant gap routes (lane "nexus"), each synthetic and driven through `state.nexusGap`: a scripted
+ * /ask refusal, held and per-job /ask/result outcomes, delivered marking, ticket cancel with refusals, the voice transcription
+ * upload and the owner-checked visual. Handlers fall through to the default synthetic routes unless the lane state asks for
+ * them. The shared `/api` 404 catch-all is registered inside packageRoutes before this runs, so the lane router is moved to
+ * run right after the request log; without that none of these paths would be reachable.
+ * @param app The fixture application.
+ * @param state The per-case synthetic state; `state.nexusGap` is created here.
+ * @returns Nothing; the routes are registered on `app`.
+ */
+function nexusGapRoutes(app: express.Application, state: ExperienceState) {
+  const lane = {
+    askRefusal: null as null | { status: number; body: Record<string, unknown> }, refusedAsks: 0,
+    hold: new Set<string>(), results: {} as Record<string, Record<string, unknown>>, polls: {} as Record<string, number>,
+    delivered: [] as string[], cancels: [] as string[], cancelStatus: {} as Record<string, number>, visualStatus: 200,
+    transcribe: { status: 200, body: { success: true, data: { providerId: 'synthetic-stt', text: 'Synthetic spoken request' } } as unknown },
+    uploads: [] as Array<{ contentType: string; audioField: boolean; partType: string; bytes: number }>,
+  };
+  Object.assign(state, { nexusGap: lane });
+  const rows = () => state.tasks as unknown as Array<Record<string, unknown>>;
+  const router = express.Router();
+  router.post('/api/jarvis/ask', (_req, res, next) => {
+    if (!lane.askRefusal) { next(); return; }
+    lane.refusedAsks += 1; res.status(lane.askRefusal.status).json(lane.askRefusal.body);
+  });
+  router.get('/api/jarvis/ask/result', (req, res, next) => {
+    const id = String(req.query.jobId || '');
+    if (!lane.hold.has(id) && !(id in lane.results)) { next(); return; }
+    lane.polls[id] = (lane.polls[id] || 0) + 1;
+    if (lane.hold.has(id)) { res.json({ status: 'pending', label: 'synthetic' }); return; }
+    res.json({ label: 'synthetic', ...lane.results[id] });
+  });
+  router.post('/api/jarvis/tasks/:id/delivered', (req, res) => {
+    lane.delivered.push(req.params.id);
+    const row = rows().find(t => t.id === req.params.id); if (row) row.delivered = true;
+    res.json({ ok: Boolean(row) });
+  });
+  router.put('/api/tickets/:ticketId/cancel', (req, res) => {
+    const id = req.params.ticketId, status = lane.cancelStatus[id] ?? 200; lane.cancels.push(id);
+    if (status !== 200) { res.status(status).json(status === 404 ? { error: 'Ticket not found' } : { success: false, error: 'Synthetic cancel failure' }); return; }
+    // The real GET /api/jarvis/tasks maps a cancelled ticket to status 'error' with this sentence.
+    const row = rows().find(t => t.ticketId === id); if (row) Object.assign(row, { status: 'error', error: 'This one was cancelled before it finished.' });
+    res.json({ success: true, status: 'cancelled', ticketId: id });
+  });
+  router.post('/api/voice/transcribe', express.raw({ type: () => true, limit: '11mb' }), (req, res) => {
+    const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0), text = raw.toString('latin1');
+    lane.uploads.push({ contentType: String(req.headers['content-type'] || ''), audioField: text.includes('name="audio"'), partType: (/Content-Type: ([^\r\n]+)/i.exec(text) || [])[1] || '', bytes: raw.length });
+    res.status(lane.transcribe.status).json(lane.transcribe.body);
+  });
+  router.get('/api/jarvis/visuals/:artifactId', (_req, res) => {
+    if (lane.visualStatus !== 200) { res.status(lane.visualStatus).json({ error: 'visual_not_found' }); return; }
+    res.type('image/svg+xml').send('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20" fill="gray"/></svg>');
+  });
+  app.use(router);
+  const stack = (app as unknown as { router: { stack: unknown[] } }).router.stack;
+  stack.splice(1, 0, stack.pop());
 }

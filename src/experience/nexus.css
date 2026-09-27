@@ -28,3 +28,29 @@
 .mission-label{margin-bottom:14px}
 @media(max-width:900px){.mission-left>.readback{grid-column:1/-1;grid-row:3;margin:0 auto 5px;max-width:440px;width:100%}}
 @media(max-width:600px){.readback{margin-top:15px}.readback-status{font-size:8px;letter-spacing:1px}.readback-button{padding:10px 15px}.welcome .eyebrow{margin-top:20px}}
+/* Request progress, typed result cards, background work and push-to-talk dictation (skin tokens only). */
+.ledger-head{padding:0 0 10px;border-bottom:1px solid var(--line)}
+.ledger-head strong{display:block;font-size:10px;letter-spacing:1.6px;text-transform:uppercase;font-weight:500;color:var(--teal)}
+.ledger-head small{display:block;font-size:10px;line-height:1.6;margin-top:4px;color:var(--muted)}
+.ledger-step[data-mark="failed"] .step-state{color:var(--gold)}
+.mic-button{border:1px solid var(--line);background:transparent;color:var(--teal);border-radius:18px;padding:0 13px;height:36px;font-size:11px;white-space:nowrap}
+.mic-button[aria-pressed="true"]{border-color:var(--gold);color:var(--gold)}
+.mission-left .mic-button{height:30px;padding:0 10px;font-size:10px}
+.mic-status{font-size:10px;line-height:1.6;color:var(--muted);margin:8px 2px 0;text-align:left}
+.mic-status:empty{display:none}
+.mic-status[data-kind="denied"],.mic-status[data-kind="failed"],.mic-status[data-kind="unconfigured"],.mic-status[data-kind="empty"]{color:var(--gold)}
+.result-visual{margin:18px 0;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--surface-2)}
+.result-visual img{display:block;max-width:100%;height:auto;border-radius:8px}
+.result-visual figcaption{font-size:10px;line-height:1.7;color:var(--muted);margin-top:8px}
+.result-card{margin:18px 0;padding:15px 16px;border:1px solid var(--line);border-radius:12px;background:var(--surface-2)}
+.result-card h3{font-size:13px;font-weight:500;margin:6px 0}
+.result-card p{font-size:11px;line-height:1.8;color:var(--muted)}
+.result-card .section-head{margin:0 0 8px}
+.result-card .work-actions{margin-top:12px}
+.approval-card{border-color:var(--gold)}
+.work-item{display:grid;gap:5px;padding:11px 0;border-top:1px solid var(--line);font-size:11px}
+.work-card .section-head+.work-item{border-top:0}
+.work-item small{font-size:10px;line-height:1.6;color:var(--muted)}
+.work-item .secondary{justify-self:start;padding:7px 11px;font-size:10px}
+.provider-note{margin:10px 0}
+@media(max-width:600px){.mic-button{padding:0 10px;font-size:10px}.result-card{padding:12px}}
