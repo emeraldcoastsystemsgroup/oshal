@@ -280,8 +280,10 @@ Changing any of these follows the existing strategy-log rule: a row with harness
 
   Either way, the live autopilot still fires only under the double opt-in (`TRADING_LIVE_ENABLED`
   and `TRADING_AUTOPILOT_LIVE`).
-- **Not done yet.** The store package does not carry the two knobs through its apply route yet, and
-  it has no plan view or amend route yet.
+- **Store side.** The store's per-book strategy apply route already carries the knobs, because it
+  normalizes a saved strategy through this core's `normalizeConfig`. Not done yet in the store: the
+  Strategy Lab knob list (`GET /api/trading/lab/knobs`) does not document the two knobs, there is no
+  store-side spec pinning the 428 refusal for them, and there is no plan view or amend route.
 
 ## Operator sign-off — answered as built (reconciled 2026-08-02)
 
