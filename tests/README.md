@@ -69,6 +69,10 @@ revocation and same-subject identities from different issuers. Session credentia
 stay outside catalogs, run evidence and Node execution.
 Preview deployment source tests use temporary local Git repositories to check
 published-branch admission, source pinning and image labels without invoking Docker.
+The core release pipeline suites (ADR-167: cut, promote, the on-box managed release and the drift
+check) run the shipped scripts in Git Bash against temporary local Git repositories, with docker,
+ssh, curl and the image probe runners as recording stand-ins; they never build an image, reach a
+box or touch the running stack.
 They also exercise the actual startup-readiness function with synthetic logs,
 including large output and producer failures, without restarting services.
 The PostgreSQL pool-budget suite runs actual Docker Compose configuration resolution

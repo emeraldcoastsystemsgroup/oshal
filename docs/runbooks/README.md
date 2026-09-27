@@ -66,6 +66,11 @@ OSHAL pipelines and surfaces. One file per procedure.
 - [ci-cd.md](./ci-cd.md) — the GitHub Actions pipeline, now MANUAL-ONLY (workflow_dispatch + PR;
   never push/cron — automatic runs billed ~$15). deploy/firetv workflows stay archived. The
   openswarm forward-sync section is still current.
+- [core-release-promotion.md](./core-release-promotion.md) — core on a **managed customer box**
+  (ADR-167): cut a named `core-YYYY.MM.DD` release once (`cut-release.sh`), promote that same image
+  to staging and then production (`promote.sh`), with a pre-deploy dump, history, automatic
+  restore, a one-command rollback, and the release-dir / pin / running / main drift check. The
+  first promote on an older release dir uses `--bootstrap`. The dev box keeps `oshal-deploy.sh`.
 - [update-check.md](./update-check.md) — daily app/core update detection, operator-gated apply
   flow, private-store token behavior, and troubleshooting.
 - [model-attribution-scrub.md](./model-attribution-scrub.md) — removing model attribution

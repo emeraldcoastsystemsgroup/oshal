@@ -21,9 +21,11 @@ volume-vs-store forensic tool; this daemon is the always-on tripwire).
 
 ## Surfaces
 
-- `GET /api/version` — **public** (like `/health`): `{name, version, commit}`. The platform's
-  runtime self-identity; `commit` is null on images built before 2026-07-25 or outside
-  `oshal-deploy.sh`.
+- `GET /api/version` — **public** (like `/health`): `{name, version, commit, release}`. The
+  platform's runtime self-identity; `commit` is null on images built before 2026-07-25 or outside
+  `oshal-deploy.sh` / `cut-release.sh`, and `release` is the ADR-167 core release name
+  (`core-YYYY.MM.DD[.N]`) or null for an image that was not cut as a release
+  ([core-release-promotion.md](./core-release-promotion.md)).
 - `GET /api/updates` — auth-gated. The cached report: `checkedAt`, `core`, `apps[]` (each with
   `installedVersion` / `latestVersion` / `updateAvailable` true|false|null / `error`).
   `?refresh=1` runs a fresh check inline.

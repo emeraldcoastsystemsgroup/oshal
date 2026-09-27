@@ -25,6 +25,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: isolate the operator-triggered update installer from controller/database/session/provider credentials; admit only OS/runtime, proxy/TLS settings, non-interactive Git controls, and the exact resolved store token.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | APP-02: pass the validated package-audit posture to update installers so enforce mode re-installs only an exact evidenced SHA.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six. A module-scope const calling the resolver is NOT converged - it freezes the root at import, before any caller can set the environment - so this became a call-time function.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-167 release identity: getRunningBuild(), GET /api/version and the core status now carry `release`, the core release name the image was cut as (OSHAL_RELEASE, baked at the Dockerfile tail by scripts/core-promote/cut-release.sh). A value outside the core-YYYY.MM.DD[.N] scheme - including the `unreleased` default - reads as null, so the public endpoint never reflects an arbitrary build argument.
  */
 import fs from 'fs';
 import path from 'path';
@@ -105,6 +106,8 @@ export interface AppUpdateStatus {
 export interface CoreUpdateStatus {
   runningVersion: string | null;
   runningCommit: string | null;
+  /** The ADR-167 core release the running image was cut as; null for a build that was not a cut. */
+  runningRelease: string | null;
   latestCommit: string | null;
   latestCommitDate: string | null;
   /** true = upstream main is ahead; false = current; null = running commit unknown / fetch failed. */
@@ -259,8 +262,31 @@ async function fetchText(url: string, accept: string): Promise<{ status: number;
   }
 }
 
-/** The running build's identity: package.json version + the GIT_SHA baked by oshal-deploy.sh. */
-export function getRunningBuild(): { version: string | null; commit: string | null } {
+/**
+ * The ADR-167 core release-name scheme: `core-YYYY.MM.DD` for a day's first cut, `.N` (N >= 1)
+ * appended for a later cut the same day. Kept identical to the shell pattern in
+ * scripts/lib/core-image-verify.sh (a spec compares the two).
+ */
+export const CORE_RELEASE_PATTERN = /^core-\d{4}\.\d{2}\.\d{2}(?:\.[1-9]\d*)?$/;
+
+/** The running build's self-identity as /api/version serves it. */
+export interface RunningBuild {
+  version: string | null;
+  commit: string | null;
+  release: string | null;
+}
+
+/**
+ * Read the running build's identity.
+ *
+ * @description `version` is package.json's (npm-facing, not a release identity); `commit` is the
+ *  GIT_SHA baked by oshal-deploy.sh or cut-release.sh; `release` is the OSHAL_RELEASE name a
+ *  release cut stamps at the Dockerfile tail. The `unknown`/`unreleased` build-arg defaults, and
+ *  any release value outside CORE_RELEASE_PATTERN, read as null: the endpoint is public, so it
+ *  reports only a well-formed release name and never echoes an arbitrary build argument.
+ * @returns the version, commit and release, each null when not known
+ */
+export function getRunningBuild(): RunningBuild {
   let version: string | null = null;
   try {
     const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8'));
@@ -269,7 +295,12 @@ export function getRunningBuild(): { version: string | null; commit: string | nu
     logger.error({ err }, 'update-check: reading package.json failed');
   }
   const sha = (process.env.GIT_SHA || '').trim();
-  return { version, commit: sha && sha !== 'unknown' ? sha : null };
+  const release = (process.env.OSHAL_RELEASE || '').trim();
+  return {
+    version,
+    commit: sha && sha !== 'unknown' ? sha : null,
+    release: CORE_RELEASE_PATTERN.test(release) ? release : null,
+  };
 }
 
 /** Check every installed store package against its source manifest. */
@@ -313,7 +344,7 @@ async function checkAppUpdates(): Promise<AppUpdateStatus[]> {
 async function checkCoreUpdate(): Promise<CoreUpdateStatus> {
   const build = getRunningBuild();
   const status: CoreUpdateStatus = {
-    runningVersion: build.version, runningCommit: build.commit,
+    runningVersion: build.version, runningCommit: build.commit, runningRelease: build.release,
     latestCommit: null, latestCommitDate: null, updateAvailable: null, repo: CORE_REPO,
   };
   const res = await fetchText(`https://api.github.com/repos/${CORE_REPO}/commits/${encodeURIComponent(CORE_BRANCH)}`, 'application/vnd.github+json');
@@ -477,8 +508,9 @@ export async function applyAppUpdate(name: string, ownerSub: string | null, deps
 /**
  * Mount GET /api/version (public) and GET /api/updates (auth-gated).
  *
- * @description /api/version is the platform's first runtime self-identity — package.json version
- *  + the build commit — public like /api/health (the source repo is public; this leaks nothing).
+ * @description /api/version is the platform's first runtime self-identity — package.json version,
+ *  the build commit and the ADR-167 release name (null unless the image was cut as a release) —
+ *  public like /api/health (the source repo and its release tags are public; this leaks nothing).
  *  /api/updates serves the cached report; `?refresh=1` awaits a fresh check (auth-gated, so no
  *  anonymous fetch-amplification against GitHub). When `deps` is provided, also mounts
  *  POST /api/updates/apps/:name/apply — requiresAuth + requiresOperator (it rewrites the shared
@@ -490,7 +522,7 @@ export async function applyAppUpdate(name: string, ownerSub: string | null, deps
 export function registerUpdateRoutes(app: Express, requiresAuth: RequestHandler, deps?: UpdateApplyDeps): void {
   app.get('/api/version', (_req, res) => {
     const build = getRunningBuild();
-    res.json({ name: 'oshal', version: build.version, commit: build.commit });
+    res.json({ name: 'oshal', version: build.version, commit: build.commit, release: build.release });
   });
   app.get('/api/updates', requiresAuth, async (req, res) => {
     try {
