@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Rotation entry guards. Born from the 2026-07-14 live open: the autopilot stopped IBM out at -23.8% (Q2 revenue-miss gap) and RE-BOUGHT it in the same fire. Two independent causes, two guards: (1) SAME-FIRE RE-ENTRY — runAutopilot's protective leg knows which names it is exiting, but rotation never saw that set, so it re-bought the name the stop had just sold; (2) GAP-DOWN — the ranker scores on 1Day closes, which PREDATE today's gap, so a name that cratered overnight still ranks on stale data and gets bought mid-crash. Deterministic and price-only: no news wire, no LLM (the event-pop family is closed — a commentary wire does not precede price; a gap does, because it IS the price).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-052 addendum — the MARKET-WIDE gap-down entry filter's pure half: marketGapBlock (SPY now vs its prior session close against a pre-registered bar, fail-open on missing data) and marketGapFilterPct, the ONE resolver the dispatch and the Strategy Lab both read (a finite StrategyConfig knob decides; an absent knob inherits the mode-aware TRADING_MARKET_GAP_FILTER / TRADING_MARKET_GAP_PCT env default, OFF unless armed; a Lab walk has no book, so absent = off there). modeArmed is the shared paper|live|both|true parser the exit-plan resolver reuses. The per-name rotation guard above is unchanged.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | envNumberOr: a blank or whitespace-only value is UNSET. docker-compose.oshal-local.yml forwards TRADING_MARKET_GAP_PCT as `${TRADING_MARKET_GAP_PCT:-}`, so a box that arms TRADING_MARKET_GAP_FILTER=paper and leaves the bar out of .env hands the api an empty string; `'' ?? 1` is '' and Number('') is 0, so the filter resolved OFF while armed and no paper soak would run. marketGapFilterPct now reads the bar through envNumberOr (blank = the pre-registered 1.0; a deliberate '0' is still the explicit off), and exitPlanSessions reuses it for TRADING_EXIT_PLAN_SESSIONS.
  *
  * @module entry-guards
  */
@@ -169,6 +170,22 @@ export function modeArmed(envName: string, mode: 'paper' | 'live'): boolean {
 }
 
 /**
+ * @description Read a numeric parity setting from the environment, treating an unset, empty or
+ * whitespace-only value as "use the pre-registered default". The compose file forwards these settings
+ * as `${NAME:-}`, so an operator who leaves the value out of .env hands the process an EMPTY string,
+ * and `Number('')` is 0 — which would read as "off" and disarm a feature the operator just armed. A
+ * deliberate `0` is not blank and still reads as 0, the explicit off.
+ * @param envName - The environment variable holding the value.
+ * @param fallback - The pre-registered default used when the variable is unset or blank.
+ * @returns The parsed number (NaN for junk, which each resolver treats as off), or `fallback` when blank.
+ */
+export function envNumberOr(envName: string, fallback: number): number {
+  const raw = process.env[envName];
+  if (raw === undefined || raw.trim() === '') return fallback;
+  return Number(raw);
+}
+
+/**
  * @description The market-wide gap-down bar for one book or one Strategy Lab walk — the ONE resolver
  * both read, so the paper book, the live book and the Lab run the same rule from the same knob.
  * Precedence: a finite `knob` (StrategyConfig.marketGapFilterPct on the applied strategy) decides —
@@ -187,7 +204,7 @@ export function marketGapFilterPct(knob: number | null | undefined, mode: 'paper
     return Number.isFinite(k) && k > 0 ? Math.min(MAX_MARKET_GAP_PCT, k) : 0;
   }
   if (!mode || !modeArmed('TRADING_MARKET_GAP_FILTER', mode)) return 0;
-  const raw = Number(process.env.TRADING_MARKET_GAP_PCT ?? DEFAULT_MARKET_GAP_PCT);
+  const raw = envNumberOr('TRADING_MARKET_GAP_PCT', DEFAULT_MARKET_GAP_PCT);
   return Number.isFinite(raw) && raw > 0 ? Math.min(MAX_MARKET_GAP_PCT, raw) : 0;
 }
 

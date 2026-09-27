@@ -16,13 +16,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — exitPlanSessions (the ONE resolver the dispatch and the Strategy Lab read: a finite StrategyConfig knob decides, an absent knob inherits the mode-aware TRADING_EXIT_PLANS / TRADING_EXIT_PLAN_SESSIONS env default, OFF unless armed), planTermsFor (stamp a plan from the policy in force and an entry reference price), addSessions (NYSE-session expiry clock over the exchange's own closure table), and planExits (judge each held position against its own stored plan: stop, take-profit, trailing, expiry — positions with no plan are handed back for the global rules).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | exitPlanSessions reads TRADING_EXIT_PLAN_SESSIONS through envNumberOr, so a blank value is unset. The compose file forwards it as `${TRADING_EXIT_PLAN_SESSIONS:-}`: armed with TRADING_EXIT_PLANS=paper and no value in .env, the api received an empty string, Number('') is 0, and plans resolved OFF while armed. Blank now means the pre-registered 20 sessions; a deliberate '0' is still the explicit off.
  *
  * @module position-plan
  */
 
 import type { Position } from './broker-adapter';
 import type { RiskPolicy, ExitOrder, PlanExitDoor } from './portfolio';
-import { modeArmed } from './entry-guards';
+import { modeArmed, envNumberOr } from './entry-guards';
 import { nyseHolidayOn } from './nyse-holidays';
 
 /** Pre-registered expiry, in NYSE sessions: four times the default weekly rotation cadence
@@ -49,7 +50,7 @@ export function exitPlanSessions(knob: number | null | undefined, mode: 'paper' 
   const clampN = (v: number): number => (Number.isFinite(v) && v >= 1 ? Math.min(MAX_EXIT_PLAN_SESSIONS, Math.round(v)) : 0);
   if (knob !== null && knob !== undefined) return clampN(Number(knob));
   if (!mode || !modeArmed('TRADING_EXIT_PLANS', mode)) return 0;
-  return clampN(Number(process.env.TRADING_EXIT_PLAN_SESSIONS ?? DEFAULT_EXIT_PLAN_SESSIONS));
+  return clampN(envNumberOr('TRADING_EXIT_PLAN_SESSIONS', DEFAULT_EXIT_PLAN_SESSIONS));
 }
 
 /** The terms of one plan — everything an exit needs, fixed at stamp time. */

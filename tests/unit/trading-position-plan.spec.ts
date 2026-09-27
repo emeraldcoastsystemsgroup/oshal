@@ -4,12 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the pure half of the per-position exit plans (ADR-052 addendum): exitPlanSessions (one resolver for dispatch and Lab; knob outranks env, mode-aware arming, clamps), addSessions over the NYSE closure table, planTermsFor, and planExits — each door (stop, take-profit, trailing, expiry) with its priority, a POLICY FLIP that cannot re-price a stored plan, unplanned and unmanaged positions handed back to the global rules. No database, no network.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Regression: a BLANK TRADING_EXIT_PLAN_SESSIONS is unset. The compose file forwards it as `${TRADING_EXIT_PLAN_SESSIONS:-}`, so a box armed with TRADING_EXIT_PLANS=paper and no value in .env hands the api an empty string, which the resolver used to read as 0 (plans off while armed). The blank is taken from the compose file itself (composeEnvDefault), whitespace is blank too, and a deliberate '0' stays the explicit off.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   exitPlanSessions, addSessions, planTermsFor, planExits, exitsToRun, RISK_POLICIES, DEFAULT_EXIT_PLAN_SESSIONS,
   type Position, type PositionPlan,
 } from '../../src/features/trading';
+import { composeEnvDefault } from '../helpers/compose-env-default';
 
 /** A held long marked at `price` whose venue average is `avg`. */
 const pos = (symbol: string, price: number, avg = 100, qty = 10, extra: Partial<Position> = {}): Position =>
@@ -38,6 +40,22 @@ describe('exitPlanSessions — ONE resolver for the dispatch and the Strategy La
     expect(exitPlanSessions(undefined, null)).toBe(0);
     process.env.TRADING_EXIT_PLAN_SESSIONS = '10';
     expect(exitPlanSessions(null, 'paper')).toBe(10);
+  });
+
+  it('a BLANK session count is unset: armed with the value compose forwards for an unset .env, plans run the pre-registered 20', () => {
+    // docker-compose.oshal-local.yml forwards `${TRADING_EXIT_PLAN_SESSIONS:-}`: leave the count out of
+    // .env and the api's process.env holds exactly this string. The arm alone must arm the plans.
+    const forwarded = composeEnvDefault('TRADING_EXIT_PLAN_SESSIONS');
+    expect(forwarded).toBe('');
+    expect(composeEnvDefault('TRADING_EXIT_PLANS')).toBe('false'); // an untouched box stays off
+    process.env.TRADING_EXIT_PLANS = 'paper'; // the operator's one-line arm in .env
+    process.env.TRADING_EXIT_PLAN_SESSIONS = forwarded;
+    expect(exitPlanSessions(undefined, 'paper')).toBe(DEFAULT_EXIT_PLAN_SESSIONS);
+    expect(exitPlanSessions(undefined, 'live')).toBe(0); // the arm still decides the book kind
+    process.env.TRADING_EXIT_PLAN_SESSIONS = ' \t ';
+    expect(exitPlanSessions(undefined, 'paper')).toBe(DEFAULT_EXIT_PLAN_SESSIONS);
+    process.env.TRADING_EXIT_PLAN_SESSIONS = '0'; // a deliberate zero is not blank: the explicit off
+    expect(exitPlanSessions(undefined, 'paper')).toBe(0);
   });
 
   it('a finite knob outranks the env (0 = explicit off), is whole and clamped', () => {

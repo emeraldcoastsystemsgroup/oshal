@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — rotation entry guards. The regression under test is the 2026-07-14 live open: the autopilot stopped IBM out at -23.8% on its Q2 revenue-miss gap and re-bought it in the same fire. Covers both guards (same-fire re-entry, gap-down), the fail-open contract on missing data, the prior-session-close selection (today's forming bar must NOT be mistaken for yesterday's close), and slot backfill.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-052 addendum — the market-wide gap-down filter's pure half: marketGapBlock (blocks at and beyond the bar, never at 0, fails OPEN on a missing or unusable price) and marketGapFilterPct, the one resolver the dispatch and the Strategy Lab share (a finite knob outranks the env, 0 is an explicit off, an absent knob inherits the mode-aware TRADING_MARKET_GAP_FILTER only for the armed book kind, a Lab walk with no book is off, clamps and garbage).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Regression: a BLANK TRADING_MARKET_GAP_PCT is unset. The compose file forwards it as `${TRADING_MARKET_GAP_PCT:-}`, so a box armed with TRADING_MARKET_GAP_FILTER=paper and no bar in .env hands the api an empty string, which the resolver used to read as 0 (off while armed). The blank is taken from the compose file itself (composeEnvDefault), whitespace is blank too, and a deliberate '0' stays the explicit off.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
@@ -12,6 +13,7 @@ import {
   DEFAULT_MAX_GAP_DOWN_PCT, type EntryGuardInput,
   marketGapBlock, marketGapFilterPct, modeArmed, DEFAULT_MARKET_GAP_PCT,
 } from '../../src/features/trading';
+import { composeEnvDefault } from '../helpers/compose-env-default';
 
 /** A guard with no exits pending and no price opinions — the permissive baseline each test narrows. */
 function guard(over: Partial<EntryGuardInput> = {}): EntryGuardInput {
@@ -265,6 +267,22 @@ describe('marketGapFilterPct — ONE resolver for the dispatch and the Strategy 
     delete process.env.TRADING_MARKET_GAP_FILTER;
     expect(marketGapFilterPct(2, 'live')).toBe(2);
     expect(marketGapFilterPct(2, null)).toBe(2); // the Lab reads the same knob the same way
+  });
+
+  it('a BLANK bar is unset: armed with the value compose forwards for an unset .env, it is the pre-registered 1.0, not off', () => {
+    // docker-compose.oshal-local.yml forwards `${TRADING_MARKET_GAP_PCT:-}`: leave the bar out of .env
+    // and the api's process.env holds exactly this string. The arm alone must arm the filter.
+    const forwarded = composeEnvDefault('TRADING_MARKET_GAP_PCT');
+    expect(forwarded).toBe('');
+    expect(composeEnvDefault('TRADING_MARKET_GAP_FILTER')).toBe('false'); // an untouched box stays off
+    process.env.TRADING_MARKET_GAP_FILTER = 'paper'; // the operator's one-line arm in .env
+    process.env.TRADING_MARKET_GAP_PCT = forwarded;
+    expect(marketGapFilterPct(undefined, 'paper')).toBe(DEFAULT_MARKET_GAP_PCT);
+    expect(marketGapFilterPct(undefined, 'live')).toBe(0); // the arm still decides the book kind
+    process.env.TRADING_MARKET_GAP_PCT = '   ';
+    expect(marketGapFilterPct(undefined, 'paper')).toBe(DEFAULT_MARKET_GAP_PCT);
+    process.env.TRADING_MARKET_GAP_PCT = '0'; // a deliberate zero is not blank: the explicit off
+    expect(marketGapFilterPct(undefined, 'paper')).toBe(0);
   });
 
   it('clamps to 50 and treats garbage as off', () => {
