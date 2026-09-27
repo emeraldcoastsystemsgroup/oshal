@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Switched tool-controller import to feature barrel and normalized legacy timestamp format
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added deregisterDynamicToolUI + DELETE /api/tools/dynamic/:toolName for swarm-app toggle
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 D11: POST /runtime/register and DELETE /runtime/:toolName now 409 when the tool is provided by an ACTIVE app (injected manifestToolOwner port). These routes sit behind serviceSecretOr(requiresAuth) — reachable by ANY signed-in user and every bot node — and were a second write door straight past manifest ownership: POST repointed an app's tool at an arbitrary endpoint/CLI command, DELETE removed it. Manifest registration does not come through here, so failing closed costs the framework nothing.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Per-caller visibility reaches the static rail: `filterToolsForCaller` is exported for the profile route, and the loopback forwards the caller's Authorization header as well as the cookie so token-authenticated sessions are judged by the app instead of failed closed.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Fail closed on tool control-plane writes: catalog/runtime mutations and executor inventory require an operator; dynamic UI registration is operator-only until an owner-bound per-bot delegation protocol exists.
  */
 
@@ -78,9 +79,11 @@ function globToRegExp(glob: string): RegExp {
  * each rule's endpoint forwarding the caller's cookie (same trick as the Test Lab): the
  * request runs exactly as the signed-in user, so the app's own auth + scoping decide.
  */
+/** The caller's session as the loopback forwards it: the cookie for a browser session, the Authorization header for a token session. */
+export interface CallerSessionHeaders { cookie?: string; authorization?: string }
 async function applyVisibilityRules<T extends { toolName: string }>(
   tools: T[],
-  cookie: string | undefined,
+  session: CallerSessionHeaders,
 ): Promise<T[]> {
   if (dynamicToolVisibility.size === 0) return tools;
   const selfBase = `http://localhost:${process.env.PORT || '5000'}`;
@@ -90,10 +93,10 @@ async function applyVisibilityRules<T extends { toolName: string }>(
     if (!filtered.some((t) => re.test(t.toolName))) continue; // nothing to filter for this app
     let allowed: Set<string> | null = null;
     try {
-      const res = await fetch(`${selfBase}${rule.endpoint}`, {
-        headers: cookie ? { cookie } : {},
-        signal: AbortSignal.timeout(5000),
-      });
+      const headers: Record<string, string> = {};
+      if (session.cookie) headers.cookie = session.cookie;
+      if (session.authorization) headers.authorization = session.authorization;
+      const res = await fetch(`${selfBase}${rule.endpoint}`, { headers, signal: AbortSignal.timeout(5000) });
       if (res.ok) {
         const body = (await res.json()) as { keys?: string[] };
         if (Array.isArray(body?.keys)) allowed = new Set(body.keys.map(String));
@@ -106,6 +109,18 @@ async function applyVisibilityRules<T extends { toolName: string }>(
     filtered = filtered.filter((t) => !re.test(t.toolName) || allow.has(t.toolName));
   }
   return filtered;
+}
+
+/**
+ * @description Apply the manifest-declared per-caller visibility rules to any tool-shaped list —
+ * the profile route uses it for the static rail so an app's endpoint decides which of its
+ * surfaces each caller sees, exactly as it does for dynamic tools. Fail-closed like the rest.
+ * @param tools Items carrying the registered toolName.
+ * @param session The caller's cookie and/or Authorization header to forward on the loopback.
+ * @returns The items the caller may see.
+ */
+export async function filterToolsForCaller<T extends { toolName: string }>(tools: T[], session: CallerSessionHeaders): Promise<T[]> {
+  return applyVisibilityRules(tools, session);
 }
 
 const RuntimeExecutorSchema = z.object({
@@ -232,7 +247,7 @@ export function createToolRoutes(
       expired: false,
       ui: t.ui,
     }));
-    const visible = await applyVisibilityRules(tools, req.headers.cookie);
+    const visible = await applyVisibilityRules(tools, { cookie: req.headers.cookie, authorization: req.headers.authorization });
     res.json({ tools: visible });
   });
 

@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial UI profile routes — /api/ui/profile, /api/ui/profiles
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Resolve swarm-app manifests first, then fall back to on-disk profile JSONs
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | WARN when an explicitly requested ?name= profile falls back to disk — the silent fallback served a stale pre-carve-out little-monsters.json (4 ribbon items, no Record, no theme) whenever RLS hid the app row, masquerading as the app for days.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Per-caller visibility for the static rail: synthesised ribbon items that name a registered tool pass through the app's manifest-declared visibility rule with the caller's session, so a surface the app does not admit for this person (a teacher-only tab for a learner) is not offered anywhere the profile is rendered.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-149 rail discoverability: the route has the request, so it resolves the verified actor and binds synthesiseProfile's discovery port to it (runtime.canDiscover + the role-guidance link the 403 page offers). A tile that opens ANOTHER package this person cannot discover now comes back locked instead of a dead frame. An actor that cannot be resolved is logged and the manifest-static rail is served as before — discovery hides, it never authorises; the mount guard stays the authority.
  */
 
@@ -16,6 +17,7 @@ import type { RibbonTileDiscovery, SwarmAppService } from '@/features/swarm-apps
 import type { AuthorizationActor } from '@/shared/application-authorization';
 import type { ApplicationAuthorizationRuntime } from '@/app/composition/application-authorization-runtime';
 import { roleGuidance } from '@/app/composition/application-navigation-authorization';
+import { filterToolsForCaller } from './tool-routes';
 
 const logger = createChildLogger({ module: 'ui-profile-routes' });
 
@@ -41,6 +43,25 @@ async function bindTileDiscovery(req: Request, ports: UiProfileDiscoveryPorts): 
     logger.error({ err }, 'Could not resolve the caller for rail discoverability — serving the manifest-static rail');
     return undefined;
   }
+}
+
+/**
+ * @description Per-caller visibility for the static rail (ADR-085 generic hook). Items whose id names a
+ * registered tool (`tool-<toolName>`) pass through the same manifest-declared visibility rules as the
+ * dynamic tools, forwarding the caller's session; framework items and items without a tool id are untouched.
+ * @param items The synthesised ribbon items.
+ * @param req The caller's request (cookie and Authorization header are forwarded on the loopback).
+ * @returns The items this caller may see, in their original order.
+ */
+async function filterRibbonItemsForCaller<T>(items: T[], req: Request): Promise<T[]> {
+  const candidates = items.map((item, index) => {
+    const id = item && typeof item === 'object' ? (item as { id?: unknown }).id : undefined;
+    return { item, index, toolName: typeof id === 'string' && id.startsWith('tool-') ? id.slice('tool-'.length) : '' };
+  });
+  const tools = candidates.filter(c => c.toolName);
+  if (tools.length === 0) return items;
+  const visible = new Set((await filterToolsForCaller(tools, { cookie: req.headers.cookie, authorization: req.headers.authorization })).map(c => c.index));
+  return candidates.filter(c => !c.toolName || visible.has(c.index)).map(c => c.item);
 }
 
 /**
@@ -82,6 +103,7 @@ export function createUiProfileRoutes(service: UIProfileService, swarmApps?: Swa
         const port = discovery ? await bindTileDiscovery(req, discovery) : undefined;
         const synthetic = await swarmApps.synthesiseProfile(selected, port);
         if (synthetic) {
+          synthetic.ribbon.items = await filterRibbonItemsForCaller(synthetic.ribbon.items, req);
           logger.debug({ selected, source: requested ? 'query' : 'env' }, 'Serving synthesised profile from swarm-app manifest');
           res.json({ profile: synthetic, requested: selected, source: 'swarm-app', envDefault: service.getEnvSelectedName() });
           return;

@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The loopback forwards the Authorization header as well as the cookie, and the exported filterToolsForCaller applies the same rules to a static rail
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 generic per-user dynamic-tool visibility: the manifest-declared endpoint decides which pattern-matching tools each caller sees; cookie is forwarded; unreachable endpoint fails CLOSED; non-matching tools are untouched.
  */
 
@@ -16,6 +17,7 @@ import {
   deregisterDynamicToolUI,
   registerDynamicToolVisibility,
   deregisterDynamicToolVisibility,
+  filterToolsForCaller,
 } from '../../src/app/routes/tool-routes';
 
 let server: Server;
@@ -27,7 +29,7 @@ beforeAll(async () => {
   // The app-owned visibility endpoint: only 'lm-class-aaaa1111' is allowed, and ONLY
   // when the caller's cookie arrived (proves the session forward).
   app.get('/api/education/class-tool-keys', (req, res) => {
-    if (!req.headers.cookie?.includes('sid=student1')) {
+    if (!req.headers.cookie?.includes('sid=student1') && req.headers.authorization !== 'Bearer student1-token') {
       res.json({ keys: [] });
       return;
     }
@@ -74,6 +76,19 @@ describe('ADR-085 — generic per-user dynamic-tool visibility', () => {
   it('a caller the app does not recognise sees NO matching tools (app answered keys: [])', async () => {
     const body = await (await fetch(`${base}/api/tools/dynamic`, { headers: { cookie: 'sid=stranger' } })).json();
     expect(body.tools.map((t: { toolName: string }) => t.toolName)).toEqual(['unrelated-tool']);
+  });
+
+  it('a token session is forwarded too: the Authorization header reaches the app endpoint', async () => {
+    registerDynamicToolVisibility('little-monsters', { endpoint: '/api/education/class-tool-keys', pattern: 'lm-class-*' });
+    const body = await (await fetch(`${base}/api/tools/dynamic`, { headers: { authorization: 'Bearer student1-token' } })).json();
+    expect(body.tools.map((t: { toolName: string }) => t.toolName).sort()).toEqual(['lm-class-aaaa1111', 'unrelated-tool']);
+  });
+
+  it('filterToolsForCaller applies the same rules to any tool-shaped list (the static rail)', async () => {
+    registerDynamicToolVisibility('little-monsters', { endpoint: '/api/education/class-tool-keys', pattern: 'lm-*' });
+    const rail = [{ toolName: 'lm-class-aaaa1111' }, { toolName: 'lm-teacher' }, { toolName: 'settings' }];
+    expect((await filterToolsForCaller(rail, { cookie: 'sid=student1' })).map(t => t.toolName)).toEqual(['lm-class-aaaa1111', 'settings']);
+    expect((await filterToolsForCaller(rail, {})).map(t => t.toolName)).toEqual(['settings']);
   });
 
   it('an unreachable endpoint fails CLOSED (all matching tools hidden)', async () => {
