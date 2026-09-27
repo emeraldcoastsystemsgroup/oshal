@@ -68,6 +68,21 @@ HTTP assertions and negative cases are themselves covered by
 `tests/unit/test-lab-artifact-registration.spec.ts`. Registration in source does not claim that the
 updated catalog or its live-model scenarios have already run on the deployed instance.
 
+### Jarvis invariant preamble cache
+
+The **Jarvis routing** card (`jarvis-routing`) also carries the guards for the invariant preamble
+cache, the provider-side handle that stops every new conversation re-sending the system prompt and
+tool declarations (as built in
+[architecture/jarvis-own-task-recall.md](architecture/jarvis-own-task-recall.md)):
+`tests/unit/invariant-prompt-cache.spec.ts`, `tests/unit/gemini-context-cache.spec.ts`,
+`tests/unit/invariant-prompt-cache-protocol-seam.spec.ts` (integration: the real `openai` client
+and `TaskController.processMessage` against a loopback Gemini surface) and
+`tests/unit/invariant-prompt-cache-usage-accounting.spec.ts`. Run them with
+`npx vitest run tests/unit/invariant-prompt-cache.spec.ts tests/unit/gemini-context-cache.spec.ts tests/unit/invariant-prompt-cache-protocol-seam.spec.ts tests/unit/invariant-prompt-cache-usage-accounting.spec.ts`.
+The card's live steps run each Jarvis ask as before; they do not assert a cache hit, because the
+installed before/after measurement is read from `chat_tasks` and the jarvis bot's call log, not
+from the Lab.
+
 ### Social signal subscriptions
 
 **Social signals — your watches reach only your bot** (`social-signal-subscriptions`, Tools) runs

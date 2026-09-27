@@ -457,3 +457,9 @@ Trading's `futures-archive-import.spec.ts` drives actual mounted routes with a f
 executes the real browser handlers, including typed confirmation, exact frozen citation and late
 navigation fences. Installed ES/CL import/coverage/repeat receipts, current vendor completeness,
 provider/nightly evidence and paper acceptance remain owed. No deployment or backlog closure follows.
+
+## Jarvis invariant preamble cache (2026-09-27)
+
+| Boundary audited | Mock/stub disposition | Required real companion | Status |
+|---|---|---|---|
+| The Gemini cache protocol: `POST /v1beta/cachedContents` creation, the `extra_body.google.cached_content` chat request, the omitted system/tools, the handle rejection and the shared-cache reuse across tasks and owners | `tests/unit/invariant-prompt-cache.spec.ts` scripts `client.chat.completions.create` and hands the provider an explicit cache; it proves the key, negative caching, the request shape and the one-leg fallback as branch logic, and is NOT closure evidence for the wire. | `tests/unit/invariant-prompt-cache-protocol-seam.spec.ts` runs a real `http.Server` on a loopback port serving both Gemini surfaces and recording raw bodies and headers, and drives it through the SHIPPED path: `TaskController.processMessage` on the BYO direct path, the real `_buildByoLlm`, the real `OpenAIProvider` with the real `openai` client, the process-shared cache, a real `ToolRegistry` and the real dispatch executor. Doubled, all outside that boundary: the task/message stores and the tool bodies. | Real local companion present. The production Google endpoint accepting the create for the installed preamble, reporting `cached_tokens`, and the before/after numbers remain live evidence owed by the operator measurement (the calls spend the caller's own Gemini connection and need a signed-in session). |
