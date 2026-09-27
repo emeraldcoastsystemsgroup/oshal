@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Declare the Token Chase replayClass on each file tool (read_file/list_files workspace-read, write_to_file workspace-write, execute_command side-effect) and expose the definitions through fileToolDefinitions() so the replay guards can register the real handlers. Registration behaviour is unchanged (BACKLOG "Workspace-bound checkpoint and tail replay").
  */
 
 /**
@@ -248,98 +249,107 @@ async function listFilesRecursive(fullPath, relativePath) {
 }
 
 /**
+ * @description The file tool definitions, exported so a caller can register the REAL handlers under
+ * its own policy (the Token Chase replay guards do). `replayClass` is the Token Chase classification
+ * (turn-provenance.js): reads and writes inside the workspace are a function of the checkpointed
+ * tree, so a hermetic replay can re-execute them; a shell command is not.
+ * @returns {object[]} Fresh definition objects (the registry freezes what it registers).
+ */
+function fileToolDefinitions() {
+  return [
+    {
+      name: 'read_file',
+      description: 'Read the contents of a file',
+      category: 'file_operations',
+      inputSchema: {
+        type: 'object',
+        required: ['path'],
+        properties: {
+          path: {
+            type: 'string',
+            description: 'Path to the file to read (relative to workspace)',
+          },
+        },
+      },
+      handler: readFile,
+      requiresApproval: false, // Reading is safe
+      replayClass: 'workspace-read',
+      timeout: 30000,
+    },
+    {
+      name: 'write_to_file',
+      description: 'Write content to a file (creates if not exists)',
+      category: 'file_operations',
+      inputSchema: {
+        type: 'object',
+        required: ['path', 'content'],
+        properties: {
+          path: {
+            type: 'string',
+            description: 'Path to the file to write (relative to workspace)',
+          },
+          content: {
+            type: 'string',
+            description: 'Content to write to the file',
+          },
+        },
+      },
+      handler: writeFile,
+      requiresApproval: true, // Writing requires approval
+      replayClass: 'workspace-write',
+      timeout: 30000,
+    },
+    {
+      name: 'list_files',
+      description: 'List files and directories in a path',
+      category: 'file_operations',
+      inputSchema: {
+        type: 'object',
+        required: ['path'],
+        properties: {
+          path: {
+            type: 'string',
+            description: 'Directory path to list (relative to workspace)',
+          },
+          recursive: {
+            type: 'boolean',
+            description: 'List files recursively',
+            default: false,
+          },
+        },
+      },
+      handler: listFiles,
+      requiresApproval: false, // Listing is safe
+      replayClass: 'workspace-read',
+      timeout: 30000,
+    },
+    {
+      name: 'execute_command',
+      description: 'Executes a shell command',
+      category: 'system',
+      inputSchema: {
+        type: 'object',
+        required: ['command'],
+        properties: {
+          command: {
+            type: 'string',
+            description: 'The command to execute',
+          },
+        },
+      },
+      handler: executeCommand,
+      requiresApproval: true, // Executing commands requires approval
+      replayClass: 'side-effect',
+      timeout: 60000,
+    },
+  ];
+}
+
+/**
  * Register all file tools with the registry
  */
 function registerFileTools(registry) {
-  // Read File tool
-  registry.register({
-    name: 'read_file',
-    description: 'Read the contents of a file',
-    category: 'file_operations',
-    inputSchema: {
-      type: 'object',
-      required: ['path'],
-      properties: {
-        path: {
-          type: 'string',
-          description: 'Path to the file to read (relative to workspace)',
-        },
-      },
-    },
-    handler: readFile,
-    requiresApproval: false, // Reading is safe
-    timeout: 30000,
-  });
-
-  // Write File tool
-  registry.register({
-    name: 'write_to_file',
-    description: 'Write content to a file (creates if not exists)',
-    category: 'file_operations',
-    inputSchema: {
-      type: 'object',
-      required: ['path', 'content'],
-      properties: {
-        path: {
-          type: 'string',
-          description: 'Path to the file to write (relative to workspace)',
-        },
-        content: {
-          type: 'string',
-          description: 'Content to write to the file',
-        },
-      },
-    },
-    handler: writeFile,
-    requiresApproval: true, // Writing requires approval
-    timeout: 30000,
-  });
-
-  // List Files tool
-  registry.register({
-    name: 'list_files',
-    description: 'List files and directories in a path',
-    category: 'file_operations',
-    inputSchema: {
-      type: 'object',
-      required: ['path'],
-      properties: {
-        path: {
-          type: 'string',
-          description: 'Directory path to list (relative to workspace)',
-        },
-        recursive: {
-          type: 'boolean',
-          description: 'List files recursively',
-          default: false,
-        },
-      },
-    },
-    handler: listFiles,
-    requiresApproval: false, // Listing is safe
-    timeout: 30000,
-  });
-
-  // Execute Command tool
-  registry.register({
-    name: 'execute_command',
-    description: 'Executes a shell command',
-    category: 'system',
-    inputSchema: {
-      type: 'object',
-      required: ['command'],
-      properties: {
-        command: {
-          type: 'string',
-          description: 'The command to execute',
-        },
-      },
-    },
-    handler: executeCommand,
-    requiresApproval: true, // Executing commands requires approval
-    timeout: 60000,
-  });
-
+  for (const definition of fileToolDefinitions()) registry.register(definition);
   logger.info('File operation tools registered');
 }
 /**
@@ -379,6 +389,7 @@ module.exports = {
   readFile,
   writeFile,
   listFiles,
+  fileToolDefinitions,
   registerFileTools,
   executeCommand,
 };

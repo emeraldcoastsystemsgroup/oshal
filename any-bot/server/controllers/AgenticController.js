@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Dispatch the fourth native bot runtime, antigravity-cli, through its injected provider without changing existing defaults.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Expose the configured-provider router as a direct generateResponse facade. Protected queued work is deliberately reasoning-only, so TaskController takes its direct path; the bot-node runtime passes this router as that path's LLM, and without the facade every configured CLI brain returned direct_mode_unsupported before reaching its provider. Delegation resolves the live configured provider at call time, preserving one provider-selection path across direct and agentic execution.
  * 10 | maintainer@emeraldcoastsystemsgroup.com  | Route execution-bound framework-tool bridge credentials only to providers that explicitly support the bridge.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com  | Token Chase workspace-bound checkpoint (BACKLOG "Workspace-bound checkpoint and tail replay"): the loop now PRODUCES the provenance the capture lane previously only accepted from options nobody set. Each executed (or failed) tool call is recorded through turn-provenance.js and drained into the next frame's per-frame `pins`, so a live read marks that frame non-replayable; the run-level options.workspaceCommit/ownerStoreVersion pass-through is gone (the capture lane commits the tree and versions the store itself); and a finally block writes the end-of-run checkpoint (final.json) on completion, max-turns and error alike. Every addition is a no-op with TOKEN_CHASE_CAPTURE off.
  */
 
 /**
@@ -29,6 +30,9 @@ const { normalizeAllowedTools, wrapUntrustedContent } = require('../utils/untrus
 // every entry point is a no-op and this call site is byte-identical to before). See
 // services/token-chase/TokenChaseCapture.js for the zero-impact contract.
 const { tokenChase } = require('../services/token-chase/TokenChaseCapture');
+// Per-turn tool-read classification for the capture lane: null when the flag is off, so the loop
+// below stays byte-identical. See services/token-chase/turn-provenance.js.
+const { createTurnProvenance } = require('../services/token-chase/turn-provenance');
 const { shouldAutoApproveTool } = require('./tool-approval-policy');
 const {
   authorizeCapability,
@@ -174,6 +178,9 @@ class AgenticController {
     let turnCount = 0;
     let isComplete = false;
     let finalResult = null;
+    // Token Chase: tool results appended since the previous frame become that frame's pins.
+    const __tcTurns = createTurnProvenance(tokenChase, task.workspace_dir);
+    let __tcOutcome = 'error';
     const capturedProviderRecords = new Map();
     let lastActualProvider = null;
     let lastActualModel = null;
@@ -427,10 +434,10 @@ class AgenticController {
           history,
           source: options.source || task.source,
           userSub: options.extraEnv && options.extraEnv.OSHAL_USER_SUB,
-          pins: options.pins,
+          // Per-frame pins: the tool results this prompt now carries, classified for replay. The
+          // capture lane marks the frame non-replayable when any of them is a live read/side effect.
+          pins: __tcTurns ? __tcTurns.drain() : options.pins,
           replayable: options.replayable,
-          workspaceCommit: options.workspaceCommit,
-          ownerStoreVersion: options.ownerStoreVersion,
         });
         try {
           response = await llmProvider.generateResponse(history, {
@@ -675,7 +682,8 @@ class AgenticController {
             });
             
             logger.info(`Tool execution successful: ${toolName}`);
-            
+            if (__tcTurns) __tcTurns.record({ tool: toolName, callId: toolId, toolDefinition: toolSnapshot.tool, input: toolInput, result: toolResult, success: true });
+
             // Generate timestamp ONCE for both broadcast and database
             const toolResultTimestamp = Date.now();
             
@@ -707,6 +715,7 @@ class AgenticController {
               success: false,
               error: error.message,
             };
+            if (__tcTurns) __tcTurns.record({ tool: toolName, callId: toolId, toolDefinition: toolSnapshot.tool, input: toolInput, success: false, error: error.message });
 
             // Generate timestamp ONCE for both broadcast and database
             const toolErrorTimestamp = Date.now();
@@ -817,8 +826,10 @@ class AgenticController {
         }
       }
 
+      __tcOutcome = 'completed';
       if (turnCount >= this.maxTurns) {
         logger.warn(`Reached max turns (${this.maxTurns})`);
+        __tcOutcome = 'max-turns';
         finalResult = {
           success: false,
           error: `Reached maximum turns (${this.maxTurns})`,
@@ -848,6 +859,13 @@ class AgenticController {
     } catch (error) {
       logger.error(`Agentic task failed: ${error.message}`);
       throw error;
+    } finally {
+      // Token Chase end-of-run checkpoint: the post-tool tree + store version a no-edit replay
+      // compares against. No-op when the flag is off; never throws (fail-open in the lane).
+      tokenChase.finishRun({
+        taskId, workspaceDir: task.workspace_dir, userSub: options.extraEnv && options.extraEnv.OSHAL_USER_SUB,
+        turns: turnCount, outcome: __tcOutcome, pins: __tcTurns ? __tcTurns.drain() : [],
+      });
     }
   }
 }
