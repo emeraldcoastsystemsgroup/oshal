@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the Jarvis cross-conversation recall acceptance case, written once and driven twice: by the signed-in Test Lab step (src/app/routes/test-lab-jarvis-recall.ts) and by the operator-PAT live proof (scripts/operations/jarvis-recall-live-proof.js). It seeds one uniquely tagged owner-bound thread holding a random codeword through the real task and message stores, asks for that codeword from a NEW thread through the real /api/jarvis/ask route without repeating it, requires the answer to carry it, requires the owner-scoped Token Chase capture of that ask to show conversation_query and/or conversation_fetch actually ran for this caller, and then deletes exactly the two threads, their messages, the chat ticket and the ask's workspace. An incomplete cleanup is a red result.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Judge DELIVERY, not the route's first word. The 2026-09-27 run recalled correctly (conversation_query x1, conversation_fetch x1, the codeword in the bot's own frames) and still went red, because the route answered at its 75 s decision window and the real answer landed later. The case now passes when the codeword is written into thread B - read through the owner's own /api/jarvis/history, the path the Jarvis surface re-renders a thread from - within deliveryBudgetMs (default 300 s: the measured run took 196 s from ask to answer), even after the route window; it fails when it never lands, lands with a wrong codeword, reached only the job and not the thread, or also landed in thread A (thread A must still hold exactly its seeded messages). The tool-evidence assertion is unchanged.
  */
 
 'use strict';
@@ -24,8 +25,12 @@ const FIXTURE_ID_RE = /^testlab-recall-[ab]-[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a
 const CODEWORD_RE = /TESTLAB-RECALL-[0-9A-F]{8}/gi;
 /** Runtime tool names of the two recall tools (bot-node-read-only-tools.ts) and their short labels. */
 const RECALL_TOOLS = Object.freeze({ conversation_query: 'query', conversation_fetch: 'fetch' });
-/** Budgets, overridable per run. The answer budget sits above Jarvis's own decision timeout. */
-const DEFAULT_BUDGETS = Object.freeze({ answerBudgetMs: 120_000, settleBudgetMs: 180_000, pollMs: 3_000 });
+/**
+ * Budgets, overridable per run. deliveryBudgetMs bounds the wait, from the ask, for the codeword to be
+ * written into thread B. It sits well above Jarvis's 75 s decision window on purpose: a late answer that
+ * lands in the thread counts, and the measured 2026-09-27 run took 196 s from ask to answer.
+ */
+const DEFAULT_BUDGETS = Object.freeze({ deliveryBudgetMs: 300_000, settleBudgetMs: 180_000, pollMs: 3_000 });
 /** The Token Chase capture directory and its end-of-run record, as the capture lane writes them. */
 const CAPTURE_DIR = '.tokenchase';
 const FINAL_FILE = 'final.json';
@@ -169,51 +174,82 @@ async function seedRecallThread(ports, fixture) {
 }
 
 /**
- * Poll answers that are not final. `expired` is also what /ask/result answers when its session read
- * cannot reach PostgreSQL for a moment (seen live: a pool connect timeout mid-ask), so it is retried
- * until the budget ends like a server error or a dropped request - only `done` and `error` settle.
- */
-const RETRYABLE_POLL = /^(pending|expired|HTTP 5\d\d|request failed)$/;
-
-/**
- * @description Poll one ask until it settles (`done` / `error`) or the budget runs out.
- * @param {object} ports - api, sleep, now.
+ * @description Read one poll of the ask job. A 5xx or a dropped request is recorded and polled again:
+ * /ask/result answers a retryable 503 when its session read cannot reach PostgreSQL for a moment.
+ * @param {object} ports - api.
  * @param {string} jobId - The ask's job id.
- * @param {{answerBudgetMs: number, pollMs: number}} budgets - Budgets.
- * @returns {Promise<{status: string, answer: string, error: string|null, elapsedMs: number}>} The settled job.
+ * @returns {Promise<{status: string, answer: string, error: string|null, stillWorking: boolean}>} The poll.
  */
-async function pollAnswer(ports, jobId, budgets) {
-  const started = ports.now();
-  let last = { status: 'pending', answer: '', error: null };
-  while (ports.now() - started < budgets.answerBudgetMs) {
-    await ports.sleep(budgets.pollMs);
-    const poll = await ports.api('GET', `/api/jarvis/ask/result?jobId=${encodeURIComponent(jobId)}`)
-      .catch((error) => ({ status: 0, json: { error: error instanceof Error ? error.message : String(error) } }));
-    const status = poll.status === 200 ? String(poll.json.status || 'unknown') : poll.status ? `HTTP ${poll.status}` : 'request failed';
-    last = { status, answer: typeof poll.json.answer === 'string' ? poll.json.answer : '', error: poll.json.error ?? null };
-    if (!RETRYABLE_POLL.test(status)) break;
-  }
-  return { ...last, elapsedMs: ports.now() - started };
+async function pollJob(ports, jobId) {
+  const poll = await ports.api('GET', `/api/jarvis/ask/result?jobId=${encodeURIComponent(jobId)}`)
+    .catch((error) => ({ status: 0, json: { error: error instanceof Error ? error.message : String(error) } }));
+  const status = poll.status === 200 ? String(poll.json.status || 'unknown') : poll.status ? `HTTP ${poll.status}` : 'request failed';
+  return { status, answer: typeof poll.json.answer === 'string' ? poll.json.answer : '', error: poll.json.error ?? null,
+    stillWorking: typeof poll.json.progress === 'string' && poll.json.progress.length > 0 };
 }
 
 /**
- * @description Ask the recall question on thread B through the real route as the caller.
+ * @description What Jarvis has said in one conversation, read as the caller through the same history
+ * route the Jarvis surface re-renders a thread from. User turns are excluded.
+ * @param {object} ports - api.
+ * @param {string} threadId - The conversation to read.
+ * @returns {Promise<string>} Every Jarvis turn's text, newline-joined ('' when unreadable or empty).
+ */
+async function readJarvisTurns(ports, threadId) {
+  const read = await ports.api('GET', `/api/jarvis/history?sessionId=${encodeURIComponent(threadId)}`)
+    .catch(() => ({ status: 0, json: {} }));
+  const turns = read.status === 200 && Array.isArray(read.json.turns) ? read.json.turns : [];
+  return turns.filter((turn) => turn && turn.role !== 'user').map((turn) => String(turn.text ?? '')).join('\n');
+}
+
+/**
+ * @description Follow one ask until a codeword is written into thread B, the turn reports a failure,
+ * or the delivery budget runs out. Settling the job is NOT the end: an answer that lands in the thread
+ * after the route's decision window still counts, so thread B is read on every poll.
+ * @param {object} ports - api, sleep, now.
+ * @param {string} jobId - The ask's job id.
+ * @param {string} threadB - The thread the answer must land in.
+ * @param {{deliveryBudgetMs: number, pollMs: number}} budgets - Budgets.
+ * @returns {Promise<{status: string, answer: string, error: string|null, threadAnswer: string,
+ *   stillWorkingSeen: boolean, deliveredMs: number|null, elapsedMs: number}>} What was observed.
+ */
+async function awaitDelivery(ports, jobId, threadB, budgets) {
+  const started = ports.now();
+  const seen = { status: 'pending', answer: '', error: null, threadAnswer: '', stillWorkingSeen: false, deliveredMs: null };
+  while (ports.now() - started < budgets.deliveryBudgetMs) {
+    await ports.sleep(budgets.pollMs);
+    if (seen.status !== 'done' && seen.status !== 'error') {
+      const job = await pollJob(ports, jobId);
+      Object.assign(seen, { status: job.status, answer: job.answer, error: job.error });
+      seen.stillWorkingSeen = seen.stillWorkingSeen || job.stillWorking;
+    }
+    seen.threadAnswer = await readJarvisTurns(ports, threadB);
+    if (extractCodewords(seen.threadAnswer).length) { seen.deliveredMs = ports.now() - started; break; }
+    if (seen.status === 'error') break;
+  }
+  return { ...seen, elapsedMs: ports.now() - started };
+}
+
+/**
+ * @description Ask the recall question on thread B through the real route as the caller and follow
+ * it until the answer is delivered into thread B (or the budget ends).
  * @param {object} ports - api, sleep, now.
  * @param {ReturnType<typeof createRecallFixture>} fixture - The run's fixture.
  * @param {object} budgets - Budgets.
  * @returns {Promise<{accepted: boolean, httpStatus: number, jobId: string|null, chatTicketId: string|null,
- *   status: string, answer: string, error: string|null, elapsedMs: number}>} The ask outcome.
+ *   status: string, answer: string, error: string|null, threadAnswer: string, stillWorkingSeen: boolean,
+ *   deliveredMs: number|null, elapsedMs: number}>} The ask outcome.
  */
 async function askRecallQuestion(ports, fixture, budgets) {
   const ask = await ports.api('POST', '/api/jarvis/ask', { message: fixture.question, sessionId: fixture.threadB });
   const jobId = typeof ask.json.jobId === 'string' ? ask.json.jobId : null;
   const chatTicketId = typeof ask.json.chatTicketId === 'string' ? ask.json.chatTicketId : null;
   if (ask.status !== 202 || !jobId || ask.json.sessionId !== fixture.threadB) {
-    return { accepted: false, httpStatus: ask.status, jobId, chatTicketId, status: 'refused',
-      answer: '', error: String(ask.json.error ?? 'no jobId'), elapsedMs: 0 };
+    return { accepted: false, httpStatus: ask.status, jobId, chatTicketId, status: 'refused', answer: '',
+      error: String(ask.json.error ?? 'no jobId'), threadAnswer: '', stillWorkingSeen: false, deliveredMs: null, elapsedMs: 0 };
   }
-  const settled = await pollAnswer(ports, jobId, budgets);
-  return { accepted: true, httpStatus: ask.status, jobId, chatTicketId, ...settled };
+  const followed = await awaitDelivery(ports, jobId, fixture.threadB, budgets);
+  return { accepted: true, httpStatus: ask.status, jobId, chatTicketId, ...followed };
 }
 
 /**
@@ -349,32 +385,37 @@ async function cleanUpRecallCase(ports, fixture, ask, finish) {
 }
 
 /**
- * @description Decide the verdict from the ask outcome and the capture evidence.
+ * @description Decide the verdict from what reached thread B, the capture evidence and thread A.
  * @param {ReturnType<typeof createRecallFixture>} fixture - The run's fixture.
  * @param {object} ask - The ask outcome.
  * @param {ReturnType<typeof summarizeToolEvidence>} evidence - The capture summary.
  * @param {string} finish - Why the bot-finish wait ended.
+ * @param {number} strayInA - Messages in thread A beyond the seeded ones.
+ * @param {number} budgetMs - The delivery budget the ask was followed for.
  * @returns {{state: 'pass'|'fail'|'degraded', detail: string}} The verdict before cleanup.
  */
-function decideVerdict(fixture, ask, evidence, finish) {
+function decideVerdict(fixture, ask, evidence, finish, strayInA, budgetMs) {
   if (!ask.accepted) return { state: 'fail', detail: `POST /api/jarvis/ask refused the new thread: HTTP ${ask.httpStatus} ${ask.error}.` };
-  const said = extractCodewords(ask.answer);
+  const inThread = extractCodewords(ask.threadAnswer);
   const toolLine = `recall tools: conversation_query x${evidence.query}, conversation_fetch x${evidence.fetch}`
     + ` over ${evidence.frames} captured frame(s)`;
-  if (ask.status !== 'done' || !said.includes(fixture.codeword)) {
-    const late = evidence.codewordInFrames ? ' The bot\'s own captured frames DID write the codeword, after the answer had already been returned.' : '';
-    const wrong = said.length ? ` It named ${said.join(', ')} instead.` : '';
-    return { state: 'fail', detail: `Jarvis did not answer with the other thread's codeword (status=${ask.status}, `
-      + `${Math.round(ask.elapsedMs / 1000)}s).${wrong} Answer began: "${ask.answer.slice(0, 200)}". ${toolLine}.${late}` };
+  if (!inThread.includes(fixture.codeword)) {
+    const wrong = inThread.length ? ` Thread B names ${inThread.join(', ')} instead.` : '';
+    const jobOnly = extractCodewords(ask.answer).includes(fixture.codeword) ? ' The ask result carried the codeword, but it was never written into thread B.' : '';
+    const frames = evidence.codewordInFrames ? ' The bot\'s own captured frames DID write the codeword.' : '';
+    return { state: 'fail', detail: `Jarvis did not deliver the other thread's codeword into thread B within ${Math.round(budgetMs / 1000)}s `
+      + `(job status=${ask.status}${ask.error ? `: ${ask.error}` : ''}).${wrong}${jobOnly} The route's answer began: "${ask.answer.slice(0, 200)}". ${toolLine}.${frames}` };
   }
+  if (strayInA) return { state: 'fail', detail: `The answer landed outside thread B as well: thread A gained ${strayInA} message(s).` };
   if (evidence.foreignFrames) return { state: 'fail', detail: `The capture of this ask holds ${evidence.foreignFrames} frame(s) stamped for another owner.` };
+  const when = `in ${Math.round(ask.deliveredMs / 1000)}s${ask.stillWorkingSeen ? ', after the route reported the turn was still working' : ''}`;
   if (evidence.query + evidence.fetch > 0) {
-    return { state: 'pass', detail: `Jarvis answered with the other thread's codeword in ${Math.round(ask.elapsedMs / 1000)}s; ${toolLine}, all stamped for this caller.` };
+    return { state: 'pass', detail: `Jarvis delivered the other thread's codeword into thread B ${when}; ${toolLine}, all stamped for this caller.` };
   }
   if (!evidence.frames) {
-    return { state: 'degraded', detail: `Jarvis answered with the codeword, but the ask left no Token Chase capture (${finish}), so tool use cannot be proven on this deployment.` };
+    return { state: 'degraded', detail: `Jarvis delivered the codeword into thread B ${when}, but the ask left no Token Chase capture (${finish}), so tool use cannot be proven on this deployment.` };
   }
-  return { state: 'fail', detail: `Jarvis answered with the codeword but the capture shows no successful recall tool call (${toolLine}).` };
+  return { state: 'fail', detail: `Jarvis delivered the codeword but the capture shows no successful recall tool call (${toolLine}).` };
 }
 
 /**
@@ -382,7 +423,8 @@ function decideVerdict(fixture, ask, evidence, finish) {
  * runs after anything was written, and a cleanup miss turns any verdict red.
  * @param {object} ports - api, ownerSub, taskStore, messageStore, query, withOwner, agentId?,
  *   threadMetadata?, workspaceRoot?, sleep?, now?.
- * @param {Partial<typeof DEFAULT_BUDGETS> & {fixture?: ReturnType<typeof createRecallFixture>}} [options] - Budgets / fixture.
+ * @param {Partial<typeof DEFAULT_BUDGETS> & {fixture?: ReturnType<typeof createRecallFixture>}} [options] - Budgets
+ *   (deliveryBudgetMs, settleBudgetMs, pollMs) / fixture.
  * @returns {Promise<{caseId: string, state: 'pass'|'fail'|'degraded', detail: string, evidence: object}>} The result.
  */
 async function runJarvisRecallAcceptance(ports, options = {}) {
@@ -393,6 +435,7 @@ async function runJarvisRecallAcceptance(ports, options = {}) {
   let verdict = { state: 'fail', detail: 'The case did not finish.' };
   let ask = null;
   let finish = null;
+  let strayInA = 0;
   let evidence = summarizeToolEvidence([], io.ownerSub, fixture.codeword);
   let wrote = false;
   try {
@@ -403,7 +446,9 @@ async function runJarvisRecallAcceptance(ports, options = {}) {
     ask = await askRecallQuestion(io, fixture, budgets);
     finish = ask.accepted ? await waitForBotFinish(io, fixture.threadB, budgets) : null;
     if (ask.accepted) evidence = summarizeToolEvidence(await readCapturedFrames(io, fixture.threadB), io.ownerSub, fixture.codeword);
-    verdict = decideVerdict(fixture, ask, evidence, finish);
+    // Thread A must still hold exactly what was seeded: an answer written there landed in the wrong thread.
+    strayInA = Math.max(0, (await readResidue(io, [fixture.threadA])).chatMessages - fixture.messages.length);
+    verdict = decideVerdict(fixture, ask, evidence, finish, strayInA, budgets.deliveryBudgetMs);
   } catch (error) {
     verdict = { state: 'fail', detail: error instanceof Error ? error.message : String(error) };
   }
@@ -412,6 +457,8 @@ async function runJarvisRecallAcceptance(ports, options = {}) {
     : `${verdict.detail}${wrote ? ' Both threads, their messages, the chat ticket and the ask workspace were removed.' : ''}`;
   return { caseId: CASE_ID, state: cleanupErrors.length ? 'fail' : verdict.state, detail,
     evidence: { threadA: fixture.threadA, threadB: fixture.threadB, answerSeconds: ask ? Math.round(ask.elapsedMs / 1000) : null,
+      deliveredSeconds: ask && ask.deliveredMs !== null ? Math.round(ask.deliveredMs / 1000) : null,
+      stillWorkingSeen: ask ? ask.stillWorkingSeen : false, strayInThreadA: strayInA,
       askStatus: ask ? ask.status : null, botFinish: finish, ...evidence, cleanupErrors } };
 }
 

@@ -18,7 +18,9 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Extracted from jarvis-routes.ts (804 code lines, over the 800-line decomposition threshold): threadTicketKey, ensureSessionTask, ensureThreadChatTicket and the durable open-ticket lookup move here unchanged; closeThreadChatTicket wraps the map access POST /thread/close used to do inline.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Stop calling an ensureSessionTask failure non-fatal. It is fatal to the ask: the caller turns the false into 404 session_not_found, so a store that could not answer is refused in exactly the words used for a session somebody else owns. The guard still fails closed - nothing about the decision changes - but the cause is now logged at ERROR, which is the only thing that tells an undetermined check apart from a real denial.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Run fresh-session protected-result admission after proving the id is unused but before creating its task row.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | ensureSessionTask now reports owned / refused / unavailable, and gateAskSession + refuseAskSession turn the whole /ask session gate into one decision. A task store that threw (live 2026-09-27: "Connection terminated due to connection timeout" during a 36-bot cold start) used to become 404 session_not_found - the words for a session somebody else owns. It is now a retryable 503 session_unavailable that says the system is busy and nothing was sent; a real foreign-owner or read-back refusal is still 404 with the same log line, and nothing reaches the model in either case.
  */
+import type { Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '@/app/composition/app-context';
 import type { InternalTicket } from '@/entities/ticket';
@@ -26,6 +28,7 @@ import { getApplicationAuthorizationActor } from '@/shared/application-authoriza
 import { OWNER_PRINCIPAL_ISSUER_METADATA_KEY, readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
 import { getJarvisBriefingDelivery } from './jarvis-briefing-delivery';
 import { JARVIS_AGENT_ID } from './jarvis-orchestrator';
+import type { JarvisSessionAccess } from './jarvis-result-access';
 
 const logger = createChildLogger({ module: 'jarvis-thread-tickets' });
 
@@ -54,16 +57,19 @@ export function threadTicketKey(ownerSub: string, sessionId: string): string {
  * @param sessionId - The conversation thread id.
  * @param message - The first line becomes the task title.
  * @param admitFresh - Access decision that must pass before an absent session may be persisted.
- * @returns Whether the caller owns the session task (a foreign or mismatched row yields false).
+ * @returns 'owned' when the caller owns the session task, 'refused' for a foreign, mismatched or
+ * inadmissible one, and 'unavailable' when the store could not answer (nothing was decided).
  */
 export async function ensureSessionTask(ctx: AppContext, sub: string, issuer: string | null, sessionId: string, message: string,
-  admitFresh: () => Promise<boolean>): Promise<boolean> {
+  admitFresh: () => Promise<boolean>): Promise<SessionTaskOwnership> {
+  const ownedByCaller = (task: { ownerSub?: string; metadata?: Record<string, unknown> } | null | undefined): SessionTaskOwnership => (
+    task && task.ownerSub === sub && (readOwnerPrincipalIssuer(task.metadata) === issuer || !issuer && !ctx.applicationAuthorization)
+      ? 'owned' : 'refused');
   try {
-    if (await getJarvisBriefingDelivery()?.service.isProducerSession(sessionId)) return false;
+    if (await getJarvisBriefingDelivery()?.service.isProducerSession(sessionId)) return 'refused';
     const existing = await ctx.taskStore.get(sessionId);
-    if (existing) return existing.ownerSub === sub && (readOwnerPrincipalIssuer(existing.metadata) === issuer
-      || !issuer && !ctx.applicationAuthorization);
-    if (!await admitFresh()) return false;
+    if (existing) return ownedByCaller(existing);
+    if (!await admitFresh()) return 'refused';
     const created = await ctx.taskStore.create({
       taskId: sessionId,
       title: (message.split('\n')[0] || message).slice(0, 90) || 'Jarvis chat',
@@ -74,15 +80,69 @@ export async function ensureSessionTask(ctx: AppContext, sub: string, issuer: st
     });
     // `create` returns an existing row when a concurrent caller wins the task-id race. Re-check the
     // returned owner so a guessed session id can never become a cross-tenant append channel.
-    return Boolean(created && created.ownerSub === sub && (readOwnerPrincipalIssuer(created.metadata) === issuer
-      || !issuer && !ctx.applicationAuthorization));
+    return ownedByCaller(created);
   } catch (err) {
-    // Fail closed, but never silently and never mislabelled: the caller answers 404
-    // session_not_found on this false, so an unavailable store is refused with the same words as a
-    // foreign owner. The log is what separates "denied" from "could not be determined".
-    logger.error({ err, sessionId }, 'jarvis: session ownership UNDETERMINED (task store failed); /ask will refuse with session_not_found');
-    return false;
+    // Fail closed, but never mislabelled: a store that could not answer decided nothing, so the
+    // caller must not hear the words used for a session somebody else owns.
+    logger.error({ err, sessionId }, 'jarvis: session ownership UNDETERMINED (task store failed); /ask answers 503 session_unavailable');
+    return 'unavailable';
   }
+}
+
+/** @description What registering an /ask thread decided: the caller's, refused, or not decidable right now. */
+export type SessionTaskOwnership = 'owned' | 'refused' | 'unavailable';
+
+/** @description The /ask session gate's outcome: admitted, refused by one named half, or undecided. */
+export type JarvisAskSessionGate = 'admitted' | 'ownership' | 'read-back' | 'unavailable';
+
+/** Seconds a caller is told to wait before retrying a gate that could not decide. */
+const SESSION_UNAVAILABLE_RETRY_AFTER_SECONDS = 5;
+
+/** @description The sentence a caller reads when the gate could not decide (the store did not answer). */
+export const JARVIS_SESSION_UNAVAILABLE_MESSAGE = 'The system is busy right now, so Jarvis could not open this '
+  + 'conversation. Nothing was sent. Try again in a moment.';
+
+/**
+ * @description Run both halves of the /ask session gate: register the thread owner-bound, then read it
+ * back through the result boundary. A half that could not answer is 'unavailable', never a refusal.
+ * @param ctx - App context (task store).
+ * @param sub - The authenticated owner.
+ * @param issuer - The verified principal issuer, or null under legacy compatibility.
+ * @param sessionId - The conversation thread id.
+ * @param message - The first line becomes a fresh task's title.
+ * @param admitFresh - Access decision that must pass before an absent session may be persisted.
+ * @param readBack - The read-back decision over the written session.
+ * @returns 'admitted', the refusing half ('ownership' / 'read-back'), or 'unavailable'.
+ */
+export async function gateAskSession(ctx: AppContext, sub: string, issuer: string | null, sessionId: string, message: string,
+  admitFresh: () => Promise<boolean>, readBack: () => Promise<JarvisSessionAccess>): Promise<JarvisAskSessionGate> {
+  const ownership = await ensureSessionTask(ctx, sub, issuer, sessionId, message, admitFresh);
+  if (ownership !== 'owned') return ownership === 'unavailable' ? 'unavailable' : 'ownership';
+  const access = await readBack();
+  if (access === 'allowed') return 'admitted';
+  return access === 'unavailable' ? 'unavailable' : 'read-back';
+}
+
+/**
+ * @description Answer a gate that did not admit. A refusal stays the deliberately uninformative 404
+ * session_not_found (the log names which half refused); a gate that could not decide is a retryable
+ * 503, because telling a caller their own thread is "not found" when the database was busy is false.
+ * @param res - The /ask response.
+ * @param sessionId - The conversation thread id (logged, never echoed to a refused caller).
+ * @param gate - The gate outcome, anything but 'admitted'.
+ * @returns Nothing; the response is sent.
+ */
+export function refuseAskSession(res: Response, sessionId: string, gate: Exclude<JarvisAskSessionGate, 'admitted'>): void {
+  if (gate === 'unavailable') {
+    logger.warn({ sessionId }, 'jarvis /ask deferred: session_unavailable');
+    res.setHeader('Retry-After', String(SESSION_UNAVAILABLE_RETRY_AFTER_SECONDS));
+    res.status(503).json({ error: 'session_unavailable', message: JARVIS_SESSION_UNAVAILABLE_MESSAGE, retryable: true });
+    return;
+  }
+  // `ownership`: the task could not be written owner-bound (a foreign owner, a mismatched issuer, a
+  // refused fresh admission). `read-back`: it was written and then would not read back.
+  logger.warn({ sessionId, refusedBy: gate }, 'jarvis /ask refused: session_not_found');
+  res.status(404).json({ error: 'session_not_found' });
 }
 
 /**

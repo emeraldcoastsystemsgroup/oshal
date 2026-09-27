@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Regression guard for the branch that answered 404 session_not_found out of POST /api/jarvis/ask with nothing written down. Two other guards sat red on that 404 and neither could say which half of the gate refused, because the route logged nothing and ensureSessionTask called its own failure "non-fatal" while the caller turned it into a hard refusal. These cases drive each shape through the REAL route: the owner is admitted, a foreign-owned session id is refused quietly, a store that cannot hand back an owner-bound task is refused (the 2026-09-11 rule, so restoring the old `!created ||` reading goes red here), a store that THROWS is refused and reported at ERROR, and a session that writes but will not read back is refused as the read-back half. Nothing here weakens a gate - every case asserts the refusal - what it pins is that the refusals stay distinguishable.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Preflight protected-result admission before a fresh Jarvis session is persisted, so a deterministic refusal cannot strand a `chat_tasks.status='created'` row.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | A store that THROWS is no longer refused as session_not_found: it still fails closed (nothing reaches the model) but answers a retryable 503 session_unavailable, because a store that could not answer decided nothing. The real pool-timeout shape is proven in jarvis-ask-session-gate-postgres.spec.ts; the denial shapes here keep their 404.
  */
 
 import type { AddressInfo } from 'node:net';
@@ -61,6 +62,7 @@ vi.mock('@/shared/logger', async (importOriginal) => {
 });
 
 import { createJarvisRoutes, purgeJarvisAskJobsForOwner } from '@/app/routes/jarvis-routes';
+import { JARVIS_SESSION_UNAVAILABLE_MESSAGE } from '@/app/routes/jarvis-thread-tickets';
 import { JARVIS_AGENT_ID } from '@/app/routes/jarvis-orchestrator';
 import { configureProtectedResultAccess } from '@/shared/protected-results';
 import {
@@ -213,11 +215,14 @@ describe('POST /api/jarvis/ask session ownership gate', () => {
     expect(refusals()[0]?.payload).toMatchObject({ refusedBy: 'ownership' });
   });
 
-  it('still fails closed when the store THROWS, and reports the cause at ERROR', async () => {
+  it('still fails closed when the store THROWS, but says busy (503) instead of not found, and reports the cause at ERROR', async () => {
     const result = await askWith(createUnavailableTaskStore(STORE_FAULT), 'session-gate-unavailable');
 
-    // Fail-closed is preserved. This is the half that must never regress.
-    expect(result).toEqual({ status: 404, body: { error: 'session_not_found' } });
+    // Fail-closed is preserved - nothing reaches the model - but a store that could not answer is not
+    // a session somebody else owns, so the caller is told to retry rather than "not found".
+    expect(result).toEqual({ status: 503, body: { error: 'session_unavailable', message: JARVIS_SESSION_UNAVAILABLE_MESSAGE, retryable: true } });
+    expect(executeBot).not.toHaveBeenCalled();
+    expect(refusals()).toHaveLength(0);
     // And it is no longer indistinguishable from a denial: an undetermined check is reported.
     const reported = errors().filter((entry) => entry.module === 'jarvis-thread-tickets');
     expect(reported).toHaveLength(1);

@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Prove the page rolls a refused persisted thread id to a fresh one and resends the turn exactly once (the 'Sorry — I couldn't do that just now' regression after issuer provenance landed).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Give the hooks that own the isolated fixture browser the fixture's exit budget, so a confirmed but slow shutdown on a loaded box is failed by neither deadline.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Create the ignored cleanup receipt directory in a fresh isolated checkout before writing the browser-close result.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Prove the page follows a turn the server reports as still working: the thinking bubble shows the server's note, polling continues past the note, and the late answer replaces it in the same bubble - the surface half of the 2026-09-27 late-answer fix.
  */
 import { type Browser, type Page, type Frame } from 'playwright';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -345,5 +346,21 @@ it('surfaces a refusal of the fresh thread as one readable error instead of retr
     expect(await surface.locator('#convo .err').textContent()).toBe('Jarvis could not open a conversation for your current sign-in.');
     expect(fixture.state.asks.length).toBe(2);
     expect(fixture.state.asks[1].sessionId).not.toBe('jarvis-legacy-fixture-thread');
+  } finally { await context.close(); }
+});
+
+it('shows the still-working note, keeps following the turn and replaces the note with the late answer', async () => {
+  const note = 'Still working on it — the answer will appear here when it is ready.';
+  fixture.state.result = { status: 'pending', label: 'Which codeword did I give you?', progress: note, expiresInMs: 60_000 };
+  const { surface, context, errors } = await openDashboard();
+  try {
+    await surface.locator('#typein').fill('Which codeword did I give you?'); await surface.locator('#typer button').click();
+    await expect.poll(() => surface.locator('#convo').textContent(), { timeout: 5000 }).toContain(note);
+    fixture.state.result = { status: 'done', answer: 'The **late answer** landed.' };
+    await expect.poll(() => surface.locator('#resultContent strong').textContent(), { timeout: 10_000 }).toBe('late answer');
+    const convo = String(await surface.locator('#convo').textContent());
+    expect(convo).not.toContain(note);
+    expect(convo).not.toContain('taking unusually long');
+    expect(errors).toEqual([]);
   } finally { await context.close(); }
 });

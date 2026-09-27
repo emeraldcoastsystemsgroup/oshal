@@ -5,6 +5,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - live acceptance for "Jarvis cannot see the user's other conversations": run the shared recall case (scripts/lib/jarvis-recall-acceptance.js, the same code the Test Lab card runs) against the deployed box as the operator automation identity. On the host it stages itself and the case into the api container and re-runs there with OSHAL_VERIFY_OPERATOR_PAT forwarded by name; in the container it seeds through the image's own compiled task/message stores under the caller's database identity, drives the real loopback routes with the PAT, and prints one RESULT line. Works on an image that predates the Test Lab card.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The answer budget knob is now OSHAL_RECALL_DELIVERY_BUDGET_MS (deliveryBudgetMs): the case waits for the codeword to be written into thread B, not for the route's first word, so a late answer that lands counts.
  */
 
 'use strict';
@@ -12,7 +13,7 @@
 // Usage (from a core checkout on the box, after a deploy):
 //   node scripts/operations/jarvis-recall-live-proof.js
 // Knobs: OSHAL_VERIFY_OPERATOR_PAT (else read by name from OSHAL_VERIFY_ENV_FILE or ./.env),
-// OSHAL_VERIFY_API_CONTAINER (default oshal-local-api), OSHAL_RECALL_ANSWER_BUDGET_MS,
+// OSHAL_VERIFY_API_CONTAINER (default oshal-local-api), OSHAL_RECALL_DELIVERY_BUDGET_MS,
 // OSHAL_RECALL_SETTLE_BUDGET_MS, OSHAL_RECALL_POLL_MS. Exit 0 pass, 1 fail, 2 not runnable, 3 degraded.
 // Spends ONE real model turn on the operator's configured Jarvis brain.
 
@@ -37,7 +38,7 @@ function runOnHost() {
     process.stdout.write(`${CASE_ID} UNAVAILABLE: ${runner.PAT_ENV} is neither exported nor in the .env; nothing was written.\n`);
     process.exit(2);
   }
-  const passthrough = ['OSHAL_RECALL_ANSWER_BUDGET_MS', 'OSHAL_RECALL_SETTLE_BUDGET_MS', 'OSHAL_RECALL_POLL_MS'];
+  const passthrough = ['OSHAL_RECALL_DELIVERY_BUDGET_MS', 'OSHAL_RECALL_SETTLE_BUDGET_MS', 'OSHAL_RECALL_POLL_MS'];
   const env = { LOG_LEVEL: 'silent', OSHAL_SCHEMA_BOOTSTRAP: 'validate-only' };
   for (const name of passthrough) if (process.env[name]) env[name] = process.env[name];
   runner.reportAndExit(runner.stageAndRun({
@@ -130,7 +131,7 @@ async function runInContainer() {
     agentId: await resolveJarvisAgentId(api),
     workspaceRoot: dist.resolveSharedWorkspaceRoot(),
   }, {
-    answerBudgetMs: process.env.OSHAL_RECALL_ANSWER_BUDGET_MS,
+    deliveryBudgetMs: process.env.OSHAL_RECALL_DELIVERY_BUDGET_MS,
     // The bot keeps running after Jarvis's decision timeout answers; the first live run's headless
     // CLI turn took 10m45s. Wait for it (bounded) so the ask workspace is removed, not raced.
     settleBudgetMs: process.env.OSHAL_RECALL_SETTLE_BUDGET_MS || LIVE_SETTLE_BUDGET_MS,
