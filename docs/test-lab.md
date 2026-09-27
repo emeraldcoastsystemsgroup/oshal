@@ -143,6 +143,24 @@ runs the real collector against a local feed server. It proves the ReportDate ke
 column, that a second run appends nothing, and the bounded recent-disclosure read. That is local
 evidence; only a pass of the live step shows the installed collector ran.
 
+### Market-data stream (ADR-143)
+
+**Market-data stream (ADR-143)** (`market-data-stream`, Tools) runs one credential-free readback of
+the kernel's own stream status: whether `TRADING_STREAM_ENABLED` is armed on this node, the venue
+session state, the feed name, how many symbols are subscribed and the last print time. It opens no
+socket and makes no venue call. Unarmed (the shipped default) is degraded and names the operator step;
+an entitlement refusal fails; an authenticated session with a print passes, and the detail says it is a
+print this node received, not the dated paper-ticket observation Phase 3 owes.
+
+Run the linked suites locally with `npx vitest run tests/unit/trading-market-data-stream.spec.ts
+tests/unit/compose-trading-stream-gate.spec.ts tests/unit/test-lab-market-stream-registration.spec.ts`.
+The kernel suite is a real local protocol seam: a `ws` `WebSocketServer` on 127.0.0.1 speaks the venue
+frame shape and records auth, subscribe, reconnect and unsubscribe messages, a live unarmed venue must
+record zero connections, and the module's pino child logger is captured through a real pino sink and
+read for the spec-set key and secret. The compose suite is a static default-off pin. That is local
+evidence; the venue session, the operator arming and the regular-hours print/reconnect receipt are
+outside every suite here (`docs/adr/143-market-data-stream.md`, Phase 3).
+
 ### Messaging channels
 
 **Messaging channels — what can reach your swarm** (`channel-inbound-bindings`, Tools) reads the

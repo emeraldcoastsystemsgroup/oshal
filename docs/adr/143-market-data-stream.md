@@ -1,8 +1,18 @@
 # ADR-143 — Market-data stream: the real-time source, entitlement/staleness guards, and the poll → stream relay
 
-**Status:** Phase 1 shipped — decision recorded 2026-09-06; kernel source and local protocol guards
-landed 2026-09-25. Phase 2 remains a later store wave: the Buy ticket still polls `GET
-/api/trading/quote` every 5 s until the authenticated relay is deployed and observed.
+**Status:** Phases 1 and 2 landed; Phase 3 (arming + observation) open — not "shipped". Decision
+recorded 2026-09-06. Phase 1 (kernel `market-data-stream.ts`, compose passthrough, the local protocol
+guards) landed 2026-09-25 in core `525df7af`; the guard set was completed to the list below on
+2026-09-27 (cases 5, 7, 8 and the three source pins). Phase 2 landed in the store: the relay
+(`trading-quote-stream-routes.ts`, `tools/ui/quote-stream.js`, the loopback HTTP/SSE guard) on
+2026-09-25 in store `82d1757` (Trading 1.29.0); the D3 staleness display, the freshness-gated feed pill,
+the `data-stream-symbol` cells and the D9 `tktLookup`/`closeTicket` re-sync in Trading 1.31.0
+(store PR #296). D5 (whole-market movers off the owned key's REST screener) landed 2026-09-16 in core
+`e1999e37` plus store `trading-research-routes.ts` SEQ 3. Deployed per the coordination log: core
+`2d317d6` (2026-09-27 04:32 UTC, contains `525df7af` and `e1999e37`) and Trading 1.29.7 staged
+2026-09-26 08:32 UTC; Trading 1.31.0 is not yet staged. `TRADING_STREAM_ENABLED` is still `false` on
+the box, so the Buy ticket still polls `GET /api/trading/quote` every 5 s and no regular-hours
+observation exists.
 
 **Date:** 2026-09-06
 
@@ -435,11 +445,22 @@ from the stream in v1 (D7).
 
 ## Status / open items
 
-Decision recorded 2026-09-06; **Phase 1 shipped 2026-09-25** — the kernel exposes a default-off,
-credential-free status/print contract and is covered by a real local WebSocket protocol guard. The
-ticket still polls exactly as before until Phase 2 lands. Open: Phase 2 of D9 with its named store
-guard, the operator decision to arm `TRADING_STREAM_ENABLED` (requires that nothing else streams with
-the paper key), a dated deployed regular-hours observation, the D5 screener source behind the movers
-report, and the deferred Schwab streamer (D6, BACKLOG). Purchase triggers are named in D1 — none is
-met today (`TRADING_EXTENDED_HOURS=false` since 2026-07-12; no intraday strategy armed; the order path
-does not read the stream).
+Decision recorded 2026-09-06. **Phase 1 landed 2026-09-25** (core `525df7af`): the kernel exposes a
+default-off, credential-free status/print contract behind a real local WebSocket protocol guard, and
+on 2026-09-27 that guard reached the full list in "Guard specs" (a live unarmed venue recording zero
+connections, the 405 trim with no subscribe loop, a captured pino sink read for the key and secret,
+and the three source pins), with the `market-data-stream` Test Lab card registered beside it.
+**Phase 2 landed** (store `82d1757`, Trading 1.29.0, 2026-09-25; completed in Trading 1.31.0, store PR
+#296): the owner-authenticated SSE relay with its loopback HTTP guard, `/quote` reporting the venue
+print time, the client that patches the ticket and positions on prints, greys on `staleAfterSec`,
+shows a feed pill only while fresh and returns to the poll on a silent stream, and a `node:vm` sandbox
+guard over the shipped script. **D5 landed 2026-09-16** (core `e1999e37`; store
+`trading-research-routes.ts` SEQ 3). Real-boundary audit rows: kernel, compose and store specs.
+
+**Open before this ADR reads "shipped":** Phase 3 only — the operator arms `TRADING_STREAM_ENABLED`
+after confirming nothing else streams with the paper key, stages Trading 1.31.0, and records a dated
+regular-hours observation of prints on the deployed paper ticket plus one api-restart reconnect in the
+real-boundary audit row and the coordination log. Deferred by design: the Schwab streamer (D6,
+BACKLOG). Purchase triggers are named in D1 — none is met today (`TRADING_EXTENDED_HOURS=false` since
+2026-07-12; no intraday strategy armed; the order path does not read the stream — pinned by
+`tests/unit/trading-market-data-stream.spec.ts`).
