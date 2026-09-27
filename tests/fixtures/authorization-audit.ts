@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Compose real PostgreSQL authorization audit, HTTP and browser fixtures without deployment data.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Close fixture keep-alive connections before resetting or removing the disposable database.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Apply migration 173 after 127: the policy store now records the activating catalog and loads reviewable catalog migrations in every policy transaction (AUTH-07), so the disposable schema needs the same tables a deployed migration tree has.
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -27,7 +28,7 @@ export class AuthorizationAuditFixture {
   /** @description Start an isolated PostgreSQL database. @returns Schema-ready fixture. */
   async start(): Promise<void> {
     await this.database.start();
-    for (const file of ['127-application-authorization.sql', '131-authorization-audit-indexes.sql']) {
+    for (const file of ['127-application-authorization.sql', '131-authorization-audit-indexes.sql', '173-authorization-catalog-migrations.sql']) {
       await this.database.owner.query(readFileSync(resolve('scripts/migrations', file), 'utf8'));
     }
     await this.database.owner.query('GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO users_runtime');

@@ -232,7 +232,8 @@ Migrations 127–129 add policy state/audit/app posture, installer proof and ver
 (migration 172 adds the proof's optional bound issuer and subject);
 migration 131 indexes scoped audit reads; migrations 132–133 persist remote execution authority and
 queued initiator provenance. Migrations 134–135 add reviewed roster registrations and exact external
-business-tenant memberships. Normal schema
+business-tenant memberships. Migration 173 adds recorded catalogs and reviewable catalog migrations
+(see below). Normal schema
 initialization supports installation. No deployed accounts or app grants are changed by the source
 implementation itself.
 
@@ -250,10 +251,55 @@ applying. Existing access stays in place. A batch saves sequentially and stops o
 result; completed changes remain saved. Plans with more than 20 missing roles require smaller reviews
 in the application table. A changed identity, tenant or catalog invalidates the pending plan.
 
-Package catalog adoption is a separate migration. Existing source/revision-bound assignments can
-block activation; review and remove incompatible grants under the old catalog, activate the new
-catalog, then make explicit named-role grants. Do not infer roles from an old `@app-admin` assignment.
-Little Monsters documents its student/teacher/admin adoption sequence in its package documentation.
+### Package upgrades that change the catalog
+
+Every assignment is bound to the installation source and to the catalog revision it was granted
+under (a hash of application, source and catalog, not the package version). Each activation records
+its catalog under that revision (migration 173), so a later upgrade can compare against it after the
+old package files are gone. When a package activates with a different catalog while assignments
+still carry the previous revision, the installer classifies the change
+(`src/features/application-authorization/catalog-diff.ts`):
+
+- **Non-widening.** This covers added resources and operations (HTTP, tool, bot, job or artifact-action
+  bindings) that require only permissions the previous catalog already defined. It also covers
+  operations that became unbound, or that require more than before. The package loads without an
+  operator. In the same policy transaction, the installer moves every assignment onto the new
+  revision, records the catalog and writes one `catalog-migration` audit event. The event names the
+  installer principal, the time, the from/to revisions and versions, the classified changes and the
+  assignment ids it carried.
+- **Widening or breaking.** Any new, removed or renamed permission, any changed role (grants, tier or
+  sensitivity), any changed resource scope or field set, a lowered requirement on an existing
+  operation, a catalog added or dropped, or a previous catalog that was never recorded. Activation
+  is refused with `authorization_catalog_migration_required`. The message names one stored review,
+  and the installed package keeps serving under its existing grants. An administrator with
+  application-wide assign reviews the classified changes with
+  `GET /api/authorization/catalog-migrations?app=<app>`. They approve with
+  `POST /api/authorization/catalog-migrations/apply` and `{previewId, idempotencyKey}`, which is
+  the same body, same-origin gate and idempotency as an access change. The next activation of exactly
+  that revision applies the reviewed migration and audits the approver.
+
+HTTP operations are compared by the requests they can match, including mount-stripped paths, not by
+binding id. Renaming or re-pathing a binding therefore cannot lower what an existing request requires.
+A grant that names a role or permission the new catalog does not define is removed, not carried, so
+re-adding that name later cannot revive it. Denies always carry. A different installation source is
+still refused with no review. Approving a migration that changes a sensitive grant the approver holds,
+or a sensitive group mapping, needs an approval reference, the same as a sensitive access change.
+
+After staging an upgrade over live assignments, `node scripts/operations/little-monsters-upgrade-proof.js`
+(`OSHAL_VERIFY_OPERATOR_PAT`, optional `OSHAL_VERIFY_BASE_URL`, `OSHAL_UPGRADE_PROOF_APP`,
+`OSHAL_UPGRADE_PROOF_MIN_VERSION`) reads Access Administration only. It checks that the package is
+registered at the new version, that a migration onto the running revision was recorded, and that
+every carried assignment is still present.
+
+Evidence is isolated: `tests/unit/authorization-catalog-diff.spec.ts`,
+`tests/unit/authorization-catalog-migration-postgres.spec.ts` (disposable PostgreSQL, forced RLS,
+non-superuser runtime role), `tests/unit/authorization-runtime.spec.ts` (real package loading and
+mounted routes), `tests/unit/authorization-routes.spec.ts` and
+`tests/unit/little-monsters-upgrade-proof.spec.ts`. A live staged upgrade has not been run yet.
+
+Do not infer named roles from an old `@app-admin` assignment. Adopting a catalog over fallback
+grants is a breaking change that needs a reviewed migration. Little Monsters documents its
+student/teacher/admin adoption sequence in its package documentation.
 
 ### Pilot package evidence (isolated, not live)
 
