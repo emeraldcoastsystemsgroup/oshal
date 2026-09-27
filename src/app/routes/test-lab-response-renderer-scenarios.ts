@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | AI Test Lab registration for the shared response renderer (BACKLOG "Shared response-renderer completion"). Three read-only steps: the running server publishes the browser bundle WITH the display-only capability profile Jarvis/chat/app surfaces require; it serves the same-origin vendored Mermaid runtime (JVV-007) at a pinned version; and the renderer's shared untrusted conformance reply (remote gallery, arbitrary download, forged provider/artifact fences) rendered in-process through that profile produces its expected block sequence with every hostile block inert. A missing bundle/runtime is a deployment gap, not a pass. Cross-surface Chromium proof is attached as regression suites.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Attach the JVV-003 queue-backed delayed-lifecycle suite (jarvis-queue-lifecycle.integration.spec.ts) as an integration regression: the same backlog entry closes the acceptance plan's worker-lifecycle question, and a spec on disk is not Test Lab registration.
  *
  * @module routes/test-lab-response-renderer-scenarios
  */
@@ -111,7 +112,7 @@ export const RESPONSE_RENDERER_SCENARIOS: Scenario[] = [{
   id: 'shared-response-renderer',
   title: 'Shared response renderer: one untrusted reply, every surface',
   group: 'jarvis',
-  description: 'Jarvis, the swarm-bot chat bubble and app surfaces render untrusted model replies through one shared renderer with one display-only capability profile. The Lab confirms the running server publishes that bundle and the same-origin pinned diagram runtime, and that a hostile reply stays inert. The registered Chromium suite proves the same reply renders to the identical block sequence in Jarvis and chat, with no request to the hostile host or any CDN.',
+  description: 'Jarvis, the swarm-bot chat bubble and app surfaces render untrusted model replies through one shared renderer with one display-only capability profile. The Lab confirms the running server publishes that bundle and the same-origin pinned diagram runtime, and that a hostile reply stays inert. The registered Chromium suite proves the same reply renders to the identical block sequence in Jarvis and chat, with no request to the hostile host or any CDN; the delayed-lifecycle suite proves a handed-off task returns to its Discussion through the real queue call-out and a remote worker.',
   regressionTests: [
     { level: 'unit', path: 'tests/unit/response-renderer-parse.spec.ts' },
     { level: 'unit', path: 'tests/unit/response-renderer-registry.spec.ts' },
@@ -120,6 +121,7 @@ export const RESPONSE_RENDERER_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/response-renderer-display-profile.spec.ts' },
     { level: 'unit', path: 'tests/unit/jarvis-mermaid-vendored.spec.ts' },
     { level: 'integration', path: 'tests/unit/test-lab-response-renderer-registration.spec.ts' },
+    { level: 'integration', path: 'tests/unit/jarvis-queue-lifecycle.integration.spec.ts' },
     { level: 'browser', path: 'tests/unit/shared-response-surfaces-browser.spec.ts' },
     { level: 'browser', path: 'tests/jarvis-shared-response-renderer.spec.ts' },
   ],

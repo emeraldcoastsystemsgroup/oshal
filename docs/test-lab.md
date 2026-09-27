@@ -141,8 +141,15 @@ real chat bubble module, bundles the renderer from source and vendors Mermaid wi
 step. It proves that the same conformance reply renders to the identical block sequence on both
 surfaces, that nothing requests the hostile host or any CDN, and that the diagram hydrates
 same-origin or stays readable text when the runtime is missing. The Little Monsters Tutor runs the
-same vector in the store (`little-monsters/tests/tutor-renderer.core.spec.mjs`). That is local
-evidence. Registration in source does not mean the card has run on the deployed instance.
+same vector in the store (`little-monsters/tests/tutor-renderer.core.spec.mjs`).
+
+The card also carries the JVV-003 delayed-work suite
+(`tests/unit/jarvis-queue-lifecycle.integration.spec.ts`). A Jarvis hand-off files a real approved
+ticket, and one real queue poll routes it by call-out to a loopback bot-node worker through the real
+`BotNodeClient`. The dispatcher then stores the completion and closes the ticket, and Jarvis
+summarizes that completion once, persists one immutable visual and returns it to the original
+Discussion. Only the hosted model, the mesh bid transport and the SQL rows are doubles. All of this is
+local evidence. Registration in source does not mean the card has run on the deployed instance.
 
 ---
 
