@@ -11,11 +11,15 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards for the update-check daemon's pure logic.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Completion guards: detectNewUpdates alerts once per released version (not every daily tick), applyAppUpdate fails closed on bad/uninstalled names before touching git or the volume.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-167 release identity: getRunningBuild reports a well-formed OSHAL_RELEASE and nulls the `unreleased` default and anything off-scheme, and the real GET /api/version route (mounted on an Express app, reached over HTTP) serves `release` publicly while /api/updates stays behind the auth gate.
  */
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, beforeAll } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import express from 'express';
+import type { AddressInfo } from 'node:net';
+import type { Server } from 'node:http';
 import {
   compareVersions,
   rawManifestUrl,
@@ -26,6 +30,7 @@ import {
   applyAppUpdate,
   resolveStoreToken,
   scrubSecret,
+  registerUpdateRoutes,
   type UpdateCheckReport,
 } from '../../src/app/routes/update-check-cron';
 
@@ -127,7 +132,7 @@ describe('detectNewUpdates — alert once per released version, not per tick', (
   });
   const withCoreUpdate = (sha: string): UpdateCheckReport => ({
     checkedAt: 't', apps: [],
-    core: { runningVersion: '2.1.0', runningCommit: 'aaaaaaaaaaaa', latestCommit: sha, latestCommitDate: null, updateAvailable: true, repo: 'o/r' },
+    core: { runningVersion: '2.1.0', runningCommit: 'aaaaaaaaaaaa', runningRelease: null, latestCommit: sha, latestCommitDate: null, updateAvailable: true, repo: 'o/r' },
   });
 
   it('announces a newly seen app update, then stays quiet on the identical daily re-check', () => {
@@ -202,5 +207,66 @@ describe('getRunningBuild — runtime self-identity', () => {
     } finally {
       if (prev === undefined) delete process.env.GIT_SHA; else process.env.GIT_SHA = prev;
     }
+  });
+
+  it('reports a release cut name and nulls the unreleased default and anything off-scheme', () => {
+    const prev = process.env.OSHAL_RELEASE;
+    try {
+      process.env.OSHAL_RELEASE = 'core-2026.09.27';
+      expect(getRunningBuild().release).toBe('core-2026.09.27');
+      process.env.OSHAL_RELEASE = 'core-2026.09.27.2';
+      expect(getRunningBuild().release).toBe('core-2026.09.27.2');
+      // The Dockerfile default for every build that is not a cut.
+      process.env.OSHAL_RELEASE = 'unreleased';
+      expect(getRunningBuild().release).toBeNull();
+      // The endpoint is public: an arbitrary build argument must never be reflected.
+      for (const bad of ['v2.1.0-beta.1', 'core-2026.9.27', 'core-2026.09.27.0', 'core-2026.09.27<script>', ' ']) {
+        process.env.OSHAL_RELEASE = bad;
+        expect(getRunningBuild().release, bad).toBeNull();
+      }
+      delete process.env.OSHAL_RELEASE;
+      expect(getRunningBuild().release).toBeNull();
+    } finally {
+      if (prev === undefined) delete process.env.OSHAL_RELEASE; else process.env.OSHAL_RELEASE = prev;
+    }
+  });
+});
+
+describe('GET /api/version — the release identity a production box is AT', () => {
+  let server: Server;
+  let base: string;
+  const saved = { sha: process.env.GIT_SHA, release: process.env.OSHAL_RELEASE };
+
+  beforeAll(async () => {
+    const app = express();
+    // A gate that refuses everything: /api/version must not depend on it, /api/updates must.
+    registerUpdateRoutes(app, (_req, res) => { res.status(401).json({ error: 'auth required' }); });
+    server = app.listen(0, '127.0.0.1');
+    await new Promise<void>((resolve) => server.once('listening', () => resolve()));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    if (saved.sha === undefined) delete process.env.GIT_SHA; else process.env.GIT_SHA = saved.sha;
+    if (saved.release === undefined) delete process.env.OSHAL_RELEASE; else process.env.OSHAL_RELEASE = saved.release;
+  });
+
+  it('serves commit and release anonymously for a release-cut image', async () => {
+    process.env.GIT_SHA = 'a'.repeat(40);
+    process.env.OSHAL_RELEASE = 'core-2026.09.27';
+    const res = await fetch(`${base}/api/version`);
+    expect(res.status).toBe(200);
+    const body = await res.json() as Record<string, unknown>;
+    expect(body).toMatchObject({ name: 'oshal', commit: 'a'.repeat(40), release: 'core-2026.09.27' });
+    expect(typeof body.version).toBe('string');
+  });
+
+  it('serves release null for a dev build, and keeps /api/updates behind the gate', async () => {
+    process.env.OSHAL_RELEASE = 'unreleased';
+    const body = await (await fetch(`${base}/api/version`)).json() as Record<string, unknown>;
+    expect(body.release).toBeNull();
+    expect('release' in body).toBe(true);
+    expect((await fetch(`${base}/api/updates`)).status).toBe(401);
   });
 });

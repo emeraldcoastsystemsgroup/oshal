@@ -74,6 +74,7 @@
 #                      |                          | runner probe loads them
 #                      |                          | through tsx before it
 #                      |                          | advertises the prerequisite.
+# 12 | maintainer@emeraldcoastsystemsgroup.com  | Release identity (ADR-167): ARG/ENV OSHAL_RELEASE and the oshal.release label, declared at the tail beside GIT_SHA so a release cut reuses every heavy layer. A production box can now say which named core release it runs (/api/version `release`) instead of only a commit. IMAGE_VERSION is left alone: it is declared before the heavy RUN layers, so a per-release value there would rebuild the image from the apk layer up.
 # =============================================================================
 #
 # Why this image exists:
@@ -463,6 +464,12 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
 # Read at runtime by /api/version + the update-check cron (src/app/routes/update-check-cron.ts).
 ARG GIT_SHA=unknown
 ENV GIT_SHA=${GIT_SHA}
+# Release identity (ADR-167): the core release this image was cut as (core-YYYY.MM.DD[.N]),
+# stamped by scripts/core-promote/cut-release.sh and reported by /api/version. Same placement
+# rule as GIT_SHA - after every RUN - and NOT IMAGE_VERSION, which sits above the heavy layers.
+# `unreleased` for every build that is not a release cut; /api/version reports that as null.
+ARG OSHAL_RELEASE=unreleased
+ENV OSHAL_RELEASE=${OSHAL_RELEASE}
 
 # ── Image labels — LAST on purpose. LABEL layers are pure metadata; sitting at line ~77 they
 # invalidated every heavy layer below (npm ci, four vendor CLIs, tsc) on any wording change,
@@ -472,6 +479,7 @@ LABEL org.opencontainers.image.title="OSHAL Swarm" \
       org.opencontainers.image.description="OSHAL — Open Swarm Harness Agent LLM. Multi-agent orchestration platform: one image, two runtimes (swarm controller + bot-node), BYOK vendor CLIs." \
       org.opencontainers.image.version="${IMAGE_VERSION}" \
       org.opencontainers.image.revision="${GIT_SHA}" \
+      oshal.release="${OSHAL_RELEASE}" \
       org.opencontainers.image.source="https://github.com/emeraldcoastsystemsgroup/oshal" \
       org.opencontainers.image.licenses="AGPL-3.0-or-later" \
       oshal.image.role="canonical-production-hosted-cockpit" \
