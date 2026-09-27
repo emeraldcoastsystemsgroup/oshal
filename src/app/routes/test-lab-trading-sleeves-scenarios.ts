@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register the ADR-168 multi-market universe with one credential-free readback of the constant this image carries: every name bucketed, no duplicate, the default universe still its unchanged prefix, no default name in a multi-market bucket, and no overlap with the swing leg's ETFs. A beta-core or operator-hold symbol of THIS node inside the universe is reported as degraded, because the rotation skips core symbols. The step never claims the sleeve's paper proof (ADR-168 D6), which only a soak on an armed paper book can produce.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | The core-symbol check reads only the 41 multi-market names. A default-universe name held as core (the operator's SKHY:0 hold) was already skipped by the rotation before ADR-168, so counting it would have graded every such node degraded for a fact this ADR did not create.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 import { DEFAULT_UNIVERSE, MULTI_MARKET_UNIVERSE, MULTI_MARKET_BUCKETS, sectorOf } from '@/features/trading';
@@ -53,6 +54,7 @@ export function measureSleeveUniverse(input: SleeveUniverseInput): SleeveUnivers
     buckets[bucket] = (buckets[bucket] ?? 0) + 1;
   }
   const extension = new Set(input.extensionBuckets);
+  const defaults = new Set(input.defaultUniverse);
   return {
     size: input.universe.length,
     defaultSize: input.defaultUniverse.length,
@@ -62,13 +64,14 @@ export function measureSleeveUniverse(input: SleeveUniverseInput): SleeveUnivers
     duplicates,
     defaultInExtensionBucket: input.defaultUniverse.filter((sym) => extension.has(input.bucketOf(sym))),
     swingOverlap: input.swingUniverse.filter((sym) => seen.has(sym.toUpperCase())),
-    coreOverlap: input.coreSymbols.filter((sym) => seen.has(sym.toUpperCase())),
+    coreOverlap: input.coreSymbols.filter((sym) => seen.has(sym.toUpperCase()) && !defaults.has(sym.toUpperCase())),
   };
 }
 
 /**
- * @description Grade the readback. A broken rule fails; a core/hold symbol of this node inside the
- *   universe is degraded (the rotation excludes core symbols, so that name would never be ranked);
+ * @description Grade the readback. A broken rule fails; a core/hold symbol of this node among the
+ *   41 multi-market names is degraded (the rotation excludes core symbols, so that name would never be
+ *   ranked);
  *   otherwise it passes, and the detail still says this is not the paper proof.
  * @param input - The kernel values to grade.
  * @returns The Lab step result, with the measured facts as its output.

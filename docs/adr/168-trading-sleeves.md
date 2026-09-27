@@ -142,7 +142,7 @@ Delivered with this ADR:
   - A book that holds or scans one of the 41 names sees that name move from the shared `other` bucket into its own market bucket. It stops consuming `other` room and gets its own cap. The portfolio spec shows IEF refused by a full fixed-income bucket, while EFA and an unbucketed name keep their room.
   - That is the only behaviour change, and it is the purpose of the coverage. On the Allocation card, such a held name moves from *unclassified* to its bucket.
 - **What is still unread.** No dispatch leg, schedule, route or default reads `MULTI_MARKET_UNIVERSE`. `TRADING_UNIVERSE_MAX_PIN` still defaults to `DEFAULT_UNIVERSE.length`, so a 200-name schedule pin is still refused with a 400. The paper path is a Lab override (D7), not a pin.
-- **Test Lab card `trading-sleeves-universe`.** This is a credential-free readback of the constant on the running image, for use after deploy. It fails if a rule in D2 breaks, reports degraded if one of this node's `TRADING_CORE_SYMBOLS` sits inside the universe (the rotation skips core symbols), and never claims the paper proof.
+- **Test Lab card `trading-sleeves-universe`.** This is a credential-free readback of the constant on the running image, for use after deploy. It fails if a rule in D2 breaks, reports degraded if one of this node's `TRADING_CORE_SYMBOLS` is among the 41 new names (the rotation skips core symbols; a default-universe core hold such as SKHY predates this ADR and does not count), and never claims the paper proof.
 
 ### D4. Scan cost against the vendor ceiling
 

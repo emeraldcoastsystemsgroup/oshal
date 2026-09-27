@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The ADR-168 trading-sleeves card is registered exactly once with suites that exist on disk, and its readback grades honestly: the real constant on a node with no core symbols passes without claiming the paper proof; an unbucketed name, a duplicate, a changed default prefix, a default name in a multi-market bucket and a swing-leg overlap each fail and name the offender; a core symbol of this node inside the universe is degraded.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | A default-universe name held as core (SKHY, the operator's :0 hold) does not degrade the card; only a multi-market name held as core does.
  */
 
 import { existsSync } from 'node:fs';
@@ -53,11 +54,17 @@ describe('ADR-168 trading-sleeves Test Lab card', () => {
     expect(swing.detail).toContain('shared with the swing leg: TLT');
   });
 
-  it('is degraded when this node holds a universe name as a core symbol', () => {
+  it('is degraded when this node holds a multi-market name as a core symbol', () => {
     const r = multiMarketUniverseStep(input({ coreSymbols: ['EFA'] }));
     expect(r.state).toBe('degraded');
     expect(r.detail).toContain('EFA');
     expect(r.detail).toContain('rotation skips as core');
+  });
+
+  it('is not degraded by a default-universe name already held as core before ADR-168', () => {
+    const r = multiMarketUniverseStep(input({ coreSymbols: ['SPY', 'SKHY', 'USO'] }));
+    expect(r.state).toBe('pass');
+    expect(r.output).toMatchObject({ coreOverlap: [] });
   });
 
   it('runs the real step against this process: the swing leg and an unset core list leave it passing', async () => {
