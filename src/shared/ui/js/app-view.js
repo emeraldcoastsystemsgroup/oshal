@@ -7,15 +7,19 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Date-only strings (YYYY-MM-DD, what pay dates, statement dates and transaction dates arrive as) format as that calendar day: `new Date('2026-09-15')` is UTC midnight, which the reader's local zone west of Greenwich showed as Sep 14 in every table.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The hero, headings and escape are neutral elements with heading roles: a page's own `header { ... }` / `h1 { ... }` rules boxed the CAD Studio hero, and a shared view must not inherit the host page's tag styling.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | AppView.day(value) formats a date-only field whose value is 'YYYY-MM-DD' or exactly UTC midnight (how a Postgres DATE reaches JSON from a UTC server) as that calendar day, so DATE columns such as Payroll's pay dates no longer print a day early in US zones; other values format as AppView.date does.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | A tile, list item or table row may carry `target: '_blank'`: its href then opens in a new tab with `noopener` and the framed view stays where it is. Before, an item href always navigated the frame (only hero and section actions honoured `target`), so a store view could not hand a reader to an outside page (a playlist, a source article) without leaving the shell; everything else is unchanged.
  * -----------------------------------------------------------------------------
  *
  * Usage (in a store page, after the theme bootstrap):
  *   <link rel="stylesheet" href="/shared/ui/css/app-view.css"><script src="/shared/ui/js/app-view.js"></script>
- *   AppView.boot({ app: 'finance', full: init, audiences: { family: buildFamily, company: buildCompany } });
+ *   AppView.boot({ app: 'finance', full: init, audiences: { family: buildFamily, company: buildCompany, classroom: buildClassroom } });
  * A builder receives { audience, root, refresh, app } and returns (or resolves) a model:
- *   { kicker, title, lede, actions:[{label, href|onClick, primary}], stats:[{label, value, hint, tone}],
+ *   { kicker, title, lede, actions:[{label, href|onClick, primary, target}], stats:[{label, value, hint, tone}],
  *     sections:[{kind:'tiles'|'list'|'table'|'progress'|'timeline'|'custom', title, items|columns+rows|render, empty}],
  *     escape:{label, href} }
+ * A tile, list item or table row is { title, text, icon, meta, badge, tone } plus, to make it clickable, onClick or
+ * href; with href, `target: '_blank'` opens it in a new tab (`noopener`) instead of navigating the frame. onClick wins
+ * over href when both are given.
  * Everything is built with DOM nodes and textContent: model strings are never parsed as HTML.
  */
 (function () {
@@ -169,10 +173,21 @@
     return el('div', { class: 'av-item-meta' }, [item.meta ? el('span', { class: 'av-meta', text: item.meta }) : null, item.badge ? badge(item.badge, item.tone) : null]);
   }
 
+  /**
+   * @description Follow an item's href. `target: '_blank'` opens a new tab with `noopener`, so an outside page never
+   * replaces the framed view and never gets a handle back to it; any other item navigates this frame, as before.
+   * @param {{href: string, target?: string}} item The clicked tile, list item or table row.
+   * @returns {void}
+   */
+  function follow(item) {
+    if (item.target === '_blank') window.open(item.href, '_blank', 'noopener');
+    else window.location.assign(item.href);
+  }
+
   function clickable(node, item) {
     if (item.onClick || item.href) {
       node.classList.add('is-link'); node.setAttribute('tabindex', '0'); node.setAttribute('role', 'link');
-      var go = function (e) { if (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ') return; e.preventDefault(); if (item.onClick) item.onClick(e); else window.location.assign(item.href); };
+      var go = function (e) { if (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ') return; e.preventDefault(); if (item.onClick) item.onClick(e); else follow(item); };
       node.addEventListener('click', go); node.addEventListener('keydown', go);
     }
     return node;

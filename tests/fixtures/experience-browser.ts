@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com | One request log registered first, then every lane's override routes, then the default synthetic routes with their `/api` 404 catch-all last: the lanes had each worked around the catch-all living inside packageRoutes (a router splice, lane-local logging); the order now makes both unnecessary
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Homebase gap routes (`homebaseGapRoutes`): Little Monsters teacher analytics (pg-shaped counts, server-side summary), classwork through assignments-with-events (teacher-of-class check, calendar event on a due date), a ticket read and its status transition (only approval_required to approved), and the caller's saved content drafts, each with a controllable status. They register with the other lane routes ahead of the default routes, whose `/api` 404 catch-all stays last (as row 6 says).
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Integration review: fullSwarmGapRoutes seats Little Monsters' summary probe at its real path (`/api/little-monsters/home-summary`, status `lm-home-summary`, 403 with the package's setup sentence) so the Jarvis agenda's probe gate is exercised, and can answer the user directory with a refusal code (`fullSwarm.directoryError`); nexusGapRoutes no longer serves POST /api/jarvis/tasks/:id/delivered (the shell never sends it; the request log proves it); the synthetic ticket status transition writes `metadata.lastStatusTransition` the way the ticket service mirrors every transition, keeping the row-level reason/nextAction.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Phase-4 assemblies: the synthetic app-view page provides a classroom builder (a new-tab tile and list item, a tile handled on the page) and `?provides=` limits the builders it registers, so "requested but not provided" stays provable; the host page frames `?audience=` of its choice; assemblyHostRoutes answers the ribbon profile of an installed application from `state.assembly.ribbons`, and installAssemblyHosts gives the ten hosts the presets gained ribbon items shaped like their manifests' surfaces (several for Intelligent Communication, Social and Marketing Engine), installing the nine the default catalog lacks; the default catalog itself is unchanged.
  */
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -120,7 +121,11 @@ function swarmRoutes(app: express.Application, state: ExperienceState) {
   // The shared audience-view kit under a synthetic application page: the full UI is in the body; the kit decides from ?audience= whether to replace it.
   app.get('/fixture/app-view/data', (_req, res) => res.status(statusOr(state, 'appview')).json({ lede: 'Synthetic household reading.', stats: [{ id: 'on', label: 'Lights on', value: '3', tone: 'ok' }, { id: 'bills', label: 'Bills due', value: '2', tone: 'warn' }, { id: 'saved', label: 'Saved', value: '$120' }],
     rooms: [{ name: 'Synthetic kitchen', text: '2 devices on' }, { name: 'Synthetic den', text: 'all off' }], events: [{ title: 'Synthetic recital', text: 'School hall', meta: 'tomorrow', badge: 'family', tone: 'info' }], rows: [['Synthetic ledger', '$1,200'], ['Synthetic payroll', '$980']] }));
-  app.get('/fixture/app-view/host', (_req, res) => res.type('html').send('<!doctype html><html><head><title>Synthetic host</title></head><body><iframe id="host-frame" src="/fixture/app-view?audience=family" style="width:900px;height:700px"></iframe></body></html>'));
+  app.get('/fixture/app-view/host', (req, res) => {
+    // The framed audience defaults to family; `?audience=` picks another known audience for the frame.
+    const audience = ['family', 'company', 'classroom'].includes(String(req.query.audience)) ? String(req.query.audience) : 'family';
+    res.type('html').send(`<!doctype html><html><head><title>Synthetic host</title></head><body><iframe id="host-frame" src="/fixture/app-view?audience=${audience}" style="width:900px;height:700px"></iframe></body></html>`);
+  });
   app.get('/fixture/app-view', (_req, res) => res.type('html').send(`<!doctype html><html><head><title>Synthetic app view</title>
   <link rel="stylesheet" href="/shared/ui/css/surface-themes.css"><script src="/shared/ui/js/surface-theme.js"></script>
   <link rel="stylesheet" href="/shared/ui/css/app-view.css"><script src="/shared/ui/js/app-view.js"></script>
@@ -135,7 +140,13 @@ function swarmRoutes(app: express.Application, state: ExperienceState) {
       { kind: 'timeline', title: 'Recent', items: [{ when: 'today', title: 'Synthetic event' }] }, { kind: 'table', id: 'bills', title: 'Bills', columns: ['Bill', { label: 'Amount', align: 'right' }], rows: [['Power', { text: AppView.money(120) }]] },
       { kind: 'list', id: 'empty', title: 'Empty', items: [], empty: 'Nothing planned.' }, { kind: 'custom', id: 'custom', title: 'Custom', render: function (el) { el.textContent = 'Synthetic custom part'; } }] }; }); }
   function company() { return data().then(function (d) { return { kicker: 'Synthetic / Business', title: 'Synthetic operations', stats: d.stats, sections: [{ kind: 'table', id: 'ledger', title: 'Ledger', columns: ['Item', 'Amount'], rows: d.rows }] }; }); }
-  window.__ctx = AppView.boot({ app: 'synthetic', title: q.get('doc') || undefined, full: function () { window.__full = true; }, audiences: { family: family, company: company } });
+  function classroom() { return data().then(function (d) { return { kicker: 'Synthetic / Classroom', title: 'Synthetic makers corner', lede: d.lede, actions: [{ label: 'Start making', primary: true, onClick: function () { window.__acted = 'make'; } }], stats: d.stats,
+    sections: [{ kind: 'tiles', id: 'starters', title: 'Starters', items: [{ title: 'Synthetic starter', text: 'Opens in a new tab', icon: 'S', href: '/fixture/surface/opened-tab', target: '_blank' }, { title: 'Synthetic kept here', text: 'Handled on the page', icon: 'K', onClick: function () { window.__opened = 'kept'; } }] },
+      { kind: 'list', id: 'guides', title: 'Guides', items: [{ title: 'Synthetic guide', text: 'Also a new tab', href: '/fixture/surface/opened-guide', target: '_blank' }] }] }; }); }
+  var provided = { family: family, company: company, classroom: classroom }, only = q.get('provides');
+  // ?provides=family,company registers only those builders, so a case can request an audience the page does not provide.
+  if (only) Object.keys(provided).forEach(function (k) { if (only.split(',').indexOf(k) < 0) delete provided[k]; });
+  window.__ctx = AppView.boot({ app: 'synthetic', title: q.get('doc') || undefined, full: function () { window.__full = true; }, audiences: provided });
   </script></head><body><div id="full-ui"><h1>Full synthetic page</h1><p id="full-marker">The complete application UI.</p></div></body></html>`));
   app.get('/api/user-directory', (_req, res) => res.status(state.directory.status).json({ users: state.directory.users }));
 }
@@ -188,6 +199,7 @@ export async function startExperienceBrowserFixture(options: { denyAuth?: boolea
   // for and fall through otherwise), then the default synthetic routes, whose `/api` 404 catch-all stays last.
   app.use((req, _res, next) => { state.calls.push(`${req.method} ${req.path}`); next(); });
   fullSwarmGapRoutes(app, state); nexusGapRoutes(app, state); homebaseGapRoutes(app, state);
+  assemblyHostRoutes(app, state);
   swarmRoutes(app, state); packageRoutes(app, state);
   app.use('/shared/ui/js', express.static(resolve(ROOT, 'src/shared/ui/js')));
   registerCockpitStaticRoutes({ app, requiresAuth, cockpitDir: resolve(ROOT, 'src/pages/cockpit'), uiEnhancedDir: resolve(ROOT, 'any-bot/ui-enhanced'),
@@ -356,4 +368,63 @@ function homebaseGapRoutes(app: express.Application, state: ExperienceState) {
     drafts.push({ id: drafts.length + 1, topic: req.body.topic || null, take: req.body.take || null, draft: String(req.body.draft), created_at: iso(0) }); res.json({ ok: true });
   });
   app.use(gap);
+}
+
+/** One ribbon item as GET /api/ui/profile carries it: `tool-<toolName>` with the surface's frame URL. */
+type AssemblyRibbonItem = { id: string; label: string; icon: string; section: string; toolUi: { iframeUrl: string } };
+/** The synthetic state the assembly-host routes read: per-application ribbon items that replace the default two-page profile. */
+type AssemblyState = ExperienceState & { assembly: { ribbons: Record<string, AssemblyRibbonItem[]> } };
+
+/**
+ * The applications the phase-4 assemblies add, each with its suite and its `ui.static` surfaces as its manifest in
+ * the store lists them (toolName, label), in manifest order. Only names and shapes are copied; every label the page
+ * shows is prefixed "Synthetic".
+ */
+const ASSEMBLY_HOSTS: Record<string, { suite: string; surfaces: Array<[string, string]> }> = {
+  presentations: { suite: 'ai-productivity', surfaces: [['presentations-studio', 'AI Office']] },
+  'circuit-lab': { suite: 'ai-engineering', surfaces: [['circuit-lab', 'Circuit Lab']] },
+  movies: { suite: 'ai-home', surfaces: [['movies-concierge', 'Movies & TV']] },
+  spotify: { suite: 'ai-home', surfaces: [['spotify-concierge', 'Music']] },
+  travel: { suite: 'ai-home', surfaces: [['travel-concierge', 'Travel']] },
+  'email-summarizer': { suite: 'ai-productivity', surfaces: [['email-myday', 'My Day'], ['email-inbox', 'Inbox'], ['email-social', 'Social']] },
+  world: { suite: 'ai-knowledge', surfaces: [['world-dashboard', 'World Intelligence']] },
+  social: { suite: 'ai-productivity', surfaces: [['social-composer', 'Composer'], ['social-workspace', 'Workspace'], ['linkedin-assistant', 'LinkedIn Assistant'], ['social-signals', 'Signals'], ['social-accounts', 'Accounts']] },
+  'marketing-engine': { suite: 'ai-productivity', surfaces: [['marketing-engine', 'Marketing'], ['marketing-content-studio', 'Content Studio'], ['marketing-linkedin-assistant', 'LinkedIn Assistant']] },
+  'venture-plan': { suite: 'ai-finance', surfaces: [['venture-home', 'Venture Plan']] },
+};
+
+/**
+ * @description Assembly-host routes (lane "assemblies"): GET /api/ui/profile answers from `state.assembly.ribbons` for an
+ * installed application that has an entry there, so a preset's hidden prefixes meet the surface ids the real profile
+ * lists; any other name falls through to the default two-page synthetic profile. Registered with the other lane routes
+ * ahead of the default routes (see startExperienceBrowserFixture). The ribbons start empty, so a case sees them only
+ * after installAssemblyHosts.
+ * @param app The fixture application.
+ * @param state The per-case synthetic state; `state.assembly` is created here.
+ * @returns Nothing; the route is registered on `app`.
+ */
+function assemblyHostRoutes(app: express.Application, state: ExperienceState) {
+  const assembly = (Object.assign(state, { assembly: { ribbons: {} } }) as AssemblyState).assembly;
+  app.get('/api/ui/profile', (req, res, next) => {
+    const name = String(req.query.name || ''), items = assembly.ribbons[name], record = state.apps.find(a => a.summary.name === name);
+    if (!items || !record) { next(); return; }
+    res.status(statusOr(state, 'profile')).json({ profile: { name, displayName: record.summary.displayName, theme: 'midnight', defaultView: items[0]?.id, ribbon: { items } } });
+  });
+}
+
+/**
+ * @description Install the applications the phase-4 assemblies host (AI Office and Circuit Lab for the classroom; Movies & TV,
+ * Music and Travel for Home; Intelligent Communication, World Intelligence, Social, Marketing Engine and Venture Plan for
+ * Business) into a case's synthetic catalog, each with a ribbon profile shaped like its manifest's surfaces. A case calls it
+ * before opening a preset; the default catalog is left as it was, so counts other cases assert do not move.
+ * @param state The case's synthetic state (from the running fixture).
+ * @returns The names installed, in ASSEMBLY_HOSTS order.
+ */
+export function installAssemblyHosts(state: ExperienceState): string[] {
+  const assembly = (state as AssemblyState).assembly;
+  return Object.entries(ASSEMBLY_HOSTS).map(([name, host]) => {
+    if (!state.apps.some(a => a.summary.name === name)) state.apps.push(syntheticApp(name, host.suite));
+    assembly.ribbons[name] = host.surfaces.map(([tool, label]) => ({ id: `tool-${tool}`, label: `Synthetic ${label}`, icon: 'codicon codicon-circle-outline', section: 'top', toolUi: { iframeUrl: `/fixture/surface/${tool}` } }));
+    return name;
+  });
 }
