@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The tool-call continuation now builds its replayed assistant turn FROM the normalized calls instead of passing the raw tool_calls array through, because the two do not line up: normalizeToolCalls synthesizes call_${index} for a call that arrived without an id and for the legacy function_call field (which has no tool_calls array at all), and drops a call with no function name. Replaying the raw array while answering the normalized ids produced an assistant turn and a tool turn that disagreed in three shapes - a legacy function_call, a tool_calls entry with no id, and several calls of which one was unnamed - and a chat-completions gateway rejects that pairing with a 400, which landed in the continuation's catch. The recovery entry 4 claims therefore never happened for those shapes, and the caller was billed for two legs to receive the same empty-answer error. A call with no function name is not replayed at all: there is no name to attribute a result to, so it cannot be answered, and a declared-but-unanswered call is the same 400. rawArguments, which is the text replayed verbatim, now also carries arguments a gateway sent already parsed - the wire format is a JSON string, and dropping a non-string to '' told the model it had called with no arguments when it had not.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | The direct conversational path now DECLARES the tools it was given and runs the exchange to a real answer. generateResponse read only model and max_tokens, so options.tools, options.enforceToolBoundary and options.authorizedScopes - all three passed by TaskController:418-422 and AgenticController:410-413 - arrived and were discarded: the system prompt promised N tools while the request declared none, which is the upstream cause entry 4 recovers from. Tools are now formatted through the same formatFunctions sendRequest already used, and a tool_calls response is executed through a caller-supplied executeTool channel and fed back until the model answers (MAX_DECLARED_TOOL_ROUNDS legs, then one final leg after a truthful budget-exhausted result). enforceToolBoundary and authorizedScopes became the enforcement ADR-122 and the SEC-05 dispatch-capability pair describe: nothing executes unless the caller asserted enforceToolBoundary, the name is in the exact declared set, the exact tool:<name> / control:attempt_completion scope is held, and an execution channel exists - every other call is refused and the refusal is told to the model rather than executed. Absence is never authority, matching normalizeAllowedTools/normalizeAuthorizedScopes. A request with no declared tools behaves exactly as before, including entry 4's unsolicited-call recovery.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Add the optional invariant-prompt cache seam. It keys only the system/tool preamble, strips no task history, sends provider handles through `extra_body.cached_content`, and falls back to the full prompt on expiry, unsupported endpoints or cache errors.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Wire the seam to Gemini and make it correct on the wire. (1) A provider built for the Gemini OpenAI-compatible base URL now uses the process-shared Gemini context cache by default (gemini-context-cache.js; env kill switch), so TaskController's per-request BYO provider gets it with no change there. (2) The handle goes out as the documented `extra_body.google.cached_content`, not the flat `extra_body.cached_content` entry 7 sent. (3) A handle-carrying request no longer re-declares `tools`/`tool_choice`: the cache holds the tool declarations, Gemini refuses a request that sets tools beside a cached content, and re-sending them was the half of the preamble the cache exists to remove. The LOCAL boundary is untouched - runDeclaredToolExchange still authorizes every call against the same resolved boundary, so a model naming an undeclared tool is refused exactly as before. (4) If the FIRST leg carrying a handle fails, the handle is invalidated (negatively cached) and the turn is re-sent once with the full system message and tools; a later leg's failure is not retried, because tools may already have executed. (5) The credential in the cache key is the provider's own apiKey, so one shared cache serves many BYO keys without crossing them. (6) addUsage now reads the endpoint-reported `prompt_tokens_details.cached_tokens` into cacheReads, the call log prints input/output/cached tokens and the cache state (hit, created, refused, none, disabled, fallback), and the result carries `promptCache` so the controller can record it.
  */
 
 /**
@@ -28,7 +29,8 @@ const {
   normalizeAuthorizedScopes,
   requiredScope,
 } = require('../../utils/dispatch-capabilities');
-const { buildInvariantPromptCacheKey } = require('./invariant-prompt-cache');
+const { buildCachedPreambleExtraBody, buildInvariantPromptCacheKey } = require('./invariant-prompt-cache');
+const { resolveDefaultInvariantPromptCache } = require('./gemini-context-cache');
 
 /**
  * @description Concrete LLMService implementation that adapts OpenAI's
@@ -64,14 +66,20 @@ class OpenAIProvider extends LLMService {
     });
     this.baseUrl = config.baseUrl || null;
     this.endpointLabel = safeEndpointLabel(this.baseUrl);
+    // Kept for the invariant cache key and the cachedContents create call only; never logged.
+    this.apiKey = config.apiKey;
 
     this.model = config.model || 'gpt-4-turbo-preview';
     this.maxTokens = config.maxTokens || 4096;
     this.temperature = config.temperature !== undefined ? config.temperature : 0.7;
-    // Optional because most OpenAI-compatible endpoints do not implement Gemini context caching.
-    // A configured cache is a provider-owned handle factory; absent/failed factories leave the
-    // ordinary full-send request untouched.
-    this.invariantPromptCache = config.invariantPromptCache || null;
+    // Most OpenAI-compatible endpoints do not implement context caching, so the default is
+    // resolved from the base URL: the Gemini compat surface gets the process-shared Gemini cache
+    // (unless the env kill switch is set), everything else gets none. An explicit
+    // `config.invariantPromptCache` (including null) overrides that resolution. A cache is a
+    // provider-owned handle factory; absent/failed factories leave the full-send request untouched.
+    this.invariantPromptCache = config.invariantPromptCache !== undefined
+      ? config.invariantPromptCache
+      : resolveDefaultInvariantPromptCache(this.baseUrl);
   }
 
   /**
@@ -98,12 +106,7 @@ class OpenAIProvider extends LLMService {
     // to the capability set the caller captured at request start rather than to anything a later
     // leg could influence.
     const boundary = resolveDispatchToolBoundary(options);
-    const cached = await this.resolveInvariantPromptCache(formatted, options, boundary);
-    const request = this.buildChatRequest(cached.messages, {
-      ...options,
-      ...(cached.extraBody ? { extraBody: cached.extraBody } : {}),
-    }, boundary);
-    const exchange = await this.runDeclaredToolExchange(request, boundary);
+    const { request, exchange, promptCache } = await this.runPreambleCachedExchange(formatted, options, boundary);
     const completion = exchange.completion;
 
     const choice = completion.choices?.[0];
@@ -148,7 +151,11 @@ class OpenAIProvider extends LLMService {
     // cannot know (their per-token price is theirs, not ours). cost stays 0 here.
     // Logged AFTER any continuation so the figure is everything this call actually spent.
     const latency = Date.now() - startTime;
-    logger.info(`OpenAI-compatible call (${this.model} @ ${this.endpointLabel}): ${latency}ms, ${usage.totalTokens} tokens`);
+    // Input, output and cached counts are printed separately because the before/after measurement
+    // for the invariant cache is read from this line: a cached preamble shows as input tokens
+    // that fell and cached tokens that rose, and the state names whether a handle served the turn.
+    logger.info(`OpenAI-compatible call (${this.model} @ ${this.endpointLabel}): ${latency}ms, ${usage.totalTokens} tokens `
+      + `(input ${usage.inputTokens}, output ${usage.outputTokens}, cached ${usage.cacheReads}), invariant cache ${promptCache}`);
 
     if (!content) {
       this.throwEmptyAnswerFailure({ completion, choice, reportedFinishReason, usage, toolCalls });
@@ -163,50 +170,95 @@ class OpenAIProvider extends LLMService {
       latency,
       model: this.model,
       provider: this.baseUrl ? 'byo-llm' : 'openai',
+      promptCache,
     };
+  }
+
+  /**
+   * @description Runs the exchange with the invariant preamble served from a provider-side handle
+   * when one is available, and re-sends the full preamble ONCE if the first leg carrying the
+   * handle fails.
+   *
+   * Only the first leg is retried. A later leg's failure means tool calls may already have been
+   * executed for this turn, and replaying the exchange from the top would run them again; that
+   * failure surfaces as it always did. The rejected handle is invalidated with a negative marker
+   * so the following turns take the full-send path instead of creating and failing again.
+   * @param {Array<Object>} formatted - System message followed by task-scoped messages.
+   * @param {Object} options - The generateResponse options.
+   * @param {Object} boundary - The resolved dispatch tool boundary for this request.
+   * @returns {Promise<{request:Object,exchange:Object,promptCache:string}>} The request the
+   *   exchange last sent, the exchange result and the cache state for the log.
+   */
+  async runPreambleCachedExchange(formatted, options, boundary) {
+    const cached = await this.resolveInvariantPromptCache(formatted, options, boundary);
+    const request = this.buildChatRequest(cached.messages, {
+      ...options,
+      ...(cached.handle ? { extraBody: cached.extraBody, preambleCached: true } : {}),
+    }, boundary);
+    try {
+      const exchange = await this.runDeclaredToolExchange(request, boundary);
+      return { request, exchange, promptCache: cached.state };
+    } catch (error) {
+      if (!cached.handle || error?.exchangeLeg !== 0) throw error;
+      logger.warn(
+        `Invariant prompt cache handle rejected by ${this.endpointLabel}; re-sending the full preamble once: ${error.message}`,
+        { model: this.model, endpoint: this.endpointLabel, error: error.message, stack: error.stack },
+      );
+      if (cached.cache && typeof cached.cache.invalidate === 'function') cached.cache.invalidate(cached.key, 'rejected');
+      const full = this.buildChatRequest(formatted, options, boundary);
+      const exchange = await this.runDeclaredToolExchange(full, boundary);
+      return { request: full, exchange, promptCache: 'fallback' };
+    }
   }
 
   /**
    * @description Resolve a provider-side cache handle for the invariant system/tool preamble.
    * Only the first system message and the declared tool definitions enter the cache key. User and
    * assistant messages remain in the request, so a cached Jarvis turn cannot replay another task.
+   * The credential in the key is this provider's own, so a process-shared cache keeps one BYO
+   * key's handle from ever serving another.
    * @param {Array<Object>} formatted - System message followed by task-scoped messages.
    * @param {Object} options - Provider options and optional cache override.
    * @param {Object} boundary - Captured declared tool boundary.
-   * @returns {Promise<{messages:Array<Object>, extraBody?:Object}>}
+   * @returns {Promise<{messages:Array<Object>, extraBody?:Object, handle:string|null, key?:string, cache?:Object, state:string}>}
    */
   async resolveInvariantPromptCache(formatted, options, boundary) {
     const cache = options.invariantPromptCache || this.invariantPromptCache;
     const system = formatted[0];
     if (!cache || !system || system.role !== 'system' || typeof cache.getHandle !== 'function') {
-      return { messages: formatted };
+      return { messages: formatted, handle: null, state: 'disabled' };
     }
     const tools = boundary.definitions || [];
     const key = buildInvariantPromptCacheKey({
       endpoint: this.baseUrl,
       model: this.model,
-      apiKey: cache.apiKey || undefined,
+      apiKey: this.apiKey || undefined,
       systemPrompt: system.content,
       tools,
     });
-    let handle = null;
+    const input = { key, systemPrompt: system.content, tools, model: this.model, endpoint: this.baseUrl, apiKey: this.apiKey };
+    let resolved = { handle: null, state: 'none' };
     try {
-      handle = await cache.getHandle({
-        key,
-        systemPrompt: system.content,
-        tools,
-        model: this.model,
-        endpoint: this.baseUrl,
-      });
+      resolved = typeof cache.resolve === 'function'
+        ? await cache.resolve(input)
+        : { handle: await cache.getHandle(input), state: 'handle' };
     } catch (error) {
-      logger.warn(`Invariant prompt cache unavailable; sending full preamble: ${error.message}`);
+      logger.warn(`Invariant prompt cache unavailable; sending full preamble: ${error.message}`, {
+        error: error.message, stack: error.stack,
+      });
     }
-    if (typeof handle !== 'string' || handle.trim().length === 0) return { messages: formatted };
+    const handle = resolved && typeof resolved.handle === 'string' && resolved.handle.trim().length > 0
+      ? resolved.handle : null;
+    if (!handle) return { messages: formatted, handle: null, key, cache, state: resolved?.state || 'none' };
     return {
       // The provider-side handle represents only this system/tool preamble. Preserve every
       // non-system message, including all task history, exactly as supplied by the caller.
       messages: formatted.slice(1),
-      extraBody: { cached_content: handle },
+      extraBody: buildCachedPreambleExtraBody(handle),
+      handle,
+      key,
+      cache,
+      state: resolved.state,
     };
   }
 
@@ -227,7 +279,10 @@ class OpenAIProvider extends LLMService {
       // the model it has N tools, and until this landed the request declared none — so the model
       // either invented a call (entry 4's recovery) or, far more often, told the operator it could
       // not reach live data and to go use the application instead. Same formatter sendRequest uses.
-      ...(boundary.definitions.length > 0
+      // When the preamble is served from a provider-side cache handle, the declarations are IN the
+      // handle: Gemini refuses `tools` beside a cached content, and re-sending them is the token
+      // push the cache removes. The local boundary still governs every call the model makes.
+      ...(boundary.definitions.length > 0 && options.preambleCached !== true
         ? { tools: this.formatFunctions(boundary.definitions), tool_choice: 'auto' }
         : {}),
       // OpenRouter reasoning models can otherwise spend the provider's entire free-tier output
@@ -333,8 +388,18 @@ class OpenAIProvider extends LLMService {
     const usage = emptyUsage();
     let executing = boundary.engaged;
     let roundsLeft = MAX_DECLARED_TOOL_ROUNDS;
+    let leg = 0;
     for (;;) {
-      const completion = await this.client.chat.completions.create({ ...request, messages });
+      let completion;
+      try {
+        completion = await this.client.chat.completions.create({ ...request, messages });
+      } catch (error) {
+        // Which leg failed decides whether a cached-preamble fallback is safe (leg 0 only: no
+        // tool has executed yet). The error itself is the caller's to log with its outcome.
+        if (error && typeof error === 'object') error.exchangeLeg = leg;
+        throw error;
+      }
+      leg += 1;
       addUsage(usage, completion.usage);
       const choice = completion.choices?.[0];
       const content = normalizeTextContent(choice?.message?.content);
@@ -987,6 +1052,11 @@ function addUsage(totals, usage) {
   // in `completion_tokens`, so the reported total is NOT always input + output. Prefer what the
   // endpoint reported and only compute a total when it reported none.
   totals.totalTokens += usage?.total_tokens || (input + output);
+  // The OpenAI usage shape reports prompt tokens served from a cache under
+  // `prompt_tokens_details.cached_tokens`; that count is the measured half of the invariant
+  // preamble saving, so it is folded in rather than left at the constant 0 it used to be.
+  const cached = Number(usage?.prompt_tokens_details?.cached_tokens);
+  totals.cacheReads += Number.isFinite(cached) && cached > 0 ? cached : 0;
   return totals;
 }
 

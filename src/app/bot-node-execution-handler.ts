@@ -28,6 +28,7 @@
  * 23 | maintainer@emeraldcoastsystemsgroup.com | Provision protected application tools at call time through the existing controller MCP bridge. The bridge binding comes only from the verified protected execution context and carries the exact bot, task, owner and original dispatch proof; provider selection remains configuration-owned.
  * 24 | maintainer@emeraldcoastsystemsgroup.com | Put the exact AUTO-granted brokered application tool names in protected prompts at call time while keeping the native bot-node registry empty. This prevents the final authority rebind from contradicting the invocation-scoped MCP tool list.
  * 25 | maintainer@emeraldcoastsystemsgroup.com | Retain completed work from configured failover (BACKLOG #1660): accept completed work from any provider in carriedConfig.fallbackOrder; attribute cost and metrics to the actual executing provider.
+ * 26 | maintainer@emeraldcoastsystemsgroup.com | Bill and relay the real usage split when TaskController reports one. The cost record and the HTTP usage block wrote `inputTokens = totalTokens, outputTokens = 0, cacheReadTokens = 0` unconditionally, so chat_tasks could never show the invariant-preamble cache's saving (fewer input tokens, a cached-token count). resolveExecutionUsage maps apiMetrics.inputTokens/outputTokens/cacheReads through when present and keeps the legacy total-as-input mapping when the runtime reports only a total, so an agentic result is billed exactly as before.
  */
 
 /**
@@ -180,7 +181,7 @@ export interface BotNodeExecutionDeps {
       error?: string;
       message?: { text?: string };
       messages?: Array<{ say: string; text?: string }>;
-      apiMetrics?: { totalCost?: number; totalTokens?: number };
+      apiMetrics?: ExecutionApiMetrics;
       /** Actual provider/model reported by the provider response for the final turn. */
       provider?: string | null;
       model?: string | null;
@@ -549,13 +550,14 @@ export function createBotNodeExecutionHandler(
 
       // Record cost — the bot owns cost capture (HTTP callers must NOT double-record).
       const apiMetrics = result.apiMetrics || {};
+      const usage = resolveExecutionUsage(apiMetrics);
       if (deps.recordCost) {
         try {
           await deps.recordCost({
             taskId, agentId,
             providerId: actualProvider,
             modelId: actualModel,
-            inputTokens: apiMetrics.totalTokens || 0, outputTokens: 0,
+            inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
             inputCost: 0, outputCost: 0, totalCost: apiMetrics.totalCost || 0,
             currency: 'USD', ticketExternalId,
             ownerSub: userSub, // per-owner budget attribution (Phase 2)
@@ -593,13 +595,7 @@ export function createBotNodeExecutionHandler(
           ? result.providerRecords.filter((record) => record && typeof record === 'object').slice(0, 8)
           : [],
         cost: apiMetrics.totalCost || 0,
-        usage: {
-          inputTokens: apiMetrics.totalTokens || 0,
-          outputTokens: 0,
-          totalTokens: apiMetrics.totalTokens || 0,
-          cacheReadTokens: 0,
-          cacheWriteTokens: 0,
-        },
+        usage,
         model: actualModel,
         provider: actualProvider,
         providerConfigSource,
@@ -646,6 +642,62 @@ function assertExistingTaskOwner(
   const error = new Error('Task owner mismatch') as Error & { code?: string };
   error.code = 'TASK_OWNER_MISMATCH';
   throw error;
+}
+
+/**
+ * @description The apiMetrics shape TaskController reports. The split fields (input, output,
+ * cached, cache state) exist only on the direct path; the agentic path reports a total alone.
+ */
+export interface ExecutionApiMetrics {
+  totalCost?: number;
+  totalTokens?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReads?: number;
+  promptCache?: string;
+}
+
+/**
+ * @description The usage block billed to the cost ledger through recordCost and relayed on the
+ * HTTP response, so a caller and chat_tasks read the same split.
+ */
+export interface ExecutionUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
+/** @description A finite non-negative count, else 0. */
+function usageCount(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+/**
+ * @description The usage split to bill and relay for one execution. When the runtime reported an
+ * input/output split (the direct path does), it is carried through with the endpoint-reported
+ * cached-token count; when it reported only a total (the agentic path), the legacy mapping of
+ * total-as-input is kept so existing rollups do not move.
+ * @param apiMetrics - The apiMetrics TaskController returned.
+ * @returns The usage block.
+ */
+export function resolveExecutionUsage(apiMetrics: ExecutionApiMetrics): ExecutionUsage {
+  const total = usageCount(apiMetrics.totalTokens);
+  const hasSplit = apiMetrics.inputTokens !== undefined || apiMetrics.outputTokens !== undefined;
+  if (!hasSplit) {
+    return { inputTokens: total, outputTokens: 0, totalTokens: total, cacheReadTokens: 0, cacheWriteTokens: 0 };
+  }
+  const inputTokens = usageCount(apiMetrics.inputTokens);
+  const outputTokens = usageCount(apiMetrics.outputTokens);
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens: total || inputTokens + outputTokens,
+    cacheReadTokens: usageCount(apiMetrics.cacheReads),
+    cacheWriteTokens: 0,
+  };
 }
 
 function normalizeRuntimeIdentity(value: unknown, maxLength: number): string | undefined {

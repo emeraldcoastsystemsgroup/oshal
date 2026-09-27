@@ -92,6 +92,7 @@
  * 40 | maintainer@emeraldcoastsystemsgroup.com   | Registered the LinkedIn content queue card (LINKEDIN_CONTENT_SCENARIOS, test-lab-linkedin-content-scenarios.ts): three read-only steps over the caller's own /api/linkedin-assistant routes (428 confirm gate, queue drafts keep their ticket/citations/audit hash, unknown draft 404) with the real-Postgres ticket-to-publish suite attached. Guard: tests/unit/test-lab-linkedin-content-registration.spec.ts.
  * 41 | maintainer@emeraldcoastsystemsgroup.com   | Registered the shared-response-renderer card (RESPONSE_RENDERER_SCENARIOS, test-lab-response-renderer-scenarios.ts): read-only probes that the running server publishes the renderer bundle with its display-only capability profile and the same-origin pinned Mermaid runtime, plus an in-process hostile-reply render that must stay inert, with the renderer unit suites and the Jarvis/chat Chromium suite attached. Guard: tests/unit/test-lab-response-renderer-registration.spec.ts.
  * 42 | maintainer@emeraldcoastsystemsgroup.com   | Registered the congressional disclosure card (WORLD_SIGNAL_SCENARIOS, test-lab-world-signal-scenarios.ts): one read-only step reporting how many names carry an observed quiver-congress disclosure in world_metrics, the newest disclosure day and the newest observed_at, with the ReportDate/observed_at/idempotence/reserved-namespace suites attached (the TimescaleDB one real-boundary). Guard: tests/unit/world-signal-test-lab.spec.ts.
+ * 43 | maintainer@emeraldcoastsystemsgroup.com   | Attached the invariant-preamble cache guards to 'jarvis-routing' regressionTests: invariant-prompt-cache (content key, negative caching, google-nested wire shape, no tools/system on a handle-carrying request, one full-send fallback), gemini-context-cache (the cachedContents adapter and the shared default cache with its kill switch), invariant-prompt-cache-protocol-seam (the real openai client and TaskController.processMessage against a loopback Gemini surface: one create for two owners' new tasks, re-creation on a preamble change, a rejected handle answered from one full send, no cross-task text) and invariant-prompt-cache-usage-accounting (cached tokens and the input/output split reaching the call log, apiMetrics and recordCost). Same Jarvis turn, same scenario; a spec on disk is not Test Lab registration.
  * @module test-lab-scenarios
  */
 
@@ -475,6 +476,10 @@ export const SCENARIOS: Scenario[] = [
       { level: 'integration', path: 'tests/unit/bot-node-read-only-tools-owner-scope-postgres.spec.ts' },
       { level: 'integration', path: 'tests/unit/bot-statement-privilege-contract.spec.ts' },
       { level: 'unit', path: 'tests/unit/jarvis-persona-recall.spec.ts' },
+      { level: 'unit', path: 'tests/unit/invariant-prompt-cache.spec.ts' },
+      { level: 'unit', path: 'tests/unit/gemini-context-cache.spec.ts' },
+      { level: 'integration', path: 'tests/unit/invariant-prompt-cache-protocol-seam.spec.ts' },
+      { level: 'unit', path: 'tests/unit/invariant-prompt-cache-usage-accounting.spec.ts' },
     ],
     steps: [
       { id: 'j-jobs', app: 'jarvis', label: '"What are my top job opportunities right now?"', run: (c) => jarvisStep(c, 'top jobs', 'What are my top job opportunities right now?') },

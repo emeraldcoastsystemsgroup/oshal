@@ -23,6 +23,7 @@
  * 18 | maintainer@emeraldcoastsystemsgroup.com  | Operator decision 2026-09-22: a BYO connection may carry tools, with the per-call boundary enforced. resolveToolLessMarker answered TWO questions off one call - which path the turn takes, and whether the turn may be handed the tools its caller was granted - and its legacy BYO fallback therefore emptied the tool set for every BYO turn, so the default-LLM-is-BYO operator got a Jarvis that was told it had N tools and handed none. processMessage now asks the marker twice: with byoLlm for ROUTING (unchanged - a BYO provider still takes the direct path, because AgenticController.getActiveProvider can only return codex/claude-code/cline/bedrock and processWithAgenticMode takes no provider argument, so an agentic BYO turn would silently run on the bot's own harness instead of the caller's endpoint), and with null for AUTHORITY, which drops only the BYO fallback. Nothing is widened: allowedTools is still exactly what the caller was issued, an explicit toolLess:true (and OSHAL_TOOL_LESS=true) still means no tools, and every call still has to clear the #757 boundary. Guard: tests/unit/byo-connection-declared-tools.spec.ts.
  * 19 | maintainer@emeraldcoastsystemsgroup.com  | Thread the trusted per-invocation framework-tool bridge binding to direct providers. Native registry capabilities and their executeTool callback stay unchanged; CLI providers that support the bridge may now discover server-side app tools without global preload.
  * 20 | maintainer@emeraldcoastsystemsgroup.com  | Pass the task's already-validated workspace_dir through the common direct-provider call. CLI wrappers had task-scoping flags but this path omitted the directory, making Antigravity fall back to its shared default workspace instead of the task folder.
+ * 21 | maintainer@emeraldcoastsystemsgroup.com  | The direct path's metrics fold moved to utils/direct-response-metrics.js (this file is over the code-line cap and must not grow). It recorded only totalTokens, so the invariant-preamble cache's saving - fewer input tokens, a cached-token count, and whether a handle served the turn - had nowhere to land in apiMetrics and therefore in chat_tasks; the fold now records inputTokens, outputTokens, cacheReads, cacheHits and promptCache beside the totals. No change to the agentic path's processLLMResponse fold.
  */
 
 /**
@@ -50,6 +51,7 @@ const {
   normalizeAuthorizedScopes,
 } = require('../utils/dispatch-capabilities');
 const { createDispatchToolExecutor } = require('./dispatch-tool-executor');
+const { mergeDirectResponseMetrics } = require('../utils/direct-response-metrics');
 const {
   UnsafeWorkspacePathError,
   ensureTaskWorkspace,
@@ -514,11 +516,7 @@ class TaskController {
       }
 
       if (response.usage) {
-        await this.updateMetrics(taskId, {
-          totalTokens: (task.apiMetrics.totalTokens || 0) + response.usage.totalTokens,
-          totalCost: (task.apiMetrics.totalCost || 0) + (response.cost || 0),
-          requestCount: (task.apiMetrics.requestCount || 0) + 1,
-        });
+        await this.updateMetrics(taskId, mergeDirectResponseMetrics(task.apiMetrics, response));
       }
 
       await this.updateTask(taskId, { status: 'completed' });
