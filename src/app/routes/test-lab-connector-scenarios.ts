@@ -1,6 +1,7 @@
 /**
  * CHANGE LOG
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register connector callback refusal and browser-bound OAuth regression suites with the existing Test Lab.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Register the Yahoo Mail connector card: the anonymous credential refusal on /api/connect/yahoo/access-token, with the loopback-IMAP reader suite and the connector schema/card suite attached. No mailbox is contacted; a live Yahoo connect is an operator acceptance step.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -27,5 +28,15 @@ export const CONNECTOR_OAUTH_SCENARIOS: Scenario[] = [{
     { id: 'invalid-state', app: 'connectors', label: 'Reject invalid callback', run: () => refusal('/api/connect/google/callback?state=test-lab-invalid&code=test-lab-unused', 400, 'Invalid state refused') },
     { id: 'private-token', app: 'connectors', label: 'Protect connector credentials', run: () => refusal('/api/connect/google/access-token', 401, 'Credentials require sign-in') },
     { id: 'private-completion', app: 'connectors', label: 'Protect completion', run: () => refusal('/api/connect/google/complete?ticket=test-lab-unused', 401, 'Completion requires sign-in') },
+  ],
+}, {
+  id: 'yahoo-mail-connector', title: 'Yahoo Mail connector (app password, read-only IMAP)', group: 'tool',
+  description: 'Check that the Yahoo Mail credential stays behind sign-in. The linked suites drive the real IMAP client against a loopback responder: the closed address:app-password schema, the fixed imap.mail.yahoo.com:993 endpoint, a read-only EXAMINE with a bounded envelope FETCH, the caller-personal grant, and LOGIN refusal. They do not sign in to a real Yahoo mailbox.',
+  regressionTests: [
+    { level: 'integration', path: 'tests/unit/imap-mail-reader.spec.ts' },
+    { level: 'unit', path: 'tests/unit/connector-yahoo.spec.ts' },
+  ],
+  steps: [
+    { id: 'private-token', app: 'connectors', label: 'Protect the Yahoo credential', run: () => refusal('/api/connect/yahoo/access-token', 401, 'Yahoo credential requires sign-in') },
   ],
 }];

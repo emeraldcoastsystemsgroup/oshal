@@ -332,6 +332,26 @@ block. The complete procedure (URI list, probe verification, flag flip, rollback
 troubleshooting) is one runbook:
 [docs/runbooks/microsoft-login-enable.md](runbooks/microsoft-login-enable.md).
 
+### Yahoo Mail (`yahoo`) — Shape B (app-password paste), **wired, nothing to register**
+
+The email swarm's third mail provider. Each user pastes their Yahoo address and a Yahoo **app
+password** on `/utilities` (Yahoo Account Security → Generate app password). App passwords need
+no partner app, so Rule 0 does not come into play. Yahoo's own OAuth would need a registered
+app under the business email, and nothing uses it.
+
+```
+Provider id (registry key): yahoo
+Shape: B (two-value paste: address + 16-letter app password, stored "address:app-password")
+Token page: https://login.yahoo.com/account/security/app-passwords
+Validation: a real IMAP LOGIN on imap.mail.yahoo.com:993 (TLS), then LOGOUT
+Exact server operation: EXAMINE INBOX + one FETCH of UID/FLAGS/ENVELOPE/INTERNALDATE over the
+  newest 50 messages (src/app/routes/imap-mail-reader.ts, AppContext `imapMail`)
+```
+
+The host is fixed in core, so a user cannot supply one. The stored secret is checked against a
+closed schema before any socket opens. The reader cannot write to the mailbox and never passes the
+app password across the AppContext boundary.
+
 ---
 
 ## Media / Entertainment bundle
@@ -383,7 +403,7 @@ app at all. The redirect paths below are the ones already registered on those co
 <!-- BEGIN GENERATED: connector-registration-reference -->
 <!-- Generated from src/app/routes/connector-provider-registry.ts. Do not edit between these markers: run `npm run connectors:partner-doc`. -->
 
-**63 connectors are wired in the hub registry — 18 need a partner app registered (Shape A or Link) and 45 are token-paste only (Shape B).**
+**64 connectors are wired in the hub registry — 18 need a partner app registered (Shape A or Link) and 46 are token-paste only (Shape B).**
 
 ### Needs a partner app — Shape A (OAuth redirect) and Link
 
@@ -417,7 +437,7 @@ highest precedence first (`→` reads "falls back to").
 
 ### No partner app — Shape B, Personal Access Token paste only
 
-These 45 connectors have no OAuth app to register: the user pastes a token on
+These 46 connectors have no OAuth app to register: the user pastes a token on
 `/utilities` (or the operator sets the connector env fallback). The link is the page the registry
 sends them to (`tokenHelpUrl`).
 
@@ -467,6 +487,7 @@ sends them to (`tokenHelpUrl`).
 | ESPN Fantasy (`espn-fantasy`) | https://fantasy.espn.com/football/league |
 | Finnhub (Market Data / Earnings) (`finnhub`) | https://finnhub.io/dashboard |
 | Bluesky (`bluesky`) | https://bsky.app/settings/app-passwords |
+| Yahoo Mail (`yahoo`) | https://login.yahoo.com/account/security/app-passwords |
 | Resend (Email) (`resend`) | https://resend.com/api-keys |
 
 <!-- END GENERATED: connector-registration-reference -->

@@ -15,6 +15,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | RingCentral OAuth entry (screen-pop spec): PKCE S256 + Basic token auth over the GENERIC exchange/refresh paths; scopes deliberately EMPTY because a RingCentral app's permissions are fixed at registration and unrequested scope= values fail the authorize call. Creds RINGCENTRAL_CLIENT_ID/SECRET; server host env-selectable for the devtest sandbox; category communication.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Add the 'espn-fantasy' connector (category 'media') for the Sports Edge Fantasy tab: two-value paste of the SWID + espn_s2 cookies, stored "SWID:espn_s2". ESPN publishes NO OAuth for fantasy, so the only credential that exists is a pair of ACCOUNT SESSION cookies — unscoped, with no per-app revocation — which is why the entry says so at the point someone would otherwise assume it is an API key. The PUBLIC half of the fantasy API (the full player universe including ESPN's own projections) needs no credential; this connector exists solely for a private league, which answers 401 without it.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Add explicit chat:write and files:write defaults for the approval-gated Office Slack upload leg; existing connections must reconnect to receive the expanded consent.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Add the 'yahoo' Yahoo Mail token connector (category 'email', backlog "Email providers beyond Gmail"): two-value paste of the Yahoo address + a Yahoo APP PASSWORD, stored "address:app-password" and validated by a real IMAP LOGIN on the fixed imap.mail.yahoo.com:993 (imap-mail-reader). No partner app to register; the secret is read only by core's fixed read-only inbox reader.
  * -----------------------------------------------------------------------------
  *
  * @module connector-provider-registry
@@ -565,6 +566,12 @@ export const PROVIDERS: Record<string, ProviderDef> = {
   bluesky: { label: 'Bluesky', auth: 'token', flavor: 'generic', authUrl: '', tokenUrl: '', scopes: [], authParams: {}, scopeSep: ' ', redirectPath: '/api/connect/bluesky/callback', tokenHelpUrl: 'https://bsky.app/settings/app-passwords' },
   // Resend (marketing email rail, ADR-133): API-key paste validated via GENERIC_VERIFY /domains;
   // sends ride the confirm-gated resend.yaml send-email action, never a raw route.
+  // Yahoo Mail (Intelligent Communication, ADR-037): two-value paste — the Yahoo address as the
+  // card's `email` field + a Yahoo APP PASSWORD (never the account password), stored
+  // "address:app-password" under a closed schema (imap-mail-reader parseYahooSecret). Validated by
+  // a real IMAP LOGIN on the FIXED host imap.mail.yahoo.com:993 (fetchAccount → probeYahooLogin);
+  // consumed only by core's fixed read-only inbox reader (AppContext `imapMail`), never a model or bot.
+  yahoo: { label: 'Yahoo Mail', auth: 'token', flavor: 'generic', authUrl: '', tokenUrl: '', scopes: [], authParams: {}, scopeSep: ' ', redirectPath: '/api/connect/yahoo/callback', tokenHelpUrl: 'https://login.yahoo.com/account/security/app-passwords' },
   resend: { label: 'Resend (Email)', auth: 'token', flavor: 'generic', authUrl: '', tokenUrl: '', scopes: [], authParams: {}, scopeSep: ' ', redirectPath: '/api/connect/resend/callback', tokenHelpUrl: 'https://resend.com/api-keys' },
   ringcentral: {
     // Telephony connector for the Intelligent Sales inbound-call screen-pop
@@ -600,7 +607,7 @@ export const CONNECTOR_CATEGORY: Record<string, string> = {
   // groups with sign-in, per the operator's "put it under your account" intent.
   facebook: 'identity',
   linkedin: 'social', twitter: 'social', 'meta-business': 'social', bluesky: 'social',
-  google: 'email', outlook: 'email', resend: 'email',
+  google: 'email', outlook: 'email', yahoo: 'email', resend: 'email',
   github: 'storage', dropbox: 'storage',
   // DevOps / cloud connectors (operator-grade cloud-platform access).
   gcp: 'devops', jira: 'devops',
