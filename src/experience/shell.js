@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Audience-aware hosting: one withAudience helper appends the layout's `?audience=` to every in-place frame (existing query, hash and audience kept), behind a device-remembered Summary view / Full application switch whose copy leaves the choice of view to the hosted page. The app panel reads the package record lazily (GET /api/swarm/apps/:name, and each installed member of a group) to list declared assistants by name with the concierge marked and online state only where the overview roster joins, and labels relationships as group members or Required / Optional app dependencies (not installed when absent from the catalog; a mixed dependency block shows a neutral note instead of tiers). The Commons game predicate moves here as isGameApp so the directory's Games chip and the Game room share it, and a layout may opt its People panel into the swarm roster from GET /api/user-directory with the non-admin fallback to the caller's own identity.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | A dependency absent from the caller's catalog is labelled 'not in your catalog': the catalog lists active apps visible to this viewer, so an installed but inactive or person-scoped app is not proof of 'not installed'
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Integration review: every server-provided link the shell puts in an href (the shared hand-off chip, a '/' link in an answer, a file download) goes through LIVE.localHref, so a target that resolves off this origin ('//host', '/\host', a tab-split path) is never linked; the Games chip's visible label carries the hedge ('Looks like a game'); a roster 403 with roster_scope_denied says this session is not permitted to read the roster instead of blaming a missing admin role.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Fix round 1: states the one exception to row 5. Only '/' answer links, hand-off chips, file downloads and admitted workspace links go through LIVE.localHref; an absolute http(s) answer link is outside the same-origin guard by design and opens in a new tab with noopener noreferrer. A dot-segment answer link such as '[x](/..//host/y)' now stays literal text because the guard refuses it.
  */
 (() => {
   'use strict';
@@ -47,6 +48,7 @@
     const inline = s => esc(s)
       .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
       // [label](/path) or [label](https://…) as the assistant writes them; a path that resolves off this origin, and anything else, stays literal text.
+      // Only '/' links are same-origin-guarded; an absolute http(s) link is outside that guard by design and opens in a new tab with noopener noreferrer.
       .replace(/\[([^\]\n]{1,120})\]\(((?:\/(?!\/)|https?:\/\/)[^\s()<>"']{1,400})\)/g, (whole, label, href) => {
         if (!href.startsWith('/')) return `<a href="${href}" rel="noopener noreferrer" target="_blank">${label}</a>`;
         const local = LIVE.localHref(href);

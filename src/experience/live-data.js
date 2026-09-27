@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Package adapters for the homebase gap closure over existing routes only: Little Monsters class activity (teacher analytics) and classwork creation through the route that also writes the class calendar event, a ticket read and its status transition, and the caller's saved content drafts. Each returns the route's own answer, refusals included.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | JSDoc for the background-work client members (markDelivered, cancelWork)
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Integration review: one same-origin guard, localHref, resolves a server-provided link against the page origin the way the browser will (tab/CR/LF stripped, a backslash read as a slash) and keeps only a path that stays on this origin, so '//host', '/\host' and a tab-split '/<TAB>/host' can never become a link. ask()'s poll-limit result carries code 'poll_limit' so a caller can say the page stopped checking instead of calling the request failed. The roster read keeps the route's refusal code (roster_scope_denied vs roster_administrator_required). markDelivered is removed: the Jarvis page stays the one surface that announces and marks results.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Fix round 1: localHref checks the path it returns as well as the URL it resolved. Dot segments normalise '/..//host', '/.//host' and '/%2e%2e//host' to a pathname that starts with '//', which the guard returned as a protocol-relative link that opens another origin; now a returned path must not start with '//' and must itself resolve to the page origin. The admitted navigation href from GET /api/ui/workspaces goes through the same guard and falls back to the cockpit link when refused, so every catalog Open link stays on this origin.
  */
 (function attach(root, factory) {
   'use strict';
@@ -69,10 +70,13 @@
   }
 
   /**
-   * @description The one same-origin guard for links a server or model hands the page (hand-off deepLinks, answer
-   * links, file downloads). The URL is resolved exactly as the browser will resolve an href, which strips tab/CR/LF
-   * and reads a backslash as a slash, so '/\t/host', '/\\host' and '//host' all resolve to another origin and are
-   * refused; only a string that starts with '/' and stays on the page origin is kept.
+   * @description The one same-origin guard for links a server or model hands the page (hand-off deepLinks, '/'
+   * answer links, file downloads, admitted workspace navigation). The URL is resolved exactly as the browser will
+   * resolve an href, which strips tab/CR/LF and reads a backslash as a slash, so '/\t/host', '/\\host' and '//host'
+   * all resolve to another origin and are refused. The string handed back is checked again: dot segments can
+   * normalise a same-origin path to one that starts with '//' ('/..//host', '/%2e%2e//host'), which as an href is
+   * protocol-relative and leaves the origin, so the returned path must not start with '//' and must itself resolve
+   * to the page origin. Only a string that starts with '/' and stays on the page origin is kept.
    * @param {unknown} u Candidate link from a payload.
    * @param {string} [origin] Page origin; defaults to location.origin in a browser.
    * @returns {string} pathname + search + hash of the resolved same-origin URL, or '' when it is not one.
@@ -82,7 +86,9 @@
     var page = origin || (typeof location !== 'undefined' && location.origin && location.origin !== 'null' ? location.origin : 'https://local.invalid');
     try {
       var base = new URL(page), resolved = new URL(u, base);
-      return resolved.origin === base.origin ? resolved.pathname + resolved.search + resolved.hash : '';
+      if (resolved.origin !== base.origin) return '';
+      var out = resolved.pathname + resolved.search + resolved.hash;
+      return out.charAt(0) === '/' && out.charAt(1) !== '/' && new URL(out, base).origin === base.origin ? out : '';
     } catch (_) { return ''; }
   }
 
@@ -103,7 +109,8 @@
       members: plan && Array.isArray(plan.members) ? plan.members : [name],
       surface: plan && typeof plan.firstSurfaceUrl === 'string' ? plan.firstSurfaceUrl : '',
       surfaceName: plan && typeof plan.firstSurface === 'string' ? plan.firstSurface : '',
-      href: workspace && typeof workspace.href === 'string' ? workspace.href : cockpitHref(name),
+      // The admitted navigation href goes through the same guard; a link that would leave this origin falls back to the cockpit link.
+      href: (workspace && localHref(workspace.href)) || cockpitHref(name),
       theme: workspace && workspace.theme ? String(workspace.theme) : '',
       navigable: Boolean(workspace || (plan && plan.firstSurfaceUrl)),
       inPlan: Boolean(plan),

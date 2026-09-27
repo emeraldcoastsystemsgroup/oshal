@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Gap closure over existing contracts (ADR-164 D8, no backend change). The workspace renders the typed fields of the done /ask/result payload: the escaped answer, the owner-checked /api/jarvis/visuals image labelled by its kind, '/'-only handoff chips, the handed-off `dispatched` work tracked on GET /api/jarvis/tasks until it settles (files offered, delivered marked once through the route, the linked ticket cancellable through the owner-checked PUT /api/tickets/:ticketId/cancel with refusals shown), a `packageToolProposal` as an approval card pointing at the Jarvis page where approval happens, and `brainFallback` as "Answered by <provider>". Lifecycle is running / ready / partial / failed / setup-needed (job code NO_HOSTED_BRAIN or the 503 ai_disabled refusal) / stopped waiting, never "cancelled". The ledger is "Request progress": observed phases only, never tool activity. A per-request generation token plus an AbortController through LIVE.ask end the wait on Stop, New and Home and release the composer; a late completion of an older request can never reopen or overwrite the workspace. Push-to-talk dictation records with MediaRecorder, posts field `audio` to /api/voice/transcribe and fills the composer without sending, with honest not-set-up / denied / failed states; the microphone never drives the core. The readback control is offered on every terminal text (ready, partial, failed, setup-needed), and the composer keeps its draft and focus across repaints.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Hand-off links accept only same-origin paths (a protocol-relative '//host' target is shown by name, never linked), and a transcription failure the route reports with HTTP 200 no longer quotes that success status
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Integration review: hand-off links go through the shared LIVE.localHref guard (isLocalPath is gone), so a tab-split or backslash target that the browser would resolve off this origin is shown by name, never linked. Reaching the ask poll limit (code 'poll_limit') is a "Still running" state that says this page stopped checking and the job may still finish, never FAILED. The page no longer marks handed-off results delivered: the Jarvis page stays the one surface that announces and marks them. Request progress is honest about a stop before the swarm answered the send (never "Not accepted") and counts checks as checks without an outcome.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Fix round 1: the Request progress polling row says the first check had the outcome only when the request reached an outcome (ready, partial, failed, setup needed, still running). While the first check is still out it reads "Checking now."; after Stop it reads "This page stopped before the first check answered." and stays pending, never done. Hand-off chips and the Applications tab inherit the dot-segment fix in LIVE.localHref, and applications named in the answer link through the catalog href that the same guard now covers.
  */
 (() => {
   'use strict';
@@ -174,10 +175,17 @@
     const sent = o.sentAt ? `Left this page at ${LIVE.clockTime(o.sentAt)} on your own thread${o.rolled ? ' (the earlier thread was unavailable under this sign-in, so a fresh one was used)' : ''}.` : 'Not sent.';
     const accepted = o.jobId ? `Job ${o.jobId.slice(0, 8)} accepted.` : o.refused ? `Refused with HTTP ${o.refused}.` : running ? 'Waiting for the swarm to accept it.'
       : p === 'stopped' ? 'This page stopped waiting before the swarm’s reply to the send arrived.' : 'Not accepted.';
-    const polled = o.polls ? `Checked ${plural(o.polls, 'time')} without an outcome.` : o.jobId ? 'The first check already had the outcome.' : 'Not started.';
     return [progressRow('Sent to Jarvis', sent, o.sentAt ? 'done' : 'pending'),
       progressRow('Accepted by the swarm', accepted, o.jobId ? 'done' : o.refused ? 'failed' : running ? 'now' : 'pending'),
-      progressRow('Checking for the answer', polled, running && o.jobId ? 'now' : o.jobId ? 'done' : 'pending')];
+      checkRow(p)];
+  }
+  /** The polling row claims an outcome only when one arrived: a check that is still out, or one the page stopped waiting for, never reads as answered. */
+  function checkRow(p) {
+    const o = state.obs, running = p === 'running', row = (detail, mark) => progressRow('Checking for the answer', detail, mark);
+    if (o.polls) return row(`Checked ${plural(o.polls, 'time')} without an outcome.`, running ? 'now' : 'done');
+    if (!o.jobId) return row('Not started.', 'pending');
+    if (TERMINAL[p]) return row('The first check already had the outcome.', 'done');
+    return running ? row('Checking now.', 'now') : row('This page stopped before the first check answered.', 'pending');
   }
   function outcomeRow(p) {
     const r = state.result || {}, visual = trustedVisual(r.visual);

@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove the central assistant's gap closure over existing contracts. Kit level (injected fetch): a refused /ask carries the route's machine code, a done payload passes only well-formed `dispatched` items and the tool proposal through, an abort ends the wait with no further polls and drops a completion that lands after it, transcription envelopes fold into text / unconfigured / empty / failed from a multipart `audio` upload, and the delivered and ticket-cancel helpers hit their routes. Browser level (headless Chromium through the real static routes over the synthetic fixture): typed result cards (owner-checked visual by kind, '/'-only handoffs, provider fallback, approval card pointing at the Jarvis page), untrusted and refused visuals, partial background work tracked to settlement with delivered-once marking, files and cancel plus refusal, setup-needed and failed states with readback offered on each, the stale-completion guard across Stop / New / Home, and push-to-talk dictation that fills the composer without sending, labels not-set-up / empty / failed / denied honestly and never drives the core.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | A protocol-relative hand-off target (//host/x) is never linked, the same as an absolute one
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Integration review: hostile hand-offs the browser would resolve off this origin ('/<TAB>/host', '/\host') are never linked and every anchor resolves same-origin; the client has no delivered marking and the page sends no POST .../delivered while tracking background work; reaching the poll limit (maxPolls/pollMs injected into LIVE.ask) is "Still running", never FAILED, and counts checks without an outcome; a request stopped before the swarm answered the send never reads "Not accepted".
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Fix round 1: dot-segment hand-offs ('/..//outside.example/x', '/.//…', '/%2e%2e//…') and a dot-segment answer link are never linked (the answer link stays literal) while every anchor resolves same-origin; with every /ask/result check held at the browser, the polling row reads "Checking now." while running and "This page stopped before the first check answered." (pending) after Stop, never that the first check had the outcome.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
@@ -164,10 +165,13 @@ afterEach(async () => { await context?.close(); await fixture?.close(); });
 
 describe('central assistant gap closure in Chromium over the real routes', () => {
   it('renders the typed result fields: the owner-checked visual by kind, "/"-only handoffs, the provider that answered and an approval card pointing at the Jarvis page', async () => {
-    setResult({ status: 'done', answer: 'Synthetic typed answer.', files: [], taskId: 'task-9', dispatched: [], visual: VISUAL,
+    // A '/' answer link whose dot segments normalise to '//outside.example' must stay literal text.
+    setResult({ status: 'done', answer: 'Synthetic typed answer. [Synthetic dotted](/..//outside.example/y)', files: [], taskId: 'task-9', dispatched: [], visual: VISUAL,
       handoffs: [{ name: 'Synthetic ledger', deepLink: '/cockpit/?app=ledger' }, { name: 'Synthetic outside', deepLink: 'https://outside.example/x' }, { name: 'Synthetic relative', deepLink: '//outside.example/y' },
         // The browser strips a tab and reads a backslash as a slash, so both of these resolve to outside.example.
-        { name: 'Synthetic tab split', deepLink: '/\t/outside.example/z' }, { name: 'Synthetic backslash', deepLink: '/\\outside.example/w' }],
+        { name: 'Synthetic tab split', deepLink: '/\t/outside.example/z' }, { name: 'Synthetic backslash', deepLink: '/\\outside.example/w' },
+        // Dot segments normalise each of these to a '//outside.example' pathname: a protocol-relative link if handed back as-is.
+        { name: 'Synthetic dot dot', deepLink: '/..//outside.example/x' }, { name: 'Synthetic dot', deepLink: '/.//outside.example/x' }, { name: 'Synthetic encoded dots', deepLink: '/%2e%2e//outside.example/x' }],
       brainFallback: { providerUsed: 'Synthetic Provider', rung: 2, chainSource: 'fleet-default', failedEndpoint: { host: 'synthetic.host', model: 'synthetic-model' }, attempts: 2, failure: 'rate-limit' },
       packageToolProposal: { id: 'p1', app: 'ledger', toolName: 'post_entry', label: 'Synthetic post entry', mode: 'ask', input: { amount: 1 }, expiresAt: new Date(Date.now() + 600000).toISOString() } });
     await open(); await ask('Show me the typed answer');
@@ -183,19 +187,21 @@ describe('central assistant gap closure in Chromium over the real routes', () =>
     expect(await page.locator('a[href^="//"]').count()).toBe(0);
     expect(await page.locator('a[href*="outside.example"]').count()).toBe(0);
     expect(await offOrigin()).toEqual([]);
+    expect(await text('.workspace-body')).toContain('[Synthetic dotted](/..//outside.example/y)');
     expect(await text('.provider-note')).toContain('Answered by Synthetic Provider');
     const card = page.locator('[data-part="proposal"]');
     expect(await card.innerText()).toMatch(/APPROVAL NEEDED[\s\S]*Synthetic post entry[\s\S]*Synthetic ledger · tool post_entry/);
     expect(await card.innerText()).toContain('This page cannot approve or run application tools.');
     expect(await card.locator('a').getAttribute('href')).toBe('/api/jarvis/');
     const ledger = await text('.action-ledger');
-    expect(ledger).toMatch(/request progress/i); expect(ledger).toContain('5 application handoffs'); expect(ledger).toContain('Answered by Synthetic Provider');
+    expect(ledger).toMatch(/request progress/i); expect(ledger).toContain('8 application handoffs'); expect(ledger).toContain('Answered by Synthetic Provider');
     expect(ledger).toContain('Answer received, with a visual (Agenda).');
     expect(ledger).not.toMatch(/tool activity/i);
     await page.getByRole('tab', { name: 'Applications' }).click();
     expect(await page.locator('.workspace-body a[href^="https://"]').count()).toBe(0);
     expect(await text('.workspace-body')).toContain('Synthetic outside');
     expect(await text('.workspace-body')).toContain('Synthetic tab split'); expect(await text('.workspace-body')).toContain('Synthetic backslash');
+    for (const name of ['Synthetic dot dot', 'Synthetic dot', 'Synthetic encoded dots']) expect(await text('.workspace-body')).toContain(name);
     expect(await page.locator('.workspace-body a[href*="outside.example"]').count()).toBe(0);
     expect(await offOrigin()).toEqual([]);
     expect(errors).toEqual([]);
@@ -367,6 +373,26 @@ describe('central assistant gap closure in Chromium over the real routes', () =>
     expect(ledger).toContain('This page stopped waiting before the swarm’s reply to the send arrived.');
     expect(ledger).not.toContain('Not accepted');
     expect(fixture.state.asks).toHaveLength(0);
+    expect(errors).toEqual([]);
+  });
+
+  it('an accepted request whose first check never answers never claims the check had the outcome, running or stopped', async () => {
+    // The job is accepted, but every /ask/result check is held at the browser until the page aborts it.
+    await page.route('**/api/jarvis/ask/result**', () => { /* held until the page aborts it */ });
+    await open();
+    await ask('accepted, then no check answers');
+    await page.waitForFunction(() => (document.querySelector('.action-ledger')?.textContent || '').includes('accepted.'));
+    const checkStep = page.locator('.ledger-step', { hasText: 'Checking for the answer' });
+    const running = await text('.action-ledger');
+    expect(running).toContain('Checking now.');
+    expect(running).not.toContain('already had the outcome');
+    expect(await checkStep.getAttribute('data-mark')).toBe('now');
+    await page.locator('.mission-actions [data-action="stop"]').click();
+    await waitMode('STOPPED WAITING');
+    const stopped = await text('.action-ledger');
+    expect(stopped).toContain('This page stopped before the first check answered.');
+    expect(stopped).not.toContain('already had the outcome');
+    expect(await checkStep.getAttribute('data-mark')).toBe('pending');
     expect(errors).toEqual([]);
   });
 

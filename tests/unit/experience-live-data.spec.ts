@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove the experience adapter's joins and Jarvis ask flow headlessly: catalog authority order, suite grouping, work merging, summary caps, identity derivation, session roll on a refused thread, poll-to-terminal states and honest source reporting when a read fails.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | `related` is a group's installed required members from the plan, no longer the plan's integrationSources (a plain app relates to nothing through them)
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Integration review: localHref keeps a same-origin path and refuses every link the browser would resolve off the page origin (tab-split, backslash, protocol-relative, absolute, non-string); the poll-limit ask result carries code 'poll_limit'.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Fix round 1: dot-segment links that normalise to a '//' pathname ('/..//outside.example/x', '/.//…', '/%2e%2e//…', '/api/..//…') are refused, a same-origin dot segment is kept normalised and every kept path re-resolves to the page origin; an admitted workspace href that would leave the origin (dot-segment, absolute, non-string) falls back to the cockpit link.
  */
 import { describe, expect, it } from 'vitest';
 import { createRequire } from 'node:module';
@@ -60,6 +61,17 @@ describe('experience adapter: pure joins', () => {
     expect(apps[2]).toMatchObject({ kind: 'group', related: ['b', 'c'] });
   });
 
+  it('keeps an admitted navigation href only when it stays on this origin, otherwise opens the cockpit link', () => {
+    const apps = LIVE.mergeApps({
+      plan: [{ name: 'a', displayName: 'A', suite: 'ai-home', summary: [], todos: [] }, { name: 'b', displayName: 'B', suite: 'ai-home', summary: [], todos: [] },
+        { name: 'c', displayName: 'C', suite: 'ai-home', summary: [], todos: [] }, { name: 'd', displayName: 'D', suite: 'ai-home', summary: [], todos: [] }],
+      apps: [],
+      workspaces: [{ name: 'a', href: '/cockpit/?app=a&tab=x' }, { name: 'b', href: '/..//outside.example/x' }, { name: 'c', href: 'https://outside.example/y' }, { name: 'd', href: 42 }],
+    });
+    expect(apps.map((x: any) => [x.id, x.href, x.navigable])).toEqual([
+      ['a', '/cockpit/?app=a&tab=x', true], ['b', '/cockpit/?app=b', true], ['c', '/cockpit/?app=c', true], ['d', '/cockpit/?app=d', true]]);
+  });
+
   it('always lists the six canonical suites and adds Platform only when populated', () => {
     const none = LIVE.buildSuites([]);
     expect(none.map((s: any) => s.id)).toEqual(['ai-finance', 'ai-engineering', 'ai-creative', 'ai-productivity', 'ai-home', 'ai-knowledge']);
@@ -97,6 +109,12 @@ describe('experience adapter: pure joins', () => {
     // The browser strips tab/CR/LF and reads a backslash as a slash before resolving, so each of these lands on another host.
     const hostile: unknown[] = ['/\t/host/x', '/\\host', '//host/x', 'https://x', '/\n/host/y', '/\r//host/z', ' /cockpit/', 'cockpit/', '', null, undefined, 42, { href: '/x' }];
     for (const u of hostile) expect(LIVE.localHref(u, origin), JSON.stringify(u)).toBe('');
+    // Dot segments normalise each of these to a pathname that starts with '//': returned as-is it would be a protocol-relative link to outside.example.
+    const dotted = ['/..//outside.example/x', '/.//outside.example/x', '/%2e%2e//outside.example/x', '/%2E//outside.example/x', '/api/..//outside.example/x', '/.\\/outside.example/x', '/\t..//outside.example/x'];
+    for (const u of dotted) expect(LIVE.localHref(u, origin), JSON.stringify(u)).toBe('');
+    // A dot segment that stays on the origin is kept, normalised, and what comes back resolves to the page origin itself.
+    expect(LIVE.localHref('/api/../cockpit/?app=a', origin)).toBe('/cockpit/?app=a');
+    for (const u of ['/cockpit/?app=ledger#x', '/api/../cockpit/?app=a', '/a/./b']) expect(new URL(LIVE.localHref(u, origin), origin).origin).toBe(origin);
     // Without a page (node), the check still runs against a fixed placeholder origin.
     expect(LIVE.localHref('/cockpit/?app=a')).toBe('/cockpit/?app=a');
     expect(LIVE.localHref('/\\host')).toBe('');
