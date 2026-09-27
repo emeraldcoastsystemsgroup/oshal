@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | LinkedIn AI Content Assistant domain types: the SocialContentDraft record + its five-state lifecycle, the LinkedIn-content judge rubric, and the injected generator/grader/publisher contracts. Kept in the feature layer with NO import of the sibling quality-judge slice (FSD forbids same-layer cross-slice imports) — the app layer adapts JudgeVerdict onto GradeResult when it wires the service.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Preserve bounded source citations and the originating queue ticket on drafts so queue-created content carries reviewable provenance into the human approval and connector-audit boundary.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Publish provenance: a draft records the post id its publish returned and the audited connector params hash, the publisher is told which draft, queue ticket and citations it is sending (PublishContext), and a publish outcome carries the params hash so the draft joins its connector_action_audit rows.
  */
 
 /**
@@ -120,10 +121,34 @@ export interface SocialContentDraft {
   scheduledFor: string | null;
   /** The last publish skip/error surfaced to the operator, or null. */
   publishError: string | null;
+  /** The LinkedIn post id a successful publish returned, or null. */
+  publishedPostId: string | null;
+  /**
+   * sha256 of the canonical connector params the last publish attempt sent. It is the value the
+   * connector write-action executor stores in connector_action_audit.params_hash, so the draft
+   * joins its audit rows on (user_sub, params_hash). Null until a publish reached the executor.
+   */
+  publishParamsHash: string | null;
   /** Row creation timestamp. */
   createdAt: string;
   /** Row last-update timestamp. */
   updatedAt: string;
+}
+
+/**
+ * @description What the publisher is told about the draft it sends. The approved body travels
+ * separately and is sent verbatim; this is provenance only. It names the draft, the queue ticket
+ * that produced it (null for an interactive draft) and the bounded citations the reviewer saw, so
+ * the publish boundary can say which draft and ticket an audited write belongs to. It never
+ * changes what is posted.
+ */
+export interface PublishContext {
+  /** The owner-scoped draft being published. */
+  draftId: number;
+  /** The queue ticket that created the draft, or null for an interactive draft. */
+  sourceTicketId: string | null;
+  /** The bounded citation list stored with the draft. */
+  sourceCitations: string[];
 }
 
 /**
@@ -143,4 +168,9 @@ export interface PublishOutcome {
   message?: string;
   /** The LinkedIn post id when ok. */
   postId?: string | null;
+  /**
+   * The canonical hash of the connector params this attempt sent, when the attempt reached the
+   * connector write-action executor (and so left connector_action_audit rows carrying it).
+   */
+  paramsHash?: string | null;
 }

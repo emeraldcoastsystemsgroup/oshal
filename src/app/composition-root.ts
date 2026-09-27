@@ -32,6 +32,7 @@
  * 27 | maintainer@emeraldcoastsystemsgroup.com   | Bind the fixed owner-scoped RingCentral call-log reader into AppContext (screen-pop v2 call history), mirroring the Outlook seam.
  * 28 | maintainer@emeraldcoastsystemsgroup.com   | Hand the orchestrator the inline-turn cost ledger over the main (GUC-stamped) pool, so an inline chat turn's spend reaches oshal_cost_events under the request's owner sub and the windowed budget cap at the bot-invocation chokepoint can see it.
  * 29 | maintainer@emeraldcoastsystemsgroup.com   | Pass the orchestrator collaborators as one named object. costLedger is now a required field, so the inline-turn ledger wiring cannot be deleted from this call without failing the build - previously it was a trailing optional positional and its removal type-checked clean while silently zeroing every windowed budget cap.
+ * 30 | maintainer@emeraldcoastsystemsgroup.com   | The LinkedIn queue binding receives the ticket service so it can write the draft id back onto the queue ticket that produced it.
  */
 
 import {
@@ -187,7 +188,7 @@ export function createAppContext(): CompositionAppContext {
     pool,
     providerResolver.getProvider,
     { taskStore, messageStore },
-    bindLinkedInContentWorker(pool, orchestrator),
+    bindLinkedInContentWorker(pool, orchestrator, ticketService),
   );
   swarm.swarmTicketProcessingService?.setTicketService(ticketService);
   const botNodeClient = new BotNodeClient(createRegistryEndpointResolver());
