@@ -237,6 +237,7 @@ repositories, with docker, ssh and curl replaced by recording stand-ins:
 - `tests/unit/core-promote.spec.ts`
 - `tests/unit/managed-core-release.spec.ts`
 - `tests/unit/core-drift-check.spec.ts`
+- `tests/unit/core-release-drill.spec.ts`: the acceptance drill below
 - `tests/unit/update-check.spec.ts`: the `/api/version` route over HTTP
 - `tests/unit/dockerfile-release-identity.spec.ts`
 
@@ -244,5 +245,12 @@ They are registered with the deploy-contract regressions in the AI Test Lab (`in
 and run by `npm run test:platform-readiness`.
 
 **Not yet proven live:** a staging → production promotion and a rollback drill on the managed
-boxes. The first run is `promote.sh --bootstrap` to the staging target, then production, then
-`--status` and `--rollback`.
+boxes. The drill is one command with asserted outcomes. It promotes to staging, checks status,
+rolls staging back and forward again, then promotes the same image to production and checks it.
+It stops at the first step that does not exit 0, and it never rolls production back:
+
+```bash
+# --bootstrap on the first run only
+bash scripts/operations/core-release-drill.sh --release core-2026.09.28 \
+  --staging <staging target> --production <production target> --bootstrap
+```
