@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Shared shell kernel for every experience layout: the experience chooser bar, device-local pins, the application directory, application and work-item panels over live summaries, the people and provenance panels, and the Jarvis conversation engine (history + ask/result) that Studio, Jarvis, Orbit, Commons, the homebases and the central assistant all reuse instead of fixtures.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Render the assistant's markdown links to same-origin paths and http(s) URLs as anchors after escaping, so an answer that names an application opens it instead of showing raw brackets.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Audience-aware hosting: one withAudience helper appends the layout's `?audience=` to every in-place frame (existing query, hash and audience kept), behind a device-remembered Summary view / Full application switch whose copy leaves the choice of view to the hosted page. The app panel reads the package record lazily (GET /api/swarm/apps/:name, and each installed member of a group) to list declared assistants by name with the concierge marked and online state only where the overview roster joins, and labels relationships as group members or Required / Optional app dependencies (not installed when absent from the catalog; a mixed dependency block shows a neutral note instead of tiers). The Commons game predicate moves here as isGameApp so the directory's Games chip and the Game room share it, and a layout may opt its People panel into the swarm roster from GET /api/user-directory with the non-admin fallback to the caller's own identity.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | A dependency absent from the caller's catalog is labelled 'not in your catalog': the catalog lists active apps visible to this viewer, so an installed but inactive or person-scoped app is not proof of 'not installed'
  */
 (() => {
   'use strict';
@@ -194,7 +195,7 @@
       else {
         const tiers = LIVE.dependencyTiers(detail.own.record.manifest);
         if (tiers.form === 'mixed') note = 'This package mixes the flat and tiered dependency forms, so no tiers are shown.';
-        else [['required', 'Required'], ['optional', 'Optional']].forEach(([tier, label]) => tiers[tier].apps.forEach(id => { if (!shown.has(id)) { shown.add(id); rows.push(relationRow(id, label, 'not installed')); } }));
+        else [['required', 'Required'], ['optional', 'Optional']].forEach(([tier, label]) => tiers[tier].apps.forEach(id => { if (!shown.has(id)) { shown.add(id); rows.push(relationRow(id, label, 'not in your catalog')); } }));
       }
       const empty = !rows.length && !note ? '<p class="note-line">No application relationships declared.</p>' : '';
       return `<div class="dependency-list">${rows.join('')}${empty}${note ? `<p class="note-line">${esc(note)}</p>` : ''}</div>`;

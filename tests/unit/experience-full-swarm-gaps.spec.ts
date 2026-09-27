@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Full-swarm gap closure: audience-aware hosting in Studio, Jarvis, Orbit and Commons (one shared helper, the Summary view / Full application switch remembered per layout), declared assistants and member / Required / Optional relationships read lazily from the package record (group members read one by one, 404 and failure states), the shared games predicate behind the directory chip and the Game room, the Commons swarm roster with the non-admin fallback, and the Jarvis agenda from the overview feed plus the Little Monsters calendar with empty, refused and not-installed states. Adapter reads are proven headlessly; the shells run in Chromium over the real static routes and the synthetic fixture.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | A dependency absent from the viewer catalog reads 'not in your catalog'
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
@@ -179,7 +180,7 @@ describe('declared assistants and relationships from the package record', () => 
     expect(assistants).toMatch(/Synthetic Bot\s*Concierge · assistant · working now/);
     expect(assistants).toMatch(/Synthetic reviewer\s*reviewer · declared in the package/);
     const relations = await detailText('relations');
-    expect(relations).toMatch(/Synthetic finance\s*Required/); expect(relations).toMatch(/synthetic-absent\s*Optional · not installed/);
+    expect(relations).toMatch(/Synthetic finance\s*Required/); expect(relations).toMatch(/synthetic-absent\s*Optional · not in your catalog/);
     expect(relations).not.toContain('Integration source');
     await page.keyboard.press('Escape');
     await openPanel('forge'); await detailSettled('assistants');
@@ -212,7 +213,7 @@ describe('declared assistants and relationships from the package record', () => 
     await openPanel('suite'); await detailSettled('assistants'); await detailSettled('relations');
     const relations = await detailText('relations');
     expect(relations).toMatch(/Synthetic ledger\s*Member \(required\)/); expect(relations).toMatch(/Synthetic finance\s*Member \(required\)/);
-    expect(relations).toMatch(/Synthetic atlas\s*Optional/); expect(relations).toMatch(/synthetic-missing\s*Optional · not installed/);
+    expect(relations).toMatch(/Synthetic atlas\s*Optional/); expect(relations).toMatch(/synthetic-missing\s*Optional · not in your catalog/);
     const assistants = await detailText('assistants');
     expect(assistants).toMatch(/Synthetic Bot\s*Concierge · assistant · from Synthetic ledger · working now/);
     expect(assistants).toMatch(/Synthetic finance assistant\s*assistant · from Synthetic finance · declared in the package/);

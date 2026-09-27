@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove the central assistant's gap closure over existing contracts. Kit level (injected fetch): a refused /ask carries the route's machine code, a done payload passes only well-formed `dispatched` items and the tool proposal through, an abort ends the wait with no further polls and drops a completion that lands after it, transcription envelopes fold into text / unconfigured / empty / failed from a multipart `audio` upload, and the delivered and ticket-cancel helpers hit their routes. Browser level (headless Chromium through the real static routes over the synthetic fixture): typed result cards (owner-checked visual by kind, '/'-only handoffs, provider fallback, approval card pointing at the Jarvis page), untrusted and refused visuals, partial background work tracked to settlement with delivered-once marking, files and cancel plus refusal, setup-needed and failed states with readback offered on each, the stale-completion guard across Stop / New / Home, and push-to-talk dictation that fills the composer without sending, labels not-set-up / empty / failed / denied honestly and never drives the core.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | A protocol-relative hand-off target (//host/x) is never linked, the same as an absolute one
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
@@ -151,7 +152,7 @@ afterEach(async () => { await context?.close(); await fixture?.close(); });
 describe('central assistant gap closure in Chromium over the real routes', () => {
   it('renders the typed result fields: the owner-checked visual by kind, "/"-only handoffs, the provider that answered and an approval card pointing at the Jarvis page', async () => {
     setResult({ status: 'done', answer: 'Synthetic typed answer.', files: [], taskId: 'task-9', dispatched: [], visual: VISUAL,
-      handoffs: [{ name: 'Synthetic ledger', deepLink: '/cockpit/?app=ledger' }, { name: 'Synthetic outside', deepLink: 'https://outside.example/x' }],
+      handoffs: [{ name: 'Synthetic ledger', deepLink: '/cockpit/?app=ledger' }, { name: 'Synthetic outside', deepLink: 'https://outside.example/x' }, { name: 'Synthetic relative', deepLink: '//outside.example/y' }],
       brainFallback: { providerUsed: 'Synthetic Provider', rung: 2, chainSource: 'fleet-default', failedEndpoint: { host: 'synthetic.host', model: 'synthetic-model' }, attempts: 2, failure: 'rate-limit' },
       packageToolProposal: { id: 'p1', app: 'ledger', toolName: 'post_entry', label: 'Synthetic post entry', mode: 'ask', input: { amount: 1 }, expiresAt: new Date(Date.now() + 600000).toISOString() } });
     await open(); await ask('Show me the typed answer');
@@ -163,13 +164,15 @@ describe('central assistant gap closure in Chromium over the real routes', () =>
     await page.waitForFunction(() => { const i = document.querySelector('.result-visual img') as HTMLImageElement | null; return Boolean(i && i.complete && i.naturalWidth > 0); });
     expect(await page.locator('.workspace-body a[href="/cockpit/?app=ledger"]').count()).toBeGreaterThan(0);
     expect(await page.locator('a[href^="https://outside"]').count()).toBe(0);
+    // A protocol-relative target (//host/x) leaves the swarm just like an absolute one: never linked.
+    expect(await page.locator('a[href^="//"]').count()).toBe(0);
     expect(await text('.provider-note')).toContain('Answered by Synthetic Provider');
     const card = page.locator('[data-part="proposal"]');
     expect(await card.innerText()).toMatch(/APPROVAL NEEDED[\s\S]*Synthetic post entry[\s\S]*Synthetic ledger · tool post_entry/);
     expect(await card.innerText()).toContain('This page cannot approve or run application tools.');
     expect(await card.locator('a').getAttribute('href')).toBe('/api/jarvis/');
     const ledger = await text('.action-ledger');
-    expect(ledger).toMatch(/request progress/i); expect(ledger).toContain('2 application handoffs'); expect(ledger).toContain('Answered by Synthetic Provider');
+    expect(ledger).toMatch(/request progress/i); expect(ledger).toContain('3 application handoffs'); expect(ledger).toContain('Answered by Synthetic Provider');
     expect(ledger).toContain('Answer received, with a visual (Agenda).');
     expect(ledger).not.toMatch(/tool activity/i);
     await page.getByRole('tab', { name: 'Applications' }).click();

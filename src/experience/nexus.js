@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Central assistant shell over the real Jarvis: the intent composer posts to /api/jarvis/ask on the shared browser thread, the ledger and workspace follow the actual job phases (sent, accepted, answered or failed), handoffs open real applications, the shelf lists the caller's Jarvis tasks, and the speaking core moves with the swarm voice route's playback amplitude (or labelled lifecycle pulses when only the browser engine is available). The scripted Vegas journey, fixture fares and prerecorded readback are gone.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Gap closure over existing contracts (ADR-164 D8, no backend change). The workspace renders the typed fields of the done /ask/result payload: the escaped answer, the owner-checked /api/jarvis/visuals image labelled by its kind, '/'-only handoff chips, the handed-off `dispatched` work tracked on GET /api/jarvis/tasks until it settles (files offered, delivered marked once through the route, the linked ticket cancellable through the owner-checked PUT /api/tickets/:ticketId/cancel with refusals shown), a `packageToolProposal` as an approval card pointing at the Jarvis page where approval happens, and `brainFallback` as "Answered by <provider>". Lifecycle is running / ready / partial / failed / setup-needed (job code NO_HOSTED_BRAIN or the 503 ai_disabled refusal) / stopped waiting, never "cancelled". The ledger is "Request progress": observed phases only, never tool activity. A per-request generation token plus an AbortController through LIVE.ask end the wait on Stop, New and Home and release the composer; a late completion of an older request can never reopen or overwrite the workspace. Push-to-talk dictation records with MediaRecorder, posts field `audio` to /api/voice/transcribe and fills the composer without sending, with honest not-set-up / denied / failed states; the microphone never drives the core. The readback control is offered on every terminal text (ready, partial, failed, setup-needed), and the composer keeps its draft and focus across repaints.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Hand-off links accept only same-origin paths (a protocol-relative '//host' target is shown by name, never linked), and a transcription failure the route reports with HTTP 200 no longer quotes that success status
  */
 (() => {
   'use strict';
@@ -121,7 +122,7 @@
   function transcribeMessage(r) {
     if (r.outcome === 'unconfigured') return r.fallback === 'browser' ? 'Server transcription is not set up here: this deployment is set to in-browser recognition, which this page does not use. Keep typing.' : 'Server transcription is not set up on this deployment. Keep typing.';
     if (r.outcome === 'empty') return 'No words were recognised in that recording. Try again, or keep typing.';
-    return r.status === 401 ? 'Transcription failed: your session has expired. Sign in again, or keep typing.' : `Transcription failed${r.status ? ` (HTTP ${r.status})` : ''}. Keep typing.`;
+    return r.status === 401 ? 'Transcription failed: your session has expired. Sign in again, or keep typing.' : `Transcription failed${r.status && r.status !== 200 ? ` (HTTP ${r.status})` : ''}. Keep typing.`;
   }
   function fillDraft(text) {
     state.draft = state.draft.trim() ? `${state.draft.trim()} ${text}` : text;
@@ -194,6 +195,8 @@
     if (p !== 'ready' && p !== 'partial') return `<p>${stage() === 0 ? 'Sending your request on your own Jarvis thread.' : 'The swarm accepted it and is working. You can watch the workspace take shape.'}</p>`;
     return S.answerHtml(state.result.answer);
   }
+  /** @description A hand-off target the page may link to: a same-origin path only ('/x'), never protocol-relative ('//host/x') or absolute. @param {unknown} u Candidate deepLink. @returns {boolean} Whether it is a local path. */
+  const isLocalPath = u => typeof u === 'string' && u.startsWith('/') && !u.startsWith('//') && !u.startsWith('/\\');
   function handoffApps() {
     const chips = (state.result && state.result.handoffs) || [];
     const named = snapshot.apps.filter(a => state.result && state.result.answer && new RegExp(`\\b${a.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(state.result.answer));
@@ -235,7 +238,7 @@
     return `<div class="result-card work-card" data-part="work"><div class="section-head"><h3>Background work</h3><span>${done} of ${state.work.length} finished · read from your Jarvis task list</span></div>${state.work.map(workItem).join('')}${state.workNote ? `<p class="result-note">${esc(state.workNote)}</p>` : ''}</div>`;
   }
   function overviewBody() {
-    const r = state.result, { chips, named } = handoffApps(), routed = chips.filter(c => c && typeof c.deepLink === 'string' && c.deepLink.startsWith('/'));
+    const r = state.result, { chips, named } = handoffApps(), routed = chips.filter(c => c && typeof c.deepLink === 'string' && isLocalPath(c.deepLink));
     return `<div class="section-head"><h3>The answer</h3>${btn('Speak it', 'readback', 'quiet')}</div>${S.answerHtml(r.answer)}${providerNote(r)}${visualCard(r.visual)}${proposalCard(r.packageToolProposal)}${workCard()}${routed.length ? `<h3>Open where the work lives</h3><div class="work-actions">${routed.map(c => link(`Open ${esc(c.name)} ↗`, c.deepLink, 'primary')).join('')}</div>` : ''}${named.length ? `<h3>Applications mentioned</h3><div class="work-actions">${named.map(a => a.navigable ? link(`${esc(a.name)} ↗`, a.href, 'secondary') : `<span class="secondary">${esc(a.name)}</span>`).join('')}</div>` : ''}${(r.files || []).length ? `<h3>Files</h3>${r.files.map(f => `<p>${S.fileLink(f) || esc(f.name || 'file')}</p>`).join('')}` : ''}<div class="work-actions">${link('Continue in Jarvis ↗', '/api/jarvis/', 'secondary')}${btn('View sources', 'sources-tab', 'quiet')}</div>`;
   }
   function shelfBody() {
@@ -248,7 +251,7 @@
   }
   function appsBody() {
     const { chips, named } = handoffApps();
-    const rows = chips.map(c => ({ name: c.name, href: typeof c.deepLink === 'string' && c.deepLink.startsWith('/') ? c.deepLink : '', note: 'Suggested by Jarvis for this request' })).concat(named.map(a => ({ name: a.name, href: a.navigable ? a.href : '', note: `${shell.suiteOf(a.suite).name} · mentioned in the answer` })));
+    const rows = chips.map(c => ({ name: c.name, href: typeof c.deepLink === 'string' && isLocalPath(c.deepLink) ? c.deepLink : '', note: 'Suggested by Jarvis for this request' })).concat(named.map(a => ({ name: a.name, href: a.navigable ? a.href : '', note: `${shell.suiteOf(a.suite).name} · mentioned in the answer` })));
     return `<div class="eyebrow">APPLICATIONS FOR THIS REQUEST</div><h2 style="font-size:25px;font-weight:400;margin-top:12px">${rows.length ? 'Where this can continue.' : 'No application was singled out.'}</h2>${rows.map(r => `<div class="source-row"><h3>${esc(r.name)}</h3><p>${esc(r.note)}</p>${r.href ? link('Open ↗', r.href, 'primary') : '<span class="secondary">Not available in your workspace</span>'}</div>`).join('') || '<p class="workspace-subtitle">Ask something that points at an application, or browse your swarm from the rail.</p>'}`;
   }
   function terminalBody(p) {

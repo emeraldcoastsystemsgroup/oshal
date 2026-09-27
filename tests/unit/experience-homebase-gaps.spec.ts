@@ -140,7 +140,7 @@ describe('homebase gap closure over the real routes', () => {
     expect(errors).toEqual([]);
   });
 
-  it('a ticket awaiting a human approval offers "Approve and resume": approval_required moves to approved and the work list reloads', async () => {
+  it('a ticket awaiting a human approval offers "Approve": approval_required moves to approved and the work list reloads', async () => {
     approvalTicket('operator_approve_to_resume', 'approval_gate');
     await open('/homebase?preset=company', `[data-work="ticket:${APPROVAL_ID}"]`);
     await page.locator(`[data-work="ticket:${APPROVAL_ID}"]`).click();
@@ -148,7 +148,7 @@ describe('homebase gap closure over the real routes', () => {
     const facts = await page.locator('.ticket-facts').innerText();
     expect(facts).toContain('Approval required'); expect(facts).toContain('approval gate'); expect(facts).toContain('operator approve to resume');
     expect(await dialogText()).not.toMatch(/Mark reviewed|Reviewed/);
-    await page.getByRole('button', { name: 'Approve and resume' }).click();
+    await page.getByRole('button', { name: 'Approve', exact: true }).click();
     await toastHas('the queue picks it up on its next cycle');
     expect(fixture.state.tickets.find(t => t.ticketId === APPROVAL_ID)?.status).toBe('approved');
     expect(fixture.state.calls).toContain(`PUT /api/tickets/${APPROVAL_ID}/status`);
@@ -161,7 +161,7 @@ describe('homebase gap closure over the real routes', () => {
     fixture.state.status['homebase:ticket-status'] = 404;
     await open('/homebase?preset=company', `[data-work="ticket:${APPROVAL_ID}"]`);
     await page.locator(`[data-work="ticket:${APPROVAL_ID}"]`).click();
-    await page.getByRole('button', { name: 'Approve and resume' }).click();
+    await page.getByRole('button', { name: 'Approve', exact: true }).click();
     await page.waitForFunction(() => document.getElementById('ticket-feedback')?.textContent?.includes('HTTP 404'));
     expect(await page.locator('#ticket-feedback').innerText()).toBe('Could not approve this ticket (HTTP 404: Ticket not found).');
     expect(fixture.state.tickets.find(t => t.ticketId === APPROVAL_ID)?.status).toBe('approval_required');
@@ -171,12 +171,12 @@ describe('homebase gap closure over the real routes', () => {
     await page.locator(`[data-work="ticket:${APPROVAL_ID}"]`).click();
     await page.waitForSelector('.ticket-facts');
     expect(await dialogText()).toContain('Nothing here waits for your approval: its child tickets dispatch on their own.');
-    expect(await page.getByRole('button', { name: 'Approve and resume' }).count()).toBe(0);
+    expect(await page.getByRole('button', { name: 'Approve', exact: true }).count()).toBe(0);
     await page.keyboard.press('Escape');
     await page.locator('[data-work="ticket:11111111-1111-4111-8111-111111111111"]').click();
     await page.waitForSelector('.ticket-facts');
     expect(await page.locator('.ticket-facts').innerText()).toContain('Working');
-    expect(await page.getByRole('button', { name: 'Approve and resume' }).count()).toBe(0);
+    expect(await page.getByRole('button', { name: 'Approve', exact: true }).count()).toBe(0);
     await page.keyboard.press('Escape');
     fixture.state.status['homebase:ticket'] = 404;
     await page.locator(`[data-work="ticket:${APPROVAL_ID}"]`).click();

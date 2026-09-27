@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Catalog `related` now means a group's installed required members (plan.members), not the plan's integrationSources, which list surfaces and outbound offers rather than a dependency. Adds the viewer-scoped app-detail read (GET /api/swarm/apps/:name) with two pure readers over it: dependencyTiers (the two-form rule of scripts/oshal-app-dependencies.js, a mixed block yields no tiers) and declaredAssistants (manifest bots by name, the explicit chatBot as concierge, online state only where the agentId joins the overview roster). Adds the swarm roster read over GET /api/user-directory (label without its account parenthetical, account source and sign-in status, never presence) and the Little Monsters agenda read (this month and next from /api/education/calendar, de-duplicated and dated) so Commons and Jarvis share them without touching the homebase.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Central-assistant gap closure over existing contracts only. ask() takes an AbortSignal threaded through the POST, every /ask/result poll and the sleep between them, so a page that stops, starts over or goes home ends the wait at once (status 'aborted') instead of polling a request nobody is watching; a refused /ask now carries the route's machine `code` (the 503 ai_disabled posture), and a done payload passes through the well-formed `dispatched` hand-offs and the `packageToolProposal` the route already returns. New helpers: transcribe() posts one recording as multipart field `audio` to /api/voice/transcribe and folds the route's envelope into text / unconfigured / empty / failed; jarvis.markDelivered() and jarvis.cancelWork() reach POST /api/jarvis/tasks/:id/delivered and the owner-checked PUT /api/tickets/:ticketId/cancel.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Package adapters for the homebase gap closure over existing routes only: Little Monsters class activity (teacher analytics) and classwork creation through the route that also writes the class calendar event, a ticket read and its status transition, and the caller's saved content drafts. Each returns the route's own answer, refusals included.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | JSDoc for the background-work client members (markDelivered, cancelWork)
  */
 (function attach(root, factory) {
   'use strict';
@@ -627,8 +628,18 @@
         history: function (sid) { return getJson('/api/jarvis/history' + (sid ? '?sessionId=' + encodeURIComponent(sid) : '')); },
         tasks: function () { return getJson('/api/jarvis/tasks'); },
         /** Mark one settled shelf task announced (POST /api/jarvis/tasks/:id/delivered); the route itself only flips rows that are not briefing-sourced. */
+        /**
+         * @description Mark one settled background item as announced, through the route's own rule (briefing-sourced rows are left alone by the server).
+         * @param {string} id Jarvis task id.
+         * @returns {Promise<{ok:boolean,status:number,body:any}>} The route's answer.
+         */
         markDelivered: function (id) { return sendJson('/api/jarvis/tasks/' + encodeURIComponent(id) + '/delivered', 'POST'); },
         /** Cancel the ticket behind a handed-off task through the owner-checked PUT /api/tickets/:ticketId/cancel; a refusal comes back with its status. */
+        /**
+         * @description Ask the ticket route to cancel background work the caller started; the route checks ownership and refuses otherwise.
+         * @param {string} ticketId Ticket behind the dispatched item.
+         * @returns {Promise<{ok:boolean,status:number,body:any}>} The route's answer, including a refusal.
+         */
         cancelWork: function (ticketId) { return sendJson('/api/tickets/' + encodeURIComponent(ticketId) + '/cancel', 'PUT'); }
       },
       directory: function () { return getJson('/api/user-directory'); },

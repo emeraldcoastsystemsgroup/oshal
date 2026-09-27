@@ -8,7 +8,8 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | A preset can host its application: the classroom lists Little Monsters' admitted tools (from the same ribbon profile the cockpit renders, per-class tools kept out of the navigation, teacher-only tools shown to teachers) and opens them in place in a frame that follows the skin; the frame's navigation messages (the cockpit's own shapes) switch tools, and only admitted tools ever open. The home paints from identity and catalog (readyCore) and fills work in when it arrives.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Paint the preset skin on load when the device remembers none: the style switcher initialises before this script selects the preset, so the default was never applied to the document.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | The hosted page is asked for its audience with `?audience=` (was `?view=`): store pages and the cockpit already use `view` for their own tabs, so the audience request must not collide with them
- * 6 | maintainer@emeraldcoastsystemsgroup.com | Close the homebase gaps over existing routes: the teacher roster shows each learner's Little Monsters activity (level, streak, quiz average, cards reviewed) and a class summary from the teacher analytics read, labelled as activity, never completion; teachers post classwork from the shell to the package route that also writes the class calendar event; a ticket's project dialog reads its current state, reason and next action and offers "Approve and resume" (approval_required to approved) only when a human approval is what it waits for, rendering the route's refusal; the personal workspace lists the caller's saved drafts and newest finished Jarvis task; the learner checklist opens My Day in place; "Configure home" is hidden for guests. The open dialog now survives a repaint with its record id.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Close the homebase gaps over existing routes: the teacher roster shows each learner's Little Monsters activity (level, streak, quiz average, cards reviewed) and a class summary from the teacher analytics read, labelled as activity, never completion; teachers post classwork from the shell to the package route that also writes the class calendar event; a ticket's project dialog reads its current state, reason and next action and offers "Approve" (approval_required to approved) only when a human approval is what it waits for, rendering the route's refusal; the personal workspace lists the caller's saved drafts and newest finished Jarvis task; the learner checklist opens My Day in place; "Configure home" is hidden for guests. The open dialog now survives a repaint with its record id.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | The ticket action reads 'Approve': the route moves Approval Required to Approved, and what follows depends on the ticket (dispatch, resume), so the label names only the transition
  */
 (() => {
   'use strict';
@@ -383,7 +384,7 @@
     const slot = document.getElementById('ticket-slot');
     if (slot && slot.dataset.ticket === w.ref) slot.innerHTML = ticketStateMarkup(w, r);
   }
-  /** @description State, reason and next action from the ticket's metadata mirror; "Approve and resume" only for approval_required when a human approval is what it waits for. */
+  /** @description State, reason and next action from the ticket's metadata mirror; "Approve" only for approval_required when a human approval is what it waits for. */
   function ticketStateMarkup(w, r) {
     if (!r.ok || !r.body) return `<p class="subtle">This ticket’s current state could not be read (HTTP ${r.status}${esc(refusal(r))}).</p>`;
     const t = r.body, meta = t.metadata && typeof t.metadata === 'object' ? t.metadata : {}, status = String(t.status || '');
@@ -393,7 +394,7 @@
     const rows = `<dl class="ticket-facts">${facts.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`;
     if (status !== 'approval_required') return rows;
     if (next === 'none_children_dispatch_independently') return `${rows}<p>Nothing here waits for your approval: its child tickets dispatch on their own.</p>`;
-    return `${rows}<p>Approving moves this ticket from Approval Required to Approved, where the queue picks it up on its next cycle. The server decides whether you may.</p><div class="dialog-actions">${btn('Approve and resume', 'ticket-approve', 'button primary', `data-work="${esc(w.id)}"`)}</div><p class="subtle" id="ticket-feedback" role="status"></p>`;
+    return `${rows}<p>Approving moves this ticket from Approval Required to Approved, where the queue picks it up on its next cycle. The server decides whether you may.</p><div class="dialog-actions">${btn('Approve', 'ticket-approve', 'button primary', `data-work="${esc(w.id)}"`)}</div><p class="subtle" id="ticket-feedback" role="status"></p>`;
   }
   /**
    * @description Ask the ticket route for approval_required → approved. The route enforces ownership and the transition table; its refusal is shown as text in the dialog.
