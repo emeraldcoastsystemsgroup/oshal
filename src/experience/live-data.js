@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Two-phase snapshot: identity and catalog first (readyCore) so a home can paint at once; work, tasks and overview merge into the same snapshot afterwards (ready). Adds the ribbon-profile read an experience uses to host an application's admitted tools.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Live data adapter for the experience shells. Joins the caller-scoped home plan, active app listing and admitted navigation into one catalog, merges tickets and Jarvis tasks into work items, wraps Jarvis ask/result polling on the shared browser thread, reads per-package home-summary probes with the Home view's pointer caps, and exposes Little Monsters, Purchasing, Finance and voice reads. It replaces every fixture the design prototypes rendered; nothing here invents data when a source is unavailable, callers get the HTTP status and render the honest state.
  */
 (function attach(root, factory) {
@@ -243,29 +244,38 @@
     }
     function list(res, key) { return res.ok && res.body && Array.isArray(res.body[key]) ? res.body[key] : []; }
 
-    /** @description Load everything the shells share, in parallel; a failed source is reported, never faked. */
-    async function load() {
-      var results = await Promise.all([
-        getJson('/api/auth/user'), getJson('/api/swarm/apps/home-plan'), getJson('/api/swarm/apps?status=active'),
-        getJson('/api/ui/workspaces'), getJson('/api/jarvis/tasks'), getJson('/api/tickets?limit=100'), getJson('/api/jarvis/overview')
-      ]);
-      var auth = results[0], plan = results[1], apps = results[2], ws = results[3], tasks = results[4], tickets = results[5], overview = results[6];
-      var sources = { auth: auth.status, plan: plan.status, apps: apps.status, workspaces: ws.status, tasks: tasks.status, tickets: tickets.status, overview: overview.status };
+    function missing(sources) { return Object.keys(sources).filter(function (k) { return sources[k] !== 200; }); }
+    /** @description Phase one: the signed-in identity and the caller's catalog, enough to paint a home; a failed source is reported, never faked. */
+    async function loadCore() {
+      var results = await Promise.all([getJson('/api/auth/user'), getJson('/api/swarm/apps/home-plan'), getJson('/api/swarm/apps?status=active'), getJson('/api/ui/workspaces')]);
+      var auth = results[0], plan = results[1], apps = results[2], ws = results[3];
       var catalog = mergeApps({ plan: list(plan, 'apps'), apps: list(apps, 'apps'), workspaces: list(ws, 'workspaces') });
-      var work = mergeWork({ tickets: list(tickets, 'tickets'), tasks: list(tasks, 'tasks') }, catalog);
-      var ov = overview.ok && overview.body ? overview.body : {};
-      var bots = Array.isArray(ov.bots) ? ov.bots : [];
-      var openFromWork = work.filter(function (w) { return w.kind === 'ticket' && w.status.open; }).length;
       snapshot = {
-        me: deriveIdentity(auth.body), apps: catalog, suites: buildSuites(catalog), work: work, bots: bots,
-        botsOnline: bots.filter(function (b) { return b.online; }).length,
-        openTickets: ov.activity && typeof ov.activity.openCount === 'number' ? ov.activity.openCount : openFromWork,
-        comms: ov.comms || null, calendarEvents: ov.calendar && Array.isArray(ov.calendar.events) ? ov.calendar.events : [],
-        sources: sources, loadedAt: new Date(),
-        unavailable: Object.keys(sources).filter(function (k) { return sources[k] !== 200; })
+        me: deriveIdentity(auth.body), apps: catalog, suites: buildSuites(catalog), work: [], bots: [], botsOnline: 0, openTickets: 0, comms: null, calendarEvents: [],
+        sources: { auth: auth.status, plan: plan.status, apps: apps.status, workspaces: ws.status }, loadedAt: new Date(), unavailable: [], workLoaded: false
       };
+      snapshot.unavailable = missing(snapshot.sources);
       return snapshot;
     }
+    /** @description Phase two: recent work, Jarvis tasks and the swarm overview, merged INTO the same snapshot (same arrays) so a shell that already painted sees them on its next render. */
+    async function loadWork(snap) {
+      var results = await Promise.all([getJson('/api/jarvis/tasks'), getJson('/api/tickets?limit=100'), getJson('/api/jarvis/overview')]);
+      var tasks = results[0], tickets = results[1], overview = results[2];
+      var work = mergeWork({ tickets: list(tickets, 'tickets'), tasks: list(tasks, 'tasks') }, snap.apps);
+      var ov = overview.ok && overview.body ? overview.body : {};
+      var bots = Array.isArray(ov.bots) ? ov.bots : [];
+      snap.work.length = 0; Array.prototype.push.apply(snap.work, work);
+      snap.bots.length = 0; Array.prototype.push.apply(snap.bots, bots);
+      snap.botsOnline = bots.filter(function (b) { return b.online; }).length;
+      var openFromWork = work.filter(function (w) { return w.kind === 'ticket' && w.status.open; }).length;
+      snap.openTickets = ov.activity && typeof ov.activity.openCount === 'number' ? ov.activity.openCount : openFromWork;
+      snap.comms = ov.comms || null; snap.calendarEvents = ov.calendar && Array.isArray(ov.calendar.events) ? ov.calendar.events : [];
+      snap.sources.tasks = tasks.status; snap.sources.tickets = tickets.status; snap.sources.overview = overview.status;
+      snap.unavailable = missing(snap.sources); snap.workLoaded = true; snap.loadedAt = new Date();
+      return snap;
+    }
+    /** @description Load everything the shells share: both phases, in order. */
+    async function load() { return loadWork(await loadCore()); }
 
     /** @description Ask the app's own home-summary probes in the viewer's session; cached briefly per app. */
     async function probeSummary(app) {
@@ -415,11 +425,13 @@
         history: function (sid) { return getJson('/api/jarvis/history' + (sid ? '?sessionId=' + encodeURIComponent(sid) : '')); },
         tasks: function () { return getJson('/api/jarvis/tasks'); }
       },
-      directory: function () { return getJson('/api/user-directory'); }
+      directory: function () { return getJson('/api/user-directory'); },
+      /** The caller-scoped ribbon profile of one application: the admitted surfaces the cockpit ribbon itself renders. */
+      profile: function (name) { return getJson('/api/ui/profile?name=' + encodeURIComponent(name)); }
     };
 
     return {
-      load: load, get snapshot() { return snapshot; }, probeSummary: probeSummary, ask: ask, speak: speak,
+      load: load, loadCore: loadCore, loadWork: loadWork, get snapshot() { return snapshot; }, probeSummary: probeSummary, ask: ask, speak: speak,
       sessionId: sessionId, rollSession: rollSession, prefs: prefs, packages: packages, getJson: getJson, sendJson: sendJson
     };
   }
@@ -435,7 +447,8 @@
     Object.keys(client).forEach(function (k) {
       if (!(k in api)) Object.defineProperty(api, k, { get: function () { return client[k]; }, enumerable: true });
     });
-    api.ready = client.load();
+    api.readyCore = client.loadCore();
+    api.ready = api.readyCore.then(client.loadWork);
   }
   return api;
 });

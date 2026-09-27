@@ -122,6 +122,20 @@ describe('experience adapter: client over an injected fetch', () => {
     expect(await client.probeSummary({ id: 'none', probes: [] })).toMatchObject({ none: true, ok: false });
   });
 
+  it('paints in two phases: identity and catalog first, then work merged into the same snapshot arrays', async () => {
+    const { fetch, calls } = fakeFetch({ ...baseRoutes, 'GET /api/tickets': okJson({ tickets: [{ ticketId: 't1', title: 'Open ticket', status: 'in_process', ticketType: 'x', updatedAt: new Date().toISOString() }] }), 'GET /api/ui/profile?name=little-monsters': okJson({ profile: { ribbon: { items: [{ id: 'tool-lm-dashboard' }] } } }) });
+    const client = LIVE.createClient({ fetch, storage: memoryStorage() });
+    const core = await client.loadCore();
+    expect(core.apps).toHaveLength(1); expect(core.work).toEqual([]); expect(core.workLoaded).toBe(false); expect(core.unavailable).toEqual([]);
+    expect(calls.map(c => c.url)).not.toContain('/api/tickets?limit=100');
+    const workRef = core.work;
+    const full = await client.loadWork(core);
+    expect(full).toBe(core); expect(core.work).toBe(workRef); expect(core.work).toHaveLength(1); expect(core.workLoaded).toBe(true); expect(core.unavailable).toEqual(['overview']);
+    expect(calls.map(c => c.url)).toContain('/api/tickets?limit=100');
+    const profile = await client.packages.profile('little-monsters');
+    expect(profile.ok).toBe(true); expect(profile.body.profile.ribbon.items[0].id).toBe('tool-lm-dashboard');
+  });
+
   it('asks Jarvis on the stored thread, polls to done, and reports the answer shape the page renders', async () => {
     let polls = 0;
     const { fetch, calls } = fakeFetch({

@@ -188,6 +188,43 @@ describe('experience shells over the real routes', () => {
     await page.reload(); await page.waitForFunction(() => document.body.innerText.includes('Open Little Monsters to join a class'));
   });
 
+  it('Classroom preset hosts the Little Monsters tools in place: admitted tools by role, opened in a frame, bridge navigation honoured', async () => {
+    await open('/homebase?preset=classroom', '.home-shell');
+    await page.waitForSelector('.tool-nav');
+    const nav = await page.locator('.tool-nav').innerText();
+    expect(nav).toContain('Home'); expect(nav).toContain('My Day'); expect(nav).toContain('Teacher'); expect(nav).not.toContain('Synthetic Science');
+    expect(await page.locator('.tools-row .app-tile').count()).toBe(3);
+    await page.locator('.tool-nav button', { hasText: 'My Day' }).click();
+    await page.waitForSelector('#tool-frame');
+    expect(await page.locator('#tool-frame').getAttribute('src')).toBe('/fixture/surface/lm-myday');
+    expect(await page.locator('.breadcrumb').innerText()).toContain('My Day');
+    expect(await page.locator('.hero').count()).toBe(0);
+    await page.frameLocator('#tool-frame').locator('#post-class').click();
+    await page.waitForFunction(() => document.querySelector('#tool-frame')?.getAttribute('src') === '/fixture/surface/lm-class-c1');
+    await page.frameLocator('#tool-frame').locator('#post-navigate').click();
+    await page.waitForFunction(() => document.querySelector('#tool-frame')?.getAttribute('src') === '/fixture/surface/lm-myday');
+    await page.getByRole('button', { name: /Back to our classroom/ }).click();
+    await page.waitForSelector('.hero');
+    fixture.state.education.me = { ...fixture.state.education.me, role: 'student' };
+    await page.reload(); await page.waitForSelector('.tool-nav');
+    expect(await page.locator('.tool-nav').innerText()).not.toContain('Teacher');
+    await page.locator('.tool-nav button', { hasText: 'Home' }).click(); await page.waitForSelector('#tool-frame');
+    await page.frameLocator('#tool-frame').locator('#post-teacher').click();
+    await page.waitForFunction(() => document.getElementById('toast')?.textContent?.includes('for teachers'));
+    expect(await page.locator('#tool-frame').getAttribute('src')).toBe('/fixture/surface/lm-dashboard');
+    expect(errors).toEqual([]);
+  });
+
+  it('a homebase paints from identity and catalog before the work sources answer, then fills the work in', async () => {
+    fixture.state.delays.tasks = 3000;
+    const started = Date.now();
+    await open('/homebase?preset=classroom', '.home-shell');
+    await page.waitForFunction(() => !document.body.innerText.includes('Reading your home'));
+    expect(Date.now() - started).toBeLessThan(2500);
+    await page.waitForFunction(() => document.body.innerText.includes('Synthetic ledger review'), null, { timeout: 9000 });
+    expect(errors).toEqual([]);
+  });
+
   it('Business preset: projects from tickets, a dense account table and directory people', async () => {
     await open('/homebase?preset=company', '.home-shell');
     await page.waitForSelector('.finance-table');
@@ -239,6 +276,7 @@ describe('experience shells over the real routes', () => {
     expect(await page.evaluate(() => document.body.dataset.skin)).toBe('jarvis');
     await page.selectOption('[data-role="experience-picker"]', 'orbit');
     await page.waitForURL(/\/orbit$/);
+    await page.waitForSelector('.full-orbit');
     expect(await page.locator('.full-orbit').count()).toBe(1);
   });
 

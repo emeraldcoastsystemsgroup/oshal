@@ -59,7 +59,15 @@ export function experienceState() {
       assignments: [{ assignment_id: 'a1', class_id: 'c1', title: 'Observe a seed', description: 'Write one observation.', status: 'open', due_date: day(1), class_name: 'Synthetic Science', assignment_type: 'homework' }],
       events: [{ event_id: 'e1', class_id: 'c1', student_id: null, title: 'Science circle', event_date: day(0), event_time: '09:00:00', event_type: 'lecture', class_name: 'Synthetic Science', subject: 'Science' }],
       created: [] as unknown[],
+      // The ribbon profile items the classroom reads to host the application's tools; the class tool carries the class id prefix like the real manifest template.
+      tools: [
+        { id: 'tool-lm-dashboard', label: 'Home', icon: 'codicon codicon-home', section: 'top', toolUi: { iframeUrl: '/fixture/surface/lm-dashboard' } },
+        { id: 'tool-lm-myday', label: 'My Day', icon: 'codicon codicon-calendar', section: 'top', toolUi: { iframeUrl: '/fixture/surface/lm-myday' } },
+        { id: 'tool-lm-teacher', label: 'Teacher', icon: 'codicon codicon-mortar-board', section: 'bottom', toolUi: { iframeUrl: '/fixture/surface/lm-teacher' } },
+        { id: 'tool-lm-class-c1', label: 'Synthetic Science', icon: 'codicon codicon-book', section: 'top', toolUi: { iframeUrl: '/fixture/surface/lm-class-c1' } },
+      ],
     },
+    delays: { tasks: 0 },
     purchasing: { lists: [{ list_id: 'l1', name: 'Synthetic list', status: 'active', item_count: '1' }], items: [{ item_id: 'i1', list_id: 'l1', title: 'Synthetic milk', quantity: 1, unit_price: '2.50', status: 'pending', created_at: iso(-24 * HOUR) }], added: [] as unknown[], removed: [] as string[] },
     finance: { status: 200, aggregate: { netWorth: { net: 1234.5, assets: 2000, liabilities: 765.5 }, accounts: [{ name: 'Synthetic Checking', mask: '0001', type: 'depository', subtype: 'checking', balance: 1500 }], spendByMonth: [{ month: '2026-08', spend: 100, income: 50 }, { month: '2026-09', spend: 200, income: 60 }] }, syncedAt: iso(-48 * HOUR), tiles: [{ id: 'nw', label: 'Cached net worth', value: 'USD 1,234.50' }] },
     directory: { status: 200, users: [{ sub: 'synthetic-user', issuer: 'x', label: 'Synthetic Teacher (google; active)', source: 'verified-sign-in', signIn: 'active' }, { sub: 'other', issuer: 'x', label: 'Other Person (google; active)', source: 'verified-sign-in', signIn: 'active' }] },
@@ -78,7 +86,7 @@ function swarmRoutes(app: express.Application, state: ExperienceState) {
   app.get('/api/swarm/apps', (_req, res) => res.status(statusOr(state, 'apps')).json({ apps: state.apps.map(a => a.summary) }));
   app.get('/api/ui/workspaces', (_req, res) => res.status(statusOr(state, 'workspaces')).json({ workspaces: state.apps.map(a => a.workspace).filter(Boolean) }));
   app.get('/api/tickets', (_req, res) => res.status(statusOr(state, 'tickets')).json({ tickets: state.tickets, count: state.tickets.length }));
-  app.get('/api/jarvis/tasks', (_req, res) => res.status(statusOr(state, 'tasks')).json({ tasks: state.tasks }));
+  app.get('/api/jarvis/tasks', (_req, res) => setTimeout(() => res.status(statusOr(state, 'tasks')).json({ tasks: state.tasks }), state.delays.tasks));
   app.get('/api/jarvis/overview', (_req, res) => res.json({ bots: state.bots, activity: { openCount: state.tickets.filter(t => t.status !== 'complete').length, tickets: [] }, comms: { digest: null, signals: [] }, calendar: { events: [] } }));
   app.get('/api/jarvis/history', (_req, res) => res.json({ turns: state.history }));
   app.post('/api/jarvis/ask', express.json(), (req, res) => {
@@ -99,13 +107,18 @@ function swarmRoutes(app: express.Application, state: ExperienceState) {
   app.post('/api/voice/synthesize', (_req, res) => res.status(state.voiceStatus).json({ error: 'Synthetic voice unavailable' }));
   app.get('/fixture/probe/:name', (req, res) => res.status(statusOr(state, `probe:${req.params.name}`)).json({ tiles: [{ id: 'reported', label: 'Reported items', value: '2', tone: 'neutral' }], items: [{ text: `Update from ${req.params.name}`, detail: 'A synthetic owner-provided detail.', highlight: true }], asOf: iso(0) }));
   app.get('/fixture/surface/:name', (req, res) => res.type('html').send(`<!doctype html><html><head><title>Synthetic ${req.params.name}</title>
-  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css"><script src="/shared/ui/js/surface-theme.js"></script></head><body><h1>Opened ${req.params.name}</h1></body></html>`));
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css"><script src="/shared/ui/js/surface-theme.js"></script></head><body><h1>Opened ${req.params.name}</h1>
+  <button id="post-navigate" onclick="parent.postMessage({ type: 'lm-navigate', view: 'myday' }, '*')">navigate</button><button id="post-class" onclick="parent.postMessage({ type: 'lm-open-class', classId: 'c1' }, '*')">class</button><button id="post-teacher" onclick="parent.postMessage({ type: 'lm-navigate', view: 'teacher' }, '*')">teacher</button><button id="post-changed" onclick="parent.postMessage('lm-classes-changed', '*')">changed</button></body></html>`));
   app.get('/api/user-directory', (_req, res) => res.status(state.directory.status).json({ users: state.directory.users }));
 }
 
 /** @description Synthetic package routes: Little Monsters, Purchasing and Finance contracts as the shells read them. */
 function packageRoutes(app: express.Application, state: ExperienceState) {
   const edu = state.education, shop = state.purchasing, fin = state.finance;
+  app.get('/api/ui/profile', (req, res) => {
+    if (String(req.query.name || '') !== 'little-monsters') { res.status(404).json({ error: 'Synthetic profile unavailable' }); return; }
+    res.status(statusOr(state, 'profile')).json({ profile: { name: 'little-monsters', displayName: 'Little Monsters', theme: 'little-monsters', defaultView: 'lm-dashboard', ribbon: { items: edu.tools } } });
+  });
   app.get('/api/education/me', (_req, res) => edu.meStatus === 200 ? res.json(edu.me) : res.status(edu.meStatus).json({ error: 'Synthetic learner missing' }));
   app.get('/api/education/classes', (_req, res) => res.json({ classes: edu.classes }));
   app.get('/api/education/classes/:id/students', (req, res) => edu.students[req.params.id] ? res.json({ students: edu.students[req.params.id] }) : res.status(403).json({ error: 'You do not teach this class' }));
