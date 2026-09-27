@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add bounded, redacted applied authorization history under current application and tenant authority.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Serve the installed source asset from compiled runtimes and redact file delivery failures.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Adapt the read-only package grant plan. Same authenticated, same-origin, JSON-bounded adapter as every other management call; a service that does not implement it refuses rather than answering an empty plan.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | AUTH-07: GET /catalog-migrations lists one application's reviewable catalog migrations (management read) and POST /catalog-migrations/apply approves one with the same previewId + idempotencyKey body as /apply, behind the same authentication, same-origin and JSON bounds. A service without the methods refuses rather than answering empty.
  */
 import path from 'node:path';
 import { Router, json, type ErrorRequestHandler, type Request, type RequestHandler, type Response } from 'express';
@@ -72,6 +73,11 @@ export function createAuthorizationRoutes(service: ApplicationAuthorizationManag
     const input = { ...req.query, ...(typeof req.query.limit === 'string' && /^[0-9]+$/.test(req.query.limit) ? { limit: Number(req.query.limit) } : {}) };
     return service.auditHistory(actor, AuthorizationAuditSchema.parse(input));
   }));
+  router.get('/catalog-migrations', run(async (req, actor) => {
+    const input = z.object({ app: z.string().regex(/^[a-z0-9][a-z0-9-]{1,63}$/) }).strict().parse(req.query);
+    if (!service.catalogMigrations) throw new Error('catalog_migrations_unsupported');
+    return service.catalogMigrations(actor, input);
+  }));
   router.use(authorizationSameOrigin, json({ limit: '32kb' }));
   router.post('/effective', run(async (req, actor) => service.effective(actor, AuthorizationTargetSchema.parse(req.body))));
   router.post('/explain', run(async (req, actor) => service.explain(actor, AuthorizationExplainSchema.parse(req.body))));
@@ -84,6 +90,12 @@ export function createAuthorizationRoutes(service: ApplicationAuthorizationManag
   }));
   router.post('/preview', run(async (req, actor) => service.previewChange(actor, AuthorizationChangeSchema.parse(req.body))));
   router.post('/apply', run(async (req, actor) => service.applyChange(actor, AuthorizationApplySchema.parse(req.body))));
+  // Approves a reviewed catalog migration; the next activation of that exact package revision applies it.
+  router.post('/catalog-migrations/apply', run(async (req, actor) => {
+    const input = AuthorizationApplySchema.parse(req.body);
+    if (!service.applyCatalogMigration) throw new Error('catalog_migrations_unsupported');
+    return service.applyCatalogMigration(actor, input);
+  }));
   if (options.authorizationTool) {
     const tool = options.authorizationTool;
     router.post('/tool', async (req, res) => {

@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Reserve the global business-membership audit namespace against application registration.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Expose the registered application names for read-only review surfaces. effective() already answers one app at a time, but a joined access review has to ask about every registered app INCLUDING the ones the subject is denied — which is the half of the answer ownCatalog() cannot give, because it returns only what is already permitted.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Add packageGrantPlan: one application plus the applications it declares it cannot run without, each classified into the ONE /access change it needs. Read-only by construction — it opens no transaction, writes no assignment and bumps no revision — and every application in the set is gated on the CALLER'S own management read, so a prerequisite the caller cannot administer reports its name and nothing else.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | AUTH-07 reviewed catalog migration. validateRegistration classifies a changed catalog against the recorded catalog its assignments were granted under instead of refusing every change: a non-widening revision passes, and registerApp re-stamps the assignments in the same policy transaction that records the new catalog and writes the audit event. A widening or breaking revision still refuses, now with one stored review (previewId) that an application-wide administrator lists and approves through catalogMigrations/applyCatalogMigration; the next activation of exactly that revision applies it. Grants the new catalog does not define are removed, never carried, so they cannot revive.
  */
 /** ADR-149 authoritative management and execution service. No swarm-admin business bypass. */
 import { randomUUID } from 'node:crypto';
@@ -27,6 +28,7 @@ import {
   type AuthorizationAuditInput, type AuthorizationAuditPage,
   type AuthorizationManagementScope,
   type PackageGrantPlan, type PackageGrantPlanInput,
+  type AuthorizationCatalogMigrationPreview, type AuthorizationCatalogMigrationReceipt,
 } from '@/shared/application-authorization';
 import type { AuthorizationAssignment, AuthorizationState, AuthorizationStore, StoredAuthorizationPreview, AuthorizationTransaction } from './types';
 import { ApplicationAuthorizationError } from './types';
@@ -36,6 +38,12 @@ import { buildPackageGrantPlan, type PackageDependencyFacts, type PackageGrantAp
 import { parseAuthorizationApply, parseAuthorizationChange, parsePackageGrantPlanInput } from './change-validation';
 import { readAuthorizationAudit } from './audit-history';
 import { mergeManagementScopes, resolveManagementRoles, storedManagementScopes } from './management-policy';
+import {
+  CATALOG_MIGRATION_REVIEW_TTL_MS, CatalogMigrationRequiredError, applyCatalogMigrationPlan, catalogMigrationNeedsApproval,
+  planCatalogMigration, publicCatalogMigration, recordCatalogMigrationReview, staleCatalogRevisions, verifiedSnapshots,
+  type CatalogMigrationPlan,
+} from './catalog-migration';
+import type { AuthorizationCatalogSnapshot, StoredCatalogMigration } from './types';
 const logger = createChildLogger({ module: 'application-authorization' });
 
 export interface ApplicationAuthorizationServiceOptions {
@@ -45,6 +53,8 @@ export interface ApplicationAuthorizationServiceOptions {
   refreshActor?: (actor: AuthorizationActor) => Promise<AuthorizationActor | null>;
   resolveTier?: (app: string, actor: AuthorizationActor) => Promise<{ tier: AuthorizationTier; explicit: boolean }>;
   verifyApproval?: (actor: AuthorizationActor, preview: AuthorizationPreview, reference: string) => Promise<boolean>;
+  /** Independent verifier for a catalog migration that changes the approver's own or a group's sensitive grants. */
+  verifyCatalogMigrationApproval?: (actor: AuthorizationActor, preview: AuthorizationCatalogMigrationPreview, reference: string) => Promise<boolean>;
   /** Provider must scope directory inventory to actor.managementScopes; this is not a business-data read. */
   inventory?: (actor: AuthorizationActor) => Promise<AuthorizationInventory>;
   /** The installed package's declared dependency tiers, or null when nothing is installed under
@@ -58,24 +68,134 @@ export class ApplicationAuthorizationService implements ApplicationAuthorization
   constructor(private readonly store: AuthorizationStore, private readonly options: ApplicationAuthorizationServiceOptions = {}) {
     this.now = options.now ?? Date.now;
   }
-  /** Changed grant meanings require explicit migration; stale assigned catalogs cannot silently activate. */
+  /**
+   * @description Activate one registration. In ONE policy transaction: assignments stamped with a
+   * previous catalog revision are re-stamped when the change is non-widening (or a reviewer approved
+   * exactly this transition), with an audit event, and the activating catalog is recorded so a later
+   * upgrade can be classified after these files are gone. A widening or breaking change refuses.
+   * @param input - Installer-built registration; the source is installation provenance, never package-claimed.
+   * @returns Completion once the application is registered.
+   * @throws CatalogMigrationRequiredError (409) naming the review to approve.
+   */
   async registerApp(input: AuthorizationAppRegistration): Promise<void> {
-    await this.validateRegistration(input);
-    const catalog = input.catalog === null ? null : validateAuthorizationCatalog(input.catalog);
-    await this.store.publishAppPosture(input.app, Boolean(catalog) || input.mode === 'enforce', input.agentIds ?? [], input.toolNames ?? []);
-    this.apps.set(input.app, { ...input, access: input.access ? structuredClone(input.access) : undefined,
-      mountPaths: [...(input.mountPaths ?? [])], adapters: { ...input.adapters }, catalog,
-      mode: catalog ? 'enforce' : input.mode, catalogRevision: catalogRevision({ ...input, catalog }) });
+    const app = this.registration(input); const now = this.now();
+    const snapshots = await this.previousCatalogs(app);
+    const outcome = await this.store.transaction(async transaction => {
+      const plan = planCatalogMigration(transaction.state, app, snapshots, now);
+      if (plan.status === 'review') return { plan, review: recordCatalogMigrationReview(transaction.state, app, plan, now) };
+      if (plan.status === 'refuse-source') return { plan };
+      const auditId = plan.status === 'migrate' ? applyCatalogMigrationPlan(transaction, app, plan, now) : undefined;
+      transaction.catalog(catalogSnapshot(app));
+      return { plan, auditId };
+    });
+    this.refuseUnmigrated(app, outcome);
+    if (outcome.plan.status === 'migrate') logger.info({ app: app.app, fromRevisions: outcome.plan.fromRevisions, toRevision: app.catalogRevision,
+      classification: outcome.plan.diff.classification, carried: outcome.plan.assignmentIds.length - outcome.plan.removedIds.length,
+      removed: outcome.plan.removedIds.length, reviewId: outcome.plan.approved?.id }, 'Authorization catalog migration applied');
+    await this.store.publishAppPosture(input.app, Boolean(app.catalog) || input.mode === 'enforce', input.agentIds ?? [], input.toolNames ?? []);
+    this.apps.set(input.app, app);
   }
+  /**
+   * @description Installation pre-check before the live package or its database record changes.
+   * Passes when nothing is stale, the change is non-widening, or an approved review covers exactly
+   * this transition; otherwise records (or reuses) the review and refuses with its id.
+   * @param input - Candidate registration. @returns Completion when activation may proceed.
+   * @throws CatalogMigrationRequiredError (409).
+   */
   async validateRegistration(input: AuthorizationAppRegistration): Promise<void> {
+    const app = this.registration(input); const now = this.now();
+    const state = await this.store.read();
+    const snapshots = await this.previousCatalogs(app, state);
+    const unlocked = planCatalogMigration(state, app, snapshots, now);
+    if (unlocked.status === 'current' || unlocked.status === 'migrate') return;
+    // Reviews load only under the writer lock: decide there whether an approval already covers this.
+    const outcome = await this.store.transaction(async ({ state: locked }) => {
+      const plan = planCatalogMigration(locked, app, snapshots, now);
+      return { plan, review: plan.status === 'review' ? recordCatalogMigrationReview(locked, app, plan, now) : undefined };
+    });
+    this.refuseUnmigrated(app, outcome);
+  }
+  /** Validated registration with its catalog revision; refuses reserved and malformed registrations. */
+  private registration(input: AuthorizationAppRegistration): RegisteredAuthorizationApp {
     if (input.app === EXTERNAL_TENANT_MEMBERSHIP_AUDIT_APP) throw new ApplicationAuthorizationError(400, 'authorization_app_name_reserved');
     if (!/^[a-z0-9][a-z0-9-]{1,63}$/.test(input.app) || !input.source || !input.version || !['legacy','enforce'].includes(input.mode)) throw new ApplicationAuthorizationError(400, 'invalid_authorization_registration');
     const catalog = input.catalog === null ? null : validateAuthorizationCatalog(input.catalog);
-    const app = { ...input, catalog, mode: catalog ? 'enforce' as const : input.mode, catalogRevision: catalogRevision({ ...input, catalog }) };
-    const state = await this.store.read();
-    if (state.assignments.some(row => row.app === input.app && (row.source !== input.source || row.catalogRevision !== app.catalogRevision))) {
-      throw new ApplicationAuthorizationError(409, 'authorization_catalog_migration_required');
+    return { ...input, access: input.access ? structuredClone(input.access) : undefined,
+      mountPaths: [...(input.mountPaths ?? [])], adapters: { ...input.adapters }, catalog,
+      mode: catalog ? 'enforce' : input.mode, catalogRevision: catalogRevision({ ...input, catalog }) };
+  }
+  /** Verified previous catalogs for every revision this application's assignments are stamped with. */
+  private async previousCatalogs(app: RegisteredAuthorizationApp, state?: AuthorizationState): Promise<Map<string, AuthorizationCatalogSnapshot>> {
+    const revisions = staleCatalogRevisions(state ?? await this.store.read(), app);
+    return revisions.length ? verifiedSnapshots(await this.store.readCatalogSnapshots(revisions), app) : new Map();
+  }
+  /** Throw the installation refusal a plan calls for, naming the stored review. */
+  private refuseUnmigrated(app: RegisteredAuthorizationApp, outcome: { plan: CatalogMigrationPlan; review?: StoredCatalogMigration }): void {
+    if (outcome.plan.status === 'refuse-source') throw new CatalogMigrationRequiredError(null, 'source', app.app);
+    if (!outcome.review) return;
+    logger.warn({ app: app.app, previewId: outcome.review.id, classification: outcome.review.classification,
+      fromRevisions: outcome.review.fromRevisions, toRevision: outcome.review.toRevision, changes: outcome.review.changes.length },
+    'Authorization catalog change refused pending review');
+    throw new CatalogMigrationRequiredError(outcome.review.id, outcome.review.classification, app.app);
+  }
+  /**
+   * @description List one application's reviewable catalog migrations, newest first. Catalog
+   * identifiers and counts only; no assignment target is disclosed.
+   * @param actor - Verified caller; needs application-wide management read.
+   * @param input - The application. @returns Its migration previews.
+   */
+  async catalogMigrations(actor: AuthorizationActor, input: { app: string }): Promise<{ migrations: AuthorizationCatalogMigrationPreview[] }> {
+    const current = await this.currentActor(actor);
+    if (!input || typeof input.app !== 'string' || !/^[a-z0-9][a-z0-9-]{1,63}$/.test(input.app)) throw new ApplicationAuthorizationError(400, 'invalid_authorization_request');
+    requireManagement(current, input.app, undefined, 'read');
+    const now = this.now();
+    const rows = await this.store.readCatalogMigrations({ app: input.app });
+    return { migrations: rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(row => publicCatalogMigration(row, now)) };
+  }
+  /**
+   * @description Approve one reviewed catalog migration. Same apply shape as an access change
+   * (previewId + idempotencyKey, optional approvalReference). The re-stamp happens when that exact
+   * package revision next activates, so the running package keeps working until then.
+   * @param actor - Verified caller; needs application-wide assign (and directory when groups are affected).
+   * @param raw - The apply request. @returns The approval receipt; a retry with the same key returns it again.
+   */
+  async applyCatalogMigration(actor: AuthorizationActor, raw: AuthorizationApplyInput): Promise<AuthorizationCatalogMigrationReceipt> {
+    const input = parseAuthorizationApply(raw);
+    const current = await this.currentActor(actor);
+    const [review] = await this.store.readCatalogMigrations({ id: input.previewId });
+    if (!review) throw new ApplicationAuthorizationError(404, 'authorization_preview_not_found');
+    const rows = (await this.store.read()).assignments.filter(row => review.assignmentIds.includes(row.id));
+    requireMigrationAuthority(current, review, rows);
+    if (!review.approval && catalogMigrationNeedsApproval(review, rows, current) && (!input.approvalReference
+      || !this.options.verifyCatalogMigrationApproval
+      || !await this.options.verifyCatalogMigrationApproval(current, publicCatalogMigration(review, this.now()), input.approvalReference))) {
+      throw new ApplicationAuthorizationError(403, 'authorization_approval_required');
     }
+    // Approval and account lookups must not hold a pool client or the policy writer lock.
+    const fresh = await this.currentActor(actor);
+    const receipt = await this.store.transaction(async ({ state }) => this.approveCatalogMigration(fresh, input, state));
+    logger.info({ app: receipt.app, previewId: receipt.previewId, toRevision: receipt.toRevision }, 'Authorization catalog migration approved');
+    return receipt;
+  }
+  private approveCatalogMigration(current: AuthorizationActor, input: AuthorizationApplyInput, state: AuthorizationState): AuthorizationCatalogMigrationReceipt {
+    const actor = this.managementActor(current, state); const now = this.now();
+    const review = state.migrations?.find(row => row.id === input.previewId);
+    if (!review) throw new ApplicationAuthorizationError(404, 'authorization_preview_not_found');
+    requireMigrationAuthority(actor, review, state.assignments.filter(row => review.assignmentIds.includes(row.id)));
+    if (state.migrations!.some(row => row.id !== review.id && row.approval?.idempotencyKey === input.idempotencyKey
+      && row.approval.actor.sub === actor.sub && row.approval.actor.issuer === actor.issuer)) throw new ApplicationAuthorizationError(409, 'authorization_idempotency_conflict');
+    if (review.approval) {
+      if (review.approval.idempotencyKey !== input.idempotencyKey) throw new ApplicationAuthorizationError(409, 'authorization_preview_consumed');
+      return migrationReceipt(review);
+    }
+    if (Date.parse(review.expiresAt) <= now) throw new ApplicationAuthorizationError(409, 'authorization_preview_expired');
+    const rows = state.assignments.filter(row => row.app === review.app && row.catalogRevision !== review.toRevision);
+    if (rows.some(row => row.source !== review.source) || rows.map(row => row.id).sort().join('\0') !== review.assignmentIds.join('\0')) {
+      throw new ApplicationAuthorizationError(409, 'authorization_revision_conflict');
+    }
+    review.approval = { actor: { sub: actor.sub, issuer: actor.issuer }, at: new Date(now).toISOString(), idempotencyKey: input.idempotencyKey, revision: state.revision };
+    review.expiresAt = new Date(now + CATALOG_MIGRATION_REVIEW_TTL_MS).toISOString();
+    return migrationReceipt(review);
   }
   registerResourceAdapter(appName: string, resource: string, adapter: AuthorizationResourceAdapter): void {
     const app = this.requireApp(appName);
@@ -360,6 +480,22 @@ export class ApplicationAuthorizationService implements ApplicationAuthorization
     return { previewId: preview.previewId, expiresAt: preview.expiresAt, revision: preview.revision,
       catalogRevision: preview.catalogRevision, change: structuredClone(preview.change), requiresApproval: preview.requiresApproval };
   }
+}
+
+/** @description The application-wide authority a catalog migration needs: assign, plus directory when group mappings are affected. */
+function requireMigrationAuthority(actor: AuthorizationActor, review: StoredCatalogMigration, rows: AuthorizationAssignment[]): void {
+  requireManagement(actor, review.app, undefined, 'assign');
+  if (rows.some(row => row.group)) requireManagement(actor, review.app, undefined, 'directory');
+}
+/** @description Approval receipt for a stored, approved review. */
+function migrationReceipt(review: StoredCatalogMigration): AuthorizationCatalogMigrationReceipt {
+  return { previewId: review.id, app: review.app, toRevision: review.toRevision, approved: true,
+    approvedAt: review.approval!.at, revision: review.approval!.revision };
+}
+/** @description The catalog one registration activates with, recorded for later classification. */
+function catalogSnapshot(app: RegisteredAuthorizationApp): AuthorizationCatalogSnapshot {
+  return { catalogRevision: app.catalogRevision, app: app.app, source: app.source, version: app.version,
+    catalog: structuredClone(app.catalog), mountPaths: [...(app.mountPaths ?? [])] };
 }
 
 /**

@@ -7,10 +7,11 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep explicit live browser acceptance separate from isolated runner parity and honest about pending execution.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Prove compiled Access HTML delivery and file-error redaction with the real policy and HTTP adapters.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Compare the Vitest command only with registered Vitest suites; keep the separate Playwright issuer-tier proof registered without pretending Vitest runs it.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | AUTH-07 catalog migration adapters: listing needs authentication and management read; approval needs application-wide assign, the same-origin JSON gate and a closed body, is idempotent per key and refuses a second key; a migration that changes the approver's own sensitive grant needs an approval reference.
  */
 /** Real HTTP authorization adapter proofs using the actual policy service and isolated repository. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createAuthorizationFixture, ISSUER } from '../fixtures/authorization';
+import { CATALOG, createAuthorizationFixture, ISSUER } from '../fixtures/authorization';
 import { AUTHORIZATION_SCENARIOS } from '@/app/routes/test-lab-authorization-scenarios';
 import { SCENARIOS } from '@/app/routes/test-lab-scenarios';
 import { existsSync, readFileSync } from 'node:fs';
@@ -121,6 +122,47 @@ describe('Access Administration HTTP authority', () => {
     const preview = await fixture.call('/preview', await fixture.change());
     await fixture.service.registerApp({ app: 'catalog-app', source: 'replacement-store', version: '2.0.0', catalog: null, mode: 'enforce' });
     expect((await fixture.call('/apply', { previewId: preview.body.previewId, idempotencyKey: 'replaced-fixture-app' })).status).toBe(409);
+  });
+
+  it('lists and approves reviewed catalog migrations through the authenticated same-origin adapter', async () => {
+    await fixture.apply();
+    const widened = { ...CATALOG, roles: { ...CATALOG.roles, reader: { ...CATALOG.roles.reader, tier: 'editor' as const } } };
+    const upgrade = { app: 'catalog-app', source: 'fixture-store', version: '2.0.0', catalog: widened, mode: 'enforce' as const,
+      adapters: { records: { authorize: async () => true } } };
+    const refusal = await fixture.service.validateRegistration(upgrade).catch(error => error);
+    expect(refusal).toMatchObject({ status: 409, code: 'authorization_catalog_migration_required', classification: 'widening' });
+    expect((await fixture.call('/catalog-migrations?app=catalog-app', undefined, null)).status).toBe(401);
+    expect((await fixture.call('/catalog-migrations?app=catalog-app', undefined, 'alice')).status).toBe(403);
+    expect((await fixture.call('/catalog-migrations?app=catalog-app&extra=1')).status).toBe(400);
+    const listed = await fixture.call('/catalog-migrations?app=catalog-app', undefined, 'reader');
+    expect(listed.status).toBe(200);
+    expect(listed.body.migrations).toEqual([expect.objectContaining({ previewId: refusal.previewId, status: 'pending', affectedAssignments: 1 })]);
+    const body = { previewId: refusal.previewId, idempotencyKey: 'route-approval' };
+    expect((await fixture.call('/catalog-migrations/apply', body, 'reader')).status).toBe(403);
+    expect((await fixture.call('/catalog-migrations/apply', body, 'admin', { origin: 'https://unrelated.test' })).status).toBe(403);
+    expect((await fixture.call('/catalog-migrations/apply', { ...body, actor: fixture.actors.admin })).status).toBe(400);
+    const approved = await fixture.call('/catalog-migrations/apply', body);
+    expect(approved.status).toBe(200);
+    expect(approved.body).toMatchObject({ previewId: refusal.previewId, approved: true, app: 'catalog-app' });
+    expect((await fixture.call('/catalog-migrations/apply', body)).body).toEqual(approved.body);
+    expect((await fixture.call('/catalog-migrations/apply', { ...body, idempotencyKey: 'route-approval-second' })).body.error).toBe('authorization_preview_consumed');
+    await fixture.service.registerApp(upgrade);
+    expect((await fixture.call('/me?app=catalog-app', undefined, 'alice')).body.tier).toBe('editor');
+  });
+
+  it('requires an approval reference when a migration changes a sensitive grant the approver holds', async () => {
+    const current = fixture.service.getApp('catalog-app')!;
+    await fixture.store.transaction(async ({ state }) => {
+      state.assignments.push({ id: 'self-sensitive-fixture', app: 'catalog-app', source: current.source, catalogRevision: current.catalogRevision,
+        targetSub: 'admin', targetIssuer: ISSUER, role: 'sensitive-reader', deny: false });
+      state.revision += 1;
+    });
+    const widened = { ...CATALOG, roles: { ...CATALOG.roles, reader: { ...CATALOG.roles.reader, tier: 'editor' as const } } };
+    const refusal = await fixture.service.validateRegistration({ app: 'catalog-app', source: 'fixture-store', version: '2.0.0',
+      catalog: widened, mode: 'enforce' }).catch(error => error);
+    const denied = await fixture.call('/catalog-migrations/apply', { previewId: refusal.previewId, idempotencyKey: 'self-approval' });
+    expect(denied.status).toBe(403); expect(denied.body.error).toBe('authorization_approval_required');
+    expect((await fixture.call('/catalog-migrations?app=catalog-app')).body.migrations[0].status).toBe('pending');
   });
 
   it('registers meaningful regression suites and its live probe never mutates access', async () => {

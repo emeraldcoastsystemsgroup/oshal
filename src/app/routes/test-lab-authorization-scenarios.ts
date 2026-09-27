@@ -18,6 +18,7 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com | Register the bot statement privilege contract: the guard that provisions a real oshal_bot from the shipped grant text and runs every statement a bot container issues, which is what caught three open grant gaps that every existing guard over this contract was blind to.
  * 14 | maintainer@emeraldcoastsystemsgroup.com | AUTH-03: register the Kubernetes first-root chart guard (tests/unit/chart-installer-root.spec.ts) and the Users-page identity-provider root browser proof (tests/unit/installer-root-oidc-browser.spec.ts) beside the installer-root suite, which now also proves the exact identity-provider issuer+subject election.
  * 15 | maintainer@emeraldcoastsystemsgroup.com | Register the guard for scripts/operations/verify-authorization-registration.js, the read-only automated acceptance that an installed swarm's Test Lab lists the authorization suites and the Little Monsters pilot cases.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com | AUTH-07: register the reviewed catalog migration proofs - the pure catalog diff classifier, the disposable-PostgreSQL upgrade/refusal/no-revival/concurrency suite under the forced-RLS runtime role, and the guard for scripts/operations/little-monsters-upgrade-proof.js (the read-only post-staging acceptance that Little Monsters loaded at the new version with its assignments carried).
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -74,7 +75,7 @@ async function accessReview(cookie: string): Promise<StepResult> {
 
 export const AUTHORIZATION_SCENARIOS: Scenario[] = [{
   id: 'authorization-management', title: 'Application access administration', group: 'tool',
-  description: 'Read the current caller-visible authorization catalog. Isolated HTTP and browser suites prove identity, scope, CSRF, preview/apply and revocation behavior.',
+  description: 'Read the current caller-visible authorization catalog. Isolated HTTP and browser suites prove identity, scope, CSRF, preview/apply and revocation behavior, and the reviewed catalog migration a package upgrade runs over existing assignments.',
   regressionTests: [
     { level: 'unit', path: 'tests/unit/authorization-management-roles.spec.ts' },
     { level: 'integration', path: 'tests/unit/authorization-management-roles-postgres.spec.ts' },
@@ -118,6 +119,9 @@ export const AUTHORIZATION_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/package-grant-plan-postgres.spec.ts' },
     { level: 'integration', path: 'tests/unit/package-grant-plan-routes.spec.ts' },
     { level: 'browser', path: 'tests/unit/package-grant-browser.spec.ts' },
+    { level: 'unit', path: 'tests/unit/authorization-catalog-diff.spec.ts' },
+    { level: 'integration', path: 'tests/unit/authorization-catalog-migration-postgres.spec.ts' },
+    { level: 'integration', path: 'tests/unit/little-monsters-upgrade-proof.spec.ts' },
   ],
   steps: [{ id: 'catalog', app: 'authorization', label: 'Caller-visible access catalog', run: authorizationCatalog }],
 }, {

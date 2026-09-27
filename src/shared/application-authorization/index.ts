@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Publish core application management templates beside the unchanged imported catalog contract.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Publish the reserved platform membership audit namespace.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Publish the AUTH-07 catalog migration contract types.
  */
 /** Shared types and the exact validator used by the standalone package CLI. */
 import { createRequire } from 'node:module';
@@ -22,3 +23,4 @@ export const loadApplicationAuthorization = contract.loadApplicationAuthorizatio
 export * from './types';
 export * from './management-roles';
 export * from './platform-audit';
+export * from './catalog-migration';

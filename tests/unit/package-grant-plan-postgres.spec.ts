@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Guard the "configure by package" grant plan against the REAL PostgreSQL policy store and the real authorization service: the required closure resolves, a cycle and a self-reference terminate, an uninstalled or inactive prerequisite is reported rather than granted, an application outside the closure is never touched, and the plan itself writes nothing.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Apply migration 173 after 127: the policy store now records the activating catalog and loads reviewable catalog migrations in every policy transaction (AUTH-07), so the disposable schema needs the same tables a deployed migration tree has.
  */
 /** Disposable local PostgreSQL only. Never consumes DATABASE_URL or deployment credentials. */
 import { execFileSync } from 'node:child_process';
@@ -63,6 +64,7 @@ beforeAll(async () => {
   }
   if (!ready) throw new Error('Disposable package-plan PostgreSQL did not become ready');
   await owner.query(readFileSync(resolve('scripts/migrations/127-application-authorization.sql'), 'utf8'));
+  await owner.query(readFileSync(resolve('scripts/migrations/173-authorization-catalog-migrations.sql'), 'utf8'));
   await owner.query("CREATE ROLE package_plan_runtime LOGIN PASSWORD 'fixture-only' NOSUPERUSER NOBYPASSRLS");
   await owner.query('GRANT USAGE ON SCHEMA public TO package_plan_runtime');
   await owner.query('GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO package_plan_runtime');

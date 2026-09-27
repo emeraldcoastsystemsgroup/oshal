@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Exercise business-only browser navigation, explicit selection, revoked membership and data-route refusal through real policy and mounts.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Reject shell navigation whose awaited decision spans a completed package reload.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Prove escaped browser denial guidance, API JSON parity and absence of unauthorized handler dispatch.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | AUTH-07 through real package loading and mounted routes: a non-widening catalog upgrade keeps an existing grant working on the new binding with no revoke or re-grant and records the installer migration event; a widening one refuses with the review id while the installed package keeps serving, and loads once an administrator approves that review.
  */
 /** Real temporary package activation and Express dispatch; persistence is isolated, policy and lifecycle are real. */
 import express, { type Request, type RequestHandler } from 'express';
@@ -24,7 +25,7 @@ import { ApplicationAuthorizationRuntime, applicationAuthorizationMode } from '@
 import { ManifestRouteMounterImpl } from '@/app/composition/manifest-route-mounter';
 import { createApplicationAuthorizationGate } from '@/app/middleware/application-authorization-gate';
 import type { AppAccessResolver } from '@/features/swarm-apps';
-import { ApplicationAuthorizationService, MemoryAuthorizationStore } from '@/features/application-authorization';
+import { ApplicationAuthorizationService, CATALOG_MIGRATION_INSTALLER, MemoryAuthorizationStore } from '@/features/application-authorization';
 import { SwarmAppService, type SwarmAppManifest, type SwarmApplicationRecord } from '@/features/swarm-apps';
 import type { AuthorizationActor, AuthorizationCatalog } from '@/shared/application-authorization';
 import { getApplicationAuthorizationActor } from '@/shared/application-authorization-context';
@@ -361,6 +362,39 @@ describe('Application authorization runtime integration', () => {
     expect(repoWrites).toBe(priorWrites); expect(queries).toHaveLength(priorQueries);
     expect((await call()).status).toBe(200);
     expect((await call('/records', { method: 'POST' })).status).toBe(403);
+  });
+
+  it('carries an existing grant across a non-widening package upgrade without a revoke or re-grant', async () => {
+    const file = writePackage(); await apps.loadApp(file); await grant();
+    expect((await call('/records/owned/history')).body.error).toBe('authorization_operation_unbound');
+    const upgraded = structuredClone(catalog);
+    upgraded.bindings.http!.push({ id: 'record-history', method: 'GET', path: '/records/:id/history', allOf: ['records.read'] });
+    writeFileSync(join(root, 'runtime-app', 'authorization.yaml'), yaml.dump(upgraded, { noRefs: true }));
+    await apps.loadApp(file);
+    expect((await call('/records/owned/history')).status).toBe(200);
+    expect((await call()).status).toBe(200);
+    expect((await call('/records', { method: 'POST' })).status).toBe(403);
+    expect(store.auditEvents.filter(event => event.change.action === 'catalog-migration')).toEqual([expect.objectContaining({
+      actor: { ...CATALOG_MIGRATION_INSTALLER }, migration: expect.objectContaining({ classification: 'non-widening', removedIds: [] }) })]);
+    const revision = policy.getApp('runtime-app')!.catalogRevision;
+    expect((await store.read()).assignments.every(row => row.catalogRevision === revision)).toBe(true);
+  });
+
+  it('names the review a widening upgrade needs, keeps serving, and loads once an administrator approves it', async () => {
+    const file = writePackage(); await apps.loadApp(file); await grant();
+    writeFileSync(join(root, 'runtime-app', 'authorization.yaml'), yaml.dump({ ...catalog,
+      roles: { ...catalog.roles, reader: { tier: 'editor', grants: catalog.roles.editor.grants } } }, { noRefs: true }));
+    const refusal = await apps.loadApp(file).catch(error => error);
+    const [pending] = (await policy.catalogMigrations(admin, { app: 'runtime-app' })).migrations;
+    expect(pending).toMatchObject({ status: 'pending', classification: 'widening', affectedAssignments: 1 });
+    expect(refusal.message).toContain('authorization_catalog_migration_required');
+    expect(refusal.message).toContain(pending.previewId);
+    expect((await call()).status).toBe(200);
+    expect((await call('/records', { method: 'POST' })).status).toBe(403);
+    await policy.applyCatalogMigration(admin, { previewId: pending.previewId, idempotencyKey: 'runtime-reviewed-upgrade' });
+    await apps.loadApp(file);
+    expect((await call('/records', { method: 'POST' })).status).toBe(200);
+    expect((await policy.catalogMigrations(admin, { app: 'runtime-app' })).migrations[0].status).toBe('applied');
   });
 
   it('requires explicit app-admin for no-catalog enforced packages and treats unknown rollout modes as enforce', async () => {

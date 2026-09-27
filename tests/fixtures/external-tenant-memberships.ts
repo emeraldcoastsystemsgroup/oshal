@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise membership authority with real PostgreSQL, provider inventory and loopback HTTP.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Apply migration 173 after 127: the policy store now records the activating catalog and loads reviewable catalog migrations in every policy transaction (AUTH-07), so the disposable schema needs the same tables a deployed migration tree has.
  */
 import { readFileSync } from 'node:fs';
 import type { Server } from 'node:http';
@@ -42,6 +43,7 @@ export class ExternalMembershipFixture {
   async start(): Promise<void> {
     await this.database.start();
     await this.database.owner.query(readFileSync('scripts/migrations/127-application-authorization.sql', 'utf8'));
+    await this.database.owner.query(readFileSync('scripts/migrations/173-authorization-catalog-migrations.sql', 'utf8'));
     await this.database.owner.query('CREATE TABLE oshal_tenants(tenant_id UUID PRIMARY KEY,name TEXT)');
     await this.database.owner.query(readFileSync('scripts/migrations/135-external-tenant-memberships.sql', 'utf8'));
     await ensureExternalTenantMembershipSchema(this.database.owner);

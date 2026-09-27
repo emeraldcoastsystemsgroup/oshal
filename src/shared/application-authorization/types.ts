@@ -7,7 +7,9 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add bounded, redacted applied authorization history under current application and tenant authority.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Expose distinct core access-management role templates and effective capabilities.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Add the read-only "configure by package" grant plan: one application plus the applications it declares it cannot run without, each classified into the ONE change /access would make for it. A plan is a description, never a grant — it creates no assignment, bumps no revision and writes no audit entry.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | AUTH-07: the management service may list reviewable catalog migrations and approve one through the same previewId + idempotencyKey apply shape as an access change; applied-change history gains the `catalog-migration` action an installation records when it re-stamps assignments onto a new catalog revision.
  */
+import type { AuthorizationCatalogMigrationPreview, AuthorizationCatalogMigrationReceipt } from './catalog-migration';
 /** ADR-149: versioned application permission contract. Routing metadata never grants authority. */
 export type AuthorizationTier = 'deny' | 'viewer' | 'editor' | 'admin';
 export type AuthorizationEffect = 'read' | 'write' | 'export' | 'execute' | 'administer';
@@ -197,15 +199,26 @@ export interface ApplicationAuthorizationManagementService {
   packageGrantPlan?(actor: AuthorizationActor, input: PackageGrantPlanInput): Promise<PackageGrantPlan>;
   previewChange(actor: AuthorizationActor, input: AuthorizationChange): Promise<AuthorizationPreview>;
   applyChange(actor: AuthorizationActor, input: AuthorizationApplyInput): Promise<AuthorizationReceipt>;
+  /** @description List the reviewable catalog migrations of one application (AUTH-07).
+   * @param actor Verified caller holding management read. @param input The application. @returns Its migration previews, newest first. */
+  catalogMigrations?(actor: AuthorizationActor, input: { app: string }): Promise<{ migrations: AuthorizationCatalogMigrationPreview[] }>;
+  /** @description Approve one reviewed catalog migration; the next activation of that exact package revision applies it.
+   * @param actor Verified caller holding application-wide assign. @param input Preview, idempotency key and optional approval reference. @returns The approval receipt. */
+  applyCatalogMigration?(actor: AuthorizationActor, input: AuthorizationApplyInput): Promise<AuthorizationCatalogMigrationReceipt>;
 }
 /** @description Read-only history filters. Omitting app requests swarm-wide history, requiring swarm administration. */
 export interface AuthorizationAuditInput { app?: string; tenantId?: string; limit?: number; cursor?: string }
 /** @description Explicit projection with no freeform reasons, approvals, resource values, credentials or raw payloads. */
 export interface AuthorizationAuditEntry {
   id: string; revision: number; at: string; actor: { sub: string; issuer: string };
-  app: string; action: AuthorizationChange['action']; tenantId?: string;
+  app: string; action: AuthorizationChange['action'] | 'catalog-migration'; tenantId?: string;
   targetSub?: string; targetIssuer?: string; group?: { issuer: string; tenantId: string; id: string };
   role?: string; permission?: string;
+  /** Present on `catalog-migration` entries: revisions, versions and the opaque assignment ids carried or removed. */
+  migration?: {
+    fromRevisions: string[]; fromVersions: string[]; toRevision: string; toVersion: string;
+    classification: 'non-widening' | 'widening' | 'breaking'; assignmentIds: string[]; removedIds: string[]; reviewId?: string;
+  };
 }
 /** @description A bounded revision snapshot; a continuation carries pagination state, never authority. */
 export interface AuthorizationAuditPage { entries: AuthorizationAuditEntry[]; snapshotRevision: number; nextCursor: string | null }

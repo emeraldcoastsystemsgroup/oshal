@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove durable delegated management, forced RLS, one-connection liveness and revoke-before-write ordering.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Apply migration 173 after 127: the policy store now records the activating catalog and loads reviewable catalog migrations in every policy transaction (AUTH-07), so the disposable schema needs the same tables a deployed migration tree has.
  */
 import { readFileSync } from 'node:fs';
 import { Pool } from 'pg';
@@ -22,6 +23,7 @@ const registration = { app: 'catalog-app', source: 'fixture', version: '1', cata
 beforeAll(async () => {
   vi.stubEnv('OSHAL_SCHEMA_BOOTSTRAP', ''); await database.start();
   await database.owner.query(readFileSync('scripts/migrations/127-application-authorization.sql', 'utf8'));
+  await database.owner.query(readFileSync('scripts/migrations/173-authorization-catalog-migrations.sql', 'utf8'));
   await database.owner.query('GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO users_runtime');
   pool = wrapPoolWithGuc(new Pool({ ...database.runtime.options, password: database.runtime.options.password,
     max: 1, connectionTimeoutMillis: 1000 }));

@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Preserve business-only browser navigation while retaining explicit data workspace authorization.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Return role guidance for denied app-open browser documents without dispatching package code.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Check workspace navigation against the current mounted HTTP policy without dispatching a page.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | AUTH-07: prepare now classifies a changed catalog instead of refusing every change. A non-widening revision passes and start() re-stamps the existing assignments atomically; a widening or breaking one refuses with the review id an administrator approves through /api/authorization/catalog-migrations.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -78,7 +79,14 @@ export class ApplicationAuthorizationRuntime implements ManifestAuthorizationReg
       mode: isPackage ? applicationAuthorizationMode(this.env) : 'legacy', access: manifest.access,
       mountPaths: (manifest.routes ?? []).map(route => route.mountPath) };
   }
-  /** Reject catalog/source migrations before the previous live package or database record is changed. */
+  /**
+   * @description Classify a catalog or source change before the previous live package or database
+   * record is changed. A non-widening catalog revision passes (start() carries the assignments onto
+   * it in one audited policy transaction); a widening or breaking one, or a different installation
+   * source, refuses here with `authorization_catalog_migration_required` naming the review to approve.
+   * @param manifest - Candidate manifest. @param manifestPath - Its installed location (source provenance).
+   * @returns Completion when activation may proceed.
+   */
   async prepare(manifest: SwarmAppManifest, manifestPath: string): Promise<void> {
     await this.service.validateRegistration(this.candidate(manifest, manifestPath));
   }
