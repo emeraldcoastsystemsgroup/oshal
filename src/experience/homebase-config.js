@@ -6,6 +6,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Every preset hosts an assembly of applications (`hosts`: app, kicker, hidden tool prefixes) and names the audience view (`view`) each hosted page is asked to render; teacher-only gating left the client (the profile arrives filtered per caller).
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Classroom: names the application whose admitted tools the preset hosts in place, which tool ids stay out of the navigation (per-class tools) and which are teacher-only presentation.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Display configuration for the three homebase presets (Home, Little Monsters classroom, Business). Presets choose labels, navigation, which suites and applications lead, and which modules compose the page. They carry no people, records or permissions: every person, event, list item, assignment and balance comes from the signed-in session at render time.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Presets name the `audience` (family, classroom, company) each hosted page is asked to render; the shared kit in /shared/ui reads the same word
  */
 window.HOMEBASE_PRESETS = {
   family: {
@@ -24,7 +25,7 @@ window.HOMEBASE_PRESETS = {
       { app: 'finance', kicker: 'MONEY', hiddenTools: ['tool-finance-trading', 'tool-finance-world', 'tool-finance-kalshi'] },
       { app: 'little-monsters', kicker: 'LITTLE MONSTERS', hiddenTools: ['tool-lm-class-'] }
     ],
-    view: 'family'
+    audience: 'family'
   },
   classroom: {
     id: 'classroom', skin: 'classroom', name: 'Little Monsters', short: 'little monsters', mark: 'm',
@@ -36,7 +37,7 @@ window.HOMEBASE_PRESETS = {
     calendarHeading: 'Our day of discovery.', assistantPrompt: 'One question is a great start.', assistantLabel: 'Your study companion',
     sidebarNote: ['A little room to grow.', 'Classwork is shared with your class. Your personal learning stays in your space.'],
     hosts: [{ app: 'little-monsters', kicker: 'LITTLE MONSTERS', hiddenTools: ['tool-lm-class-'] }],
-    view: 'classroom'
+    audience: 'classroom'
   },
   company: {
     id: 'company', skin: 'company', name: 'Business', short: 'workspace', mark: 'w',
@@ -56,6 +57,6 @@ window.HOMEBASE_PRESETS = {
       { app: 'identity', kicker: 'IDENTITY' },
       { app: 'cad-studio', kicker: 'ENGINEERING' }
     ],
-    view: 'company'
+    audience: 'company'
   }
 };

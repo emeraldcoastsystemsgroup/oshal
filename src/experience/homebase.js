@@ -7,6 +7,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | A preset hosts an assembly of applications: one ribbon profile per host, tools tagged with their host and grouped per host in the sidebar and the tile row, the preset's audience view requested on every hosted page (`?view=`), hidden prefixes curating off-audience tiles; teacher-only gating left the client because the profile now arrives filtered per caller.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | A preset can host its application: the classroom lists Little Monsters' admitted tools (from the same ribbon profile the cockpit renders, per-class tools kept out of the navigation, teacher-only tools shown to teachers) and opens them in place in a frame that follows the skin; the frame's navigation messages (the cockpit's own shapes) switch tools, and only admitted tools ever open. The home paints from identity and catalog (readyCore) and fills work in when it arrives.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Paint the preset skin on load when the device remembers none: the style switcher initialises before this script selects the preset, so the default was never applied to the document.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | The hosted page is asked for its audience with `?audience=` (was `?view=`): store pages and the cockpit already use `view` for their own tabs, so the audience request must not collide with them
  */
 (() => {
   'use strict';
@@ -127,7 +128,7 @@
   /** The offered tools grouped by host, in host order. */
   const hostGroups = () => { const groups = []; navTools().forEach(t => { let g = groups.find(x => x.host === t.host); if (!g) { g = { host: t.host, kicker: t.kicker, tools: [] }; groups.push(g); } g.tools.push(t); }); return groups; };
   /** The URL a hosted tool opens with: its own surface plus this preset's audience view, as a request (a view id is never authority). */
-  const hostedUrl = t => { const u = new URL(t.href, location.origin); if (preset.view && !u.searchParams.has('view')) u.searchParams.set('view', preset.view); return u.pathname + u.search + u.hash; };
+  const hostedUrl = t => { const u = new URL(t.href, location.origin); if (preset.audience && !u.searchParams.has('audience')) u.searchParams.set('audience', preset.audience); return u.pathname + u.search + u.hash; };
   /** @description Open an admitted tool in place. Anything not admitted for this caller is refused with a notice, never fetched. */
   function openTool(id) {
     const t = toolById(id);
