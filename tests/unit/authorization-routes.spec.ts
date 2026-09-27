@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify authorization HTTP and tool parity and actual Test Lab registration.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep explicit live browser acceptance separate from isolated runner parity and honest about pending execution.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Prove compiled Access HTML delivery and file-error redaction with the real policy and HTTP adapters.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Compare the Vitest command only with registered Vitest suites; keep the separate Playwright issuer-tier proof registered without pretending Vitest runs it.
  */
 /** Real HTTP authorization adapter proofs using the actual policy service and isolated repository. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -129,7 +130,11 @@ describe('Access Administration HTTP authority', () => {
     expect(SCENARIOS.find(item => item.id === scenario.id)).toBe(scenario);
     const command = JSON.parse(readFileSync(resolve('package.json'), 'utf8')).scripts['test:authorization'];
     const registered = scenario.regressionTests!.map(item => item.path);
-    expect(new Set(command.match(/tests\/unit\/[^ ]+\.spec\.ts/g))).toEqual(new Set(registered));
+    const registeredVitest = registered.filter(path => path.startsWith('tests/unit/'));
+    const registeredPlaywright = registered.filter(path => !path.startsWith('tests/unit/'));
+    expect(new Set(command.match(/tests\/unit\/[^ ]+\.spec\.ts/g))).toEqual(new Set(registeredVitest));
+    expect(registeredPlaywright).toEqual(['tests/authorization-issuer-tier-live.spec.ts']);
+    expect(command).not.toContain(registeredPlaywright[0]);
     expect(registered.every(file => existsSync(resolve(file)))).toBe(true);
     const state = await fixture.store.read();
     expect((await scenario.steps[0].run('session=admin', [])).state).toBe('pass');
