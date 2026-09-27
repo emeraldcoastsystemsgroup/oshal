@@ -26,7 +26,11 @@
 #     fall back to its own defaults, so an unattended round regenerated, curated and validated
 #     against the first character the studio ever trained. Scorecards and the training set are now
 #     read from and written to this character's own box directory.
-import argparse, json, os, subprocess, sys, time, glob, urllib.request
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Sign the final review callback with the
+#     dispatch's callback grant (OSHAL_LORA_CALLBACK_GRANT, lora_callback.py) instead of the fleet
+#     SWARM_SERVICE_SECRET. Nested train/validate steps inherit the grant through the environment;
+#     it is never placed in their argv.
+import argparse, json, os, subprocess, sys, time, glob
 
 HOME = os.path.expanduser("~")
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -34,6 +38,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 from character_config import (add_character_arguments, character_config,  # noqa: E402
                              forwardable_arguments)
+from lora_callback import load_grant, post_json  # noqa: E402
 
 PY = sys.executable
 
@@ -64,14 +69,10 @@ def weak_values(sc):
     return [w.get("value", "") for w in (sc or {}).get("weak_cells", []) if w.get("value")]
 
 
-def post(controller, secret, owner_sub_b64, payload):
+def post(controller, grant, owner_sub_b64, payload):
+    """Send one grant-signed callback; a failure is logged, never fatal to the loop."""
     try:
-        req = urllib.request.Request(
-            controller.rstrip("/") + "/api/lora/ingest",
-            data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json", "x-service-secret": secret,
-                     "x-oshal-user-sub-b64": owner_sub_b64})
-        urllib.request.urlopen(req, timeout=30).read()
+        post_json(controller, grant, owner_sub_b64, payload)
     except Exception as e:
         log("post failed: %r" % e)
 
@@ -101,7 +102,8 @@ def improve_round(cfg, ident, a, tail, cur, nxt, weak):
     @param cfg - The resolved CharacterConfig.
     @param ident - forwardable_arguments(cfg), the identity argv.
     @param a - Parsed arguments.
-    @param tail - Controller/owner callback argv (empty when unbound).
+    @param tail - Controller/owner callback argv (empty when unbound). The grant itself travels in
+      the inherited environment, never in this argv.
     @param cur - The version being improved from.
     @param nxt - The version being produced.
     @param weak - Weak axis-values from cur's scorecard.
@@ -124,9 +126,9 @@ def main():
     a = build_parser().parse_args()
     cfg = character_config(a)
     ident = forwardable_arguments(cfg)
-    secret = os.environ.get("SWARM_SERVICE_SECRET", "")
+    grant = load_grant()
     tail = (["--controller", a.controller, "--owner-sub-b64", a.owner_sub_b64]
-            if a.controller and secret and a.owner_sub_b64 else [])
+            if a.controller and grant and a.owner_sub_b64 else [])
     t0 = time.time()
 
     cur = a.start_version
@@ -157,8 +159,8 @@ def main():
     summary = ("Overnight improve finished: best v%d at score %.3f after %d versions (%.1fh)."
                % (best, best_score, cur - a.start_version + 1, (time.time() - t0) / 3600))
     log("==== " + summary + " ====")
-    if a.controller and secret and a.owner_sub_b64:
-        post(a.controller, secret, a.owner_sub_b64,
+    if a.controller and grant and a.owner_sub_b64:
+        post(a.controller, grant, a.owner_sub_b64,
              {"kind": "review", "character": cfg.subject,
               "ticket_id": a.review_ticket_id,
               "best_version": best, "overall": best_score, "summary": summary})

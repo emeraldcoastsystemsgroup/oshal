@@ -4,10 +4,13 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Real-boundary guard for LoRA per-character generalization. The box scripts carried the first character the studio ever trained as constants - its trigger word, identity sentence, anatomy guard, dataset globs and one shared dataset folder per box - so a second character could not be trained without editing them and would have consumed and overwritten the first one's data on the way. Every case here drives the REAL scripts in scripts/comfyui-edge for a character that is NOT that one, and asserts on what actually leaves them: the curated.zip the trainer consumes, the ComfyUI workflow payload the validator submits, and the argv the overnight loop spawns its nested steps with.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | The overnight loop signs its review callback with the dispatch's callback grant (OSHAL_LORA_CALLBACK_GRANT) instead of the fleet secret. Prove the grant reaches nested steps only through the environment (never their argv), and drive the real loop's final callback against a loopback listener: vendor media type, grant headers, a signature that verifies under an independent recomputation of the store verifier's contract, and no fleet secret even when one is in the environment.
  */
 
 import { describe, expect, it } from 'vitest';
-import { spawnSync } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
+import { createHash, createHmac } from 'crypto';
+import { createServer } from 'http';
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
@@ -16,6 +19,9 @@ import { execFileSync } from 'child_process';
 const REPO_ROOT = resolve(__dirname, '../..');
 const EDGE_DIR = join(REPO_ROOT, 'scripts/comfyui-edge');
 const RUN_TIMEOUT_MS = 60_000;
+const GRANT_ID = '0d0d0d0d-1111-4222-8333-444444444444';
+const GRANT_SECRET = 'Z'.repeat(43);
+const GRANT_TOKEN = `${GRANT_ID}.${GRANT_SECRET}`;
 
 /** A real 1x1 PNG, so every pool the scripts walk is genuine image files. */
 const PNG_1X1 = Buffer.from(
@@ -63,13 +69,34 @@ function python(): string {
  * @param args - Arguments after the interpreter's -c program.
  * @returns status, stdout and stderr.
  */
-function drive(lines: string[], args: string[]): { status: number; stdout: string; stderr: string } {
+function drive(lines: string[], args: string[], env: NodeJS.ProcessEnv = process.env): { status: number; stdout: string; stderr: string } {
   const r = spawnSync(python(), ['-c', lines.join('\n'), ...args], {
     encoding: 'utf8',
     timeout: RUN_TIMEOUT_MS,
+    env,
   });
   if (r.error) throw r.error;
   return { status: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
+}
+
+/**
+ * @description Recompute a captured callback's signature from the grant secret, independently of the
+ *   box helper, using the contract the controller verifies: HMAC-SHA256 keyed by SHA-256 of
+ *   "oshal-lora-callback-grant-v1:" + secret over METHOD|target|timestamp|nonce|sha256(body).
+ * @param secret - The grant secret half.
+ * @param method - HTTP method as received.
+ * @param target - Request target as received (path and query).
+ * @param headers - Received headers.
+ * @param body - Received body bytes.
+ * @returns The expected hex signature.
+ */
+function expectedSignature(secret: string, method: string, target: string,
+  headers: Record<string, string | string[] | undefined>, body: Buffer): string {
+  const key = createHash('sha256').update(`oshal-lora-callback-grant-v1:${secret}`).digest();
+  const bodyHash = createHash('sha256').update(body).digest('hex');
+  return createHmac('sha256', key)
+    .update(`${method}|${target}|${headers['x-lora-callback-timestamp']}|${headers['x-lora-callback-nonce']}|${bodyHash}`)
+    .digest('hex');
 }
 
 /** Parse the last JSON line a driver printed (the scripts log to stdout as well). */
@@ -250,10 +277,16 @@ describe('LoRA box scripts generalize to a newly created character', () => {
       '--box-root', work,
       '--start-version', '1',
       '--max-hours', '0.0001',
-    ])]);
+      '--controller', 'http://controller.test',
+      '--owner-sub-b64', 'b3duZXItYQ',
+    ])], { ...process.env, OSHAL_LORA_CALLBACK_GRANT: GRANT_TOKEN });
 
     expect(r.status, `overnight driver failed: ${r.stderr}`).toBe(0);
     const calls = lastJson<Array<{ script: string; args: string[] }>>(r.stdout);
+    for (const call of calls) {
+      expect(call.args.join(' '), `${call.script} received the callback grant in its argv`).not.toContain(GRANT_SECRET);
+      if (call.script !== 'make-targeted-batch.py') expect(call.args).toContain('--controller');
+    }
     const scripts = calls.map((c) => c.script);
     expect(scripts, 'the loop never reached the improve round').toContain('make-targeted-batch.py');
     expect(scripts).toContain('validate-lora.py');
@@ -284,8 +317,8 @@ describe('LoRA box scripts generalize to a newly created character', () => {
       'spec.loader.exec_module(m)',
       'm.sh = lambda script, args: 0',
       'm.scorecard = lambda cfg, version: {"overall": 0.5, "weak_cells": []}',
-      'm.post = lambda controller, secret, owner, payload: print(json.dumps(payload))',
-      'os.environ["SWARM_SERVICE_SECRET"] = "fixture-secret"',
+      'm.post = lambda controller, grant, owner, payload: print(json.dumps(dict(payload, grant_id=grant[0])))',
+      'os.environ["OSHAL_LORA_CALLBACK_GRANT"] = sys.argv[3]',
       'sys.argv = ["overnight-loop.py"] + json.loads(sys.argv[2])',
       'm.main()',
     ], [join(EDGE_DIR, 'overnight-loop.py'), JSON.stringify([
@@ -302,10 +335,62 @@ describe('LoRA box scripts generalize to a newly created character', () => {
       '--controller', 'http://controller.test',
       '--owner-sub-b64', 'owner-a',
       '--review-ticket-id', 'ticket-123',
-    ])]);
+    ]), GRANT_TOKEN]);
 
     expect(r.status, `overnight callback driver failed: ${r.stderr}`).toBe(0);
-    expect(lastJson<{ ticket_id: string }>(r.stdout).ticket_id).toBe('ticket-123');
+    expect(lastJson<{ ticket_id: string; grant_id: string }>(r.stdout)).toMatchObject({ ticket_id: 'ticket-123', grant_id: GRANT_ID });
+  }, RUN_TIMEOUT_MS);
+
+  it('signs the real final review callback with the grant and never sends the fleet secret', async () => {
+    const received: Array<{ method: string; url: string; headers: Record<string, string | string[] | undefined>; body: Buffer }> = [];
+    const server = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk: Buffer) => chunks.push(chunk));
+      req.on('end', () => {
+        received.push({ method: req.method ?? '', url: req.url ?? '', headers: req.headers, body: Buffer.concat(chunks) });
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end('{"ok":true}');
+      });
+    });
+    await new Promise<void>((done) => server.listen(0, '127.0.0.1', () => done()));
+    const address = server.address();
+    const origin = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`;
+    const work = mkdtempSync(join(tmpdir(), 'lora-review-signed-'));
+    const driver = [
+      'import importlib.util, json, sys',
+      'spec = importlib.util.spec_from_file_location("loop", sys.argv[1])',
+      'm = importlib.util.module_from_spec(spec)',
+      'spec.loader.exec_module(m)',
+      'm.sh = lambda script, args: 0',
+      'm.scorecard = lambda cfg, version: {"overall": 0.5, "weak_cells": []}',
+      'sys.argv = ["overnight-loop.py"] + json.loads(sys.argv[2])',
+      'm.main()',
+    ].join('\n');
+    // Asynchronous on purpose: the listener above lives in this process's event loop.
+    const run = await new Promise<{ status: number; stderr: string }>((done, fail) => {
+      const child = spawn(python(), ['-c', driver, join(EDGE_DIR, 'overnight-loop.py'), JSON.stringify([
+        '--character', MINE.subject, '--box-root', work, '--start-version', '1', '--max-hours', '0.0001',
+        '--controller', origin, '--owner-sub-b64', 'b3duZXItYQ', '--review-ticket-id', 'ticket-456',
+      ])], { env: { ...process.env, OSHAL_LORA_CALLBACK_GRANT: GRANT_TOKEN, SWARM_SERVICE_SECRET: 'fleet-secret-in-env' } });
+      let stderr = '';
+      child.stderr.on('data', (chunk) => { stderr += String(chunk); });
+      child.once('error', fail);
+      child.once('close', (code) => done({ status: code ?? -1, stderr }));
+    });
+    await new Promise<void>((done) => server.close(() => done()));
+    expect(run.status, run.stderr).toBe(0);
+    expect(received).toHaveLength(1);
+    const [review] = received;
+    expect(review.method).toBe('POST');
+    expect(review.url).toBe('/api/lora/ingest');
+    expect(review.headers['content-type']).toBe('application/vnd.oshal.lora-callback+json');
+    expect(review.headers['x-service-secret']).toBeUndefined();
+    expect(JSON.stringify(review.headers)).not.toContain('fleet-secret-in-env');
+    expect(review.headers['x-lora-callback-grant']).toBe(GRANT_ID);
+    expect(review.headers['x-lora-callback-owner']).toBe('b3duZXItYQ');
+    expect(review.headers['x-lora-callback-signature'])
+      .toBe(expectedSignature(GRANT_SECRET, review.method, review.url, review.headers, review.body));
+    expect(JSON.parse(review.body.toString('utf8'))).toMatchObject({ kind: 'review', ticket_id: 'ticket-456', character: MINE.subject });
   }, RUN_TIMEOUT_MS);
 
   it('refuses to curate when no character and no pool were named', () => {
