@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the encrypted owner-store version + ciphertext-only restore (BACKLOG "Workspace-bound checkpoint and tail replay", ADR-046 §1): the version is stable and changes after a write; the snapshot copies CIPHERTEXT only (no plaintext under .tokenchase, proven by scanning every object for the plaintext); a restore is byte-identical and decrypts with the owner's key and ONLY that owner's; a symlinked store file is refused through the real exact-subject-store guards; and a node with no configured store reports bound:false instead of a made-up version.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Wiring seam: the bot-node server installs the snapshotter on the capture lane (configureOwnerStore over readOwnerStoreConfig) and the feature barrel exports it, so a frame's ownerStoreVersion has a real producer on every worker rather than a contract nobody calls.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The config case opts in (TOKEN_CHASE_OWNER_STORE_SNAPSHOT=on) before expecting a bound root: a vault root alone no longer binds the snapshotter (the opt-in itself is guarded by token-chase-owner-store-opt-in.spec.ts).
  */
 
 import crypto from 'node:crypto';
@@ -136,13 +137,14 @@ describe('Token Chase owner-store snapshot (ciphertext only)', () => {
     expect(() => store.restore(traversing, objectDir, path.join(tempRoot(), 'r3'), OWNER)).toThrow(/safe store-relative/);
   });
 
-  it('reports bound:false with no configured store and reads its config from the vault env names', () => {
+  it('reports bound:false with no configured store and, once opted in, reads its config from the vault env names', () => {
     const none = createOwnerStoreSnapshotter(readOwnerStoreConfig({}));
     expect(none.bound).toBe(false);
     expect(() => none.snapshot(OWNER, tempRoot())).toThrow(/no owner store/);
-    const cfg = readOwnerStoreConfig({ PI_STORE_ROOT: '/home/user/vaults', PI_TENANT: 'acme', TOKEN_CHASE_STORE_OBJECT_MAX_BYTES: '4096' });
+    const on = { TOKEN_CHASE_OWNER_STORE_SNAPSHOT: 'on' };
+    const cfg = readOwnerStoreConfig({ ...on, PI_STORE_ROOT: '/home/user/vaults', PI_TENANT: 'acme', TOKEN_CHASE_STORE_OBJECT_MAX_BYTES: '4096' });
     expect(cfg).toEqual({ storeRoot: '/home/user/vaults', tenant: 'acme', maxObjectBytes: 4096 });
-    expect(readOwnerStoreConfig({ TOKEN_CHASE_STORE_ROOT: '/home/user/tc', PI_STORE_ROOT: '/home/user/vaults' }).storeRoot).toBe('/home/user/tc');
+    expect(readOwnerStoreConfig({ ...on, TOKEN_CHASE_STORE_ROOT: '/home/user/tc', PI_STORE_ROOT: '/home/user/vaults' }).storeRoot).toBe('/home/user/tc');
   });
 
   it('is installed on the capture lane by the bot-node server and exported through the barrel', () => {

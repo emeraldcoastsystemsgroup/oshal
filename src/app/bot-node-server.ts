@@ -33,6 +33,7 @@
  * 28 | maintainer@emeraldcoastsystemsgroup.com | Treat dead-letter quarantine as terminal in the bot-node stale-envelope guard so refused work cannot execute after the controller parks it.
  * 29 | maintainer@emeraldcoastsystemsgroup.com | Token Chase owner-store binding (BACKLOG "Workspace-bound checkpoint and tail replay", ADR-046 three-part checkpoint): after the shared runtime is built, install the encrypted owner-store snapshotter (createOwnerStoreSnapshotter over readOwnerStoreConfig — PI_STORE_ROOT / TOKEN_CHASE_STORE_ROOT) on the any-bot capture lane through tokenChase.configureOwnerStore, so every captured frame and final.json records the accountable owner's store version from ciphertext only. A node with no store root stays unbound and records null, never a fabricated version.
  * 30 | maintainer@emeraldcoastsystemsgroup.com | Mount POST /api/token-chase/replay-tail (bot-node-token-chase-tail-route.ts) behind authorizeBotNodeCall with the ownership pool and the owner-store snapshotter: the hermetic no-edit tail (BACKLOG "Workspace-bound checkpoint and tail replay") runs on this accountable node, never on the controller.
+ * 31 | maintainer@emeraldcoastsystemsgroup.com | The owner-store binding comment now states the opt-in: readOwnerStoreConfig binds the snapshotter only when TOKEN_CHASE_OWNER_STORE_SNAPSHOT is on, so a node holding a vault (PI_STORE_ROOT / JOBHUNTER_STORE_ROOT) no longer copies it on every captured turn by default. Wiring unchanged.
  */
 
 /**
@@ -137,9 +138,10 @@ async function start(): Promise<void> {
 
   // ── Token Chase owner-store binding (ADR-046 §1 three-part checkpoint) ────────
   // The any-bot capture lane versions the accountable owner's encrypted store on every
-  // frame through this snapshotter — CIPHERTEXT ONLY, nothing is ever decrypted. With no
-  // store root configured on this node it stays unbound and each recorded version is
-  // honestly null (ownerStore.bound:false) rather than a made-up reference.
+  // frame through this snapshotter — CIPHERTEXT ONLY, nothing is ever decrypted. It binds
+  // only when the node opts in (TOKEN_CHASE_OWNER_STORE_SNAPSHOT=on) and has a store root;
+  // otherwise it stays unbound and each recorded version is honestly null
+  // (ownerStore.bound:false) rather than a made-up reference.
   const ownerStore = createOwnerStoreSnapshotter(readOwnerStoreConfig());
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { tokenChase } = require('../../any-bot/server/services/token-chase/TokenChaseCapture');

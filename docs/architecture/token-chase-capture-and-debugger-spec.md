@@ -148,12 +148,19 @@ The capture rail (`any-bot/server/services/token-chase/`) binds every frame to:
   open: the commit stays `null` and `checkpoint.error` says why; a SHA is never fabricated.
   `checkpoint.redactedPaths` names files whose bytes changed under redaction, which a replay cannot
   reproduce byte for byte;
-- the accountable owner's **encrypted store version** (`context.ownerStoreVersion`): sha256 over the
-  sorted (path, sha256(ciphertext)) pairs of the exact-subject store, with the ciphertext copied into
+- the accountable owner's **encrypted store version** (`context.ownerStoreVersion`), **only on a node
+  that opted in** with `TOKEN_CHASE_OWNER_STORE_SNAPSHOT=on`: sha256 over the sorted
+  (path, sha256(ciphertext)) pairs of the exact-subject store, with the ciphertext copied into
   `.tokenchase/store-objects/<sha256>` and the manifest written as `store-<version>.json`
   (`src/features/token-chase/services/owner-store-snapshot.ts`, installed on the lane by the bot-node
-  server at boot). Nothing is decrypted; a node with no store root records `null` and
-  `ownerStore.bound:false`;
+  server at boot). The store root is `TOKEN_CHASE_STORE_ROOT`, else `PI_STORE_ROOT` /
+  `JOBHUNTER_STORE_ROOT`, and is read only after the opt-in: a vault root being present never turns
+  the snapshot on. Nothing is decrypted. A node that did not opt in, or has no store root, records
+  `null` and `ownerStore.bound:false`, and a tail replay of its runs reports `storeBound:false`.
+  **Cost:** each frame and `final.json` hashes and copies the owner's whole store. On the operator's
+  1.6 GB, 19,287-file store that held a jarvis bot's event loop 88.8 s before the model call and
+  33.6 s after it, and wrote 1.2 GB per ask (measured 2026-09-27,
+  [jarvis-own-task-recall.md](jarvis-own-task-recall.md)); do not enable it on a large vault;
 - **per-turn pins**: every tool result the agentic loop appended since the previous frame becomes
   `{tool, callId, replayClass, pinned, inputSha256, resultSha256}` (`turn-provenance.js`), stored
   redacted and content-addressed. `replayClass` is declared on the tool definition
