@@ -198,6 +198,9 @@ Suites: `npx vitest run tests/unit/jarvis-recall-acceptance.spec.ts
 tests/unit/jarvis-recall-acceptance-postgres.spec.ts tests/unit/test-lab-jarvis-recall-registration.spec.ts`.
 The PostgreSQL suite is the real boundary: the seed goes through the real stores as the app role, and
 the real recall tools running as the bot role find it for its owner and nothing for another owner.
+On the Antigravity brain the card also leans on `tests/unit/antigravity-host-tool-loop.spec.ts` and
+`tests/unit/antigravity-bot-runtime.spec.ts` (attached here and to `jarvis-routing`): the same two-tool
+recall through the real host loop with agy holding no native tools, and the invocation's permission scope.
 
 ### LoRA gallery import (live acceptance)
 

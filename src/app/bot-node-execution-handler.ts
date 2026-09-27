@@ -29,6 +29,7 @@
  * 24 | maintainer@emeraldcoastsystemsgroup.com | Put the exact AUTO-granted brokered application tool names in protected prompts at call time while keeping the native bot-node registry empty. This prevents the final authority rebind from contradicting the invocation-scoped MCP tool list.
  * 25 | maintainer@emeraldcoastsystemsgroup.com | Retain completed work from configured failover (BACKLOG #1660): accept completed work from any provider in carriedConfig.fallbackOrder; attribute cost and metrics to the actual executing provider.
  * 26 | maintainer@emeraldcoastsystemsgroup.com | Bill and relay the real usage split when TaskController reports one. The cost record and the HTTP usage block wrote `inputTokens = totalTokens, outputTokens = 0, cacheReadTokens = 0` unconditionally, so chat_tasks could never show the invariant-preamble cache's saving (fewer input tokens, a cached-token count). resolveExecutionUsage maps apiMetrics.inputTokens/outputTokens/cacheReads through when present and keeps the legacy total-as-input mapping when the runtime reports only a total, so an agentic result is billed exactly as before.
+ * 27 | maintainer@emeraldcoastsystemsgroup.com | Mark a direct (interactive) dispatch hostToolsOnly. Such a turn is conversation plus the tools the agentic loop brokers itself (Jarvis's conversation_query/conversation_fetch); it never needs the CLI's own file or command tools. On the Antigravity brain those native tools were what a recall ask spent 10 min 45 s on before a headless read_file denial killed it. Protected work keeps its own path (toolLess + the controller MCP bridge) and is never marked.
  */
 
 /**
@@ -464,6 +465,9 @@ export function createBotNodeExecutionHandler(
           agenticMode,
           autoApprove: protectedExecution ? {} : { 'use_mcp_tool': true },
           ...(protectedExecution ? { toolLess: true, assertCurrentAuthorization: () => protectedExecution.check() } : {}),
+          // An interactive turn's tools are brokered by the agentic loop itself; a CLI brain gets none
+          // of its own (AntigravityProvider runs agy tool-less). Protected work keeps its bridge path.
+          ...(direct && !protectedExecution ? { hostToolsOnly: true } : {}),
           source: 'swarm-dispatch',
           allowedTools: [...promptAuthority.allowedTools],
           authorizedScopes: [...promptAuthority.scopes],
