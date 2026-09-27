@@ -16,6 +16,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — decomposition of trading-schedule-dispatch.ts (890 code lines) along its section seams: rotationConfig, rankUniverse, buildEntryGuard (private), rotateSleeve and rotateBlendSleeve move here unchanged (rotationConfig/rankUniverse keep their exported names for the lab routes, lab sim and rotation backtest through the entry barrel). Env names unchanged: TRADING_SLEEVE_ROTATION, TRADING_ROTATION_EVERY_DAYS, TRADING_ROTATION_TOPN, TRADING_ROTATION_RANK, TRADING_ROTATION_WEIGHTING, TRADING_ROTATION_EXT_HOURS. rotateSleeve and rotateBlendSleeve remain over the 50-line function guideline exactly as in the monolith (pre-existing; a body change would be a behavior change). Golden-plan guard: tests/unit/trading-dispatch-golden-plan.spec.ts.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Comment-only: rotationConfig's section banner opened with `/*` so its @description/@param/@returns tags were invisible to JSDoc tooling; opened as `/**`. No code line changed.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 — both rotation paths withhold every decision for a held long the engine cannot account for from its own filled orders: it is not rotated out, not trimmed to target weight and not topped up. This is the path that actually traded the operator's hand-bought shares — rotation OWNS the sleeve wherever TRADING_SLEEVE_ROTATION is on, and a name it no longer targets is sold in full. Withholding the drop-out sell deliberately leaves the name in `heldNow`, so the buy leg still sees the shares and cannot mistake it for a fresh entry. The withheld BUY notional is reserved out of `cashAvail`, so withholding can only ever REMOVE orders from the plan — no other name's order can grow because of it.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-052 addendum (paper-to-live parity) — both rotation paths take the fire's optional ParityControls as a trailing argument; null/absent (every fire while both features are off) is the pre-existing path. A blocked market-wide gap verdict holds the WHOLE rebalance before its first order — a rebalance is funded by its drop-out sells, and selling into a gap to buy nothing is the worst trade it can make — and records the leaderboard's not-yet-held targets as 'market-gap' counterfactuals; the caller keeps the day's rotation slot open. Every placeManaged call carries the plan ledger, so a rotation buy stamps a FRESH plan at its own entry, a drop-out sell closes the plan with door 'rotation' and a trim leaves it open; a held leader the rebalance re-selected without buying has its open plan re-underwritten at its current mark.
  *
  * @module trading-dispatch-rotation
  */
@@ -32,6 +33,8 @@ import { overlayRotationKnobs, type ConfigOverrideRow } from './trading-config-o
 import { blendRotationPlan } from './trading-blend';
 import { placeManaged, bookBinding, capAccount, type RunOrder } from './trading-dispatch-rail';
 import { coreConfig, sizingPrice } from './trading-dispatch-core';
+import { marketGapHolds, freshTargets, type ParityControls } from './trading-dispatch-market-gate';
+import { reunderwritePlans, heldCandidates } from './trading-position-plans';
 import { createChildLogger } from '@/shared/logger';
 
 // Module name kept as the monolith's: the log stream is the watchdog/operator contract.
@@ -170,6 +173,7 @@ async function buildEntryGuard(candidates: string[], exiting: Set<string>): Prom
  * @param override - The applied Strategy Library override (ADR-095), when one is active.
  * @param exiting - UPPERCASE symbols the protective leg is selling THIS fire (never re-bought).
  * @param noBuy - The earnings blackout set (empty unless armed).
+ * @param parity - The fire's parity controls (market-gap hold, plan ledger); null = both off.
  * @returns Resolves when the rebalance has been placed (sells, trims, settle, buys).
  */
 export async function rotateSleeve(
@@ -179,6 +183,7 @@ export async function rotateSleeve(
   override: ConfigOverrideRow | null = null,
   exiting: Set<string> = new Set(),
   noBuy: Set<string> = new Set(),
+  parity: ParityControls | null = null,
 ): Promise<void> {
   const book = typeof bookOrMode === 'string' ? legacyBook(sub, bookOrMode) : bookOrMode;
   const mode = book.kind;
@@ -245,6 +250,8 @@ export async function rotateSleeve(
     logger.info({ scheduleId: sub, mode, refused: picked.blocked, maxGapDownPct: guardIn.maxGapDownPct },
       'rotation entry guard refused candidates');
   }
+  // ADR-052 addendum: a market-wide gap-down holds the whole rebalance (its drop-out sells included).
+  if (marketGapHolds(ctx.pool, sub, book, parity, 'rotation', freshTargets(buyTargets, positions, bars))) return;
 
   // SELLS — rotate OUT every held sleeve name that is no longer in the target leaderboard.
   const currentSleeve = positions.filter((p) => p.qty > 0 && !coreSet.has(p.symbol.toUpperCase()));
@@ -266,7 +273,7 @@ export async function rotateSleeve(
       symbol: p.symbol, action: 'sell', side: 'sell', qty: p.qty, confidence: 1,
       rationale: `Rotation (${cfg.rank}) — dropped out of the top ${N}; rotating capital to stronger names.`,
       indicators: { reason: 'rotation', rank: cfg.rank }, price: null, source: 'gravity-rotation',
-    }, orders, errors, 'rotation');
+    }, orders, errors, 'rotation', parity?.plans);
     sold.add(sym);
   }
 
@@ -307,7 +314,7 @@ export async function rotateSleeve(
       symbol: sym, action: 'sell', side: 'sell', qty, confidence: 1,
       rationale: `Rotation (${cfg.rank}/${cfg.weighting}) — trim to target weight ($${Math.round(goal)}); no single name dominates.`,
       indicators: { reason: 'rotation-trim', rank: cfg.rank, weighting: cfg.weighting }, price: px, source: 'gravity-rotation',
-    }, orders, errors, 'rotation');
+    }, orders, errors, 'rotation', parity?.plans);
   }
   // LEVERAGE-PROOF FUNDING: wait for the drop-out sells + trims above to actually SETTLE, then re-read the
   // REAL cash and fund buys ONLY from that — never spend anticipated proceeds. A rejected or slow sell then
@@ -332,9 +339,11 @@ export async function rotateSleeve(
       symbol: sym, action: 'buy', side: 'buy', qty, confidence: 1,
       rationale: `Rotation (${cfg.rank}/${cfg.weighting}) — size into top-${N} at target weight ($${Math.round(goal)}; score ${(scoreBySym.get(sym) ?? 0).toFixed(2)}).`,
       indicators: { reason: 'rotation', rank: cfg.rank, weighting: cfg.weighting, score: scoreBySym.get(sym) ?? 0 }, price: px, source: 'gravity-rotation',
-    }, orders, errors, 'rotation');
+    }, orders, errors, 'rotation', parity?.plans);
     cashAvail -= qty * px; if (!heldNow.has(sym)) openCount += 1;
   }
+  // ADR-052 addendum: a held leader re-selected this rebalance re-earns its plan (a bought one was stamped above).
+  if (parity?.plans) await reunderwritePlans(ctx.pool, parity.plans, heldCandidates(positions, buyTargets), 'rotation');
 }
 
 /**
@@ -358,6 +367,7 @@ export async function rotateSleeve(
  * @param override - The active blend override (components + applyPct already reflected in core).
  * @param exiting - UPPERCASE symbols the protective leg is selling THIS fire (never re-bought).
  * @param noBuy - The earnings blackout set (empty unless armed).
+ * @param parity - The fire's parity controls (market-gap hold, plan ledger); null = both off.
  * @returns Resolves when the merged-plan rebalance has been placed.
  */
 export async function rotateBlendSleeve(
@@ -367,6 +377,7 @@ export async function rotateBlendSleeve(
   override: ConfigOverrideRow,
   exiting: Set<string> = new Set(),
   noBuy: Set<string> = new Set(),
+  parity: ParityControls | null = null,
 ): Promise<void> {
   const book = typeof bookOrMode === 'string' ? legacyBook(sub, bookOrMode) : bookOrMode;
   const mode = book.kind;
@@ -381,6 +392,8 @@ export async function rotateBlendSleeve(
   const universe = symbols.filter((s) => !coreSet.has(s.toUpperCase()));
   const bars = await barsBatch(universe, '1Day', 150);
   const plan = blendRotationPlan(components, sleeveBudget, equity, bars, coreSet, new Set([...symbolBlocklist(), ...noBuy]), rankUniverse);
+  // ADR-052 addendum: a market-wide gap-down holds the whole merged rebalance, before its first sell.
+  if (marketGapHolds(ctx.pool, sub, book, parity, 'blend-rotation', freshTargets([...plan.goals.keys()], positions, bars))) return;
 
   // SELLS — rotate OUT every held sleeve name no component targets anymore.
   const currentSleeve = positions.filter((p) => p.qty > 0 && !coreSet.has(p.symbol.toUpperCase()));
@@ -400,7 +413,7 @@ export async function rotateBlendSleeve(
       symbol: p.symbol, action: 'sell', side: 'sell', qty: p.qty, confidence: 1,
       rationale: `Blend rotation — no component targets ${sym} anymore; rotating capital to the merged leaders.`,
       indicators: { reason: 'rotation', rank: 'blend-multi' }, price: null, source: 'gravity-rotation',
-    }, orders, errors, 'rotation');
+    }, orders, errors, 'rotation', parity?.plans);
     sold.add(sym);
   }
 
@@ -438,7 +451,7 @@ export async function rotateBlendSleeve(
       symbol: sym, action: 'sell', side: 'sell', qty, confidence: 1,
       rationale: `Blend rotation — trim to merged target weight ($${Math.round(g.goal)}).`,
       indicators: { reason: 'rotation-trim', rank: 'blend-multi' }, price: px, source: 'gravity-rotation',
-    }, orders, errors, 'rotation');
+    }, orders, errors, 'rotation', parity?.plans);
   }
   // LEVERAGE-PROOF FUNDING: wait for sells/trims to settle, re-read REAL cash, fund buys only from it.
   await new Promise((r) => setTimeout(r, 6000));
@@ -460,7 +473,9 @@ export async function rotateBlendSleeve(
       symbol: sym, action: 'buy', side: 'buy', qty, confidence: 1,
       rationale: `Blend rotation — size into merged target ($${Math.round(g.goal)}; strongest component score ${g.score.toFixed(2)}).`,
       indicators: { reason: 'rotation', rank: 'blend-multi', score: g.score }, price: px, source: 'gravity-rotation',
-    }, orders, errors, 'rotation');
+    }, orders, errors, 'rotation', parity?.plans);
     cashAvail -= qty * px; if (!heldNow.has(sym)) openCount += 1;
   }
+  // ADR-052 addendum: a held merged target re-selected this rebalance re-earns its plan.
+  if (parity?.plans) await reunderwritePlans(ctx.pool, parity.plans, heldCandidates(positions, buyOrder.map(([sym]) => sym)), 'rotation');
 }

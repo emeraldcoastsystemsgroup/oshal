@@ -48,6 +48,7 @@
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 — mark the book ONCE per fire, immediately after the protected-lot overlay and before any leg reads it: withEngineCostBasis now sets `unmanaged` on every long the engine's own filled orders do not cover, and every leg (core top-up, protective exits, rotation) receives the marked array. It used to be attached inside computeExits, which reached only the stop/take-profit rule and ran AFTER the core leg had already traded. The operator bought shares outside the engine and the engine managed them against a basis it never paid; from here the engine withholds every order decision for such a position while exposure, capital and drawdown keep counting it.
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 round 2 — the two SCAN-sleeve sell legs were left reading the book through the plain quantity map (`held`), which carries no mark: the 2a short-timeframe breakdown exit could still sell a holding the engine cannot account for, and unlike 2b/2c/2d it runs on EVERY fire rather than only when rotation does not own the sleeve — so the one leg that was always live was the one still trading hand-bought shares. Both 2a and 2b now read `unmanagedSymbols(positions)` beside `held`. `held` itself is deliberately unchanged: it is also placeEntries' dedup guard, so removing a withheld name from it would let the engine BUY what it just refused to manage. A withheld name is likewise NOT added to `exiting`, so it keeps consuming its maxPositions slot and its exposure exactly as today — withholding can only remove an order, never free capital for another target. Guard: tests/unit/trading-dispatch-unmanaged-fire.spec.ts drives a full dispatchTradingSchedule fire over a book with one uncovered position and asserts no order of any kind for it.
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | ADR-134 book resolution gains a FOURTH hard rule: a resolved NON-LEGACY book with no arming acknowledgement on its row hard-skips the fire. Enabling a second book was already inert for trading - this function resolves exactly ONE book from its own schedule's taskData and never enumerates enabled books - but that safety was a property of the code with nothing pinning it and nothing standing between a hand-written schedule row and roughly $224k of hand-picked positions in the rollover account. The gate is suppressive by construction (it can only withhold a fire) and the two legacy books are excluded, so the running first leg is byte-identical. The four rules move into resolveScheduleBook() - a pure code move, branch for branch - because dispatchTradingSchedule was already 121 lines and adding the gate inline would have grown it further past the 50-line rule; its early returns become a null the caller turns back into the same logged no-op result.
+ * 25 | maintainer@emeraldcoastsystemsgroup.com   | ADR-052 addendum (paper-to-live parity): runAutopilot resolves the fire's ParityControls ONCE, right after the earnings blackout (resolveParityControls, trading-dispatch-market-gate.ts — the market-wide gap-down verdict and the per-position exit-plan ledger, each null unless armed by the applied strategy's knob or the mode-aware env default), and threads them to computeExits, both rotation paths, placePopCatches, placeEntries and the four sell sites here (placeManaged's plan ledger, so a full exit closes the position's plan with its door). A market-gap-held rotation does not consume the day's rotation slot. All logic lives in the new modules; runAutopilot does not grow (the resolve joins the earnings-blackout read in one Promise.all; every other change is an argument or a condition on an existing line). Unarmed = the null controls every leg already treats as absent, so the plan is byte-identical (tests/unit/trading-dispatch-golden-plan.spec.ts, unchanged).
  *
  * @module trading-schedule-dispatch
  */
@@ -89,6 +90,7 @@ import { coreConfig, ensureCore } from './trading-dispatch-core';
 import { rotationConfig, rotateSleeve, rotateBlendSleeve } from './trading-dispatch-rotation';
 import { computeExits, placeEntries, placePopCatches } from './trading-dispatch-exits-entries';
 import { withEngineCostBasis } from './trading-engine-cost-basis';
+import { resolveParityControls } from './trading-dispatch-market-gate';
 import { createChildLogger } from '@/shared/logger';
 
 const logger = createChildLogger({ module: 'trading-schedule-dispatch' });
@@ -235,8 +237,8 @@ async function runAutopilot(ctx: AppContext, sub: string, bookOrMode: TradingBoo
   const worldSvc = createWorldIntelligenceService();
   // EARNINGS BLACKOUT (TRADING_EARNINGS_GATE, default off; mode-aware: paper|live|both) — read ONCE
   // per fire. Empty set unless armed for THIS book, so the default path is byte-identical.
-  // Evidence: 2026-07-14 earnings-proximity study; counterfactuals accrue in the gate-block ledger.
-  const noBuy = await earningsBlackout(worldSvc, mode);
+  // Evidence: 2026-07-14 earnings-proximity study; counterfactuals accrue in the gate-block ledger. Beside it: the ADR-052 parity controls (null unless armed).
+  const [noBuy, parity] = await Promise.all([earningsBlackout(worldSvc, mode), resolveParityControls(sub, book, override, policy)]);
   if (noBuy.size) logger.info({ sub, mode, blackout: [...noBuy].join(','), days: EARNINGS_BLACKOUT_DAYS }, 'earnings blackout active — these names will not be bought');
 
   // 0) Beta core — deploy idle cash into a market-index core (captures the market beta the active
@@ -251,12 +253,12 @@ async function runAutopilot(ctx: AppContext, sub: string, bookOrMode: TradingBoo
 
   // 1) Protective exits — hard stop / take-profit / trailing stop + cap-breach trims on open longs.
   //    Core symbols are exempt (we hold the core; the sleeve never sells it).
-  const exits = (await computeExits(ctx, sub, book, positions, policy, account.equity, extHours)).filter((e) => !coreSet.has(e.symbol.toUpperCase()));
+  const exits = (await computeExits(ctx, sub, book, positions, policy, account.equity, extHours, parity)).filter((e) => !coreSet.has(e.symbol.toUpperCase()));
   const exiting = new Set(exits.map((e) => e.symbol.toUpperCase()));
   // Free shares locked by STALE working sells (a stranded ext-hours limit) before re-placing, so a
   // protective exit can chase a falling market instead of being rejected fire after fire.
   await freeStaleSells(ctx, sub, book, exiting).catch((e) => logger.warn({ err: e }, 'freeStaleSells failed'));
-  for (const e of exits) await placeManaged(ctx, sub, book, exitDecision(e), orders, errors, e.reason);
+  for (const e of exits) await placeManaged(ctx, sub, book, exitDecision(e), orders, errors, e.reason, parity.plans);
 
   // 1b) OPTIONAL gravity-ranked sleeve rotation (TRADING_SLEEVE_ROTATION, default OFF). When enabled,
   //     rotation OWNS the sleeve: on a weekly cadence (TRADING_ROTATION_EVERY_DAYS) it ranks the
@@ -297,17 +299,17 @@ async function runAutopilot(ctx: AppContext, sub: string, bookOrMode: TradingBoo
         const beforeRotation = orders.length;
         // `exiting` (the protective leg's sells, placed just above) is threaded in so rotation cannot
         // re-buy a name the stop is selling in this same fire — the 2026-07-14 IBM round-trip.
-        if (override?.config.kind === 'blend') await rotateBlendSleeve(ctx, sub, book, account, positions, policy, coreSet, symbols, orders, errors, override, exiting, noBuy);
-        else await rotateSleeve(ctx, sub, book, account, positions, policy, coreSet, symbols, orders, errors, override, exiting, noBuy);
+        if (override?.config.kind === 'blend') await rotateBlendSleeve(ctx, sub, book, account, positions, policy, coreSet, symbols, orders, errors, override, exiting, noBuy, parity);
+        else await rotateSleeve(ctx, sub, book, account, positions, policy, coreSet, symbols, orders, errors, override, exiting, noBuy, parity);
         const rotationPlaced = orders.length - beforeRotation;
         const sleeveHeld = positions.filter((p) => p.qty > 0 && !coreSet.has(p.symbol.toUpperCase())).length;
         // Consume the daily rotation slot only when rotation DEPLOYED something or the sleeve is
         // already positioned. An EMPTY sleeve that bought nothing (an all-red open where no target
         // was buyable) must NOT burn the day's only buy window — 2026-07-07: live "rotated" nothing
-        // at the 9:30 open and then sat 100% cash while the tape turned buyable at noon.
-        if (rotationPlaced > 0 || sleeveHeld > 0) {
+        // at the 9:30 open and then sat 100% cash while the tape turned buyable at noon. Nor does a market-gap hold.
+        if (!parity.marketGap?.blocked && (rotationPlaced > 0 || sleeveHeld > 0)) {
           await saveLastRotated(ctx.pool, sub, book).catch(() => {});
-        } else {
+        } else if (!parity.marketGap?.blocked) {
           logger.info({ sub, mode }, 'rotation deployed nothing on an empty sleeve — daily slot NOT consumed; retrying next fire');
         }
       }
@@ -352,14 +354,14 @@ async function runAutopilot(ctx: AppContext, sub: string, bookOrMode: TradingBoo
       const d = scan.get(sym);
       const qty = held.get(sym) ?? 0;
       if (!d || !(qty > 0)) continue;
-      await placeManaged(ctx, sub, book, breakdownDecision(d, qty), orders, errors, 'breakdown');
+      await placeManaged(ctx, sub, book, breakdownDecision(d, qty), orders, errors, 'breakdown', parity.plans);
       exiting.add(sym);
     }
   }
 
   // 2a-pop) POP-CATCHER (opt-in, off by default) — the monolith's block, moved verbatim to
   //   placePopCatches (trading-dispatch-exits-entries.ts); nothing reordered, TRADING_POP_CATCHER read per fire.
-  await placePopCatches(ctx, sub, book, scan, positions, account, coreSet, exiting, coreSpent, orders, errors);
+  await placePopCatches(ctx, sub, book, scan, positions, account, coreSet, exiting, coreSpent, orders, errors, parity);
 
   // The scan-based sleeve management (technical sells / benches / new entries) runs ONLY when the
   // gravity rotation is NOT in charge. With rotation enabled, rotateSleeve (1b) owns these decisions;
@@ -371,7 +373,7 @@ async function runAutopilot(ctx: AppContext, sub: string, bookOrMode: TradingBoo
       // ADR-159: same contract as 2a — a technical close is still an engine order, and the engine has
       // no basis for this quantity. Not added to `exiting` for the same reason.
       if (d.action === 'sell' && (held.get(sym) || 0) > 0 && !exiting.has(sym) && !coreSet.has(sym) && !unaccounted.has(sym)) {
-        await placeManaged(ctx, sub, book, scanDecision(d, 'sell', held.get(sym) as number), orders, errors);
+        await placeManaged(ctx, sub, book, scanDecision(d, 'sell', held.get(sym) as number), orders, errors, undefined, parity.plans);
         exiting.add(sym);
       }
     }
@@ -382,7 +384,7 @@ async function runAutopilot(ctx: AppContext, sub: string, bookOrMode: TradingBoo
       [...scan.values()].map((d) => [d.symbol.toUpperCase(), { score: d.score, action: d.action }]));
     for (const e of rotationBenches(positions, strength, policy)) {
       if (!exiting.has(e.symbol.toUpperCase()) && !coreSet.has(e.symbol.toUpperCase())) {
-        await placeManaged(ctx, sub, book, exitDecision(e), orders, errors, 'rotation');
+        await placeManaged(ctx, sub, book, exitDecision(e), orders, errors, 'rotation', parity.plans);
         exiting.add(e.symbol.toUpperCase());
       }
     }
@@ -410,7 +412,7 @@ async function runAutopilot(ctx: AppContext, sub: string, bookOrMode: TradingBoo
       // dip rule sells, nothing rebuys until the regular session. TRADING_EXT_ENTRIES=true re-enables
       // the old halved-size ext-hours entries if ever wanted.
       if (!extHours || String(process.env.TRADING_EXT_ENTRIES || 'false').toLowerCase() === 'true') {
-        await placeEntries(ctx, sub, book, scan, held, reservedAccount, policy, remaining, orders, errors, worldSvc, inFlight.symbols, extHours, noBuy);
+        await placeEntries(ctx, sub, book, scan, held, reservedAccount, policy, remaining, orders, errors, worldSvc, inFlight.symbols, extHours, noBuy, parity);
       }
     }
   }

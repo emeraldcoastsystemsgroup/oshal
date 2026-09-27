@@ -169,6 +169,122 @@ live posture — live stays gated and is the subject of the open questions below
   the long-only/instrument questions below should be re-confirmed before any live order. Shorting
   and stop/trailing on the LIVE book are explicitly out of scope until that review.
 
+## Addendum (2026-09-27) — paper-to-live parity: market-wide gap-down filter and per-position exit plans
+
+Two features the operator queued on 2026-07-09 change the tested algorithm, so neither may reach
+the live book except as the same algorithm the paper book has already run. This addendum records
+the one config path each uses, the values pre-registered before any evidence, and how each is
+promoted. The third queued feature, the idle-cash yield sleeve, is not covered here.
+
+### P1. One config path per feature
+
+- Each feature is a `StrategyConfig` knob:
+  - `marketGapFilterPct`, in percent.
+  - `exitPlanSessions`, in NYSE sessions.
+- The Strategy Lab walk and the dispatch read each knob through the same resolver:
+  - `marketGapFilterPct()` in [entry-guards.ts](../../src/features/trading/services/entry-guards.ts).
+  - `exitPlanSessions()` in [position-plan.ts](../../src/features/trading/services/position-plan.ts).
+- Precedence:
+  - A finite knob on the book's applied strategy decides. `0` is an explicit off.
+  - An absent knob (`null`, which is every strategy saved before the knobs existed) inherits the
+    book's mode-aware env default. `TRADING_MARKET_GAP_FILTER` and `TRADING_EXIT_PLANS` accept
+    `paper | live | both | true` and are **off by default**. `TRADING_MARKET_GAP_PCT` and
+    `TRADING_EXIT_PLAN_SESSIONS` set the value.
+  - A Lab walk has no book, so an absent knob is off there.
+- While a feature is off, the dispatch makes no new read and no new write. The golden plan guard,
+  `tests/unit/trading-dispatch-golden-plan.spec.ts`, passes unchanged.
+- Blend walks zero both knobs, as they do `earningsGateDays`. A blend book inherits the env default.
+
+### P2. Pre-registered values, not fitted
+
+| Value | Pre-registered | Why this number |
+|---|---|---|
+| Market-gap bar | **1.0%** below SPY's prior session close | The trading watchdog already pages the operator at this line before the open (check F, `GapAlertPct` 1.0). |
+| Plan life | **20** NYSE sessions | Four times the default weekly rotation cadence (`TRADING_ROTATION_EVERY_DAYS=5`). |
+| Plan stop / take-profit / trailing | The posture in force at the buy | No new numbers. The plan freezes the dials that already exist. |
+
+Changing any of these follows the existing strategy-log rule: a row with harness numbers first.
+
+### P3. Market-wide gap-down entry filter
+
+- The dispatch evaluates the filter **once per fire**, in
+  [trading-dispatch-market-gate.ts](../../src/app/trading-dispatch-market-gate.ts). It compares SPY's
+  latest print with its prior **session** close, taken from the dated daily series. At or beyond the
+  bar, the entry legs hold. If either price is missing, the filter fails open.
+- **Held:**
+  - scan entries;
+  - the rotation rebalance, including its drop-out sells, because a rebalance must not sell into the
+    gap and then buy nothing;
+  - the blend rebalance;
+  - the pop-catcher.
+- **Never held:**
+  - protective exits;
+  - the breakdown leg;
+  - technical sells and benches;
+  - the beta-core rebalance, which tracks its target in both directions and is not an entry decision.
+- A held rotation does **not** consume the day's rotation slot.
+- **Shadow evidence.** Each held leg writes its would-be buys to `oshal_trading_gate_blocks` with
+  `gate = 'market-gap'`. The first fire of each ET day wins. These rows are scored the way the
+  earnings gate's rows are.
+- **Lab twin.** The walk reads SPY's daily opens. A session that opens at or beyond the bar holds its
+  entries, and a rebalance due that session runs on the next session that is not held. The honest
+  limit: the Lab judges only the open, while the live filter judges every fire's print.
+
+### P4. Per-position exit plans
+
+- **Storage.** Plans live in `oshal_trading_position_plans`
+  ([trading-position-plans.ts](../../src/app/trading-position-plans.ts)).
+  - Owner RLS applies.
+  - Each (user, book, symbol) has at most one open plan.
+  - A database trigger refuses any UPDATE of a plan's terms.
+- **Stamping.** `placeManaged` stamps a plan after every placed autonomous BUY: scan, rotation, blend
+  and pop. The plan records the decision's reference price and the fire's stop, take-profit and
+  trailing dials, and expires N sessions out. The beta core is never stamped.
+- **Exits.**
+  - A planned position is judged on its **stored** plan, through the doors `plan-stop`, `plan-tp`,
+    `plan-trail` and `plan-expiry`. Because the terms are stored, a later posture or policy change
+    cannot re-price it.
+  - Unplanned positions keep the global rules.
+  - The cap trim stays a book-level rule.
+  - If the plan read fails, the whole book runs on the global rules.
+- **Doors.**
+  - A plan exit's decision carries `{ reason: <door>, planId }` under source `position-plan`.
+  - Any full exit closes the open plan with `closed_by_door` and `closed_decision_id`. This covers the
+    plan doors and the event doors: `breakdown`, `signal`, `rotation`, `ext_dip`, and the global
+    stops.
+  - A partial trim leaves the plan open.
+- **Re-underwriting.** Each of these supersedes the open plan with a fresh one at the current price,
+  on a new clock:
+  - a new buy of a held name;
+  - a scan buy call on a held name;
+  - a rotation re-selection of a held leader.
+
+  Only names that already carry an open plan are re-underwritten.
+- **Amendment.** `amendPlans()` is the only way to change a plan's terms. The old row becomes
+  `amended`, and a successor row records the new terms, the actor and the note.
+- **Lab twin.** Each lot carries its plan basis and clock. Exits judge that basis, and a lot that has
+  not been re-underwritten for N sessions leaves on the clock.
+
+### P5. Evidence and promotion
+
+- **Soak.** The paper soak is the evidence, and it needs market time:
+  - at least one SPY gap-down day with `market-gap` rows;
+  - plan exits that cross-check against the decision ledger door by door;
+  - gate-on / gate-off Lab twins recorded in [the strategy log](../apps/trading/strategy-log.md).
+- **Readback.** The Test Lab card `trading-parity-features` reads the caller's settings and ledgers
+  after a deploy. It never claims the soak.
+- **Promotion to live** is the operator's act. It goes through the existing confirmations:
+  - the env arm naming `live`;
+  - or a strategy carrying the knob, applied to the live book through the confirm-gated per-book
+    strategy apply.
+
+  Either way, the live autopilot still fires only under the double opt-in (`TRADING_LIVE_ENABLED`
+  and `TRADING_AUTOPILOT_LIVE`).
+- **Store side.** The store's per-book strategy apply route already carries the knobs, because it
+  normalizes a saved strategy through this core's `normalizeConfig`. Not done yet in the store: the
+  Strategy Lab knob list (`GET /api/trading/lab/knobs`) does not document the two knobs, there is no
+  store-side spec pinning the 428 refusal for them, and there is no plan view or amend route.
+
 ## Operator sign-off — answered as built (reconciled 2026-08-02)
 
 This section was written as *"open questions for operator sign-off (before any code)"*. The code

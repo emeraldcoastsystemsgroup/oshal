@@ -44,6 +44,7 @@
 # 36 | maintainer@emeraldcoastsystemsgroup.com | Complete the P8 rollout after the store backfill: the controller now defaults OSHAL_CONCIERGE_COVERAGE_MODE to fail-closed enforce; warn remains an explicit temporary observation/rollback override.
 # 37 | maintainer@emeraldcoastsystemsgroup.com | Add an optional dedicated Futures research worker with package-owned persona and no CLI credential mounts.
 # 38 | maintainer@emeraldcoastsystemsgroup.com | Forward the inbound chat-channel settings to the api only: DISCORD_BOT_TOKEN (without it the Discord DM Gateway never starts on this stack and POST /api/channels/discord/link answers 503), TWILIO_INBOUND_NUMBER (the number SMS users text their LINK code to), TWILIO_INBOUND_PUBLIC_URL (the exact public URL the Twilio signature is verified against; unforwarded, the api falls back to the URL it reconstructs from the request, sms-inbound-routes requestUrl) and TWILIO_WHATSAPP_FROM (the WhatsApp sender users message). All four were read by the api and never forwarded. The Discord token stays off x-bot-env so no bot container carries it. Guard: tests/unit/compose-env-passthrough.spec.ts.
+# 39 | maintainer@emeraldcoastsystemsgroup.com | ADR-052 addendum (paper-to-live parity): forward TRADING_MARKET_GAP_FILTER / TRADING_MARKET_GAP_PCT (the market-wide gap-down entry filter) and TRADING_EXIT_PLANS / TRADING_EXIT_PLAN_SESSIONS (per-position exit plans) beside the earnings gate. All four default OFF/blank (= the code default), so an untouched box fires byte-identically; the knob-not-in-compose trap is why they are forwarded at all. Guard: tests/unit/compose-env-passthrough.spec.ts.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -525,6 +526,16 @@ x-bot-env: &bot-env
   # leaderboard (rotation sells it) — arming is a behavior change, soak on paper first.
   TRADING_EARNINGS_GATE: ${TRADING_EARNINGS_GATE:-false}
   TRADING_EARNINGS_BLACKOUT_DAYS: ${TRADING_EARNINGS_BLACKOUT_DAYS:-}
+  # ADR-052 addendum (paper-to-live parity). Market-wide gap-down entry filter: when SPY trades at or
+  # beyond TRADING_MARKET_GAP_PCT (blank = the pre-registered 1.0) below its prior session close, the
+  # entry legs hold for the fire and record their would-be buys as 'market-gap' counterfactuals;
+  # exits never hold. Per-position exit plans: every autonomous buy stamps an immutable plan that
+  # expires after TRADING_EXIT_PLAN_SESSIONS (blank = 20) sessions. Both mode-aware
+  # (paper|live|both|true), default OFF; an applied strategy's own knob outranks these.
+  TRADING_MARKET_GAP_FILTER: ${TRADING_MARKET_GAP_FILTER:-false}
+  TRADING_MARKET_GAP_PCT: ${TRADING_MARKET_GAP_PCT:-}
+  TRADING_EXIT_PLANS: ${TRADING_EXIT_PLANS:-false}
+  TRADING_EXIT_PLAN_SESSIONS: ${TRADING_EXIT_PLAN_SESSIONS:-}
   # ADR-136 D6 event playbooks (IPO plans): the per-user 'trading-events' schedule leg only EXECUTES
   # while this is true. Plans can be designed and armed regardless; nothing fires until it is on.
   TRADING_EVENT_PLANS: ${TRADING_EVENT_PLANS:-false}

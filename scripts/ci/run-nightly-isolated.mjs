@@ -15,6 +15,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com | The planted-fixture secret-scan proof joins the fixed isolated set, beside the partial-scan guard it completes. That one replaces docker on PATH; this one runs the real gitleaks image over a disposable repository and requires the gate to go red on a planted synthetic credential and green once it is removed. Docker and Git Bash are exactly what this gate provides, and running it nightly is what keeps the proof a standing claim rather than a one-day recording.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | The nightly backup diagnostic's round-trip guard joins the fixed isolated set. It starts its own PostgreSQL and runs a real pg_dump and psql against it in the shapes the 2026-09-12 incident produced - a dump cancelled by lock contention, a restore that errors part-way, a deploy holding the lock and one taking it mid-run - so it needs Docker and no address, the same shape as the trading and alert guards beside it. Nightly is also the only gate that executes it: the plain unit gate has no server to point it at, and the operator database is the one database it must never touch.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | The partial-scan proof joins the fixed isolated set beside its two siblings. It denies read on one file of a disposable export and requires the gate to refuse the PASS while the real gitleaks image exits 0 - the 2026-09-10 failure - so it needs Docker and Git Bash, which is exactly what this gate provides. Nightly is also what keeps the FLOATING :latest tag honest: the day the image rewords its skip line, this is where it shows up.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com | The two ADR-052 addendum parity guards join the fixed isolated set: the per-position exit-plan table spec and the parity fire spec. Each starts and destroys its own PostgreSQL and reads no database address, the same shape as the trading guards above, so this runner - which blanks every database variable it passes down - is the gate that executes them.
  */
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, createWriteStream } from 'node:fs';
@@ -45,6 +46,8 @@ export const NIGHTLY_ISOLATED_SUITES = Object.freeze([
   'tests/unit/trading-earnings-rules.spec.ts',
   'tests/unit/trading-schema-bootstrap-race.spec.ts',
   'tests/unit/trading-spec-bare-cluster-prerequisites.spec.ts',
+  'tests/unit/trading-position-plans-postgres.spec.ts',
+  'tests/unit/trading-parity-fire.spec.ts',
 ]);
 
 /**

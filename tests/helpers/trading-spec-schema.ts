@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ONE prologue for the trading DB specs, because each of them had written its own against a database that was ALREADY built. On the operator box every table exists before the spec starts, so a prologue that forgets one is invisible; on the disposable PostgreSQL those specs are supposed to run against now, the forgotten table is a 42P01 in beforeAll. Three files failed that way on a bare cluster: trading-books-schema and trading-settlement seed an account through the REAL envelope path (encryptToken -> getUserDek -> oshal_user_deks) and never called ensureDekSchema, and trading-dispatch-golden-plan sweeps trading_config_overrides before the first fire that would have created it. The fix is not three more ensure lines: it is one list, so the guard beside it (trading-spec-bare-cluster-prerequisites.spec.ts) can prove on an EMPTY server that the prologue produces every relation the specs touch, and a fourth spec inherits that instead of rediscovering it.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-052 addendum: the per-position exit-plan table (ensurePositionPlansTable) joins the list and its relation joins TRADING_SPEC_RELATIONS, so the plan specs inherit a complete prologue and the bare-cluster guard proves it on an empty server instead of a fourth spec rediscovering it.
  */
 
 import type { Pool } from 'pg';
@@ -17,6 +18,7 @@ import { ensureDailyEquityTable } from '../../src/app/trading-daily-equity-store
 import { ensureRotationStateTable } from '../../src/app/trading-rotation-store';
 import { ensurePinnedLotsSchema } from '../../src/app/trading-pinned-lots';
 import { ensureOverridesSchema } from '../../src/app/trading-config-overrides';
+import { ensurePositionPlansTable } from '../../src/app/trading-position-plans';
 import { ensureDekSchema } from '../../src/app/routes/connector-token-crypto';
 
 /**
@@ -36,6 +38,7 @@ const BOOTSTRAPS: ReadonlyArray<readonly [string, (pool: never) => Promise<unkno
   ['trading-daily-equity-store.ensureDailyEquityTable', ensureDailyEquityTable as (pool: never) => Promise<unknown>],
   ['trading-rotation-store.ensureRotationStateTable', ensureRotationStateTable as (pool: never) => Promise<unknown>],
   ['trading-pinned-lots.ensurePinnedLotsSchema', ensurePinnedLotsSchema as (pool: never) => Promise<unknown>],
+  ['trading-position-plans.ensurePositionPlansTable', ensurePositionPlansTable as (pool: never) => Promise<unknown>],
   ['trading-config-overrides.ensureOverridesSchema', ensureOverridesSchema as (pool: never) => Promise<unknown>],
   ['connector-token-crypto.ensureDekSchema', ensureDekSchema as (pool: never) => Promise<unknown>],
 ];
@@ -58,6 +61,7 @@ export const TRADING_SPEC_RELATIONS: readonly string[] = [
   'oshal_trading_daily_equity',
   'oshal_trading_rotation_state',
   'oshal_trading_pinned_lots',
+  'oshal_trading_position_plans',
   'trading_config_overrides',
   'oshal_user_deks',
 ];

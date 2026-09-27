@@ -5766,10 +5766,10 @@
     },
     {
       "file": "tests/unit/trading-blend.spec.ts",
-      "line": 13,
+      "line": 14,
       "col": 75,
       "code": "TS2322",
-      "message": "Type '{ kind: \"rotation\" | \"ensemble\" | \"blend\"; components?: BlendComponent[] | undefined; posture: RiskPosture; corePct: number; coreSymbol: string; takeProfitPct: number | null; ... 7 more ...; earningsGateDays?: number | undefined; }' is not assignable to type 'StrategyConfig'.",
+      "message": "Type '{ kind: \"rotation\" | \"ensemble\" | \"blend\"; components?: BlendComponent[] | undefined; posture: RiskPosture; corePct: number; coreSymbol: string; takeProfitPct: number | null; ... 9 more ...; exitPlanSessions?: number | null | undefined; }' is not assignable to type 'StrategyConfig'.",
       "reason": "Pre-existing: Test fixture or mock object does not strictly satisfy production interface"
     },
     {
@@ -5777,7 +5777,7 @@
       "line": 17,
       "col": 70,
       "code": "TS2322",
-      "message": "Type '{ kind: \"rotation\" | \"ensemble\" | \"blend\"; components?: BlendComponent[] | undefined; posture: RiskPosture; corePct: number; coreSymbol: string; ... 8 more ...; earningsGateDays?: number | undefined; }' is not assignable to type 'StrategyConfig'.",
+      "message": "Type '{ kind: \"rotation\" | \"ensemble\" | \"blend\"; components?: BlendComponent[] | undefined; posture: RiskPosture; corePct: number; coreSymbol: string; ... 10 more ...; exitPlanSessions?: number | null | undefined; }' is not assignable to type 'StrategyConfig'.",
       "reason": "Pre-existing: Test fixture or mock object does not strictly satisfy production interface"
     },
     {

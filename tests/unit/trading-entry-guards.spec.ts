@@ -4,12 +4,16 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — rotation entry guards. The regression under test is the 2026-07-14 live open: the autopilot stopped IBM out at -23.8% on its Q2 revenue-miss gap and re-bought it in the same fire. Covers both guards (same-fire re-entry, gap-down), the fail-open contract on missing data, the prior-session-close selection (today's forming bar must NOT be mistaken for yesterday's close), and slot backfill.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-052 addendum — the market-wide gap-down filter's pure half: marketGapBlock (blocks at and beyond the bar, never at 0, fails OPEN on a missing or unusable price) and marketGapFilterPct, the one resolver the dispatch and the Strategy Lab share (a finite knob outranks the env, 0 is an explicit off, an absent knob inherits the mode-aware TRADING_MARKET_GAP_FILTER only for the armed book kind, a Lab walk with no book is off, clamps and garbage).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Regression: a BLANK TRADING_MARKET_GAP_PCT is unset. The compose file forwards it as `${TRADING_MARKET_GAP_PCT:-}`, so a box armed with TRADING_MARKET_GAP_FILTER=paper and no bar in .env hands the api an empty string, which the resolver used to read as 0 (off while armed). The blank is taken from the compose file itself (composeEnvDefault), whitespace is blank too, and a deliberate '0' stays the explicit off.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   maxGapDownPct, gapPct, priorSessionClose, etSessionDate, entryBlock, selectEntryTargets,
   DEFAULT_MAX_GAP_DOWN_PCT, type EntryGuardInput,
+  marketGapBlock, marketGapFilterPct, modeArmed, DEFAULT_MARKET_GAP_PCT,
 } from '../../src/features/trading';
+import { composeEnvDefault } from '../helpers/compose-env-default';
 
 /** A guard with no exits pending and no price opinions — the permissive baseline each test narrows. */
 function guard(over: Partial<EntryGuardInput> = {}): EntryGuardInput {
@@ -206,5 +210,96 @@ describe('selectEntryTargets', () => {
     const { targets, blocked } = selectEntryTargets(['IBM', 'EOG'], 2, g);
     expect(targets).toEqual(['EOG']);           // IBM is NOT re-bought
     expect(blocked[0].reason).toBe('exiting-this-fire'); // the stop wins the refusal
+  });
+});
+
+describe('marketGapBlock — the market-wide gap-down verdict (ADR-052 addendum)', () => {
+  it('blocks when SPY sits at or beyond the bar below its prior close', () => {
+    expect(marketGapBlock(490, 500, 1)).toMatchObject({ blocked: true, spyPrice: 490, spyPriorClose: 500, thresholdPct: 1 });
+    expect(marketGapBlock(490, 500, 1).gapPct).toBeCloseTo(-2, 9);
+    // Exactly ON the line blocks (the rule reads "down >= X%").
+    expect(marketGapBlock(495, 500, 1).blocked).toBe(true);
+  });
+
+  it('does not block a smaller dip, a flat tape or a gap UP', () => {
+    expect(marketGapBlock(497.5, 500, 1).blocked).toBe(false);
+    expect(marketGapBlock(500, 500, 1).blocked).toBe(false);
+    expect(marketGapBlock(520, 500, 1).blocked).toBe(false);
+  });
+
+  it('fails OPEN on missing or unusable data — a data hole must never stop the book buying', () => {
+    expect(marketGapBlock(null, 500, 1)).toMatchObject({ blocked: false, gapPct: null });
+    expect(marketGapBlock(450, null, 1)).toMatchObject({ blocked: false, gapPct: null });
+    expect(marketGapBlock(450, 0, 1)).toMatchObject({ blocked: false, gapPct: null });
+  });
+
+  it('a threshold of 0 is the off switch and never blocks, however deep the gap', () => {
+    expect(marketGapBlock(250, 500, 0).blocked).toBe(false);
+  });
+});
+
+describe('marketGapFilterPct — ONE resolver for the dispatch and the Strategy Lab', () => {
+  const ENV = ['TRADING_MARKET_GAP_FILTER', 'TRADING_MARKET_GAP_PCT'];
+  beforeEach(() => { for (const k of ENV) delete process.env[k]; });
+
+  it('is OFF by default for both books and for a Lab walk', () => {
+    expect(marketGapFilterPct(undefined, 'paper')).toBe(0);
+    expect(marketGapFilterPct(null, 'live')).toBe(0);
+    expect(marketGapFilterPct(undefined, null)).toBe(0);
+  });
+
+  it('an absent knob inherits the mode-aware env arm — paper arms paper ONLY', () => {
+    process.env.TRADING_MARKET_GAP_FILTER = 'paper';
+    expect(marketGapFilterPct(undefined, 'paper')).toBe(DEFAULT_MARKET_GAP_PCT);
+    expect(DEFAULT_MARKET_GAP_PCT).toBe(1);
+    expect(marketGapFilterPct(undefined, 'live')).toBe(0);
+    // A Lab walk has no book, so the env can never arm it: the twin row's own knob decides.
+    expect(marketGapFilterPct(undefined, null)).toBe(0);
+    process.env.TRADING_MARKET_GAP_FILTER = 'both';
+    expect(marketGapFilterPct(null, 'live')).toBe(1);
+    process.env.TRADING_MARKET_GAP_PCT = '1.5';
+    expect(marketGapFilterPct(null, 'paper')).toBe(1.5);
+  });
+
+  it('a finite knob on the applied strategy outranks the env — 0 is an explicit off, >0 arms', () => {
+    process.env.TRADING_MARKET_GAP_FILTER = 'both';
+    expect(marketGapFilterPct(0, 'paper')).toBe(0);
+    delete process.env.TRADING_MARKET_GAP_FILTER;
+    expect(marketGapFilterPct(2, 'live')).toBe(2);
+    expect(marketGapFilterPct(2, null)).toBe(2); // the Lab reads the same knob the same way
+  });
+
+  it('a BLANK bar is unset: armed with the value compose forwards for an unset .env, it is the pre-registered 1.0, not off', () => {
+    // docker-compose.oshal-local.yml forwards `${TRADING_MARKET_GAP_PCT:-}`: leave the bar out of .env
+    // and the api's process.env holds exactly this string. The arm alone must arm the filter.
+    const forwarded = composeEnvDefault('TRADING_MARKET_GAP_PCT');
+    expect(forwarded).toBe('');
+    expect(composeEnvDefault('TRADING_MARKET_GAP_FILTER')).toBe('false'); // an untouched box stays off
+    process.env.TRADING_MARKET_GAP_FILTER = 'paper'; // the operator's one-line arm in .env
+    process.env.TRADING_MARKET_GAP_PCT = forwarded;
+    expect(marketGapFilterPct(undefined, 'paper')).toBe(DEFAULT_MARKET_GAP_PCT);
+    expect(marketGapFilterPct(undefined, 'live')).toBe(0); // the arm still decides the book kind
+    process.env.TRADING_MARKET_GAP_PCT = '   ';
+    expect(marketGapFilterPct(undefined, 'paper')).toBe(DEFAULT_MARKET_GAP_PCT);
+    process.env.TRADING_MARKET_GAP_PCT = '0'; // a deliberate zero is not blank: the explicit off
+    expect(marketGapFilterPct(undefined, 'paper')).toBe(0);
+  });
+
+  it('clamps to 50 and treats garbage as off', () => {
+    expect(marketGapFilterPct(400, 'paper')).toBe(50);
+    expect(marketGapFilterPct(-3, 'paper')).toBe(0);
+    process.env.TRADING_MARKET_GAP_FILTER = 'paper';
+    process.env.TRADING_MARKET_GAP_PCT = 'not-a-number';
+    expect(marketGapFilterPct(undefined, 'paper')).toBe(0);
+  });
+
+  it('modeArmed parses paper|live|both|true exactly like the earnings gate', () => {
+    process.env.TRADING_MARKET_GAP_FILTER = 'LIVE';
+    expect(modeArmed('TRADING_MARKET_GAP_FILTER', 'live')).toBe(true);
+    expect(modeArmed('TRADING_MARKET_GAP_FILTER', 'paper')).toBe(false);
+    process.env.TRADING_MARKET_GAP_FILTER = 'true';
+    expect(modeArmed('TRADING_MARKET_GAP_FILTER', 'paper')).toBe(true);
+    process.env.TRADING_MARKET_GAP_FILTER = 'yes';
+    expect(modeArmed('TRADING_MARKET_GAP_FILTER', 'paper')).toBe(false);
   });
 });

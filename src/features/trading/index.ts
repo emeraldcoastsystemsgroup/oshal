@@ -21,6 +21,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Export the ADR-116 Phase 1 walk-forward evidence rail (futures-walk-forward): walkForwardWindows/walkForward for the project's first out-of-sample futures measurement at frozen constants, scoreBacktest, and the shared experiment plumbing mergeBacktestConfig / patchFromDottedKey / expandGrid / resolveFitness that the backtest and sweep runners both consume.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Export the detached Futures replay observation contract.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | ADR-168: export MULTI_MARKET_UNIVERSE and MULTI_MARKET_EXTENSION (multi-timeframe) and MULTI_MARKET_BUCKETS (portfolio), so the Strategy Lab, the Test Lab card and the store package name the multi-market universe through the barrel instead of a second hand-typed list.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com | ADR-052 addendum (paper-to-live parity): export the market-wide gap-down filter's pure half from entry-guards (marketGapBlock, marketGapFilterPct, modeArmed, DEFAULT_MARKET_GAP_PCT, MarketGapVerdict) and the per-position exit-plan math from the new position-plan module (exitPlanSessions, planTermsFor, addSessions, planExits, DEFAULT_EXIT_PLAN_SESSIONS, PlanTerms, PlanDials, PositionPlan), plus the PlanExitDoor type beside ExitOrder.
  *
  * @module trading
  */
@@ -48,8 +49,11 @@ export type { AssetHit } from './services/market-data';
 export type { ScreenerBoard, ScreenerRow, ScreenerFilter, ScreenerSide, ActivesBy } from './services/alpaca-screener';
 export { screenerMovers, screenerMostActives, moversMinPrice, SCREENER_LABEL, DEFAULT_MOVERS_MIN_PRICE } from './services/alpaca-screener';
 // Rotation entry guards — never re-buy a name the stop is selling this fire; never buy a gap-down.
-export type { EntryBlock, EntryBlockReason, EntryGuardInput } from './services/entry-guards';
-export { maxGapDownPct, gapPct, priorSessionClose, etSessionDate, entryBlock, selectEntryTargets, DEFAULT_MAX_GAP_DOWN_PCT } from './services/entry-guards';
+export type { EntryBlock, EntryBlockReason, EntryGuardInput, MarketGapVerdict } from './services/entry-guards';
+export { maxGapDownPct, gapPct, priorSessionClose, etSessionDate, entryBlock, selectEntryTargets, DEFAULT_MAX_GAP_DOWN_PCT, marketGapBlock, marketGapFilterPct, modeArmed, DEFAULT_MARKET_GAP_PCT } from './services/entry-guards';
+// ADR-052 addendum — per-position exit plans (stamped at entry, judged on their own terms, expire on a clock).
+export type { PlanTerms, PlanDials, PositionPlan } from './services/position-plan';
+export { exitPlanSessions, planTermsFor, addSessions, planExits, DEFAULT_EXIT_PLAN_SESSIONS } from './services/position-plan';
 // Short signals — purpose-built bearish entries + the market-regime gate (classic untuned params).
 export { marketBearGate, donchianBreakdown, donchianCover, trendBroken, relativeReturn, shortEntrySignal, sma } from './services/short-signals';
 // Per-mode market-data source (Alpaca paper feed | Schwab live feed) — the trade engine's price inputs.
@@ -78,7 +82,7 @@ export type { MaterialClass, ReaderVerdict } from './services/news-materiality';
 export { prefilterHeadline, buildReaderPrompt, parseReaderVerdicts } from './services/news-materiality';
 
 // Portfolio money-manager (sizing, exposure caps, stop-loss/take-profit/trailing, daily-loss breaker).
-export type { RiskPosture, RiskPolicy, PolicyOverride, ExitOrder, SizingResult, NameStrength } from './services/portfolio';
+export type { RiskPosture, RiskPolicy, PolicyOverride, ExitOrder, PlanExitDoor, SizingResult, NameStrength } from './services/portfolio';
 export { RISK_POLICIES, riskPolicy, sectorOf, exitsToRun, trailingExits, nextPeaks, sizeEntry, rotationBenches, rebalanceTrims, drawdownHaltTriggered, dipExits, symbolBlocklist, unmanagedSymbols, MULTI_MARKET_BUCKETS } from './services/portfolio';
 
 // Sector tilt — "lean harder on <sector>" as a rank multiplier (TRADING_SECTOR_TILT), so a lean is a

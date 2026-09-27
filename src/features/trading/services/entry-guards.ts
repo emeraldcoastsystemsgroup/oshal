@@ -4,6 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Rotation entry guards. Born from the 2026-07-14 live open: the autopilot stopped IBM out at -23.8% (Q2 revenue-miss gap) and RE-BOUGHT it in the same fire. Two independent causes, two guards: (1) SAME-FIRE RE-ENTRY — runAutopilot's protective leg knows which names it is exiting, but rotation never saw that set, so it re-bought the name the stop had just sold; (2) GAP-DOWN — the ranker scores on 1Day closes, which PREDATE today's gap, so a name that cratered overnight still ranks on stale data and gets bought mid-crash. Deterministic and price-only: no news wire, no LLM (the event-pop family is closed — a commentary wire does not precede price; a gap does, because it IS the price).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-052 addendum — the MARKET-WIDE gap-down entry filter's pure half: marketGapBlock (SPY now vs its prior session close against a pre-registered bar, fail-open on missing data) and marketGapFilterPct, the ONE resolver the dispatch and the Strategy Lab both read (a finite StrategyConfig knob decides; an absent knob inherits the mode-aware TRADING_MARKET_GAP_FILTER / TRADING_MARKET_GAP_PCT env default, OFF unless armed; a Lab walk has no book, so absent = off there). modeArmed is the shared paper|live|both|true parser the exit-plan resolver reuses. The per-name rotation guard above is unchanged.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | envNumberOr: a blank or whitespace-only value is UNSET. docker-compose.oshal-local.yml forwards TRADING_MARKET_GAP_PCT as `${TRADING_MARKET_GAP_PCT:-}`, so a box that arms TRADING_MARKET_GAP_FILTER=paper and leaves the bar out of .env hands the api an empty string; `'' ?? 1` is '' and Number('') is 0, so the filter resolved OFF while armed and no paper soak would run. marketGapFilterPct now reads the bar through envNumberOr (blank = the pre-registered 1.0; a deliberate '0' is still the explicit off), and exitPlanSessions reuses it for TRADING_EXIT_PLAN_SESSIONS.
  *
  * @module entry-guards
  */
@@ -139,4 +141,101 @@ export function selectEntryTargets(
     targets.push(sym.toUpperCase());
   }
   return { targets, blocked };
+}
+
+/* ── Market-wide gap-down entry filter (ADR-052 addendum, paper-to-live parity) ─────────────────
+ * The per-name guard above reads ONE candidate's own gap. This reads the whole tape: when SPY is
+ * trading at or beyond a pre-registered bar below its prior session close, the autopilot's ENTRY
+ * legs hold for the fire; protective exits never do. The bar is pre-registered, not fitted. */
+
+/** Pre-registered bar (percent) — the same 1.0% line the trading watchdog's pre-market gap alert
+ *  (check F, GapAlertPct) already pages the operator on, so the automated filter and its interim
+ *  human stand-in judge the same tape. */
+export const DEFAULT_MARKET_GAP_PCT = 1;
+
+/** The ceiling a knob or env value is clamped to: a wider bar is indistinguishable from "off". */
+const MAX_MARKET_GAP_PCT = 50;
+
+/**
+ * @description Mode-aware arming for a paper-to-live parity feature, parsed exactly as the earnings
+ * gate parses TRADING_EARNINGS_GATE: `paper` or `live` arms that one book kind, `both` or `true` arms
+ * both, anything else (including unset) is off. Paper-first soaks arm `paper`.
+ * @param envName - The environment variable holding the arm.
+ * @param mode - The book kind firing.
+ * @returns True when the variable arms this book kind.
+ */
+export function modeArmed(envName: string, mode: 'paper' | 'live'): boolean {
+  const v = String(process.env[envName] ?? 'false').trim().toLowerCase();
+  return v === 'true' || v === 'both' || v === mode;
+}
+
+/**
+ * @description Read a numeric parity setting from the environment, treating an unset, empty or
+ * whitespace-only value as "use the pre-registered default". The compose file forwards these settings
+ * as `${NAME:-}`, so an operator who leaves the value out of .env hands the process an EMPTY string,
+ * and `Number('')` is 0 — which would read as "off" and disarm a feature the operator just armed. A
+ * deliberate `0` is not blank and still reads as 0, the explicit off.
+ * @param envName - The environment variable holding the value.
+ * @param fallback - The pre-registered default used when the variable is unset or blank.
+ * @returns The parsed number (NaN for junk, which each resolver treats as off), or `fallback` when blank.
+ */
+export function envNumberOr(envName: string, fallback: number): number {
+  const raw = process.env[envName];
+  if (raw === undefined || raw.trim() === '') return fallback;
+  return Number(raw);
+}
+
+/**
+ * @description The market-wide gap-down bar for one book or one Strategy Lab walk — the ONE resolver
+ * both read, so the paper book, the live book and the Lab run the same rule from the same knob.
+ * Precedence: a finite `knob` (StrategyConfig.marketGapFilterPct on the applied strategy) decides —
+ * 0 is an explicit off, a positive value arms at that percent. An absent knob (null/undefined, the
+ * default for every strategy saved before the knob existed) inherits the book's mode-aware env
+ * default: TRADING_MARKET_GAP_FILTER arms the book kind, TRADING_MARKET_GAP_PCT sets the bar
+ * (default {@link DEFAULT_MARKET_GAP_PCT}). A Lab walk passes mode null and has no env default, so an
+ * absent knob is off there.
+ * @param knob - The applied StrategyConfig's marketGapFilterPct (null/undefined = inherit).
+ * @param mode - The book kind firing, or null for a Lab walk.
+ * @returns The bar as a positive percent; 0 means the filter is off.
+ */
+export function marketGapFilterPct(knob: number | null | undefined, mode: 'paper' | 'live' | null): number {
+  if (knob !== null && knob !== undefined) {
+    const k = Number(knob);
+    return Number.isFinite(k) && k > 0 ? Math.min(MAX_MARKET_GAP_PCT, k) : 0;
+  }
+  if (!mode || !modeArmed('TRADING_MARKET_GAP_FILTER', mode)) return 0;
+  const raw = envNumberOr('TRADING_MARKET_GAP_PCT', DEFAULT_MARKET_GAP_PCT);
+  return Number.isFinite(raw) && raw > 0 ? Math.min(MAX_MARKET_GAP_PCT, raw) : 0;
+}
+
+/** The market-wide verdict for one fire (or one Lab session), with the numbers that produced it. */
+export interface MarketGapVerdict {
+  /** True when the entry legs hold this fire. */
+  blocked: boolean;
+  /** SPY's signed percent move from its prior session close; null when either price is missing. */
+  gapPct: number | null;
+  /** The SPY price judged (current print, or the session open in the Lab). */
+  spyPrice: number | null;
+  /** SPY's prior SESSION close (never today's forming bar). */
+  spyPriorClose: number | null;
+  /** The bar applied, as a positive percent (0 = off). */
+  thresholdPct: number;
+}
+
+/**
+ * @description Judge the whole tape once: block entries when SPY sits at or beyond `thresholdPct`
+ * below its prior session close. Fails OPEN — a missing or unusable price yields `blocked: false` —
+ * because a data hole must never silently stop the book from buying (the entry-guard doctrine above).
+ * A threshold of 0 is the off switch and never blocks.
+ * @param spyPrice - SPY's current print (the dispatch) or session open (the Lab).
+ * @param spyPriorClose - SPY's prior session close.
+ * @param thresholdPct - The bar as a positive percent; 0 = off.
+ * @returns The verdict, carrying the gap it measured.
+ */
+export function marketGapBlock(spyPrice: number | null, spyPriorClose: number | null, thresholdPct: number): MarketGapVerdict {
+  const gap = spyPrice != null && spyPriorClose != null ? gapPct(spyPrice, spyPriorClose) : null;
+  return {
+    blocked: thresholdPct > 0 && gap != null && gap <= -thresholdPct,
+    gapPct: gap, spyPrice: spyPrice ?? null, spyPriorClose: spyPriorClose ?? null, thresholdPct,
+  };
 }
