@@ -6,6 +6,11 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Serve the real experience shells through the real static route registration over an isolated, explicitly synthetic swarm: home plan, listing, navigation, tickets, Jarvis shelf/history/ask, package summaries, Little Monsters, Purchasing, Finance and the user directory, with controllable statuses so honest setup, denial and failure states can be proven in Chromium.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | The synthetic ribbon profile answers per application (Little Monsters role-filtered; every other host a home and a more page) so the multi-host presets are exercised against 19 installed applications
  * 3 | maintainer@emeraldcoastsystemsgroup.com | A synthetic application page under the shared audience-view kit (`/fixture/app-view`, its data with a controllable status, and a host page that frames it) so the kit is proven in Chromium: full page by default, audience views on request, hidden full UI, text-only rendering, failure with retry, and the escape that navigates the top window
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | fullSwarmGapRoutes: the viewer-scoped app record (GET /api/swarm/apps/:name with manifest bots, chatBot and dependencies, 404 when not visible or when `detail:<name>` says so), a controllable Little Monsters calendar status (`edu-calendar`) and overview calendar events. It is registered ahead of the swarm and package routes because packageRoutes ends in the `/api` 404 catch-all; every path it does not answer falls through untouched.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Central-assistant gap routes (nexusGapRoutes, controlled through `state.nexusGap`): a scripted refusal of POST /api/jarvis/ask (the 503 ai_disabled body), held and per-job /ask/result outcomes for the stale-completion cases, POST /api/jarvis/tasks/:id/delivered, the owner-checked PUT /api/tickets/:ticketId/cancel with refusals, POST /api/voice/transcribe recording what the multipart upload carried, and the owner-checked /api/jarvis/visuals image. The lane router runs ahead of the shared `/api` catch-all; its /ask and /ask/result handlers fall through to the default synthetic routes unless the lane state asks for them, and its other routes always answer
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | One request log registered first, then every lane's override routes, then the default synthetic routes with their `/api` 404 catch-all last: the lanes had each worked around the catch-all living inside packageRoutes (a router splice, lane-local logging); the order now makes both unnecessary
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Homebase gap routes (`homebaseGapRoutes`): Little Monsters teacher analytics (pg-shaped counts, server-side summary), classwork through assignments-with-events (teacher-of-class check, calendar event on a due date), a ticket read and its status transition (only approval_required to approved), and the caller's saved content drafts, each with a controllable status. They register with the other lane routes ahead of the default routes, whose `/api` 404 catch-all stays last (as row 6 says).
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Integration review: fullSwarmGapRoutes seats Little Monsters' summary probe at its real path (`/api/little-monsters/home-summary`, status `lm-home-summary`, 403 with the package's setup sentence) so the Jarvis agenda's probe gate is exercised, and can answer the user directory with a refusal code (`fullSwarm.directoryError`); nexusGapRoutes no longer serves POST /api/jarvis/tasks/:id/delivered (the shell never sends it; the request log proves it); the synthetic ticket status transition writes `metadata.lastStatusTransition` the way the ticket service mirrors every transition, keeping the row-level reason/nextAction.
  */
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -84,7 +89,6 @@ function statusOr(state: ExperienceState, key: string, fallback = 200) { return 
 
 /** @description Synthetic caller-scoped reads the shells join, each with a controllable status. */
 function swarmRoutes(app: express.Application, state: ExperienceState) {
-  app.use((req, _res, next) => { state.calls.push(`${req.method} ${req.path}`); next(); });
   app.get('/api/auth/user', (_req, res) => res.json({ authenticated: state.authenticated, user: state.authenticated ? state.user : null, mode: 'mock', guestMode: false, capabilities: null }));
   app.get('/api/swarm/apps/home-plan', (_req, res) => res.status(statusOr(state, 'plan')).json({ apps: state.apps.map(a => a.plan).filter(Boolean) }));
   app.get('/api/swarm/apps', (_req, res) => res.status(statusOr(state, 'apps')).json({ apps: state.apps.map(a => a.summary) }));
@@ -180,6 +184,10 @@ function packageRoutes(app: express.Application, state: ExperienceState) {
 export async function startExperienceBrowserFixture(options: { denyAuth?: boolean } = {}) {
   const app = express(), state = experienceState();
   const requiresAuth: express.RequestHandler = options.denyAuth ? (_req, res) => { res.status(401).json({ error: 'unauthorized' }); } : (_req, _res, next) => next();
+  // One request log for every case, then each lane's override routes (they answer only what their case state asks
+  // for and fall through otherwise), then the default synthetic routes, whose `/api` 404 catch-all stays last.
+  app.use((req, _res, next) => { state.calls.push(`${req.method} ${req.path}`); next(); });
+  fullSwarmGapRoutes(app, state); nexusGapRoutes(app, state); homebaseGapRoutes(app, state);
   swarmRoutes(app, state); packageRoutes(app, state);
   app.use('/shared/ui/js', express.static(resolve(ROOT, 'src/shared/ui/js')));
   registerCockpitStaticRoutes({ app, requiresAuth, cockpitDir: resolve(ROOT, 'src/pages/cockpit'), uiEnhancedDir: resolve(ROOT, 'any-bot/ui-enhanced'),
@@ -188,4 +196,164 @@ export async function startExperienceBrowserFixture(options: { denyAuth?: boolea
   await new Promise<void>(done => server.once('listening', done));
   return { origin: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, state,
     close: async () => { server.closeAllConnections(); await new Promise<void>((done, reject) => server.close(error => error ? reject(error) : done())); } };
+}
+
+/**
+ * @description Synthetic reads for the full-swarm gap closure: the viewer-scoped app record per application
+ * (manifest bots, chatBot, dependencies; 404 when absent or when `status['detail:<name>']` says so), a
+ * controllable Little Monsters calendar status (`status['edu-calendar']`), Little Monsters' summary probe at its real
+ * path with a controllable status (`status['lm-home-summary']`), a user-directory refusal code (`fullSwarm.directoryError`)
+ * and overview calendar events. Registered ahead of the default routes (see startExperienceBrowserFixture); any request
+ * it does not answer falls through with next(). The shared request log records every call.
+ * @param app The fixture Express application.
+ * @param state The synthetic swarm state; gains `fullSwarm.manifests` (overrides by app name), `fullSwarm.overviewEvents` and `fullSwarm.directoryError`.
+ * @returns Nothing; routes are registered on `app`.
+ */
+function fullSwarmGapRoutes(app: express.Application, state: ExperienceState) {
+  const gaps = Object.assign(state, { fullSwarm: {
+    manifests: { ledger: { bots: [{ agentId: 'a1', name: 'Synthetic Bot', role: 'assistant' }, { agentId: 'synthetic-reviewer', name: 'Synthetic reviewer', role: 'reviewer' }], chatBot: 'Synthetic Bot', uses: ['app-dependencies'], dependencies: { required: { apps: ['finance'] }, optional: { apps: ['synthetic-absent'] } } } } as Record<string, Record<string, unknown>>,
+    overviewEvents: [] as Array<{ title: string; when: string }>,
+    directoryError: '',
+  } }).fullSwarm;
+  // Little Monsters declares one summary probe, its read-only home-summary route; the synthetic plan points at the same path.
+  const lm = state.apps.find(a => a.summary.name === 'little-monsters');
+  if (lm?.plan) lm.plan.summary = [{ app: 'little-monsters', path: '/api/little-monsters/home-summary', tilesPointer: '/tiles', itemsPointer: '/items', surfaces: ['little-monsters-home'] }];
+  app.get('/api/little-monsters/home-summary', (_req, res) => {
+    const status = statusOr(state, 'lm-home-summary');
+    if (status !== 200) { res.status(status).json({ error: status === 403 ? 'Open Little Monsters to complete school setup' : 'Synthetic summary unavailable' }); return; }
+    res.json({ tiles: [{ id: 'classes', label: 'Accessible classes', value: '1', tone: 'neutral' }], items: [{ text: 'Update from little-monsters', detail: 'A synthetic owner-provided detail.' }], asOf: iso(0) });
+  });
+  app.get('/api/user-directory', (_req, res, next) => {
+    if (!gaps.directoryError) { next(); return; }
+    res.status(403).json({ error: gaps.directoryError });
+  });
+  app.get('/api/swarm/apps/:name', (req, res, next) => {
+    const name = String(req.params.name);
+    if (name === 'home-plan') { next(); return; }
+    const record = state.apps.find(a => a.summary.name === name);
+    const status = statusOr(state, `detail:${name}`, record ? 200 : 404);
+    if (!record || status !== 200) { res.status(status).json({ error: 'App not found' }); return; }
+    const manifest = { name, displayName: record.summary.displayName, bots: [{ agentId: `${name}-agent`, name: `${record.summary.displayName} assistant`, role: 'assistant' }], ...gaps.manifests[name] };
+    res.json({ app: { name, displayName: record.summary.displayName, status: 'active', agentIds: (manifest.bots as Array<{ agentId: string }>).map(b => b.agentId), manifest } });
+  });
+  app.get('/api/education/calendar', (req, res, next) => {
+    const status = statusOr(state, 'edu-calendar');
+    if (status === 200) { next(); return; }
+    res.status(status).json({ error: 'Synthetic calendar refused' });
+  });
+  app.get('/api/jarvis/overview', (req, res, next) => {
+    if (!gaps.overviewEvents.length) { next(); return; }
+    res.json({ bots: state.bots, activity: { openCount: 0, tickets: [] }, comms: { digest: null, signals: [] }, calendar: { events: gaps.overviewEvents } });
+  });
+}
+
+/**
+ * @description Central-assistant gap routes (lane "nexus"), each synthetic and driven through `state.nexusGap`: a scripted
+ * /ask refusal, held and per-job /ask/result outcomes, ticket cancel with refusals, the voice transcription upload and the
+ * owner-checked visual. The /ask and /ask/result handlers fall through to the default synthetic routes unless the lane state
+ * asks for them; the other routes always answer. It is registered ahead of the default routes (see
+ * startExperienceBrowserFixture), so no reordering is needed.
+ * @param app The fixture application.
+ * @param state The per-case synthetic state; `state.nexusGap` is created here.
+ * @returns Nothing; the routes are registered on `app`.
+ */
+function nexusGapRoutes(app: express.Application, state: ExperienceState) {
+  const lane = {
+    askRefusal: null as null | { status: number; body: Record<string, unknown> }, refusedAsks: 0,
+    hold: new Set<string>(), results: {} as Record<string, Record<string, unknown>>, polls: {} as Record<string, number>,
+    cancels: [] as string[], cancelStatus: {} as Record<string, number>, visualStatus: 200,
+    transcribe: { status: 200, body: { success: true, data: { providerId: 'synthetic-stt', text: 'Synthetic spoken request' } } as unknown },
+    uploads: [] as Array<{ contentType: string; audioField: boolean; partType: string; bytes: number }>,
+  };
+  Object.assign(state, { nexusGap: lane });
+  const rows = () => state.tasks as unknown as Array<Record<string, unknown>>;
+  const router = express.Router();
+  router.post('/api/jarvis/ask', (_req, res, next) => {
+    if (!lane.askRefusal) { next(); return; }
+    lane.refusedAsks += 1; res.status(lane.askRefusal.status).json(lane.askRefusal.body);
+  });
+  router.get('/api/jarvis/ask/result', (req, res, next) => {
+    const id = String(req.query.jobId || '');
+    if (!lane.hold.has(id) && !(id in lane.results)) { next(); return; }
+    lane.polls[id] = (lane.polls[id] || 0) + 1;
+    if (lane.hold.has(id)) { res.json({ status: 'pending', label: 'synthetic' }); return; }
+    res.json({ label: 'synthetic', ...lane.results[id] });
+  });
+  router.put('/api/tickets/:ticketId/cancel', (req, res) => {
+    const id = req.params.ticketId, status = lane.cancelStatus[id] ?? 200; lane.cancels.push(id);
+    if (status !== 200) { res.status(status).json(status === 404 ? { error: 'Ticket not found' } : { success: false, error: 'Synthetic cancel failure' }); return; }
+    // The real GET /api/jarvis/tasks maps a cancelled ticket to status 'error' with this sentence.
+    const row = rows().find(t => t.ticketId === id); if (row) Object.assign(row, { status: 'error', error: 'This one was cancelled before it finished.' });
+    res.json({ success: true, status: 'cancelled', ticketId: id });
+  });
+  router.post('/api/voice/transcribe', express.raw({ type: () => true, limit: '11mb' }), (req, res) => {
+    const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0), text = raw.toString('latin1');
+    lane.uploads.push({ contentType: String(req.headers['content-type'] || ''), audioField: text.includes('name="audio"'), partType: (/Content-Type: ([^\r\n]+)/i.exec(text) || [])[1] || '', bytes: raw.length });
+    res.status(lane.transcribe.status).json(lane.transcribe.body);
+  });
+  router.get('/api/jarvis/visuals/:artifactId', (_req, res) => {
+    if (lane.visualStatus !== 200) { res.status(lane.visualStatus).json({ error: 'visual_not_found' }); return; }
+    res.type('image/svg+xml').send('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20" fill="gray"/></svg>');
+  });
+  app.use(router);
+}
+
+/**
+ * @description Synthetic contracts for the homebase gap closure, each with a controllable status (`homebase:analytics`, `homebase:classwork`,
+ * `homebase:ticket`, `homebase:ticket-status`, `homebase:drafts`): Little Monsters teacher analytics shaped like the package's pg rows (counts as
+ * strings, the summary computed server-side), classwork through assignments-with-events, one ticket's read and status transition, and the caller's
+ * saved content drafts (seeded through their own POST route). Registered with the other lane routes ahead of the defaults (see
+ * startExperienceBrowserFixture); none of its paths overlaps a default route.
+ * @param app The fixture application.
+ * @param state The synthetic swarm state these routes read and change.
+ * @returns Nothing; the routes are registered on `app`.
+ */
+function homebaseGapRoutes(app: express.Application, state: ExperienceState) {
+  const edu = state.education, gap = express.Router(), drafts: Array<{ id: number; topic: string | null; take: string | null; draft: string; created_at: string }> = [];
+  const refused = (res: express.Response, key: string, errors: Record<number, string>) => { const status = statusOr(state, key); if (status === 200) return false; res.status(status).json({ error: errors[status] ?? 'Synthetic refusal' }); return true; };
+  const count = (v: unknown) => String(Number(v ?? 0));
+  gap.get('/api/education/teacher/classes/:classId/analytics', (req, res) => {
+    const roster = edu.students[req.params.classId] as Array<Record<string, unknown>> | undefined;
+    if (refused(res, 'homebase:analytics', { 403: 'You do not teach this class', 404: 'Class not found' })) return;
+    if (!roster) { res.status(403).json({ error: 'You do not teach this class' }); return; }
+    const students = roster.map(s => ({ student_id: s.student_id, name: s.name, email: s.email ?? null, xp: Number(s.xp ?? 0), level: Number(s.level ?? 1), streak_days: Number(s.streak_days ?? 0),
+      last_active_date: s.last_active_date ?? null, quiz_average: count(s.quiz_average), quiz_count: count(s.quiz_count), cards_reviewed: count(s.cards_reviewed) }));
+    const quizzed = students.filter(s => Number(s.quiz_count) > 0);
+    res.json({ class: { class_id: req.params.classId }, students, summary: { studentCount: students.length, classQuizAverage: quizzed.length ? Math.round(quizzed.reduce((n, s) => n + Number(s.quiz_average), 0) / quizzed.length) : null,
+      studentsWithActivity: students.filter(s => Number(s.quiz_count) > 0 || Number(s.cards_reviewed) > 0).length, totalCardsReviewed: students.reduce((n, s) => n + Number(s.cards_reviewed), 0) } });
+  });
+  gap.post('/api/education/assignments-with-events', express.json(), (req, res) => {
+    const body = req.body || {}, title = String(body.title ?? '').trim(), cls = edu.classes.find(c => c.class_id === String(body.classId ?? ''));
+    if (refused(res, 'homebase:classwork', { 403: 'You do not teach this class', 409: 'Class authorization changed' })) return;
+    if (!title || title.length > 500) { res.status(400).json({ error: 'title must contain 1-500 characters' }); return; }
+    if (!cls || !(edu.me.role === 'admin' || (edu.me.role === 'teacher' && cls.teacher_student_id === edu.me.studentId))) { res.status(403).json({ error: 'You do not teach this class' }); return; }
+    const assignmentId = `a${edu.assignments.length + 1}`, dueDate = body.dueDate ? String(body.dueDate) : null, type = String(body.assignmentType || 'homework');
+    (edu.assignments as unknown[]).push({ assignment_id: assignmentId, class_id: cls.class_id, title, description: String(body.description || ''), status: 'open', due_date: dueDate, class_name: cls.name, assignment_type: type });
+    const eventId = dueDate ? `e${edu.events.length + 1}` : null;
+    if (dueDate) (edu.events as unknown[]).push({ event_id: eventId, class_id: cls.class_id, student_id: null, title: `${cls.name}: ${title}`, event_date: dueDate, event_time: '17:00:00', event_type: type === 'test' ? 'test' : type === 'quiz-prep' ? 'quiz' : 'assignment', class_name: cls.name, subject: cls.subject });
+    res.status(201).json({ assignmentId, eventId, dueDate });
+  });
+  gap.get('/api/tickets/:ticketId', (req, res) => {
+    const ticket = state.tickets.find(t => t.ticketId === req.params.ticketId);
+    if (refused(res, 'homebase:ticket', { 404: 'Ticket not found' })) return;
+    if (ticket) res.json(ticket); else res.status(404).json({ error: 'Ticket not found' });
+  });
+  gap.put('/api/tickets/:ticketId/status', express.json(), (req, res) => {
+    const ticket = state.tickets.find(t => t.ticketId === req.params.ticketId), next = String(req.body?.status ?? '');
+    if (refused(res, 'homebase:ticket-status', { 400: 'Invalid state transition', 404: 'Ticket not found' })) return;
+    if (!ticket) { res.status(404).json({ error: 'Ticket not found' }); return; }
+    if (!(ticket.status === 'approval_required' && next === 'approved')) { res.status(400).json({ error: `Invalid state transition: ${ticket.status} -> ${next}` }); return; }
+    // The ticket service mirrors every transition as metadata.lastStatusTransition ({ status, ...its metadata }) and keeps the
+    // row-level reason/nextAction from earlier transitions; this route's body carries no metadata, so the mirror is the status alone.
+    const row = ticket as typeof ticket & { metadata?: Record<string, unknown> };
+    row.metadata = { ...(row.metadata || {}), lastStatusTransition: { status: next } };
+    ticket.status = next; ticket.updatedAt = iso(0);
+    res.json({ status: 'updated', newStatus: next });
+  });
+  gap.get('/api/content/drafts', (_req, res) => { if (!refused(res, 'homebase:drafts', { 401: 'not_authenticated' })) res.json({ drafts: [...drafts].reverse() }); });
+  gap.post('/api/content/drafts', express.json(), (req, res) => {
+    if (!String(req.body?.draft ?? '').trim()) { res.status(400).json({ error: 'draft required' }); return; }
+    drafts.push({ id: drafts.length + 1, topic: req.body.topic || null, take: req.body.take || null, draft: String(req.body.draft), created_at: iso(0) }); res.json({ ok: true });
+  });
+  app.use(gap);
 }

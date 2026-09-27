@@ -5,6 +5,12 @@
  * -----------------------------------------------------------------------------
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Two-phase snapshot: identity and catalog first (readyCore) so a home can paint at once; work, tasks and overview merge into the same snapshot afterwards (ready). Adds the ribbon-profile read an experience uses to host an application's admitted tools.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Live data adapter for the experience shells. Joins the caller-scoped home plan, active app listing and admitted navigation into one catalog, merges tickets and Jarvis tasks into work items, wraps Jarvis ask/result polling on the shared browser thread, reads per-package home-summary probes with the Home view's pointer caps, and exposes Little Monsters, Purchasing, Finance and voice reads. It replaces every fixture the design prototypes rendered; nothing here invents data when a source is unavailable, callers get the HTTP status and render the honest state.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Catalog `related` now means a group's installed required members (plan.members), not the plan's integrationSources, which list surfaces and outbound offers rather than a dependency. Adds the viewer-scoped app-detail read (GET /api/swarm/apps/:name) with two pure readers over it: dependencyTiers (the two-form rule of scripts/oshal-app-dependencies.js, a mixed block yields no tiers) and declaredAssistants (manifest bots by name, the explicit chatBot as concierge, online state only where the agentId joins the overview roster). Adds the swarm roster read over GET /api/user-directory (label without its account parenthetical, account source and sign-in status, never presence) and the Little Monsters agenda read (this month and next from /api/education/calendar, de-duplicated and dated) so Commons and Jarvis share them without touching the homebase.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Central-assistant gap closure over existing contracts only. ask() takes an AbortSignal threaded through the POST, every /ask/result poll and the sleep between them, so a page that stops, starts over or goes home ends the wait at once (status 'aborted') instead of polling a request nobody is watching; a refused /ask now carries the route's machine `code` (the 503 ai_disabled posture), and a done payload passes through the well-formed `dispatched` hand-offs and the `packageToolProposal` the route already returns. New helpers: transcribe() posts one recording as multipart field `audio` to /api/voice/transcribe and folds the route's envelope into text / unconfigured / empty / failed; jarvis.markDelivered() and jarvis.cancelWork() reach POST /api/jarvis/tasks/:id/delivered and the owner-checked PUT /api/tickets/:ticketId/cancel.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Package adapters for the homebase gap closure over existing routes only: Little Monsters class activity (teacher analytics) and classwork creation through the route that also writes the class calendar event, a ticket read and its status transition, and the caller's saved content drafts. Each returns the route's own answer, refusals included.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | JSDoc for the background-work client members (markDelivered, cancelWork)
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Integration review: one same-origin guard, localHref, resolves a server-provided link against the page origin the way the browser will (tab/CR/LF stripped, a backslash read as a slash) and keeps only a path that stays on this origin, so '//host', '/\host' and a tab-split '/<TAB>/host' can never become a link. ask()'s poll-limit result carries code 'poll_limit' so a caller can say the page stopped checking instead of calling the request failed. The roster read keeps the route's refusal code (roster_scope_denied vs roster_administrator_required). markDelivered is removed: the Jarvis page stays the one surface that announces and marks results.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Fix round 1: localHref checks the path it returns as well as the URL it resolved. Dot segments normalise '/..//host', '/.//host' and '/%2e%2e//host' to a pathname that starts with '//', which the guard returned as a protocol-relative link that opens another origin; now a returned path must not start with '//' and must itself resolve to the page origin. The admitted navigation href from GET /api/ui/workspaces goes through the same guard and falls back to the cockpit link when refused, so every catalog Open link stays on this origin.
  */
 (function attach(root, factory) {
   'use strict';
@@ -63,6 +69,29 @@
     return { authenticated: true, name: name, initials: initials(name), sub: String(user.sub || ''), email: email, mode: String(payload.mode || ''), guest: Boolean(payload.guestMode), picture: user.picture || null };
   }
 
+  /**
+   * @description The one same-origin guard for links a server or model hands the page (hand-off deepLinks, '/'
+   * answer links, file downloads, admitted workspace navigation). The URL is resolved exactly as the browser will
+   * resolve an href, which strips tab/CR/LF and reads a backslash as a slash, so '/\t/host', '/\\host' and '//host'
+   * all resolve to another origin and are refused. The string handed back is checked again: dot segments can
+   * normalise a same-origin path to one that starts with '//' ('/..//host', '/%2e%2e//host'), which as an href is
+   * protocol-relative and leaves the origin, so the returned path must not start with '//' and must itself resolve
+   * to the page origin. Only a string that starts with '/' and stays on the page origin is kept.
+   * @param {unknown} u Candidate link from a payload.
+   * @param {string} [origin] Page origin; defaults to location.origin in a browser.
+   * @returns {string} pathname + search + hash of the resolved same-origin URL, or '' when it is not one.
+   */
+  function localHref(u, origin) {
+    if (typeof u !== 'string' || u.charAt(0) !== '/') return '';
+    var page = origin || (typeof location !== 'undefined' && location.origin && location.origin !== 'null' ? location.origin : 'https://local.invalid');
+    try {
+      var base = new URL(page), resolved = new URL(u, base);
+      if (resolved.origin !== base.origin) return '';
+      var out = resolved.pathname + resolved.search + resolved.hash;
+      return out.charAt(0) === '/' && out.charAt(1) !== '/' && new URL(out, base).origin === base.origin ? out : '';
+    } catch (_) { return ''; }
+  }
+
   function suiteId(raw) { return raw && SUITE_META[raw] ? raw : 'platform'; }
   function cockpitHref(name) { return '/cockpit/?app=' + encodeURIComponent(name); }
 
@@ -80,7 +109,8 @@
       members: plan && Array.isArray(plan.members) ? plan.members : [name],
       surface: plan && typeof plan.firstSurfaceUrl === 'string' ? plan.firstSurfaceUrl : '',
       surfaceName: plan && typeof plan.firstSurface === 'string' ? plan.firstSurface : '',
-      href: workspace && typeof workspace.href === 'string' ? workspace.href : cockpitHref(name),
+      // The admitted navigation href goes through the same guard; a link that would leave this origin falls back to the cockpit link.
+      href: (workspace && localHref(workspace.href)) || cockpitHref(name),
       theme: workspace && workspace.theme ? String(workspace.theme) : '',
       navigable: Boolean(workspace || (plan && plan.firstSurfaceUrl)),
       inPlan: Boolean(plan),
@@ -91,11 +121,107 @@
       connectors: summary.connectors && typeof summary.connectors === 'object' ? summary.connectors : { required: [], optional: [] },
       probes: plan && Array.isArray(plan.summary) ? plan.summary : [],
       todos: plan && Array.isArray(plan.todos) ? plan.todos : [],
-      related: plan && Array.isArray(plan.integrationSources)
-        ? plan.integrationSources.map(function (s) { return s && s.app; }).filter(function (a, i, arr) { return a && a !== name && arr.indexOf(a) === i; })
+      // A group's members are its installed REQUIRED app dependencies (the plan filters them); a plain app has none.
+      related: plan && plan.kind === 'group' && Array.isArray(plan.members)
+        ? plan.members.filter(function (m, i, arr) { return typeof m === 'string' && m && m !== name && arr.indexOf(m) === i; })
         : []
     };
   }
+
+  var DEPENDENCY_KINDS = ['apps', 'tools', 'connectors'];
+  function isMapping(value) { return Boolean(value) && typeof value === 'object' && !Array.isArray(value); }
+  function dependencyLists(value) {
+    var lists = { apps: [], tools: [], connectors: [] };
+    if (!isMapping(value)) return lists;
+    DEPENDENCY_KINDS.forEach(function (kind) {
+      if (Array.isArray(value[kind])) lists[kind] = value[kind].filter(function (entry) { return typeof entry === 'string'; });
+    });
+    return lists;
+  }
+
+  /**
+   * @description Read a manifest's `dependencies` block into its two tiers with the same two-form rule the
+   * installer uses (scripts/oshal-app-dependencies.js): tiered `required`/`optional` keys give the tiers, a
+   * legacy flat block is all required, and a block that mixes both forms is refused there, so it yields no
+   * tiers here and the shell says so instead of guessing.
+   * @param {object} manifest The package manifest from GET /api/swarm/apps/:name (body.app.manifest).
+   * @returns {{form: string, required: object, optional: object}} form is none | flat | tiered | mixed | invalid; each tier holds apps/tools/connectors lists.
+   */
+  function dependencyTiers(manifest) {
+    var value = manifest ? manifest.dependencies : undefined;
+    var result = { form: 'none', required: dependencyLists(null), optional: dependencyLists(null) };
+    if (value === undefined || value === null) return result;
+    if (!isMapping(value)) { result.form = 'invalid'; return result; }
+    var keys = Object.keys(value);
+    var tiered = keys.some(function (k) { return k === 'required' || k === 'optional'; });
+    if (tiered && keys.some(function (k) { return DEPENDENCY_KINDS.indexOf(k) >= 0; })) { result.form = 'mixed'; return result; }
+    if (tiered) return { form: 'tiered', required: dependencyLists(value.required), optional: dependencyLists(value.optional) };
+    return { form: 'flat', required: dependencyLists(value), optional: dependencyLists(null) };
+  }
+
+  /**
+   * @description The assistants a package declares, by name, from its manifest. Only an explicit `chatBot`
+   * is marked as the concierge (the runtime defaults are not inferred), and online state appears only when
+   * the declared agentId joins the swarm overview roster; otherwise the row says it is a declaration.
+   * @param {object} record The application record from GET /api/swarm/apps/:name (body.app).
+   * @param {Array} bots The overview roster (snapshot.bots: agentId, online, active).
+   * @param {string} concierge The concierge name to mark; defaults to the record's own manifest.chatBot.
+   * @returns {Array<{name: string, role: string, agentId: string, concierge: boolean, state: string}>} state is working | online | offline | declared.
+   */
+  function declaredAssistants(record, bots, concierge) {
+    var manifest = record && isMapping(record.manifest) ? record.manifest : {};
+    var chat = typeof concierge === 'string' ? concierge : (typeof manifest.chatBot === 'string' ? manifest.chatBot : '');
+    var roster = Array.isArray(bots) ? bots : [];
+    var declared = (Array.isArray(manifest.bots) ? manifest.bots : []).filter(function (b) { return b && typeof b.name === 'string' && b.name; });
+    return declared.map(function (b) {
+      var live = b.agentId ? roster.filter(function (r) { return r && r.agentId === b.agentId; })[0] : null;
+      return {
+        name: b.name, role: typeof b.role === 'string' ? b.role : '', agentId: typeof b.agentId === 'string' ? b.agentId : '',
+        concierge: Boolean(chat) && b.name === chat, state: live ? (live.active ? 'working' : live.online ? 'online' : 'offline') : 'declared'
+      };
+    });
+  }
+
+  var ACCOUNT_SOURCES = { 'local-account': 'Local account', 'verified-sign-in': 'Verified sign-in', 'access-assignment': 'Access assignment' };
+  var SIGN_IN_STATES = { active: 'account active', disabled: 'account disabled', 'awaiting-sign-in': 'awaiting first sign-in', 'provider-disabled': 'sign-in provider disabled' };
+  /**
+   * @description The swarm roster from GET /api/user-directory as display rows: the label without its account
+   * parenthetical, and the account source plus sign-in status. It is a roster of accounts, never presence.
+   * @param {{ok: boolean, status: number, body: object}} res The directory read.
+   * @param {string} selfSub The caller's subject, so the caller's own row can be told apart.
+   * @returns {{ok: boolean, status: number, error: string, people: Array<{sub: string, name: string, detail: string, self: boolean}>}} error is the route's refusal code (roster_scope_denied, roster_administrator_required) or ''.
+   */
+  function directoryPeople(res, selfSub) {
+    var users = res && res.ok && res.body && Array.isArray(res.body.users) ? res.body.users : [];
+    var people = users.filter(function (u) { return u && typeof u.sub === 'string' && u.sub; }).map(function (u) {
+      var source = ACCOUNT_SOURCES[u.source] || (u.source ? String(u.source).replace(/-/g, ' ') : '');
+      var signIn = u.signIn && u.signIn !== u.source ? (SIGN_IN_STATES[u.signIn] || String(u.signIn).replace(/-/g, ' ')) : '';
+      return { sub: u.sub, name: String(u.label || '').replace(/\s*\([^)]*\)\s*$/, '').trim() || 'Member', detail: [source, signIn].filter(Boolean).join(' · '), self: Boolean(selfSub) && u.sub === selfSub };
+    });
+    var error = res && !res.ok && res.body && typeof res.body.error === 'string' ? res.body.error : '';
+    return { ok: Boolean(res && res.ok), status: res ? res.status : 0, error: error, people: people };
+  }
+
+  /**
+   * @description Little Monsters calendar responses as dated agenda rows: de-duplicated by event id, dated from
+   * event_date plus event_time (untimed events are all-day), and sorted. Rows keep the class they belong to.
+   * @param {Array<{ok: boolean, body: object}>} responses One GET /api/education/calendar?month= read per month.
+   * @returns {Array<{id: string, title: string, when: Date, timed: boolean, className: string}>}
+   */
+  function classEvents(responses) {
+    var seen = {}, rows = [];
+    (responses || []).forEach(function (r) {
+      (r && r.ok && r.body && Array.isArray(r.body.events) ? r.body.events : []).forEach(function (e) {
+        if (!e || !e.event_id || seen[e.event_id]) return;
+        seen[e.event_id] = true;
+        var when = new Date(String(e.event_date || '').slice(0, 10) + 'T' + (e.event_time || '00:00:00'));
+        if (isNaN(when.getTime())) return;
+        rows.push({ id: String(e.event_id), title: String(e.title || 'Event'), when: when, timed: Boolean(e.event_time), className: e.class_name ? String(e.class_name) : '' });
+      });
+    });
+    return rows.sort(function (a, b) { return a.when.getTime() - b.when.getTime(); });
+  }
+  function monthKey(date) { return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0'); }
 
   /** @description Join the three caller-scoped catalog reads. Plan entries carry authority; listed-but-unadmitted apps stay visible as unavailable. */
   function mergeApps(input) {
@@ -215,7 +341,31 @@
     if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
     return Date.now().toString(16) + '-' + Math.random().toString(16).slice(2);
   }
-  function defaultSleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+  /**
+   * @description Wait between polls, waking early when the caller aborts, so a stopped request does not hold the page for another poll interval.
+   * @param {number} ms Poll interval.
+   * @param {AbortSignal|null} signal The request's abort signal, when the caller supplied one.
+   * @returns {Promise<void>} Resolves after the interval or on abort, whichever comes first.
+   */
+  function abortableSleep(ms, signal) {
+    return new Promise(function (done) {
+      if (signal && signal.aborted) { done(); return; }
+      var timer = setTimeout(finish, ms);
+      function finish() { clearTimeout(timer); if (signal) signal.removeEventListener('abort', finish); done(); }
+      if (signal) signal.addEventListener('abort', finish);
+    });
+  }
+
+  /**
+   * @description Keep only the well-formed hand-off records of a done /ask/result payload ({ workJobId, title }, the shape dispatchHandoffs returns); anything else is dropped rather than guessed at.
+   * @param {unknown} raw The payload's `dispatched` field.
+   * @returns {Array<{workJobId: string, title: string}>} The background work items the page may track on GET /api/jarvis/tasks.
+   */
+  function dispatchedList(raw) {
+    return (Array.isArray(raw) ? raw : []).filter(function (d) { return d && typeof d.workJobId === 'string' && d.workJobId.length > 0; })
+      .map(function (d) { return { workJobId: d.workJobId, title: String(d.title || 'Background work').slice(0, 200) }; });
+  }
 
   /** @description Build the adapter over an injectable fetch and storage so tests can drive it headlessly. */
   function createClient(options) {
@@ -226,18 +376,21 @@
 
     async function getJson(path, extra) {
       var timeoutMs = extra && extra.timeoutMs ? extra.timeoutMs : 12000;
+      var outer = extra && extra.signal ? extra.signal : null;
       var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
       var timer = controller ? setTimeout(function () { controller.abort(); }, timeoutMs) : null;
+      var relay = function () { if (controller) controller.abort(); };
+      if (outer) { if (outer.aborted) relay(); else outer.addEventListener('abort', relay); }
       try {
         var res = await fetchImpl(path, { credentials: 'same-origin', headers: { Accept: 'application/json' }, signal: controller ? controller.signal : undefined });
         var body = null; try { body = await res.json(); } catch (_) { body = null; }
         return { ok: res.ok, status: res.status, body: body };
       } catch (err) { return { ok: false, status: 0, body: null, error: err }; }
-      finally { if (timer) clearTimeout(timer); }
+      finally { if (timer) clearTimeout(timer); if (outer) outer.removeEventListener('abort', relay); }
     }
-    async function sendJson(path, method, payload) {
+    async function sendJson(path, method, payload, extra) {
       try {
-        var res = await fetchImpl(path, { method: method, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: payload === undefined ? undefined : JSON.stringify(payload) });
+        var res = await fetchImpl(path, { method: method, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: payload === undefined ? undefined : JSON.stringify(payload), signal: extra && extra.signal ? extra.signal : undefined });
         var body = null; try { body = await res.json(); } catch (_) { body = null; }
         return { ok: res.ok, status: res.status, body: body };
       } catch (err) { return { ok: false, status: 0, body: null, error: err }; }
@@ -305,38 +458,71 @@
       if (d.status === 'error') return { status: 'error', error: String(d.error || 'That did not work.'), code: d.code || '', jobId: jobId, taskId: d.taskId || '', sessionId: session };
       return {
         status: 'done', answer: String(d.answer || ''), handoffs: Array.isArray(d.handoffs) ? d.handoffs : [], files: Array.isArray(d.files) ? d.files : [],
-        visual: d.visual || null, brainFallback: d.brainFallback || null, taskId: d.taskId || '', label: d.label || '', jobId: jobId, sessionId: session
+        visual: d.visual || null, brainFallback: d.brainFallback || null, taskId: d.taskId || '', label: d.label || '', jobId: jobId, sessionId: session,
+        dispatched: dispatchedList(d.dispatched), packageToolProposal: d.packageToolProposal && typeof d.packageToolProposal === 'object' ? d.packageToolProposal : null
       };
     }
+    function abortedAsk(jobId, session) { return { status: 'aborted', error: 'Stopped waiting.', jobId: jobId || '', sessionId: session }; }
 
-    /** @description POST /api/jarvis/ask and poll /ask/result to a terminal state. Mirrors the Jarvis page: a refused persisted thread rolls to a fresh id once. */
-    async function ask(message, config) {
-      var c = config || {}, onPhase = c.onPhase || function () {}, sleep = c.sleep || defaultSleep;
-      var text = String(message || '').trim();
-      if (!text) return { status: 'error', error: 'Say what you need first.' };
+    /** @description POST the turn, rolling a refused persisted thread to a fresh id once; returns the final response and the session it went out on. */
+    async function postAsk(text, c, onPhase, signal) {
       var session = c.sessionId || sessionId();
       onPhase({ phase: 'sending', sessionId: session });
       var payload = { message: text, sessionId: session };
-      var r = await sendJson('/api/jarvis/ask', 'POST', payload);
-      if (r.status === 404 && r.body && r.body.error === 'session_not_found' && !c.sessionId) {
+      var r = await sendJson('/api/jarvis/ask', 'POST', payload, { signal: signal });
+      if (r.status === 404 && r.body && r.body.error === 'session_not_found' && !c.sessionId && !(signal && signal.aborted)) {
         session = rollSession(); payload.sessionId = session; onPhase({ phase: 'rolled', sessionId: session });
-        r = await sendJson('/api/jarvis/ask', 'POST', payload);
+        r = await sendJson('/api/jarvis/ask', 'POST', payload, { signal: signal });
       }
+      return { r: r, session: session };
+    }
+
+    /** @description POST /api/jarvis/ask and poll /ask/result to a terminal state. Mirrors the Jarvis page: a refused persisted thread rolls to a fresh id once. `config.signal` ends the wait at any point with status 'aborted'; the job itself is not cancelled (no such route exists). */
+    async function ask(message, config) {
+      var c = config || {}, onPhase = c.onPhase || function () {}, sleep = c.sleep || abortableSleep, signal = c.signal || null;
+      var stopped = function () { return Boolean(signal && signal.aborted); };
+      var text = String(message || '').trim();
+      if (!text) return { status: 'error', error: 'Say what you need first.' };
+      var sent = await postAsk(text, c, onPhase, signal), r = sent.r, session = sent.session;
+      if (stopped()) return abortedAsk('', session);
       if (!r.ok || !r.body || !r.body.jobId) {
         var reason = r.status === 0 ? 'The swarm could not be reached.' : (r.body && (r.body.message || r.body.error)) ? String(r.body.message || r.body.error) : 'HTTP ' + r.status;
-        return { status: 'error', error: reason, httpStatus: r.status, sessionId: session };
+        return { status: 'error', error: reason, httpStatus: r.status, code: r.body && typeof r.body.code === 'string' ? r.body.code : '', sessionId: session };
       }
       var jobId = r.body.jobId;
       onPhase({ phase: 'accepted', jobId: jobId, sessionId: session });
       var maxPolls = c.maxPolls || 200, pollMs = c.pollMs || 1500;
       for (var i = 0; i < maxPolls; i++) {
-        var p = await getJson('/api/jarvis/ask/result?jobId=' + encodeURIComponent(jobId));
+        if (stopped()) return abortedAsk(jobId, session);
+        var p = await getJson('/api/jarvis/ask/result?jobId=' + encodeURIComponent(jobId), { signal: signal });
+        if (stopped()) return abortedAsk(jobId, session);
         var d = p.ok && p.body ? p.body : null;
         if (d && d.status && d.status !== 'pending') return finishAsk(d, jobId, session);
         onPhase({ phase: 'waiting', jobId: jobId, sessionId: session, poll: i + 1 });
-        await sleep(pollMs);
+        await sleep(pollMs, signal);
       }
-      return { status: 'error', error: 'This is taking unusually long. It may still finish; check Jarvis later.', jobId: jobId, sessionId: session };
+      if (stopped()) return abortedAsk(jobId, session);
+      return { status: 'error', code: 'poll_limit', error: 'This is taking unusually long. It may still finish; check Jarvis later.', jobId: jobId, sessionId: session };
+    }
+
+    /**
+     * @description Send one recorded clip to the swarm's speech-to-text route (POST /api/voice/transcribe, multipart field `audio`) and fold the route's envelope ({ success, data: { text } | { fallback, message } }) into one outcome the page can say honestly: 'text', 'unconfigured' (no server recognizer; the route's 'browser' fallback means the deployment chose in-browser recognition), 'empty' (the server heard no words) or 'failed'.
+     * @param {Blob} blob The recording, typed with a base audio MIME type the route accepts.
+     * @param {{filename?: string, signal?: AbortSignal}} [config] Upload name and optional abort signal.
+     * @returns {Promise<{outcome: string, status: number, text: string, fallback: string}>} The outcome; the text is never sent anywhere by this helper.
+     */
+    async function transcribe(blob, config) {
+      var c = config || {}, res, body = null;
+      var form = new FormData(); form.append('audio', blob, c.filename || 'speech.webm');
+      try { res = await fetchImpl('/api/voice/transcribe', { method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json' }, body: form, signal: c.signal }); }
+      catch (_) { return { outcome: 'failed', status: 0, text: '', fallback: '' }; }
+      try { body = await res.json(); } catch (_) { body = null; }
+      var d = body && body.data && typeof body.data === 'object' ? body.data : {};
+      var text = typeof d.text === 'string' ? d.text.trim() : '';
+      if (res.ok && text) return { outcome: 'text', status: res.status, text: text, fallback: '' };
+      if (res.ok && (d.fallback === 'unconfigured' || d.fallback === 'browser')) return { outcome: 'unconfigured', status: res.status, text: '', fallback: d.fallback };
+      if (res.ok && !d.fallback) return { outcome: 'empty', status: res.status, text: '', fallback: '' };
+      return { outcome: 'failed', status: res.status, text: '', fallback: typeof d.fallback === 'string' ? d.fallback : '' };
     }
 
     /** @description Speak text through the swarm's voice route, falling back to the browser engine. Level callbacks are amplitude when an analyser is available, lifecycle pulses otherwise. */
@@ -402,14 +588,58 @@
       set: function (key, value) { try { storage.setItem('oshal-experience:' + key, JSON.stringify(value)); return true; } catch (_) { return false; } }
     };
 
+    function educationCalendar(month) { return getJson('/api/education/calendar' + (month ? '?month=' + encodeURIComponent(month) : '')); }
+    /** The caller's Little Monsters calendar for this month and next; the first refused month names the status. */
+    async function educationAgenda(now) {
+      var d = now || new Date(), next = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+      var reads = await Promise.all([educationCalendar(monthKey(d)), educationCalendar(monthKey(next))]);
+      var refused = reads.filter(function (r) { return !r.ok; })[0];
+      return { ok: !refused, status: (refused || reads[0]).status, events: classEvents(reads) };
+    }
+
     var packages = {
       education: {
         me: function () { return getJson('/api/education/me'); },
         classes: function () { return getJson('/api/education/classes'); },
         students: function (id) { return getJson('/api/education/classes/' + encodeURIComponent(id) + '/students'); },
         assignments: function () { return getJson('/api/education/assignments'); },
-        calendar: function (month) { return getJson('/api/education/calendar' + (month ? '?month=' + encodeURIComponent(month) : '')); },
-        addEvent: function (payload) { return sendJson('/api/education/calendar', 'POST', payload); }
+        calendar: educationCalendar,
+        agenda: educationAgenda,
+        addEvent: function (payload) { return sendJson('/api/education/calendar', 'POST', payload); },
+        /**
+         * @description One class's learner activity (level, streak, quiz average, cards reviewed) and class summary, the teacher-only analytics read. It is activity, never classwork completion.
+         * @param {string} id Little Monsters class id the caller teaches.
+         * @returns {Promise<{ok:boolean,status:number,body:any}>} The package's answer; 403/404 when the caller does not teach the class.
+         */
+        analytics: function (id) { return getJson('/api/education/teacher/classes/' + encodeURIComponent(id) + '/analytics'); },
+        /**
+         * @description Post classwork through the package route that also puts a dated item on the class calendar, so the shell never writes two records itself.
+         * @param {{classId:string,title:string,assignmentType?:string,dueDate?:string,description?:string}} payload Body the package validates and authorizes.
+         * @returns {Promise<{ok:boolean,status:number,body:any}>} 201 with assignmentId/eventId, or the package's refusal.
+         */
+        addClasswork: function (payload) { return sendJson('/api/education/assignments-with-events', 'POST', payload); }
+      },
+      tickets: {
+        /**
+         * @description Read one ticket as the ticket route answers it (current status plus the reason/nextAction mirror in metadata); the route refuses non-owners with 404.
+         * @param {string} id Ticket id.
+         * @returns {Promise<{ok:boolean,status:number,body:any}>} The ticket or the route's refusal.
+         */
+        get: function (id) { return getJson('/api/tickets/' + encodeURIComponent(id)); },
+        /**
+         * @description Ask the ticket route for one exact state transition; the server enforces ownership and the transition table, the shell only names the state.
+         * @param {string} id Ticket id.
+         * @param {string} status Canonical next state.
+         * @returns {Promise<{ok:boolean,status:number,body:any}>} The route's answer, including its refusal.
+         */
+        setStatus: function (id, status) { return sendJson('/api/tickets/' + encodeURIComponent(id) + '/status', 'PUT', { status: status }); }
+      },
+      content: {
+        /**
+         * @description The caller's saved content drafts (topic, take, draft, created_at), newest first; the route reads only the caller's own rows.
+         * @returns {Promise<{ok:boolean,status:number,body:any}>} The drafts list or the route's refusal.
+         */
+        drafts: function () { return getJson('/api/content/drafts'); }
       },
       purchasing: {
         lists: function () { return getJson('/api/purchasing/lists'); },
@@ -423,15 +653,25 @@
       },
       jarvis: {
         history: function (sid) { return getJson('/api/jarvis/history' + (sid ? '?sessionId=' + encodeURIComponent(sid) : '')); },
-        tasks: function () { return getJson('/api/jarvis/tasks'); }
+        tasks: function () { return getJson('/api/jarvis/tasks'); },
+        /**
+         * @description Ask the ticket route to cancel background work the caller started; the route checks ownership and refuses otherwise.
+         * @param {string} ticketId Ticket behind the dispatched item.
+         * @returns {Promise<{ok:boolean,status:number,body:any}>} The route's answer, including a refusal.
+         */
+        cancelWork: function (ticketId) { return sendJson('/api/tickets/' + encodeURIComponent(ticketId) + '/cancel', 'PUT'); }
       },
       directory: function () { return getJson('/api/user-directory'); },
+      /** The swarm roster as display rows (swarm admins only; anyone else gets the route's refusal status). */
+      people: function (selfSub) { return getJson('/api/user-directory').then(function (r) { return directoryPeople(r, selfSub); }); },
       /** The caller-scoped ribbon profile of one application: the admitted surfaces the cockpit ribbon itself renders. */
-      profile: function (name) { return getJson('/api/ui/profile?name=' + encodeURIComponent(name)); }
+      profile: function (name) { return getJson('/api/ui/profile?name=' + encodeURIComponent(name)); },
+      /** One application's record as this viewer may see it (404 when it is not visible): manifest bots, chatBot, dependencies. */
+      appDetail: function (name) { return getJson('/api/swarm/apps/' + encodeURIComponent(name)); }
     };
 
     return {
-      load: load, loadCore: loadCore, loadWork: loadWork, get snapshot() { return snapshot; }, probeSummary: probeSummary, ask: ask, speak: speak,
+      load: load, loadCore: loadCore, loadWork: loadWork, get snapshot() { return snapshot; }, probeSummary: probeSummary, ask: ask, speak: speak, transcribe: transcribe,
       sessionId: sessionId, rollSession: rollSession, prefs: prefs, packages: packages, getJson: getJson, sendJson: sendJson
     };
   }
@@ -440,7 +680,8 @@
     SUITE_META: SUITE_META, SUITE_ORDER: SUITE_ORDER, statusOf: statusOf, initials: initials, deriveIdentity: deriveIdentity,
     mergeApps: mergeApps, buildSuites: buildSuites, mergeWork: mergeWork, normalizeTicket: normalizeTicket, normalizeTask: normalizeTask,
     atPointer: atPointer, normalizeSummary: normalizeSummary, relativeTime: relativeTime, clockTime: clockTime, parseDate: parseDate,
-    createClient: createClient
+    dependencyTiers: dependencyTiers, declaredAssistants: declaredAssistants, directoryPeople: directoryPeople, classEvents: classEvents,
+    localHref: localHref, createClient: createClient
   };
   if (typeof window !== 'undefined' && typeof fetch === 'function') {
     var client = createClient();

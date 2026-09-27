@@ -5,6 +5,10 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Shared shell kernel for every experience layout: the experience chooser bar, device-local pins, the application directory, application and work-item panels over live summaries, the people and provenance panels, and the Jarvis conversation engine (history + ask/result) that Studio, Jarvis, Orbit, Commons, the homebases and the central assistant all reuse instead of fixtures.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Render the assistant's markdown links to same-origin paths and http(s) URLs as anchors after escaping, so an answer that names an application opens it instead of showing raw brackets.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Audience-aware hosting: one withAudience helper appends the layout's `?audience=` to every in-place frame (existing query, hash and audience kept), behind a device-remembered Summary view / Full application switch whose copy leaves the choice of view to the hosted page. The app panel reads the package record lazily (GET /api/swarm/apps/:name, and each installed member of a group) to list declared assistants by name with the concierge marked and online state only where the overview roster joins, and labels relationships as group members or Required / Optional app dependencies (not installed when absent from the catalog; a mixed dependency block shows a neutral note instead of tiers). The Commons game predicate moves here as isGameApp so the directory's Games chip and the Game room share it, and a layout may opt its People panel into the swarm roster from GET /api/user-directory with the non-admin fallback to the caller's own identity.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | A dependency absent from the caller's catalog is labelled 'not in your catalog': the catalog lists active apps visible to this viewer, so an installed but inactive or person-scoped app is not proof of 'not installed'
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Integration review: every server-provided link the shell puts in an href (the shared hand-off chip, a '/' link in an answer, a file download) goes through LIVE.localHref, so a target that resolves off this origin ('//host', '/\host', a tab-split path) is never linked; the Games chip's visible label carries the hedge ('Looks like a game'); a roster 403 with roster_scope_denied says this session is not permitted to read the roster instead of blaming a missing admin role.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Fix round 1: states the one exception to row 5. Only '/' answer links, hand-off chips, file downloads and admitted workspace links go through LIVE.localHref; an absolute http(s) answer link is outside the same-origin guard by design and opens in a new tab with noopener noreferrer. A dot-segment answer link such as '[x](/..//host/y)' now stays literal text because the guard refuses it.
  */
 (() => {
   'use strict';
@@ -43,16 +47,60 @@
   function answerHtml(text) {
     const inline = s => esc(s)
       .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-      // [label](/path) or [label](https://…) as the assistant writes them; anything else stays literal text.
-      .replace(/\[([^\]\n]{1,120})\]\(((?:\/(?!\/)|https?:\/\/)[^\s()<>"']{1,400})\)/g, (_, label, href) => `<a href="${href}"${href.startsWith('/') ? '' : ' rel="noopener noreferrer" target="_blank"'}>${label}</a>`);
+      // [label](/path) or [label](https://…) as the assistant writes them; a path that resolves off this origin, and anything else, stays literal text.
+      // Only '/' links are same-origin-guarded; an absolute http(s) link is outside that guard by design and opens in a new tab with noopener noreferrer.
+      .replace(/\[([^\]\n]{1,120})\]\(((?:\/(?!\/)|https?:\/\/)[^\s()<>"']{1,400})\)/g, (whole, label, href) => {
+        if (!href.startsWith('/')) return `<a href="${href}" rel="noopener noreferrer" target="_blank">${label}</a>`;
+        const local = LIVE.localHref(href);
+        return local ? `<a href="${local}">${label}</a>` : whole;
+      });
     return String(text || '').trim().split(/\n{2,}/).filter(Boolean).map(block => {
       const lines = block.split('\n');
       if (lines.every(l => /^\s*[-*•]\s+/.test(l))) return `<ul class="artifact-steps">${lines.map(l => `<li>${inline(l.replace(/^\s*[-*•]\s+/, ''))}</li>`).join('')}</ul>`;
       return `<p>${lines.map(inline).join('<br>')}</p>`;
     }).join('') || '<p class="muted">No answer text was returned.</p>';
   }
-  const chip = h => h && typeof h.deepLink === 'string' && h.deepLink.startsWith('/') ? link(`Open ${esc(h.name || 'application')} ↗`, h.deepLink, 'mini-app') : '';
-  const fileLink = f => { const url = f && (f.downloadUrl || f.url); return typeof url === 'string' && url.startsWith('/api/') ? link(`↓ ${esc(f.name || 'file')}`, url, 'quiet-link', 'download') : ''; };
+  const chip = h => { const href = h ? LIVE.localHref(h.deepLink) : ''; return href ? link(`Open ${esc(h.name || 'application')} ↗`, href, 'mini-app') : ''; };
+  const fileLink = f => { const href = f ? LIVE.localHref(f.downloadUrl || f.url) : ''; return href.startsWith('/api/') ? link(`↓ ${esc(f.name || 'file')}`, href, 'quiet-link', 'download') : ''; };
+
+  /**
+   * @description Ask a hosted page for an audience view (ADR-164 D6). The parameter is a request the page may
+   * honour, never authority, so the URL's own query and hash are kept as written and an audience the URL
+   * already names is never overridden.
+   * @param {string} url The application surface to frame.
+   * @param {string} audience The layout's audience id (family, company, ...); empty leaves the URL as is.
+   * @returns {string} The URL with `audience=` appended once.
+   */
+  function withAudience(url, audience) {
+    const raw = String(url || '');
+    if (!raw || !audience) return raw;
+    const hashAt = raw.indexOf('#'), base = hashAt < 0 ? raw : raw.slice(0, hashAt), hash = hashAt < 0 ? '' : raw.slice(hashAt);
+    const queryAt = base.indexOf('?');
+    if (queryAt >= 0 && new URLSearchParams(base.slice(queryAt + 1)).has('audience')) return raw;
+    const joiner = queryAt < 0 ? '?' : /[?&]$/.test(base) ? '' : '&';
+    return `${base}${joiner}audience=${encodeURIComponent(audience)}${hash}`;
+  }
+  /** Chip title for the Games filter: it is a name match inside the Creative & games suite, not a manifest marker. */
+  const GAMES_TITLE = 'Creative apps that look like games';
+  /**
+   * @description The one games predicate the directory chip and the Commons Game room share. No manifest field
+   * marks a game, so this is a heuristic: a Creative & games suite member whose name reads like a game.
+   * @param {object} app A catalog entry.
+   * @returns {boolean} True when the entry looks like a game.
+   */
+  const isGameApp = app => Boolean(app) && app.suite === 'ai-creative' && /game|dungeon|arcade|show/i.test(`${app.name} ${app.id}`);
+  const ASSISTANT_STATE = { working: 'working now', online: 'online', offline: 'offline', declared: 'declared in the package' };
+  /**
+   * @description Why the swarm roster is not listed, from the directory route's own refusal code: roster_scope_denied
+   * means this session's permission scope excludes the read (the account may well be an admin); roster_administrator_required,
+   * or any other 403, means only a swarm admin may list everyone.
+   * @param {{status: number, error: string}} roster The refused directory read.
+   * @returns {string} The sentence the roster slot shows beside the caller's own identity.
+   */
+  function rosterRefusal(roster) {
+    if (roster.status !== 403) return `The swarm roster could not be read (HTTP ${roster.status || 'network'}), so only your own identity is shown.`;
+    return roster.error === 'roster_scope_denied' ? 'This session is not permitted to read the roster. Only your own identity is shown.' : 'Only a swarm admin can list everyone on this swarm, so only your own identity is shown.';
+  }
 
   /** @description Create the per-page shell kernel over a loaded snapshot. */
   function createShell(options) {
@@ -61,7 +109,8 @@
     const apps = snapshot.apps, suites = snapshot.suites, work = snapshot.work;
     const byId = id => apps.find(a => a.id === id) || null;
     const suiteOf = id => suites.find(s => s.id === id) || LIVE.SUITE_META[id] && Object.assign({ id, count: 0, apps: [] }, LIVE.SUITE_META[id]) || suites[suites.length - 1];
-    const state = { modal: null, dirSuite: 'all', dirQuery: '', returnFocus: null, pins: null, summaries: new Map(), embed: false };
+    const state = { modal: null, dirSuite: 'all', dirQuery: '', returnFocus: null, pins: null, summaries: new Map(), embed: false, details: new Map(), detailReads: new Map(), roster: null, rosterRead: null };
+    state.embedView = LIVE.prefs.get('embed-view:' + layoutId, 'summary') === 'full' ? 'full' : 'summary';
     const savedPins = LIVE.prefs.get('pins:' + layoutId, null);
     const busiest = s => s.apps.map(a => [a, work.filter(w => w.app === a.id).length]).sort((x, y) => y[1] - x[1] || Number(y[0].probes.length > 0) - Number(x[0].probes.length > 0))[0];
     const defaultPins = suites.map(s => (busiest(s) || [])[0] || s.spotlight).filter(a => a && a.navigable).map(a => a.id).slice(0, 6);
@@ -109,9 +158,86 @@
       });
     }
 
+    /** In-place hosting: the layout's audience is requested unless the viewer chose the full application (device-local). */
+    const hostedUrl = app => state.embedView === 'full' ? app.surface : withAudience(app.surface, options.audience);
+    function embedControls(app) {
+      if (!options.audience) return '';
+      const choice = (view, label) => button(label, 'embed-view', '', `data-view="${view}" aria-pressed="${state.embedView === view}"`);
+      const note = state.embedView === 'full' ? `Full application opens ${esc(app.name)} without an audience request.` : `Summary view asks ${esc(app.name)} for its ${esc(options.audience)} view. The application decides: a page without that view runs its full UI.`;
+      return `<div class="embed-switch"><div class="segmented" role="group" aria-label="How ${esc(app.name)} opens here">${choice('summary', 'Summary view')}${choice('full', 'Full application')}</div><p class="note-line">${note} Saved on this device.</p></div>`;
+    }
+    const embedFrame = (app, cls = '') => `<iframe class="embed-frame${cls ? ` ${cls}` : ''}" src="${esc(hostedUrl(app))}" title="${esc(app.name)}" loading="lazy"></iframe>`;
+    function setEmbedView(view) {
+      state.embedView = view === 'full' ? 'full' : 'summary';
+      LIVE.prefs.set('embed-view:' + layoutId, state.embedView);
+      if (state.modal && state.modal.kind === 'embed') {
+        renderModal();
+        const pressed = document.querySelector(`#full-dialog [data-action="embed-view"][data-view="${state.embedView}"]`); if (pressed) pressed.focus();
+      }
+      if (hooks.onEmbedViewChanged) hooks.onEmbedViewChanged();
+    }
+
+    /** Package record: one viewer-scoped GET /api/swarm/apps/:name per application (and per installed member of a group), read when a panel first shows it. */
+    async function readDetail(app) {
+      const read = async name => { const r = await LIVE.packages.appDetail(name); return { name, status: r.status, record: r.ok && r.body && r.body.app ? r.body.app : null }; };
+      const [own, members] = await Promise.all([read(app.id), app.kind === 'group' ? Promise.all(app.related.map(read)) : Promise.resolve([])]);
+      return { own, members };
+    }
+    const detailPart = (app, part) => (part === 'assistants' ? assistantsMarkup : relationsMarkup)(app, state.details.get(app.id) || null);
+    const detailSlot = (app, part) => `<div class="detail-slot" data-detail-slot="${esc(app.id)}" data-detail-part="${part}">${detailPart(app, part)}</div>`;
+    function fillDetail(app) {
+      if (!app || state.details.has(app.id)) return;
+      if (!state.detailReads.has(app.id)) state.detailReads.set(app.id, readDetail(app).then(detail => { state.details.set(app.id, detail); return detail; }));
+      state.detailReads.get(app.id).then(() => document.querySelectorAll(`[data-detail-slot="${CSS.escape(app.id)}"]`).forEach(slot => { slot.innerHTML = detailPart(app, slot.dataset.detailPart); }));
+    }
+    const nameOf = id => (byId(id) || { name: id }).name;
+    const unreadNote = read => read.status === 404 ? `${nameOf(read.name)}: its package record is not visible to you.` : `${nameOf(read.name)}: package record unavailable (HTTP ${read.status || 'network'}).`;
+    function assistantsMarkup(app, detail) {
+      if (!detail) return '<p class="note-line">Reading the package declaration…</p>';
+      const group = app.kind === 'group', manifest = (detail.own.record && detail.own.record.manifest) || {};
+      const concierge = typeof manifest.chatBot === 'string' ? manifest.chatBot : '', reads = group ? detail.members : [detail.own];
+      const rows = reads.flatMap(read => read.record ? LIVE.declaredAssistants(read.record, snapshot.bots, concierge).map(r => Object.assign(r, { from: group ? nameOf(read.name) : '' })) : []);
+      const notes = (group && !detail.own.record ? [detail.own] : []).concat(reads.filter(read => !read.record)).map(unreadNote);
+      if (concierge && !rows.some(r => r.concierge)) notes.push(`${concierge} is named as the concierge but is not declared in ${group ? 'an installed member' : 'this package'}.`);
+      const list = rows.map(r => personRow(LIVE.initials(r.name), r.name, [r.concierge ? 'Concierge' : '', r.role, r.from ? `from ${r.from}` : '', ASSISTANT_STATE[r.state]].filter(Boolean).join(' · '), r.state === 'working' ? 'bot active' : 'bot')).join('');
+      const empty = rows.length || notes.length ? '' : `<p class="note-line">${group ? 'Its installed members declare no assistants.' : 'This package declares no assistants.'}</p>`;
+      const foot = rows.length ? '<p class="note-line">Names come from the package manifest; online state appears only where the assistant is registered in the swarm overview.</p>' : '';
+      return list + empty + notes.map(n => `<p class="note-line">${esc(n)}</p>`).join('') + foot;
+    }
+    const relationRow = (id, label, absent) => byId(id) ? button(`${appMark(byId(id))}<span>${esc(byId(id).name)}</span><small>${esc(label)}</small>`, 'open-app', 'dependency-row', `data-app="${esc(id)}"`) : `<div class="dependency-row"><span>${esc(id)}</span><small>${esc(`${label} · ${absent}`)}</small></div>`;
+    function relationsMarkup(app, detail) {
+      const rows = app.related.map(id => relationRow(id, 'Member (required)', 'not in your catalog')), shown = new Set([app.id, ...app.related]);
+      let note = '';
+      if (!detail) note = 'Reading declared dependencies…';
+      else if (!detail.own.record) note = detail.own.status === 404 ? 'The package record is not visible to you, so declared dependencies are not listed.' : `Declared dependencies could not be read (HTTP ${detail.own.status || 'network'}).`;
+      else {
+        const tiers = LIVE.dependencyTiers(detail.own.record.manifest);
+        if (tiers.form === 'mixed') note = 'This package mixes the flat and tiered dependency forms, so no tiers are shown.';
+        else [['required', 'Required'], ['optional', 'Optional']].forEach(([tier, label]) => tiers[tier].apps.forEach(id => { if (!shown.has(id)) { shown.add(id); rows.push(relationRow(id, label, 'not in your catalog')); } }));
+      }
+      const empty = !rows.length && !note ? '<p class="note-line">No application relationships declared.</p>' : '';
+      return `<div class="dependency-list">${rows.join('')}${empty}${note ? `<p class="note-line">${esc(note)}</p>` : ''}</div>`;
+    }
+
+    /** Swarm roster (layouts that opt in): GET /api/user-directory once per page; a refusal keeps the caller's own identity only. */
+    function fillRoster() {
+      if (state.roster) return;
+      if (!state.rosterRead) state.rosterRead = LIVE.packages.people(snapshot.me.sub).then(r => { state.roster = r; return r; });
+      state.rosterRead.then(r => document.querySelectorAll('[data-roster-slot]').forEach(slot => { slot.innerHTML = rosterMarkup(r, slot.dataset.rosterSlot); }));
+    }
+    const rosterSlot = variant => `<div class="roster-slot" data-roster-slot="${variant}">${rosterMarkup(state.roster, variant)}</div>`;
+    function rosterMarkup(roster, variant) {
+      const self = personRow(snapshot.me.initials, `${snapshot.me.name} · you`, snapshot.me.email || 'Signed in', 'person');
+      if (!roster) return `${self}<p class="note-line">Reading the swarm roster…</p>`;
+      if (!roster.ok) return `${self}<p class="note-line">${rosterRefusal(roster)}</p>`;
+      const others = roster.people.filter(p => !p.self), limit = variant === 'room' ? 6 : 40;
+      const more = others.length > limit ? `<p class="note-line">…and ${others.length - limit} more on the roster.</p>` : '';
+      return `${self}${others.slice(0, limit).map(p => personRow(LIVE.initials(p.name), p.name, p.detail || 'Account', 'person')).join('')}${more}<p class="note-line">${others.length ? `${roster.people.length} accounts on this swarm’s user directory.` : 'Nobody else is on this swarm’s user directory.'} A roster, not presence or room membership.</p>`;
+    }
+
     function appPanel(id) {
       const app = byId(id); if (!app) return '<p>That application is not in your catalog.</p>';
-      const suite = suiteOf(app.suite), related = app.related.map(byId).filter(Boolean), items = workFor(app.id).slice(0, 4);
+      const suite = suiteOf(app.suite), items = workFor(app.id).slice(0, 4);
       const availability = app.navigable ? 'Available in your workspace.' : app.inPlan ? 'Installed; opens through the cockpit.' : 'Installed, but not available to you in this workspace.';
       return `<div class="app-detail-header">${appMark(app)}<div><span class="eyebrow muted">${esc(suite.name)}</span><p class="app-package">${esc(app.id)}${app.version ? ` · v${esc(app.version)}` : ''}</p></div>${button(isPinned(app.id) ? '★ Pinned' : '☆ Pin app', 'pin', 'action', `data-app="${esc(app.id)}" aria-pressed="${isPinned(app.id)}"`)}</div>
 <p class="app-description">${esc(app.description)}</p>
@@ -120,12 +246,13 @@
 ${app.todos.length ? `<h3>Setup steps</h3><ol class="artifact-steps">${app.todos.map(t => `<li>${esc(t.label)}</li>`).join('')}</ol>` : ''}
 ${items.length ? `<h3>Recent work</h3>${items.map(workRow).join('')}` : ''}
 <div class="drawer-actions">${app.navigable ? link('Open ↗', app.href, 'action primary') : ''}${app.surface && hooks.allowEmbed ? button('Open here', 'embed', 'action', `data-app="${esc(app.id)}"`) : ''}${hooks.contextAction ? button(hooks.contextAction, 'use-context', 'action', `data-app="${esc(app.id)}"`) : ''}</div>
-<h3>Declared application relationships</h3><div class="dependency-list">${related.map(dep => button(`${appMark(dep)}<span>${esc(dep.name)}</span><small>Integration source</small>`, 'open-app', 'dependency-row', `data-app="${esc(dep.id)}"`)).join('') || '<p>No integration sources declared by other packages.</p>'}</div>
+<h3>Declared assistants</h3>${detailSlot(app, 'assistants')}
+<h3>Declared application relationships</h3>${detailSlot(app, 'relations')}
 ${(app.connectors.required || []).length || (app.connectors.optional || []).length ? `<h3>Providers</h3><p class="bot-identifiers">${esc([...(app.connectors.required || []).map(c => `${c} (required)`), ...(app.connectors.optional || [])].join(' · '))}</p>` : ''}`;
     }
     function embedPanel(id) {
       const app = byId(id); if (!app || !app.surface) return '<p>This application has no embeddable surface.</p>';
-      return `<p class="note-line">${esc(app.name)} running in place. It keeps its own navigation; use Open ↗ for the full cockpit view.</p><iframe class="embed-frame" src="${esc(app.surface)}" title="${esc(app.name)}" loading="lazy"></iframe><div class="drawer-actions">${link('Open ↗', app.href, 'action primary')}</div>`;
+      return `<p class="note-line">${esc(app.name)} running in place. It keeps its own navigation; use Open ↗ for the full cockpit view.</p>${embedControls(app)}${embedFrame(app)}<div class="drawer-actions">${link('Open ↗', app.href, 'action primary')}</div>`;
     }
     function workPanel(id) {
       const item = work.find(w => w.id === id); if (!item) return '<p>That item is no longer in your recent work.</p>';
@@ -139,12 +266,15 @@ ${item.files.length ? `<h3>Files</h3><ul class="artifact-steps">${item.files.map
     }
     function filtered() {
       const q = state.dirQuery.toLowerCase().trim();
-      return apps.filter(a => (state.dirSuite === 'all' || (state.dirSuite === 'pinned' ? isPinned(a.id) : a.suite === state.dirSuite)) && `${a.name} ${a.id} ${a.description} ${suiteOf(a.suite).name}`.toLowerCase().includes(q));
+      const inFilter = a => state.dirSuite === 'all' || (state.dirSuite === 'pinned' ? isPinned(a.id) : state.dirSuite === 'games' ? isGameApp(a) : a.suite === state.dirSuite);
+      return apps.filter(a => inFilter(a) && `${a.name} ${a.id} ${a.description} ${suiteOf(a.suite).name}`.toLowerCase().includes(q));
     }
+    const gameApps = () => apps.filter(isGameApp);
     const appCard = a => `<article class="catalog-card" data-catalog-app="${esc(a.id)}"><div class="row between">${appMark(a)}${button(isPinned(a.id) ? '★' : '☆', 'pin', 'pin-button', `data-app="${esc(a.id)}" aria-label="${isPinned(a.id) ? 'Unpin' : 'Pin'} ${esc(a.name)}" aria-pressed="${isPinned(a.id)}"`)}</div>${button(`<h3>${esc(a.name)}</h3><span class="app-package">${esc(a.id)}</span><p>${esc(a.description)}</p>`, 'open-app', 'catalog-main', `data-app="${esc(a.id)}"`)}<div class="catalog-card-foot"><span>${esc(suiteOf(a.suite).name)}</span><span>${a.navigable ? (workFor(a.id)[0] ? `Latest: ${esc(workFor(a.id)[0].status.label.toLowerCase())}` : 'Available') : 'Not available here'}</span></div></article>`;
     function directoryPanel() {
-      const filters = [['all', 'All apps', apps.length], ...suites.map(s => [s.id, s.name, s.count]), ['pinned', 'Pinned', state.pins.length]];
-      return `<div class="directory-intro"><p>Every application installed on this swarm that you can see, with its declared suite, version and current availability to you.</p><span>${apps.length} applications · ${suites.length} suites</span></div><div class="directory-search"><span aria-hidden="true">⌕</span><label class="screenreader" for="app-search">Search all applications</label><input id="app-search" type="search" placeholder="Find an application or capability…" value="${esc(state.dirQuery)}" autocomplete="off"></div><nav class="directory-filters" aria-label="Filter applications">${filters.map(([k, n, c]) => button(`${esc(n)}<span>${c}</span>`, 'filter', 'filter-chip', `data-suite="${k}" aria-pressed="${state.dirSuite === k}"`)).join('')}</nav><div class="directory-results-head"><span id="catalog-result-count" role="status"></span><span>★ Pins are saved on this device only</span></div><div id="catalog-results" class="catalog-grid"></div><footer class="directory-foot">Membership, availability and versions come from your installed swarm. Nothing here installs, enables or grants an application. ${button('What is live here?', 'provenance', 'quiet-link')}</footer>`;
+      const games = gameApps().length ? [['games', 'Looks like a game', gameApps().length, `title="${esc(GAMES_TITLE)}"`]] : [];
+      const filters = [['all', 'All apps', apps.length], ...suites.map(s => [s.id, s.name, s.count]), ...games, ['pinned', 'Pinned', state.pins.length]];
+      return `<div class="directory-intro"><p>Every application installed on this swarm that you can see, with its declared suite, version and current availability to you.</p><span>${apps.length} applications · ${suites.length} suites</span></div><div class="directory-search"><span aria-hidden="true">⌕</span><label class="screenreader" for="app-search">Search all applications</label><input id="app-search" type="search" placeholder="Find an application or capability…" value="${esc(state.dirQuery)}" autocomplete="off"></div><nav class="directory-filters" aria-label="Filter applications">${filters.map(([k, n, c, extra = '']) => button(`${esc(n)}<span>${c}</span>`, 'filter', 'filter-chip', `data-suite="${k}" aria-pressed="${state.dirSuite === k}" ${extra}`)).join('')}</nav><div class="directory-results-head"><span id="catalog-result-count" role="status"></span><span>★ Pins are saved on this device only</span></div><div id="catalog-results" class="catalog-grid"></div><footer class="directory-foot">Membership, availability and versions come from your installed swarm. Nothing here installs, enables or grants an application. ${button('What is live here?', 'provenance', 'quiet-link')}</footer>`;
     }
     function updateDirectory() {
       const result = filtered(), host = document.getElementById('catalog-results');
@@ -160,7 +290,10 @@ ${item.files.length ? `<h3>Files</h3><ul class="artifact-steps">${item.files.map
     }
     function peoplePanel() {
       const bots = [...snapshot.bots].sort((a, b) => Number(b.active) - Number(a.active) || Number(b.online) - Number(a.online)).slice(0, 14);
-      return `<p>People appear here when an installed application publishes membership you belong to (a classroom roster, a team workspace). This deployment does not expose a general people directory to this view.</p><h3>You</h3>${personRow(snapshot.me.initials, snapshot.me.name, snapshot.me.email || (snapshot.me.authenticated ? 'Signed in' : 'Not signed in'), 'person')}<hr class="rule"><h3>Assistants in this swarm</h3><p class="note-line">${snapshot.botsOnline} of ${snapshot.bots.length} registered assistants are online${bots.some(b => b.active) ? '; highlighted ones worked in the last two minutes' : ''}.</p>${bots.map(b => personRow(LIVE.initials(b.name), b.name, `${b.role || 'assistant'}${b.active ? ' · working now' : b.online ? ' · online' : ' · offline'}`, b.active ? 'bot active' : 'bot')).join('') || '<p class="note-line">The assistant roster is unavailable right now.</p>'}`;
+      const people = hooks.peopleDirectory
+        ? `<p>People listed here come from this swarm’s user directory, read in your session. It is an account roster: it shows nobody’s presence and no room membership.</p><h3>People on this swarm</h3>${rosterSlot('panel')}`
+        : `<p>People appear here when an installed application publishes membership you belong to (a classroom roster, a team workspace). This deployment does not expose a general people directory to this view.</p><h3>You</h3>${personRow(snapshot.me.initials, snapshot.me.name, snapshot.me.email || (snapshot.me.authenticated ? 'Signed in' : 'Not signed in'), 'person')}`;
+      return `${people}<hr class="rule"><h3>Assistants in this swarm</h3><p class="note-line">${snapshot.botsOnline} of ${snapshot.bots.length} registered assistants are online${bots.some(b => b.active) ? '; highlighted ones worked in the last two minutes' : ''}.</p>${bots.map(b => personRow(LIVE.initials(b.name), b.name, `${b.role || 'assistant'}${b.active ? ' · working now' : b.online ? ' · online' : ' · offline'}`, b.active ? 'bot active' : 'bot')).join('') || '<p class="note-line">The assistant roster is unavailable right now.</p>'}`;
     }
     const personRow = (mark, name, status, cls = 'bot') => `<div class="person-row">${avatar(mark, cls)}<span><strong>${esc(name)}</strong><small>${esc(status)}</small></span></div>`;
     function provenancePanel() {
@@ -202,7 +335,8 @@ ${item.files.length ? `<h3>Files</h3><ul class="artifact-steps">${item.files.map
       dialog.addEventListener('cancel', e => { e.preventDefault(); close(); });
       dialog.addEventListener('click', e => { if (e.target === dialog) close(); });
       if (kind === 'directory') { updateDirectory(); document.getElementById('app-search').focus(); }
-      if (kind === 'app' && byId(id)) fillSummary(byId(id));
+      if (kind === 'app' && byId(id)) { fillSummary(byId(id)); fillDetail(byId(id)); }
+      if (kind === 'people' && hooks.peopleDirectory) fillRoster();
     }
     function togglePin(id) {
       state.pins = isPinned(id) ? state.pins.filter(x => x !== id) : [...state.pins, id];
@@ -220,6 +354,7 @@ ${item.files.length ? `<h3>Files</h3><ul class="artifact-steps">${item.files.map
       if (action === 'pin') { togglePin(id); return true; }
       if (action === 'open-app') { open('app', id); return true; }
       if (action === 'embed') { open('embed', id); return true; }
+      if (action === 'embed-view') { setEmbedView(target.dataset.view); return true; }
       if (action === 'work-item') { open('work', target.dataset.work); return true; }
       if (action === 'all-work') { open('work-list'); return true; }
       if (action === 'people' || action === 'provenance') { open(action); return true; }
@@ -267,8 +402,9 @@ ${item.files.length ? `<h3>Files</h3><ul class="artifact-steps">${item.files.map
       : `<div><div class="message-header">${avatar('J')}Jarvis ${t.pending ? badge('Working', true) : t.error ? badge('Could not answer', true) : ''}</div><div class="message-content">${t.pending ? `<p class="muted">${esc(t.text)}</p>` : t.error ? `<p class="tone-warn">${esc(t.text)}</p>` : answerHtml(t.text)}${(t.handoffs || []).map(chip).join('')}${(t.files || []).map(fileLink).join('')}</div></div>`).join('');
     const threadNote = thread => thread.unavailable ? 'Earlier turns could not be loaded.' : thread.turns.length ? `${thread.turns.length} turns in this thread` : 'A new conversation. Ask anything across your swarm.';
 
-    return { state, apps, suites, work, byId, suiteOf, pinned, isPinned, togglePin, workFor, openWork, attention, timeAgo, appMark, statusBadge, miniApp, workRow, artifactTile, personRow, studyBar, appPanel, workPanel, open, close, renderModal, handle, bind, toast, createThread, threadHtml, threadNote, summaryFor, summaryMarkup, fillSummary };
+    return { state, apps, suites, work, byId, suiteOf, pinned, isPinned, togglePin, workFor, openWork, attention, timeAgo, appMark, statusBadge, miniApp, workRow, artifactTile, personRow, studyBar, appPanel, workPanel, open, close, renderModal, handle, bind, toast, createThread, threadHtml, threadNote, summaryFor, summaryMarkup, fillSummary,
+      gameApps, hostedUrl, embedControls, embedFrame, detailSlot, fillDetail, rosterSlot, fillRoster };
   }
 
-  window.OSHAL_SHELL = { esc, button, primary, link, avatar, badge, chip, fileLink, answerHtml, EXPERIENCES, experienceFor, currentExperience, pickerMarkup, skinPicker, createShell };
+  window.OSHAL_SHELL = { esc, button, primary, link, avatar, badge, chip, fileLink, answerHtml, withAudience, isGameApp, GAMES_TITLE, EXPERIENCES, experienceFor, currentExperience, pickerMarkup, skinPicker, createShell };
 })();

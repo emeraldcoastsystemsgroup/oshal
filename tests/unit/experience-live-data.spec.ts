@@ -4,6 +4,9 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove the experience adapter's joins and Jarvis ask flow headlessly: catalog authority order, suite grouping, work merging, summary caps, identity derivation, session roll on a refused thread, poll-to-terminal states and honest source reporting when a read fails.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | `related` is a group's installed required members from the plan, no longer the plan's integrationSources (a plain app relates to nothing through them)
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Integration review: localHref keeps a same-origin path and refuses every link the browser would resolve off the page origin (tab-split, backslash, protocol-relative, absolute, non-string); the poll-limit ask result carries code 'poll_limit'.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Fix round 1: dot-segment links that normalise to a '//' pathname ('/..//outside.example/x', '/.//…', '/%2e%2e//…', '/api/..//…') are refused, a same-origin dot segment is kept normalised and every kept path re-resolves to the page origin; an admitted workspace href that would leave the origin (dot-segment, absolute, non-string) falls back to the cockpit link.
  */
 import { describe, expect, it } from 'vitest';
 import { createRequire } from 'node:module';
@@ -46,13 +49,27 @@ describe('experience adapter: pure joins', () => {
 
   it('lets the authorized plan lead the catalog, keeps unadmitted apps visible as unavailable, and derives relationships', () => {
     const apps = LIVE.mergeApps({
-      plan: [{ name: 'a', displayName: 'A', suite: 'ai-home', firstSurfaceUrl: '/api/a/', summary: [{ app: 'a', path: '/api/a/home-summary' }], todos: [], integrationSources: [{ app: 'b' }, { app: 'a' }] }],
+      plan: [{ name: 'a', displayName: 'A', suite: 'ai-home', firstSurfaceUrl: '/api/a/', summary: [{ app: 'a', path: '/api/a/home-summary' }], todos: [], integrationSources: [{ app: 'b' }, { app: 'a' }] },
+        { name: 'g', displayName: 'G', kind: 'group', suite: 'ai-home', members: ['b', 'c', 'b'], summary: [], todos: [], integrationSources: [{ app: 'b' }, { app: 'c' }] }],
       apps: [{ name: 'a', displayName: 'Listing A', description: 'from listing', version: '1.2.3', suite: 'ai-home', botCount: 2, ticketType: 'A-Type' }, { name: 'b', displayName: 'B', suite: null }],
       workspaces: [{ name: 'a', href: '/cockpit/?app=a', theme: 'ocean' }],
     });
-    expect(apps.map((x: any) => x.id)).toEqual(['a', 'b']);
-    expect(apps[0]).toMatchObject({ name: 'A', description: 'from listing', version: '1.2.3', navigable: true, inPlan: true, theme: 'ocean', ticketType: 'a-type', botCount: 2, related: ['b'] });
-    expect(apps[1]).toMatchObject({ suite: 'platform', navigable: false, inPlan: false, href: '/cockpit/?app=b' });
+    expect(apps.map((x: any) => x.id)).toEqual(['a', 'b', 'g']);
+    // integrationSources list surfaces and outbound offers, not a dependency: a plain app relates to nothing, a group to its installed required members.
+    expect(apps[0]).toMatchObject({ name: 'A', description: 'from listing', version: '1.2.3', navigable: true, inPlan: true, theme: 'ocean', ticketType: 'a-type', botCount: 2, related: [] });
+    expect(apps[1]).toMatchObject({ suite: 'platform', navigable: false, inPlan: false, href: '/cockpit/?app=b', related: [] });
+    expect(apps[2]).toMatchObject({ kind: 'group', related: ['b', 'c'] });
+  });
+
+  it('keeps an admitted navigation href only when it stays on this origin, otherwise opens the cockpit link', () => {
+    const apps = LIVE.mergeApps({
+      plan: [{ name: 'a', displayName: 'A', suite: 'ai-home', summary: [], todos: [] }, { name: 'b', displayName: 'B', suite: 'ai-home', summary: [], todos: [] },
+        { name: 'c', displayName: 'C', suite: 'ai-home', summary: [], todos: [] }, { name: 'd', displayName: 'D', suite: 'ai-home', summary: [], todos: [] }],
+      apps: [],
+      workspaces: [{ name: 'a', href: '/cockpit/?app=a&tab=x' }, { name: 'b', href: '/..//outside.example/x' }, { name: 'c', href: 'https://outside.example/y' }, { name: 'd', href: 42 }],
+    });
+    expect(apps.map((x: any) => [x.id, x.href, x.navigable])).toEqual([
+      ['a', '/cockpit/?app=a&tab=x', true], ['b', '/cockpit/?app=b', true], ['c', '/cockpit/?app=c', true], ['d', '/cockpit/?app=d', true]]);
   });
 
   it('always lists the six canonical suites and adds Platform only when populated', () => {
@@ -83,6 +100,24 @@ describe('experience adapter: pure joins', () => {
     expect(LIVE.atPointer({ a: { b: null } }, '/a/b')).toEqual({ found: true, value: null });
     expect(LIVE.atPointer({ a: {} }, '/a/b').found).toBe(false);
     expect(LIVE.atPointer({}, 'tiles').found).toBe(false);
+  });
+
+  it('keeps only links that stay on the page origin, resolved the way the browser resolves an href', () => {
+    const origin = 'https://oshal.test';
+    expect(LIVE.localHref('/cockpit/?app=ledger#x', origin)).toBe('/cockpit/?app=ledger#x');
+    expect(LIVE.localHref('/api/jarvis/files/synthetic', origin)).toBe('/api/jarvis/files/synthetic');
+    // The browser strips tab/CR/LF and reads a backslash as a slash before resolving, so each of these lands on another host.
+    const hostile: unknown[] = ['/\t/host/x', '/\\host', '//host/x', 'https://x', '/\n/host/y', '/\r//host/z', ' /cockpit/', 'cockpit/', '', null, undefined, 42, { href: '/x' }];
+    for (const u of hostile) expect(LIVE.localHref(u, origin), JSON.stringify(u)).toBe('');
+    // Dot segments normalise each of these to a pathname that starts with '//': returned as-is it would be a protocol-relative link to outside.example.
+    const dotted = ['/..//outside.example/x', '/.//outside.example/x', '/%2e%2e//outside.example/x', '/%2E//outside.example/x', '/api/..//outside.example/x', '/.\\/outside.example/x', '/\t..//outside.example/x'];
+    for (const u of dotted) expect(LIVE.localHref(u, origin), JSON.stringify(u)).toBe('');
+    // A dot segment that stays on the origin is kept, normalised, and what comes back resolves to the page origin itself.
+    expect(LIVE.localHref('/api/../cockpit/?app=a', origin)).toBe('/cockpit/?app=a');
+    for (const u of ['/cockpit/?app=ledger#x', '/api/../cockpit/?app=a', '/a/./b']) expect(new URL(LIVE.localHref(u, origin), origin).origin).toBe(origin);
+    // Without a page (node), the check still runs against a fixed placeholder origin.
+    expect(LIVE.localHref('/cockpit/?app=a')).toBe('/cockpit/?app=a');
+    expect(LIVE.localHref('/\\host')).toBe('');
   });
 
   it('formats relative time from the caller clock', () => {
@@ -174,7 +209,7 @@ describe('experience adapter: client over an injected fetch', () => {
     const failed = fakeFetch({ 'POST /api/jarvis/ask': { status: 202, body: { jobId: 'j' } }, 'GET /api/jarvis/ask/result?jobId=j': okJson({ status: 'error', error: 'tool blew up', code: 'X' }) });
     expect(await LIVE.createClient({ fetch: failed.fetch, storage: memoryStorage() }).ask('x', { sleep: async () => {} })).toMatchObject({ status: 'error', error: 'tool blew up', code: 'X' });
     const slow = fakeFetch({ 'POST /api/jarvis/ask': { status: 202, body: { jobId: 'j' } }, 'GET /api/jarvis/ask/result?jobId=j': okJson({ status: 'pending' }) });
-    expect(await LIVE.createClient({ fetch: slow.fetch, storage: memoryStorage() }).ask('x', { sleep: async () => {}, maxPolls: 2 })).toMatchObject({ status: 'error', error: expect.stringContaining('unusually long') });
+    expect(await LIVE.createClient({ fetch: slow.fetch, storage: memoryStorage() }).ask('x', { sleep: async () => {}, maxPolls: 2 })).toMatchObject({ status: 'error', code: 'poll_limit', error: expect.stringContaining('unusually long') });
     expect(await LIVE.createClient({ fetch: slow.fetch, storage: memoryStorage() }).ask('   ')).toMatchObject({ status: 'error' });
   });
 

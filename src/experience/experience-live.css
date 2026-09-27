@@ -43,3 +43,10 @@ a.action.primary,a.action{display:inline-flex;align-items:center;gap:6px;cursor:
 .finance-table td:last-child,.finance-table th:last-child{text-align:right}
 .preview-bar .preview-selects label select{max-width:210px}
 .home-sidebar .nav-link{display:flex;align-items:center;gap:10px;width:100%;text-align:left}
+.embed-switch{margin:12px 0 0}
+.embed-switch .note-line{margin-top:8px}
+.detail-slot .person-row,.roster-slot .person-row{margin-top:10px}
+.detail-slot .dependency-list{margin:10px 0 18px}
+.live-agenda .agenda-row{margin-top:14px}
+.live-agenda .agenda-row .agenda-detail{border-left-color:var(--accent)}
+.live-agenda .agenda-sources{margin-top:14px}
