@@ -119,6 +119,29 @@ Gateway client over a local WebSocket server, and the real signed Twilio webhook
 WhatsApp. That is local evidence: registration in source does not mean the card has run on the
 deployed instance, and nothing here is a real Telegram, Discord or WhatsApp message.
 
+### Shared response renderer
+
+**Shared response renderer: one untrusted reply, every surface** (`shared-response-renderer`,
+Jarvis) has three read-only steps:
+
+- the running server serves `/dist/response-renderer.js` and it publishes
+  `DISPLAY_ONLY_RESPONSE_CAPABILITIES`. Jarvis and the swarm-bot chat refuse a bundle without it
+  and stay on escaped text, so a missing or older bundle is reported as a deployment gap;
+- the same-origin Mermaid runtime is served from `/dist/vendor/mermaid` at an exact version
+  (a gap when the image predates the vendoring);
+- a hostile reply (remote gallery image, arbitrary download link, forged `oshal:provider-record`
+  and `artifact:image` fences) rendered in the server process through that profile produces no
+  image, link or URL-bearing attribute, keeps the gallery and download as visible escaped
+  fallbacks, and never parses a forged fence as a trusted block.
+
+Run the linked suites locally with `npm run test:response-renderer`. The Chromium suite
+(`tests/unit/shared-response-surfaces-browser.spec.ts`) loads the unmodified `jarvis.html` and the
+real chat bubble module, bundles the renderer from source and vendors Mermaid with the build's own
+step. It proves that one shared reply (`tests/fixtures/shared-untrusted-response.json`) renders to
+the identical block sequence on both surfaces, that nothing requests the hostile host or any CDN,
+and that the diagram hydrates same-origin or stays readable text when the runtime is missing. That
+is local evidence. Registration in source does not mean the card has run on the deployed instance.
+
 ---
 
 ## Application-installed smoke cases

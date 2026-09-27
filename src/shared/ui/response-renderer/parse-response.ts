@@ -12,15 +12,21 @@
  * (non-JSON) degrades to a `code` block rather than throwing, so a bad typed block renders visibly
  * instead of breaking the reply. Deterministic — same input → same blocks.
  *
+ * Trust boundary: the parser NEVER emits an `artifact` block, and a fence named after a trusted
+ * block (see trusted-provenance.ts) stays `code`. Provider-grounded content reaches a surface only
+ * beside the text with a server provenance record.
+ *
  * CHANGE LOG
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — fenced-block segmentation into markdown/code/mermaid/oshal blocks + hasRichBlocks helper.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | A fence that impersonates a trusted block (`artifact:*`, `provider:*`, `trusted:*`, or a reserved `oshal:` kind) is demoted to an inert code block: model text can never mint a provider-grounded block.
  *
  * @module shared/ui/response-renderer/parse-response
  */
 
+import { isReservedTrustedFence } from './trusted-provenance';
 import type { ResponseBlock } from './types';
 
 /** Matches a fenced block: ```<info>\n<body>\n``` (info string on the opening line, body lazy). */
@@ -31,6 +37,10 @@ function fenceToBlock(info: string, body: string): ResponseBlock {
   const lang = info.trim();
   const code = body.replace(/\n$/, ''); // drop the trailing newline before the closing fence
 
+  // Checked first: a forged trusted fence is displayed as the text it is, never promoted.
+  if (isReservedTrustedFence(lang)) {
+    return { type: 'code', lang, code };
+  }
   if (lang.toLowerCase() === 'mermaid') {
     return { type: 'mermaid', code };
   }

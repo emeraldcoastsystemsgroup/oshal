@@ -18,13 +18,14 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — standard registry (markdown/code/mermaid/oshal:chart/oshal:table) + renderResponseHtml pipeline with sanitized fallbacks.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Register the oshal:map / oshal:gallery / oshal:download typed-block components so the standard registry covers the operator north-star kinds beyond chart+table.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Register the bounded oshal:doc display-only component.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Export DISPLAY_ONLY_RESPONSE_CAPABILITIES — the named profile of registered kinds whose output carries no URL, image request, link, form or action — so Jarvis, chat and app surfaces pass one shared capability set and a model-authored oshal:gallery/oshal:download degrades to its escaped fallback.
  *
  * @module shared/ui/response-renderer/components/standard-registry
  */
 
 import { ResponseComponentRegistry, createResponseComponentRegistry } from '../component-registry';
 import { hasRichBlocks, parseResponse } from '../parse-response';
-import type { RenderableResponseBlock, ResponseRenderOptions } from '../types';
+import type { RenderableResponseBlock, ResponseRendererKey, ResponseRenderOptions } from '../types';
 import { chartComponent } from './chart-component';
 import { codeComponent } from './code-component';
 import { docComponent } from './doc-component';
@@ -53,6 +54,24 @@ export function createStandardResponseRegistry(): ResponseComponentRegistry<void
     .register('oshal:download', downloadComponent)
     .register('oshal:doc', docComponent);
 }
+
+/**
+ * @description The display-only capability profile for surfaces that render UNTRUSTED model
+ * text: every registered kind whose output is literal, escaped markup with no URL-bearing
+ * attribute, remote image request, link, form or action. `oshal:gallery` (remote `<img src>`) and
+ * `oshal:download` (arbitrary `href`) are deliberately absent — a model URL must never load or
+ * become a clickable delivery in a chat bubble. A surface passes this as `capabilities`; a newly
+ * registered kind stays OUT until someone decides it belongs here (guarded by a unit spec).
+ */
+export const DISPLAY_ONLY_RESPONSE_CAPABILITIES: ReadonlyArray<ResponseRendererKey> = Object.freeze([
+  'markdown',
+  'code',
+  'mermaid',
+  'oshal:chart',
+  'oshal:table',
+  'oshal:map',
+  'oshal:doc',
+] as const);
 
 /**
  * @description Sanitized plain-text fallback markup for a block whose component did not run

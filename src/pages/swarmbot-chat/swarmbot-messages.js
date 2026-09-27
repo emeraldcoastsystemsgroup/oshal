@@ -14,6 +14,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted bubble rendering (appendMessage, read-aloud, escapeHtml) from swarmbot-chat.js (file was past the 800 code-line trigger) and wired assistant bubbles through the shared response renderer with plain-text graceful fallback.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Render assistant bubbles with the shared DISPLAY_ONLY_RESPONSE_CAPABILITIES profile Jarvis uses, so the same untrusted reply produces the same blocks on both surfaces and a model-authored oshal:gallery/oshal:download stays escaped text; a bundle without the profile leaves the bubble plain text.
  */
 
 import { createUiLogger, serializeUiError } from '../shared/ui-debug.js';
@@ -72,18 +73,21 @@ export function appendMessage(container, role, author, text) {
 
 /**
  * @description Upgrades one assistant bubble in place through the shared response renderer
- * (parseResponse + renderBlocks): fenced code, mermaid source fallbacks, and oshal:chart /
- * oshal:table typed blocks become rich markup. Any load/render failure leaves the plain-text
- * bubble untouched.
+ * (parseResponse + renderBlocks) with the shared display-only capability profile: fenced code,
+ * mermaid source fallbacks, and the display-only typed blocks become rich markup, while URL-bearing
+ * kinds degrade to escaped text. Any load/render failure, or a bundle without the profile, leaves
+ * the plain-text bubble untouched.
  * @param {HTMLElement} node - The message article appended by appendMessage.
  * @param {string} text - The assistant's raw reply text.
  */
 function upgradeAssistantBubble(node, text) {
   responseRendererReady.then(() => {
-    if (!responseRenderer || typeof responseRenderer.renderResponseHtml !== 'function') {
+    const capabilities = responseRenderer && responseRenderer.DISPLAY_ONLY_RESPONSE_CAPABILITIES;
+    if (!responseRenderer || typeof responseRenderer.renderResponseHtml !== 'function'
+      || !Array.isArray(capabilities)) {
       return;
     }
-    return responseRenderer.renderResponseHtml(text).then((result) => {
+    return responseRenderer.renderResponseHtml(text, { capabilities }).then((result) => {
       const bubble = node.querySelector('.message-bubble');
       if (!bubble || !result || !result.html) {
         return;

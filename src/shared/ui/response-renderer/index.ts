@@ -13,6 +13,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial barrel for the response-renderer segmenter.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export the DOM-free portable component registry foundation.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Export the concrete component set (markdown/code/mermaid/oshal:chart/oshal:table), the standard registry, and the renderResponseHtml pipeline. This barrel is also the vite `response-renderer` browser-bundle entry (served at /dist/response-renderer.js).
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Export the trusted-provenance boundary (reserved trusted fences/kinds and the server-channel provenance validator).
  *
  * @module shared/ui/response-renderer
  */
@@ -26,3 +27,8 @@ export {
   responseRendererKeyForBlock,
 } from './component-registry';
 export * from './components';
+export {
+  isReservedOshalKind,
+  isReservedTrustedFence,
+  isValidResponseProvenance,
+} from './trusted-provenance';
