@@ -4,6 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Shared audience-view kit (ADR-164 D6): a store page renders its family or company view from one declarative model (hero, stats, tiles, lists, tables, progress, timeline) over the tokens the skin paints, so every application in a Home or Business assembly shares one grammar per audience. The audience is read from `?audience=` as a request the page may honour (D5), never authority: data still comes from the page's own routes under the caller's session. Every view keeps one escape to the full application in the cockpit.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Date-only strings (YYYY-MM-DD, what pay dates, statement dates and transaction dates arrive as) format as that calendar day: `new Date('2026-09-15')` is UTC midnight, which the reader's local zone west of Greenwich showed as Sep 14 in every table.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The hero, headings and escape are neutral elements with heading roles: a page's own `header { ... }` / `h1 { ... }` rules boxed the CAD Studio hero, and a shared view must not inherit the host page's tag styling.
  * -----------------------------------------------------------------------------
  *
  * Usage (in a store page, after the theme bootstrap):
@@ -80,19 +82,29 @@
     return Math.round(isPercent ? n : n * 100) + '%';
   }
 
+  /** @returns {Date} A Date for a value; a date-only string (YYYY-MM-DD) is the reader's calendar day, not UTC midnight shifted into yesterday. */
+  function toDate(value) {
+    if (value instanceof Date) return value;
+    var m = typeof value === 'string' && value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(value);
+  }
+
   /** @returns {string} A short absolute date (Mar 4 · Mar 4, 2025 when not this year), or an em dash. */
   function date(value) {
-    var d = value instanceof Date ? value : new Date(value); if (!value || isNaN(d.getTime())) return '—';
+    var d = toDate(value); if (!value || isNaN(d.getTime())) return '—';
     var opts = { month: 'short', day: 'numeric' }; if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
     try { return d.toLocaleDateString(undefined, opts); } catch (_) { return d.toDateString(); }
   }
 
   /** @returns {string} A relative phrase (today · tomorrow · in 3 days · 2 h ago · Mar 4 beyond two weeks). */
   function when(value) {
-    var d = value instanceof Date ? value : new Date(value); if (!value || isNaN(d.getTime())) return '—';
-    var diffMs = d.getTime() - Date.now(), hours = Math.round(diffMs / 36e5), days = Math.round(diffMs / 864e5);
-    if (Math.abs(diffMs) < 36e5) return diffMs >= 0 ? 'soon' : 'just now';
-    if (Math.abs(hours) < 24) return hours > 0 ? 'in ' + hours + ' h' : Math.abs(hours) + ' h ago';
+    var d = toDate(value); if (!value || isNaN(d.getTime())) return '—';
+    var dayOnly = typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value), now = new Date();
+    var diffMs = d.getTime() - now.getTime(), hours = Math.round(diffMs / 36e5);
+    // A date-only value is a calendar day: compare days from the start of today, never hours.
+    var days = dayOnly ? Math.round((d.getTime() - new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()) / 864e5) : Math.round(diffMs / 864e5);
+    if (!dayOnly && Math.abs(diffMs) < 36e5) return diffMs >= 0 ? 'soon' : 'just now';
+    if (!dayOnly && Math.abs(hours) < 24) return hours > 0 ? 'in ' + hours + ' h' : Math.abs(hours) + ' h ago';
     if (days === 0) return 'today';
     if (days === 1) return 'tomorrow';
     if (days === -1) return 'yesterday';
@@ -120,9 +132,9 @@
 
   function hero(m) {
     if (!m.title && !m.kicker && !m.lede && !(m.actions && m.actions.length)) return null;
-    return el('header', { class: 'av-hero' }, [
+    return el('div', { class: 'av-hero' }, [
       m.kicker ? el('div', { class: 'av-kicker', text: m.kicker }) : null,
-      m.title ? el('h1', { class: 'av-title', text: m.title }) : null,
+      m.title ? el('div', { class: 'av-title', role: 'heading', 'aria-level': '1', text: m.title }) : null,
       m.lede ? el('p', { class: 'av-lede', text: m.lede }) : null,
       m.actions && m.actions.length ? el('div', { class: 'av-actions' }, m.actions.map(function (a) { return actionNode(a); })) : null
     ]);
@@ -156,7 +168,7 @@
     return el('div', { class: 'av-tiles' }, s.items.map(function (t) {
       return clickable(el('article', { class: 'av-tile' + (t.tone ? ' tone-' + t.tone : '') }, [
         t.icon ? el('div', { class: 'av-tile-icon', text: t.icon, 'aria-hidden': 'true' }) : null,
-        el('h3', { class: 'av-tile-title', text: t.title || '' }),
+        el('div', { class: 'av-tile-title', role: 'heading', 'aria-level': '3', text: t.title || '' }),
         t.text ? el('p', { class: 'av-tile-text', text: t.text }) : null,
         (t.meta || t.badge) ? itemMeta(t) : null
       ]), t);
@@ -211,7 +223,7 @@
     var hasItems = s.kind === 'table' ? (s.rows && s.rows.length) : s.kind === 'custom' ? true : (s.items && s.items.length);
     var body = hasItems && RENDERERS[s.kind] ? RENDERERS[s.kind](s) : s.kind === 'custom' ? el('div', { class: 'av-custom' }) : el('div', { class: 'av-empty', text: s.empty || 'Nothing here yet.' });
     var node = el('section', { class: 'av-section av-kind-' + (s.kind || 'custom') + (s.wide ? ' is-wide' : ''), 'data-section': s.id || null }, [
-      (s.title || s.action) ? el('div', { class: 'av-section-head' }, [s.title ? el('h2', { class: 'av-section-title', text: s.title }) : null, s.action ? actionNode(s.action, 'av-link') : null]) : null,
+      (s.title || s.action) ? el('div', { class: 'av-section-head' }, [s.title ? el('div', { class: 'av-section-title', role: 'heading', 'aria-level': '2', text: s.title }) : null, s.action ? actionNode(s.action, 'av-link') : null]) : null,
       s.note ? el('p', { class: 'av-section-note', text: s.note }) : null,
       body
     ]);
@@ -221,7 +233,7 @@
 
   function escapeNode(e) {
     if (!e || !e.href) return null;
-    return el('footer', { class: 'av-escape' }, [el('span', { class: 'av-escape-text', text: e.text || 'Looking for everything else?' }), el('a', { class: 'av-escape-link', href: e.href, text: e.label || 'Open the full application', onClick: function (ev) { ev.preventDefault(); open(e.href); } })]);
+    return el('div', { class: 'av-escape' }, [el('span', { class: 'av-escape-text', text: e.text || 'Looking for everything else?' }), el('a', { class: 'av-escape-link', href: e.href, text: e.label || 'Open the full application', onClick: function (ev) { ev.preventDefault(); open(e.href); } })]);
   }
 
   /**
@@ -290,5 +302,5 @@
     return ctx;
   }
 
-  window.AppView = { AUDIENCES: AUDIENCES, audience: audience, active: active, isHosted: isHosted, boot: boot, mount: mount, skeleton: skeleton, failure: failure, el: el, badge: badge, money: money, num: num, pct: pct, date: date, when: when, open: open, escapeFor: escapeFor };
+  window.AppView = { AUDIENCES: AUDIENCES, audience: audience, active: active, isHosted: isHosted, boot: boot, mount: mount, skeleton: skeleton, failure: failure, el: el, badge: badge, money: money, num: num, pct: pct, date: date, when: when, open: open, escapeFor: escapeFor, toDate: toDate };
 })();

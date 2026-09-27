@@ -4,6 +4,8 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove the shared audience-view kit in headless Chromium over the real /shared/ui mounts: a page keeps its full UI without a request, ignores an audience it does not provide, renders the family and company grammars from one model with text-only nodes, hides the full UI, keeps one escape that navigates the top window out of a frame, and turns a failed read into a retryable notice instead of a blank frame.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Date-only strings format as the reader's calendar day (Sep 15 stays Sep 15; a date-only today is 'today')
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | No header/h1/h2/h3 inside the kit root (heading roles instead) so host-page tag rules cannot restyle a view
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -69,6 +71,8 @@ describe('shared audience-view kit', () => {
     expect(await page.locator('.av-title').textContent()).toBe(hostile);
     expect(await page.evaluate(() => (window as unknown as { __xss?: number }).__xss)).toBeUndefined();
     expect(await page.locator('.av-title img').count()).toBe(0);
+    expect(await page.locator('#av-root header, #av-root h1, #av-root h2, #av-root h3').count()).toBe(0);
+    expect(await page.locator('.av-title').getAttribute('role')).toBe('heading');
 
     expect(await page.locator('.av-stat').count()).toBe(3);
     expect(await page.locator('.av-stat.tone-warn .av-stat-value').textContent()).toBe('2');
@@ -119,9 +123,12 @@ describe('shared audience-view kit', () => {
     const out = await page.evaluate(() => {
       const AV = (window as unknown as { AppView: Record<string, (...a: unknown[]) => string> }).AppView;
       return [AV.money(1234.5), AV.money(12), AV.money(null), AV.num(12400), AV.num(2500000), AV.num(42), AV.pct(0.256), AV.pct(80, true),
-        AV.when(new Date(Date.now() + 3 * 864e5).toISOString()), AV.when(new Date(Date.now() - 2 * 36e5).toISOString()), AV.when(null), AV.date('nonsense')];
+        AV.when(new Date(Date.now() + 3 * 864e5).toISOString()), AV.when(new Date(Date.now() - 2 * 36e5).toISOString()), AV.when(null), AV.date('nonsense'),
+        // Date-only strings are the reader's calendar day in every zone (UTC-midnight parsing showed Sep 14 for Sep 15 west of Greenwich).
+        AV.date(new Date().getFullYear() + '-09-15'), AV.date('2025-01-02'), AV.when(localDay(0)), AV.when(localDay(1)), AV.when(localDay(-3))];
+      function localDay(offsetDays: number) { const d = new Date(); d.setDate(d.getDate() + offsetDays); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
     });
-    expect(out).toEqual(['$1,235', '$12.00', '—', '12.4k', '2.5M', '42', '26%', '80%', 'in 3 days', '2 h ago', '—', '—']);
+    expect(out).toEqual(['$1,235', '$12.00', '—', '12.4k', '2.5M', '42', '26%', '80%', 'in 3 days', '2 h ago', '—', '—', 'Sep 15', 'Jan 2, 2025', 'today', 'tomorrow', '3 days ago']);
   });
 
   it('escapes from a frame by navigating the top window to the full application', async () => {
