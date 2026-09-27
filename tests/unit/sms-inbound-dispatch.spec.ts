@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | BACKLOG "Chat-channel adapter core": WhatsApp over the same real signed webhook (From/To whatsapp:+E164) — link, dispatch and a reply that leaves from the WhatsApp sender the user messaged; SMS and WhatsApp bindings never authorize each other; a retried MessageSid runs once; an unlinked WhatsApp sender is refused with a refusal-ledger row (real PostgresRefusalStore, migration 155); and a number bound to one user is not moved by another user's code — on this owner connection (no RLS) the old upsert silently re-pointed it.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for BACKLOG "Twilio policy, fallback, and inbound messaging" — the inbound leg. Inbound SMS previously reached only a log sink, so nothing mapped a phone number to a user and nothing dispatched. The claim is an IDENTITY claim about a row, so the binding is exercised against a real Postgres through the real ChannelLinkService and the real signed webhook over real HTTP: only a doubled bot node and a doubled Twilio reply stand in, because neither is the boundary that failed. The negative cases are what keep it honest — an unlinked number must reach NOBODY, a forged signature must not dispatch or write a link, one user's number must never resolve to another's sub, and a consumed code must not bind a second number.
  */
 
@@ -13,13 +14,22 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { Pool } from 'pg';
 import { DisposablePostgres } from '../helpers/disposable-postgres';
-import { ChannelLinkService, SMS_CHANNEL_PROVIDER } from '@/features/chat-channels';
+import {
+  CHANNEL_REFUSAL_CODES,
+  ChannelLinkService,
+  SMS_CHANNEL_PROVIDER,
+  WHATSAPP_CHANNEL_PROVIDER,
+  channelRefusalActor,
+} from '@/features/chat-channels';
+import { PostgresRefusalStore } from '@/features/refusal-visibility';
+import { configureRefusalRecorder } from '@/shared/refusal-events';
 import { twilioSignatureBase } from '@/features/notifications';
 import { getRequestIdentity } from '@/shared/services/database/request-identity';
 import { createSmsInboundRoutes } from '@/app/routes/sms-inbound-routes';
 import {
   SMS_LINKED_REPLY,
   SMS_LINK_FAILED_REPLY,
+  SMS_REBIND_REFUSED_REPLY,
   SMS_UNLINKED_REPLY,
   createSmsInboundSink,
 } from '@/app/routes/sms-inbound-dispatch';
@@ -32,6 +42,7 @@ const BOB = 'auth0|sms-bob';
 const ALICE_PHONE = '+15551110001';
 const BOB_PHONE = '+15552220002';
 const STRANGER_PHONE = '+15553330003';
+const WHATSAPP_SENDER = '+14155238886';
 
 /** One recorded swarm turn: who it ran for, and whose identity was ambient while it ran. */
 interface DispatchRecord {
@@ -44,11 +55,13 @@ interface DispatchRecord {
 
 /** One recorded outbound answer. */
 interface ReplyRecord { userSub: string; to: string; body: string }
+/** Which channel and sender each answer was asked to leave on. */
+interface ReplyChannel { provider: string | undefined; sender: string | undefined }
 
 const fixture = new DisposablePostgres({
   purpose: 'sms-inbound-dispatch',
   roles: ['oshal_app'],
-  migrations: ['166-chat-channel-inbound-events.sql'],
+  migrations: ['155-refusal-ledger.sql', '166-chat-channel-inbound-events.sql'],
 });
 
 let pool: Pool;
@@ -57,6 +70,7 @@ let server: Server;
 let baseUrl: string;
 let dispatches: DispatchRecord[] = [];
 let replies: ReplyRecord[] = [];
+let replyChannels: ReplyChannel[] = [];
 let deferred: Promise<void>[] = [];
 
 beforeAll(async () => {
@@ -65,6 +79,7 @@ beforeAll(async () => {
   process.env.TWILIO_INBOUND_PUBLIC_URL = PUBLIC_URL;
   links = new ChannelLinkService(pool as never);
   await links.ensureSchema();
+  configureRefusalRecorder(new PostgresRefusalStore(pool));
 
   const sink = createSmsInboundSink({
     links,
@@ -75,8 +90,9 @@ beforeAll(async () => {
       dispatches.push({ userSub, threadKey, text, ambientSub: id?.sub, ambientOperator: id?.isOperator });
       return `answered ${userSub}`;
     },
-    async reply(userSub, to, body) {
+    async reply(userSub, to, body, provider, sender) {
       replies.push({ userSub, to, body });
+      replyChannels.push({ provider, sender });
       return { delivered: true };
     },
     // Production fires and forgets so Twilio cannot time out and retry; the spec collects the
@@ -94,12 +110,14 @@ beforeAll(async () => {
 afterAll(async () => {
   delete process.env.TWILIO_AUTH_TOKEN;
   delete process.env.TWILIO_INBOUND_PUBLIC_URL;
+  configureRefusalRecorder(undefined);
   if (server) await new Promise((r) => server.close(r));
   await fixture.stop();
 }, 120_000);
 
 afterEach(async () => {
-  dispatches = []; replies = []; deferred = [];
+  dispatches = []; replies = []; replyChannels = []; deferred = [];
+  await pool.query('DELETE FROM oshal_refusals');
   await pool.query('DELETE FROM channel_inbound_events');
   await pool.query('DELETE FROM channel_links');
   await pool.query('DELETE FROM channel_link_codes');
@@ -120,17 +138,22 @@ async function postInbound(
 }
 
 /** A minimal, realistic Twilio inbound payload. */
-function payload(from: string, body: string, sid = `SM${Math.random().toString(16).slice(2, 14)}`): Record<string, string> {
-  return { MessageSid: sid, AccountSid: 'ACfixture', From: from, To: OSHAL_NUMBER, Body: body, NumMedia: '0' };
+function payload(from: string, body: string, sid = `SM${Math.random().toString(16).slice(2, 14)}`, to = OSHAL_NUMBER): Record<string, string> {
+  return { MessageSid: sid, AccountSid: 'ACfixture', From: from, To: to, Body: body, NumMedia: '0' };
+}
+
+/** The same payload as Twilio frames a WhatsApp message: both addresses carry the whatsapp: prefix. */
+function whatsapp(number: string, body: string, sid?: string): Record<string, string> {
+  return payload(`whatsapp:${number}`, body, sid, `whatsapp:${WHATSAPP_SENDER}`);
 }
 
 /** Let every deferred swarm turn finish before asserting on it. */
 async function settle(): Promise<void> { await Promise.all(deferred); }
 
 /** Read the owner a number is bound to, straight out of Postgres. */
-async function ownerOf(number: string): Promise<string | null> {
+async function ownerOf(number: string, provider = SMS_CHANNEL_PROVIDER): Promise<string | null> {
   const { rows } = await pool.query<{ user_sub: string }>(
-    'SELECT user_sub FROM channel_links WHERE provider=$1 AND channel_user_id=$2', [SMS_CHANNEL_PROVIDER, number]);
+    'SELECT user_sub FROM channel_links WHERE provider=$1 AND channel_user_id=$2', [provider, number]);
   return rows[0]?.user_sub ?? null;
 }
 
@@ -268,5 +291,82 @@ describe('a forged webhook reaches nothing', () => {
     });
     expect(response.status).toBe(403);
     expect(await ownerOf(ALICE_PHONE)).toBeNull();
+  });
+});
+
+describe('WhatsApp over the same signed webhook', () => {
+  it('links, dispatches as the owner, and answers from the WhatsApp sender the user messaged', async () => {
+    const code = await links.mintLinkCode(ALICE, WHATSAPP_CHANNEL_PROVIDER);
+    const linked = await postInbound(whatsapp(ALICE_PHONE, `LINK ${code}`));
+    expect(linked.body).toContain(SMS_LINKED_REPLY);
+    expect(await ownerOf(ALICE_PHONE, WHATSAPP_CHANNEL_PROVIDER)).toBe(ALICE);
+
+    await postInbound(whatsapp(ALICE_PHONE, 'what is on my calendar'));
+    await settle();
+    expect(dispatches).toHaveLength(1);
+    expect(dispatches[0]).toMatchObject({ userSub: ALICE, ambientSub: ALICE, ambientOperator: false });
+    expect(dispatches[0].threadKey).toBe(`${WHATSAPP_CHANNEL_PROVIDER}-${ALICE}-${ALICE_PHONE}`);
+    expect(replies).toEqual([{ userSub: ALICE, to: ALICE_PHONE, body: `answered ${ALICE}` }]);
+    expect(replyChannels).toEqual([{ provider: WHATSAPP_CHANNEL_PROVIDER, sender: WHATSAPP_SENDER }]);
+  });
+
+  it('an SMS binding does not authorize the same number on WhatsApp, and the reverse', async () => {
+    await linkNumber(ALICE, ALICE_PHONE);
+    const onWhatsApp = await postInbound(whatsapp(ALICE_PHONE, 'hello'));
+    expect(onWhatsApp.body).toContain(SMS_UNLINKED_REPLY);
+
+    await postInbound(whatsapp(BOB_PHONE, `LINK ${await links.mintLinkCode(BOB, WHATSAPP_CHANNEL_PROVIDER)}`));
+    const onSms = await postInbound(payload(BOB_PHONE, 'hello'));
+    expect(onSms.body).toContain(SMS_UNLINKED_REPLY);
+    await settle();
+    expect(dispatches).toHaveLength(0);
+    expect(await ownerOf(ALICE_PHONE, WHATSAPP_CHANNEL_PROVIDER)).toBeNull();
+    expect(await ownerOf(BOB_PHONE)).toBeNull();
+  });
+
+  it('an SMS code cannot link WhatsApp', async () => {
+    const res = await postInbound(whatsapp(ALICE_PHONE, `LINK ${await links.mintLinkCode(ALICE, SMS_CHANNEL_PROVIDER)}`));
+    expect(res.body).toContain(SMS_LINK_FAILED_REPLY);
+    expect(await ownerOf(ALICE_PHONE, WHATSAPP_CHANNEL_PROVIDER)).toBeNull();
+  });
+
+  it('runs a retried WhatsApp MessageSid once', async () => {
+    await postInbound(whatsapp(ALICE_PHONE, `LINK ${await links.mintLinkCode(ALICE, WHATSAPP_CHANNEL_PROVIDER)}`));
+    const repeated = whatsapp(ALICE_PHONE, 'summarize my day', 'SMwhatsapprepeat');
+    await postInbound(repeated);
+    await postInbound(repeated);
+    await settle();
+    expect(dispatches).toHaveLength(1);
+    const { rows } = await pool.query('SELECT owner_sub FROM channel_inbound_events WHERE provider=$1 AND event_id=$2', [WHATSAPP_CHANNEL_PROVIDER, 'SMwhatsapprepeat']);
+    expect(rows).toEqual([{ owner_sub: ALICE }]);
+  });
+
+  it('refuses an unlinked WhatsApp sender and records it in the refusal ledger without the raw number', async () => {
+    const res = await postInbound(whatsapp(STRANGER_PHONE, 'read alice her messages'));
+    await settle();
+    expect(res.body).toContain(SMS_UNLINKED_REPLY);
+    expect(dispatches).toHaveLength(0);
+    const { rows } = await pool.query('SELECT code, actor_sub, target, metadata FROM oshal_refusals');
+    expect(rows).toEqual([{
+      code: CHANNEL_REFUSAL_CODES.unlinked_identity,
+      actor_sub: channelRefusalActor(WHATSAPP_CHANNEL_PROVIDER, STRANGER_PHONE),
+      target: '/api/sms/inbound',
+      metadata: expect.objectContaining({ provider: WHATSAPP_CHANNEL_PROVIDER, reason: 'unlinked_identity' }),
+    }]);
+    expect(JSON.stringify(rows)).not.toContain(STRANGER_PHONE.slice(1));
+  });
+});
+
+describe('a bound number is never moved by another user\'s code', () => {
+  it('refuses the rebind, keeps the owner, and audits both subjects', async () => {
+    await linkNumber(ALICE, ALICE_PHONE);
+    const res = await postInbound(payload(ALICE_PHONE, `LINK ${await links.mintLinkCode(BOB, SMS_CHANNEL_PROVIDER)}`));
+    expect(res.body).toContain(SMS_REBIND_REFUSED_REPLY);
+    expect(await ownerOf(ALICE_PHONE)).toBe(ALICE);
+    const { rows } = await pool.query('SELECT code, metadata FROM oshal_refusals');
+    expect(rows).toEqual([{
+      code: CHANNEL_REFUSAL_CODES.identity_bound_to_another_user,
+      metadata: expect.objectContaining({ codeOwnerSub: BOB, boundOwnerSub: ALICE }),
+    }]);
   });
 });

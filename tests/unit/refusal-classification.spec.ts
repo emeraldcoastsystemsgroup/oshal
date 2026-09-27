@@ -6,6 +6,7 @@
  * 1   | maintainer@emeraldcoastsystemsgroup.com   | Lock every source-derived refusal token to one reviewed Stage 3 disposition and fail for both new unclassified emitters and stale inventory entries.
  * 2   | maintainer@emeraldcoastsystemsgroup.com   | Cover every tracked executable production JS/TS-family source and inline HTML script, including JSX/template literals while excluding in-tree test files and inventory self-seeding.
  * 3   | maintainer@emeraldcoastsystemsgroup.com   | Inventory literal RefusalError constructor codes independently of the suffix heuristic so a new typed refusal cannot evade disposition review by naming shape.
+ * 4   | maintainer@emeraldcoastsystemsgroup.com   | Count the three reviewed chat-channel refusal codes (channel_identity_rebind_denied, channel_link_code_refused, channel_link_required): 154 unique tokens.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -98,7 +99,7 @@ const classified = new Set<string>(classifiedCodes);
 const { codes: census, inlineHtmlCodes, typedRefusalCodes, parseDiagnostics } = sourceRefusalCodeCensus();
 
 describe('source-derived refusal disposition inventory', () => {
-  it('holds exactly the six reviewed groups and all 151 unique tokens', () => {
+  it('holds exactly the six reviewed groups and all 154 unique tokens', () => {
     expect(dispositions).toEqual([
       'hard-security',
       'infrastructure-undetermined',
@@ -110,21 +111,21 @@ describe('source-derived refusal disposition inventory', () => {
     expect(Object.fromEntries(dispositions.map(disposition => [
       disposition, REFUSAL_CODES_BY_DISPOSITION[disposition].length,
     ]))).toEqual({
-      'hard-security': 53,
+      'hard-security': 54,
       'infrastructure-undetermined': 48,
       'non-refusal': 4,
       'operator-remediable': 8,
-      'validation-or-user-action': 20,
+      'validation-or-user-action': 22,
       'workflow-or-domain': 18,
     });
-    expect(classifiedCodes).toHaveLength(151);
-    expect(classified.size, 'a code may have only one disposition').toBe(151);
-    expect(Object.keys(REFUSAL_CODE_CLASSIFICATION)).toHaveLength(151);
+    expect(classifiedCodes).toHaveLength(154);
+    expect(classified.size, 'a code may have only one disposition').toBe(154);
+    expect(Object.keys(REFUSAL_CODE_CLASSIFICATION)).toHaveLength(154);
   });
 
   it('finds the complete AST-derived executable production census, including inline scripts and template prefixes', () => {
     expect(parseDiagnostics).toEqual([]);
-    expect(census.size).toBe(151);
+    expect(census.size).toBe(154);
     expect([...census]).toEqual(expect.arrayContaining([
       'authorization_recorded_delegation_required',
       'book_delete_refused',

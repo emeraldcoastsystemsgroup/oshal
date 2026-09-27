@@ -50,7 +50,15 @@ dispatches to the accountable bot, exactly like the cockpit does.
 
 The `(provider, channel_user_id) → user_sub` binding is the boundary. A shared bot routes each DM to
 the correct linked user; an unlinked chat only ever gets linking instructions — never another user's
-data. Every link read/write is user_sub-scoped (`ChannelLinkService`).
+data. Every link read/write is user_sub-scoped (`ChannelLinkService`), each `update_id` is claimed
+once before a bot turn, and a chat already bound to one user is never moved by another user's code.
+
+Every refusal (unlinked chat, invalid/expired/other-provider code, refused rebind) is written to the
+refusal ledger under a pseudonymous actor (`channel:telegram:<truncated SHA-256>`), never the raw
+Telegram id; the rows are visible to operators only. Locally tested over the real webhook and a real
+PostgreSQL (`tests/unit/chat-channel-inbound-postgres.spec.ts`,
+`tests/unit/chat-channel-denial-audit.spec.ts`); the AI Test Lab card `channel-inbound-round-trip`
+runs the flow on a deployment with the bot turn and the Telegram send doubled.
 
 ## Limits (honest, v1)
 
@@ -64,5 +72,5 @@ data. Every link read/write is user_sub-scoped (`ChannelLinkService`).
   land in the same context; a very long chat accumulates history.
 - **Public reachability.** Telegram must be able to POST to the webhook, so the controller needs a
   public HTTPS origin (the Cloudflare tunnel already provides one).
-- Discord (interactions/gateway) and Twilio SMS/voice/WhatsApp are on the backlog — see
-  [BACKLOG.md → Chat-channel surfaces](../BACKLOG.md).
+- Discord ([discord.md](discord.md)) and Twilio SMS/WhatsApp ([twilio.md](twilio.md)) are sibling
+  channels on the same identity store.
