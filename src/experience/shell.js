@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Render the assistant's markdown links to same-origin paths and http(s) URLs as anchors after escaping, so an answer that names an application opens it instead of showing raw brackets.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Audience-aware hosting: one withAudience helper appends the layout's `?audience=` to every in-place frame (existing query, hash and audience kept), behind a device-remembered Summary view / Full application switch whose copy leaves the choice of view to the hosted page. The app panel reads the package record lazily (GET /api/swarm/apps/:name, and each installed member of a group) to list declared assistants by name with the concierge marked and online state only where the overview roster joins, and labels relationships as group members or Required / Optional app dependencies (not installed when absent from the catalog; a mixed dependency block shows a neutral note instead of tiers). The Commons game predicate moves here as isGameApp so the directory's Games chip and the Game room share it, and a layout may opt its People panel into the swarm roster from GET /api/user-directory with the non-admin fallback to the caller's own identity.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | A dependency absent from the caller's catalog is labelled 'not in your catalog': the catalog lists active apps visible to this viewer, so an installed but inactive or person-scoped app is not proof of 'not installed'
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Integration review: every server-provided link the shell puts in an href (the shared hand-off chip, a '/' link in an answer, a file download) goes through LIVE.localHref, so a target that resolves off this origin ('//host', '/\host', a tab-split path) is never linked; the Games chip's visible label carries the hedge ('Looks like a game'); a roster 403 with roster_scope_denied says this session is not permitted to read the roster instead of blaming a missing admin role.
  */
 (() => {
   'use strict';
@@ -45,16 +46,20 @@
   function answerHtml(text) {
     const inline = s => esc(s)
       .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-      // [label](/path) or [label](https://…) as the assistant writes them; anything else stays literal text.
-      .replace(/\[([^\]\n]{1,120})\]\(((?:\/(?!\/)|https?:\/\/)[^\s()<>"']{1,400})\)/g, (_, label, href) => `<a href="${href}"${href.startsWith('/') ? '' : ' rel="noopener noreferrer" target="_blank"'}>${label}</a>`);
+      // [label](/path) or [label](https://…) as the assistant writes them; a path that resolves off this origin, and anything else, stays literal text.
+      .replace(/\[([^\]\n]{1,120})\]\(((?:\/(?!\/)|https?:\/\/)[^\s()<>"']{1,400})\)/g, (whole, label, href) => {
+        if (!href.startsWith('/')) return `<a href="${href}" rel="noopener noreferrer" target="_blank">${label}</a>`;
+        const local = LIVE.localHref(href);
+        return local ? `<a href="${local}">${label}</a>` : whole;
+      });
     return String(text || '').trim().split(/\n{2,}/).filter(Boolean).map(block => {
       const lines = block.split('\n');
       if (lines.every(l => /^\s*[-*•]\s+/.test(l))) return `<ul class="artifact-steps">${lines.map(l => `<li>${inline(l.replace(/^\s*[-*•]\s+/, ''))}</li>`).join('')}</ul>`;
       return `<p>${lines.map(inline).join('<br>')}</p>`;
     }).join('') || '<p class="muted">No answer text was returned.</p>';
   }
-  const chip = h => h && typeof h.deepLink === 'string' && h.deepLink.startsWith('/') ? link(`Open ${esc(h.name || 'application')} ↗`, h.deepLink, 'mini-app') : '';
-  const fileLink = f => { const url = f && (f.downloadUrl || f.url); return typeof url === 'string' && url.startsWith('/api/') ? link(`↓ ${esc(f.name || 'file')}`, url, 'quiet-link', 'download') : ''; };
+  const chip = h => { const href = h ? LIVE.localHref(h.deepLink) : ''; return href ? link(`Open ${esc(h.name || 'application')} ↗`, href, 'mini-app') : ''; };
+  const fileLink = f => { const href = f ? LIVE.localHref(f.downloadUrl || f.url) : ''; return href.startsWith('/api/') ? link(`↓ ${esc(f.name || 'file')}`, href, 'quiet-link', 'download') : ''; };
 
   /**
    * @description Ask a hosted page for an audience view (ADR-164 D6). The parameter is a request the page may
@@ -83,6 +88,17 @@
    */
   const isGameApp = app => Boolean(app) && app.suite === 'ai-creative' && /game|dungeon|arcade|show/i.test(`${app.name} ${app.id}`);
   const ASSISTANT_STATE = { working: 'working now', online: 'online', offline: 'offline', declared: 'declared in the package' };
+  /**
+   * @description Why the swarm roster is not listed, from the directory route's own refusal code: roster_scope_denied
+   * means this session's permission scope excludes the read (the account may well be an admin); roster_administrator_required,
+   * or any other 403, means only a swarm admin may list everyone.
+   * @param {{status: number, error: string}} roster The refused directory read.
+   * @returns {string} The sentence the roster slot shows beside the caller's own identity.
+   */
+  function rosterRefusal(roster) {
+    if (roster.status !== 403) return `The swarm roster could not be read (HTTP ${roster.status || 'network'}), so only your own identity is shown.`;
+    return roster.error === 'roster_scope_denied' ? 'This session is not permitted to read the roster. Only your own identity is shown.' : 'Only a swarm admin can list everyone on this swarm, so only your own identity is shown.';
+  }
 
   /** @description Create the per-page shell kernel over a loaded snapshot. */
   function createShell(options) {
@@ -211,7 +227,7 @@
     function rosterMarkup(roster, variant) {
       const self = personRow(snapshot.me.initials, `${snapshot.me.name} · you`, snapshot.me.email || 'Signed in', 'person');
       if (!roster) return `${self}<p class="note-line">Reading the swarm roster…</p>`;
-      if (!roster.ok) return `${self}<p class="note-line">${roster.status === 403 ? 'Only a swarm admin can list everyone on this swarm, so only your own identity is shown.' : `The swarm roster could not be read (HTTP ${roster.status || 'network'}), so only your own identity is shown.`}</p>`;
+      if (!roster.ok) return `${self}<p class="note-line">${rosterRefusal(roster)}</p>`;
       const others = roster.people.filter(p => !p.self), limit = variant === 'room' ? 6 : 40;
       const more = others.length > limit ? `<p class="note-line">…and ${others.length - limit} more on the roster.</p>` : '';
       return `${self}${others.slice(0, limit).map(p => personRow(LIVE.initials(p.name), p.name, p.detail || 'Account', 'person')).join('')}${more}<p class="note-line">${others.length ? `${roster.people.length} accounts on this swarm’s user directory.` : 'Nobody else is on this swarm’s user directory.'} A roster, not presence or room membership.</p>`;
@@ -254,7 +270,7 @@ ${item.files.length ? `<h3>Files</h3><ul class="artifact-steps">${item.files.map
     const gameApps = () => apps.filter(isGameApp);
     const appCard = a => `<article class="catalog-card" data-catalog-app="${esc(a.id)}"><div class="row between">${appMark(a)}${button(isPinned(a.id) ? '★' : '☆', 'pin', 'pin-button', `data-app="${esc(a.id)}" aria-label="${isPinned(a.id) ? 'Unpin' : 'Pin'} ${esc(a.name)}" aria-pressed="${isPinned(a.id)}"`)}</div>${button(`<h3>${esc(a.name)}</h3><span class="app-package">${esc(a.id)}</span><p>${esc(a.description)}</p>`, 'open-app', 'catalog-main', `data-app="${esc(a.id)}"`)}<div class="catalog-card-foot"><span>${esc(suiteOf(a.suite).name)}</span><span>${a.navigable ? (workFor(a.id)[0] ? `Latest: ${esc(workFor(a.id)[0].status.label.toLowerCase())}` : 'Available') : 'Not available here'}</span></div></article>`;
     function directoryPanel() {
-      const games = gameApps().length ? [['games', 'Games', gameApps().length, `title="${esc(GAMES_TITLE)}"`]] : [];
+      const games = gameApps().length ? [['games', 'Looks like a game', gameApps().length, `title="${esc(GAMES_TITLE)}"`]] : [];
       const filters = [['all', 'All apps', apps.length], ...suites.map(s => [s.id, s.name, s.count]), ...games, ['pinned', 'Pinned', state.pins.length]];
       return `<div class="directory-intro"><p>Every application installed on this swarm that you can see, with its declared suite, version and current availability to you.</p><span>${apps.length} applications · ${suites.length} suites</span></div><div class="directory-search"><span aria-hidden="true">⌕</span><label class="screenreader" for="app-search">Search all applications</label><input id="app-search" type="search" placeholder="Find an application or capability…" value="${esc(state.dirQuery)}" autocomplete="off"></div><nav class="directory-filters" aria-label="Filter applications">${filters.map(([k, n, c, extra = '']) => button(`${esc(n)}<span>${c}</span>`, 'filter', 'filter-chip', `data-suite="${k}" aria-pressed="${state.dirSuite === k}" ${extra}`)).join('')}</nav><div class="directory-results-head"><span id="catalog-result-count" role="status"></span><span>★ Pins are saved on this device only</span></div><div id="catalog-results" class="catalog-grid"></div><footer class="directory-foot">Membership, availability and versions come from your installed swarm. Nothing here installs, enables or grants an application. ${button('What is live here?', 'provenance', 'quiet-link')}</footer>`;
     }

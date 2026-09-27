@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Central assistant shell over the real Jarvis: the intent composer posts to /api/jarvis/ask on the shared browser thread, the ledger and workspace follow the actual job phases (sent, accepted, answered or failed), handoffs open real applications, the shelf lists the caller's Jarvis tasks, and the speaking core moves with the swarm voice route's playback amplitude (or labelled lifecycle pulses when only the browser engine is available). The scripted Vegas journey, fixture fares and prerecorded readback are gone.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Gap closure over existing contracts (ADR-164 D8, no backend change). The workspace renders the typed fields of the done /ask/result payload: the escaped answer, the owner-checked /api/jarvis/visuals image labelled by its kind, '/'-only handoff chips, the handed-off `dispatched` work tracked on GET /api/jarvis/tasks until it settles (files offered, delivered marked once through the route, the linked ticket cancellable through the owner-checked PUT /api/tickets/:ticketId/cancel with refusals shown), a `packageToolProposal` as an approval card pointing at the Jarvis page where approval happens, and `brainFallback` as "Answered by <provider>". Lifecycle is running / ready / partial / failed / setup-needed (job code NO_HOSTED_BRAIN or the 503 ai_disabled refusal) / stopped waiting, never "cancelled". The ledger is "Request progress": observed phases only, never tool activity. A per-request generation token plus an AbortController through LIVE.ask end the wait on Stop, New and Home and release the composer; a late completion of an older request can never reopen or overwrite the workspace. Push-to-talk dictation records with MediaRecorder, posts field `audio` to /api/voice/transcribe and fills the composer without sending, with honest not-set-up / denied / failed states; the microphone never drives the core. The readback control is offered on every terminal text (ready, partial, failed, setup-needed), and the composer keeps its draft and focus across repaints.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Hand-off links accept only same-origin paths (a protocol-relative '//host' target is shown by name, never linked), and a transcription failure the route reports with HTTP 200 no longer quotes that success status
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Integration review: hand-off links go through the shared LIVE.localHref guard (isLocalPath is gone), so a tab-split or backslash target that the browser would resolve off this origin is shown by name, never linked. Reaching the ask poll limit (code 'poll_limit') is a "Still running" state that says this page stopped checking and the job may still finish, never FAILED. The page no longer marks handed-off results delivered: the Jarvis page stays the one surface that announces and marks them. Request progress is honest about a stop before the swarm answered the send (never "Not accepted") and counts checks as checks without an outcome.
  */
 (() => {
   'use strict';
@@ -21,15 +22,18 @@
   let animation, observer, noticeTimer, activeModal = null, previousFocus;
   /* Stale-completion guard: every wait belongs to one generation; Stop, New and Home move the generation on and abort the wait. */
   let generation = 0, pending = null;
-  const TERMINAL = { ready: true, partial: true, failed: true, setup: true };
+  const TERMINAL = { ready: true, partial: true, failed: true, setup: true, unsettled: true };
   const PHASES = {
     running: { mode: 'WORKING', label: 'BRINGING IT TOGETHER', sr: 'Request running' },
     ready: { mode: 'LIVE ANSWER', label: 'HERE WHEN YOU NEED ME', sr: 'Answer ready' },
     partial: { mode: 'ANSWER READY · WORK CONTINUING', label: 'BACKGROUND WORK CONTINUING', sr: 'Answer ready, background work still running' },
     failed: { mode: 'FAILED', label: 'THAT DID NOT WORK', sr: 'Request failed' },
     setup: { mode: 'SETUP NEEDED', label: 'SETUP NEEDED', sr: 'Setup needed before Jarvis can answer' },
-    stopped: { mode: 'STOPPED WAITING', label: 'STOPPED WAITING', sr: 'Stopped waiting' }
+    stopped: { mode: 'STOPPED WAITING', label: 'STOPPED WAITING', sr: 'Stopped waiting' },
+    unsettled: { mode: 'STILL RUNNING · STOPPED CHECKING', label: 'STILL RUNNING · CHECK JARVIS LATER', sr: 'Still running; this page stopped checking' }
   };
+  const UNSETTLED_TEXT = 'This page stopped checking for the answer. The job may still finish: its answer is saved to this conversation, so check Jarvis later.';
+  const RESUME_LABELS = { stopped: 'Back to the stopped request', unsettled: 'Back to the request still running' };
   const TASK_POLL_MS = 3000, TASK_POLL_LIMIT = 200;
   const VISUAL_KINDS = ['weather', 'priority-email', 'table', 'chart', 'summary', 'timeline', 'diagram', 'gallery', 'map', 'gauge', 'checklist', 'agenda', 'comparison', 'profile', 'image'];
   const VISUAL_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -65,6 +69,7 @@
   /** Terminal text the readback may speak: the answer when one arrived, the refusal or setup sentence otherwise. */
   function readbackText() {
     const p = shownPhase(); if (!TERMINAL[p]) return '';
+    if (p === 'unsettled') return UNSETTLED_TEXT;
     return p === 'failed' || p === 'setup' ? state.error : (state.result && state.result.answer) || '';
   }
   function speakAnswer() {
@@ -149,7 +154,7 @@
   }
   function suggestions() {
     const latest = snapshot.work[0];
-    return `<div class="suggestions">${btn('What needs my attention today?', 'prompt', 'suggestion', 'data-prompt="What needs my attention today across my swarm? List what is waiting on me first."')}${latest ? btn(`Tell me about “${esc(latest.title.slice(0, 40))}${latest.title.length > 40 ? '…' : ''}”`, 'prompt', 'suggestion', `data-prompt="${esc(`Tell me about ${latest.kind === 'task' ? 'the task' : 'the ticket'} “${latest.title}” and what I should do next.`)}"`) : ''}${btn('What can my swarm do for me?', 'prompt', 'suggestion', 'data-prompt="Which applications do I have and what can each of them do for me? Keep it short."')}${state.resume ? btn(state.resume === 'stopped' ? 'Back to the stopped request' : 'Resume the last answer', 'result', 'suggestion') : ''}</div>`;
+    return `<div class="suggestions">${btn('What needs my attention today?', 'prompt', 'suggestion', 'data-prompt="What needs my attention today across my swarm? List what is waiting on me first."')}${latest ? btn(`Tell me about “${esc(latest.title.slice(0, 40))}${latest.title.length > 40 ? '…' : ''}”`, 'prompt', 'suggestion', `data-prompt="${esc(`Tell me about ${latest.kind === 'task' ? 'the task' : 'the ticket'} “${latest.title}” and what I should do next.`)}"`) : ''}${btn('What can my swarm do for me?', 'prompt', 'suggestion', 'data-prompt="Which applications do I have and what can each of them do for me? Keep it short."')}${state.resume ? btn(RESUME_LABELS[state.resume] || 'Resume the last answer', 'result', 'suggestion') : ''}</div>`;
   }
   function welcome() {
     return `<section class="welcome"><div class="presence"><canvas id="core-canvas" role="img" aria-label="Luminous particle core: the assistant’s presence, moving with its voice"></canvas></div><div class="orb-caption">YOUR WORLD. CONNECTED.</div>${voiceControls()}<div class="eyebrow">${greeting()}, ${esc(firstName().toUpperCase())} / ${snapshot.apps.length} APPS · ${shell.openWork().length} OPEN · ${snapshot.botsOnline} ASSISTANTS ONLINE</div><h1>A little ambition.<br><em>A whole swarm behind you.</em></h1><p>Tell me what you want to do. I’ll bring the right tools to you.</p>${composer()}${suggestions()}<div class="welcome-bottom">${snapshot.suites.slice(0, 3).map(s => `<div class="connected-item"><strong><span class="status-dot"></span>${esc(s.name)}</strong><small>${s.count} application${s.count === 1 ? '' : 's'}</small></div>`).join('')}</div></section>`;
@@ -167,8 +172,9 @@
   function askRows(p) {
     const o = state.obs, running = p === 'running';
     const sent = o.sentAt ? `Left this page at ${LIVE.clockTime(o.sentAt)} on your own thread${o.rolled ? ' (the earlier thread was unavailable under this sign-in, so a fresh one was used)' : ''}.` : 'Not sent.';
-    const accepted = o.jobId ? `Job ${o.jobId.slice(0, 8)} accepted.` : o.refused ? `Refused with HTTP ${o.refused}.` : running ? 'Waiting for the swarm to accept it.' : 'Not accepted.';
-    const polled = o.polls ? `Checked ${plural(o.polls, 'time')} while the job was still running.` : o.jobId ? 'The first check already had the outcome.' : 'Not started.';
+    const accepted = o.jobId ? `Job ${o.jobId.slice(0, 8)} accepted.` : o.refused ? `Refused with HTTP ${o.refused}.` : running ? 'Waiting for the swarm to accept it.'
+      : p === 'stopped' ? 'This page stopped waiting before the swarm’s reply to the send arrived.' : 'Not accepted.';
+    const polled = o.polls ? `Checked ${plural(o.polls, 'time')} without an outcome.` : o.jobId ? 'The first check already had the outcome.' : 'Not started.';
     return [progressRow('Sent to Jarvis', sent, o.sentAt ? 'done' : 'pending'),
       progressRow('Accepted by the swarm', accepted, o.jobId ? 'done' : o.refused ? 'failed' : running ? 'now' : 'pending'),
       progressRow('Checking for the answer', polled, running && o.jobId ? 'now' : o.jobId ? 'done' : 'pending')];
@@ -179,6 +185,7 @@
     if (p === 'failed') return progressRow('Request failed', state.error, 'failed');
     if (p === 'setup') return progressRow('Setup needed', state.error, 'failed');
     if (p === 'stopped') return progressRow('Stopped waiting', 'This page stopped checking. Nothing was cancelled on the swarm.', 'failed');
+    if (p === 'unsettled') return progressRow('Still running', 'This page stopped checking; the job may still finish. Check Jarvis later.', 'pending');
     return progressRow('Answer assembled', 'Tool-using answers can take a minute.', 'pending');
   }
   function ledger() {
@@ -192,15 +199,14 @@
     const p = state.phase;
     if (p === 'stopped') return '<p>Stopped waiting. Nothing was cancelled on the swarm; if it finishes, the answer is saved to this conversation, which the Jarvis page shows.</p>';
     if (p === 'failed' || p === 'setup') return `<p class="tone-warn">${esc(state.error)}</p>`;
+    if (p === 'unsettled') return `<p>Still running. ${esc(UNSETTLED_TEXT)}</p>`;
     if (p !== 'ready' && p !== 'partial') return `<p>${stage() === 0 ? 'Sending your request on your own Jarvis thread.' : 'The swarm accepted it and is working. You can watch the workspace take shape.'}</p>`;
     return S.answerHtml(state.result.answer);
   }
-  /** @description A hand-off target the page may link to: a same-origin path only ('/x'), never protocol-relative ('//host/x') or absolute. @param {unknown} u Candidate deepLink. @returns {boolean} Whether it is a local path. */
-  const isLocalPath = u => typeof u === 'string' && u.startsWith('/') && !u.startsWith('//') && !u.startsWith('/\\');
   function handoffApps() {
     const chips = (state.result && state.result.handoffs) || [];
     const named = snapshot.apps.filter(a => state.result && state.result.answer && new RegExp(`\\b${a.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(state.result.answer));
-    return { chips, named: named.filter(a => !chips.some(c => c.deepLink && c.deepLink.includes(`app=${a.id}`))).slice(0, 6) };
+    return { chips, named: named.filter(a => !chips.some(c => c && typeof c.deepLink === 'string' && c.deepLink.includes(`app=${a.id}`))).slice(0, 6) };
   }
   /* ── typed result cards: only the fields the done /ask/result payload and GET /api/jarvis/tasks already return ── */
   function trustedVisual(v) {
@@ -230,7 +236,7 @@
     const settled = settledItem(w), requesting = w.cancel === 'requesting';
     const cancel = settled || w.cancel === 'cancelled' ? '' : w.ticketId ? btn(requesting ? 'Cancelling…' : 'Cancel this work', 'cancel-work', 'secondary', `data-job="${esc(w.workJobId)}"${requesting ? ' disabled' : ''}`) : '<small>No ticket is linked to this item yet, so it cannot be cancelled from here.</small>';
     const detail = w.error ? `<small class="tone-warn">${esc(w.error)}</small>` : settled && w.result ? `<small>${esc(w.result.slice(0, 220))}${w.result.length > 220 ? '…' : ''}</small>` : '';
-    return `<div class="work-item" data-work="${esc(w.workJobId)}" data-status="${esc(w.status)}"><strong>${esc(w.title)}</strong><small>${esc(workLabel(w))}</small>${detail}${w.files.map(f => S.fileLink(f)).filter(Boolean).join('')}${cancel}${w.cancelNote ? `<small role="status">${esc(w.cancelNote)}</small>` : ''}${w.deliveredNote ? `<small>${esc(w.deliveredNote)}</small>` : ''}</div>`;
+    return `<div class="work-item" data-work="${esc(w.workJobId)}" data-status="${esc(w.status)}"><strong>${esc(w.title)}</strong><small>${esc(workLabel(w))}</small>${detail}${w.files.map(f => S.fileLink(f)).filter(Boolean).join('')}${cancel}${w.cancelNote ? `<small role="status">${esc(w.cancelNote)}</small>` : ''}</div>`;
   }
   function workCard() {
     if (!state.work.length) return '';
@@ -238,8 +244,8 @@
     return `<div class="result-card work-card" data-part="work"><div class="section-head"><h3>Background work</h3><span>${done} of ${state.work.length} finished · read from your Jarvis task list</span></div>${state.work.map(workItem).join('')}${state.workNote ? `<p class="result-note">${esc(state.workNote)}</p>` : ''}</div>`;
   }
   function overviewBody() {
-    const r = state.result, { chips, named } = handoffApps(), routed = chips.filter(c => c && typeof c.deepLink === 'string' && isLocalPath(c.deepLink));
-    return `<div class="section-head"><h3>The answer</h3>${btn('Speak it', 'readback', 'quiet')}</div>${S.answerHtml(r.answer)}${providerNote(r)}${visualCard(r.visual)}${proposalCard(r.packageToolProposal)}${workCard()}${routed.length ? `<h3>Open where the work lives</h3><div class="work-actions">${routed.map(c => link(`Open ${esc(c.name)} ↗`, c.deepLink, 'primary')).join('')}</div>` : ''}${named.length ? `<h3>Applications mentioned</h3><div class="work-actions">${named.map(a => a.navigable ? link(`${esc(a.name)} ↗`, a.href, 'secondary') : `<span class="secondary">${esc(a.name)}</span>`).join('')}</div>` : ''}${(r.files || []).length ? `<h3>Files</h3>${r.files.map(f => `<p>${S.fileLink(f) || esc(f.name || 'file')}</p>`).join('')}` : ''}<div class="work-actions">${link('Continue in Jarvis ↗', '/api/jarvis/', 'secondary')}${btn('View sources', 'sources-tab', 'quiet')}</div>`;
+    const r = state.result, { chips, named } = handoffApps(), routed = chips.map(c => ({ name: c && c.name, href: c ? LIVE.localHref(c.deepLink) : '' })).filter(c => c.href);
+    return `<div class="section-head"><h3>The answer</h3>${btn('Speak it', 'readback', 'quiet')}</div>${S.answerHtml(r.answer)}${providerNote(r)}${visualCard(r.visual)}${proposalCard(r.packageToolProposal)}${workCard()}${routed.length ? `<h3>Open where the work lives</h3><div class="work-actions">${routed.map(c => link(`Open ${esc(c.name)} ↗`, c.href, 'primary')).join('')}</div>` : ''}${named.length ? `<h3>Applications mentioned</h3><div class="work-actions">${named.map(a => a.navigable ? link(`${esc(a.name)} ↗`, a.href, 'secondary') : `<span class="secondary">${esc(a.name)}</span>`).join('')}</div>` : ''}${(r.files || []).length ? `<h3>Files</h3>${r.files.map(f => `<p>${S.fileLink(f) || esc(f.name || 'file')}</p>`).join('')}` : ''}<div class="work-actions">${link('Continue in Jarvis ↗', '/api/jarvis/', 'secondary')}${btn('View sources', 'sources-tab', 'quiet')}</div>`;
   }
   function shelfBody() {
     const list = tasks().slice(0, 12);
@@ -251,12 +257,13 @@
   }
   function appsBody() {
     const { chips, named } = handoffApps();
-    const rows = chips.map(c => ({ name: c.name, href: typeof c.deepLink === 'string' && isLocalPath(c.deepLink) ? c.deepLink : '', note: 'Suggested by Jarvis for this request' })).concat(named.map(a => ({ name: a.name, href: a.navigable ? a.href : '', note: `${shell.suiteOf(a.suite).name} · mentioned in the answer` })));
+    const rows = chips.filter(Boolean).map(c => ({ name: c.name, href: LIVE.localHref(c.deepLink), note: 'Suggested by Jarvis for this request' })).concat(named.map(a => ({ name: a.name, href: a.navigable ? a.href : '', note: `${shell.suiteOf(a.suite).name} · mentioned in the answer` })));
     return `<div class="eyebrow">APPLICATIONS FOR THIS REQUEST</div><h2 style="font-size:25px;font-weight:400;margin-top:12px">${rows.length ? 'Where this can continue.' : 'No application was singled out.'}</h2>${rows.map(r => `<div class="source-row"><h3>${esc(r.name)}</h3><p>${esc(r.note)}</p>${r.href ? link('Open ↗', r.href, 'primary') : '<span class="secondary">Not available in your workspace</span>'}</div>`).join('') || '<p class="workspace-subtitle">Ask something that points at an application, or browse your swarm from the rail.</p>'}`;
   }
   function terminalBody(p) {
     if (p === 'setup') return `<div class="eyebrow">SETUP NEEDED</div><h2>Jarvis needs setup before it can answer.</h2><p>${esc(state.error)}</p><div class="work-actions">${link('Open the cockpit ↗', '/cockpit/', 'secondary')}${btn('Ask again', 'retry', 'quiet')}</div>`;
     if (p === 'failed') return `<div class="eyebrow">FAILED</div><h2>That did not work.</h2><p>${esc(state.error)}</p>${btn('Ask again', 'retry', 'quiet')}`;
+    if (p === 'unsettled') return `<div class="eyebrow">STILL RUNNING · THIS PAGE STOPPED CHECKING</div><h2>Still running.</h2><p>${esc(UNSETTLED_TEXT)}</p><div class="work-actions">${link('Check the Jarvis page ↗', '/api/jarvis/', 'secondary')}</div>`;
     return `<div class="eyebrow">STOPPED WAITING</div><h2>You stopped waiting.</h2><p>This page stopped checking for the answer. Nothing was cancelled on the swarm: if it finishes, the answer is saved to this conversation, which the Jarvis page shows.</p>${btn('Ask again', 'retry', 'quiet')}`;
   }
   function loadingBody() {
@@ -371,12 +378,14 @@
     if (p.phase === 'waiting') o.polls = p.poll;
     if (state.phase === 'running') paintProgress();
   }
-  /** Map the terminal ask result to the lifecycle: ready, partial (handed-off work continuing), setup-needed or failed. */
+  /** Map the terminal ask result to the lifecycle: ready, partial (handed-off work continuing), still running (the page's poll limit, never a failure), setup-needed or failed. */
   function settle(result) {
     state.result = result; state.jobId = result.jobId || state.jobId;
     if (result.status === 'done') {
-      state.work = (result.dispatched || []).map(d => ({ workJobId: d.workJobId, title: d.title, status: 'unlisted', ticketId: '', files: [], result: '', error: '', briefing: false, delivered: false, deliveredNote: '', cancel: '', cancelNote: '' }));
+      state.work = (result.dispatched || []).map(d => ({ workJobId: d.workJobId, title: d.title, status: 'unlisted', ticketId: '', files: [], result: '', error: '', cancel: '', cancelNote: '' }));
       state.phase = state.work.length ? 'partial' : 'ready';
+    } else if (result.code === 'poll_limit') {
+      state.phase = 'unsettled'; state.code = result.code; state.error = UNSETTLED_TEXT;
     } else {
       const setup = result.code === 'NO_HOSTED_BRAIN' || (result.httpStatus === 503 && result.code === 'ai_disabled');
       state.phase = setup ? 'setup' : 'failed'; state.code = result.code || '';
@@ -394,19 +403,10 @@
   function applyTasks(rows) {
     state.work.forEach(w => {
       const row = rows.find(t => t && t.id === w.workJobId); if (!row) return;
-      Object.assign(w, { status: String(row.status || 'queued'), ticketId: row.ticketId ? String(row.ticketId) : '', files: Array.isArray(row.files) ? row.files : [], result: String(row.result || ''), error: String(row.error || ''), briefing: Boolean(row.briefing), delivered: w.delivered || row.delivered === true });
+      Object.assign(w, { status: String(row.status || 'queued'), ticketId: row.ticketId ? String(row.ticketId) : '', files: Array.isArray(row.files) ? row.files : [], result: String(row.result || ''), error: String(row.error || '') });
     });
   }
-  /** Mark each settled, shown item delivered once, only where the route acts on it (not briefing-sourced, not already delivered). */
-  async function deliverSettled(gen) {
-    for (const w of state.work) {
-      if (!settledItem(w) || w.delivered || w.briefing || w.deliveredNote) continue;
-      const r = await LIVE.packages.jarvis.markDelivered(w.workJobId);
-      if (gen !== generation) return;
-      w.delivered = Boolean(r.ok && r.body && r.body.ok === true);
-      w.deliveredNote = w.delivered ? 'Marked delivered, so Jarvis does not announce it again.' : 'Could not be marked delivered; Jarvis may announce it again.';
-    }
-  }
+  /** Follow the handed-off items on the task list until each settles. Nothing is marked delivered here: the Jarvis page announces and marks results. */
   async function track(gen) {
     for (let i = 0; i < TASK_POLL_LIMIT; i++) {
       if (i) await pause(TASK_POLL_MS);
@@ -415,8 +415,6 @@
       if (gen !== generation) return;
       if (r.ok && r.body && Array.isArray(r.body.tasks)) { applyTasks(r.body.tasks); state.workNote = ''; }
       else state.workNote = `Your task list did not answer${r.status ? ` (HTTP ${r.status})` : ''}; checking again.`;
-      await deliverSettled(gen);
-      if (gen !== generation) return;
       if (state.work.every(settledItem)) return workSettled();
       if (state.phase === 'partial') paintProgress();
     }

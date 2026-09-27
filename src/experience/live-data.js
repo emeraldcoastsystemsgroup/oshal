@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Central-assistant gap closure over existing contracts only. ask() takes an AbortSignal threaded through the POST, every /ask/result poll and the sleep between them, so a page that stops, starts over or goes home ends the wait at once (status 'aborted') instead of polling a request nobody is watching; a refused /ask now carries the route's machine `code` (the 503 ai_disabled posture), and a done payload passes through the well-formed `dispatched` hand-offs and the `packageToolProposal` the route already returns. New helpers: transcribe() posts one recording as multipart field `audio` to /api/voice/transcribe and folds the route's envelope into text / unconfigured / empty / failed; jarvis.markDelivered() and jarvis.cancelWork() reach POST /api/jarvis/tasks/:id/delivered and the owner-checked PUT /api/tickets/:ticketId/cancel.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Package adapters for the homebase gap closure over existing routes only: Little Monsters class activity (teacher analytics) and classwork creation through the route that also writes the class calendar event, a ticket read and its status transition, and the caller's saved content drafts. Each returns the route's own answer, refusals included.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | JSDoc for the background-work client members (markDelivered, cancelWork)
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Integration review: one same-origin guard, localHref, resolves a server-provided link against the page origin the way the browser will (tab/CR/LF stripped, a backslash read as a slash) and keeps only a path that stays on this origin, so '//host', '/\host' and a tab-split '/<TAB>/host' can never become a link. ask()'s poll-limit result carries code 'poll_limit' so a caller can say the page stopped checking instead of calling the request failed. The roster read keeps the route's refusal code (roster_scope_denied vs roster_administrator_required). markDelivered is removed: the Jarvis page stays the one surface that announces and marks results.
  */
 (function attach(root, factory) {
   'use strict';
@@ -65,6 +66,24 @@
     var handle = function (v) { v = String(v || '').trim(); return v.indexOf('@') > 0 ? v.split('@')[0] : v; };
     var name = String(user.name || user.given_name || handle(user.preferred_username) || user.nickname || handle(email) || 'You').trim();
     return { authenticated: true, name: name, initials: initials(name), sub: String(user.sub || ''), email: email, mode: String(payload.mode || ''), guest: Boolean(payload.guestMode), picture: user.picture || null };
+  }
+
+  /**
+   * @description The one same-origin guard for links a server or model hands the page (hand-off deepLinks, answer
+   * links, file downloads). The URL is resolved exactly as the browser will resolve an href, which strips tab/CR/LF
+   * and reads a backslash as a slash, so '/\t/host', '/\\host' and '//host' all resolve to another origin and are
+   * refused; only a string that starts with '/' and stays on the page origin is kept.
+   * @param {unknown} u Candidate link from a payload.
+   * @param {string} [origin] Page origin; defaults to location.origin in a browser.
+   * @returns {string} pathname + search + hash of the resolved same-origin URL, or '' when it is not one.
+   */
+  function localHref(u, origin) {
+    if (typeof u !== 'string' || u.charAt(0) !== '/') return '';
+    var page = origin || (typeof location !== 'undefined' && location.origin && location.origin !== 'null' ? location.origin : 'https://local.invalid');
+    try {
+      var base = new URL(page), resolved = new URL(u, base);
+      return resolved.origin === base.origin ? resolved.pathname + resolved.search + resolved.hash : '';
+    } catch (_) { return ''; }
   }
 
   function suiteId(raw) { return raw && SUITE_META[raw] ? raw : 'platform'; }
@@ -163,7 +182,7 @@
    * parenthetical, and the account source plus sign-in status. It is a roster of accounts, never presence.
    * @param {{ok: boolean, status: number, body: object}} res The directory read.
    * @param {string} selfSub The caller's subject, so the caller's own row can be told apart.
-   * @returns {{ok: boolean, status: number, people: Array<{sub: string, name: string, detail: string, self: boolean}>}}
+   * @returns {{ok: boolean, status: number, error: string, people: Array<{sub: string, name: string, detail: string, self: boolean}>}} error is the route's refusal code (roster_scope_denied, roster_administrator_required) or ''.
    */
   function directoryPeople(res, selfSub) {
     var users = res && res.ok && res.body && Array.isArray(res.body.users) ? res.body.users : [];
@@ -172,7 +191,8 @@
       var signIn = u.signIn && u.signIn !== u.source ? (SIGN_IN_STATES[u.signIn] || String(u.signIn).replace(/-/g, ' ')) : '';
       return { sub: u.sub, name: String(u.label || '').replace(/\s*\([^)]*\)\s*$/, '').trim() || 'Member', detail: [source, signIn].filter(Boolean).join(' · '), self: Boolean(selfSub) && u.sub === selfSub };
     });
-    return { ok: Boolean(res && res.ok), status: res ? res.status : 0, people: people };
+    var error = res && !res.ok && res.body && typeof res.body.error === 'string' ? res.body.error : '';
+    return { ok: Boolean(res && res.ok), status: res ? res.status : 0, error: error, people: people };
   }
 
   /**
@@ -475,7 +495,7 @@
         await sleep(pollMs, signal);
       }
       if (stopped()) return abortedAsk(jobId, session);
-      return { status: 'error', error: 'This is taking unusually long. It may still finish; check Jarvis later.', jobId: jobId, sessionId: session };
+      return { status: 'error', code: 'poll_limit', error: 'This is taking unusually long. It may still finish; check Jarvis later.', jobId: jobId, sessionId: session };
     }
 
     /**
@@ -627,14 +647,6 @@
       jarvis: {
         history: function (sid) { return getJson('/api/jarvis/history' + (sid ? '?sessionId=' + encodeURIComponent(sid) : '')); },
         tasks: function () { return getJson('/api/jarvis/tasks'); },
-        /** Mark one settled shelf task announced (POST /api/jarvis/tasks/:id/delivered); the route itself only flips rows that are not briefing-sourced. */
-        /**
-         * @description Mark one settled background item as announced, through the route's own rule (briefing-sourced rows are left alone by the server).
-         * @param {string} id Jarvis task id.
-         * @returns {Promise<{ok:boolean,status:number,body:any}>} The route's answer.
-         */
-        markDelivered: function (id) { return sendJson('/api/jarvis/tasks/' + encodeURIComponent(id) + '/delivered', 'POST'); },
-        /** Cancel the ticket behind a handed-off task through the owner-checked PUT /api/tickets/:ticketId/cancel; a refusal comes back with its status. */
         /**
          * @description Ask the ticket route to cancel background work the caller started; the route checks ownership and refuses otherwise.
          * @param {string} ticketId Ticket behind the dispatched item.
@@ -662,7 +674,7 @@
     mergeApps: mergeApps, buildSuites: buildSuites, mergeWork: mergeWork, normalizeTicket: normalizeTicket, normalizeTask: normalizeTask,
     atPointer: atPointer, normalizeSummary: normalizeSummary, relativeTime: relativeTime, clockTime: clockTime, parseDate: parseDate,
     dependencyTiers: dependencyTiers, declaredAssistants: declaredAssistants, directoryPeople: directoryPeople, classEvents: classEvents,
-    createClient: createClient
+    localHref: localHref, createClient: createClient
   };
   if (typeof window !== 'undefined' && typeof fetch === 'function') {
     var client = createClient();

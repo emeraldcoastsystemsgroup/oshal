@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Drive the homebase gap closure in headless Chromium through the real static route registration over the isolated synthetic swarm: learner activity pills and the class summary from the teacher analytics read (and its 403/404 notes), teacher classwork posted to assignments-with-events with the class picker limited to taught classes and refusals rendered as text, the learner checklist opening My Day in place, the ticket project dialog's approval transition with its refusal and no-approval states, the caller's saved drafts and newest finished Jarvis task with empty and failure states, and "Configure home" hidden for guests.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Integration review: the ticket dialog's Reason and Next action rows appear only when metadata.lastStatusTransition describes the current status (after an approval, and for a mirror of an older state, only State shows); the drafts dialog names Content Studio drafts in its heading, empty and failure copy.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -46,12 +47,19 @@ async function open(path: string, ready: string) {
 }
 const dialogText = () => page.locator('#homebase-dialog').innerText();
 const toastHas = (text: string) => page.waitForFunction(t => document.getElementById('toast')?.textContent?.includes(t), text);
+/**
+ * @description The metadata the ticket service writes for one transition: the row-level reason/nextAction board fields
+ * and the lastStatusTransition mirror ({ status, ...transition metadata }) that says which state they describe.
+ */
+const mirror = (status: string, reason: string, nextAction: string) => ({ reason, nextAction, lastStatusTransition: { status, reason, nextAction } });
 /** @description A synthetic ticket parked at approval_required with the metadata mirror the ticket service writes. */
 function approvalTicket(nextAction: string, reason: string) {
-  const ticket = { ticketId: APPROVAL_ID, title: 'Synthetic approval gate', status: 'approval_required', ticketType: 'ledger-review', updatedAt: iso(0), description: 'A synthetic workflow paused at an approval gate.', metadata: { reason, nextAction } };
+  const ticket = { ticketId: APPROVAL_ID, title: 'Synthetic approval gate', status: 'approval_required', ticketType: 'ledger-review', updatedAt: iso(0), description: 'A synthetic workflow paused at an approval gate.', metadata: mirror('approval_required', reason, nextAction) };
   fixture.state.tickets.push(ticket);
   return ticket;
 }
+/** @description The fact labels (dt) the open ticket dialog shows. */
+const factLabels = () => page.locator('.ticket-facts dt').allInnerTexts();
 
 describe('homebase gap closure over the real routes', () => {
   it('the teacher roster shows each learner’s activity and the class summary, labelled as activity, never completion', async () => {
@@ -147,12 +155,38 @@ describe('homebase gap closure over the real routes', () => {
     await page.waitForSelector('.ticket-facts');
     const facts = await page.locator('.ticket-facts').innerText();
     expect(facts).toContain('Approval required'); expect(facts).toContain('approval gate'); expect(facts).toContain('operator approve to resume');
+    expect(await factLabels()).toEqual(['State', 'Reason', 'Next action']);
     expect(await dialogText()).not.toMatch(/Mark reviewed|Reviewed/);
     await page.getByRole('button', { name: 'Approve', exact: true }).click();
     await toastHas('the queue picks it up on its next cycle');
     expect(fixture.state.tickets.find(t => t.ticketId === APPROVAL_ID)?.status).toBe('approved');
     expect(fixture.state.calls).toContain(`PUT /api/tickets/${APPROVAL_ID}/status`);
     expect(await page.locator(`[data-work="ticket:${APPROVAL_ID}"]`).innerText()).toContain('Approved');
+    // Reopened: the row-level reason/nextAction still name the approval gate, but the mirror now describes 'approved' with no reason.
+    await page.locator(`[data-work="ticket:${APPROVAL_ID}"]`).click();
+    await page.waitForSelector('.ticket-facts');
+    expect(await factLabels()).toEqual(['State']);
+    expect(await page.locator('.ticket-facts').innerText()).not.toMatch(/approval gate|operator approve to resume/);
+    expect(await page.getByRole('button', { name: 'Approve', exact: true }).count()).toBe(0);
+    expect(errors).toEqual([]);
+  });
+
+  it('Reason and Next action show only when the transition mirror describes the ticket’s current state', async () => {
+    const older = fixture.state.tickets[0] as unknown as { metadata: Record<string, unknown> };
+    older.metadata = mirror('escalated', 'synthetic_escalation', 'synthetic_follow_up');
+    const matching = { ticketId: '44444444-4444-4444-8444-444444444444', title: 'Synthetic blocked build', status: 'blocked', ticketType: 'ledger-review', updatedAt: iso(0), description: 'A synthetic blocked ticket.', metadata: mirror('blocked', 'synthetic_dependency_missing', 'synthetic_install_dependency') };
+    fixture.state.tickets.push(matching);
+    await open('/homebase?preset=company', `[data-work="ticket:${matching.ticketId}"]`);
+    await page.locator('[data-work="ticket:11111111-1111-4111-8111-111111111111"]').click();
+    await page.waitForSelector('.ticket-facts');
+    expect(await factLabels()).toEqual(['State']);
+    expect(await page.locator('.ticket-facts').innerText()).not.toMatch(/synthetic escalation|synthetic follow up/);
+    await page.keyboard.press('Escape');
+    await page.locator(`[data-work="ticket:${matching.ticketId}"]`).click();
+    await page.waitForSelector('.ticket-facts');
+    expect(await factLabels()).toEqual(['State', 'Reason', 'Next action']);
+    const facts = await page.locator('.ticket-facts').innerText();
+    expect(facts).toContain('Blocked'); expect(facts).toContain('synthetic dependency missing'); expect(facts).toContain('synthetic install dependency');
     expect(errors).toEqual([]);
   });
 
@@ -167,7 +201,7 @@ describe('homebase gap closure over the real routes', () => {
     expect(fixture.state.tickets.find(t => t.ticketId === APPROVAL_ID)?.status).toBe('approval_required');
     await page.keyboard.press('Escape');
     const planning = fixture.state.tickets.find(t => t.ticketId === APPROVAL_ID) as unknown as { metadata: Record<string, string> };
-    planning.metadata = { reason: 'planning_complete', nextAction: 'none_children_dispatch_independently' };
+    planning.metadata = mirror('approval_required', 'planning_complete', 'none_children_dispatch_independently') as unknown as Record<string, string>;
     await page.locator(`[data-work="ticket:${APPROVAL_ID}"]`).click();
     await page.waitForSelector('.ticket-facts');
     expect(await dialogText()).toContain('Nothing here waits for your approval: its child tickets dispatch on their own.');
@@ -209,13 +243,14 @@ describe('homebase gap closure over the real routes', () => {
     await page.getByRole('button', { name: 'My drafts' }).click();
     await page.waitForFunction(() => document.getElementById('drafts-slot')?.textContent?.includes('Newest finished Jarvis task'));
     let dialog = await dialogText();
-    expect(dialog).toContain('You have no saved drafts yet.'); expect(dialog).toContain('No finished Jarvis task yet.');
+    expect(dialog).toContain('Your saved Content Studio drafts');
+    expect(dialog).toContain('No Content Studio drafts saved yet.'); expect(dialog).toContain('No finished Jarvis task yet.');
     await page.keyboard.press('Escape');
     fixture.state.status['homebase:drafts'] = 500; fixture.state.status.tasks = 503;
     await page.getByRole('button', { name: 'My drafts' }).click();
     await page.waitForFunction(() => document.getElementById('drafts-slot')?.textContent?.includes('Newest finished Jarvis task'));
     dialog = await dialogText();
-    expect(dialog).toContain('Your saved drafts could not be read (HTTP 500).'); expect(dialog).toContain('Your Jarvis tasks could not be read (HTTP 503).');
+    expect(dialog).toContain('Your saved Content Studio drafts could not be read (HTTP 500).'); expect(dialog).toContain('Your Jarvis tasks could not be read (HTTP 503).');
     expect(await page.locator('#homebase-dialog a', { hasText: 'Open Jarvis' }).count()).toBe(1);
   });
 

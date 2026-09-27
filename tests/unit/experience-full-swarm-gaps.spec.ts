@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Full-swarm gap closure: audience-aware hosting in Studio, Jarvis, Orbit and Commons (one shared helper, the Summary view / Full application switch remembered per layout), declared assistants and member / Required / Optional relationships read lazily from the package record (group members read one by one, 404 and failure states), the shared games predicate behind the directory chip and the Game room, the Commons swarm roster with the non-admin fallback, and the Jarvis agenda from the overview feed plus the Little Monsters calendar with empty, refused and not-installed states. Adapter reads are proven headlessly; the shells run in Chromium over the real static routes and the synthetic fixture.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | A dependency absent from the viewer catalog reads 'not in your catalog'
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Integration review: the Jarvis agenda reads Little Monsters' read-only home-summary probe first and sends zero /api/education requests when it answers 403 (or fails), reading the calendar only on 200; agenda copy names the Little Monsters calendar (classes and personal events) and an absent package as not in your catalog; Orbit's inspector shows the declared assistants; the Games chip reads 'Looks like a game'; a roster_scope_denied refusal is told apart from the admin requirement, and the roster read keeps the refusal code.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
@@ -18,7 +19,7 @@ const require = createRequire(import.meta.url);
 const LIVE = require('../../src/experience/live-data.js') as Record<string, any>;
 
 type Fixture = Awaited<ReturnType<typeof startExperienceBrowserFixture>>;
-type GapState = Fixture['state'] & { fullSwarm: { manifests: Record<string, Record<string, unknown>>; overviewEvents: Array<{ title: string; when: string }> } };
+type GapState = Fixture['state'] & { fullSwarm: { manifests: Record<string, Record<string, unknown>>; overviewEvents: Array<{ title: string; when: string }>; directoryError: string } };
 let browser: Browser, context: BrowserContext, page: Page, fixture: Fixture;
 const errors: string[] = [];
 const gaps = () => (fixture.state as GapState).fullSwarm;
@@ -53,26 +54,28 @@ describe('full-swarm gap reads in the adapter', () => {
 
   it('reads the roster as accounts, never presence, and keeps a refusal honest', () => {
     const ok = LIVE.directoryPeople({ ok: true, status: 200, body: { users: [{ sub: 'me', label: 'Synthetic Me (google; active)', source: 'verified-sign-in', signIn: 'active' }, { sub: 'x', label: 'Synthetic Local (local; active)', source: 'local-account', signIn: 'local-account' }, { sub: 'y', label: 'Synthetic New (registered; awaiting verified sign-in)', source: 'access-assignment', signIn: 'awaiting-sign-in' }, { label: 'no sub' }] } }, 'me');
-    expect(ok).toEqual({ ok: true, status: 200, people: [
+    expect(ok).toEqual({ ok: true, status: 200, error: '', people: [
       { sub: 'me', name: 'Synthetic Me', detail: 'Verified sign-in · account active', self: true },
       { sub: 'x', name: 'Synthetic Local', detail: 'Local account', self: false },
       { sub: 'y', name: 'Synthetic New', detail: 'Access assignment · awaiting first sign-in', self: false },
     ] });
-    expect(LIVE.directoryPeople({ ok: false, status: 403, body: { error: 'roster_admin_required' } }, 'me')).toEqual({ ok: false, status: 403, people: [] });
+    expect(LIVE.directoryPeople({ ok: false, status: 403, body: { error: 'roster_administrator_required' } }, 'me')).toEqual({ ok: false, status: 403, error: 'roster_administrator_required', people: [] });
+    expect(LIVE.directoryPeople({ ok: false, status: 403, body: { error: 'roster_scope_denied' } }, 'me').error).toBe('roster_scope_denied');
+    expect(LIVE.directoryPeople({ ok: false, status: 0, body: null }, 'me')).toEqual({ ok: false, status: 0, error: '', people: [] });
   });
 
   it('reads one app record, the roster and two months of classwork over the existing routes', async () => {
     const now = new Date(2026, 11, 20);
     const { fetch, calls } = fakeFetch({
       '/api/swarm/apps/': { status: 200, body: { app: { manifest: { bots: [] } } } },
-      '/api/user-directory': { status: 403, body: { error: 'roster_admin_required' } },
+      '/api/user-directory': { status: 403, body: { error: 'roster_administrator_required' } },
       '/api/education/calendar?month=2026-12': { status: 200, body: { events: [{ event_id: 'e2', title: 'Synthetic later', event_date: '2026-12-24', event_time: null }, { event_id: 'e1', title: 'Synthetic first', event_date: '2026-12-21', event_time: '09:30:00', class_name: 'Synthetic Class' }] } },
       '/api/education/calendar?month=2027-01': { status: 200, body: { events: [{ event_id: 'e1', title: 'Synthetic first', event_date: '2026-12-21' }, { event_id: 'e3', title: 'Synthetic bad', event_date: 'not a date' }] } },
     });
     const client = LIVE.createClient({ fetch, storage: memoryStorage() });
     expect((await client.packages.appDetail('synthetic app')).ok).toBe(true);
     expect(calls).toContain('/api/swarm/apps/synthetic%20app');
-    expect(await client.packages.people('me')).toEqual({ ok: false, status: 403, people: [] });
+    expect(await client.packages.people('me')).toEqual({ ok: false, status: 403, error: 'roster_administrator_required', people: [] });
     const agenda = await client.packages.education.agenda(now);
     expect(calls).toEqual(expect.arrayContaining(['/api/education/calendar?month=2026-12', '/api/education/calendar?month=2027-01']));
     expect(agenda.ok).toBe(true);
@@ -233,7 +236,7 @@ describe('declared assistants and relationships from the package record', () => 
     expect(await page.locator('#full-dialog [data-detail-part="relations"] .dependency-row').count()).toBe(0);
   });
 
-  it('Studio’s selected workspace and Orbit’s inspector show the same declared facts', async () => {
+  it('Studio’s selected workspace and Orbit’s inspector show the same declared facts, assistants and relationships', async () => {
     await open('/studio', '.full-studio');
     await openPanel('ledger');
     await page.locator('#full-dialog').getByRole('button', { name: 'Use as my context' }).click();
@@ -245,6 +248,10 @@ describe('declared assistants and relationships from the package record', () => 
     await page.locator('.orbit-app[data-app="ledger"]').click();
     await page.waitForFunction(() => (document.querySelector('.orbit-inspector [data-detail-part="relations"]')?.textContent || '').includes('Required'));
     expect(await page.locator('.orbit-inspector').innerText()).toMatch(/Synthetic finance\s*Required/);
+    await page.waitForFunction(() => (document.querySelector('.orbit-inspector [data-detail-part="assistants"]')?.textContent || '').includes('Synthetic Bot'));
+    const inspectorAssistants = await page.locator('.orbit-inspector [data-detail-part="assistants"]').innerText();
+    expect(inspectorAssistants).toMatch(/Synthetic Bot\s*Concierge · assistant · working now/);
+    expect(inspectorAssistants).toMatch(/Synthetic reviewer\s*reviewer · declared in the package/);
     expect(errors).toEqual([]);
   });
 });
@@ -256,6 +263,8 @@ describe('games chip, Commons people and the Jarvis agenda', () => {
     await page.keyboard.press('Control+k');
     const chip = page.locator('[data-action="filter"][data-suite="games"]');
     expect(await chip.getAttribute('title')).toBe('Creative apps that look like games');
+    // The visible label carries the hedge, not only the title: no manifest field marks a game.
+    expect(await chip.innerText()).toMatch(/^Looks like a game\s*2$/);
     expect(await chip.locator('span').innerText()).toBe('2');
     await chip.click();
     expect((await page.locator('.catalog-card').evaluateAll(cards => cards.map(c => c.getAttribute('data-catalog-app')))).sort()).toEqual(['arcade-games', 'dungeon-crawl']);
@@ -299,6 +308,15 @@ describe('games chip, Commons people and the Jarvis agenda', () => {
     fixture.state.directory.status = 503;
     await page.reload(); await page.waitForFunction(() => (document.querySelector('.presence-panel')?.textContent || '').includes('HTTP 503'));
     expect(await page.locator('.presence-panel').innerText()).toContain('The swarm roster could not be read (HTTP 503), so only your own identity is shown.');
+    // roster_scope_denied: this session's permission scope excludes the read, which is not the same as lacking the admin role.
+    gaps().directoryError = 'roster_scope_denied';
+    await page.reload(); await page.waitForFunction(() => (document.querySelector('.presence-panel')?.textContent || '').includes('not permitted'));
+    const scoped = await page.locator('.presence-panel').innerText();
+    expect(scoped).toContain('This session is not permitted to read the roster.'); expect(scoped).not.toContain('swarm admin');
+    expect(scoped).toContain('synthetic · you'); expect(scoped).not.toContain('Other Person');
+    gaps().directoryError = 'roster_administrator_required';
+    await page.reload(); await page.waitForFunction(() => (document.querySelector('.presence-panel')?.textContent || '').includes('swarm admin'));
+    expect(await page.locator('.presence-panel').innerText()).toContain('Only a swarm admin can list everyone on this swarm, so only your own identity is shown.');
   });
 
   it('layouts that do not opt in keep their People panel and never read the directory', async () => {
@@ -315,8 +333,32 @@ describe('games chip, Commons people and the Jarvis agenda', () => {
     expect(agenda.toLowerCase()).toContain('your agenda'); expect(agenda).toMatch(/Today\s*Science circle/);
     expect(agenda).toContain('Little Monsters · Synthetic Science');
     expect(agenda).toContain('No application contributes events to the swarm calendar feed yet.');
-    expect(agenda).toContain('Little Monsters classwork calendar, this month and next.');
+    expect(agenda).toContain('Little Monsters calendar (classes and personal events), this month and next.');
     expect(callsTo('GET /api/education/calendar')).toBe(2);
+    // The read-only probe answers first; the calendar (whose route can provision a learner) is read only after its 200.
+    const calls = fixture.state.calls, probeAt = calls.indexOf('GET /api/little-monsters/home-summary');
+    expect(probeAt).toBeGreaterThanOrEqual(0);
+    expect(probeAt).toBeLessThan(calls.indexOf('GET /api/education/calendar'));
+    expect(errors).toEqual([]);
+  });
+
+  it('a Little Monsters probe that refuses (no school profile yet) or fails means no /api/education request at all', async () => {
+    const educationCalls = () => fixture.state.calls.filter(c => c.includes('/api/education/'));
+    fixture.state.status['lm-home-summary'] = 403;
+    await open('/jarvis', '.full-jarvis');
+    await page.waitForFunction(() => (document.querySelector('[data-agenda-slot]')?.textContent || '').includes('Open Little Monsters once'));
+    await page.waitForLoadState('networkidle');
+    const agenda = await page.locator('.live-agenda').innerText();
+    expect(agenda).toContain('Open Little Monsters once to see its calendar here.');
+    expect(agenda).not.toContain('Science circle');
+    expect(callsTo('GET /api/little-monsters/home-summary')).toBeGreaterThanOrEqual(1);
+    expect(educationCalls()).toEqual([]);
+    fixture.state.status['lm-home-summary'] = 500;
+    fixture.state.calls.length = 0;
+    await page.reload(); await page.waitForFunction(() => (document.querySelector('[data-agenda-slot]')?.textContent || '').includes('could not be checked'));
+    await page.waitForLoadState('networkidle');
+    expect(await page.locator('.live-agenda').innerText()).toContain('Little Monsters could not be checked (HTTP 500), so its calendar is not read.');
+    expect(educationCalls()).toEqual([]);
     expect(errors).toEqual([]);
   });
 
@@ -337,13 +379,14 @@ describe('games chip, Commons people and the Jarvis agenda', () => {
     await open('/jarvis', '.full-jarvis');
     await page.waitForFunction(() => (document.querySelector('[data-agenda-slot]')?.textContent || '').includes('refused'));
     let agenda = await page.locator('.live-agenda').innerText();
-    expect(agenda).toContain('Little Monsters calendar refused (HTTP 403).'); expect(agenda).not.toContain('Science circle');
+    expect(agenda).toContain('Little Monsters calendar (classes and personal events) refused (HTTP 403).'); expect(agenda).not.toContain('Science circle');
     expect(agenda).toContain('Nothing on your agenda from the sources below.');
     fixture.state.apps = fixture.state.apps.filter(a => a.summary.name !== 'little-monsters');
     fixture.state.calls.length = 0;
-    await page.reload(); await page.waitForFunction(() => (document.querySelector('[data-agenda-slot]')?.textContent || '').includes('not installed'));
+    await page.reload(); await page.waitForFunction(() => (document.querySelector('[data-agenda-slot]')?.textContent || '').includes('not in your catalog'));
     agenda = await page.locator('.live-agenda').innerText();
-    expect(agenda).toContain('Little Monsters is not installed, so no classwork calendar is read.');
+    expect(agenda).toContain('Little Monsters is not in your catalog, so its calendar is not read.');
     expect(callsTo('GET /api/education/calendar')).toBe(0);
+    expect(callsTo('GET /api/little-monsters/home-summary')).toBe(0);
   });
 });

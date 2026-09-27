@@ -7,9 +7,10 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | The synthetic ribbon profile answers per application (Little Monsters role-filtered; every other host a home and a more page) so the multi-host presets are exercised against 19 installed applications
  * 3 | maintainer@emeraldcoastsystemsgroup.com | A synthetic application page under the shared audience-view kit (`/fixture/app-view`, its data with a controllable status, and a host page that frames it) so the kit is proven in Chromium: full page by default, audience views on request, hidden full UI, text-only rendering, failure with retry, and the escape that navigates the top window
  * 4 | maintainer@emeraldcoastsystemsgroup.com | fullSwarmGapRoutes: the viewer-scoped app record (GET /api/swarm/apps/:name with manifest bots, chatBot and dependencies, 404 when not visible or when `detail:<name>` says so), a controllable Little Monsters calendar status (`edu-calendar`) and overview calendar events. It is registered ahead of the swarm and package routes because packageRoutes ends in the `/api` 404 catch-all; every path it does not answer falls through untouched.
- * 5 | maintainer@emeraldcoastsystemsgroup.com | Central-assistant gap routes (nexusGapRoutes, controlled through `state.nexusGap`): a scripted refusal of POST /api/jarvis/ask (the 503 ai_disabled body), held and per-job /ask/result outcomes for the stale-completion cases, POST /api/jarvis/tasks/:id/delivered, the owner-checked PUT /api/tickets/:ticketId/cancel with refusals, POST /api/voice/transcribe recording what the multipart upload carried, and the owner-checked /api/jarvis/visuals image. The lane router runs ahead of the shared `/api` catch-all and falls through to the default synthetic routes unless the lane state asks for it
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Central-assistant gap routes (nexusGapRoutes, controlled through `state.nexusGap`): a scripted refusal of POST /api/jarvis/ask (the 503 ai_disabled body), held and per-job /ask/result outcomes for the stale-completion cases, POST /api/jarvis/tasks/:id/delivered, the owner-checked PUT /api/tickets/:ticketId/cancel with refusals, POST /api/voice/transcribe recording what the multipart upload carried, and the owner-checked /api/jarvis/visuals image. The lane router runs ahead of the shared `/api` catch-all; its /ask and /ask/result handlers fall through to the default synthetic routes unless the lane state asks for them, and its other routes always answer
  * 6 | maintainer@emeraldcoastsystemsgroup.com | One request log registered first, then every lane's override routes, then the default synthetic routes with their `/api` 404 catch-all last: the lanes had each worked around the catch-all living inside packageRoutes (a router splice, lane-local logging); the order now makes both unnecessary
- * 7 | maintainer@emeraldcoastsystemsgroup.com | Homebase gap routes (`homebaseGapRoutes`): Little Monsters teacher analytics (pg-shaped counts, server-side summary), classwork through assignments-with-events (teacher-of-class check, calendar event on a due date), a ticket read and its status transition (only approval_required to approved), and the caller's saved content drafts, each with a controllable status. They are seated ahead of packageRoutes' `/api` catch-all, which is registered first and would otherwise answer them with 404.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Homebase gap routes (`homebaseGapRoutes`): Little Monsters teacher analytics (pg-shaped counts, server-side summary), classwork through assignments-with-events (teacher-of-class check, calendar event on a due date), a ticket read and its status transition (only approval_required to approved), and the caller's saved content drafts, each with a controllable status. They register with the other lane routes ahead of the default routes, whose `/api` 404 catch-all stays last (as row 6 says).
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Integration review: fullSwarmGapRoutes seats Little Monsters' summary probe at its real path (`/api/little-monsters/home-summary`, status `lm-home-summary`, 403 with the package's setup sentence) so the Jarvis agenda's probe gate is exercised, and can answer the user directory with a refusal code (`fullSwarm.directoryError`); nexusGapRoutes no longer serves POST /api/jarvis/tasks/:id/delivered (the shell never sends it; the request log proves it); the synthetic ticket status transition writes `metadata.lastStatusTransition` the way the ticket service mirrors every transition, keeping the row-level reason/nextAction.
  */
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -200,18 +201,32 @@ export async function startExperienceBrowserFixture(options: { denyAuth?: boolea
 /**
  * @description Synthetic reads for the full-swarm gap closure: the viewer-scoped app record per application
  * (manifest bots, chatBot, dependencies; 404 when absent or when `status['detail:<name>']` says so), a
- * controllable Little Monsters calendar status (`status['edu-calendar']`) and overview calendar events.
- * Registered ahead of the default routes (see startExperienceBrowserFixture); any request it does not answer
- * falls through with next(). The shared request log records every call.
+ * controllable Little Monsters calendar status (`status['edu-calendar']`), Little Monsters' summary probe at its real
+ * path with a controllable status (`status['lm-home-summary']`), a user-directory refusal code (`fullSwarm.directoryError`)
+ * and overview calendar events. Registered ahead of the default routes (see startExperienceBrowserFixture); any request
+ * it does not answer falls through with next(). The shared request log records every call.
  * @param app The fixture Express application.
- * @param state The synthetic swarm state; gains `fullSwarm.manifests` (overrides by app name) and `fullSwarm.overviewEvents`.
+ * @param state The synthetic swarm state; gains `fullSwarm.manifests` (overrides by app name), `fullSwarm.overviewEvents` and `fullSwarm.directoryError`.
  * @returns Nothing; routes are registered on `app`.
  */
 function fullSwarmGapRoutes(app: express.Application, state: ExperienceState) {
   const gaps = Object.assign(state, { fullSwarm: {
     manifests: { ledger: { bots: [{ agentId: 'a1', name: 'Synthetic Bot', role: 'assistant' }, { agentId: 'synthetic-reviewer', name: 'Synthetic reviewer', role: 'reviewer' }], chatBot: 'Synthetic Bot', uses: ['app-dependencies'], dependencies: { required: { apps: ['finance'] }, optional: { apps: ['synthetic-absent'] } } } } as Record<string, Record<string, unknown>>,
     overviewEvents: [] as Array<{ title: string; when: string }>,
+    directoryError: '',
   } }).fullSwarm;
+  // Little Monsters declares one summary probe, its read-only home-summary route; the synthetic plan points at the same path.
+  const lm = state.apps.find(a => a.summary.name === 'little-monsters');
+  if (lm?.plan) lm.plan.summary = [{ app: 'little-monsters', path: '/api/little-monsters/home-summary', tilesPointer: '/tiles', itemsPointer: '/items', surfaces: ['little-monsters-home'] }];
+  app.get('/api/little-monsters/home-summary', (_req, res) => {
+    const status = statusOr(state, 'lm-home-summary');
+    if (status !== 200) { res.status(status).json({ error: status === 403 ? 'Open Little Monsters to complete school setup' : 'Synthetic summary unavailable' }); return; }
+    res.json({ tiles: [{ id: 'classes', label: 'Accessible classes', value: '1', tone: 'neutral' }], items: [{ text: 'Update from little-monsters', detail: 'A synthetic owner-provided detail.' }], asOf: iso(0) });
+  });
+  app.get('/api/user-directory', (_req, res, next) => {
+    if (!gaps.directoryError) { next(); return; }
+    res.status(403).json({ error: gaps.directoryError });
+  });
   app.get('/api/swarm/apps/:name', (req, res, next) => {
     const name = String(req.params.name);
     if (name === 'home-plan') { next(); return; }
@@ -234,9 +249,10 @@ function fullSwarmGapRoutes(app: express.Application, state: ExperienceState) {
 
 /**
  * @description Central-assistant gap routes (lane "nexus"), each synthetic and driven through `state.nexusGap`: a scripted
- * /ask refusal, held and per-job /ask/result outcomes, delivered marking, ticket cancel with refusals, the voice transcription
- * upload and the owner-checked visual. Handlers fall through to the default synthetic routes unless the lane state asks for
- * them. It is registered ahead of the default routes (see startExperienceBrowserFixture), so no reordering is needed.
+ * /ask refusal, held and per-job /ask/result outcomes, ticket cancel with refusals, the voice transcription upload and the
+ * owner-checked visual. The /ask and /ask/result handlers fall through to the default synthetic routes unless the lane state
+ * asks for them; the other routes always answer. It is registered ahead of the default routes (see
+ * startExperienceBrowserFixture), so no reordering is needed.
  * @param app The fixture application.
  * @param state The per-case synthetic state; `state.nexusGap` is created here.
  * @returns Nothing; the routes are registered on `app`.
@@ -245,7 +261,7 @@ function nexusGapRoutes(app: express.Application, state: ExperienceState) {
   const lane = {
     askRefusal: null as null | { status: number; body: Record<string, unknown> }, refusedAsks: 0,
     hold: new Set<string>(), results: {} as Record<string, Record<string, unknown>>, polls: {} as Record<string, number>,
-    delivered: [] as string[], cancels: [] as string[], cancelStatus: {} as Record<string, number>, visualStatus: 200,
+    cancels: [] as string[], cancelStatus: {} as Record<string, number>, visualStatus: 200,
     transcribe: { status: 200, body: { success: true, data: { providerId: 'synthetic-stt', text: 'Synthetic spoken request' } } as unknown },
     uploads: [] as Array<{ contentType: string; audioField: boolean; partType: string; bytes: number }>,
   };
@@ -262,11 +278,6 @@ function nexusGapRoutes(app: express.Application, state: ExperienceState) {
     lane.polls[id] = (lane.polls[id] || 0) + 1;
     if (lane.hold.has(id)) { res.json({ status: 'pending', label: 'synthetic' }); return; }
     res.json({ label: 'synthetic', ...lane.results[id] });
-  });
-  router.post('/api/jarvis/tasks/:id/delivered', (req, res) => {
-    lane.delivered.push(req.params.id);
-    const row = rows().find(t => t.id === req.params.id); if (row) row.delivered = true;
-    res.json({ ok: Boolean(row) });
   });
   router.put('/api/tickets/:ticketId/cancel', (req, res) => {
     const id = req.params.ticketId, status = lane.cancelStatus[id] ?? 200; lane.cancels.push(id);
@@ -332,6 +343,10 @@ function homebaseGapRoutes(app: express.Application, state: ExperienceState) {
     if (refused(res, 'homebase:ticket-status', { 400: 'Invalid state transition', 404: 'Ticket not found' })) return;
     if (!ticket) { res.status(404).json({ error: 'Ticket not found' }); return; }
     if (!(ticket.status === 'approval_required' && next === 'approved')) { res.status(400).json({ error: `Invalid state transition: ${ticket.status} -> ${next}` }); return; }
+    // The ticket service mirrors every transition as metadata.lastStatusTransition ({ status, ...its metadata }) and keeps the
+    // row-level reason/nextAction from earlier transitions; this route's body carries no metadata, so the mirror is the status alone.
+    const row = ticket as typeof ticket & { metadata?: Record<string, unknown> };
+    row.metadata = { ...(row.metadata || {}), lastStatusTransition: { status: next } };
     ticket.status = next; ticket.updatedAt = iso(0);
     res.json({ status: 'updated', newStatus: next });
   });

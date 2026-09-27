@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove the experience adapter's joins and Jarvis ask flow headlessly: catalog authority order, suite grouping, work merging, summary caps, identity derivation, session roll on a refused thread, poll-to-terminal states and honest source reporting when a read fails.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | `related` is a group's installed required members from the plan, no longer the plan's integrationSources (a plain app relates to nothing through them)
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Integration review: localHref keeps a same-origin path and refuses every link the browser would resolve off the page origin (tab-split, backslash, protocol-relative, absolute, non-string); the poll-limit ask result carries code 'poll_limit'.
  */
 import { describe, expect, it } from 'vitest';
 import { createRequire } from 'node:module';
@@ -87,6 +88,18 @@ describe('experience adapter: pure joins', () => {
     expect(LIVE.atPointer({ a: { b: null } }, '/a/b')).toEqual({ found: true, value: null });
     expect(LIVE.atPointer({ a: {} }, '/a/b').found).toBe(false);
     expect(LIVE.atPointer({}, 'tiles').found).toBe(false);
+  });
+
+  it('keeps only links that stay on the page origin, resolved the way the browser resolves an href', () => {
+    const origin = 'https://oshal.test';
+    expect(LIVE.localHref('/cockpit/?app=ledger#x', origin)).toBe('/cockpit/?app=ledger#x');
+    expect(LIVE.localHref('/api/jarvis/files/synthetic', origin)).toBe('/api/jarvis/files/synthetic');
+    // The browser strips tab/CR/LF and reads a backslash as a slash before resolving, so each of these lands on another host.
+    const hostile: unknown[] = ['/\t/host/x', '/\\host', '//host/x', 'https://x', '/\n/host/y', '/\r//host/z', ' /cockpit/', 'cockpit/', '', null, undefined, 42, { href: '/x' }];
+    for (const u of hostile) expect(LIVE.localHref(u, origin), JSON.stringify(u)).toBe('');
+    // Without a page (node), the check still runs against a fixed placeholder origin.
+    expect(LIVE.localHref('/cockpit/?app=a')).toBe('/cockpit/?app=a');
+    expect(LIVE.localHref('/\\host')).toBe('');
   });
 
   it('formats relative time from the caller clock', () => {
@@ -178,7 +191,7 @@ describe('experience adapter: client over an injected fetch', () => {
     const failed = fakeFetch({ 'POST /api/jarvis/ask': { status: 202, body: { jobId: 'j' } }, 'GET /api/jarvis/ask/result?jobId=j': okJson({ status: 'error', error: 'tool blew up', code: 'X' }) });
     expect(await LIVE.createClient({ fetch: failed.fetch, storage: memoryStorage() }).ask('x', { sleep: async () => {} })).toMatchObject({ status: 'error', error: 'tool blew up', code: 'X' });
     const slow = fakeFetch({ 'POST /api/jarvis/ask': { status: 202, body: { jobId: 'j' } }, 'GET /api/jarvis/ask/result?jobId=j': okJson({ status: 'pending' }) });
-    expect(await LIVE.createClient({ fetch: slow.fetch, storage: memoryStorage() }).ask('x', { sleep: async () => {}, maxPolls: 2 })).toMatchObject({ status: 'error', error: expect.stringContaining('unusually long') });
+    expect(await LIVE.createClient({ fetch: slow.fetch, storage: memoryStorage() }).ask('x', { sleep: async () => {}, maxPolls: 2 })).toMatchObject({ status: 'error', code: 'poll_limit', error: expect.stringContaining('unusually long') });
     expect(await LIVE.createClient({ fetch: slow.fetch, storage: memoryStorage() }).ask('   ')).toMatchObject({ status: 'error' });
   });
 

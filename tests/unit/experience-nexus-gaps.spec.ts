@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove the central assistant's gap closure over existing contracts. Kit level (injected fetch): a refused /ask carries the route's machine code, a done payload passes only well-formed `dispatched` items and the tool proposal through, an abort ends the wait with no further polls and drops a completion that lands after it, transcription envelopes fold into text / unconfigured / empty / failed from a multipart `audio` upload, and the delivered and ticket-cancel helpers hit their routes. Browser level (headless Chromium through the real static routes over the synthetic fixture): typed result cards (owner-checked visual by kind, '/'-only handoffs, provider fallback, approval card pointing at the Jarvis page), untrusted and refused visuals, partial background work tracked to settlement with delivered-once marking, files and cancel plus refusal, setup-needed and failed states with readback offered on each, the stale-completion guard across Stop / New / Home, and push-to-talk dictation that fills the composer without sending, labels not-set-up / empty / failed / denied honestly and never drives the core.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | A protocol-relative hand-off target (//host/x) is never linked, the same as an absolute one
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Integration review: hostile hand-offs the browser would resolve off this origin ('/<TAB>/host', '/\host') are never linked and every anchor resolves same-origin; the client has no delivered marking and the page sends no POST .../delivered while tracking background work; reaching the poll limit (maxPolls/pollMs injected into LIVE.ask) is "Still running", never FAILED, and counts checks without an outcome; a request stopped before the swarm answered the send never reads "Not accepted".
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
@@ -85,19 +86,27 @@ describe('central-assistant kit helpers over an injected fetch', () => {
     expect(await offline.transcribe(blob)).toMatchObject({ outcome: 'failed', status: 0 });
   });
 
-  it('marks a task delivered and cancels a hand-off ticket through their own routes, returning refusals with their status', async () => {
-    const kit = client({ 'POST /api/jarvis/tasks/w%201/delivered': { status: 200, body: { ok: true } }, 'PUT /api/tickets/t-1/cancel': { status: 200, body: { success: true, status: 'cancelled', ticketId: 't-1' } }, 'PUT /api/tickets/t-2/cancel': { status: 404, body: { error: 'Ticket not found' } } });
-    expect(await kit.api.packages.jarvis.markDelivered('w 1')).toMatchObject({ ok: true, body: { ok: true } });
+  it('cancels a hand-off ticket through its own route, returns the refusal with its status, and offers no delivered marking', async () => {
+    const kit = client({ 'PUT /api/tickets/t-1/cancel': { status: 200, body: { success: true, status: 'cancelled', ticketId: 't-1' } }, 'PUT /api/tickets/t-2/cancel': { status: 404, body: { error: 'Ticket not found' } } });
+    // The Jarvis page is the one surface that announces and marks results; the kit has no way to send POST .../delivered.
+    expect(kit.api.packages.jarvis.markDelivered).toBeUndefined();
     expect(await kit.api.packages.jarvis.cancelWork('t-1')).toMatchObject({ ok: true, body: { status: 'cancelled' } });
     expect(await kit.api.packages.jarvis.cancelWork('t-2')).toMatchObject({ ok: false, status: 404 });
-    expect(kit.calls.map(c => `${c.method} ${c.url}`)).toEqual(['POST /api/jarvis/tasks/w%201/delivered', 'PUT /api/tickets/t-1/cancel', 'PUT /api/tickets/t-2/cancel']);
+    expect(kit.calls.map(c => `${c.method} ${c.url}`)).toEqual(['PUT /api/tickets/t-1/cancel', 'PUT /api/tickets/t-2/cancel']);
+    expect(kit.calls.some(c => c.url.endsWith('/delivered'))).toBe(false);
+  });
+
+  it('reports the poll limit as its own code, not a failure the page must name as one', async () => {
+    const slow = client({ 'POST /api/jarvis/ask': { status: 202, body: { jobId: 'p' } }, 'GET /api/jarvis/ask/result?jobId=p': { status: 200, body: { status: 'pending' } } });
+    expect(await slow.api.ask('x', { maxPolls: 2, sleep: async () => {} })).toMatchObject({ status: 'error', code: 'poll_limit', jobId: 'p', error: expect.stringContaining('may still finish') });
+    expect(slow.calls.filter(c => c.url.startsWith('/api/jarvis/ask/result'))).toHaveLength(2);
   });
 });
 
 interface NexusLane {
   askRefusal: null | { status: number; body: Record<string, unknown> }; refusedAsks: number;
   hold: Set<string>; results: Record<string, Record<string, unknown>>; polls: Record<string, number>;
-  delivered: string[]; cancels: string[]; cancelStatus: Record<string, number>; visualStatus: number;
+  cancels: string[]; cancelStatus: Record<string, number>; visualStatus: number;
   transcribe: { status: number; body: unknown }; uploads: Array<{ contentType: string; audioField: boolean; partType: string; bytes: number }>;
 }
 let browser: Browser, context: BrowserContext, page: Page;
@@ -120,6 +129,10 @@ async function open() {
 async function ask(text: string) { await page.fill('#intent-input', text); await page.press('#intent-input', 'Enter'); }
 const waitMode = (mode: string, timeout = 20000) => page.waitForFunction(m => document.querySelector('.mode-indicator')?.textContent === m, mode, { timeout });
 const text = (selector: string) => page.locator(selector).first().innerText();
+/** @description Every anchor whose href the browser resolves off the page origin (its own resolution: tab stripping, backslash as slash). */
+const offOrigin = () => page.evaluate(() => Array.from(document.querySelectorAll('a')).filter(a => new URL(a.href, location.href).origin !== location.origin).map(a => a.getAttribute('href')));
+/** @description POST .../delivered requests the page sent, from the fixture's request log. */
+const deliveredPosts = () => fixture.state.calls.filter(c => c.startsWith('POST ') && c.endsWith('/delivered'));
 
 beforeAll(async () => { browser = await chromium.launch({ headless: true }); });
 afterAll(async () => { await browser?.close(); });
@@ -152,7 +165,9 @@ afterEach(async () => { await context?.close(); await fixture?.close(); });
 describe('central assistant gap closure in Chromium over the real routes', () => {
   it('renders the typed result fields: the owner-checked visual by kind, "/"-only handoffs, the provider that answered and an approval card pointing at the Jarvis page', async () => {
     setResult({ status: 'done', answer: 'Synthetic typed answer.', files: [], taskId: 'task-9', dispatched: [], visual: VISUAL,
-      handoffs: [{ name: 'Synthetic ledger', deepLink: '/cockpit/?app=ledger' }, { name: 'Synthetic outside', deepLink: 'https://outside.example/x' }, { name: 'Synthetic relative', deepLink: '//outside.example/y' }],
+      handoffs: [{ name: 'Synthetic ledger', deepLink: '/cockpit/?app=ledger' }, { name: 'Synthetic outside', deepLink: 'https://outside.example/x' }, { name: 'Synthetic relative', deepLink: '//outside.example/y' },
+        // The browser strips a tab and reads a backslash as a slash, so both of these resolve to outside.example.
+        { name: 'Synthetic tab split', deepLink: '/\t/outside.example/z' }, { name: 'Synthetic backslash', deepLink: '/\\outside.example/w' }],
       brainFallback: { providerUsed: 'Synthetic Provider', rung: 2, chainSource: 'fleet-default', failedEndpoint: { host: 'synthetic.host', model: 'synthetic-model' }, attempts: 2, failure: 'rate-limit' },
       packageToolProposal: { id: 'p1', app: 'ledger', toolName: 'post_entry', label: 'Synthetic post entry', mode: 'ask', input: { amount: 1 }, expiresAt: new Date(Date.now() + 600000).toISOString() } });
     await open(); await ask('Show me the typed answer');
@@ -166,18 +181,23 @@ describe('central assistant gap closure in Chromium over the real routes', () =>
     expect(await page.locator('a[href^="https://outside"]').count()).toBe(0);
     // A protocol-relative target (//host/x) leaves the swarm just like an absolute one: never linked.
     expect(await page.locator('a[href^="//"]').count()).toBe(0);
+    expect(await page.locator('a[href*="outside.example"]').count()).toBe(0);
+    expect(await offOrigin()).toEqual([]);
     expect(await text('.provider-note')).toContain('Answered by Synthetic Provider');
     const card = page.locator('[data-part="proposal"]');
     expect(await card.innerText()).toMatch(/APPROVAL NEEDED[\s\S]*Synthetic post entry[\s\S]*Synthetic ledger · tool post_entry/);
     expect(await card.innerText()).toContain('This page cannot approve or run application tools.');
     expect(await card.locator('a').getAttribute('href')).toBe('/api/jarvis/');
     const ledger = await text('.action-ledger');
-    expect(ledger).toMatch(/request progress/i); expect(ledger).toContain('3 application handoffs'); expect(ledger).toContain('Answered by Synthetic Provider');
+    expect(ledger).toMatch(/request progress/i); expect(ledger).toContain('5 application handoffs'); expect(ledger).toContain('Answered by Synthetic Provider');
     expect(ledger).toContain('Answer received, with a visual (Agenda).');
     expect(ledger).not.toMatch(/tool activity/i);
     await page.getByRole('tab', { name: 'Applications' }).click();
     expect(await page.locator('.workspace-body a[href^="https://"]').count()).toBe(0);
     expect(await text('.workspace-body')).toContain('Synthetic outside');
+    expect(await text('.workspace-body')).toContain('Synthetic tab split'); expect(await text('.workspace-body')).toContain('Synthetic backslash');
+    expect(await page.locator('.workspace-body a[href*="outside.example"]').count()).toBe(0);
+    expect(await offOrigin()).toEqual([]);
     expect(errors).toEqual([]);
   });
 
@@ -196,7 +216,7 @@ describe('central assistant gap closure in Chromium over the real routes', () =>
     expect(await text('.workspace-body')).toContain('Synthetic answer with a refused image.');
   });
 
-  it('tracks handed-off work on the task list until it settles, offers its files, marks each delivered once and cancels or reports the refusal', async () => {
+  it('tracks handed-off work on the task list until it settles, offers its files, cancels or reports the refusal, and never marks anything delivered', async () => {
     const now = new Date().toISOString();
     taskRows().push({ id: 'work-a', title: 'Synthetic build A', status: 'queued', kind: 'complex', ticketId: 'ticket-a', createdAt: now },
       { id: 'work-b', title: 'Synthetic build B', status: 'running', kind: 'complex', ticketId: 'ticket-b', createdAt: now });
@@ -219,10 +239,10 @@ describe('central assistant gap closure in Chromium over the real routes', () =>
     expect(await page.locator('[data-work="work-b"] a[href="/api/jarvis/files/build-b"]').count()).toBe(1);
     expect(await text('[data-work="work-a"]')).toContain('This one was cancelled before it finished.');
     expect(await text('[data-work="work-a"]')).toContain('Did not finish');
-    await expect.poll(() => [...lane().delivered].sort()).toEqual(['work-a', 'work-b']);
-    await page.waitForFunction(() => document.querySelectorAll('.work-item').length === 2 && Array.from(document.querySelectorAll('.work-item')).every(n => n.textContent?.includes('Marked delivered')));
+    // Settled items stay unannounced here: the Jarvis page is the one surface that announces and marks results.
     await page.waitForTimeout(3500);
-    expect(lane().delivered).toHaveLength(2);
+    expect(deliveredPosts()).toEqual([]);
+    expect(await text('[data-part="work"]')).not.toMatch(/delivered/i);
     expect(await page.locator('[data-action="cancel-work"]').count()).toBe(0);
     expect(errors).toEqual([]);
   });
@@ -305,6 +325,48 @@ describe('central assistant gap closure in Chromium over the real routes', () =>
     const body = await page.evaluate(() => document.body.innerText);
     expect(body).toContain('Synthetic answer');
     expect(body).not.toMatch(/Synthetic stale answer [ABC]/);
+    expect(errors).toEqual([]);
+  });
+
+  it('reaching the poll limit is "Still running": the page stopped checking and the job may still finish, never FAILED', async () => {
+    // Inject maxPolls/pollMs into the page's LIVE.ask (the adapter's own config seam) so the limit arrives in three quick checks.
+    await page.addInitScript(() => {
+      let live: unknown;
+      Object.defineProperty(window, 'OSHAL_LIVE', { configurable: true, get: () => live, set: (api: Record<string, any>) => {
+        live = new Proxy(api, { get: (target, key) => key === 'ask' ? (message: string, config: Record<string, unknown>) => target.ask(message, { ...config, maxPolls: 3, pollMs: 10 }) : Reflect.get(target, key) });
+      } });
+    });
+    await open();
+    lane().hold.add('job-1');
+    await ask('a long job');
+    await waitMode('STILL RUNNING · STOPPED CHECKING');
+    expect(lane().polls['job-1']).toBe(3);
+    const body = await text('.loading-body');
+    expect(body).toContain('STILL RUNNING · THIS PAGE STOPPED CHECKING'); expect(body).toContain('The job may still finish'); expect(body).toContain('check Jarvis later');
+    expect(body).not.toMatch(/FAILED|did not work/i);
+    expect(await page.locator('.loading-body a[href="/api/jarvis/"]').count()).toBe(1);
+    const ledger = await text('.action-ledger');
+    expect(ledger).toContain('Checked 3 times without an outcome.'); expect(ledger).toContain('Still running');
+    expect(ledger).not.toMatch(/Request failed|while the job was still running/);
+    expect(await page.locator('.ledger-step[data-mark="failed"]').count()).toBe(0);
+    await page.locator('.rail [data-action="home"]').click();
+    await page.getByRole('button', { name: 'Back to the request still running' }).click();
+    await waitMode('STILL RUNNING · STOPPED CHECKING');
+    expect(errors).toEqual([]);
+  });
+
+  it('a request stopped before the swarm answered the send says so, never "Not accepted"', async () => {
+    // The send never reaches the swarm: the POST is held at the browser, so no job id ever comes back.
+    await page.route('**/api/jarvis/ask', () => { /* held until the page aborts it */ });
+    await open();
+    await ask('held at the send');
+    await waitMode('WORKING');
+    await page.locator('.mission-actions [data-action="stop"]').click();
+    await waitMode('STOPPED WAITING');
+    const ledger = await text('.action-ledger');
+    expect(ledger).toContain('This page stopped waiting before the swarm’s reply to the send arrived.');
+    expect(ledger).not.toContain('Not accepted');
+    expect(fixture.state.asks).toHaveLength(0);
     expect(errors).toEqual([]);
   });
 

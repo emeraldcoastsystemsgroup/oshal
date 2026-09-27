@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com | The hosted page is asked for its audience with `?audience=` (was `?view=`): store pages and the cockpit already use `view` for their own tabs, so the audience request must not collide with them
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Close the homebase gaps over existing routes: the teacher roster shows each learner's Little Monsters activity (level, streak, quiz average, cards reviewed) and a class summary from the teacher analytics read, labelled as activity, never completion; teachers post classwork from the shell to the package route that also writes the class calendar event; a ticket's project dialog reads its current state, reason and next action and offers "Approve" (approval_required to approved) only when a human approval is what it waits for, rendering the route's refusal; the personal workspace lists the caller's saved drafts and newest finished Jarvis task; the learner checklist opens My Day in place; "Configure home" is hidden for guests. The open dialog now survives a repaint with its record id.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | The ticket action reads 'Approve': the route moves Approval Required to Approved, and what follows depends on the ticket (dispatch, resume), so the label names only the transition
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Integration review: the ticket dialog shows Reason and Next action only when metadata.lastStatusTransition describes the ticket's current status, read from that transition itself; the row-level reason/nextAction fields are written only when a transition carried them, so they can describe an older state (an approved ticket kept its approval-gate reason). Otherwise the dialog shows State alone. "My drafts" names what it reads: the caller's saved Content Studio drafts.
  */
 (() => {
   'use strict';
@@ -342,7 +343,7 @@
     if (!classes.length) return ['Add classwork', '<p>You do not teach a class in Little Monsters yet, so there is no class to post classwork to.</p>'];
     return ['Add classwork', `<p>Posted to Little Monsters for the whole class. A due date also puts it on the class calendar. Little Monsters offers no way to edit or remove classwork once it is posted.</p><form id="classwork-form"><label class="field">Class<select id="classwork-class" required>${classes.map(c => `<option value="${esc(c.class_id)}">${esc(c.name)}</option>`).join('')}</select></label><label class="field">Title<input id="classwork-title" maxlength="500" required placeholder="What should the class do?"></label><label class="field">Type<select id="classwork-type">${CLASSWORK_TYPES.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select></label><label class="field">Due date (optional)<input id="classwork-due" type="date"></label><label class="field">Description (optional)<textarea id="classwork-description" maxlength="2000"></textarea></label><div class="dialog-actions"><button class="button primary" type="submit">Post classwork</button></div><p class="subtle" id="classwork-feedback" role="status"></p></form>`];
   }
-  function draftsDialog() { return ['My drafts', `<p>Your saved drafts and your newest finished Jarvis task, read for you alone. Nothing here is shared with the team.</p><div id="drafts-slot"><p class="subtle">Reading your drafts…</p></div><div class="dialog-actions">${link('Open Jarvis ↗', '/api/jarvis/', 'button primary')}</div>`]; }
+  function draftsDialog() { return ['My drafts', `<p>Your saved Content Studio drafts and your newest finished Jarvis task, read for you alone. Nothing here is shared with the team.</p><div id="drafts-slot"><p class="subtle">Reading your drafts…</p></div><div class="dialog-actions">${link('Open Jarvis ↗', '/api/jarvis/', 'button primary')}</div>`]; }
   function projectDialog(id) {
     const w = snapshot.work.find(x => x.id === id); if (!w) return ['', ''];
     const ticket = w.kind === 'ticket' ? `<div id="ticket-slot" data-ticket="${esc(w.ref)}"><p class="subtle">Reading this ticket’s current state…</p></div>` : '';
@@ -384,12 +385,25 @@
     const slot = document.getElementById('ticket-slot');
     if (slot && slot.dataset.ticket === w.ref) slot.innerHTML = ticketStateMarkup(w, r);
   }
-  /** @description State, reason and next action from the ticket's metadata mirror; "Approve" only for approval_required when a human approval is what it waits for. */
+  /**
+   * @description The reason and next action of the transition that put the ticket in its current status, from
+   * metadata.lastStatusTransition ({ status, ...metadata }, written on every transition). Only a mirror whose status is
+   * the current status describes the current state; the row-level reason/nextAction fields may describe an older one.
+   * @param {object} meta The ticket's metadata.
+   * @param {string} status The ticket's current status.
+   * @returns {{reason: string, next: string}} Both empty when the mirror is absent or describes another status.
+   */
+  function currentTransition(meta, status) {
+    const last = meta.lastStatusTransition && typeof meta.lastStatusTransition === 'object' ? meta.lastStatusTransition : null;
+    if (!last || String(last.status || '') !== status) return { reason: '', next: '' };
+    const text = k => typeof last[k] === 'string' ? last[k].trim() : '';
+    return { reason: text('reason') || text('message'), next: text('nextAction') };
+  }
+  /** @description State, and the reason and next action only when the transition mirror describes the current state; "Approve" only for approval_required when a human approval is what it waits for. */
   function ticketStateMarkup(w, r) {
     if (!r.ok || !r.body) return `<p class="subtle">This ticket’s current state could not be read (HTTP ${r.status}${esc(refusal(r))}).</p>`;
     const t = r.body, meta = t.metadata && typeof t.metadata === 'object' ? t.metadata : {}, status = String(t.status || '');
-    const text = k => typeof meta[k] === 'string' ? meta[k].trim() : '';
-    const reason = text('reason'), next = text('nextAction');
+    const { reason, next } = currentTransition(meta, status);
     const facts = [['State', LIVE.statusOf(status).label], ['Reason', reason && human(reason)], ['Next action', next && human(next)]].filter(f => f[1]);
     const rows = `<dl class="ticket-facts">${facts.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`;
     if (status !== 'approval_required') return rows;
@@ -421,8 +435,8 @@
   }
   function draftsMarkup(r) {
     const list = r.ok && r.body && Array.isArray(r.body.drafts) ? r.body.drafts : null;
-    const body = !list ? `<p class="subtle">Your saved drafts could not be read (HTTP ${r.status}).</p>` : list.length ? `<div class="list-items">${list.slice(0, 10).map(draftRow).join('')}</div>` : '<p class="subtle">You have no saved drafts yet. Drafts you save in Content Studio appear here.</p>';
-    return `<h3>Saved drafts</h3>${body}`;
+    const body = !list ? `<p class="subtle">Your saved Content Studio drafts could not be read (HTTP ${r.status}).</p>` : list.length ? `<div class="list-items">${list.slice(0, 10).map(draftRow).join('')}</div>` : '<p class="subtle">No Content Studio drafts saved yet.</p>';
+    return `<h3>Your saved Content Studio drafts</h3>${body}`;
   }
   function finishedTaskMarkup(r) {
     const tasks = r.ok && r.body && Array.isArray(r.body.tasks) ? r.body.tasks : null, at = t => { const d = LIVE.parseDate(t.finishedAt); return d ? d.getTime() : 0; };
