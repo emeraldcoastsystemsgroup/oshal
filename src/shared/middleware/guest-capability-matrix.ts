@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Pumpkin public demo: retain the safe Tier-B server posture while advertising its explicitly browser-local interactive controls. No guest mutation grant is added.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Guest voice I/O: added GUEST_ALLOWED_MUTATIONS (the symmetric mirror of GUEST_BLOCKED_GETS) and granted /api/voice/transcribe + /api/voice/synthesize. Jarvis is Tier-A, but its mic posts to /api/voice/transcribe — a DIFFERENT segment that fell to the Tier-B default, so every guest push-to-talk 403'd and the UI reported "Didn't catch that". Narrow literal-prefix grants, not Tier A on `voice`, so anything else mounted there stays read-only; both routes resolve the deployment's default STT/TTS via resolveForApp() (no per-user token) and stay under the guest-guard mutation rate limit.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Guest Jarvis TEXT turn: the same defect as entry 9, on the path nobody checked. `jarvis` is Tier-A, but its turn posts to /api/tasks + /api/tasks/:id/messages — segment `tasks`, which fell to the Tier-B default, so every guest turn 403'd guest_readonly and the public demo could not answer a single question. Reshaped GUEST_ALLOWED_MUTATIONS from literal PREFIXES to ANCHORED method+pattern grants first: a bare '/api/tasks' prefix would also have granted DELETE /api/tasks/:id and POST /api/tasks/:id/workspace/bootstrap. Grants now carry spendsModel so the guard can meter the routes that reach a model; guest turns are additionally forced chatOnly in handleSendMessage and broker no connector tokens (a guest sub owns none). Guard: tests/unit/guest-jarvis-turn.spec.ts.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 D3: `location` is Tier C. A guest may not read or write any /api/location route, GET included: every one of them is a person's position, places or consent, and a guest sub owns none of it.
  */
 
 /**
@@ -45,6 +46,7 @@ export const GUEST_TIER_A_APPS = [
 export const GUEST_TIER_C_APPS = [
   'workflow-studio',
   'forge', // bots
+  'location', // ADR-169 D3: positions, places and consent; nothing here is demo content, even on GET
   // NOTE on `trading` (operator decision, 2026-08-10): guests get the Tier-B default — GET the
   // PAPER desk (view-only), all mutations blocked. The paper book a guest sees is the deployment's
   // Alpaca *paper* account (env-resolved), which is intended demo content, not private data: the

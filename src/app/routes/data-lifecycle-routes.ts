@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | /api/me data-lifecycle surface: GET /export (self-scope JSON bundle — one section per store + honest manifest; a single JSON download because no zip library is a dependency and adding packages is out of scope), POST /delete-request (mints the short-lived signed confirmation token; operator subs refused up front), POST /delete-confirm (verifies the sub-bound token, executes the registry delete pass, writes the RETAINED data_lifecycle_audit row — 080-data-lifecycle.sql — and reports every store outcome). Auth-gated via the requiresAuth param, the sanctioned route-factory pattern.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review fix: buildAllExporters is now async (per-request information_schema discovery covers every remaining sub-keyed table) — all three handlers await it; the export manifest and BOTH delete responses now carry KNOWN_EXPORT_GAPS so the stores this surface still does not cover are disclosed to the user, never implied deleted.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L2: every handler builds its registry through routeExporters, which leads with the location store bound to the caller's subject and verified issuer (location-data-lifecycle.ts) and keeps the location tables out of discovery. delete-confirm therefore runs the one location erase (revoke location device credentials, delete the caller's location rows, clear in-memory location state) before the discovered deletes, and the export carries the caller's location rows once.
  */
 
 /**
@@ -22,6 +23,7 @@ import type { Express } from 'express';
 import type { AppContext } from '@/app/composition/app-context';
 import { createChildLogger } from '@/shared/logger';
 import { getCaller } from '@/shared/middleware/authz';
+import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-issuer';
 import {
   buildAllExporters,
   buildExportBundle,
@@ -30,7 +32,9 @@ import {
   mintDeleteToken,
   verifyDeleteToken,
   KNOWN_EXPORT_GAPS,
+  type DataExporter,
 } from '@/features/data-lifecycle';
+import { LOCATION_COVERED_TABLES, buildLocationExporter } from './location-data-lifecycle';
 
 const logger = createChildLogger({ module: 'data-lifecycle-routes' });
 
@@ -69,6 +73,20 @@ async function writeAuditRow(
 }
 
 /**
+ * @description The registry for one request: the location store first, bound to the caller's
+ * subject and verified issuer (ADR-169 D6), then the default registry with the location tables
+ * kept out of discovery.
+ * @param ctx - App context (the GUC-wrapped pool).
+ * @param req - The authenticated request (the issuer comes from its verified session only).
+ * @param sub - The caller's subject.
+ * @returns Every exporter, in delete-safe order.
+ */
+function routeExporters(ctx: AppContext, req: Request, sub: string): Promise<DataExporter[]> {
+  const location = buildLocationExporter(ctx.pool, { sub, principalIssuer: getAuthenticatedPrincipalIssuer(req) });
+  return buildAllExporters(ctx.pool, { leading: [location], coveredTables: LOCATION_COVERED_TABLES });
+}
+
+/**
  * @description Build the /api/me data-lifecycle router. Mounted behind requiresAuth by
  * {@link registerDataLifecycleRoutes}; every handler additionally re-derives the subject from
  * the validated session and 401s without one (defense-in-depth for MOCK_OIDC edge shapes).
@@ -86,7 +104,7 @@ export function createDataLifecycleRouter(ctx: AppContext, requiresAuth?: Reques
     const { sub, email } = getCaller(req);
     if (!sub) { res.status(401).json({ error: 'unauthorized' }); return; }
     try {
-      const bundle = await buildExportBundle(await buildAllExporters(ctx.pool), sub, KNOWN_EXPORT_GAPS);
+      const bundle = await buildExportBundle(await routeExporters(ctx, req, sub), sub, KNOWN_EXPORT_GAPS);
       // The export itself is a data access worth remembering; failure to audit never blocks it.
       void writeAuditRow(ctx.pool, {
         userSub: sub,
@@ -128,7 +146,7 @@ export function createDataLifecycleRouter(ctx: AppContext, requiresAuth?: Reques
       return;
     }
     try {
-      const exporters = await buildAllExporters(ctx.pool);
+      const exporters = await routeExporters(ctx, req, sub);
       logger.info({ sub, expiresAt: minted.expiresAt }, 'delete-request: token minted');
       res.json({
         token: minted.token,
@@ -167,7 +185,7 @@ export function createDataLifecycleRouter(ctx: AppContext, requiresAuth?: Reques
       return;
     }
     try {
-      const outcomes = await executeDeleteAll(await buildAllExporters(ctx.pool), sub);
+      const outcomes = await executeDeleteAll(await routeExporters(ctx, req, sub), sub);
       const auditRecorded = await writeAuditRow(ctx.pool, { userSub: sub, userEmail: email, action: 'delete', outcomes });
       logger.info({ sub, durationMs: Date.now() - start, outcomes, auditRecorded }, 'POST /api/me/delete-confirm executed');
       // knownGaps: what was NOT deleted because no exporter covers it yet — success must never imply it was.

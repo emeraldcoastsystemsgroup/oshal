@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Resolve Career export/delete through the installed package's exact read-only mapper and never follow symlink inventory entries.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Resolve Personal Data Vault export/delete from the exact OIDC subject, retain digest/legacy binding checks, and reject linked/nonregular SQLite main, journal, WAL, shm, or manifest entries before direct reads or deletion.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Split the unchanged declarative Postgres exporter inventory into bounded helpers so every touched function remains below the repository's physical-line limit.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L2: buildAllExporters takes optional leading exporters and the tables they cover. A store whose delete must do more than drop rows (location: revoke device credentials and clear in-memory state before its rows go) is composed in by the app layer, runs FIRST, and its tables are excluded from discovery so they are neither exported twice nor deleted out from under it. With no options the registry is exactly what it was.
  */
 
 /**
@@ -376,6 +377,19 @@ export const KNOWN_EXPORT_GAPS: KnownDataGap[] = [
 ];
 
 /**
+ * @description Stores a feature outside this slice contributes to the registry. The app layer
+ * composes them (a feature may not import another), they run before everything else, and the
+ * tables they cover are kept out of discovery so no row is exported twice or deleted by a plain
+ * discovered DELETE before the covering store's own delete has run.
+ */
+export interface BuildAllExportersOptions {
+  /** Exporters placed first in the registry, in the order given. */
+  leading?: readonly DataExporter[];
+  /** Tables those exporters own; discovery skips them. */
+  coveredTables?: Iterable<string>;
+}
+
+/**
  * @description The full default registry, assembled per request in delete-safe order:
  * (1) the information_schema-DISCOVERED exporters (every remaining sub-keyed public table,
  * children-before-parents — run first so no discovered child can block an explicit parent),
@@ -383,14 +397,17 @@ export const KNOWN_EXPORT_GAPS: KnownDataGap[] = [
  * stores. Async because discovery reads the live catalog — a table created after boot still
  * participates. This is what the /api/me routes consume.
  * @param pool - Postgres pool (PgLike; the app passes its GUC-wrapped pool).
+ * @param options - Exporters composed in by the app layer: they run first, and the tables they
+ * cover are excluded from discovery (see {@link BuildAllExportersOptions}).
  * @returns All registered exporters.
  */
-export async function buildAllExporters(pool: PgLike): Promise<DataExporter[]> {
+export async function buildAllExporters(pool: PgLike, options: BuildAllExportersOptions = {}): Promise<DataExporter[]> {
   // Explicit tables are excluded from discovery: their curated SQL deliberately omits columns
   // (e.g. oshal_connections tokens) that a discovered SELECT * would re-expose.
-  const covered = new Set(pgExporterDefs().map((d) => d.store));
+  const covered = new Set([...pgExporterDefs().map((d) => d.store), ...(options.coveredTables ?? [])]);
   const discovered = await discoverSubKeyedExporters(pool, covered);
   return [
+    ...(options.leading ?? []),
     ...discovered,
     ...buildPgExporters(pool),
     buildVaultExporter(),
