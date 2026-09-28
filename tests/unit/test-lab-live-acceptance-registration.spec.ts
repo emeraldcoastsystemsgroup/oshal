@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the live-acceptance Test Lab cards: exactly one explicit-only card per registered case (so "Run live scenarios" never writes fixtures or spends a model turn), each naming the host command and its backlog entry, every attached suite on disk, the shared case modules shipped in the api image; the signed-in adapter binds the caller's cookie to every loopback call and the named statements to the request pool, maps an unavailable case to a gap, and the host-only cases (commerce, Jarvis cache) answer that gap without a single call.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The registry gains the trading-parity case.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The adapter's `anonymous` port reaches the same loopback base with no session cookie, while `api` keeps forwarding the caller's.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
@@ -57,6 +58,10 @@ describe('live-acceptance Test Lab cards', () => {
       expect(step.state).toBe('gap');
       expect(step.detail).toContain('aero-lab with the ADR-160 vehicle record');
       expect(seen.every((s) => s.cookie === 'sid=abc' && s.url.startsWith('http://127.0.0.1:5000/'))).toBe(true);
+      seen.length = 0;
+      const anonymous = (labPorts('sid=abc', runtime) as { anonymous: (m: string, r: string) => Promise<{ status: number }> }).anonymous;
+      expect((await anonymous('GET', '/api/dev-workspace-index/query?q=ADR-077')).status).toBe(404);
+      expect(seen).toEqual([{ url: 'http://127.0.0.1:5000/api/dev-workspace-index/query?q=ADR-077', cookie: null }]);
       seen.length = 0;
       for (const key of ['commerce', 'jarvis-cache']) {
         const hostOnly = await runLiveAcceptanceCase(key, 'sid=abc', runtime);
