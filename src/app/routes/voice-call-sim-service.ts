@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Persist owner-scoped synthetic call traces and drive mock IVR/handoff scenarios asynchronously.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Standard Change Log block; the scenario driver logs the failure that interrupts a run and a trace write that fails while recording that interruption (both were silent), and JSDoc on the exported members.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | JSDoc on the three fictional 555 numbers (caller, insurer, owner), which the voice-sim spec imports; they were the last exports without a description.
  */
 /**
  * In-process Twilio-shaped simulator. Its only destinations are fictional 555 numbers; it never
@@ -26,8 +27,11 @@ const logger = createChildLogger({ module: 'voice-call-sim-service' });
 
 /** @description The only account id the mock Twilio-shaped routes accept. */
 export const MOCK_TWILIO_ACCOUNT = 'ACSIMULATED';
+/** @description Fictional 555 number the simulated assistant dials from; the only allowed From number. */
 export const MOCK_CALLER = '+12025550100';
+/** @description Fictional 555 number of the simulated insurer phone tree; the only allowed outbound To number. */
 export const MOCK_INSURER = '+12025550101';
+/** @description Fictional 555 number of the simulated account owner, bridged in when a human answers. */
 export const MOCK_OWNER = '+12025550102';
 const MAX_SECONDS = 1_200;
 const MAX_EVENTS = 64;
