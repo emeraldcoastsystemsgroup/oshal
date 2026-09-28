@@ -5,6 +5,7 @@
   SEQ | AUTHOR                                  | DESCRIPTION
   -----------------------------------------------------------------------------
   1   | maintainer@emeraldcoastsystemsgroup.com | ADR-169 L3: Settings, Location. Off by default: a person turns location on per browser at a precision class they choose, sees where they are as a place (never coordinates), stops reporting (the current place clears, the history stays), sees who can see them, and deletes their history. Turning on, raising precision and accepting a share need a fresh sign-in (the step-up): a sign-in window for an identity-provider or mock session, a two-factor code for a local account. The browser reports only while this page is open, at most every 30 seconds.
+  2   | maintainer@emeraldcoastsystemsgroup.com | ADR-169 L4: places and devices at places. "Where you are" says since when. Places: the person's own and their groups' places by name, label and radius (never a centre or an address, only whether one is on file); add one from where the browser is now or from typed coordinates, for yourself or for a group you administer; resize or delete the ones you may change. Devices at places: enrol an existing node (from the nodes you own), camera or drone (to a group you administer), TV (by the room its screen shows) or hub device, give it a place and a room, change or clear them, or remove its location record; a device you may only see (a group's, when you are not its admin) shows its place with no controls. "Your devices" lists only the devices that report (browsers and phones).
 -->
 <html lang="en" data-theme="midnight">
 <head>
@@ -55,6 +56,9 @@
   .empty { color: var(--muted); font-size: 13.5px; }
   .place { font-size: 20px; font-weight: 600; }
   .stepup { border-color: var(--warn); }
+  .form { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-top: 8px; }
+  .form label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+  .row input.small { width: 90px; }
   .foot { color: var(--muted); font-size: 12px; margin-top: 26px; border-top: 1px solid var(--line); padding-top: 12px; max-width: 84ch; }
 </style>
 <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
@@ -101,6 +105,49 @@
   <section class="card">
     <div class="place" id="currentPlace" data-testid="current-place">No position yet</div>
     <p class="meta" id="currentMeta" data-testid="current-meta"></p>
+  </section>
+
+  <h2>Places</h2>
+  <section class="card" id="places" data-testid="places"></section>
+  <section class="card" data-testid="place-form">
+    <h3>Add a place</h3>
+    <p class="meta">A place is a circle. Nobody sees its coordinates here once it is saved, and its address is only ever passed to a service acting for you.</p>
+    <div class="form">
+      <label>Name<input id="placeName" data-testid="place-name" maxlength="120" /></label>
+      <label>Kind<select id="placeLabel" data-testid="place-label">
+        <option value="home">Home</option><option value="work">Work</option><option value="grocery">Grocery</option><option value="other" selected>Other</option>
+      </select></label>
+      <label>Radius (m)<input id="placeRadius" data-testid="place-radius" type="number" min="50" max="50000" placeholder="100" /></label>
+      <label>Latitude<input id="placeLat" data-testid="place-lat" inputmode="decimal" /></label>
+      <label>Longitude<input id="placeLon" data-testid="place-lon" inputmode="decimal" /></label>
+      <label>Address (optional)<input id="placeAddress" data-testid="place-address" maxlength="500" /></label>
+      <label>For<select id="placeGroup" data-testid="place-group"></select></label>
+    </div>
+    <div class="actions">
+      <button id="placeHere" data-testid="place-here" type="button">Use where I am now</button>
+      <button class="primary" id="placeAdd" data-testid="place-add" type="button">Add place</button>
+    </div>
+  </section>
+
+  <h2>Devices at places</h2>
+  <section class="card" id="placed" data-testid="placed-devices"></section>
+  <section class="card" data-testid="enrol-form">
+    <h3>Add a device</h3>
+    <p class="meta">Say where a device you already have is. This records its place only: it does not turn on any reporting and gives nobody control of it.</p>
+    <div class="form">
+      <label>Kind<select id="enrolKind" data-testid="enrol-kind">
+        <option value="node">Node (a computer of yours)</option><option value="camera">Camera</option><option value="drone">Drone</option>
+        <option value="tv">TV</option><option value="hub">Smart-home device</option>
+      </select></label>
+      <label id="enrolNodeLabel">Node<select id="enrolNode" data-testid="enrol-node"></select></label>
+      <label id="enrolRefLabel" hidden><span id="enrolRefText">Id</span><input id="enrolRef" data-testid="enrol-ref" maxlength="200" /></label>
+      <label>Owner<select id="enrolGroup" data-testid="enrol-group"></select></label>
+      <label>Place<select id="enrolPlace" data-testid="enrol-place"></select></label>
+      <label>Room (optional)<input id="enrolRoom" data-testid="enrol-room" maxlength="80" /></label>
+    </div>
+    <div class="actions">
+      <button class="primary" id="enrolAdd" data-testid="enrol-add" type="button">Add device</button>
+    </div>
   </section>
 
   <h2>Your devices</h2>
@@ -218,16 +265,18 @@
       return;
     }
     $('currentPlace').textContent = current.place ? 'At ' + current.place.name : 'Not at a saved place';
-    $('currentMeta').textContent = 'Updated ' + ago(current.ageSeconds) + ' · ' + current.precisionClass + ' precision'
+    $('currentMeta').textContent = (current.since ? 'Since ' + new Date(current.since).toLocaleTimeString() + ' · ' : '')
+      + 'Updated ' + ago(current.ageSeconds) + ' · ' + current.precisionClass + ' precision'
       + (current.place ? ' · ' + current.place.label : '');
   }
 
   function renderDevices() {
     const box = $('devices');
     box.textContent = '';
-    if (!state.devices.length) { box.appendChild(el('p', 'empty', 'No devices report your location.')); return; }
+    const reporting = state.devices.filter((d) => d.kind === 'browser' || d.kind === 'phone');
+    if (!reporting.length) { box.appendChild(el('p', 'empty', 'No devices report your location.')); return; }
     const mine = readDeviceId();
-    state.devices.forEach((d) => {
+    reporting.forEach((d) => {
       const row = el('div', 'row');
       row.dataset.testid = 'device-row';
       row.appendChild(el('span', 'grow', (d.deviceId === mine ? 'This browser' : d.kind) + ' · ' + d.precisionClass
@@ -420,6 +469,190 @@
     }
   }
 
+  // ── ADR-169 L4: places and devices at places ──
+  const KIND_NAMES = { node: 'Node', camera: 'Camera', drone: 'Drone', tv: 'TV', hub: 'Smart-home device' };
+  const REF_HINTS = { camera: 'Camera id', drone: 'Drone id', tv: 'Room its screen shows', hub: 'Device id' };
+  let places = { places: [], groups: [] };
+  let placed = { devices: [], nodes: [], groups: [] };
+
+  function option(value, text) {
+    const o = el('option', '', text);
+    o.value = value;
+    return o;
+  }
+
+  function fillSelect(select, options) {
+    const keep = select.value;
+    select.textContent = '';
+    options.forEach((o) => select.appendChild(option(o[0], o[1])));
+    if (options.some((o) => o[0] === keep)) select.value = keep;
+  }
+
+  function groupName(g) { return g ? (g.name || 'a group') : 'you'; }
+
+  function placeOptions(groupId) {
+    const usable = places.places.filter((p) => (groupId ? Boolean(p.group) && p.group.groupId === groupId : true));
+    return [['', 'No place']].concat(usable.map((p) => [p.placeId, p.name + (p.group ? ' (' + groupName(p.group) + ')' : '')]));
+  }
+
+  function adminGroupOptions() {
+    return places.groups.filter((g) => g.admin).map((g) => [g.groupId, 'Group ' + (g.name || g.groupId)]);
+  }
+
+  function button(text, cls, testid, onClick) {
+    const b = el('button', cls, text);
+    b.type = 'button';
+    if (testid) b.dataset.testid = testid;
+    b.addEventListener('click', onClick);
+    return b;
+  }
+
+  function placeRowControls(row, p) {
+    const radius = el('input', 'small');
+    radius.type = 'number'; radius.min = '50'; radius.max = '50000'; radius.value = String(p.radiusM);
+    radius.dataset.testid = 'place-row-radius';
+    row.appendChild(radius);
+    row.appendChild(button('Save radius', '', 'place-row-save', () => savePlace(p.placeId, { radiusM: Number(radius.value) })));
+    row.appendChild(button('Delete', 'danger', 'place-row-delete', () => deletePlace(p.placeId)));
+  }
+
+  function renderPlaces() {
+    const box = $('places');
+    box.textContent = '';
+    if (!places.places.length) { box.appendChild(el('p', 'empty', 'No places yet. Add one below.')); return; }
+    places.places.forEach((p) => {
+      const row = el('div', 'row');
+      row.dataset.testid = 'place-row';
+      row.dataset.name = p.name;
+      row.appendChild(el('span', 'grow', p.name + ' · ' + p.label + ' · ' + p.radiusM + ' m · ' + (p.group ? 'group ' + groupName(p.group) : 'yours')
+        + (p.hasAddress ? ' · address on file' : '')));
+      if (p.editable) placeRowControls(row, p);
+      else row.appendChild(el('span', 'pill', 'view only'));
+      box.appendChild(row);
+    });
+  }
+
+  function placedRowControls(row, d) {
+    const select = el('select');
+    select.dataset.testid = 'placed-place';
+    fillSelect(select, placeOptions(d.group ? d.group.groupId : null));
+    select.value = d.place ? d.place.placeId : '';
+    const room = el('input', 'small');
+    room.placeholder = 'Room'; room.maxLength = 80; room.value = d.room || '';
+    room.dataset.testid = 'placed-room';
+    row.appendChild(select);
+    row.appendChild(room);
+    row.appendChild(button('Save', '', 'placed-save', () => saveDevicePlace(d.deviceId, select.value || null, room.value || null)));
+    row.appendChild(button('Remove', 'danger', 'placed-remove', () => removeDevice(d.deviceId)));
+  }
+
+  function renderPlaced() {
+    const box = $('placed');
+    box.textContent = '';
+    if (!placed.devices.length) { box.appendChild(el('p', 'empty', 'No devices have a place yet.')); return; }
+    placed.devices.forEach((d) => {
+      const row = el('div', 'row');
+      row.dataset.testid = 'placed-row';
+      row.dataset.kind = d.kind;
+      row.dataset.name = d.name;
+      const text = el('span', 'grow', KIND_NAMES[d.kind] + ' ' + d.name + ' · ' + (d.group ? 'group ' + groupName(d.group) : 'yours') + ' · ');
+      const where = el('span', '', d.place ? 'at ' + d.place.name + (d.room ? ' · ' + d.room : '') : 'no place');
+      where.dataset.testid = 'placed-where';
+      text.appendChild(where);
+      row.appendChild(text);
+      if (d.editable) placedRowControls(row, d);
+      else row.appendChild(el('span', 'pill', 'view only'));
+      box.appendChild(row);
+    });
+  }
+
+  function renderEnrolForm(kindChanged) {
+    const kind = $('enrolKind').value;
+    const groupOnly = kind === 'camera' || kind === 'drone';
+    $('enrolNodeLabel').hidden = kind !== 'node';
+    $('enrolRefLabel').hidden = kind === 'node';
+    $('enrolRefText').textContent = REF_HINTS[kind] || 'Id';
+    if (kindChanged === true) $('enrolGroup').value = '';
+    fillSelect($('enrolGroup'), (groupOnly ? [] : [['', 'You']]).concat(adminGroupOptions()));
+    fillSelect($('enrolNode'), placed.nodes.filter((n) => !n.enrolled).map((n) => [n.clientId, n.clientId]));
+    fillSelect($('enrolPlace'), placeOptions($('enrolGroup').value || null));
+    fillSelect($('placeGroup'), [['', 'Just me']].concat(adminGroupOptions()));
+  }
+
+  async function loadPlaces() {
+    const [p, d] = await Promise.all([api('GET', '/places'), api('GET', '/devices')]);
+    if (p.status !== 200 || d.status !== 200) {
+      setStatus('Could not load your places and devices (' + (p.json.error || d.json.error || p.status + '/' + d.status) + ').', true);
+      return false;
+    }
+    places = p.json;
+    placed = d.json;
+    renderPlaces();
+    renderPlaced();
+    renderEnrolForm();
+    return true;
+  }
+
+  async function afterChange(r, okStatus, okText) {
+    await loadPlaces();
+    await load();
+    setStatus(r.status === okStatus ? okText : 'Not saved (' + (r.json.error || r.status) + ').', r.status !== okStatus);
+  }
+
+  async function addPlace() {
+    const radius = $('placeRadius').value;
+    const body = { name: $('placeName').value, label: $('placeLabel').value,
+      center: { lat: Number($('placeLat').value), lon: Number($('placeLon').value) },
+      address: $('placeAddress').value || null, groupId: $('placeGroup').value || null };
+    if (radius) body.radiusM = Number(radius);
+    const r = await api('POST', '/places', body);
+    if (r.status === 201) ['placeName', 'placeLat', 'placeLon', 'placeAddress', 'placeRadius'].forEach((id) => { $(id).value = ''; });
+    await afterChange(r, 201, 'Place added.');
+  }
+
+  function fillHere() {
+    if (!navigator.geolocation) { setStatus('This browser cannot tell where it is.', true); return; }
+    navigator.geolocation.getCurrentPosition((pos) => {
+      $('placeLat').value = pos.coords.latitude.toFixed(5);
+      $('placeLon').value = pos.coords.longitude.toFixed(5);
+      setStatus('Filled in where this browser is now.');
+    }, (err) => setStatus('This browser did not share its position (' + err.message + ').', true), { enableHighAccuracy: true, timeout: 20000 });
+  }
+
+  async function savePlace(placeId, change) {
+    await afterChange(await api('PUT', '/places/' + encodeURIComponent(placeId), change), 200, 'Place saved.');
+  }
+
+  async function deletePlace(placeId) {
+    if (!window.confirm('Delete this place? Devices at it keep their records with no place.')) return;
+    await afterChange(await api('DELETE', '/places/' + encodeURIComponent(placeId)), 200, 'Place deleted.');
+  }
+
+  async function enrolDevice() {
+    const kind = $('enrolKind').value;
+    const body = { kind: kind, ref: kind === 'node' ? $('enrolNode').value : $('enrolRef').value,
+      groupId: $('enrolGroup').value || null, placeId: $('enrolPlace').value || null, room: $('enrolRoom').value || null };
+    const r = await api('POST', '/devices', body);
+    if (r.status === 201) { $('enrolRef').value = ''; $('enrolRoom').value = ''; }
+    await afterChange(r, 201, 'Device added.');
+  }
+
+  async function saveDevicePlace(deviceId, placeId, room) {
+    const path = '/devices/' + encodeURIComponent(deviceId) + '/place';
+    await afterChange(await api('PUT', path, { placeId: placeId, room: room }), 200, 'Device place saved.');
+  }
+
+  async function removeDevice(deviceId) {
+    if (!window.confirm('Remove this device\'s location record? The device itself is not touched.')) return;
+    await afterChange(await api('DELETE', '/devices/' + encodeURIComponent(deviceId)), 200, 'Device removed.');
+  }
+
+  $('placeAdd').addEventListener('click', addPlace);
+  $('placeHere').addEventListener('click', fillHere);
+  $('enrolKind').addEventListener('change', () => renderEnrolForm(true));
+  $('enrolGroup').addEventListener('change', () => fillSelect($('enrolPlace'), placeOptions($('enrolGroup').value || null)));
+  $('enrolAdd').addEventListener('click', enrolDevice);
+
   $('optIn').addEventListener('click', optIn);
   $('optOut').addEventListener('click', () => { const d = thisDevice(); if (d) optOut(d.deviceId); });
   $('changePrecision').addEventListener('click', changePrecision);
@@ -441,7 +674,7 @@
     api('GET', '/step-up/' + encodeURIComponent(challengeId)).then((r) => { if (r.json.state === 'proven') stepUpDone(true); });
   });
 
-  load().then((ok) => { if (ok) setStatus(''); });
+  Promise.all([load(), loadPlaces()]).then(([ok, placesOk]) => { if (ok && placesOk) setStatus(''); });
 })();
 </script>
 </body>

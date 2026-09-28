@@ -1,7 +1,7 @@
 # ADR-169: Location, places and proximity
 
 Date: 2026-09-28
-Status: **Proposed; the operator answered Q1-Q7 on 2026-09-28 (see "Operator decisions"). Slices L1 (shared geo maths, namespaced location redaction keys, static log guard), L2 (storage and row-level security with no operator bypass, the membership fence, the location erase in both erasure routes) and L3 (browser ingest, the step-up proof, the Settings Location tab) are built; L4-L9 are not.**
+Status: **Proposed; the operator answered Q1-Q7 on 2026-09-28 (see "Operator decisions"). Slices L1 (shared geo maths, namespaced location redaction keys, static log guard), L2 (storage and row-level security with no operator bypass, the membership fence, the location erase in both erasure routes), L3 (browser ingest, the step-up proof, the Settings Location tab) and L4 (places, the four package-facing reads, device enrolment at places) are built; L5-L9 are not.**
 The Context records what exists at core `main` `e1fd5b0f` and store `main` `6fdc1a1`. The Decision carries
 the operator's answers; each Rollout slice is still accepted on its own.
 
@@ -930,6 +930,44 @@ on; what remains is order by dependency.
   cover containment edges and ownership refusals; a node, a camera and a TV each show an assigned place that
   the owner can change and a non-owner cannot; and a non-admin cannot enrol a drone or camera to a group, or
   assign their own node's location data to it.
+  **Built:**
+  - **Migration 176.** `location_current.place_since` and `location_devices.place_assigned_at` (the
+    "since" of `currentPlace`); a CHECK that keeps camera and drone rows group-owned; and the device
+    identity fence, a trigger on `location_devices`. The fence fixes a device's kind and reference once
+    it is enrolled. A node's location data may be enrolled, or moved between the person and a group,
+    only by the node's ADR-114 owner (the `remote_task_journal_client_owners` binding). A TV's or hub
+    device's reference must carry the writer's own namespace key, so nobody can claim another person's
+    TV room or hub device through the one-record-per-device constraint. It never reads
+    `oshal.is_operator`, and the static guard and the catalog posture check now cover it.
+  - **The kernel reads** (`src/features/location`, `uses: location`): `placeAt`, `currentPlace`,
+    `distanceBand` and `operationAddress`. The caller is always the ambient request identity, never an
+    argument, so a package cannot read as someone else by naming them. SYSTEM and an identity without a
+    verified issuer are refused. A place or device the caller may not read is "not found". The first
+    three return places by reference, a band and "since", and no coordinate. `operationAddress` returns
+    the owner-typed address and the centre for server code only; no route returns it.
+  - **Settings, Location** (`/api/location/places` and `/api/location/devices`, declared in
+    `LOCATION_ROUTE_POLICY`). Places are listed by name, label and radius, with no centre and no address
+    text. A person creates their own places; a group admin creates, changes and deletes the group's.
+    Devices: enrol a node from the nodes you own, a camera or drone to a group you administer, a TV by
+    the room its screen shows, or a hub device by its id, with a place and a room; change or clear them;
+    remove the record. Only the owner, or a group admin for a group device, changes a device's place. A
+    member sees a group device view-only.
+
+  Choices made here:
+  - None of these routes spends a step-up proof: they start no reporting and expose no person's
+    position, and D3's list of exposure-raising routes does not include them.
+  - A person-owned device may use their own places and their groups' places; a group device only that
+    group's places (the L2 `location_place_assignable` rule).
+  - `distanceBand` answers `unknown` for a fix older than `OSHAL_LOCATION_BAND_MAX_AGE_SEC` (default
+    900 s). It places a stationary device at its assigned place's centre, and reads `at` when the
+    subject's latest fix fell in the place.
+
+  Evidence:
+  - `tests/unit/location-place-reads-postgres.spec.ts`;
+  - `tests/unit/location-places-devices-postgres.spec.ts`;
+  - `tests/unit/location-places-browser.spec.ts` (Chromium, localhost, `MOCK_OIDC`);
+  - `tests/unit/location-rls-no-operator-guard.spec.ts` and `tests/unit/location-route-policy.spec.ts`;
+  - the Test Lab card `location-places-devices`.
 - **L5: Reminders.** The rules, state and fire tables with their subject, dispatch-recovery and projection
   paths; `location_share_presence` and the grantee projection; the evaluator; two-rail delivery with
   tier-aware text; member shares with place sets (Q1) and guardian shares of minors (Q5), with

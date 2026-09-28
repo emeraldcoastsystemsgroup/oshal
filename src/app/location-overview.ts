@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L3: what the Settings, Location tab shows a person about their own location, read in one transaction under their own identity. Their default precision, their own devices, their current place (the place their latest fix fell in, with its age; no coordinates: an owner coordinate read needs the step-up and is not part of this read), how many fixes their history holds, and "who can see me" (D6): the member shares they granted to groups, and any restriction or guardian share that names them. Everything a group admin or the swarm's root could otherwise see is absent by design: the location tables have no operator branch (Q2).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L4: the current place carries "since", when the person's latest fixes began falling in it (location_current.place_since, migration 176), falling back to the fix's receipt time for a row written before that column existed.
  *
  * @module app/location-overview
  */
@@ -28,6 +29,8 @@ export interface LocationCurrentView {
   receivedAt: string;
   ageSeconds: number;
   place: LocationPlaceRef | null;
+  /** When the person's latest fixes began falling in `place` (or in no saved place). */
+  since: string;
 }
 
 /** @description A member share the person granted a group (Q1). */
@@ -91,7 +94,7 @@ const iso = (v: unknown): string | null => (v instanceof Date ? v.toISOString() 
  */
 async function readCurrent(client: PoolClient, who: LocationPrincipal, nowMs: number): Promise<LocationCurrentView | null> {
   const result = await client.query(`SELECT c.device_id, c.source, c.precision_class, c.accuracy_m, c.received_at,
-         c.place_id, p.name AS place_name, p.label AS place_label
+         c.place_id, c.place_since, p.name AS place_name, p.label AS place_label
     FROM location_current c LEFT JOIN location_places p ON p.place_id = c.place_id
    WHERE c.tenant_id IS NULL AND c.owner_sub = $1 AND c.principal_issuer = $2 AND c.subject_ref = $1`,
   [who.sub, who.principalIssuer]);
@@ -107,6 +110,7 @@ async function readCurrent(client: PoolClient, who: LocationPrincipal, nowMs: nu
     ageSeconds: Math.max(0, Math.round((nowMs - received.getTime()) / 1000)),
     place: row.place_id && row.place_name
       ? { placeId: String(row.place_id), name: String(row.place_name), label: String(row.place_label) } : null,
+    since: (row.place_since instanceof Date ? row.place_since : received).toISOString(),
   };
 }
 

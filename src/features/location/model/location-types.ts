@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L2: the location store's table inventory and the shapes its storage functions exchange. The table lists are the single source the erase, purge and export functions and the /api/me registry exclusion read, so a table added to migration 175 without being added here is caught by the live spec that compares this list with the database.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L4: the shapes of the package-facing reads (placeAt, currentPlace, distanceBand, operationAddress) and their two refusals. A place is returned by reference (id, name, label); only operationAddress carries an address or a centre, and it is for server code that passes them into a fixed provider operation or the owner's own page, never a prompt. LocationInputError and LocationNotFoundError carry fixed text, never a coordinate, a place name or a subject.
  *
  * @module location/model/location-types
  */
@@ -92,5 +93,67 @@ export class LocationForbiddenError extends Error {
   constructor() {
     super('Only an admin of the group may do that.');
     this.name = 'LocationForbiddenError';
+  }
+}
+
+/** @description A place by reference: never its geometry or its address (ADR-169 D3 model-safe reads). */
+export interface LocationPlaceRef {
+  /** The place id. */
+  placeId: string;
+  /** The owner's name for it. */
+  name: string;
+  /** home, work, grocery or other. */
+  label: string;
+}
+
+/** @description Whose position a read is about: the caller themself, or a device the caller may read. */
+export type LocationSubject = 'self' | { deviceId: string };
+
+/**
+ * @description What currentPlace answers. `basis` says where the answer comes from: the subject's
+ * latest fix (`observed`), a stationary device's assigned place (`assigned`), or nothing (`none`).
+ */
+export interface LocationCurrentPlace {
+  /** The place the subject is at, or null when it is at no saved place or unknown. */
+  place: LocationPlaceRef | null;
+  /** When the subject arrived there (observed) or the place was assigned (assigned); ISO time. */
+  since: string | null;
+  /** Seconds since the latest fix was received; null for an assigned place or no fix. */
+  ageSeconds: number | null;
+  /** observed, assigned or none. */
+  basis: 'observed' | 'assigned' | 'none';
+}
+
+/** @description What operationAddress answers: for a fixed-server provider operation only, never a prompt. */
+export interface LocationOperationAddress {
+  /** The place id. */
+  placeId: string;
+  /** The owner-typed address, or null when none is on file. */
+  address: string | null;
+  /** The place's centre. */
+  center: { lat: number; lon: number };
+  /** The place's IANA time zone, or null. */
+  timezone: string | null;
+}
+
+/** @description Raised for malformed input to a location read: a bad point, subject or id. */
+export class LocationInputError extends Error {
+  /** @description Stable code for callers that map it to an outcome. */
+  readonly code = 'location_invalid_input';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'LocationInputError';
+  }
+}
+
+/** @description Raised when a place or device does not exist or the caller may not read it (the two are not told apart). */
+export class LocationNotFoundError extends Error {
+  /** @description Stable code for callers that map it to an outcome. */
+  readonly code = 'location_not_found';
+
+  constructor(what: 'place' | 'device') {
+    super(what === 'place' ? 'No such place of yours or your groups.' : 'No such device of yours or your groups.');
+    this.name = 'LocationNotFoundError';
   }
 }

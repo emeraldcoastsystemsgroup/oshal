@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 D3/L2 static guard (operator decision Q2): no location_* policy, no function such a policy calls (transitively), no membership-fence helper and no dynamically built location policy in scripts/migrations may mention oshal.is_operator. Runs over the real migrations tree (non-vacuous: every location table's policies are read and the tenant-admin helper is reached), and goes red on each planted shape: a bypass policy, a bypass in a helper two calls deep, a dynamic EXECUTE format policy, a later migration that redefines a helper with a bypass, and a planted policy appended to the real 175 file. Prose (comments, COMMENT ON strings) and policies on non-location tables are not flagged.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L4: the real-tree check also proves the scan reaches migration 176's device identity fence and the namespace-key helper it calls, and a planted bypass inside that fence (a later migration redefining it) goes red.
  */
 
 import fs from 'node:fs';
@@ -25,6 +26,7 @@ describe('ADR-169 L2: no oshal.is_operator in any location policy or its helpers
     expect(report.functionsChecked).toEqual(expect.arrayContaining([
       'oshal_is_tenant_admin', 'oshal_is_tenant_member', 'location_row_writable', 'location_member_share_admissible',
       'location_guardian_share_admissible', 'location_places_digest', 'oshal_tenant_membership_fence',
+      'location_device_identity_fence', 'location_owner_ref_key',
     ]));
   });
 
@@ -42,6 +44,12 @@ describe('ADR-169 L2: no oshal.is_operator in any location policy or its helpers
     const redefined = `CREATE OR REPLACE FUNCTION location_row_readable(a text, b text, c uuid) RETURNS boolean LANGUAGE sql STABLE
       AS $$ SELECT current_setting('oshal.is_operator', true) = 'on' $$;`;
     expect(scanForOperatorBypass([...realFiles(), ['999-redefine.sql', redefined]]).bypasses).toEqual(['function location_row_readable']);
+  });
+
+  it('goes red when the device identity fence gains a bypass', () => {
+    const fence = `CREATE OR REPLACE FUNCTION location_device_identity_fence() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF current_setting('oshal.is_operator', true) = 'on' THEN RETURN NEW; END IF; RETURN NEW; END; $$;`;
+    expect(scanForOperatorBypass([...realFiles(), ['999-fence.sql', fence]]).bypasses).toEqual(['function location_device_identity_fence']);
   });
 
 });
