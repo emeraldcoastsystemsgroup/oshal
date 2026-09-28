@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | AUTH-07 catalog migration lifecycle. When an installation activates a catalog revision its existing assignments were not granted under, classify the change against the recorded previous catalog: a non-widening change re-stamps the assignments inside the policy transaction with a durable audit event; a widening or breaking change keeps the refusal and records one reviewable migration an administrator approves before the next activation applies it. Grants the next catalog does not define are removed rather than carried, so they can never revive.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Carry the approval reference of a reviewed migration onto the activation audit event, so a sole-operator self-approval is recorded with the change it approved.
  */
 import { randomUUID } from 'node:crypto';
 import {
@@ -176,7 +177,8 @@ export function applyCatalogMigrationPlan(transaction: AuthorizationTransaction,
     migration: { source: app.source, fromRevisions: plan.fromRevisions, fromVersions: plan.fromVersions, toRevision: app.catalogRevision,
       toVersion: app.version, classification: plan.diff.classification === 'unchanged' ? 'non-widening' : plan.diff.classification,
       changes: kept, omittedChanges: plan.diff.changes.length - kept.length, assignmentIds: plan.assignmentIds, removedIds: plan.removedIds,
-      ...(plan.approved ? { reviewId: plan.approved.id, approvedBy: plan.approved.approval!.actor } : {}) } });
+      ...(plan.approved ? { reviewId: plan.approved.id, approvedBy: plan.approved.approval!.actor } : {}) },
+    ...(approval?.reference ? { approvalReference: approval.reference } : {}) });
   const review = plan.approved && state.migrations?.find(row => row.id === plan.approved!.id);
   if (review) { review.appliedAt = at; review.appliedRevision = state.revision; }
   return auditId;

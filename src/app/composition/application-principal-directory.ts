@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Observe verified sessions, retain explicit local links, and expose provider-aware management inventory.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Unite reviewed registrations and assignment targets with account inventory while preserving verified-only authority.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Take schema readiness as a re-requestable thunk so a bootstrap that failed at boot is retried by the next directory read instead of refusing for the life of the process.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | List the directory identities configuration admits as swarm administrators, so sole-operator self-approval can refuse the moment a second administrator exists.
  */
 import type { Request, RequestHandler } from 'express';
 import type { Pool } from 'pg';
@@ -88,6 +89,22 @@ class ApplicationPrincipalDirectory {
     await this.ready(); const row = await this.store.get(issuer,sub); const enabled = this.providers();
     const isActive = Boolean(row && !row.canonicalLocalSub && row.status === 'active' && enabled.has(issuer));
     return { isActive, isSwarmAdmin: Boolean(isActive && row && configuredPrincipalOperator(row,enabled,this.env)) };
+  };
+  /** @description Every directory identity that configuration currently admits as a swarm administrator:
+   * verified provider sign-ins the operator policy admits, and active local accounts whose email is a
+   * configured operator email. Read by the sole-operator census; it grants nothing.
+   * @returns Administrator identities, issuer-qualified.
+   */
+  swarmAdministrators = async (): Promise<Array<{ sub: string; issuer: string }>> => {
+    await this.ready(); const enabled = this.providers();
+    const native = (await this.store.list()).filter(row => configuredPrincipalOperator(row,enabled,this.env))
+      .map(row => ({ sub: row.sub, issuer: row.issuer }));
+    if (!await this.hasTable('oshal_local_users')) return native;
+    const emails = new Set((this.env.OSHAL_OPERATOR_EMAILS ?? '').split(',').map(value => value.trim().toLowerCase()).filter(Boolean));
+    const locals = (await runWithSystemIdentity(() => listUsers(this.pool)))
+      .filter(user => user.status === 'active' && emails.has(user.email.toLowerCase()))
+      .map(user => ({ sub: user.userSub, issuer: LOCAL_AUTH_PRINCIPAL_ISSUER }));
+    return [...native, ...locals];
   };
   targetActor = async (sub: string, issuer: string): Promise<AuthorizationActor | null> => {
     if (issuer === LOCAL_AUTH_PRINCIPAL_ISSUER) {

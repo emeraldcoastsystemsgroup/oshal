@@ -150,8 +150,24 @@ lookup, SCIM lifecycle, and native AD/LDAPS provisioning remain backlog work. A 
 session or PAT alone does not prove directory membership.
 
 Sensitive self-grants, sensitive group mappings, and restoration of sensitive self-access require a
-trusted approval verifier. The initial server composition has no such approval workflow and therefore
-refuses those changes. A model-supplied confirmation cannot approve them. The UI shows this requirement.
+trusted approval verifier. The server composition wires one verifier, sole-operator self-approval
+(`src/app/composition/sole-operator-approval.ts`), into both the access-change and the catalog-migration
+hooks. It accepts only when all of these hold:
+
+- the approval reference is `sole-operator-self-approval:<previewId>` for that exact preview, so an
+  approval for one change is never accepted for another;
+- the caller is active, undelegated, a swarm administrator, and the ADR-148 swarm root;
+- no OTHER identity resolves as a swarm administrator. The census reads every source that can make
+  one: `swarm_roles` root/admin rows, `OSHAL_OPERATOR_SUBS`, verified provider sign-ins the operator
+  policy admits, and active local accounts whose email is in `OSHAL_OPERATOR_EMAILS`. An unreadable
+  census refuses.
+
+The moment a second administrator exists, the reference is refused and these changes need an
+independent approval again; no second-approver workflow exists yet, so they stay blocked. Access
+Administration shows a confirmation field on such a review; typing `approve` sends the bound reference.
+Model tool calls cannot apply changes at all (`allowChanges` is false on the bridge). The accepted
+reference is stored on the audit event (`approvalReference`) and on an approved catalog migration; the
+redacted history projection keeps omitting approval data.
 
 ## Jarvis, tools, and workers
 
@@ -284,6 +300,8 @@ A grant that names a role or permission the new catalog does not define is remov
 re-adding that name later cannot revive it. Denies always carry. A different installation source is
 still refused with no review. Approving a migration that changes a sensitive grant the approver holds,
 or a sensitive group mapping, needs an approval reference, the same as a sensitive access change.
+On a single-administrator swarm the root sends `approvalReference: "sole-operator-self-approval:<previewId>"`
+with the apply (see Administration and identity).
 
 After staging an upgrade over live assignments, `node scripts/operations/little-monsters-upgrade-proof.js`
 (`OSHAL_VERIFY_OPERATOR_PAT`, optional `OSHAL_VERIFY_BASE_URL`, `OSHAL_UPGRADE_PROOF_APP`,

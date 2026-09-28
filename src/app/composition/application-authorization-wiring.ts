@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Give the RETURNED readiness the same re-requestable shape. It was a plain promise derived once from the recovered thunk, so the four modules chaining off it - queued ticket provenance, the user directory, Jarvis briefings and Test Lab runs - still inherited the first bootstrap failure forever, and authenticated ticket creation threw for the life of the process.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Resolve a legacy explicit tier on the full principal while retaining the canonical-local meaning of issuer-less assignments.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Forward the AUTH-07 catalog snapshot and migration review reads through the schema-readiness wrapper. Without them the service could never read the catalog an installed package's assignments were granted under, so every catalog change would classify as unrecorded and refuse.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | Wire the sole-operator self-approval verifier into both approval hooks. Neither hook had a verifier, so a change touching the approver's own sensitive grants was refused for everyone, including the only administrator of the install.
  */
 /** Assemble the control plane without granting it authority over business records. */
 import type { Request } from 'express';
@@ -39,6 +40,7 @@ import { ensureRemoteExecutionSchema } from '@/features/application-remote-execu
 import { createApplicationRemoteExecutionWiring } from './application-remote-execution-wiring';
 import { createApplicationServiceActivationWiring } from '../application-service-activation-wiring';
 import { APPLICATION_SERVICE_PRINCIPAL_ISSUER } from '@/features/application-authorization';
+import { createSoleOperatorApprovalVerifier, createSwarmAdministratorCensus } from './sole-operator-approval';
 
 const logger = createChildLogger({ module: 'application-authorization-wiring' });
 function createActorPorts(ctx: AppContext, directory: ReturnType<typeof createApplicationPrincipalDirectory>, memberships: PostgresExternalTenantMembershipStore) {
@@ -71,8 +73,11 @@ function createActorPorts(ctx: AppContext, directory: ReturnType<typeof createAp
 }
 
 function createPolicyOptions(appAccess: AppAccessService, getApps: () => SwarmAppService,
-  actors: ReturnType<typeof createActorPorts>): ApplicationAuthorizationServiceOptions {
+  actors: ReturnType<typeof createActorPorts>, verifySoleOperator: ReturnType<typeof createSoleOperatorApprovalVerifier>): ApplicationAuthorizationServiceOptions {
   return { refreshActor: actors.refreshActor, resolveActor: actors.targetActor,
+    // Operator decision 2026-09-28: the swarm root may approve their own sensitive change only while
+    // no other swarm administrator exists. Without a verifier both hooks refused every such change.
+    verifyApproval: verifySoleOperator, verifyCatalogMigrationApproval: verifySoleOperator,
     // The legacy ADR-118 ceiling is resolved on the FULL principal. This used to refuse any
     // issuer but urn:oshal:local-auth BEFORE reading an assignment, because an old row carried
     // no issuer and could only belong to a local account — but refusing early also made an
@@ -155,7 +160,8 @@ export function createApplicationAuthorizationWiring(ctx: AppContext, appAccess:
   const actors = createActorPorts(ctx,directory,membershipStore);
   const memberships = new ExternalTenantMembershipService(membershipStore, { refreshActor: actors.refreshActor, resolveTarget: directory.targetActor });
   const { resolveActor } = actors;
-  const service = new ApplicationAuthorizationService(store, createPolicyOptions(appAccess, getApps, actors));
+  const verifySoleOperator = createSoleOperatorApprovalVerifier(createSwarmAdministratorCensus(ctx.pool, process.env, directory.swarmAdministrators));
+  const service = new ApplicationAuthorizationService(store, createPolicyOptions(appAccess, getApps, actors, verifySoleOperator));
   const runtime = new ApplicationAuthorizationRuntime(service, resolveActor, process.env, name => getApps().getApp(name), actors.targetActor);
   const remoteExecution = createApplicationRemoteExecutionWiring(ctx.pool, ready, runtime, actors.refreshActor);
   const isProtected = async (app: string) => {
