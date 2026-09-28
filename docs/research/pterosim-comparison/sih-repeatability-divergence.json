@@ -1,0 +1,147 @@
+{
+ "axes": {
+  "e": {
+   "max": 0.047384249453316346,
+   "rms": 0.019728280047457858
+  },
+  "n": {
+   "max": 0.05554973478991876,
+   "rms": 0.02211979319867329
+  },
+  "up": {
+   "max": 0.1767990112304712,
+   "rms": 0.02206184977214808
+  },
+  "yawDeg": {
+   "max": 3.0388088007821636,
+   "rms": 0.25761229483275927
+  }
+ },
+ "clock": {
+  "hz": 20.0,
+  "phases": [
+   {
+    "commandOffsetS": 0.0,
+    "durationS": 8.032,
+    "phase": "takeoff",
+    "points": 161
+   },
+   {
+    "commandOffsetS": -0.02800000000000047,
+    "durationS": 8.024000000000001,
+    "phase": "leg-north",
+    "points": 161
+   },
+   {
+    "commandOffsetS": -0.10800000000000054,
+    "durationS": 5.0,
+    "phase": "yaw-90",
+    "points": 101
+   },
+   {
+    "commandOffsetS": -0.1280000000000001,
+    "durationS": 10.000000000000004,
+    "phase": "hover",
+    "points": 201
+   },
+   {
+    "commandOffsetS": -0.1839999999999975,
+    "durationS": 9.759999999999998,
+    "phase": "land",
+    "points": 196
+   }
+  ],
+  "points": 820
+ },
+ "findings": [],
+ "horizontal": {
+  "max": 0.056243267996947385,
+  "rms": 0.02963933678041729
+ },
+ "labels": {
+  "a": "px4-sih",
+  "b": "px4-sih-repeat"
+ },
+ "legs": {
+  "leg-north": {
+   "a": {
+    "axis": "n",
+    "from": 0.0,
+    "overshootPct": 5.814266110816968,
+    "riseTimeS": 1.6959999999999997,
+    "settlingS": 5.179999999999998,
+    "to": 5.0
+   },
+   "b": {
+    "axis": "n",
+    "from": 0.0,
+    "overshootPct": 5.835008249862583,
+    "riseTimeS": 1.7040000000000006,
+    "settlingS": 5.184000000000001,
+    "to": 5.0
+   },
+   "difference": {
+    "overshootPct": -0.020742139045615282,
+    "riseTimeS": -0.008000000000000895,
+    "settlingS": -0.004000000000003112
+   }
+  },
+  "takeoff": {
+   "a": {
+    "axis": "up",
+    "from": 0.0,
+    "overshootPct": 0.0,
+    "riseTimeS": 3.08,
+    "settlingS": 7.103999999999999,
+    "to": 2.0
+   },
+   "b": {
+    "axis": "up",
+    "from": 0.0,
+    "overshootPct": 0.0,
+    "riseTimeS": 3.16,
+    "settlingS": 7.016000000000001,
+    "to": 2.0
+   },
+   "difference": {
+    "overshootPct": 0.0,
+    "riseTimeS": -0.08000000000000007,
+    "settlingS": 0.0879999999999983
+   }
+  },
+  "yaw-90": {
+   "a": {
+    "axis": "yawDeg",
+    "from": 0.0,
+    "overshootPct": 2.5577231434322556,
+    "riseTimeS": 0.379999999999999,
+    "settlingS": 1.075999999999997,
+    "to": 90.0
+   },
+   "b": {
+    "axis": "yawDeg",
+    "from": 0.0,
+    "overshootPct": 2.2877990848539698,
+    "riseTimeS": 0.3760000000000012,
+    "settlingS": 1.1000000000000014,
+    "to": 90.0
+   },
+   "difference": {
+    "overshootPct": 0.26992405857828583,
+    "riseTimeS": 0.003999999999997783,
+    "settlingS": -0.024000000000004462
+   }
+  }
+ },
+ "schema": "embodied.px4-crosscheck.divergence/1",
+ "tolerances": {
+  "overshootPct": 10.0,
+  "positionMaxM": 0.75,
+  "positionRmsM": 0.25,
+  "riseTimeS": 0.5,
+  "settlingS": 1.0,
+  "yawMaxDeg": 15.0,
+  "yawRmsDeg": 5.0
+ },
+ "verdict": "agree"
+}
