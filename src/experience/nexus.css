@@ -54,3 +54,19 @@
 .work-item .secondary{justify-self:start;padding:7px 11px;font-size:10px}
 .provider-note{margin:10px 0}
 @media(max-width:600px){.mic-button{padding:0 10px;font-size:10px}.result-card{padding:12px}}
+.status-dot.off{background:#5d6f77;box-shadow:none}
+.calendar-pad{aspect-ratio:1}
+.calendar-day.unknown,.calendar-day.past{opacity:.45;border-style:dashed}
+.calendar-day.past{border-style:solid}
+.cal-nav{display:flex;align-items:center;gap:10px;font-size:12px;color:#b8cfd4}
+.cal-nav .quiet{font-size:18px;padding:2px 8px}
+.trip-form{display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) auto;gap:10px;align-items:end;margin:18px 0 8px}
+.trip-form .field{display:grid;gap:6px;font-size:10px;color:#afc8d1;min-width:0}
+.trip-form .field input{background:#0b1e28;border:1px solid #355260;border-radius:7px;padding:10px;color:#d4e6e9;min-width:0;width:100%}
+.trip-form .primary{height:40px}
+.trip-form input[type="date"]{color-scheme:dark}
+.plan-card .work-actions{margin-top:10px}
+[data-part="offers-source"] .source-label{margin-right:6px}
+@media(max-width:900px){.trip-form{grid-template-columns:repeat(2,minmax(0,1fr))}.trip-form .primary{grid-column:1/-1}}
+@media(max-width:600px){.trip-form .field input{font-size:16px}.cal-nav{font-size:11px}}
+@media(max-width:600px){.study-bar{flex-wrap:wrap;row-gap:6px}.study-bar select{max-width:100%}.study-bar label{max-width:100%}}
