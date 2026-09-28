@@ -400,8 +400,8 @@ runs three steps on the build that is running:
   (the configured one when set; it is never printed) and expects 401.
 - `step-up-gate` runs as the signed-in person. Opting in and accepting a share are each refused
   without a fresh sign-in, including with a challenge the Lab opened but did not prove. Arming a rule
-  has no route to reach. The person's devices and shares must not change, and the Lab withdraws its
-  challenge.
+  has no route to reach. The person's devices and shares must not change, and the Lab must withdraw its
+  challenge; a failed or refused withdrawal fails the step.
 - `consent-lifecycle` runs the consent and ingest services the routes call, for a uniquely tagged
   synthetic person on the real database. It opts a browser in and posts a fix whose body names another
   owner. The fix must be stored for the synthetic person at `block` precision and placed in their

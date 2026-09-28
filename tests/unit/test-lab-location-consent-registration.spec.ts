@@ -4,13 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The ADR-169 L3 location consent card is registered exactly once with suites that exist on disk, and its three steps run for real against the localhost MOCK_OIDC fixture server (the real /api/location mount) and a private PostgreSQL owned by the enforcing runtime role: the service rail step, the step-up gate step (which leaves the signed-in person's devices, shares and open challenges as it found them) and the synthetic-person lifecycle (which leaves no row behind) all pass; each goes red when the thing it checks is broken (the rail refusal unmounted, a gated route admitted without a proof, the erase unable to remove the synthetic rows); and a run without the server grades as a gap.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The gate step now grades its own cleanup: a pass carries a seventh check, "the Lab's challenge was withdrawn", and a withdrawal the route refuses (the store's cancel made to report nothing removed, so the DELETE answers 404) fails the step on that check and leaves the challenge for the spec to clear, instead of passing with a withdrawal it never made; a withdrawal request that throws (fetch rejected for the DELETE) fails the same way.
  */
 
 /** Disposable local PostgreSQL only. Never consumes DATABASE_URL or deployment credentials. */
 import express from 'express';
 import { existsSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ScenarioRunContext } from '@/app/routes/test-lab-scenarios';
 import { SCENARIOS } from '@/app/routes/test-lab-scenarios';
 import { LOCATION_CONSENT_SCENARIOS } from '@/app/routes/test-lab-location-consent-scenarios';
@@ -37,7 +38,8 @@ describe('ADR-169 L3 location consent Test Lab card', () => {
     expect(first.state, first.detail).toBe('pass');
     const second = await gate.run('lab=1', {}, runtime());
     expect(second.state, second.detail).toBe('pass');
-    expect(second.detail).toContain('6 checks hold');
+    expect(second.detail).toContain('7 checks hold');
+    expect(second.detail).toContain("the Lab's challenge was withdrawn");
     expect(fx.store.size()).toBe(0);
     const third = await lifecycle.run('', {}, runtime());
     expect(third.state, third.detail).toBe('pass');
@@ -80,6 +82,43 @@ describe('ADR-169 L3 location consent Test Lab card: red when broken', () => {
       fx.store.consume = original;
       await fx.db.pool.query('DELETE FROM location_devices');
     }
+  });
+
+  it('the gate step fails, and does not claim the withdrawal, when the challenge cannot be withdrawn', async () => {
+    const original = fx.store.cancel.bind(fx.store);
+    const kept: Array<Parameters<typeof original>> = [];
+    fx.store.cancel = (...args) => { kept.push(args); return false; };
+    try {
+      const r = await gate.run('lab=1', {}, runtime());
+      expect(r.state).toBe('fail');
+      expect(r.detail).toBe("Gate failed: the Lab's challenge was withdrawn.");
+      expect(kept).toHaveLength(1);
+      expect(fx.store.size()).toBe(1);
+    } finally {
+      fx.store.cancel = original;
+      for (const args of kept) original(...args);
+    }
+    expect(fx.store.size()).toBe(0);
+  });
+
+  it('the gate step fails when the withdrawal request itself fails', async () => {
+    const realFetch = globalThis.fetch;
+    const create = fx.store.create.bind(fx.store);
+    const owners: Array<Parameters<typeof create>[0]> = [];
+    fx.store.create = (principal, ...rest) => { owners.push(principal); return create(principal, ...rest); };
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) =>
+      (init?.method === 'DELETE' ? Promise.reject(new TypeError('fetch failed')) : realFetch(input, init)));
+    try {
+      const r = await gate.run('lab=1', {}, runtime());
+      expect(r.state).toBe('fail');
+      expect(r.detail).toBe("Gate failed: the Lab's challenge was withdrawn.");
+      expect(fx.store.size()).toBe(1);
+    } finally {
+      spy.mockRestore();
+      fx.store.create = create;
+      for (const owner of owners) fx.store.clearPrincipal(owner);
+    }
+    expect(fx.store.size()).toBe(0);
   });
 
   it('the lifecycle step fails when the synthetic rows cannot be erased', async () => {

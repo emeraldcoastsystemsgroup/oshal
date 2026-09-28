@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | AI Test Lab registration for ADR-169 slice L3 (browser ingest, consent and the step-up). Three steps on the running build. The service-rail step calls POST /api/location/presence over the loopback with the service secret (the configured one when set, never printed) and expects 401. The gate step, as the Lab's signed-in person, tries every exposure-raising call with no proof and with a challenge it opened but could not prove (opt-in, accepting a share), confirms arming has no route to reach, checks the person's device and share counts did not move, and withdraws its challenge. The lifecycle step runs the same consent and ingest services the routes call, for a uniquely tagged synthetic person on the real database: opt a browser in, post a fix whose body names another owner, see the fix stored for the synthetic person at block precision and placed in their synthetic place, opt out (current row cleared, history kept, ingest refused), purge, then erase and prove no row of the synthetic person remains; incomplete cleanup is a failure. No real person's location is read or written.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The gate step's challenge withdrawal is a graded check. It was a DELETE whose error was swallowed, and the step still reported "The Lab's challenge was withdrawn" when the DELETE failed or was refused. Now a thrown or non-200 withdrawal is logged at ERROR (op lab-gate-cleanup) and fails the step on the named check "the Lab's challenge was withdrawn".
  */
 
 import { randomUUID } from 'node:crypto';
@@ -68,9 +69,24 @@ async function gateChecks(base: string, cookie: string): Promise<Array<[string, 
     checks.push(['accepting a share without a proof is refused', (await call(base, h, 'POST', '/shares', share)).json.error === 'step_up_required']);
     checks.push(['arming a rule has no route to reach', (await call(base, h, 'POST', '/step-up', { operation: 'arm-rule', params: {} })).status === 400]);
   } finally {
-    if (handle) await call(base, h, 'DELETE', `/step-up/${encodeURIComponent(handle)}`).catch(() => undefined);
+    if (handle) checks.push(['the Lab\'s challenge was withdrawn', await withdrawChallenge(base, h, handle)]);
   }
   return checks;
+}
+
+/**
+ * Withdraw the challenge the gate step opened. A refused or failed withdrawal is logged and graded
+ * as a failed check, so the step never claims a cleanup that did not happen.
+ */
+async function withdrawChallenge(base: string, headers: Record<string, string>, handle: string): Promise<boolean> {
+  try {
+    const res = await call(base, headers, 'DELETE', `/step-up/${encodeURIComponent(handle)}`);
+    if (res.status === 200) return true;
+    logger.error({ op: 'lab-gate-cleanup', outcome: 'refused', status: res.status }, 'Test Lab could not withdraw its location challenge');
+  } catch (error) {
+    logger.error({ op: 'lab-gate-cleanup', outcome: 'failed', err: locationSafeError(error) }, 'Test Lab could not withdraw its location challenge');
+  }
+  return false;
 }
 
 /**
@@ -91,7 +107,7 @@ export async function stepUpGateStep(cookie: string, runtime?: ScenarioRunContex
   checks.push(['the person\'s devices and shares did not change', after.status === 200 && count(after.json) === count(before.json)]);
   const failed = checks.filter(([, ok]) => !ok).map(([name]) => name);
   if (failed.length) return result('fail', `Gate failed: ${failed.join('; ')}.`, { failed });
-  return result('pass', `${checks.length} checks hold: ${checks.map(([name]) => name).join('; ')}. The Lab's challenge was withdrawn.`);
+  return result('pass', `${checks.length} checks hold: ${checks.map(([name]) => name).join('; ')}.`);
 }
 
 /** Rows of the synthetic person left in each person table, read as that person. */
@@ -167,7 +183,7 @@ export const LOCATION_CONSENT_SCENARIOS: Scenario[] = [{
   id: 'location-browser-consent',
   title: 'Location — browser ingest, consent and the step-up (ADR-169 L3)',
   group: 'tool',
-  description: 'Checks ADR-169 slice L3 on the running build. The service secret is refused on /api/location with 401. As the signed-in person, opting in and accepting a share are refused without a fresh sign-in, a challenge the page opened but did not prove does not help, arming has no route, and the person\'s devices and shares do not change (the Lab withdraws its challenge). Then a uniquely tagged synthetic person goes through the consent and ingest services on the real database: opt in, a fix whose body names another owner is stored for the synthetic person at block precision in their place, opting out clears the current place and keeps the history, ingest stops, the purge removes the history, and an erase leaves no row of theirs. No real person\'s location is read or written.',
+  description: 'Checks ADR-169 slice L3 on the running build. The service secret is refused on /api/location with 401. As the signed-in person, opting in and accepting a share are refused without a fresh sign-in, a challenge the page opened but did not prove does not help, arming has no route, and the person\'s devices and shares do not change. The Lab withdraws its challenge, and the step fails if the withdrawal fails. Then a uniquely tagged synthetic person goes through the consent and ingest services on the real database: opt in, a fix whose body names another owner is stored for the synthetic person at block precision in their place, opting out clears the current place and keeps the history, ingest stops, the purge removes the history, and an erase leaves no row of theirs. No real person\'s location is read or written.',
   regressionTests: [
     { level: 'unit', path: 'tests/unit/location-step-up.spec.ts' },
     { level: 'unit', path: 'tests/unit/location-route-policy.spec.ts' },
