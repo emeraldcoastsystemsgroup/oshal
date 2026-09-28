@@ -143,8 +143,8 @@ export function packageAuditInstallVerdict(pkg: AuditedCatalogPackage, run: Audi
 
 /** Run the canonical installer CLI for one package into a disposable destination. */
 async function runAuditedInstaller(pkg: AuditedCatalogPackage, destination: string): Promise<AuditInstallRun> {
-  const { buildRemoteAppInstallerProcessEnv } = await import('./app-store-remote');
-  const { resolveStoreToken } = await import('./update-check-cron');
+  const { buildRemoteAppInstallerProcessEnv } = await import('./app-store-remote.js');
+  const { resolveStoreToken } = await import('./update-check-cron.js');
   const args = [path.join(process.cwd(), 'scripts', 'oshal-app.js'), 'install', pkg.name,
     '--repo', pkg.source!.url, '--ref', pkg.source!.ref, '--dest', destination, '--audit-mode', 'enforce'];
   const env = { ...buildRemoteAppInstallerProcessEnv(resolveStoreToken()), OSHAL_PACKAGE_AUDIT_MODE: 'enforce' };
@@ -168,7 +168,7 @@ export interface PackageAuditStepDeps {
 
 /** The real collaborators: the configured store catalog, the canonical installer, the OS temp dir. */
 async function defaultPackageAuditDeps(): Promise<PackageAuditStepDeps> {
-  const { fetchStoreCatalog } = await import('./app-store-remote');
+  const { fetchStoreCatalog } = await import('./app-store-remote.js');
   return { catalog: () => fetchStoreCatalog(true), install: runAuditedInstaller, tempRoot: os.tmpdir() };
 }
 
