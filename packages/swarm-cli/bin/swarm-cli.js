@@ -11,6 +11,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Adversarial-review fixes: (HIGH) chat no longer crashes with ERR_USE_AFTER_CLOSE / exit 1 when stdin EOFs mid-turn — reprompt() guards rl.prompt() on the closed interface (piped `echo x | … chat` and Ctrl-D-during-a-turn now exit 0 after the answer). (MED) color gates each stream independently (COLOR_ERR from stderr.isTTY) so `2>file` from a TTY no longer receives escape codes. (MED) the `→` arrow is now the UNICODE-gated ARROW everywhere (whoami/status/handoff), matching the banner/prompt fallback. (LOW) `/clear` only emits its escape on a TTY; `--version` added to all three completion flag lists.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | PACKAGED: moved scripts/swarm-cli.js → packages/swarm-cli/bin/swarm-cli.js as a real, zero-dependency npm package (@oshal/swarm-cli), installable with `npm i -g ./packages/swarm-cli` so `swarm-cli` lands on PATH with no checkout and no dependency tree (a global install of the control-plane root would have dragged in express/pg/etc — wrong for a client). Two path consequences: the completion scripts are now package data at ../completions (relative to bin/), and `version` now reports THIS package's version rather than the control-plane's. Image installs it globally too, so `docker exec <container> swarm-cli …` works.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Fixed the residual status-color gap (BACKLOG): note()/error helpers baked COLOR_ON (stdout's TTY) even though COLOR_ERR was computed, so `swarm-cli ask x | jq` (stdout piped, stderr a terminal) printed plain status notes. Added a stderr-gated color set (paintErr/cErr/uiErr) and pointed note() + the entrypoint error line at it; the stdout-gated c/ui tables are untouched, so piped stdout stays plain and `2>file` stays byte-clean. Positive TTY-stderr coloring still needs a pseudo-tty to acceptance-test end-to-end.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Credential-free `skins` and `experience` commands (and /skins, /experience in chat), with --json. skins lists the twelve cockpit themes and eight ADR-164 experience skins (the ids in theme-manager.js); experience lists the six shells and three homebase presets with their routes, described as docs/architecture/experience-shells.md records them rather than with prototype copy.
  *
  * Usage:
  *   node scripts/swarm-cli.js ask "what's on my calendar today?"
@@ -141,7 +142,7 @@ function banner(cfg) {
 }
 
 // ── REPL slash-commands ───────────────────────────────────────────────────────
-const SLASH_COMMANDS = ['/help', '/catalog', '/tasks', '/whoami', '/history', '/session', '/new', '/clear', '/exit', '/quit'];
+const SLASH_COMMANDS = ['/help', '/catalog', '/tasks', '/whoami', '/history', '/session', '/new', '/skins', '/experience', '/clear', '/exit', '/quit'];
 const REPL_HELP = [
   'Chat commands — type a message to talk to Jarvis, or one of these:',
   '',
@@ -152,6 +153,8 @@ const REPL_HELP = [
   '  /history           replay this thread\'s transcript',
   '  /session           print the current thread id',
   '  /new               start a fresh thread (the old one is kept)',
+  '  /skins             list supported visual skins and core themes',
+  '  /experience        show available UX layouts and audience presets',
   '  /clear             clear the terminal screen',
   '  /exit, /quit       leave chat — the thread is saved',
   '',
@@ -186,6 +189,8 @@ Commands:
   history          print the current thread's transcript
   catalog          list the apps Jarvis can reach
   tasks            list durable handed-off work items + results
+  skins            list supported visual skins and core themes
+  experience       show available UX layouts and audience presets
   tokens [revoke <id>]  list or revoke your personal access tokens
   completion <bash|zsh|powershell>   print a shell tab-completion script
   version          print the CLI version
@@ -546,6 +551,8 @@ async function cmdChat(cfg) {
       case '/history': await cmdHistory({ ...cfg, session: sessionId }); return true;
       case '/catalog': await cmdCatalog(cfg); return true;
       case '/tasks': await cmdTasks(cfg); return true;
+      case '/skins': cmdSkins(cfg); return true;
+      case '/experience': cmdExperience(cfg); return true;
       case '/whoami': await cmdWhoami(cfg); return true;
       default: return false;
     }
@@ -627,12 +634,87 @@ async function cmdTasks(cfg) {
   if (!(data.tasks || []).length) note(cfg, '(no tasks)');
 }
 
+/**
+ * @description `skins` command: list the twelve cockpit themes and eight ADR-164 experience skins.
+ * The ids mirror COCKPIT_THEMES and EXPERIENCE_THEMES in src/pages/cockpit/js/theme-manager.js;
+ * the command is credential-free and makes no request.
+ * @param {{json?: boolean}} flags - Parsed CLI flags; --json prints one JSON object.
+ * @returns {void}
+ */
+function cmdSkins(flags) {
+  const skins = [
+    { id: 'workspace', category: 'core', desc: 'Neutral slate (canonical cockpit default)', scheme: 'light' },
+    { id: 'midnight', category: 'core', desc: 'Deep navy / dark default fallback', scheme: 'dark' },
+    { id: 'daylight', category: 'core', desc: 'Clean high-contrast daylight', scheme: 'light' },
+    { id: 'ocean', category: 'core', desc: 'Deep marine blue', scheme: 'dark' },
+    { id: 'sakura', category: 'core', desc: 'Soft rose / cherry blossom', scheme: 'light' },
+    { id: 'forest', category: 'core', desc: 'Emerald pine', scheme: 'dark' },
+    { id: 'gray', category: 'core', desc: 'Monochrome neutral', scheme: 'light' },
+    { id: 'black', category: 'core', desc: 'OLED true black', scheme: 'dark' },
+    { id: 'light-blue', category: 'core', desc: 'Sky blue daylight', scheme: 'light' },
+    { id: 'aurora', category: 'core', desc: 'Northern lights violet & green', scheme: 'dark' },
+    { id: 'graphite', category: 'core', desc: 'Dark technical charcoal', scheme: 'dark' },
+    { id: 'amber', category: 'core', desc: 'Warm phosphor ember', scheme: 'dark' },
+    { id: 'studio', category: 'experience', desc: 'Graphite & mint workbench (full catalog)', scheme: 'dark' },
+    { id: 'jarvis', category: 'experience', desc: 'Parchment & ember executive briefing', scheme: 'light' },
+    { id: 'orbit', category: 'experience', desc: 'Arctic & cobalt hub-and-spoke map', scheme: 'light' },
+    { id: 'commons', category: 'experience', desc: 'Aubergine & lilac team rooms & Kanban', scheme: 'light' },
+    { id: 'nexus', category: 'experience', desc: 'Luminous deep teal & cyan central assistant', scheme: 'dark' },
+    { id: 'family', category: 'experience', desc: 'Warm sage household (cozy)', scheme: 'light' },
+    { id: 'classroom', category: 'experience', desc: 'Lilac & lavender learning space (playful)', scheme: 'light' },
+    { id: 'company', category: 'experience', desc: 'Slate & teal organization (professional)', scheme: 'light' },
+  ];
+  if (flags.json) { process.stdout.write(`${JSON.stringify({ skins })}\n`); return; }
+  process.stdout.write(`${c.bold('Supported Skins & Themes:')}\n\n`);
+  for (const s of skins) {
+    const badge = s.category === 'experience' ? c.green('[experience]') : c.cyan('[core theme]');
+    process.stdout.write(`  ${c.bold(s.id.padEnd(14))} ${badge.padEnd(16)} ${s.desc} ${c.gray(`(${s.scheme})`)}\n`);
+  }
+}
+
+/**
+ * @description `experience` command: list the experience shells and homebase presets with their
+ * routes, as docs/architecture/experience-shells.md describes them. Credential-free, no request.
+ * @param {{json?: boolean}} flags - Parsed CLI flags; --json prints one JSON object.
+ * @returns {void}
+ */
+function cmdExperience(flags) {
+  const data = {
+    layouts: [
+      { id: 'studio', name: 'Studio', route: '/studio', line: 'Workbench: suites and pinned apps beside one Jarvis conversation' },
+      { id: 'jarvis', name: 'Jarvis', route: '/jarvis', line: 'Assistant home: briefing from the queue, recent work, agenda and suites' },
+      { id: 'orbit', name: 'Orbit', route: '/orbit', line: 'Suites as connected worlds around Jarvis; drill into a suite or an app' },
+      { id: 'commons', name: 'Commons', route: '/commons', line: 'Suite rooms with apps, assistants, a work board and a Jarvis thread per room' },
+      { id: 'nexus', name: 'Central assistant', route: '/nexus', line: 'Intent composer, request-progress ledger and typed answer workspace' },
+      { id: 'homebase', name: 'Homebase', route: '/homebase?preset=<id>', line: 'Audience front pages over your own data (presets below)' },
+    ],
+    presets: [
+      { id: 'family', name: 'Home', route: '/homebase?preset=family', skin: 'family (warm sage)' },
+      { id: 'classroom', name: 'Little Monsters', route: '/homebase?preset=classroom', skin: 'classroom (lilac)' },
+      { id: 'company', name: 'Business', route: '/homebase?preset=company', skin: 'company (slate & teal)' },
+    ],
+    url: '/experience/index.html',
+  };
+  if (flags.json) { process.stdout.write(`${JSON.stringify(data)}\n`); return; }
+  process.stdout.write(`${c.bold('Configurable Experience Layouts:')}\n\n`);
+  for (const l of data.layouts) {
+    process.stdout.write(`  ${c.cyan(l.id.padEnd(12))} ${c.bold(l.name.padEnd(18))} ${l.line} ${c.gray(l.route)}\n`);
+  }
+  process.stdout.write(`\n${c.bold('Audience Presets:')}\n\n`);
+  for (const p of data.presets) {
+    process.stdout.write(`  ${c.green(p.id.padEnd(12))} ${c.bold(p.name.padEnd(18))} ${p.route} ${c.gray(`[${p.skin}]`)}\n`);
+  }
+  process.stdout.write(`\nWeb Portal: ${c.bold(data.url)}\n`);
+}
+
 /** Entry point. */
 async function main() {
   const { cmd, message, flags } = parseArgs(process.argv.slice(2));
   // Credential-free commands: resolved before any config/server work.
   if (cmd === 'help' || flags.help) { printHelp(); return; }
   if (cmd === 'version' || flags.version) { cmdVersion(); return; }
+  if (cmd === 'skins') { cmdSkins(flags); return; }
+  if (cmd === 'experience') { cmdExperience(flags); return; }
   if (cmd === 'completion') { cmdCompletion(message); return; }
   const cfg = resolveConfig(flags, cmd === 'login');
   const commands = {

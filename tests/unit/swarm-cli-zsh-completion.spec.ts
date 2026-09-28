@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the swarm-cli zsh completion (BACKLOG: `swarm-cli` zsh completion). The script had only ever been emitted and line-counted; nothing had run it in zsh, so the README and runbook called it unexecuted. This runs it in a REAL zsh: the script the CLI actually prints (`swarm-cli completion zsh`) must pass `zsh -n`, and TAB pressed in an interactive zsh on a pseudo-terminal (tests/helpers/zsh-complete.zsh) must offer exactly the top-level commands, the three completion shells, the `revoke` token action, and the contexts a real `swarm-cli login` saved for `--context` (before and after the subcommand) - once for each install the script supports: `eval` from ~/.zshrc and `_swarm-cli` autoloaded from $fpath, which take different branches of its dispatch tail. No zsh is a loud failure, never a skip: set OSHAL_ZSH to a zsh binary that has the zsh/zpty module, or put one on PATH.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | experience and skins join the top-level commands the real zsh completion must offer.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { spawn, spawnSync } from 'child_process';
@@ -21,8 +22,8 @@ const STUB_PAT = 'oshal_pat_zshcompletion0000000000000000000000000000';
 const ZSH_RUN_TIMEOUT_MS = 200_000;
 
 const TOP_LEVEL_COMMANDS = [
-  'ask', 'catalog', 'chat', 'completion', 'help', 'history',
-  'login', 'logout', 'tasks', 'tokens', 'version', 'whoami',
+  'ask', 'catalog', 'chat', 'completion', 'experience', 'help', 'history',
+  'login', 'logout', 'skins', 'tasks', 'tokens', 'version', 'whoami',
 ];
 const SAVED_CONTEXTS = ['prod-east', 'staging'];
 const CASES: Array<{ typed: string; expected: string[] }> = [

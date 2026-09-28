@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — proves the headless swarm CLI (scripts/swarm-cli.js) against a stub controller: trusted-service auth headers on every call, the ask→poll→answer loop, per-controller+user session persistence (consecutive asks are ONE thread; --new rotates it), the OIDC-redirect → exit 2 auth failure, job errors → exit 1, poll timeout → exit 3, and catalog formatting. The stub emulates POST /api/jarvis/ask (202+jobId) and GET /ask/result (pending→done) exactly as jarvis-routes responds, so the CLI's contract with the real surface endpoints is what's under test.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | skins and experience print their human headings and a --json shape: 20 skins of which 8 are experience skins, 6 layouts, 3 presets and the chooser URL.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn } from 'child_process';
@@ -280,6 +281,42 @@ describe('swarm-cli (headless Jarvis client)', () => {
     expect(pwsh.stdout).toContain('Register-ArgumentCompleter');
     const bad = await runCli(['completion', 'fish'], { OSHAL_CLI_STATE_DIR: stateDir });
     expect(bad.code).toBe(2);
+  }, 20_000);
+
+  it('skins command lists themes and skins in human and json format', async () => {
+    const human = await runCli(['skins'], { OSHAL_CLI_STATE_DIR: stateDir });
+    expect(human.code).toBe(0);
+    expect(human.stdout).toContain('Supported Skins & Themes:');
+    expect(human.stdout).toContain('studio');
+    expect(human.stdout).toContain('jarvis');
+    expect(human.stdout).toContain('nexus');
+
+    const json = await runCli(['skins', '--json'], { OSHAL_CLI_STATE_DIR: stateDir });
+    expect(json.code).toBe(0);
+    const parsed = JSON.parse(json.stdout);
+    expect(Array.isArray(parsed.skins)).toBe(true);
+    expect(parsed.skins.length).toBe(20);
+    const expSkins = parsed.skins.filter((s: { category: string }) => s.category === 'experience');
+    expect(expSkins.length).toBe(8);
+  }, 20_000);
+
+  it('experience command lists UI screens and audience presets in human and json format', async () => {
+    const human = await runCli(['experience'], { OSHAL_CLI_STATE_DIR: stateDir });
+    expect(human.code).toBe(0);
+    expect(human.stdout).toContain('Configurable Experience Layouts:');
+    expect(human.stdout).toContain('studio');
+    expect(human.stdout).toContain('jarvis');
+    expect(human.stdout).toContain('nexus');
+    expect(human.stdout).toContain('Audience Presets:');
+
+    const json = await runCli(['experience', '--json'], { OSHAL_CLI_STATE_DIR: stateDir });
+    expect(json.code).toBe(0);
+    const parsed = JSON.parse(json.stdout);
+    expect(Array.isArray(parsed.layouts)).toBe(true);
+    expect(parsed.layouts.length).toBe(6);
+    expect(Array.isArray(parsed.presets)).toBe(true);
+    expect(parsed.presets.length).toBe(3);
+    expect(parsed.url).toBe('/experience/index.html');
   }, 20_000);
 
   it('pipe-safety: no ANSI escapes or banner on stdout when not a TTY', async () => {
