@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Sole-operator self-approval on real PostgreSQL under the non-superuser runtime role: the swarm root alone may approve an AUTH-07 catalog migration or an access change touching their own sensitive grant by naming that exact preview, and the reference is stored with the approval and its audit event; a second administrator from ANY source (role store, configured subject, verified provider sign-in, local account) turns the two-person rule back on; a non-root administrator, a delegated root, a reference for another preview and an unreadable census are all refused.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Cover MOCK_OIDC: a mock identity with an operator email is a second administrator, and header-selectable mock identities refuse outright.
  */
 /** Disposable local PostgreSQL only. Never consumes DATABASE_URL or deployment credentials. */
 import type { Pool } from 'pg';
@@ -137,6 +138,19 @@ describe('sole-operator self-approval of a catalog migration', () => {
     // An operator email with no account behind it is no administrator yet; the root alone again.
     await database.pool.query('DELETE FROM oshal_local_users');
     await expect(approve('sole-again')).resolves.toMatchObject({ approved: true });
+  });
+
+  it('counts the MOCK_OIDC administrator and refuses when mock identities are caller-chosen', async () => {
+    const authority = service();
+    const previewId = await pendingReview(authority);
+    const approve = (key: string) => authority.applyCatalogMigration(root, { previewId, idempotencyKey: key,
+      approvalReference: soleOperatorApprovalReference(previewId) });
+    Object.assign(env, { MOCK_OIDC: 'true', MOCK_OIDC_SUB: 'fixture-mock-admin', MOCK_OIDC_EMAIL: 'second@example.test' });
+    await expect(approve('mock-administrator')).rejects.toMatchObject({ status: 403 });
+    Object.assign(env, { MOCK_OIDC_EMAIL: 'not-an-operator@example.test', MOCK_OIDC_ALLOW_HEADER: 'true' });
+    await expect(approve('mock-header-override')).rejects.toMatchObject({ status: 403 });
+    env.MOCK_OIDC_ALLOW_HEADER = 'false';
+    await expect(approve('mock-not-operator')).resolves.toMatchObject({ approved: true });
   });
 
   it('refuses the only administrator while swarm root is unclaimed', async () => {

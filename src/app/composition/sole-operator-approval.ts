@@ -4,10 +4,13 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Sole-operator self-approval (operator decision 2026-09-28). An access change or AUTH-07 catalog migration that touches the approver's own sensitive grants needs an approval reference an independent verifier accepts, and no verifier was wired, so on a one-administrator install such a change could never be applied by anyone. The swarm root may now approve it themselves by naming the exact preview, but only while no other identity resolves as a swarm administrator; the moment a second administrator exists the reference is refused again.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Count the MOCK_OIDC administrator too. Mock sessions are never observed into the principal directory, so a mock identity whose email is an operator email was an administrator the census could not see; with header overrides allowed any caller can pick a mock identity, so the census now refuses outright.
  */
 import type { Pool } from 'pg';
 import type { AuthorizationActor } from '@/shared/application-authorization';
 import { getRootSubFromStore, listRoles } from '@/features/swarm-roles';
+import { isMockOidcEnabled, MOCK_OIDC_PRINCIPAL_ISSUER } from '@/shared/middleware/principal-issuer';
+import { isMockOidcHeaderOverrideEnabled, mockOidcDefaultIdentity } from '@/shared/middleware/oidc';
 import { createChildLogger } from '@/shared/logger';
 
 const logger = createChildLogger({ module: 'sole-operator-approval' });
@@ -90,10 +93,26 @@ export function createSoleOperatorApprovalVerifier(ports: SoleOperatorApprovalPo
 }
 
 /**
+ * @description The MOCK_OIDC administrator, when mock sign-in is on. Mock sessions are never
+ * observed into the principal directory, so the census adds the fixed mock identity itself when its
+ * email is a configured operator email. With header overrides allowed a caller can sign in as any
+ * mock identity, so the administrators cannot be counted at all and the census refuses.
+ * @param env - Authentication configuration.
+ * @returns The mock administrator, if any.
+ */
+function mockAdministrators(env: NodeJS.ProcessEnv): SwarmAdministratorIdentity[] {
+  if (!isMockOidcEnabled(env)) return [];
+  if (isMockOidcHeaderOverrideEnabled(env)) throw new Error('MOCK_OIDC_ALLOW_HEADER lets a caller choose any mock identity; administrators cannot be counted');
+  const identity = mockOidcDefaultIdentity(env);
+  const emails = new Set((env.OSHAL_OPERATOR_EMAILS ?? '').split(',').map(value => value.trim().toLowerCase()).filter(Boolean));
+  return emails.has(identity.email.toLowerCase()) ? [{ sub: identity.sub, issuer: MOCK_OIDC_PRINCIPAL_ISSUER }] : [];
+}
+
+/**
  * @description The administrator census from every source that can make an identity a swarm
  * administrator: the ADR-148 role store (root and admin), the configured operator subjects, and
  * the directory identities that configuration admits (verified provider sign-ins and local
- * accounts matched by operator email).
+ * accounts matched by operator email), and the MOCK_OIDC identity when mock sign-in is on.
  * @param pool - Control-plane pool. @param env - Authentication configuration.
  * @param directoryAdministrators - Directory identities that resolve as administrators.
  * @returns The census port.
@@ -105,7 +124,7 @@ export function createSwarmAdministratorCensus(pool: Pool, env: NodeJS.ProcessEn
     administrators: async () => {
       const roles = (await listRoles(pool)).filter(row => row.role === 'root' || row.role === 'admin').map(row => ({ sub: row.userSub }));
       const configured = (env.OSHAL_OPERATOR_SUBS ?? '').split(',').map(value => value.trim()).filter(Boolean).map(sub => ({ sub }));
-      return [...roles, ...configured, ...await directoryAdministrators()];
+      return [...roles, ...configured, ...mockAdministrators(env), ...await directoryAdministrators()];
     },
   };
 }

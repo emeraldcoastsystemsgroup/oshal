@@ -22,6 +22,7 @@
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Export shouldReturnUnauthorizedResponse so the LOCAL_AUTH middleware set (ADR-117, src/app/routes/local-auth-routes.ts) answers API/fetch vs browser-document requests with the SAME 401-JSON/redirect split as this wrapper — one discrimination rule, not two drifting copies.
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | Stamp MOCK_OIDC identities with an explicit synthetic issuer so downstream account binding uses the same verified (issuer, subject) namespace as real OIDC instead of app-specific fallback logic.
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | Multi-provider login (ADR-126): one auth() instance per host × enabled provider (GOOGLE_LOGIN / MICROSOFT_LOGIN — registry in oidc-providers.ts). The legacy issuer stays the primary on /callback + the default appSession cookie (registered redirect URIs and live sessions survive); secondaries get /login/<name>, /callback/<name>, and a suffixed session cookie. Bare /login renders a provider chooser when more than one is enabled; starting a login clears sibling providers' session cookies so exactly one identity is active per browser.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com | Expose the fixed MOCK_OIDC identity (mockOidcDefaultIdentity) and let the header-override check read a given environment, so the sole-operator administrator census counts the mock administrator from the same definition the middleware signs requests in with.
  */
 
 import { auth, requiresAuth, ConfigParams } from 'express-openid-connect';
@@ -52,9 +53,19 @@ export { isMockOidcEnabled } from '@/shared/middleware/principal-issuer';
  * only honored inside MOCK_OIDC mode so production OIDC never trusts test
  * identity headers.
  */
-export function isMockOidcHeaderOverrideEnabled(): boolean {
-  const val = (process.env.MOCK_OIDC_ALLOW_HEADER ?? '').toLowerCase().trim();
+export function isMockOidcHeaderOverrideEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const val = (env.MOCK_OIDC_ALLOW_HEADER ?? '').toLowerCase().trim();
   return val === 'true' || val === '1' || val === 'yes';
+}
+
+/**
+ * @description The fixed identity MOCK_OIDC mode signs every request in as when no header override is
+ * allowed. One definition, read by the middleware and by the administrator census.
+ * @param env - Process environment.
+ * @returns The mock subject and email.
+ */
+export function mockOidcDefaultIdentity(env: NodeJS.ProcessEnv = process.env): { sub: string; email: string } {
+  return { sub: env.MOCK_OIDC_SUB || 'mock-user-001', email: env.MOCK_OIDC_EMAIL || 'alex@demo.local' };
 }
 
 type MockOidcUser = {
@@ -174,10 +185,10 @@ function createMockOidcMiddleware(): OidcMiddlewareSet {
 
   // Generic demo identity for MOCK_OIDC mode (values are asserted by several specs —
   // keep stable). Override with MOCK_OIDC_EMAIL/NAME/SUB.
-  const mockEmail = process.env.MOCK_OIDC_EMAIL || 'alex@demo.local';
+  const { sub: mockSub, email: mockEmail } = mockOidcDefaultIdentity();
   const mockUser: MockOidcUser = {
     iss: MOCK_OIDC_PRINCIPAL_ISSUER,
-    sub: process.env.MOCK_OIDC_SUB || 'mock-user-001',
+    sub: mockSub,
     name: process.env.MOCK_OIDC_NAME || 'Alex Monster',
     email: mockEmail,
     preferred_username: mockEmail,
