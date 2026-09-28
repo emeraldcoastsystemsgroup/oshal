@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en" data-theme="midnight">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jarvis calling setup</title>
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css">
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css">
+  <script src="/shared/ui/js/surface-theme.js" defer></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { max-width: 800px; margin: 0 auto; padding: 24px 16px 60px; color: var(--text-primary); background: var(--bg-primary); font: 16px/1.5 system-ui, sans-serif; }
+    a { color: var(--accent-primary); }
+    header { margin-bottom: 24px; }
+    h1 { margin: 12px 0 8px; font-size: clamp(1.7rem, 4vw, 2.3rem); }
+    h2 { margin: 0 0 10px; font-size: 1.15rem; }
+    p { color: var(--text-secondary); }
+    article { margin: 16px 0; padding: 20px; border: 1px solid var(--border-color); border-radius: 14px; background: var(--bg-secondary); }
+    label { display: block; margin: 15px 0 5px; font-weight: 600; }
+    select, input, button { font: inherit; }
+    select, input[type="tel"], input[type="number"] { display: block; width: 100%; min-height: 44px; padding: 8px 10px; color: var(--text-primary); background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 8px; }
+    .twocol { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .check { display: flex; gap: 10px; align-items: flex-start; font-weight: 400; }
+    .check input { margin-top: 5px; width: 18px; height: 18px; flex: none; }
+    .note { border-left: 4px solid var(--accent-primary); padding: 8px 14px; background: var(--bg-tertiary); border-radius: 0 8px 8px 0; }
+    button { padding: 10px 18px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--accent-primary); color: var(--bg-primary); font-weight: 700; cursor: pointer; }
+    button:disabled { opacity: .55; cursor: wait; }
+    [role="status"] { min-height: 2em; padding-top: 12px; }
+    :focus-visible { outline: 3px solid var(--accent-primary); outline-offset: 3px; }
+    @media (max-width: 580px) { .twocol { grid-template-columns: 1fr; gap: 0; } article { padding: 16px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <a href="/api/jarvis/ui">← Back to Jarvis</a>
+    <h1>Calling setup</h1>
+    <p>Choose which existing Twilio connection this Jarvis application may use. Connecting Twilio in Utilities does not turn calling on. No account, number, or credential is chosen automatically.</p>
+    <p class="note">Live calling is not installed yet. Saving these preferences makes no call and does not authorize Jarvis to call without your approval for each request.</p>
+  </header>
+  <form id="calling-form">
+    <article>
+      <h2>1. Select a connection</h2>
+      <p>Only connected Twilio accounts available to your signed-in identity appear here. A shared connection still requires your own opt-in.</p>
+      <label for="connection">Twilio connection</label>
+      <select id="connection" name="connectionId"><option value="">Choose a connection</option></select>
+      <p id="connection-hint">Need to connect an account? <a href="/utilities">Open Connections</a>.</p>
+    </article>
+    <article>
+      <h2>2. Set your transfer and limits</h2>
+      <label for="transfer-phone">Phone to ring when a human answers</label>
+      <input id="transfer-phone" name="transferPhone" type="tel" autocomplete="tel" inputmode="tel" placeholder="International format, starting with +" maxlength="16">
+      <div class="twocol">
+        <div><label for="max-minutes">Maximum minutes per call</label><input id="max-minutes" name="maxMinutes" type="number" min="1" max="60" step="1" required></div>
+        <div><label for="max-cost">Maximum estimated cost (USD)</label><input id="max-cost" name="maxCostUsd" type="number" min="1" max="500" step="0.01" required></div>
+      </div>
+      <p>These are saved limits for the future live service, not a Twilio billing cap. The actual call must stop if its configured limit is reached.</p>
+    </article>
+    <article>
+      <h2>3. Opt in for this application</h2>
+      <label class="check"><input id="enabled" name="enabled" type="checkbox"><span>Allow this Jarvis application to use the selected connection when live calling is separately released.</span></label>
+      <label class="check"><input id="consent" name="consent" type="checkbox"><span>I understand calls may incur charges. Jarvis must still ask me to approve each live call, and I can disable this application here.</span></label>
+    </article>
+    <button id="save" type="submit">Save calling setup</button>
+    <div id="status" role="status" aria-live="polite">Loading settings…</div>
+  </form>
+  <script src="/api/jarvis/calling/client.js" defer></script>
+</body>
+</html>

@@ -38,6 +38,10 @@ The guiding model is:
     pg_trgm latency numbers with an honest reading of which index carried which win
 - [platform-shared-services.md](./platform-shared-services.md)
   - as-built reference for the cross-cutting services every app rides on (budgets, connector write-actions, global search, LLM-judge, persona-evals, notifications, data export/delete, queue DLQ, bot-node auth, run tracing) from the 2026-07 gap-list build
+- [ticket-workflow-view-spec.md](./ticket-workflow-view-spec.md)
+  - the ticket-as-workflow read model behind the cockpit Workflow tab (`GET /api/v1/tickets/:ticketId/workflow`):
+    what the owner- and application-scoped projection returns, how graph-gate receipts are correlated,
+    what it deliberately does not claim, and the execution invariants later slices must meet
 - [core-runtime-overview.md](./core-runtime-overview.md)
   - fastest architecture read for reviewers who only need the core runtime
 - [OSHAL-agent-runtime-design-and-implementation-plan.md](./OSHAL-agent-runtime-design-and-implementation-plan.md)

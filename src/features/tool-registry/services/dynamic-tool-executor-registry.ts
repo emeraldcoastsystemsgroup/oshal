@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Track B S6: Dynamic tool executor registry — replaces hardcoded switch with runtime-extendable descriptor map
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: publish immutable executor descriptors so request-start identity checks cannot be bypassed by in-place mutation.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Reserve authorization executors for fixed code-owned handlers.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Reserve the non-executing n8n analysis handler from runtime descriptor replacement.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -68,6 +69,11 @@ export class DynamicToolExecutorRegistry {
   register(descriptor: ToolExecutorDescriptor): void {
     if (isAuthorizationTool(descriptor.toolName) || isAuthorizationTool(descriptor.builtinKey ?? '')) {
       throw new Error('Authorization tool executors are reserved for core registration');
+    }
+    if ((descriptor.toolName === 'n8n-import-analyze' || descriptor.builtinKey === 'n8n-import-analyze')
+      && (descriptor.toolName !== 'n8n-import-analyze' || descriptor.executorType !== 'builtin'
+        || descriptor.builtinKey !== descriptor.toolName || descriptor.runtimeRegistered)) {
+      throw new Error('n8n import analysis executor is reserved for core registration');
     }
     const immutableDescriptor = Object.freeze({ ...descriptor });
     this.registry.set(immutableDescriptor.toolName, immutableDescriptor);
@@ -144,6 +150,7 @@ export class DynamicToolExecutorRegistry {
       ['analyze-spending', 'analyze-spending'],
       ['check-budget', 'check-budget'],
       ['workflow-studio', 'workflow-studio'],
+      ['n8n-import-analyze', 'n8n-import-analyze'],
     ];
 
     for (const [toolName, builtinKey] of builtins) {

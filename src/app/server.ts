@@ -204,7 +204,9 @@
  * 188 | maintainer@emeraldcoastsystemsgroup.com   | Wire the durable refusal recorder and authenticated caller-scoped /api/ops/refusals read API for P1 refusal visibility.
  * 189 | maintainer@emeraldcoastsystemsgroup.com   | Server bootstrap decomposition (BACKLOG #1788): extracted post-bootstrap installs (provider-switch snapshot, autoload, wiring audit, demo seeding) to composition/server-bootstrap-tasks.ts, and auxiliary route clusters to server-auxiliary-routes.ts, bringing server.ts under the 800-line decomposition threshold.
  * 190 | maintainer@emeraldcoastsystemsgroup.com | Share the explorer service with the periodic schema detector and its shutdown lifecycle.
- * 191 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L3: mounted /api/location (routes/location-routes.ts): browser ingest, the person's location consent and the step-up ceremony. The service-secret rail is refused (401) before requiresAuth, so a machine caller never reaches a location handler whatever session rides along; the router itself admits only an interactive browser session with a verified issuer and runs every statement as that person with is_operator off.
+ * 191 | maintainer@emeraldcoastsystemsgroup.com   | Mount owner-scoped Jarvis calling setup at /api/jarvis/calling (requiresAuth) before the broader Jarvis gate. It stores one explicitly selected Twilio connection, transfer phone, limits and consent per user and always reports calling as not effective; no call path is added.
+ * 192 | maintainer@emeraldcoastsystemsgroup.com   | Mount authenticated, synthetic-only phone-call simulation at /api/voice-sim (serviceSecretOr(requiresAuth) inside the router, with a trusted-service user binding) beside Jarvis without enabling live dialing.
+ * 193 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L3: mounted /api/location (routes/location-routes.ts): browser ingest, the person's location consent and the step-up ceremony. The service-secret rail is refused (401) before requiresAuth, so a machine caller never reaches a location handler whatever session rides along; the router itself admits only an interactive browser session with a verified issuer and runs every statement as that person with is_operator off.
  */
 
 require('dotenv').config();
@@ -256,6 +258,7 @@ import { createSwarmRolesRoutes, initializeSwarmRoles } from './routes/swarm-rol
 import { createAppRegistryRoutes, initializeAppRegistries } from './routes/app-registry-routes';
 import { createApplicationAuthMiddlewareSet } from './middleware/application-auth';
 import { createJarvisVoiceRoutes } from './routes/jarvis-voice-routes';
+import { createVoiceCallSimRoutes } from './routes/voice-call-sim-routes';
 import { createPersonModelRoutes } from './routes/person-model-routes';
 import { ensurePersonModelSchema } from '@/features/person-model';
 import { startAmbientEnrichmentRuntime, startPersonModelMaintenanceRuntime } from './ambient-enrichment-runtime';
@@ -292,6 +295,7 @@ import { createDataModelService } from '@/features/data-model';
 import { startSchemaDriftMonitor } from './schema-drift-runtime';
 import { createJoinRoutes } from './routes/join-routes';
 import { createJarvisRoutes } from './routes/jarvis-routes';
+import { createJarvisCallingConfigRoutes } from './routes/jarvis-calling-config-routes';
 import { createJarvisPackageToolService } from './composition/jarvis-package-tool-wiring';
 import { createJarvisBriefRoutes } from './routes/jarvis-brief-routes';
 import { createJarvisBriefingRoutes } from './routes/jarvis-briefing-routes';
@@ -1257,10 +1261,14 @@ function createApp(): express.Application {
   // other Jarvis path through to the later SEC-01 gate (the ambient routes use the same ordering).
   app.use('/api/jarvis', createJarvisBriefRoutes(requiresAuth, ctx));
   app.use('/api/jarvis/briefings', createJarvisBriefingRoutes(jarvisBriefings.service, requiresAuth, jarvisBriefings.resolveActor));
+  // A Twilio connector by itself never activates Jarvis calling; each owner must select it here.
+  app.use('/api/jarvis/calling', createJarvisCallingConfigRoutes(ctx.pool, requiresAuth));
   // Same durable SEC-01 gate as Graph. Legacy reads retain immediate containment in every mode;
   // enforce also removes the compatibility fleet secret from Jarvis actions.
   app.use('/api/jarvis', delegatedUserRouteAuth,
     createJarvisRoutes(ctx, apiDir, artifactVisibleApps, createJarvisPackageToolService(ctx, packageTools)));
+  // Synthetic phone-tree fixtures only: no real carrier transport or live phone numbers.
+  app.use('/api/voice-sim', createVoiceCallSimRoutes(requiresAuth));
   // Vision describe (the visual analog of /api/voice/transcribe): base64 images exceed the global
   // 100kb JSON cap, so this mount is excluded from the default parser above and carries its own
   // 12MB one. serviceSecretOr(requiresAuth): browser session OR the trusted-service identity.

@@ -32,6 +32,7 @@
   .badge { font-size:11px; padding:2px 8px; border-radius:20px; border:1px solid var(--line); color:var(--muted); }
   .badge.swarm { color:var(--accent2); border-color:var(--accent2); }
   .badge.wrapper { color:var(--accent); border-color:var(--accent); }
+  .badge.n8n-analysis { color:var(--status-warning,var(--accent)); border-color:var(--status-warning,var(--accent)); }
   .badge.gate { color:var(--status-warning,var(--status-warning)); border-color:var(--status-warning,var(--status-warning)); }
   .pack .desc { color:var(--text-secondary,#c8c8da); font-size:13px; margin:8px 0; line-height:1.5; }
   .pack .meta { color:var(--muted); font-size:12px; margin-bottom:12px; }
@@ -52,33 +53,69 @@
   .fnode:last-child { border-bottom:none; }
   .fedges { margin-top:8px; }
   .fedge { font-size:12px; color:var(--text-secondary,#c8c8da); padding:2px 0; }
+  .import-form { display:flex; align-items:end; gap:10px; flex-wrap:wrap; margin:18px 0 24px; }
+  .import-form label { display:grid; gap:5px; color:var(--muted); font-size:12px; }
+  .import-form input { color:var(--text); background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:8px; max-width:260px; }
+  .warning { color:var(--status-warning,var(--accent)); font-size:12px; margin:8px 0; }
 </style>
 </head>
 <body>
   <div class="page">
     <h1>📦 Packs</h1>
     <div class="sub">Swarms you scoped with codex-packer. <b>Wrapper</b> = a one-shot bot you download as a zip. <b>Swarm</b> = a multi-bot app you deploy (its own ticket type + queue + bots).</div>
+    <div class="pack">
+      <div class="top"><span class="nm">Import an n8n process for review</span><span class="badge n8n-analysis">analysis only</span></div>
+      <div class="desc">Upload one n8n JSON export (512 KiB max). The private draft keeps step types, versions, warnings and connection ports; source names, parameters, code, credentials and pinned data are discarded. It cannot deploy or create tickets.</div>
+      <form class="import-form" id="n8n-import-form" enctype="multipart/form-data">
+        <label>Draft slug <input name="name" required maxlength="80" pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="my-process-review" autocomplete="off"></label>
+        <label>n8n JSON export <input name="file" type="file" accept=".json,application/json" required></label>
+        <button class="btn primary" type="submit">Analyze and save draft</button>
+      </form>
+      <div class="toast" id="n8n-import-status" role="status" aria-live="polite"></div>
+    </div>
     <div id="list"><div class="notice">Loading…</div></div>
   </div>
 <script>
-const esc = s => (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const esc = s => String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+document.getElementById('n8n-import-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  const status = document.getElementById('n8n-import-status');
+  button.disabled = true;
+  status.className = 'toast';
+  status.textContent = 'Analyzing…';
+  try {
+    const response = await fetch('/api/swarm/packs/import/n8n', { method:'POST', body:new FormData(form) });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.code || result.error || 'import_failed');
+    status.textContent = `Saved private analysis draft “${result.name}”: ${result.nodeCount} steps, ${result.connectionCount} connections, ${result.unsupportedCount} unsupported. No workflow was deployed.`;
+    form.reset();
+    await load();
+  } catch (error) {
+    status.className = 'toast err';
+    status.textContent = `Import refused: ${error.message || 'request failed'}`;
+  } finally { button.disabled = false; }
+});
 async function load(){
   try {
     const r = await fetch('/api/swarm/packs'); const j = await r.json();
     const packs = Array.isArray(j.packs) ? j.packs : [];
-    if (!packs.length) { document.getElementById('list').innerHTML = '<div class="notice">No packs yet. Scope one with codex-packer, then it shows up here.</div>'; return; }
+    if (!packs.length) { document.getElementById('list').innerHTML = '<div class="notice">No packs yet. Scope one with codex-packer or import an n8n review draft above.</div>'; return; }
     document.getElementById('list').innerHTML = packs.map((p,i)=>{
       const mode = p.mode || 'unknown';
       const bots = Array.isArray(p.bots) ? p.bots.length : 0;
       const gate = p.hasApprovalGates ? '<span class="badge gate">approval gates</span>' : '';
-      const deploy = mode === 'swarm' ? `<button class="btn primary" data-deploy="${esc(p.name)}" data-i="${i}">🚀 Deploy to swarm</button>` : '';
+      const deploy = mode === 'swarm' && p.analysisOnly !== true ? `<button class="btn primary" data-deploy="${esc(p.name)}" data-i="${i}">🚀 Deploy to swarm</button>` : '';
+      const analysis = mode === 'n8n-analysis' ? `<div class="warning">Analysis only · ${esc(p.nodeCount)} steps · ${esc(p.unsupportedCount)} unsupported · no deploy or ticket action</div>` : '';
       return `<div class="pack">
         <div class="top"><span class="nm">${esc(p.name)}</span><span class="badge ${esc(mode)}">${esc(mode)}</span>${gate}</div>
         <div class="desc">${esc(p.description||'')}</div>
+        ${analysis}
         <div class="meta">${bots?bots+' bots · ':''}${p.ticketType?'ticket type: '+esc(p.ticketType)+' · ':''}${p.updatedAt?new Date(p.updatedAt).toLocaleString():''}</div>
         <div class="bar">
           <a class="btn ghost" href="/api/swarm/packs/${encodeURIComponent(p.name)}/download">⬇ Download ZIP</a>
-          ${mode==='swarm'?`<button class="btn ghost" data-flow="${esc(p.name)}" data-i="${i}">🔀 View flow</button>`:''}
+          ${mode==='swarm'||mode==='n8n-analysis'?`<button class="btn ghost" data-flow="${esc(p.name)}" data-i="${i}">🔀 View flow</button>`:''}
           ${deploy}<span class="toast" id="t-${i}"></span>
         </div><div class="flow" id="f-${i}"></div></div>`;
     }).join('');
@@ -99,9 +136,13 @@ async function viewFlow(name, i){
     const wf = j.workflow || {};
     const nodes = Array.isArray(wf.nodes) ? wf.nodes : Object.entries(wf.nodes||{}).map(([id,v])=>({id,...(v||{})}));
     const edges = Array.isArray(wf.edges) ? wf.edges : (wf.transitions||[]);
-    const nrow = nodes.map(n=>`<div class="fnode"><b>${esc(n.id||n.name||'')}</b> <span class="src">${esc(n.type||n.kind||'')}</span> ${esc(n.label||n.bot||n.description||'')}</div>`).join('');
-    const erow = edges.map(e=>`<div class="fedge">${esc(e.from||e.source||'')} → ${esc(e.to||e.target||'')}${e.label||e.on?' <span class="src">['+esc(e.label||e.on)+']</span>':''}</div>`).join('');
+    const byId = new Map(nodes.map(n=>[n.id,n.label||n.id]));
+    const nrow = nodes.map(n=>`<div class="fnode"><b>${esc(n.label||n.id||n.name||'')}</b> <span class="src">${esc(n.type||n.kind||'')}${n.typeVersion?' v'+esc(n.typeVersion):''}</span> ${n.status?'<span class="warning">'+esc(n.status)+'</span>':''} ${Array.isArray(n.reasons)?esc(n.reasons.join(', ')):esc(n.bot||n.description||'')}</div>`).join('');
+    const erow = edges.map(e=>`<div class="fedge">${esc(byId.get(e.from)||e.from||e.source||'')}${e.sourceChannel?' '+esc(e.sourceChannel)+'['+esc(e.sourceOutput)+']':''} → ${esc(byId.get(e.to)||e.to||e.target||'')}${e.targetChannel?' '+esc(e.targetChannel)+'['+esc(e.targetInput)+']':''}${e.label||e.on?' <span class="src">['+esc(e.label||e.on)+']</span>':''}</div>`).join('');
+    const warnings = wf.analysisOnly ? '<div class="warning">Review only: this graph is not runnable or publishable.</div>'+(wf.flags?.sourceActive?'<div class="warning">Source workflow was active; no local trigger was activated.</div>':'')+'<div class="meta">'+esc((wf.blockers||[]).join(' · '))+'</div>' : '';
+    const candidates = Array.isArray(wf.nativeCandidates) && wf.nativeCandidates.length ? '<div class="meta">Studio proposals (not connected or executable): '+esc(wf.nativeCandidates.map(c=>'Step '+c.sourceOrdinal+' → '+c.node?.type+'; '+c.requiredBinding).join(' · '))+'</div>' : '';
     el.innerHTML = '<div class="flowbox"><div class="srchead">🔀 Workflow — '+nodes.length+' nodes, '+edges.length+' edges (read-only)</div>'+
+      warnings+candidates+
       '<div class="fnodes">'+(nrow||'<span class="src">no nodes</span>')+'</div>'+
       (erow?'<div class="fedges">'+erow+'</div>':'')+'</div>';
   } catch (e) { el.innerHTML = '<div class="meta">Couldn\'t load flow.</div>'; }

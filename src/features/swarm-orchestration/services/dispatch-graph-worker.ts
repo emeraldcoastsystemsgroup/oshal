@@ -14,6 +14,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Run-history recording: optional runRecorder opens a workflow_runs row per dispatch (reused across suspend/resume via metadata.workflowRunId), streams per-node steps via the engine's onStep observer, and closes the run with its terminal disposition. Fire-and-forget like saveCheckpoint — every recorder call is non-throwing so a recording failure can never break a run.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Register the multi-app planner's plan-step executor on the engine instance so a compiled NL plan runs on this same graph rail (data-passing between app-bot steps + approval gates). Additive: studio-authored graphs never emit plan-step nodes.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The approval-gate suspend names its reason (CKR-12 / D5). This is the one approval_required that genuinely needs a human, and it was indistinguishable in the cockpit from the two that do not.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Correlate a graph gate's suspended step with its approval-request status receipt by recording the gate node id and run id in transition metadata; no execution policy change.
  */
 
 import type { InternalTicket } from '@/entities/ticket';
@@ -176,9 +177,12 @@ export async function dispatchGraphTicket(
         } catch {
           /* already paused on a re-run — ignore */
         }
+        const gateStep = [...result.trace].reverse().find((step) => step.nodeType === 'approval-gate' && step.outcome === 'suspended');
         await deps.ticketService.updateStatus(ticketId, 'approval_required', {
           reason: 'approval_gate',
           source: 'dispatch-graph-worker',
+          ...(gateStep ? { gateNodeId: gateStep.nodeId } : {}),
+          ...(runId ? { workflowRunId: runId } : {}),
         });
         await finishRunRecord('suspended', 'suspended', result.reason);
         logger.info({ ticketId, resumeNode: result.resumeNodeId }, 'Graph workflow paused at approval gate — awaiting operator approval (state checkpointed)');

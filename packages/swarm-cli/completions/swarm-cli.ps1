@@ -20,6 +20,8 @@ Register-ArgumentCompleter -Native -CommandName @('swarm-cli','swarm-cli.cmd','s
         catalog    = 'List the apps/agents Jarvis can reach'
         tasks      = 'List durable handed-off work items and their results'
         tokens     = 'List or revoke personal access tokens'
+        skins      = 'List supported visual skins and core themes'
+        experience = 'Show available UX layouts and audience presets'
         completion = 'Print a shell-completion script (bash|zsh|powershell)'
         version    = 'Print the swarm-cli version'
         help       = 'Show usage'

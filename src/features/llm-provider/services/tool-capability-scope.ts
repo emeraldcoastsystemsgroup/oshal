@@ -1,3 +1,10 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Change Log added. The n8n-import-analyze runtime tool carries only the n8n-import-analysis capability tag, so it reaches a bot only when that bot is explicitly scoped for import assessment.
+ */
 import type { LLMToolDefinition } from './llm-service';
 import type { Tool } from '@/shared/types/tool';
 import { HARNESS_NATIVE_TOOL_NAMES } from '@/shared/tools/embedded-tool-tier';
@@ -53,6 +60,7 @@ const RUNTIME_TOOL_CAPABILITY_TAGS: Record<string, string[]> = {
   'analyze-spending': ['finance', 'spending-analysis', 'budgeting'],
   'check-budget': ['finance', 'budgeting', 'spending-analysis'],
   'workflow-studio': ['workflow', 'workflow-studio', 'orchestration', 'architecture', 'design', 'system-modeling'],
+  'n8n-import-analyze': ['n8n-import-analysis'],
 };
 
 const MCP_SERVER_CAPABILITY_TAGS: Record<string, string[]> = {

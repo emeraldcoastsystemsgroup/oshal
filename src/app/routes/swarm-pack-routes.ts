@@ -3,7 +3,7 @@
  *
  * codex-packer writes its output to a deterministic, named directory
  * `${CLINE_WORKSPACE_ROOT}/packs/<name>/` containing a `pack.json` descriptor
- * ({ name, mode: 'wrapper' | 'swarm', description, files }). These routes let the
+ * ({ name, mode: 'wrapper' | 'swarm' | 'n8n-analysis', description, files }). These routes let the
  * cockpit list packs, read a descriptor, and DOWNLOAD the pack as a ZIP — the
  * "one-shot codex wrapper → downloadable zip" half of ADR-039. The "load a
  * multi-bot swarm into the runtime" half (deploy) is a sibling slice.
@@ -25,15 +25,24 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | A pack slug belongs to whoever deployed it. The pack tree is per-user but the emitted manifest path is not, so a second authenticated user deploying the same slug inherited the incumbent agent ids and ticket queue and overwrote their manifest - loadApp then registered the newcomer persona under the row the incumbent tickets point at. The emission now records packOwnerKey and a deploy that would take over another owner slug is refused 409. A manifest written before owners were stamped carries none and is adopted, because breaking the packs already deployed here would cost more than it saves.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The pack deploy names its caller when loading the manifest. It called loadApp with no scope, so withInstallOwner stamped OSHAL_INSTALL_OWNER_SUB - which every new install now sets - and any authenticated user's own deployed pack became the install owner's, with that owner made its administrator. The tier half was already defanged for a non-operator caller by RLS, but the ownership stamp landed. Adoption is meant for rows staged before anyone could sign in; a request that HAS an identity must supply it.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. Both chains read ONE of the six. A module-scope const calling the resolver is NOT converged - it freezes the root at import, before any caller can set the environment - so this became a call-time function.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Bounded n8n JSON multipart upload saves a private redacted Packs review draft. Read-only topology, no source export retained, no deploy path. Auth before buffering; draft marker also blocks direct deploy. Existing swarm deploy semantics are unchanged.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | The n8n import handler moved out of createSwarmPackRoutes into named module functions (caller check, multipart parse, analysis, exclusive directory, draft write), each under 50 lines; the analyzer is imported through the workflow-studio barrel, and every refusal path logs.
  */
-import { Router, type Request, type Response } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as zlib from 'zlib';
 import * as crypto from 'crypto';
 import yaml from 'js-yaml';
+import multer from 'multer';
 import { createChildLogger } from '@/shared/logger';
 import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
+import {
+  analyzeN8nImport,
+  buildN8nImportPackDraft,
+  N8nImportAnalysisError,
+  type N8nImportAnalysis,
+} from '@/features/workflow-studio';
 
 const logger = createChildLogger({ module: 'swarm-pack-routes' });
 
@@ -54,8 +63,13 @@ function packsRoot(): string { return path.join(resolveSharedWorkspaceRoot(), 'p
 
 /** Reject anything that isn't a safe single path segment (no traversal). */
 function safeName(name: string): string | null {
-  return /^[a-zA-Z0-9._-]{1,80}$/.test(name) ? name : null;
+  return name !== '.' && name !== '..' && /^[a-zA-Z0-9._-]{1,80}$/.test(name) ? name : null;
 }
+
+/** Multipart bypasses the global 100kb JSON parser; the analyzer enforces the same 512KiB cap. */
+const n8nUpload = multer({ storage: multer.memoryStorage(), limits: {
+  fileSize: 512 * 1024, files: 1, fields: 1, parts: 2, fieldSize: 80,
+} });
 
 /**
  * @description FS-safe, collision-free per-user key derived from the OIDC sub.
@@ -265,6 +279,85 @@ function buildPackManifest(
   return { manifest, ticketType, version, gated };
 }
 
+/** Authenticate before multer buffers any of the caller's potentially sensitive export. */
+function requireN8nImportCaller(req: Request, res: Response, next: NextFunction): void {
+  if (!userPacksRoot(req)) { res.status(401).json({ error: 'not authenticated' }); return; }
+  next();
+}
+
+/** One bounded multipart file; an over-size or malformed upload is refused before analysis. */
+function parseN8nUpload(req: Request, res: Response, next: NextFunction): void {
+  n8nUpload.single('file')(req, res, (err: unknown) => {
+    if (!err) { next(); return; }
+    const tooLarge = err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE';
+    logger.error({ err }, 'n8n upload refused at the multipart boundary');
+    res.status(tooLarge ? 413 : 400).json({ error: 'n8n_upload_limit_or_shape' });
+  });
+}
+
+/** Decode strictly as UTF-8 and analyze; answers 400 with a stable code and returns null on refusal. */
+function analyzeUpload(buffer: Buffer, res: Response): N8nImportAnalysis | null {
+  try {
+    const decoder = new TextDecoder('utf-8', { fatal: true });
+    return analyzeN8nImport(decoder.decode(buffer));
+  } catch (err) {
+    const code = err instanceof N8nImportAnalysisError ? err.code : 'invalid_utf8';
+    logger.error({ err, code }, 'n8n import refused');
+    res.status(400).json({ error: 'n8n_import_refused', code });
+    return null;
+  }
+}
+
+/** Create the draft directory exclusively: never replace an existing pack or its bots. */
+function createDraftDir(root: string, dir: string, name: string, res: Response): boolean {
+  fs.mkdirSync(root, { recursive: true });
+  try {
+    fs.mkdirSync(dir);
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+      logger.error({ err, name }, 'n8n draft refused: pack name exists');
+      res.status(409).json({ error: 'pack_name_exists' });
+      return false;
+    }
+    logger.error({ err, name }, 'n8n draft directory creation failed');
+    res.status(500).json({ error: 'n8n_draft_save_failed' });
+    return false;
+  }
+}
+
+/** Write the four draft files with exclusive flags; a partial draft is removed on failure. */
+function writeDraft(dir: string, name: string, report: N8nImportAnalysis, res: Response): void {
+  try {
+    const draft = buildN8nImportPackDraft(name, report);
+    fs.writeFileSync(path.join(dir, 'pack.json'), JSON.stringify(draft.descriptor, null, 2), { flag: 'wx' });
+    fs.writeFileSync(path.join(dir, 'workflow.json'), JSON.stringify(draft.workflow, null, 2), { flag: 'wx' });
+    fs.writeFileSync(path.join(dir, 'analysis.json'), JSON.stringify(report, null, 2), { flag: 'wx' });
+    fs.writeFileSync(path.join(dir, 'README.md'), draft.readme, { flag: 'wx' });
+    logger.info({ name, nodes: report.nodeCount, connections: report.connectionCount }, 'n8n review draft saved');
+    res.status(201).json({ ok: true, name, ...draft.descriptor });
+  } catch (err) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    logger.error({ err, name }, 'n8n draft save failed');
+    res.status(500).json({ error: 'n8n_draft_save_failed' });
+  }
+}
+
+/** POST /import/n8n body handler: validate the slug, analyze, then save the private review draft. */
+function handleN8nImport(req: Request, res: Response): void {
+  const root = userPacksRoot(req)!;
+  const rawName = (req.body as { name?: unknown } | undefined)?.name;
+  const name = typeof rawName === 'string' && /^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$/.test(rawName)
+    ? rawName : null;
+  if (!name) { res.status(400).json({ error: 'invalid_pack_name' }); return; }
+  if (!req.file?.buffer) { res.status(400).json({ error: 'n8n_json_file_required' }); return; }
+  const report = analyzeUpload(req.file.buffer, res);
+  if (!report) return;
+  const dir = path.join(root, name);
+  if (!createDraftDir(root, dir, name, res)) return;
+  writeDraft(dir, name, report, res);
+}
+
 /**
  * @description Builds the swarm-pack router (mount at /api/swarm/packs).
  * @returns Express router exposing list / descriptor / download.
@@ -290,12 +383,15 @@ export function createSwarmPackRoutes(appLoader?: AppLoader): Router {
     }
   });
 
-  /** GET /studio — the Packs panel surface (list + download/deploy). */
+  /** GET /studio — the Packs panel surface (list + download/deploy + n8n review import). */
   router.get('/studio', (_req: Request, res: Response) => {
     res.sendFile(path.resolve(process.cwd(), 'src/api/swarm-packs.html'), (err) => {
       if (err) { logger.error({ err }, 'serve packs panel failed'); res.status(404).send('Not found'); }
     });
   });
+
+  /** POST /import/n8n — save a redacted review draft, never a runnable pack. */
+  router.post('/import/n8n', requireN8nImportCaller, parseN8nUpload, handleN8nImport);
 
   /** GET /:name — one pack's descriptor + file list (caller's packs only). */
   router.get('/:name', (req: Request, res: Response) => {
@@ -358,14 +454,18 @@ export function createSwarmPackRoutes(appLoader?: AppLoader): Router {
     if (!root) { res.status(401).json({ error: 'not authenticated' }); return; }
     const name = safeName(String(req.params.name));
     if (!name) { res.status(400).json({ error: 'bad pack name' }); return; }
-    if (!appLoader) { res.status(503).json({ error: 'app loader unavailable' }); return; }
     const dir = path.join(root, name);
     if (!fs.existsSync(dir)) { res.status(404).json({ error: 'pack not found' }); return; }
     const desc = readDescriptor(dir, name) as Record<string, unknown>;
+    if (desc.mode === 'n8n-analysis' || desc.analysisOnly === true || fs.existsSync(path.join(dir, 'analysis.json'))) {
+      res.status(400).json({ error: 'n8n review drafts cannot be deployed; map and verify a new native process first' });
+      return;
+    }
     if (desc.mode === 'wrapper') {
       res.status(400).json({ error: 'wrapper packs are downloaded, not deployed', download: `/api/swarm/packs/${name}/download` });
       return;
     }
+    if (!appLoader) { res.status(503).json({ error: 'app loader unavailable' }); return; }
     try {
       // The pack slug names exactly ONE manifest, so an edit overwrites rather than forking.
       const deployedDir = deployedAppsDir();

@@ -15,8 +15,9 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Inventory artifact-exchange-routes.ts (ADR-139). It authenticates a machine caller over the service rail and threads that sub explicitly, but owns no owner-scoped write: the handle ledger and destination registry are in-process Maps, the storage built-in writes the caller's own filesystem path, and the email built-in only reads their connector token. Same no-owner-scoped-write shape as connector-oauth-ceremony-core.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Inventory guest-seed-orchestrator.ts (ADR-144 guest-seed contract). Discovery caught it the moment the guest-seed work landed a machine-auth surface under src/app/routes with no entry. It is the inventory's first OUTBOUND caller rather than an inbound route: nothing authenticates TO it, it PRESENTS the service rail on the loopback and stamps x-oshal-user-sub = the fresh guest sub. It owns no database access at all, so it takes the no-owner-scoped-write shape - but it is precisely the place the accountable identity for every downstream app seed is established, which is the question this inventory exists to answer.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Inventory ambient-test-fixture-routes.ts (ADR-100 Test Lab attributed-ingest fixture). Discovery caught it the moment the router landed: a strict requireServiceSecret over eight owner-scoped ambient/person-model tables. It is caller-scoped by construction — the owner comes only from the validated OIDC session and the handler runs inside runWithRequestIdentity(isOperator:false), so the operator stamp a valid secret earns from the global middleware never reaches the writes.
- * 12 | maintainer@emeraldcoastsystemsgroup.com   | Exempt src/app/routes/location-session.ts (ADR-169 L3): discovery matches it because it names the service secret, but it names it only to REFUSE it - every /api/location request presenting x-service-secret or an asserted subject header gets 401 before any handler runs, and the location handlers write only under the signed-in person's own owner session with is_operator off. No machine caller is admitted, so there is no machine write to inventory; the refusal is proven in tests/unit/location-browser-consent-postgres.spec.ts.
- * 13 | maintainer@emeraldcoastsystemsgroup.com   | Exempt src/app/routes/test-lab-location-consent-scenarios.ts (ADR-169 L3 Test Lab card). Discovery matches it because its service-rail step sends x-service-secret on the loopback - but only as a negative probe that must be answered 401 by refuseLocationServiceRail, so no request it sends on the machine rail is admitted and nothing is written under it. Its only database writes are the lifecycle step's in-process calls for a uniquely tagged synthetic person, each inside withLocationOwnerSession (owner sub = that person, is_operator off), erased and counted back to zero at the end. The round-1 PR omitted this entry and the discovery test went red on the branch.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | Inventory voice-call-sim-routes.ts (synthetic phone-call simulator). Discovery caught it when the router landed: serviceSecretOr(requiresAuth) plus hasValidServiceSecret in its same-origin check. It writes no table at all: VoiceCallSimService keeps runs in an in-process Map and saves each run as a JSON file under the voice-sim root, so it takes the no-owner-scoped-write shape. requireTrustedServiceUserIdentity still binds a service caller to one user, which is what keeps one owner's run files away from another.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | Exempt src/app/routes/location-session.ts (ADR-169 L3): discovery matches it because it names the service secret, but it names it only to REFUSE it - every /api/location request presenting x-service-secret or an asserted subject header gets 401 before any handler runs, and the location handlers write only under the signed-in person's own owner session with is_operator off. No machine caller is admitted, so there is no machine write to inventory; the refusal is proven in tests/unit/location-browser-consent-postgres.spec.ts.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | Exempt src/app/routes/test-lab-location-consent-scenarios.ts (ADR-169 L3 Test Lab card). Discovery matches it because its service-rail step sends x-service-secret on the loopback - but only as a negative probe that must be answered 401 by refuseLocationServiceRail, so no request it sends on the machine rail is admitted and nothing is written under it. Its only database writes are the lifecycle step's in-process calls for a uniquely tagged synthetic person, each inside withLocationOwnerSession (owner sub = that person, is_operator off), erased and counted back to zero at the end. The round-1 PR omitted this entry and the discovery test went red on the branch.
  */
 
 /**
@@ -697,6 +698,29 @@ export const MACHINE_WRITE_INVENTORY: readonly MachineWriteEntry[] = [
       + 'signed-in session is refused 401 and an unconfigured deployment is refused 503. Driver: '
       + 'driveAmbientTestFixtureIdentity observes the real handler at the ambient_speaker_consents and '
       + 'ambient_person_asks INSERTs and checks both the connection identity and the owner column.',
+  },
+  {
+    id: 'voice-call-sim',
+    entryPoint: 'GET/POST /api/voice-sim/* (scenarios, runs, relay, callback, mock Twilio-shaped Calls/Conferences)',
+    file: 'src/app/routes/voice-call-sim-routes.ts',
+    auth: 'service-secret',
+    ownerScopedTables: [],
+    identity: {
+      kind: 'no-owner-scoped-write',
+      why:
+        'The router and src/app/routes/voice-call-sim-service.ts touch no database: runs live in an '
+        + 'in-process Map and save() writes each run as a JSON file under the voice-sim root '
+        + '(OSHAL_VOICE_SIM_ROOT, /app/output/oshal-voice-sim or the OS temp directory), in a folder '
+        + 'named by a hash of the owner subject. No table is read or written.',
+    },
+    behaviorallyProven: true,
+    note:
+      'serviceSecretOr(requiresAuth) is followed by requireTrustedServiceUserIdentity, so a valid '
+      + 'service secret with no x-oshal-user-sub binding is refused 403 and a bound one runs as that '
+      + 'user with isOperator:false; the owner every handler uses is the session sub or that bound sub. '
+      + 'tests/unit/voice-call-sim.spec.ts drives the real router over HTTP: unauthenticated 401, '
+      + 'unbound service secret 403, another owner reading a run or its mock mail 404, and a run '
+      + 'report persisted as JSON under the owner-hash folder.',
   },
 ];
 
