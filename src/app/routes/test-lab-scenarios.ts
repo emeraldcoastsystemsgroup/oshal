@@ -100,6 +100,7 @@
  * 48 | maintainer@emeraldcoastsystemsgroup.com   | Registered the ADR-168 trading-sleeves card (TRADING_SLEEVES_SCENARIOS, test-lab-trading-sleeves-scenarios.ts): one credential-free readback of the multi-market universe this image carries (bucketed, deduplicated, default universe unchanged as its prefix, no swing-leg overlap; a core symbol of this node among the 41 new names = degraded), with the four trading specs that prove the list, its sector coverage and the blend path attached. It never claims the sleeve's paper proof. Guard: tests/unit/test-lab-trading-sleeves-registration.spec.ts.
  * 49 | maintainer@emeraldcoastsystemsgroup.com   | Attached jarvis-late-answer and jarvis-ask-session-gate-postgres to 'jarvis-routing' regressionTests: a conversational turn that outlives the decision window stays pending and lands its own answer in the same thread instead of the false "provider did not respond", and a task-store pool timeout during the /ask session gate is a retryable 503 over a real PostgreSQL store, never 404 session_not_found. Same Jarvis turn, same scenario; a spec on disk is not Test Lab registration.
  * 50 | maintainer@emeraldcoastsystemsgroup.com   | Registered the ADR-052 addendum trading-parity card (TRADING_PARITY_SCENARIOS, test-lab-trading-parity-scenarios.ts): two read-only steps over the signed-in caller's own legacy books — the market-wide gap-down filter (each book's resolved bar and its source, today's SPY verdict when armed, the caller's market-gap counterfactual rows) and the per-position exit plans (each book's plan life and source, the paper book's open and closed-by-door plans). Paper not armed = degraded with the setting that starts the soak; it never claims the soak. Guard: tests/unit/test-lab-trading-parity-registration.spec.ts.
+ * 51 | maintainer@emeraldcoastsystemsgroup.com   | Registered the automated live-acceptance cards (LIVE_ACCEPTANCE_SCENARIOS, test-lab-live-acceptance-scenarios.ts): one explicit-only card per case in scripts/lib/live-acceptance-cases.js (renderer + Tutor, congressional disclosures + watchlist Add, developer workspace index, ADR-160 Floater, LinkedIn queue to a reviewed draft, commerce confirm gate, Little Monsters class material, Jarvis prompt cache), each running the same shared case module as scripts/operations/live-acceptance.js with exact cleanup. Guard: tests/unit/test-lab-live-acceptance-registration.spec.ts.
  * @module test-lab-scenarios
  */
 
@@ -129,6 +130,7 @@ import { TOKEN_CHASE_SCENARIOS } from './test-lab-token-chase-scenarios';
 import { JARVIS_RECALL_SCENARIOS } from './test-lab-jarvis-recall-scenarios';
 import { TRADING_SLEEVES_SCENARIOS } from './test-lab-trading-sleeves-scenarios';
 import { TRADING_PARITY_SCENARIOS } from './test-lab-trading-parity-scenarios';
+import { LIVE_ACCEPTANCE_SCENARIOS } from './test-lab-live-acceptance-scenarios';
 import { renderCatalogVisual, VISUAL_CATALOG } from './test-lab-visual-catalog';
 import type { AppContext } from '@/app/composition/app-context';
 
@@ -317,6 +319,7 @@ export const SCENARIOS: Scenario[] = [
   ...JARVIS_RECALL_SCENARIOS,
   ...TRADING_SLEEVES_SCENARIOS,
   ...TRADING_PARITY_SCENARIOS,
+  ...LIVE_ACCEPTANCE_SCENARIOS,
   // ── Rich visuals — every kind rendered deterministically through the real renderer ──────────
   ...VISUAL_CATALOG.map((entry): Scenario => ({
     id: `visual-${entry.kind}`,

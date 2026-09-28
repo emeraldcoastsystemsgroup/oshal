@@ -244,3 +244,17 @@ short preamble is refused for size. Record, for several fresh conversations with
 off and on: `total_input_tokens` and `usage_by_model` from `chat_tasks`, `duration_ms` from
 `oshal_cost_events`, and the jarvis bot's `OpenAI-compatible call` lines (input, cached, state,
 latency).
+
+**Automated measurement.** `node scripts/operations/live-acceptance.js jarvis-cache --record-doc`, run
+on the box as the operator automation identity, opens three fresh tagged Jarvis conversations, asks
+each the same short conversational question, reads the Jarvis bot's `OpenAI-compatible call` line for
+each conversation's window (`docker logs`), the owner's `oshal_cost_events` input tokens and the
+`chat_tasks` rollups, deletes the conversations, and writes the table between the markers below. It
+passes when the first conversation created (or hit) the cache and every later one hit it with cached
+tokens above zero; when no OpenAI-compatible call is logged it reports which brain answered instead.
+The Test Lab card `live-acceptance-jarvis-cache` is the same case and needs the host runner for the
+call log.
+
+<!-- live-acceptance:jarvis-prompt-cache:start -->
+No automated measurement has been recorded in this note yet.
+<!-- live-acceptance:jarvis-prompt-cache:end -->

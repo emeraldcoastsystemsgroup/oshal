@@ -224,6 +224,37 @@ and removal commands also run through real `powershell.exe` against a temp home;
 one PLATFORM SKIP line). An unreadable probe is named in the verdict: which field is wrong, the
 probe task's exit, and the first 300 redacted characters of the worker's stdout.
 
+### Automated live acceptance sweep
+
+`node scripts/operations/live-acceptance.js <case|all|list> [--record-doc]` runs the automated live
+acceptance cases for merged work that was never proven on an installed box. It runs as the operator
+automation identity (`OSHAL_VERIFY_OPERATOR_PAT`, read by name from the environment or the box's
+`.env`, never printed and never put on a command line), against `OSHAL_VERIFY_BASE_URL` (default
+`http://127.0.0.1:35457`), and needs no deploy: it drives whatever is installed. It prints one
+`PASS` / `FAIL` / `DEGRADED` / `UNAVAILABLE` line per case, the case's cleanup receipt (what was
+removed, what was deliberately kept and why, anything outstanding, every cleanup error) and its
+evidence, then one summary line. It exits 0 only when every selected case passed. Every fixture is
+tagged `testlab-live-<case>-<8 hex>` (the commerce and watchlist fixtures use the page's own shapes)
+and removed; a cleanup miss turns the case red.
+
+| Key | Card | What it proves on the installed build |
+|---|---|---|
+| `response-renderer` | `live-acceptance-response-renderer` | The `shared-response-renderer` card passes all three steps, Mermaid is served same-origin from `/dist/vendor/mermaid` (exact `VERSION`, JavaScript entry, no redirect), and the Little Monsters `tutor-shared-renderer` package case runs through the durable run route and executes tests (a run that declines is not a pass). |
+| `congress` | `live-acceptance-congress` | The `congress-disclosures` readback passes, `GET /api/trading/reports/congress` lists rows that each carry a ReportDate day and `observedAt`, and the watchlist Add step adds a synthetic `ZZT-XXXXX` ticker (symbol only, as the Add button posts it) and deletes it. |
+| `dev-workspace` | `live-acceptance-dev-workspace` | In dev mode, a Jarvis package-tool ask naming ADR-077 (in a tagged Jarvis conversation, which the proposal must belong to) returns that ADR's cited `doc_id`; with dev mode off the same ask is refused with no citation; dev mode is left as found. A closed gate (package, `OSHAL_DEV_WORKSPACE_INDEX_ENABLED`, `OSHAL_DEV_CONSOLE_ENABLED`, `OSHAL_SUPERADMIN_SUBS`, index not built) is reported by name; those need an api restart, so the case never opens them. Spends one model turn. |
+| `floater` | `live-acceptance-floater` | The ADR-160 Floater, seeded through aero-lab's own route, shows evaluation 1's mass budget RED at +274.3 g and the fabricable sentence verbatim. An owner's existing Floater is only read; a Floater the case seeded is deleted (the package has no delete route, so through the closed statement set under the owner's identity) and proven gone. |
+| `linkedin` | `live-acceptance-linkedin` | A tagged synthetic `linkedin-content-post` ticket becomes a graded pending-approval draft that names the ticket and carries its citation, and publishing it without confirmation is refused 428. The case never approves, confirms or publishes; the draft is rejected and deleted and the ticket removed. Spends real model turns. |
+| `commerce` | `live-acceptance-commerce` | Rides, Eats and Shopping at 390 x 844 in headless Chromium: the page fits, its own flow reaches something to confirm, the relayed outward op renders the confirm card, and Cancel hands off nothing. Every hand-off POST is aborted in the browser and `window.open` is stubbed, so a regressed gate is counted and reaches nothing. Only an empty cart is used. Host runner only. |
+| `lm-class-material` | `live-acceptance-lm-class-material` | A tagged class, a generated PDF carried in a Send-to handle, and `POST /api/education/import-artifact` answer 201 approved with the material in the class's shared materials; the material and the class are deleted through the package's routes. |
+| `jarvis-cache` | `live-acceptance-jarvis-cache` | Three fresh tagged Jarvis conversations: the Jarvis bot's `OpenAI-compatible call` line shows the invariant cache created, then hit with cached tokens. `--record-doc` writes the table into `docs/architecture/jarvis-own-task-recall.md`. When no OpenAI-compatible call is logged the case names the brain that answered instead. Host runner only (`docker logs`). Spends three model turns. |
+
+The same case modules (`scripts/lib/live-acceptance-*.js`, listed in `live-acceptance-cases.js`) run
+from the Lab as explicit-only cards (never from "Run live scenarios"), bound to the signed-in caller;
+the commerce and Jarvis-cache cards report a gap there, because Chromium and the call log exist only
+on the host. On the host, the owner-scoped statements, ticket reads and ask-workspace removal run
+through `scripts/lib/live-acceptance-container.js`, staged once into the api container per run.
+Suites: `npm run test:live-acceptance`.
+
 ### Messaging channels
 
 **Messaging channels — what can reach your swarm** (`channel-inbound-bindings`, Tools) reads the
