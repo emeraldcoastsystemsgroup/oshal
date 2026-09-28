@@ -20,6 +20,7 @@
  * 15 | maintainer@emeraldcoastsystemsgroup.com | Register the guard for scripts/operations/verify-authorization-registration.js, the read-only automated acceptance that an installed swarm's Test Lab lists the authorization suites and the Little Monsters pilot cases.
  * 16 | maintainer@emeraldcoastsystemsgroup.com | AUTH-07: register the reviewed catalog migration proofs - the pure catalog diff classifier, the disposable-PostgreSQL upgrade/refusal/no-revival/concurrency suite under the forced-RLS runtime role, and the guard for scripts/operations/little-monsters-upgrade-proof.js (the read-only post-staging acceptance that Little Monsters loaded at the new version with its assignments carried).
  * 17 | maintainer@emeraldcoastsystemsgroup.com | Register the sole-operator self-approval proofs: the PostgreSQL census and approval/audit spec and the Access Administration browser flow.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com | Register the career-hunter worker-rail posture proofs: the enforce-mode boundary spec (a manifest route declared auth: service answers the package's own engine child - valid secret, X-Oshal-User-Sub-B64 of a subject holding the app grant, run token - with 401 authorization_identity_required before package code; the legacy rollout admits it) and the guard for scripts/operations/career-rail-live-proof.js, the on-box acceptance that starts one real owner-scoped score run, requires the Career bot's chat_tasks/oshal_cost_events attribution for the owner, and fails naming the kernel refusal. Both belong to this card because the refusal is application authorization's, not the package's.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -125,6 +126,8 @@ export const AUTHORIZATION_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/little-monsters-upgrade-proof.spec.ts' },
     { level: 'integration', path: 'tests/unit/sole-operator-approval-postgres.spec.ts' },
     { level: 'browser', path: 'tests/unit/sole-operator-approval-browser.spec.ts' },
+    { level: 'integration', path: 'tests/unit/career-rail-enforce-posture.spec.ts' },
+    { level: 'integration', path: 'tests/unit/career-rail-live-proof.spec.ts' },
   ],
   steps: [{ id: 'catalog', app: 'authorization', label: 'Caller-visible access catalog', run: authorizationCatalog }],
 }, {
