@@ -102,6 +102,7 @@
  * 50 | maintainer@emeraldcoastsystemsgroup.com   | Registered the ADR-052 addendum trading-parity card (TRADING_PARITY_SCENARIOS, test-lab-trading-parity-scenarios.ts): two read-only steps over the signed-in caller's own legacy books — the market-wide gap-down filter (each book's resolved bar and its source, today's SPY verdict when armed, the caller's market-gap counterfactual rows) and the per-position exit plans (each book's plan life and source, the paper book's open and closed-by-door plans). Paper not armed = degraded with the setting that starts the soak; it never claims the soak. Guard: tests/unit/test-lab-trading-parity-registration.spec.ts.
  * 51 | maintainer@emeraldcoastsystemsgroup.com   | Registered the automated live-acceptance cards (LIVE_ACCEPTANCE_SCENARIOS, test-lab-live-acceptance-scenarios.ts): one explicit-only card per case in scripts/lib/live-acceptance-cases.js (renderer + Tutor, congressional disclosures + watchlist Add, developer workspace index, ADR-160 Floater, LinkedIn queue to a reviewed draft, commerce confirm gate, Little Monsters class material, Jarvis prompt cache), each running the same shared case module as scripts/operations/live-acceptance.js with exact cleanup. Guard: tests/unit/test-lab-live-acceptance-registration.spec.ts.
  * 52 | maintainer@emeraldcoastsystemsgroup.com   | Registered the ADR-169 L1 location log-safety card (LOCATION_SCENARIOS, test-lab-location-scenarios.ts): two credential-free in-process steps on the running build (the shipped redact config censors a synthetic fix under location/coords and the location error projection keeps no URL; a synthetic geo canary), with the static log guard, geo, safe-error and redaction suites attached as regressionTests.
+ * 53 | maintainer@emeraldcoastsystemsgroup.com   | Registered the ADR-169 L2 location storage card (LOCATION_STORAGE_SCENARIOS, test-lab-location-storage-scenarios.ts): a catalog read of the location tables' row-level-security posture on the running database (ENABLE+FORCE with policies, no oshal.is_operator in any policy or helper it reaches, both membership fences) and a two-identity probe inside a transaction that is always rolled back, with the live RLS, erasure-route, static-guard and registration suites attached as regressionTests.
  * @module test-lab-scenarios
  */
 
@@ -133,6 +134,7 @@ import { TRADING_SLEEVES_SCENARIOS } from './test-lab-trading-sleeves-scenarios'
 import { TRADING_PARITY_SCENARIOS } from './test-lab-trading-parity-scenarios';
 import { LIVE_ACCEPTANCE_SCENARIOS } from './test-lab-live-acceptance-scenarios';
 import { LOCATION_SCENARIOS } from './test-lab-location-scenarios';
+import { LOCATION_STORAGE_SCENARIOS } from './test-lab-location-storage-scenarios';
 import { renderCatalogVisual, VISUAL_CATALOG } from './test-lab-visual-catalog';
 import type { AppContext } from '@/app/composition/app-context';
 
@@ -323,6 +325,7 @@ export const SCENARIOS: Scenario[] = [
   ...TRADING_PARITY_SCENARIOS,
   ...LIVE_ACCEPTANCE_SCENARIOS,
   ...LOCATION_SCENARIOS,
+  ...LOCATION_STORAGE_SCENARIOS,
   // ── Rich visuals — every kind rendered deterministically through the real renderer ──────────
   ...VISUAL_CATALOG.map((entry): Scenario => ({
     id: `visual-${entry.kind}`,

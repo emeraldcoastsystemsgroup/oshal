@@ -8,6 +8,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Included ambient transcripts, settings, reviews, speaker-profile metadata, and biometric-template erasure in owner export/delete.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added speaker identity-label export/erasure and audio receipt deletion to the privacy lifecycle.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Included owner-scoped Jarvis work records and persisted visual-response artifacts in privacy export and erasure.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L2 (D6): DELETE /me calls the one location erase (the same function /api/me/delete-confirm reaches through its registry) for the caller's subject and verified issuer: location device credentials revoked, every location row the caller owns deleted, in-memory location state cleared. The response and the audit event carry the counts; a session without a verified issuer is reported as not erased with its reason, never as an empty success. The task/ticket deletes and the audit counts moved into two helpers so the handler stays under the function-length limit.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -18,6 +19,8 @@ import { createChildLogger } from '@/shared/logger';
 import { withAmbientOwnerLock } from '@/shared/services/database';
 import { emitAuditEvent, queryAuditEvents, type AuditRow } from '@/features/governance';
 import { purgeJarvisAskJobsForOwner } from './jarvis-routes';
+import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-issuer';
+import { eraseLocationData, type LocationEraseResult } from '@/features/location';
 
 const logger = createChildLogger({ module: 'privacy-routes' });
 
@@ -77,27 +80,11 @@ function handleDeleteMe(ctx: AppContext) {
       const ambientDeleted = await deleteAmbientOwnerData(ctx, subject);
       const jarvisDeleted = await deleteJarvisOwnerData(ctx, subject);
       const ephemeralJarvisAnswers = purgeJarvisAskJobsForOwner(subject);
-      for (const task of exportData.tasks) {
-        await ctx.messageStore.deleteByTask(task.taskId);
-        await ctx.taskStore.delete(task.taskId);
-      }
-      for (const ticket of exportData.tickets) {
-        await ctx.ticketService.deleteTicket(ticket.ticketId);
-      }
+      const locationDeleted = await deleteLocationOwnerData(ctx, req, subject);
+      await deleteOperationalOwnerData(ctx, exportData);
 
-      void emitPrivacyAudit(ctx, subject, 'privacy.delete', 'privacy_export', subject, {
-        deletedTasks: exportData.counts.tasks,
-        deletedMessages: exportData.counts.messages,
-        deletedTickets: exportData.counts.tickets,
-        deletedAmbientTranscriptSegments: ambientDeleted.transcriptSegments,
-        deletedSpeakerProfiles: ambientDeleted.speakerProfiles,
-        deletedAudioChunkReceipts: ambientDeleted.audioChunkReceipts,
-        clearedMembershipDisplayNames: ambientDeleted.membershipDisplayNamesCleared,
-        deletedJarvisTasks: jarvisDeleted.tasks,
-        deletedVisualResponseArtifacts: jarvisDeleted.visualResponseArtifacts,
-        deletedEphemeralJarvisAnswers: ephemeralJarvisAnswers,
-        retainedAuditEvents: true,
-      });
+      void emitPrivacyAudit(ctx, subject, 'privacy.delete', 'privacy_export', subject,
+        deleteAuditMetadata(exportData, ambientDeleted, jarvisDeleted, ephemeralJarvisAnswers, locationDeleted));
 
       res.json({
         success: true,
@@ -111,6 +98,7 @@ function handleDeleteMe(ctx: AppContext) {
           ephemeralJarvisAnswers,
         },
         ambientDeleted,
+        locationDeleted,
         retained: {
           auditEvents: true,
           reason: 'Compliance audit records are retained separately from user operational data.',
@@ -120,6 +108,84 @@ function handleDeleteMe(ctx: AppContext) {
       logger.error({ err: error, subject }, 'privacy delete failed');
       res.status(500).json({ error: 'Failed to delete user data' });
     }
+  };
+}
+
+type UserExport = Awaited<ReturnType<typeof collectUserExport>>;
+
+/** @description Deletes the caller's tasks (with their messages) and tickets found by the export pass. */
+async function deleteOperationalOwnerData(ctx: AppContext, exportData: UserExport): Promise<void> {
+  for (const task of exportData.tasks) {
+    await ctx.messageStore.deleteByTask(task.taskId);
+    await ctx.taskStore.delete(task.taskId);
+  }
+  for (const ticket of exportData.tickets) {
+    await ctx.ticketService.deleteTicket(ticket.ticketId);
+  }
+}
+
+/** @description The counts the privacy.delete audit event records; counts only, no content. */
+function deleteAuditMetadata(
+  exportData: UserExport,
+  ambientDeleted: AmbientDeleteCounts,
+  jarvisDeleted: JarvisDeleteCounts,
+  ephemeralJarvisAnswers: number,
+  locationDeleted: LocationDeleteOutcome,
+): Record<string, unknown> {
+  return {
+    deletedTasks: exportData.counts.tasks,
+    deletedMessages: exportData.counts.messages,
+    deletedTickets: exportData.counts.tickets,
+    deletedAmbientTranscriptSegments: ambientDeleted.transcriptSegments,
+    deletedSpeakerProfiles: ambientDeleted.speakerProfiles,
+    deletedAudioChunkReceipts: ambientDeleted.audioChunkReceipts,
+    clearedMembershipDisplayNames: ambientDeleted.membershipDisplayNamesCleared,
+    deletedJarvisTasks: jarvisDeleted.tasks,
+    deletedVisualResponseArtifacts: jarvisDeleted.visualResponseArtifacts,
+    deletedEphemeralJarvisAnswers: ephemeralJarvisAnswers,
+    locationErased: locationDeleted.erased,
+    deletedLocationRows: locationDeleted.rows,
+    revokedLocationCredentials: locationDeleted.credentialsRevoked,
+    retainedAuditEvents: true,
+  };
+}
+
+interface LocationDeleteOutcome {
+  erased: boolean;
+  rows: number;
+  credentialsRevoked: number;
+  stateErasersFailed: string[];
+  reason?: string;
+}
+
+/**
+ * @description Erases the caller's location data through the one location erase (ADR-169 D6).
+ * Location rows are keyed on subject AND verified issuer, so without a verified issuer nothing is
+ * touched and the outcome says why instead of implying the rows are gone.
+ * @param ctx - App context (pool).
+ * @param req - The authenticated request; the issuer is read from its verified session only.
+ * @param subject - The caller's subject.
+ * @returns Whether the erase ran, the rows deleted, credentials revoked and any failed state eraser.
+ */
+async function deleteLocationOwnerData(ctx: AppContext, req: Request, subject: string): Promise<LocationDeleteOutcome> {
+  const principalIssuer = getAuthenticatedPrincipalIssuer(req);
+  if (!principalIssuer) {
+    logger.warn({ subject }, 'privacy deletion could not erase location data: no verified issuer on this session');
+    return { erased: false, rows: 0, credentialsRevoked: 0, stateErasersFailed: [], reason: 'no-verified-issuer' };
+  }
+  let result: LocationEraseResult;
+  try {
+    result = await eraseLocationData(ctx.pool, { sub: subject, principalIssuer });
+  } catch (error) {
+    if (!isUndefinedTableOrColumn(error)) throw error;
+    logger.warn({ subject }, 'privacy deletion skipped location data: location store not installed');
+    return { erased: false, rows: 0, credentialsRevoked: 0, stateErasersFailed: [], reason: 'location-store-absent' };
+  }
+  return {
+    erased: true,
+    rows: Object.values(result.deleted).reduce((sum, n) => sum + n, 0),
+    credentialsRevoked: result.credentialsRevoked,
+    stateErasersFailed: result.stateErasersFailed,
   };
 }
 

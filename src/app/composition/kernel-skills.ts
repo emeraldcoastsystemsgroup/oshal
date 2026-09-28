@@ -15,6 +15,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Pin confirmed Futures archive import and worker boundaries into deployable artifacts.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Pin the World package's barrel and four deep world-data imports as the ADR-045 kernel-skill contract.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | ADR-146 D2: pin @/features/fantasy-leagues, the ESPN fantasy read client moved out of sports-edge. No core module imports it, so this re-export is the only thing carrying it into dist for the packages that resolve it at mount.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com | ADR-169 L2: pin @/features/location, the location kernel skill. Core routes import it too (the two account-erasure routes), but the package-facing contract must not depend on that: this re-export keeps it in dist for every package that declares uses: location.
  */
 
 /**
@@ -133,3 +134,8 @@ export * as boundWorkflowResults from '@/features/swarm-orchestration';
 // No core module imports it; the sports-edge package resolves it from dist at mount, so this
 // re-export is its only anchor.
 export * as fantasyLeagues from '@/features/fantasy-leagues';
+
+// ── location: the consented, owner-scoped location and places store (ADR-169) ──
+// Pinned here rather than relying on the erasure routes' import, so packages that declare
+// `uses: location` keep resolving it whatever core stops calling.
+export * as location from '@/features/location';

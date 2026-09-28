@@ -15,6 +15,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com | ADR-045: declare the world-data engine and every module imported by the World package as a kernel skill, so package compatibility and build-artifact checks cover deep imports.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Declare the signed provider-callback compatibility floor so packages cannot mount anonymous callbacks without a verified owner and current application permission.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | ADR-146 D2 (operator decision 2026-09-27): declare 'fantasy-leagues', the ESPN fantasy read client moved out of sports-edge. Two packages need the same league reads (sports-edge today, fantasy-football next) and the store has no package-to-package rail, so the choice was one kernel client or a copy per package; the client's host already moved once inside a season. Declaring it here is what pins @/features/fantasy-leagues into dist and lets the loader refuse a package that names it on an older core.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com | ADR-169 D3/L2: declare 'location', the consented, owner-scoped location and places store. Two or more packages need it (eats, rides, purchasing, home, drone, spaces) and it needs core tables, a core device ingest route and the Jarvis intent, so it is kernel by the skill test; L2 ships its storage half (migrations 174/175, the owner purge and export, the one erase both account-erasure routes call), and later slices extend the same barrel with the package-facing reads.
  */
 
 /**
@@ -50,7 +51,8 @@ export type KernelSkillId =
   | 'futures-forward-receipts'
   | 'futures-archive-import'
   | 'world-data'
-  | 'fantasy-leagues';
+  | 'fantasy-leagues'
+  | 'location';
 
 /**
  * @description One importable module behind a skill.
@@ -98,6 +100,9 @@ export interface KernelSkillDeclaration {
  * docs/apps/kernel-skills.md. The CI guard then enforces it forever.
  */
 export const KERNEL_SKILLS: readonly KernelSkillDeclaration[] = [
+  { id: 'location', title: 'Location, places and proximity',
+    why: 'One consented, owner-scoped location and places store (ADR-169) instead of a copy in every package that needs a position: eats, rides, purchasing, home, drone and spaces. Its tables carry no operator bypass, history is kept until its owner purges it, and packages reach it only through this skill, on the server.',
+    modules: [{ specifier: '@/features/location', distFile: 'dist/features/location/index.js' }] },
   { id: 'fantasy-leagues', title: 'Fantasy league reads (ESPN)',
     why: 'One ESPN fantasy client for every fantasy package (ADR-146 D2): league settings, rosters, schedule and the public projection feed, with the caller cookies put on exactly the outbound league request and never logged, stored or returned. A copy per package would drift on a host that has already moved once.',
     modules: [{ specifier: '@/features/fantasy-leagues', distFile: 'dist/features/fantasy-leagues/index.js' }] },
