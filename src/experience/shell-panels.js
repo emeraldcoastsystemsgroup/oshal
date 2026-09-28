@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Markup for the full-swarm work panels over existing routes: a moving item's indeterminate progress (the queue reports no percentage), a ticket's workflow (GET /api/v1/tickets/:id/workflow: stages with their recorded state, progress only from a recorded run, approval gates, status history, child tickets) and its actions: Approve only for a ticket held at approval_required whose current transition waits on a person (the homebase rule), Cancel through the owner-checked cancel route behind a confirmation. The server decides every action; a refusal is shown as returned.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | The Routines panel: the caller's schedules (GET /api/v1/agent/schedules) with their cadence, next and last run and an "On for me" switch only on their own prompt schedules (an application's or an operator's schedule says who manages it), an application's own routines first when opened from its panel, an empty state that offers to ask Jarvis for one, and the Workflow Studio definitions by name and version with a link to Workflow Studio, where workflows are edited, published and restored.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Visual cards (the demo's mini visuals) over real facts: the suite and latest work state as the label, the latest work's title (or the application's name) as the heading, its source as the footer; engineering, game, home and document pictures are labelled illustrations, and only Finance draws data, bars of monthly spend from its own summary when the caller's plan admits it, with the no-data, empty and failed states.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Package facts (the demo's "Catalog source and package facts"): identity, version, kind, suite, listing status, plan admission, ticket type and queue, first surface, skin, declared tools and providers from the caller's catalog, then the viewer-scoped record's scope, kernel skills, registered agents and status, or why the record is not shown.
  */
 (() => {
   'use strict';
@@ -205,5 +206,39 @@
     return `<div class="mini-visual ${kind}-visual" data-visual="${esc(app.id)}"><span class="visual-label">${esc(label)}</span>${art}<h3>${h}</h3>${kind === 'document' ? ART.document : ''}<span class="visual-footer">${esc(foot)}</span></div>`;
   }
 
-  window.OSHAL_SHELL_PANELS = { movingBar, ticketOf, currentTransition, actionsMarkup, cancelConfirm, workflowSection, workflowPanel, routineRow, routinesPanel, visualKind, visual, financeInner };
+  /** @description The facts the package record adds once read: its declared scope, the kernel skills it uses and how many agents it registers. */
+  function recordFacts(detail) {
+    if (!detail) return [['Package record', 'Reading…']];
+    const rec = detail.own.record;
+    if (!rec) return [['Package record', detail.own.status === 404 ? 'Not visible to you' : `Unavailable (HTTP ${detail.own.status || 'network'})`]];
+    const m = rec.manifest && typeof rec.manifest === 'object' ? rec.manifest : {};
+    return [
+      ['Scope', m.scope === 'person' ? 'Person-scoped: each person has their own' : 'Shared across the swarm'],
+      ['Kernel skills used', Array.isArray(m.uses) && m.uses.length ? m.uses.join(', ') : 'None declared'],
+      ['Registered agents', String(Array.isArray(rec.agentIds) ? rec.agentIds.length : 0)],
+      ['Record status', String(rec.status || 'not reported')]
+    ];
+  }
+
+  /**
+   * @description The package facts of an application (the demo's "Catalog source and package facts"), from this swarm's
+   * own registry as the caller may read it: identity, version, kind, suite, listing status, plan admission, queue and
+   * ticket type, first surface, skin, declared tools and providers, then the record's scope, skills and agents.
+   * @param {object} app The catalog entry.
+   * @param {object|null} detail The viewer-scoped record read (null while reading).
+   * @param {(app: object) => {name: string}} suiteOf The shell's suite lookup.
+   * @returns {string} A closed details block.
+   */
+  function packageFacts(app, detail, suiteOf) {
+    const connectors = [...(app.connectors.required || []).map(c => `${c} (required)`), ...(app.connectors.optional || [])];
+    const rows = [
+      ['Package', app.id], ['Version', app.version || 'not reported'], ['Kind', app.kind === 'group' ? `Group of ${app.related.length} installed member${app.related.length === 1 ? '' : 's'}` : 'Application'],
+      ['Suite', suiteOf(app).name], ['Listing status', app.status ? `${app.status} (registry metadata, not live verification)` : 'not listed'],
+      ['In your plan', app.inPlan ? 'Yes' : 'No: listed only, not admitted for you'], ['Ticket type', app.ticketType || 'none'], ['Queue', app.queueId || 'none'],
+      ['First surface', app.surfaceName || 'none'], ['Skin', app.theme || 'framework default'], ['Tools declared', String(app.toolCount)], ['Providers', connectors.join(', ') || 'none']
+    ].concat(recordFacts(detail));
+    return `<details class="package-facts"><summary>Package facts</summary><dl>${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl><p class="note-line">From this swarm’s app registry, read in your session (GET /api/swarm/apps, /home-plan and /${esc(app.id)}).</p></details>`;
+  }
+
+  window.OSHAL_SHELL_PANELS = { movingBar, ticketOf, currentTransition, actionsMarkup, cancelConfirm, workflowSection, workflowPanel, routineRow, routinesPanel, visualKind, visual, financeInner, packageFacts };
 })();

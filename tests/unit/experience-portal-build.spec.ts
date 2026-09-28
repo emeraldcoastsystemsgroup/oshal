@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Routines panel: own routines with a switch, managed ones without, somebody else's absent, workflows by version; pause/resume and the 404 refusal that puts the switch back; an application's routines first; the ask-Jarvis empty state and the refused reads.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Day focus: Studio's ordering, heading and device-only memory; Jarvis's evening copy and the games prompt; Orbit's ringed suites and stream; Commons moving to the Game room and back.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Visual cards: the selected workspace's document picture from the latest work, Finance's monthly spend bars read once, the no-data state, a Finance outside the plan never read, Orbit's engineering illustration, the Game room table and the work panel's picture.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Package facts (registry and record, the listed-only and not-visible states), Orbit's cross-suite follow and Studio's related context, pin focus in the directory and the Commons room grid with the sidebar following, and Orbit's six hubs clear of the legend.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -393,5 +394,79 @@ describe('visual cards over real facts', () => {
     await page.locator(`.running-row[data-work="ticket:${LEDGER}"]`).click();
     expect(await page.locator('#full-dialog [data-visual="ledger"] h3').innerText()).toBe('Synthetic ledger review');
     expect(errors).toEqual([]);
+  });
+});
+
+type Manifests = { fullSwarm: { manifests: Record<string, Record<string, unknown>> } };
+/** @description Open one application's panel from the directory. */
+async function appPanel(name: string) {
+  await page.keyboard.press('Control+k'); await page.fill('#app-search', name);
+  await page.locator(`.catalog-card[data-catalog-app="${name}"] .catalog-main`).click();
+  await page.waitForSelector('#full-dialog .app-detail-header');
+}
+
+describe('package facts, relationship navigation and pins', () => {
+  it('the application panel lists its package facts from the registry and the viewer-scoped record', async () => {
+    await open('/studio', '.full-studio');
+    await appPanel('ledger');
+    await page.waitForFunction(() => (document.querySelector('#full-dialog [data-detail-part="facts"]')?.textContent || '').includes('Registered agents'));
+    await page.locator('#full-dialog .package-facts summary').click();
+    const facts = await page.locator('#full-dialog .package-facts').innerText();
+    for (const line of [/Package\s*ledger/, /Version\s*0\.0\.1/, /Kind\s*Application/, /Suite\s*Finance/, /Listing status\s*active \(registry metadata, not live verification\)/, /In your plan\s*Yes/,
+      /Ticket type\s*ledger-review/, /First surface\s*ledger-home/, /Skin\s*midnight/, /Tools declared\s*2/, /Kernel skills used\s*app-dependencies/, /Registered agents\s*2/, /Record status\s*active/]) expect(facts).toMatch(line);
+    await page.keyboard.press('Escape');
+    fixture.state.status['detail:unadmitted'] = 404;
+    await appPanel('unadmitted');
+    await page.waitForFunction(() => (document.querySelector('#full-dialog [data-detail-part="facts"]')?.textContent || '').includes('Not visible to you'));
+    await page.locator('#full-dialog .package-facts summary').click();
+    expect(await page.locator('#full-dialog .package-facts').innerText()).toMatch(/In your plan\s*No: listed only, not admitted for you/);
+    expect(errors).toEqual([]);
+  });
+
+  it('Orbit follows a relationship into another suite, and Studio makes a related application the context', async () => {
+    (fixture.state as unknown as Manifests).fullSwarm.manifests.forge = { dependencies: { optional: { apps: ['arcade-games'] } } };
+    await open('/orbit', '.full-orbit');
+    await page.locator('.suite-node[data-suite="ai-engineering"]').click();
+    await page.locator('.orbit-app[data-app="forge"]').click();
+    await page.locator('.orbit-inspector [data-detail-part="relations"] [data-action="select-app"][data-app="arcade-games"]').click();
+    await page.waitForFunction(() => document.querySelector('.orbit-inspector h2')?.textContent === 'Synthetic arcade-games');
+    expect(await page.locator('.orbit-map-heading h1').innerText()).toBe('Creative & games');
+    expect(await page.locator('.orbit-app').count()).toBe(2);
+    await open('/studio', '.full-context');
+    await page.waitForSelector('.full-context [data-detail-part="relations"] [data-action="select-app"][data-app="finance"]');
+    await page.locator('.full-context [data-detail-part="relations"] [data-action="select-app"][data-app="finance"]').click();
+    await page.waitForFunction(() => document.querySelector('.crumb .title')?.textContent === 'Synthetic finance');
+    expect(await page.locator('#full-dialog').count()).toBe(0);
+    expect(errors).toEqual([]);
+  });
+
+  it('pinning keeps the keyboard on the pin in the directory and in the Commons room grid, and the sidebar follows', async () => {
+    await open('/commons', '.full-commons');
+    await page.keyboard.press('Control+k'); await page.fill('#app-search', 'Synthetic');
+    const pin = page.locator('.catalog-card[data-catalog-app="stage"] [data-action="pin"]');
+    await pin.focus(); await page.keyboard.press('Enter');
+    expect(await page.evaluate(() => document.activeElement?.closest('[data-catalog-app]')?.getAttribute('data-catalog-app'))).toBe('stage');
+    expect(await pin.getAttribute('aria-pressed')).toBe('true');
+    await page.keyboard.press('Escape');
+    await page.getByRole('tab', { name: /Applications/ }).click();
+    const roomPin = page.locator('.room-app-grid [data-catalog-app="ledger"] [data-action="pin"]');
+    const before = await roomPin.getAttribute('aria-pressed');
+    await roomPin.focus(); await page.keyboard.press('Enter');
+    await page.waitForFunction(b => document.querySelector('.room-app-grid [data-catalog-app="ledger"] [data-action="pin"]')?.getAttribute('aria-pressed') !== b, before);
+    expect(await page.evaluate(() => document.activeElement?.closest('[data-catalog-app]')?.getAttribute('data-catalog-app'))).toBe('ledger');
+    const pinnedSide = await page.locator('.commons-sidebar .side-navigation').nth(1).innerText();
+    expect(pinnedSide.includes('Synthetic ledger')).toBe(before !== 'true');
+    expect(errors).toEqual([]);
+  });
+
+  it('Orbit seats six suites around the hub without covering the legend', async () => {
+    await open('/orbit', '.full-orbit');
+    const boxes = await page.evaluate(() => {
+      const r = (e: Element) => e.getBoundingClientRect();
+      return { legend: r(document.querySelector('.map-legend')!), nodes: Array.from(document.querySelectorAll('.suite-node')).map(r) };
+    });
+    expect(boxes.nodes).toHaveLength(6);
+    for (const n of boxes.nodes) expect(n.bottom <= boxes.legend.top || n.top >= boxes.legend.bottom || n.right <= boxes.legend.left || n.left >= boxes.legend.right).toBe(true);
+    expect(await page.locator('.suite-node[data-suite="ai-productivity"]').getAttribute('style')).toContain('--node-y:84.0%');
   });
 });

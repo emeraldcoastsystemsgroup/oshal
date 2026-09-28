@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Routines panel (kind 'routines', layouts that opt in): reads the caller's schedules and the Workflow Studio definitions once per page, and each own prompt schedule's switch pauses or resumes it through POST /api/v1/agent/schedules/:id/pause|resume; a refusal puts the switch back and says why. The application panel offers 'Its routines' (that application's routines first).
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Day focus picker in the study bar for layouts that opt in (hooks.scenes): 'A workday' or 'An evening at home', saved per layout on this device (oshal-experience:scene:<layout>, ADR-164 D9), never sent to a server; setScene re-renders the layout through hooks.onSceneChanged.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Visual cards for layouts that opt in: visualFor(app, latest) pictures an application or a work item (the application panel and the work panel carry one) and fillVisuals draws the Finance picture from one GET /api/finance/summary per page, only for a Finance the caller's plan admits.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com | The application panel carries its package facts (a 'facts' detail part for layouts with shell-panels.js); a detail slot can render related applications with another action (select-app navigates instead of opening a panel); pinning in the directory keeps the keyboard on the same application's pin after the grid is rebuilt; appCard is exported for the Commons room grid.
  */
 (() => {
   'use strict';
@@ -203,12 +204,17 @@
       const [own, members] = await Promise.all([read(app.id), app.kind === 'group' ? Promise.all(app.related.map(read)) : Promise.resolve([])]);
       return { own, members };
     }
-    const detailPart = (app, part) => (part === 'assistants' ? assistantsMarkup : relationsMarkup)(app, state.details.get(app.id) || null);
-    const detailSlot = (app, part) => `<div class="detail-slot" data-detail-slot="${esc(app.id)}" data-detail-part="${part}">${detailPart(app, part)}</div>`;
+    /** One part of the package record: assistants, relationships (each related application opens its panel, or navigates with `action`), or the package facts (layouts with shell-panels.js). */
+    function detailPart(app, part, action = 'open-app') {
+      const detail = state.details.get(app.id) || null;
+      if (part === 'facts') return panels() ? panels().packageFacts(app, detail, a => suiteOf(a.suite)) : '';
+      return part === 'assistants' ? assistantsMarkup(app, detail) : relationsMarkup(app, detail, action);
+    }
+    const detailSlot = (app, part, action = 'open-app') => `<div class="detail-slot" data-detail-slot="${esc(app.id)}" data-detail-part="${part}" data-detail-action="${esc(action)}">${detailPart(app, part, action)}</div>`;
     function fillDetail(app) {
       if (!app || state.details.has(app.id)) return;
       if (!state.detailReads.has(app.id)) state.detailReads.set(app.id, readDetail(app).then(detail => { state.details.set(app.id, detail); return detail; }));
-      state.detailReads.get(app.id).then(() => document.querySelectorAll(`[data-detail-slot="${CSS.escape(app.id)}"]`).forEach(slot => { slot.innerHTML = detailPart(app, slot.dataset.detailPart); }));
+      state.detailReads.get(app.id).then(() => document.querySelectorAll(`[data-detail-slot="${CSS.escape(app.id)}"]`).forEach(slot => { slot.innerHTML = detailPart(app, slot.dataset.detailPart, slot.dataset.detailAction || 'open-app'); }));
     }
     const nameOf = id => (byId(id) || { name: id }).name;
     const unreadNote = read => read.status === 404 ? `${nameOf(read.name)}: its package record is not visible to you.` : `${nameOf(read.name)}: package record unavailable (HTTP ${read.status || 'network'}).`;
@@ -224,16 +230,16 @@
       const foot = rows.length ? '<p class="note-line">Names come from the package manifest; online state appears only where the assistant is registered in the swarm overview.</p>' : '';
       return list + empty + notes.map(n => `<p class="note-line">${esc(n)}</p>`).join('') + foot;
     }
-    const relationRow = (id, label, absent) => byId(id) ? button(`${appMark(byId(id))}<span>${esc(byId(id).name)}</span><small>${esc(label)}</small>`, 'open-app', 'dependency-row', `data-app="${esc(id)}"`) : `<div class="dependency-row"><span>${esc(id)}</span><small>${esc(`${label} · ${absent}`)}</small></div>`;
-    function relationsMarkup(app, detail) {
-      const rows = app.related.map(id => relationRow(id, 'Member (required)', 'not in your catalog')), shown = new Set([app.id, ...app.related]);
+    const relationRow = (id, label, absent, action = 'open-app') => byId(id) ? button(`${appMark(byId(id))}<span>${esc(byId(id).name)}</span><small>${esc(label)}</small>`, action, 'dependency-row', `data-app="${esc(id)}"`) : `<div class="dependency-row"><span>${esc(id)}</span><small>${esc(`${label} · ${absent}`)}</small></div>`;
+    function relationsMarkup(app, detail, action = 'open-app') {
+      const rows = app.related.map(id => relationRow(id, 'Member (required)', 'not in your catalog', action)), shown = new Set([app.id, ...app.related]);
       let note = '';
       if (!detail) note = 'Reading declared dependencies…';
       else if (!detail.own.record) note = detail.own.status === 404 ? 'The package record is not visible to you, so declared dependencies are not listed.' : `Declared dependencies could not be read (HTTP ${detail.own.status || 'network'}).`;
       else {
         const tiers = LIVE.dependencyTiers(detail.own.record.manifest);
         if (tiers.form === 'mixed') note = 'This package mixes the flat and tiered dependency forms, so no tiers are shown.';
-        else [['required', 'Required'], ['optional', 'Optional']].forEach(([tier, label]) => tiers[tier].apps.forEach(id => { if (!shown.has(id)) { shown.add(id); rows.push(relationRow(id, label, 'not in your catalog')); } }));
+        else [['required', 'Required'], ['optional', 'Optional']].forEach(([tier, label]) => tiers[tier].apps.forEach(id => { if (!shown.has(id)) { shown.add(id); rows.push(relationRow(id, label, 'not in your catalog', action)); } }));
       }
       const empty = !rows.length && !note ? '<p class="note-line">No application relationships declared.</p>' : '';
       return `<div class="dependency-list">${rows.join('')}${empty}${note ? `<p class="note-line">${esc(note)}</p>` : ''}</div>`;
@@ -269,6 +275,7 @@ ${items.length ? `<h3>Recent work</h3>${items.map(workRow).join('')}` : ''}
 <div class="drawer-actions">${app.navigable ? link('Open ↗', app.href, 'action primary') : ''}${app.surface && hooks.allowEmbed ? button('Open here', 'embed', 'action', `data-app="${esc(app.id)}"`) : ''}${hooks.contextAction ? button(hooks.contextAction, 'use-context', 'action', `data-app="${esc(app.id)}"`) : ''}${panels() ? button('Its routines', 'routines', 'action', `data-app="${esc(app.id)}"`) : ''}</div>
 <h3>Declared assistants</h3>${detailSlot(app, 'assistants')}
 <h3>Declared application relationships</h3>${detailSlot(app, 'relations')}
+${panels() ? detailSlot(app, 'facts') : ''}
 ${(app.connectors.required || []).length || (app.connectors.optional || []).length ? `<h3>Providers</h3><p class="bot-identifiers">${esc([...(app.connectors.required || []).map(c => `${c} (required)`), ...(app.connectors.optional || [])].join(' · '))}</p>` : ''}`;
     }
     function embedPanel(id) {
@@ -474,7 +481,11 @@ ${workExtras(item)}
     function togglePin(id) {
       state.pins = isPinned(id) ? state.pins.filter(x => x !== id) : [...state.pins, id];
       savePins();
-      if (state.modal && state.modal.kind === 'directory') { updateDirectory(); const chip = document.querySelector('[data-action="filter"][data-suite="pinned"] span'); if (chip) chip.textContent = state.pins.length; }
+      if (state.modal && state.modal.kind === 'directory') {
+        updateDirectory(); const chip = document.querySelector('[data-action="filter"][data-suite="pinned"] span'); if (chip) chip.textContent = state.pins.length;
+        // The grid was rebuilt: keep the keyboard on the same application's pin (or its card when a filter removed it).
+        const again = document.querySelector(`[data-catalog-app="${CSS.escape(id)}"] [data-action="pin"]`) || document.getElementById('app-search'); if (again) again.focus();
+      }
       else if (state.modal) renderModal();
       if (hooks.onPinsChanged) hooks.onPinsChanged();
     }
@@ -542,7 +553,7 @@ ${workExtras(item)}
     const threadNote = thread => thread.unavailable ? 'Earlier turns could not be loaded.' : thread.turns.length ? `${thread.turns.length} turns in this thread` : 'A new conversation. Ask anything across your swarm.';
 
     return { state, apps, suites, work, byId, suiteOf, pinned, isPinned, togglePin, workFor, openWork, attention, timeAgo, appMark, statusBadge, miniApp, workRow, artifactTile, personRow, studyBar, appPanel, workPanel, open, close, renderModal, handle, bind, toast, createThread, threadHtml, threadNote, summaryFor, summaryMarkup, fillSummary,
-      gameApps, hostedUrl, embedControls, embedFrame, detailSlot, fillDetail, rosterSlot, fillRoster, scene: () => state.scene, setScene, visualFor, fillVisuals };
+      gameApps, hostedUrl, embedControls, embedFrame, detailSlot, fillDetail, rosterSlot, fillRoster, scene: () => state.scene, setScene, visualFor, fillVisuals, appCard };
   }
 
   window.OSHAL_SHELL = { esc, button, primary, link, avatar, badge, chip, fileLink, answerHtml, withAudience, isGameApp, GAMES_TITLE, EXPERIENCES, experienceFor, currentExperience, pickerMarkup, skinPicker, createShell };
