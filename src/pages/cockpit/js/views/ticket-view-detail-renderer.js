@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | De-brand: the RCA tab fetched a retired legacy incidents-compare endpoint (a 404 since those routes were archived). Rewrote renderRcaTab to an honest, backend-free panel pointing to the incident workspace deliverables/ folder, and deleted the now-orphaned helpers (buildRcaDeliverablesMarkup, buildRcaAlarmTable, buildOshalDeliverablesSection, bindRcaActions, escapeAttr). A real in-cockpit deliverables view returns with the ADR-069 operations rebuild.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Fixed the detail pane's universal render crash: timeAgo() is used at three sites but was missing from the formatters import, so every ticket detail render threw ReferenceError and stuck on "Loading...". Guarded by the un-quarantined ticket-activity-rollup + ticket-cost-rollup-by-bot e2e specs.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Dispatch the new Run Trace sub-screen to ticket-view-trace-renderer.js (its own module — this file is already inside the 800-line warn band), so the embeddable /api/trace/:ticketId.html waterfall shows on the ticket the operator has open instead of only in the standalone paste-an-id tool.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | Dispatch the new Workflow sub-screen to ticket-view-workflow-renderer.js (its own module, since this file is already past the 800-line warn band), passing a staleness check so a late response for another ticket or tab is dropped.
  */
 
 import { formatCost, getStatusClass, getStatusLabel, timeAgo, truncate } from '../utils/formatters.js';
@@ -31,6 +32,7 @@ import { renderCostTab } from './ticket-view-cost-renderer.js';
 import { renderTraceTab } from './ticket-view-trace-renderer.js';
 import { buildEscalationPanelMarkup } from './ticket-view-escalation-panel.js';
 import { resolveDetailTabs } from './ticket-detail-tabs.js';
+import { renderWorkflowTab } from './ticket-view-workflow-renderer.js';
 import { buildFeedEntriesHtml } from './ticket-result-feed-entry.js';
 
 const logger = createUiLogger('cockpit-ticket-view-detail-renderer');
@@ -96,6 +98,13 @@ export async function renderTicketTab(view, tab, ticket, timeline, costData) {
   }
   if (tab === 'process') {
     await renderProcessTab(view, body, ticket, timeline);
+    return;
+  }
+  if (tab === 'workflow') {
+    await renderWorkflowTab(body, ticket, {
+      isCurrent: () => view.selectedId === ticket.id && view.container.querySelector('.td-tab.active')?.dataset.tab === 'workflow',
+      openTicket: (ticketId) => view._selectTicket(ticketId),
+    });
     return;
   }
   if (tab === 'rca') {

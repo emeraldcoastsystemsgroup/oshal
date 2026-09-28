@@ -14,6 +14,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Review fix (DLQ mis-count): the manual cockpit status/state PUT handlers now transition via updateStatusAs with the caller's identity instead of the actor-less updateStatus (which defaulted to 'system'). The queue DLQ policy counts only 'system' escalations as poison cycles, so a deliberate operator escalation recorded as 'system' could be quarantined as an auto-escalate loop — recording the operator actor prevents the mis-count.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: cockpit ticket chat no longer grants blanket automatic tool approval; executor policy must authorize each operation.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | GET /:ticketId answers where a graph ticket is parked (CKR-13 / D6). A graph ticket is dispatched from `approved` and nothing writes an in_process_* status, so an operator saw "Approval Required" and a status history with no way to tell which node of which workflow was waiting or what had just finished - that lived in metadata and a workflow_run_steps row nobody joined. Added only when the ticket IS a graph run, so every other ticket's payload is byte-identical.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | Record the authenticated caller on resume transitions so graph-gate approvals have a decision actor instead of a misleading system actor.
  */
 
 import { Router } from 'express';
@@ -340,7 +341,9 @@ export function createTicketRoutes(ctx: AppContext): Router {
     const { ticketId } = req.params;
     try {
       if (!(await requireTicketAccess(ctx, req, res, ticketId as string))) return;
-      await ctx.ticketService.updateStatus(ticketId as string, 'approved');
+      const { sub, email } = getCaller(req);
+      const actor = email ?? sub ?? 'operator';
+      await ctx.ticketService.updateStatusAs(ticketId as string, 'approved', actor, `Operator ${actor}`);
       res.json({ success: true, status: 'approved', ticketId, message: 'Ticket resumed — will be picked up by next poll cycle' });
     } catch (error) {
       res.status(400).json({ success: false, error: error instanceof Error ? error.message : 'Failed to resume ticket' });
