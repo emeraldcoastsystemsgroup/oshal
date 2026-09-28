@@ -4,9 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the LoRA gallery-import live acceptance's own logic: the generated image is a valid unique PNG, box commands refuse any non-fixture path and only prune literal-variable parents, worker output is redacted, and a run passes only when the receipt reaches "ready on worker" AND the pair is in the curated folder training reads with the exact bytes and caption. Not-ready, literal-path-only and surviving-row runs are red; cleanup always removes the box directory, the import ticket and the character.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Real-boundary probe cases. The in-memory worker above answered the probe with the JSON the script HOPED for, so it never caught what real Windows PowerShell 5.1 prints: `Get-Content -Raw` hands `ConvertTo-Json` a provider-decorated string and the caption serializes as a 25 KB nested object, which sank the 2026-09-28 live run as "nothing readable" although the pair was on the GPU box. The new cases run the exact `buildBoxProbeCommand` and `buildBoxRemoveCommand` output through powershell.exe with USERPROFILE pointed at a temp home (the DEFAULT `$env:USERPROFILE/lora-characters` root, so expansion is exercised) and pin one JSON line of plain values (png/txt booleans, bytes = the PNG's size, caption = the exact string, UTF-8 without a BOM) that the verdict passes on; removal likewise prints plain booleans and never climbs above the character directory. Pure cases pin that a decorated, truncated or empty probe is named (which field, the task exit, the first 300 redacted chars of stdout) and that a removal whose stdout is unreadable quotes it. Off win32 the shell cases print one PLATFORM SKIP line, never a silent green.
  */
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import sharp from 'sharp';
 
 const requireCjs = createRequire(import.meta.url);
@@ -17,7 +22,14 @@ const CHARACTER_ID = '11111111-2222-3333-4444-555555555555';
 const STORAGE_KEY = `lora-${CHARACTER_ID.replace(/-/g, '')}`;
 const CLIENT = 'node-fixture-worker';
 
-interface FakeOptions { receipt?: string; at?: 'expanded' | 'literal'; keepCharacter?: boolean; importStatus?: number; foreignTicket?: boolean }
+const WIN32 = process.platform === 'win32';
+if (!WIN32) {
+  process.stderr.write(`PLATFORM SKIP: lora-import-live-proof - the real-PowerShell probe and removal cases run only on win32 `
+    + `(this host is ${process.platform}); the shipped box commands were NOT executed here.\n`);
+}
+const onWindows = it.skipIf(!WIN32);
+
+interface FakeOptions { receipt?: string; at?: 'expanded' | 'literal'; keepCharacter?: boolean; importStatus?: number; foreignTicket?: boolean; removeOutput?: string }
 
 /** The fake box + server state one run reads and writes. */
 interface FakeState {
@@ -36,7 +48,7 @@ function runBox(state: FakeState, command: string): string {
   const key = (loc: string) => [...state.box.keys()].find((k) => k.startsWith(`${loc}/${STORAGE_KEY}`));
   if (command.includes('Remove-Item')) {
     for (const k of [...state.box.keys()]) if (k.includes(STORAGE_KEY)) state.box.delete(k);
-    return JSON.stringify({ expanded: false, literal: false });
+    return state.options.removeOutput ?? JSON.stringify({ expanded: false, literal: false });
   }
   const entry = (loc: string) => { const k = key(loc); const v = k ? state.box.get(k)! : null;
     return { png: Boolean(v), bytes: v ? v.bytes : 0, txt: Boolean(v), caption: v ? v.caption : '' }; };
@@ -122,6 +134,9 @@ describe('fixture and box commands', () => {
     expect([decoded.info.width, decoded.info.height, decoded.info.channels]).toEqual([16, 16, 3]);
     expect(a.png.equals(b.png)).toBe(false);
     expect(a.character.heroImage).not.toBe(b.character.heroImage);
+    // The probe's JSON line carries this caption back through the worker's console, whose codepage
+    // Windows PowerShell 5.1 applies to non-ASCII text; a printable-ASCII caption round-trips on any box.
+    expect(a.caption).toMatch(/^[\x20-\x7e]+$/);
   });
 
   it('refuses to probe or remove anything but a fixture storage key and dataset file', () => {
@@ -141,8 +156,120 @@ describe('fixture and box commands', () => {
     expect(proof.buildBoxRemoveCommand('D:/lora', STORAGE_KEY)).not.toContain('Split-Path');
   });
 
-  it('redacts user-profile folder names from worker output', () => {
+  it('redacts user-profile folder names from worker output, JSON-escaped and drive-less spellings included', () => {
     expect(proof.redactWorkerText('at C:\\Users\\someone\\lora and /home/someone/x')).toBe('at C:\\Users\\user\\lora and /home/user/x');
+    expect(proof.redactWorkerText('"PSPath":"C:\\\\Users\\\\someone\\\\x","CurrentLocation":"Users\\\\someone\\\\y"'))
+      .toBe('"PSPath":"C:\\\\Users\\\\user\\\\x","CurrentLocation":"Users\\\\user\\\\y"');
+  });
+});
+
+describe('the probe and removal commands on real Windows PowerShell (the worker shell)', () => {
+  const made: string[] = [];
+  afterEach(() => { for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+
+  /** A temp home holding one curated pair at the DEFAULT root's expanded path, and a separate cwd for the shell. */
+  function curatedHome(fixture: { name: string; png: Buffer; caption: string }) {
+    const home = mkdtempSync(join(tmpdir(), 'lora-proof-home-'));
+    const cwd = mkdtempSync(join(tmpdir(), 'lora-proof-cwd-'));
+    made.push(home, cwd);
+    const curated = join(home, 'lora-characters', STORAGE_KEY, 'curated');
+    mkdirSync(curated, { recursive: true });
+    writeFileSync(join(curated, fixture.name), fixture.png);
+    writeFileSync(join(curated, fixture.name.replace(/\.png$/, '.txt')), fixture.caption, 'utf8');
+    return { home, cwd, curated };
+  }
+
+  /** Run one box command exactly as the worker's shell.exec does, with USERPROFILE pointed at the temp home. */
+  function runPowerShell(command: string, home: string, cwd: string) {
+    return spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command],
+      { cwd, env: { ...process.env, USERPROFILE: home }, encoding: 'utf8', timeout: 60_000 });
+  }
+
+  onWindows('the probe prints ONE JSON line of plain values for the pair at the expanded default root, and the verdict passes on it', () => {
+    const fixture = proof.createImportFixture();
+    const { home, cwd } = curatedHome(fixture);
+    const run = runPowerShell(proof.buildBoxProbeCommand(proof.DEFAULT_BOX_ROOT, STORAGE_KEY, fixture.name), home, cwd);
+    expect(run.status, run.stderr).toBe(0);
+    const lines = run.stdout.trim().split(/\r?\n/);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].startsWith('{')).toBe(true);
+    const probe = proof.parseProbe(run.stdout);
+    expect(proof.probeShapeProblem(probe)).toBeNull();
+    expect(probe).toEqual({
+      expanded: { png: true, bytes: fixture.png.length, txt: true, caption: fixture.caption },
+      literal: { png: false, bytes: 0, txt: false, caption: '' },
+    });
+    expect(run.stdout.length).toBeLessThan(1_000);
+    const verdict = proof.decideVerdict({ status: 'ready', elapsedMs: 3_000 }, probe, fixture, null, run);
+    expect(verdict.state, verdict.detail).toBe('pass');
+  }, 60_000);
+
+  onWindows('the removal prints plain booleans on one line, removes the character directory and never climbs above it', () => {
+    const fixture = proof.createImportFixture();
+    const { home, cwd, curated } = curatedHome(fixture);
+    const run = runPowerShell(proof.buildBoxRemoveCommand(proof.DEFAULT_BOX_ROOT, STORAGE_KEY), home, cwd);
+    expect(run.status, run.stderr).toBe(0);
+    expect(run.stdout.trim().split(/\r?\n/)).toHaveLength(1);
+    expect(proof.parseProbe(run.stdout)).toEqual({ expanded: false, literal: false });
+    expect(existsSync(curated)).toBe(false);
+    expect(existsSync(join(home, 'lora-characters', STORAGE_KEY))).toBe(false);
+    expect(existsSync(join(home, 'lora-characters'))).toBe(true);
+  }, 60_000);
+});
+
+describe('an unreadable probe names itself', () => {
+  const ready = { status: 'ready', elapsedMs: 3_000 };
+
+  /** What Windows PowerShell 5.1 printed on 2026-09-28: the caption as a provider-decorated object. */
+  function decoratedStdout(caption: string) {
+    const txt = `C:\\Users\\someone\\lora-characters\\${STORAGE_KEY}\\curated\\x.txt`;
+    return JSON.stringify({
+      expanded: { png: true, bytes: 852, txt: true, caption: { value: caption, PSPath: txt, PSParentPath: txt.replace(/\\x\.txt$/, ''), PSChildName: 'x.txt',
+        PSDrive: { CurrentLocation: 'Users\\someone\\lora', Name: 'C', Provider: { ImplementingType: 'Microsoft.PowerShell.Commands.FileSystemProvider' } } } },
+      literal: { png: false, bytes: 0, txt: false, caption: '' },
+    });
+  }
+
+  it('reports a decorated caption as not a plain string, with the task exit and the first 300 redacted chars of stdout', () => {
+    const fixture = proof.createImportFixture();
+    const stdout = decoratedStdout(fixture.caption);
+    expect(stdout.length).toBeGreaterThan(proof.PROBE_EXCERPT_CHARS + 100);
+    const verdict = proof.decideVerdict(ready, proof.parseProbe(stdout), fixture, null, { stdout, stderr: '', exitCode: 0 });
+    expect(verdict.state).toBe('fail');
+    expect(verdict.detail).toContain('nothing readable: "expanded".caption is not a plain string (object) (probe task exit 0)');
+    expect(verdict.detail).toContain(`Worker stdout, first ${proof.PROBE_EXCERPT_CHARS} chars: "${proof.redactWorkerText(stdout).slice(0, proof.PROBE_EXCERPT_CHARS)}..."`);
+    expect(verdict.detail).toContain('C:\\\\Users\\\\user\\\\lora-characters');
+    expect(verdict.detail).not.toContain('someone');
+    expect(verdict.detail).not.toContain('FileSystemProvider');
+  });
+
+  it('reports a truncated payload, an empty stdout with stderr, and a probe task that never answered', () => {
+    const fixture = proof.createImportFixture();
+    const truncated = decoratedStdout(fixture.caption).slice(0, 200);
+    const cut = proof.decideVerdict(ready, proof.parseProbe(truncated), fixture, null, { stdout: truncated, stderr: '', exitCode: 0 });
+    expect(cut.state).toBe('fail');
+    expect(cut.detail).toContain('nothing readable: no JSON object line in the worker stdout (probe task exit 0)');
+    expect(cut.detail).toContain(`chars: "${truncated.slice(0, 40)}`);
+    const empty = proof.decideVerdict(ready, null, fixture, null, { stdout: '', stderr: 'C:\\Users\\someone\\x: Access is denied', exitCode: 1 });
+    expect(empty.detail).toContain(`(probe task exit 1). Worker stdout, first ${proof.PROBE_EXCERPT_CHARS} chars: (empty); stderr: "C:\\Users\\user\\x: Access is denied".`);
+    const none = proof.decideVerdict(ready, null, fixture, null, { stdout: '', stderr: '', exitCode: null, error: 'no result within the budget' });
+    expect(none.detail).toContain('(probe task no result within the budget)');
+  });
+
+  it('names the wrong-shaped field: a string bytes count, a stringly boolean and a missing literal block', () => {
+    const literal = { png: false, bytes: 0, txt: false, caption: '' };
+    expect(proof.probeShapeProblem({ expanded: { png: true, bytes: '852', txt: true, caption: 'x' }, literal })).toBe('"expanded".bytes is not a plain number');
+    expect(proof.probeShapeProblem({ expanded: { png: 'True', bytes: 852, txt: true, caption: 'x' }, literal })).toBe('"expanded".png/txt are not plain booleans');
+    expect(proof.probeShapeProblem({ expanded: { png: true, bytes: 852, txt: true, caption: 'x' } })).toBe('"literal" is not an object');
+    expect(proof.probeShapeProblem({ expanded: { png: true, bytes: 852, txt: true, caption: ['x'] }, literal })).toBe('"expanded".caption is not a plain string (array)');
+    expect(proof.probeShapeProblem({ expanded: { png: true, bytes: 852, txt: true, caption: 'x' }, literal })).toBeNull();
+  });
+
+  it('quotes an unreadable removal stdout in the cleanup error', async () => {
+    const f = fake({ removeOutput: 'Remove-Item : Access to the path C:\\Users\\someone\\lora is denied' });
+    const result = await proof.runLoraImportAcceptance(f.ports);
+    expect(result.state).toBe('fail');
+    expect(result.detail).toContain(`CLEANUP INCOMPLETE: box directory ${STORAGE_KEY} was not removed (exit 0; worker stdout: "Remove-Item : Access to the path C:\\Users\\user\\lora is denied")`);
   });
 });
 

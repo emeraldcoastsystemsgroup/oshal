@@ -5,6 +5,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - live acceptance for "ADR-139 - LoRA has no image-ingest route at all" (Done-when: one image sent from the gallery lands in a named dataset and is visible in the LoRA surface). As the operator automation identity it creates a synthetic `testlab-import-<hex>` character, mints a Send-to handle carrying one generated PNG through core's artifact-exchange upload route, imports it through the installed package's POST /api/lora/dataset/import, waits for the receipt the studio shows as "ready on worker", reads the character's curated folder on the GPU worker through the same remote-client shell.exec rail LoRA dispatches on (read-only probe), then removes the box files, the import ticket and the character (its receipt, staging and grants cascade). Core rather than a package test-lab.yaml case: it orchestrates core artifact exchange, the core remote-client rail and the store package on a real worker, and the package catalog leaves live external-write cases pending.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The box probe emits plain values. The 2026-09-28 run on LoRA 1.7.1 wrote the pair to the GPU box in 3 s and the probe found it, yet the verdict was "the worker probe returned nothing readable": Windows PowerShell 5.1's `Get-Content -Raw` returns the caption as a string decorated with provider NoteProperties (PSPath, PSParentPath, PSChildName, PSDrive, PSProvider), and `ConvertTo-Json -Depth 4` serialized that as a 25 KB nested object (caption = {value, PSPath, PSDrive: {...}}) instead of a string. The caption is now read with [IO.File]::ReadAllText (UTF-8, the encoding the package writes with) and png/txt/bytes are cast to plain bool/long, so the line is exactly {"expanded":{png,bytes,txt,caption},"literal":{...}}. The verdict also names an unreadable or wrong-shaped probe (which field, the task exit, the first 300 redacted chars of the worker stdout) instead of "nothing readable", the removal path quotes its stdout the same way, and the redaction covers JSON-escaped and drive-less user-profile paths. The remove command already emitted plain Test-Path booleans; it is unchanged.
  */
 
 'use strict';
@@ -108,7 +109,9 @@ function psLiteral(value) {
  * @description The read-only probe of one dataset entry on the worker. It checks the path the
  * package's TRAINING command reads (the box root inside double quotes, so PowerShell expands it) and,
  * as a diagnostic, the same path as a single-quoted literal (how the package's import command writes
- * it). Prints presence, size and caption per location; never a full path.
+ * it). Prints presence, size and caption per location; never a full path. Every value is a plain
+ * bool, long or .NET string: a provider-decorated string (what `Get-Content` returns on Windows
+ * PowerShell 5.1) serializes as a nested object, which is what broke the 2026-09-28 run.
  * @param {string} boxRoot - The package box root (may hold $env:USERPROFILE).
  * @param {string} storageKey - lora-<32 hex>.
  * @param {string} filename - The dataset filename the import chose.
@@ -119,9 +122,9 @@ function buildBoxProbeCommand(boxRoot, storageKey, filename) {
   const rel = `${storageKey}/curated/${filename}`;
   return `& { $paths = [ordered]@{ expanded = "${boxRoot}/${rel}"; literal = ${psLiteral(`${boxRoot}/${rel}`)} }; $out = [ordered]@{}; `
     + 'foreach ($k in @($paths.Keys)) { $png = $paths[$k]; $txt = [IO.Path]::ChangeExtension($png, \'.txt\'); '
-    + '$has = Test-Path -LiteralPath $png; $cap = Test-Path -LiteralPath $txt; '
-    + '$out[$k] = [ordered]@{ png = $has; bytes = $(if ($has) { (Get-Item -LiteralPath $png).Length } else { 0 }); '
-    + 'txt = $cap; caption = $(if ($cap) { Get-Content -Raw -LiteralPath $txt } else { \'\' }) } }; '
+    + '$has = [bool](Test-Path -LiteralPath $png); $cap = [bool](Test-Path -LiteralPath $txt); '
+    + '$out[$k] = [ordered]@{ png = $has; bytes = [long]$(if ($has) { (Get-Item -LiteralPath $png).Length } else { 0 }); '
+    + 'txt = $cap; caption = [string]$(if ($cap) { [IO.File]::ReadAllText((Convert-Path -LiteralPath $txt), [Text.UTF8Encoding]::new($false)) } else { \'\' }) } }; '
     + '$out | ConvertTo-Json -Compress -Depth 4 }';
 }
 
@@ -147,12 +150,14 @@ function buildBoxRemoveCommand(boxRoot, storageKey) {
 }
 
 /**
- * @description Replace user-profile folder names in worker output with a neutral one.
+ * @description Replace user-profile folder names in worker output with a neutral one: `C:\Users\x`,
+ * its JSON-escaped form `C:\\Users\\x`, a drive-less `Users\x` (PSDrive's CurrentLocation), and
+ * `/Users/x` or `/home/x`.
  * @param {unknown} text - Worker stdout/stderr.
  * @returns {string} The redacted text.
  */
 function redactWorkerText(text) {
-  return String(text ?? '').replace(/([A-Za-z]:\\Users\\)[^\\\s"']+/gi, '$1user').replace(/(\/Users\/|\/home\/)[^/\s"']+/g, '$1user');
+  return String(text ?? '').replace(/(Users\\{1,2}|\/Users\/|\/home\/)[^\\/\s"']+/g, '$1user');
 }
 
 /**
@@ -206,6 +211,54 @@ function parseProbe(stdout) {
   try { return line ? JSON.parse(line) : null; } catch { return null; }
 }
 
+/** How much of an unreadable worker stdout a verdict quotes. The probe prints only presence, sizes and a caption. */
+const PROBE_EXCERPT_CHARS = 300;
+
+/**
+ * @description Say what is wrong with a parsed probe, or nothing when it is exactly the shape the
+ * probe command emits: `expanded` and `literal`, each with plain png/txt booleans, a plain bytes
+ * number and a plain caption string. A decorated caption (an object) is named as such.
+ * @param {unknown} probe - parseProbe's outcome.
+ * @returns {string|null} The problem, or null when the probe is readable.
+ */
+function probeShapeProblem(probe) {
+  if (!probe || typeof probe !== 'object' || Array.isArray(probe)) return 'no JSON object line in the worker stdout';
+  for (const key of ['expanded', 'literal']) {
+    const at = probe[key];
+    if (!at || typeof at !== 'object' || Array.isArray(at)) return `"${key}" is not an object`;
+    if (typeof at.png !== 'boolean' || typeof at.txt !== 'boolean') return `"${key}".png/txt are not plain booleans`;
+    if (typeof at.bytes !== 'number' || !Number.isFinite(at.bytes)) return `"${key}".bytes is not a plain number`;
+    if (typeof at.caption !== 'string') return `"${key}".caption is not a plain string (${Array.isArray(at.caption) ? 'array' : typeof at.caption})`;
+  }
+  return null;
+}
+
+/**
+ * @description The first PROBE_EXCERPT_CHARS of a worker stdout, whitespace-collapsed and redacted,
+ * quoted for a verdict so the next unreadable payload names itself.
+ * @param {unknown} stdout - Worker stdout.
+ * @returns {string} The quoted excerpt, or "(empty)".
+ */
+function probeExcerpt(stdout) {
+  const text = redactWorkerText(stdout).replace(/\s+/g, ' ').trim();
+  if (!text) return '(empty)';
+  return `"${text.slice(0, PROBE_EXCERPT_CHARS)}${text.length > PROBE_EXCERPT_CHARS ? '...' : ''}"`;
+}
+
+/**
+ * @description The failing detail for a probe that ran but could not be read.
+ * @param {number} seconds - Seconds the receipt took to reach ready.
+ * @param {string} problem - probeShapeProblem's finding.
+ * @param {{stdout?: unknown, stderr?: unknown, exitCode?: number|null, error?: string}|null} run - The probe task's outcome.
+ * @returns {string} The detail.
+ */
+function unreadableProbeDetail(seconds, problem, run) {
+  const outcome = run ? ` (probe task ${run.error || `exit ${run.exitCode}`})` : '';
+  const stderr = run && run.stderr ? `; stderr: "${redactWorkerText(run.stderr).slice(0, PROBE_EXCERPT_CHARS)}"` : '';
+  return `The receipt is ready (${seconds}s) but the worker probe returned nothing readable: ${problem}${outcome}. `
+    + `Worker stdout, first ${PROBE_EXCERPT_CHARS} chars: ${probeExcerpt(run ? run.stdout : '')}${stderr}.`;
+}
+
 /**
  * @description Poll the studio's dataset receipts until this run's file leaves "queued for worker".
  * @param {object} ports - api, sleep, now.
@@ -253,21 +306,23 @@ async function importFixture(ports, fixture) {
  * @param {object|null} probe - The parsed box probe.
  * @param {ReturnType<typeof createImportFixture>} fixture - The run's fixture.
  * @param {object} importTask - The LoRA import task's worker result (diagnostic).
+ * @param {object|null} [probeRun] - The probe task's own outcome (stdout, stderr, exitCode, error), quoted when the probe is unreadable.
  * @returns {{state: 'pass'|'fail', detail: string}} The verdict before cleanup.
  */
-function decideVerdict(receipt, probe, fixture, importTask) {
+function decideVerdict(receipt, probe, fixture, importTask, probeRun = null) {
   const seconds = Math.round(receipt.elapsedMs / 1000);
   if (receipt.status !== 'ready') {
     const worker = importTask ? ` Worker import task: exit ${importTask.exitCode}${importTask.stderr ? `, stderr "${importTask.stderr.slice(-300)}"` : ''}.` : '';
     return { state: 'fail', detail: `The receipt did not reach "ready on worker" (status ${receipt.status} after ${seconds}s).${worker}` };
   }
-  const at = (probe && probe.expanded) || {};
-  const literal = (probe && probe.literal) || {};
-  const where = `curated folder training reads: png=${Boolean(at.png)} (${at.bytes || 0} bytes), txt=${Boolean(at.txt)}; `
-    + `single-quoted literal path: png=${Boolean(literal.png)}, txt=${Boolean(literal.txt)}`;
-  if (!probe) return { state: 'fail', detail: `The receipt is ready (${seconds}s) but the worker probe returned nothing readable.` };
-  const captionOk = String(at.caption || '').trim() === fixture.caption;
-  if (at.png && at.txt && Number(at.bytes) === fixture.png.length && captionOk) {
+  const problem = probeShapeProblem(probe);
+  if (problem) return { state: 'fail', detail: unreadableProbeDetail(seconds, problem, probeRun) };
+  const at = probe.expanded;
+  const literal = probe.literal;
+  const where = `curated folder training reads: png=${at.png} (${at.bytes} bytes), txt=${at.txt}; `
+    + `single-quoted literal path: png=${literal.png}, txt=${literal.txt}`;
+  const captionOk = at.caption.trim() === fixture.caption;
+  if (at.png && at.txt && at.bytes === fixture.png.length && captionOk) {
     return { state: 'pass', detail: `The imported image reached "ready on worker" in ${seconds}s and the .png/.txt pair is in the character's curated folder with the exact bytes and caption (${where}).` };
   }
   return { state: 'fail', detail: `The receipt says "ready on worker" (${seconds}s) but the pair is not in the curated folder training reads (${where}; caption match=${captionOk}).` };
@@ -347,8 +402,8 @@ async function removeImportTicket(ports, fixture, ticketId) {
 async function removeBoxDirectory(ports, worker, storageKey, budgets) {
   const removed = await runOnWorker(ports, worker, buildBoxRemoveCommand(ports.boxRoot, storageKey), budgets);
   const left = parseProbe(removed.stdout);
-  if (removed.ok && left && !left.expanded && !left.literal) return [];
-  return [`box directory ${storageKey} was not removed (${removed.error || `exit ${removed.exitCode}`})`];
+  if (removed.ok && left && left.expanded === false && left.literal === false) return [];
+  return [`box directory ${storageKey} was not removed (${removed.error || `exit ${removed.exitCode}`}; worker stdout: ${probeExcerpt(removed.stdout)})`];
 }
 
 /**
@@ -379,11 +434,12 @@ async function runLoraImportAcceptance(ports, options = {}) {
     const receipt = await awaitReceipt(io, fixture.subject, job.filename, budgets);
     made.storageKey = STORAGE_KEY_RE.test(receipt.storageKey || '') ? receipt.storageKey : null;
     const importTask = receipt.status === 'ready' ? null : await awaitWorkerResult(io, job.clientId, job.taskId, { ...budgets, boxBudgetMs: budgets.pollMs * 2 });
-    const probe = receipt.status === 'ready' && made.storageKey
-      ? parseProbe((await runOnWorker(io, made.worker, buildBoxProbeCommand(io.boxRoot, made.storageKey, job.filename), budgets)).stdout) : null;
+    const probeRun = receipt.status === 'ready' && made.storageKey
+      ? await runOnWorker(io, made.worker, buildBoxProbeCommand(io.boxRoot, made.storageKey, job.filename), budgets) : null;
+    const probe = probeRun ? parseProbe(probeRun.stdout) : null;
     Object.assign(evidence, { filename: job.filename, ticketId: job.ticketId, importTaskId: job.taskId, receipt: receipt.status, readySeconds: Math.round(receipt.elapsedMs / 1000), worker: job.clientId,
-      curated: probe ? probe.expanded : null, literalPath: probe ? probe.literal : null });
-    verdict = decideVerdict(receipt, probe, fixture, importTask);
+      probeTaskId: probeRun ? probeRun.taskId : null, curated: probe ? probe.expanded : null, literalPath: probe ? probe.literal : null });
+    verdict = decideVerdict(receipt, probe, fixture, importTask, probeRun);
   } catch (error) {
     verdict = { state: 'fail', detail: error instanceof Error ? error.message : String(error) };
   }
@@ -490,6 +546,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  CASE_ID, SUBJECT_RE, DEFAULT_BOX_ROOT, generatePng, createImportFixture, psLiteral, buildBoxProbeCommand,
-  buildBoxRemoveCommand, redactWorkerText, parseProbe, decideVerdict, runLoraImportAcceptance,
+  CASE_ID, SUBJECT_RE, DEFAULT_BOX_ROOT, PROBE_EXCERPT_CHARS, generatePng, createImportFixture, psLiteral, buildBoxProbeCommand,
+  buildBoxRemoveCommand, redactWorkerText, parseProbe, probeShapeProblem, probeExcerpt, decideVerdict, runLoraImportAcceptance,
 };

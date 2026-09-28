@@ -219,7 +219,10 @@ directory, the import ticket (through the ticket service after re-reading it) an
 whose receipt, staged bytes and grants cascade. It is a core script rather than a package
 `tests/test-lab.yaml` case because it orchestrates core artifact exchange, the core remote-client rail
 and the store package on a real worker, and the package catalog leaves live external-write cases
-pending. Suite: `npx vitest run tests/unit/lora-import-live-proof.spec.ts`.
+pending. Suite: `npx vitest run tests/unit/lora-import-live-proof.spec.ts` (on win32 the box probe
+and removal commands also run through real `powershell.exe` against a temp home; other hosts print
+one PLATFORM SKIP line). An unreadable probe is named in the verdict: which field is wrong, the
+probe task's exit, and the first 300 redacted characters of the worker's stdout.
 
 ### Messaging channels
 
