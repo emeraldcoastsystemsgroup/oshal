@@ -50,3 +50,24 @@ a.action.primary,a.action{display:inline-flex;align-items:center;gap:6px;cursor:
 .live-agenda .agenda-row{margin-top:14px}
 .live-agenda .agenda-row .agenda-detail{border-left-color:var(--accent)}
 .live-agenda .agenda-sources{margin-top:14px}
+/* Full-swarm work panels: an indeterminate bar for Working items (no percentage is recorded), recorded workflow
+   progress and the stage list of a ticket's workflow. Motion stops under reduced motion. */
+.mini-progress.live-indeterminate{position:relative;align-self:center}
+.mini-progress.live-indeterminate i,.live-indeterminate-track i{width:40%;animation:live-slide 1.4s ease-in-out infinite}
+.live-indeterminate-track{position:relative;overflow:hidden}
+.live-indeterminate-track i{display:block;height:100%;background:var(--accent)}
+@keyframes live-slide{0%{transform:translateX(-110%)}100%{transform:translateX(260%)}}
+@media (prefers-reduced-motion:reduce){.mini-progress.live-indeterminate i,.live-indeterminate-track i{animation:none;width:100%;opacity:.45}}
+.running-row .mini-progress{margin-left:8px}
+.work-item .mini-progress{margin-left:10px}
+.live-progress>span strong{margin-left:auto;padding-left:10px}
+.live-stages{list-style:none;margin:12px 0;padding:0;display:grid;gap:8px}
+.live-stages li{display:flex;gap:12px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-radius:8px}
+.live-stages li small{display:block;color:var(--muted);font-size:11px;margin-top:2px}
+.live-stages .stage-mark{flex:0 0 12px;height:12px;margin-top:3px;border-radius:50%;border:2px solid var(--line)}
+.live-stages .stage-done .stage-mark,.live-stages .stage-skipped .stage-mark{background:var(--accent);border-color:var(--accent)}
+.live-stages .stage-waiting .stage-mark,.live-stages .stage-running .stage-mark{border-color:var(--accent);box-shadow:0 0 0 3px var(--soft,transparent)}
+.live-stages .stage-failed .stage-mark{border-color:var(--status-warning,#b45309);background:var(--status-warning,#b45309)}
+.live-stages .stage-pending{opacity:.72}
+.work-flow,.work-state{margin-top:14px}
+.work-actions{margin-top:10px}

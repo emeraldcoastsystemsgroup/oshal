@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Fix round 1: localHref checks the path it returns as well as the URL it resolved. Dot segments normalise '/..//host', '/.//host' and '/%2e%2e//host' to a pathname that starts with '//', which the guard returned as a protocol-relative link that opens another origin; now a returned path must not start with '//' and must itself resolve to the page origin. The admitted navigation href from GET /api/ui/workspaces goes through the same guard and falls back to the cockpit link when refused, so every catalog Open link stays on this origin.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Acceptance fixes: calendarDay reads a date-only field ('YYYY-MM-DD' or exactly UTC midnight, how a Postgres DATE reaches JSON) as that local calendar day, so a Little Monsters due date no longer prints a day early west of Greenwich (due_date was the only field read through `new Date(iso)`); event and last-active dates were already read as local days and now share the helper, as do the agenda's class events. probeSummary carries the first probe's refusal code as `error`, and littleMonstersRefusal names an application-authorization refusal (403 app_access_* / authorization_*) apart from the package's no-school-profile sentence, so a shell stops telling an unadmitted caller to open Little Monsters.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Every canonical ticket state now folds to a label a shell can place: approved (Approved, waiting for the queue), approval_required (Approval required) and customer_action (Needs you) wait on a person, dead_letter reads Blocked, and every in_process_* phase is Working (they printed as "In process build" and fell off the Commons board, and an approval gate was never counted as needing you). STATUS_GROUPS names the attention / moving / done label sets the shells share for briefings and board columns.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | Adapters for the full-swarm build over existing routes: one ticket's workflow read model (GET /api/v1/tickets/:id/workflow) and its owner-checked cancel, the caller's schedules with pause/resume (GET /api/v1/agent/schedules, POST /:id/pause|resume), Workflow Studio definitions, household/team membership (GET /api/tenants, /:id/members) and the caller's own location overview (GET /api/location/state). The catalog keeps the listing's package status for the package-facts panel.
  */
 (function attach(root, factory) {
   'use strict';
@@ -120,6 +121,7 @@
       name: (plan && plan.displayName) || summary.displayName || name,
       description: (plan && plan.description) || summary.description || '',
       version: summary.version || '',
+      status: typeof summary.status === 'string' ? summary.status : '',
       suite: suiteId((plan && plan.suite) || summary.suite),
       icon: (plan && plan.icon) || summary.icon || '',
       kind: plan && plan.kind === 'group' ? 'group' : 'app',
@@ -694,8 +696,42 @@
          * @param {string} status Canonical next state.
          * @returns {Promise<{ok:boolean,status:number,body:any}>} The route's answer, including its refusal.
          */
-        setStatus: function (id, status) { return sendJson('/api/tickets/' + encodeURIComponent(id) + '/status', 'PUT', { status: status }); }
+        setStatus: function (id, status) { return sendJson('/api/tickets/' + encodeURIComponent(id) + '/status', 'PUT', { status: status }); },
+        /**
+         * @description One ticket's owner- and application-scoped workflow read model: the registered definition (not a run snapshot), the latest owner-matched run, status history, approval-gate receipts and child tickets.
+         * @param {string} id Ticket id.
+         * @returns {Promise<{ok:boolean,status:number,body:any}>} The projection, or 404 when the caller may not read the ticket.
+         */
+        workflow: function (id) { return getJson('/api/v1/tickets/' + encodeURIComponent(id) + '/workflow'); },
+        /**
+         * @description Ask the ticket route to cancel work the caller owns; the route checks ownership and refuses otherwise.
+         * @param {string} id Ticket id.
+         * @returns {Promise<{ok:boolean,status:number,body:any}>} The route's answer, including a refusal.
+         */
+        cancel: function (id) { return sendJson('/api/tickets/' + encodeURIComponent(id) + '/cancel', 'PUT'); }
       },
+      routines: {
+        /**
+         * @description The caller's schedules (owner-scoped by the route; unowned system schedules stay visible to everyone).
+         * @returns {Promise<{ok:boolean,status:number,body:any}>} { schedules } or the route's refusal.
+         */
+        list: function () { return getJson('/api/v1/agent/schedules'); },
+        /**
+         * @description Pause or resume one schedule; the route refuses a schedule the caller does not own (404), one an application manifest manages, and a workflow schedule for a non-operator (403).
+         * @param {string} id Schedule id.
+         * @param {boolean} on True resumes, false pauses.
+         * @returns {Promise<{ok:boolean,status:number,body:any}>} { schedule } or the refusal.
+         */
+        setOn: function (id, on) { return sendJson('/api/v1/agent/schedules/' + encodeURIComponent(id) + (on ? '/resume' : '/pause'), 'POST'); }
+      },
+      /** Workflow Studio definitions (name, version, node count); editing, publishing and restoring stay in Workflow Studio. */
+      workflows: function () { return getJson('/api/workflow-studio/definitions'); },
+      /** The households and teams the caller belongs to, with their role (GET /api/tenants). */
+      tenants: function () { return getJson('/api/tenants'); },
+      /** Members of one tenant (subject and role); the route answers members only (403 otherwise). */
+      tenantMembers: function (id) { return getJson('/api/tenants/' + encodeURIComponent(id) + '/members'); },
+      /** The caller's own location overview (ADR-169 L3: settings, devices, current place, who can see them; no coordinates). */
+      locationState: function () { return getJson('/api/location/state'); },
       content: {
         /**
          * @description The caller's saved content drafts (topic, take, draft, created_at), newest first; the route reads only the caller's own rows.

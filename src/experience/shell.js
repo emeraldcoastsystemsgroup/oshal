@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Integration review: every server-provided link the shell puts in an href (the shared hand-off chip, a '/' link in an answer, a file download) goes through LIVE.localHref, so a target that resolves off this origin ('//host', '/\host', a tab-split path) is never linked; the Games chip's visible label carries the hedge ('Looks like a game'); a roster 403 with roster_scope_denied says this session is not permitted to read the roster instead of blaming a missing admin role.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Fix round 1: states the one exception to row 5. Only '/' answer links, hand-off chips, file downloads and admitted workspace links go through LIVE.localHref; an absolute http(s) answer link is outside the same-origin guard by design and opens in a new tab with noopener noreferrer. A dot-segment answer link such as '[x](/..//host/y)' now stays literal text because the guard refuses it.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | The attention list reads the shared status groups (LIVE.STATUS_GROUPS.attention), so an approval gate, a customer action and a parked (dead-letter) ticket lead the briefing with the other items that wait on the person.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Work panels for layouts that opt in (hooks.workActions, with shell-panels.js loaded): a ticket, or the ticket behind a swarm task, reads its workflow (GET /api/v1/tickets/:id/workflow) and state (GET /api/tickets/:id) once per panel; the panel shows recorded progress and stages, a full ticket-workflow panel, Approve (approval_required to approved through PUT /api/tickets/:id/status, only when a person is what it waits for) and Cancel behind a confirmation (PUT /api/tickets/:id/cancel). A refusal is shown in the panel as returned; a success reloads the caller's work and re-renders through hooks.onWorkChanged. Working rows carry an indeterminate bar. Homebase and the central assistant do not opt in and are unchanged.
  */
 (() => {
   'use strict';
@@ -110,7 +111,7 @@
     const apps = snapshot.apps, suites = snapshot.suites, work = snapshot.work;
     const byId = id => apps.find(a => a.id === id) || null;
     const suiteOf = id => suites.find(s => s.id === id) || LIVE.SUITE_META[id] && Object.assign({ id, count: 0, apps: [] }, LIVE.SUITE_META[id]) || suites[suites.length - 1];
-    const state = { modal: null, dirSuite: 'all', dirQuery: '', returnFocus: null, pins: null, summaries: new Map(), embed: false, details: new Map(), detailReads: new Map(), roster: null, rosterRead: null };
+    const state = { modal: null, dirSuite: 'all', dirQuery: '', returnFocus: null, pins: null, summaries: new Map(), embed: false, details: new Map(), detailReads: new Map(), roster: null, rosterRead: null, workFlows: new Map(), workReads: new Set() };
     state.embedView = LIVE.prefs.get('embed-view:' + layoutId, 'summary') === 'full' ? 'full' : 'summary';
     const savedPins = LIVE.prefs.get('pins:' + layoutId, null);
     const busiest = s => s.apps.map(a => [a, work.filter(w => w.app === a.id).length]).sort((x, y) => y[1] - x[1] || Number(y[0].probes.length > 0) - Number(x[0].probes.length > 0))[0];
@@ -134,7 +135,9 @@
       if (latest) return `${latest.status.label} · ${latest.title}`;
       return app.navigable ? suiteOf(app.suite).name : 'Not available in this workspace';
     }
-    const workRow = item => button(`${item.app && byId(item.app) ? appMark(byId(item.app)) : avatar(item.kind === 'task' ? 'J' : 'Q')}<span><strong>${esc(item.title)}</strong><small>${esc(item.appName)} · ${esc(item.typeLabel)} · ${esc(timeAgo(item))}</small></span><span class="work-status">${esc(item.status.label)}</span>`, 'work-item', 'work-item', `data-work="${esc(item.id)}"`);
+    /** The full-swarm work panel extras (workflow, actions, progress) load only where the layout opts in and ships shell-panels.js. */
+    const panels = () => (hooks.workActions && window.OSHAL_SHELL_PANELS) || null;
+    const workRow = item => button(`${item.app && byId(item.app) ? appMark(byId(item.app)) : avatar(item.kind === 'task' ? 'J' : 'Q')}<span><strong>${esc(item.title)}</strong><small>${esc(item.appName)} · ${esc(item.typeLabel)} · ${esc(timeAgo(item))}</small></span><span class="work-status">${esc(item.status.label)}</span>${panels() ? panels().movingBar(item) : ''}`, 'work-item', 'work-item', `data-work="${esc(item.id)}"`);
     const artifactTile = item => button(`<span class="file-icon">${item.kind === 'task' ? 'TASK' : 'TKT'}</span><span><strong>${esc(item.title)}</strong><small>${esc(item.appName)} · ${esc(item.status.label)} · ${esc(timeAgo(item))}</small></span><span class="arrow">↗</span>`, 'work-item', 'file-tile', `data-work="${esc(item.id)}"`);
 
     function studyBar(caption = '') {
@@ -263,8 +266,65 @@ ${(app.connectors.required || []).length || (app.connectors.optional || []).leng
       return `<div class="row between">${statusBadge(item.status)}<span class="small-label">${esc(item.appName)} · ${esc(item.typeLabel)} · ${esc(item.at ? item.at.toLocaleString() : '')}</span></div>
 <h2 class="artifact-title">${esc(item.title)}</h2>${body}
 ${item.files.length ? `<h3>Files</h3><ul class="artifact-steps">${item.files.map(f => `<li>${fileLink(f) || esc(f.name || 'file')}</li>`).join('')}</ul>` : ''}
+${workExtras(item)}
 <div class="drawer-actions">${link(item.kind === 'task' && !item.ticketId ? 'Open in Jarvis ↗' : 'Open in cockpit ↗', item.href, 'action primary')}${app ? button(`About ${esc(app.name)}`, 'open-app', 'action', `data-app="${esc(app.id)}"`) : ''}${button('Ask Jarvis about this', 'prompt', 'action', `data-prompt="${esc(`Tell me about ${item.kind === 'task' ? 'the task' : 'ticket'} “${item.title}” (${item.ref}).`)}"`)}</div>
 <p class="note-line">${item.kind === 'task' ? 'Recorded on your Jarvis shelf' : 'Recorded in the swarm ticket queue'} · ${esc(item.ref)}</p>`;
+    }
+    /** The workflow and action slots of a work panel, filled from the ticket's own reads once the panel shows. */
+    function workExtras(item) {
+      const P = panels(); if (!P) return '';
+      if (!P.ticketOf(item)) return item.status.label === 'Working' ? `<p class="note-line">In progress on your Jarvis shelf ${P.movingBar(item)}</p>` : '';
+      const flow = state.workFlows.get(item.id);
+      return `<div class="work-flow" data-work-flow="${esc(item.id)}">${flow ? P.workflowSection(flow.view, item) : '<p class="note-line">Reading this ticket’s workflow…</p>'}</div><div class="work-state" data-work-state="${esc(item.id)}">${flow ? P.actionsMarkup(item, flow.ticket) : ''}</div>`;
+    }
+    /** @description Read one ticket's workflow and state (GET /api/v1/tickets/:id/workflow, GET /api/tickets/:id) and paint every slot showing it. */
+    async function fillWork(item) {
+      const P = panels(), ref = P && P.ticketOf(item); if (!ref || state.workReads.has(item.id)) return;
+      state.workReads.add(item.id);
+      const [flow, ticket] = await Promise.all([LIVE.packages.tickets.workflow(ref), LIVE.packages.tickets.get(ref)]);
+      state.workReads.delete(item.id);
+      state.workFlows.set(item.id, { view: window.OSHAL_LIVE_VIEWS.workflowView(flow), ticket });
+      paintWork(item);
+    }
+    function paintWork(item) {
+      const P = panels(), flow = state.workFlows.get(item.id); if (!P || !flow) return;
+      document.querySelectorAll(`[data-work-flow="${CSS.escape(item.id)}"]`).forEach(slot => { slot.innerHTML = P.workflowSection(flow.view, item); });
+      document.querySelectorAll(`[data-work-state="${CSS.escape(item.id)}"]`).forEach(slot => { slot.innerHTML = P.actionsMarkup(item, flow.ticket); });
+      if (state.modal && state.modal.kind === 'ticket-workflow' && state.modal.id === item.id) { const body = document.getElementById('ticket-workflow-body'); if (body) body.innerHTML = P.workflowPanel(flow.view, item); }
+    }
+    const refusalOf = r => r && r.body && (r.body.error || r.body.message) ? `: ${r.body.error || r.body.message}` : '';
+    function ticketWorkflowPanel(id) {
+      const item = work.find(w => w.id === id), P = panels(); if (!item || !P) return '<p>That item is no longer in your recent work.</p>';
+      const flow = state.workFlows.get(id);
+      return `<div id="ticket-workflow-body">${P.workflowPanel(flow ? flow.view : null, item)}</div>`;
+    }
+    /** @description Swap a panel's actions for the cancel confirmation, or back. */
+    function workCancelStep(target, ask) {
+      const item = work.find(w => w.id === target.dataset.work), P = panels(), flow = item && state.workFlows.get(item.id); if (!item || !P || !flow) return;
+      document.querySelectorAll(`[data-work-state="${CSS.escape(item.id)}"]`).forEach(slot => { slot.innerHTML = ask ? P.cancelConfirm(item) : P.actionsMarkup(item, flow.ticket); });
+      const next = document.querySelector(`[data-work-state="${CSS.escape(item.id)}"] [data-action="${ask ? 'work-cancel-keep' : 'work-cancel'}"]`); if (next) next.focus();
+    }
+    /**
+     * @description Send one ticket action (approve: approval_required → approved; cancel: the owner-checked cancel route).
+     * The route decides; a refusal is shown in the panel as returned, a success reloads the caller's work.
+     * @param {HTMLElement} target The clicked action (carries data-work).
+     * @param {'approve'|'cancel'} kind Which action.
+     * @returns {Promise<void>} Resolves once the refusal is shown or the work is reloaded.
+     */
+    async function ticketAction(target, kind) {
+      const item = work.find(w => w.id === target.dataset.work), P = panels(); if (!item || !P) return;
+      target.disabled = true;
+      const r = kind === 'approve' ? await LIVE.packages.tickets.setStatus(P.ticketOf(item), 'approved') : await LIVE.packages.tickets.cancel(P.ticketOf(item));
+      if (!r.ok) {
+        paintWork(item);
+        const feedback = document.getElementById('work-feedback');
+        if (feedback) feedback.textContent = `Could not ${kind === 'approve' ? 'approve' : 'cancel'} this ticket (HTTP ${r.status || 'network'}${refusalOf(r)}).`;
+        return;
+      }
+      await LIVE.loadWork(snapshot);
+      state.workFlows.delete(item.id);
+      if (hooks.onWorkChanged) hooks.onWorkChanged(); else if (state.modal) renderModal();
+      toast(kind === 'approve' ? `Approved: ${item.title} waits for the queue.` : `Cancelled: ${item.title}.`);
     }
     function filtered() {
       const q = state.dirQuery.toLowerCase().trim();
@@ -314,7 +374,7 @@ ${item.files.length ? `<h3>Files</h3><ul class="artifact-steps">${item.files.map
       if (state.returnFocus && state.returnFocus.isConnected) state.returnFocus.focus();
     }
     function titleFor(kind, id) {
-      const titles = { directory: 'Your application swarm', app: byId(id) ? byId(id).name : 'Application', embed: byId(id) ? byId(id).name : 'Application', work: (work.find(w => w.id === id) || {}).title || 'Work item', 'work-list': 'Work across the swarm', people: 'People & assistants', provenance: 'What is live in this view' };
+      const titles = { directory: 'Your application swarm', app: byId(id) ? byId(id).name : 'Application', embed: byId(id) ? byId(id).name : 'Application', work: (work.find(w => w.id === id) || {}).title || 'Work item', 'work-list': 'Work across the swarm', people: 'People & assistants', provenance: 'What is live in this view', 'ticket-workflow': `Workflow · ${(work.find(w => w.id === id) || {}).title || 'work item'}` };
       return titles[kind] || (hooks.modalTitle ? hooks.modalTitle(kind, id) : '');
     }
     function contentFor(kind, id) {
@@ -323,6 +383,7 @@ ${item.files.length ? `<h3>Files</h3><ul class="artifact-steps">${item.files.map
       if (kind === 'embed') return embedPanel(id);
       if (kind === 'work') return workPanel(id);
       if (kind === 'work-list') return workListPanel();
+      if (kind === 'ticket-workflow') return ticketWorkflowPanel(id);
       if (kind === 'people') return peoplePanel();
       if (kind === 'provenance') return provenancePanel();
       return hooks.modalContent ? hooks.modalContent(kind, id) : '';
@@ -338,6 +399,7 @@ ${item.files.length ? `<h3>Files</h3><ul class="artifact-steps">${item.files.map
       dialog.addEventListener('click', e => { if (e.target === dialog) close(); });
       if (kind === 'directory') { updateDirectory(); document.getElementById('app-search').focus(); }
       if (kind === 'app' && byId(id)) { fillSummary(byId(id)); fillDetail(byId(id)); }
+      if ((kind === 'work' || kind === 'ticket-workflow') && panels()) { const item = work.find(w => w.id === id); if (item && !state.workFlows.has(id)) fillWork(item); }
       if (kind === 'people' && hooks.peopleDirectory) fillRoster();
     }
     function togglePin(id) {
@@ -360,6 +422,9 @@ ${item.files.length ? `<h3>Files</h3><ul class="artifact-steps">${item.files.map
       if (action === 'work-item') { open('work', target.dataset.work); return true; }
       if (action === 'all-work') { open('work-list'); return true; }
       if (action === 'people' || action === 'provenance') { open(action); return true; }
+      if (action === 'work-approve' || action === 'work-cancel-confirm') { ticketAction(target, action === 'work-approve' ? 'approve' : 'cancel'); return true; }
+      if (action === 'work-cancel' || action === 'work-cancel-keep') { workCancelStep(target, action === 'work-cancel'); return true; }
+      if (action === 'ticket-workflow') { open('ticket-workflow', target.dataset.work); return true; }
       return false;
     }
     function bind(root) {

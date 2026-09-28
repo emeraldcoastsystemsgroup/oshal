@@ -8,10 +8,11 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Integration review: the Jarvis agenda no longer provisions a Little Monsters learner. The calendar route resolves the caller without readOnly (it can create or link a learner row), so the package's read-only home-summary probe is read first and the calendar only when that probe answers 200; a 403/404 probe says to open Little Monsters once and sends no /api/education request. Agenda copy names the source as the Little Monsters calendar (classes and personal events) and an absent package as not in your catalog. The Orbit inspector lists the declared assistants beside its relationships, as the Studio aside does.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Acceptance fixes: a Little Monsters entry the caller's plan does not admit is not available to them, so the agenda sends neither the probe nor a calendar read and says so, instead of "could not be checked (HTTP unreachable)" (a listed-only entry has no probe). A probe refusal is named from its code: an application-authorization refusal reads "not available to you", the package's no-school-profile refusal says to open Little Monsters once to set up the profile, anything else could not be checked. Class event dates come through LIVE.calendarDay (they were already read as local days; the helper is now the one rule for date-only fields).
  * 5 | maintainer@emeraldcoastsystemsgroup.com | The briefing sentence and the Commons work board read the shared status groups: approval gates and customer actions count as needing you and sit in Review, every in_process_* phase and an approved ticket waiting for the queue sit in Working (they had no column and vanished from the board).
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | The four layouts opt in to the shell's work panels (workflow progress and stages, Approve, Cancel) and re-render when an action changes the caller's work; Studio's running rows carry the indeterminate bar for Working items.
  */
 (() => {
   'use strict';
-  const S = window.OSHAL_SHELL, LIVE = window.OSHAL_LIVE;
+  const S = window.OSHAL_SHELL, LIVE = window.OSHAL_LIVE, PANELS = () => window.OSHAL_SHELL_PANELS;
   const { esc, button, primary, link, avatar, badge } = S;
   const root = document.getElementById('app');
   const layout = document.body.dataset.layout;
@@ -41,7 +42,7 @@
   function boot(loaded) {
     snapshot = loaded;
     if (!snapshot.me.authenticated) { root.innerHTML = `<div class="app-shell"><section class="loading-shell"><h1>Sign in to see your swarm.</h1><p class="note-line">This experience reads your own applications, tickets and conversations, so it needs your session.</p><p>${link('Sign in', '/login', 'action primary')}</p></section></div>`; return; }
-    shell = S.createShell({ snapshot, layoutId: layout, audience: AUDIENCE[layout], hooks: { allowEmbed: true, contextAction: layout === 'commons' ? 'Go to its room' : 'Use as my context', modalContent, modalTitle, afterClose: () => { if (dirty) { dirty = false; render(); } }, onPinsChanged: () => { dirty = true; }, onEmbedViewChanged, peopleDirectory: layout === 'commons' } });
+    shell = S.createShell({ snapshot, layoutId: layout, audience: AUDIENCE[layout], hooks: { allowEmbed: true, contextAction: layout === 'commons' ? 'Go to its room' : 'Use as my context', modalContent, modalTitle, afterClose: () => { if (dirty) { dirty = false; render(); } }, onPinsChanged: () => { dirty = true; }, onEmbedViewChanged, peopleDirectory: layout === 'commons', workActions: true, onWorkChanged: () => render() } });
     state = defaults();
     try { const saved = JSON.parse(sessionStorage.getItem(storageKey) || 'null'); if (saved && typeof saved === 'object') state = { ...state, ...saved, navOpen: false }; } catch (_) { /* fresh state */ }
     if (!shell.byId(state.selected)) state.selected = (shell.pinned()[0] || snapshot.apps.find(a => a.navigable) || snapshot.apps[0] || { id: '' }).id;
@@ -91,7 +92,7 @@
   /* ── shared fragments ─────────────────────────────────────────── */
   const suiteButton = (s, action = 'suite', active = false) => button(`<span class="suite-symbol" aria-hidden="true">${s.symbol}</span><span>${esc(s.name)}</span><span class="nav-count">${s.count}</span>`, action, `nav-button${active ? ' active' : ''}`, `data-suite="${s.id}"`);
   const suiteTiles = () => `<div class="suite-grid">${snapshot.suites.map(s => button(`<div class="row between"><span class="suite-symbol">${s.symbol}</span><span class="small-label">${s.count} apps</span></div><h3>${esc(s.name)}</h3><p>${esc(s.line)}</p><div class="suite-apps">${s.apps.slice(0, 3).map(a => `<span>${esc(a.name)}</span>`).join('') || '<span>No applications installed</span>'}</div>`, 'suite', 'suite-tile', `data-suite="${s.id}"`)).join('')}</div>`;
-  const runningRow = item => button(`${item.app && shell.byId(item.app) ? shell.appMark(shell.byId(item.app)) : avatar(item.kind === 'task' ? 'J' : 'Q')}<span><strong>${esc(item.appName)}</strong><small>${esc(item.title)}</small></span><span class="small-label">${esc(item.status.label)} · ${esc(shell.timeAgo(item))}</span>`, 'work-item', 'running-row', `data-work="${esc(item.id)}"`);
+  const runningRow = item => button(`${item.app && shell.byId(item.app) ? shell.appMark(shell.byId(item.app)) : avatar(item.kind === 'task' ? 'J' : 'Q')}<span><strong>${esc(item.appName)}</strong><small>${esc(item.title)}</small></span><span class="small-label">${esc(item.status.label)} · ${esc(shell.timeAgo(item))}</span>${PANELS().movingBar(item)}`, 'work-item', 'running-row', `data-work="${esc(item.id)}"`);
   function briefingSentence() {
     const waiting = shell.attention().filter(w => LIVE.STATUS_GROUPS.attention.includes(w.status.label));
     const working = shell.openWork().length, done = snapshot.work.filter(w => w.status.label === 'Ready').length;

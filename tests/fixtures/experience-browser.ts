@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Integration review: fullSwarmGapRoutes seats Little Monsters' summary probe at its real path (`/api/little-monsters/home-summary`, status `lm-home-summary`, 403 with the package's setup sentence) so the Jarvis agenda's probe gate is exercised, and can answer the user directory with a refusal code (`fullSwarm.directoryError`); nexusGapRoutes no longer serves POST /api/jarvis/tasks/:id/delivered (the shell never sends it; the request log proves it); the synthetic ticket status transition writes `metadata.lastStatusTransition` the way the ticket service mirrors every transition, keeping the row-level reason/nextAction.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Phase-4 assemblies: the synthetic app-view page provides a classroom builder (a new-tab tile and list item, a tile handled on the page) and `?provides=` limits the builders it registers, so "requested but not provided" stays provable; the host page frames `?audience=` of its choice; assemblyHostRoutes answers the ribbon profile of an installed application from `state.assembly.ribbons`, and installAssemblyHosts gives the ten hosts the presets gained ribbon items shaped like their manifests' surfaces (several for Intelligent Communication, Social and Marketing Engine), installing the nine the default catalog lacks; the default catalog itself is unchanged.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Composed front pages: installFrontPageHosts installs the card applications the assemblies did not (Calendar, Federal CRM with four of its surfaces, Calling Assistant) through the same installHosts helper installAssemblyHosts now uses; each is a synthetic app with the default probe (`/fixture/probe/<name>`, status `probe:<name>`), so a card's tiles, items, refusal and D10 silence are provable per application.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | Full-swarm build routes (portalBuildRoutes, lane "portal", registered first among the lane routes): one ticket's workflow read model shaped like GET /api/v1/tickets/:ticketId/workflow with per-ticket overrides and statuses, and a cancel pre-handler that moves the synthetic ticket to cancelled whenever the existing cancel route will answer 200.
  */
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -199,6 +200,7 @@ export async function startExperienceBrowserFixture(options: { denyAuth?: boolea
   // One request log for every case, then each lane's override routes (they answer only what their case state asks
   // for and fall through otherwise), then the default synthetic routes, whose `/api` 404 catch-all stays last.
   app.use((req, _res, next) => { state.calls.push(`${req.method} ${req.path}`); next(); });
+  portalBuildRoutes(app, state);
   fullSwarmGapRoutes(app, state); nexusGapRoutes(app, state); homebaseGapRoutes(app, state);
   assemblyHostRoutes(app, state);
   swarmRoutes(app, state); packageRoutes(app, state);
@@ -451,4 +453,47 @@ function installHosts(state: ExperienceState, hosts: Record<string, { suite: str
     assembly.ribbons[name] = host.surfaces.map(([tool, label]) => ({ id: `tool-${tool}`, label: `Synthetic ${label}`, icon: 'codicon codicon-circle-outline', section: 'top', toolUi: { iframeUrl: `/fixture/surface/${tool}` } }));
     return name;
   });
+}
+
+/** The synthetic state the full-swarm build routes read (lane "portal"): per-ticket workflow read models and statuses. */
+export type PortalFixtureState = {
+  ticketWorkflows: Record<string, Record<string, unknown>>;
+  workflowStatus: Record<string, number>;
+};
+
+/**
+ * @description The full-swarm build lane's synthetic state on a running fixture.
+ * @param state The case's synthetic state (from the running fixture).
+ * @returns The lane state portalBuildRoutes reads, created when the fixture started.
+ */
+export function portalState(state: ExperienceState): PortalFixtureState { return (state as ExperienceState & { portal: PortalFixtureState }).portal; }
+
+/**
+ * @description Synthetic routes for the full-swarm build (lane "portal"), shaped like the real contracts: one ticket's
+ * workflow read model (GET /api/v1/tickets/:ticketId/workflow, the buildWorkflowPayload shape; 404 for a ticket the
+ * caller does not own, or the status `workflowStatus[id]` names; `ticketWorkflows[id]` overrides the definition, run,
+ * history, gates and children), and a pre-handler on PUT /api/tickets/:ticketId/cancel that moves the ticket to
+ * cancelled when the central-assistant lane's cancel route will answer 200, then falls through to that route, which
+ * answers and records the call. Registered first among the lane routes (see startExperienceBrowserFixture).
+ * @param app The fixture application.
+ * @param state The per-case synthetic state; `state.portal` is created here.
+ * @returns Nothing; the routes are registered on `app`.
+ */
+function portalBuildRoutes(app: express.Application, state: ExperienceState) {
+  const portal: PortalFixtureState = { ticketWorkflows: {}, workflowStatus: {} };
+  Object.assign(state, { portal });
+  const router = express.Router();
+  router.get('/api/v1/tickets/:ticketId/workflow', (req, res) => {
+    const id = req.params.ticketId, ticket = state.tickets.find(t => t.ticketId === id), status = portal.workflowStatus[id] ?? (ticket ? 200 : 404);
+    if (!ticket || status !== 200) { res.status(status).json({ success: false, error: status === 404 ? 'Ticket not found' : 'Failed to load ticket workflow' }); return; }
+    res.json({ success: true, ticket: { ticketId: id, title: ticket.title, ticketType: ticket.ticketType, queueId: '', queueName: '', status: ticket.status, assignedAgentId: '' },
+      definition: null, run: null, runHistoryAvailable: true, otherRunCount: 0, history: [], historyAvailable: true, approvalGates: [], children: [], childrenAvailable: true, ...portal.ticketWorkflows[id] });
+  });
+  router.put('/api/tickets/:ticketId/cancel', (req, _res, next) => {
+    const lane = (state as ExperienceState & { nexusGap?: { cancelStatus: Record<string, number> } }).nexusGap;
+    const ticket = state.tickets.find(t => t.ticketId === req.params.ticketId);
+    if (ticket && (lane?.cancelStatus[req.params.ticketId] ?? 200) === 200) ticket.status = 'cancelled';
+    next();
+  });
+  app.use(router);
 }
