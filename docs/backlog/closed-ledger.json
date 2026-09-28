@@ -397,12 +397,6 @@
   },
   {
     "date": "2026-09-24",
-    "title": "Person-model maintenance never runs on a box that restarts daily",
-    "pr": "main",
-    "evidence": "startPersonModelMaintenanceRuntime runs first pass after initial delay plus jitter, forwarded by compose knobs; guarded by tests/unit/person-model-maintenance-runtime.spec.ts (6/6 pass) and tests/unit/compose-env-passthrough.spec.ts."
-  },
-  {
-    "date": "2026-09-24",
     "title": "Circuit Lab (store package `circuit-lab`, ADR-154)",
     "pr": "main",
     "evidence": "Delivered local electromechanical lab (ngspice, schematic/breadboard canvas, parts catalog, CAD Studio handoff) under ADR-154; package backlog handoff to oshal-applications circuit-lab/BACKLOG.md; guarded by circuit-lab test suites (153/153 pass)."
@@ -433,12 +427,6 @@
   },
   {
     "date": "2026-09-24",
-    "title": "Trading — timed orders: the STORE half of the D4 follow-ups (ADR-136 D4)",
-    "pr": "main",
-    "evidence": "trading-events cron leg minute-precision, validateFireAt order validation, extended hours rules, and static NYSE holiday table shipped in trading-dated-orders.ts and trading package 1.10.1; guarded by tests/unit/trading-dated-orders.spec.ts (22/22 pass) and tests/unit/trading-extended-hours-scope.spec.ts (2/2 pass)."
-  },
-  {
-    "date": "2026-09-24",
     "title": "Trading — market movers: add Alpaca's REST screener as the whole-market source (ADR-143 D5)",
     "pr": "main",
     "evidence": "Alpaca REST screener integrated for US-equity market movers report (/api/trading/reports/movers) with fail-soft fallback; guarded by tests/unit/trading-movers-screener.spec.ts (13/13 pass)."
@@ -448,18 +436,6 @@
     "title": "A calendar-preparation agent: brief me before the meeting (2026-09-14)",
     "pr": "main",
     "evidence": "Calendar preparation agent and scheduled meeting briefing implemented; default-OFF consent, provenance citation for claims, caller-scoped user_sub storage, and surface parity; guarded by calendar package test suite calendar/tests/meeting-briefs.core.test.js (26/26 pass)."
-  },
-  {
-    "title": "Manifest bots get an ADR-034 authoritative record at load",
-    "date": "2026-09-24",
-    "pr": "main",
-    "evidence": "Clean-database manifest loader seeds authoritative persona and deployment defaults in database while preserving operator customizations; verified by tests/unit/manifest-bot-authority.spec.ts, manifest-bot-runtime-defaults.spec.ts, manifest-bot-runtime.spec.ts, and manifest-node-bot-dispatch.spec.ts (37/37 pass)."
-  },
-  {
-    "title": "Top-level workspaces for complete applications",
-    "date": "2026-09-24",
-    "pr": "main",
-    "evidence": "Top-level themed workspace switcher with direct application routes, quiet More menu, preserved sidebar navigation, and session recovery delivered; guarded by tests/unit/workspace-navigation-routes.spec.ts (28/28 pass), workspace-navigation-model.spec.ts (7/7 pass), and applications-directory-navigation.spec.ts (8/8 pass)."
   },
   {
     "title": "ADR-139 — adopt artifact source tags",
@@ -472,12 +448,6 @@
     "date": "2026-09-24",
     "pr": "main",
     "evidence": "Bidirectional chat-to-surface bridge with fail-closed validation, HTML-stripping, app/op isolation, and conversational roundtrip verified in live browser; guarded by tests/unit/surface-bridge-contract.spec.ts, surface-bridge-relay.spec.ts, surface-directives.spec.ts, surface-bridge-forge-e2e.spec.ts, and surface-bridge-roundtrip-browser.spec.ts (65/65 pass)."
-  },
-  {
-    "title": "Spaces: the PLY→splat converter runs on the api's event loop and a large import can take the box down (2026-09-14)",
-    "date": "2026-09-24",
-    "pr": "main",
-    "evidence": "PLY conversion moved to isolated worker thread under resourceLimits and memory cap with failure containment and streaming byte limit gate; guarded by tests/unit/spatial-import-event-loop.spec.ts (1/1 pass), tests/unit/spatial-import-worker.spec.ts (10/10 pass), and spaces/tests/ply-import-off-loop.core.test.js (3/3 pass)."
   },
   {
     "title": "The nightly trade recap has failed at the render-node lease since 2026-08-06",
@@ -496,12 +466,6 @@
     "date": "2026-09-24",
     "pr": "main",
     "evidence": "Local ComfyUI storyboard provider with workflow injection, slot substitution, anchor upload deduplication, non-transient timeout handling, and image verification delivered; guarded by tests/unit/storyboard-comfyui-provider.spec.ts (28/28 pass)."
-  },
-  {
-    "title": "World Intelligence: the market-hours pulse saturates the series store (2026-09-14)",
-    "date": "2026-09-24",
-    "pr": "main",
-    "evidence": "Process-wide bounded read gate (WORLD_SERIES_READ_CONCURRENCY=4), in-flight read coalescing, daily rollup optimization, and window duration warnings shipped; guarded by tests/unit/world-series-read-gate.spec.ts (10/10 pass)."
   },
   {
     "title": "Deploy modes — `codebase` vs `codeless` development posture (ADR-137 amendment A)",
@@ -568,12 +532,6 @@
     "date": "2026-09-24",
     "pr": "431",
     "evidence": "Compose env passthrough and core dependencies shipped, package backlog handoff to marketing-engine/BACKLOG.md; guarded by tests/unit/compose-env-passthrough.spec.ts (7/7 pass)."
-  },
-  {
-    "title": "Test Lab browser runner: the real-boundary proof has not run (2026-09-14)",
-    "date": "2026-09-24",
-    "pr": "main",
-    "evidence": "Docker-isolated test container execution with memory limits, timeout terminations, network sandboxing, Playwright browser capability verification, and core test fixtures closure verified; guarded by tests/unit/package-test-sandbox.spec.ts (14/14 pass) and package-test-core-fixtures.spec.ts (10/10 pass)."
   },
   {
     "title": "App status contract (ADR-145) — build the `status:` declaration and the highlights section",
@@ -658,12 +616,6 @@
     "date": "2026-09-24",
     "pr": "main",
     "evidence": "Consolidated per-app workspace layout provides unified header, responsive drawer, contextual sub-navigation, and persistent palette controls; guarded by workspace-navigation-browser.spec.ts (44/44 pass) and workspace-navigation-contextual-browser.spec.ts (30/30 pass)."
-  },
-  {
-    "title": "Chat-channel adapter core",
-    "date": "2026-09-24",
-    "pr": "main",
-    "evidence": "Chat channel adapter core binds Telegram and external messaging channels, enforces owner identity mapping, tiers notification fallbacks, and registers test lab suites; guarded by chat-channels-telegram.spec.ts (6/6 pass), notify-channel-tier.spec.ts (9/9 pass), and test-lab-channel-registration.spec.ts (4/4 pass)."
   },
   {
     "title": "Jarvis and a compact daily dashboard",
@@ -858,34 +810,22 @@
     "evidence": "Kalshi trading platform manages paper and live book execution, gates live order submission behind double opt-in controls, calculates bankroll curves, and validates arbitrage bounds; guarded by compose-kalshi-live-gate.spec.ts (4/4 pass), kalshi-report.spec.ts (9/9 pass), kalshi-orders.spec.ts (8/8 pass), and kalshi-arbitrage.spec.ts (10/10 pass)."
   },
   {
-    "title": "Shared response-renderer completion",
-    "date": "2026-09-24",
-    "pr": "main",
-    "evidence": "Response renderer registry and parsing engine provide safe document and workbook generation across PPTX, DOCX, and XLSX formats with theme cascades, typed component trees, and streaming telemetry; guarded by response-renderer-components.spec.ts (18/18 pass), response-renderer-media-kinds.spec.ts (10/10 pass), response-renderer-parse.spec.ts (10/10 pass), response-renderer-registry.spec.ts (9/9 pass), docx-renderer.spec.ts (10/10 pass), xlsx-renderer.spec.ts (8/8 pass), and presentron-in-repo-renderer.spec.ts (6/6 pass)."
-  },
-  {
-    "title": "Six host scheduled tasks predate the platform scheduler and should move into it",
-    "date": "2026-09-24",
-    "pr": "main",
-    "evidence": "Host scheduled task launchers self-locate across repo roots, migrate internal domain jobs into the platform scheduler while preserving host-level watchers, and enforce immutable git archive ref pinning; guarded by scheduled-task-launchers-self-locating.spec.ts (36/36 pass), schedule-controller-system-boundary.spec.ts (14/14 pass), and ci-local-scheduled-ref.spec.ts (5/5 pass)."
-  },
-  {
-    "title": "LinkedIn Content Assistant queue workflow",
-    "date": "2026-09-24",
-    "pr": "main",
-    "evidence": "LinkedIn Content Assistant manages queue-backed draft lifecycle with approval state transitions, LLM judge-bar scoring and single-pass refinement, and confirmation-gated publishing with clean refusal paths; guarded by linkedin-assistant.spec.ts (17/17 pass)."
-  },
-  {
     "title": "Reviewed non-NONE tool provisioning and attestation",
     "date": "2026-09-24",
     "pr": "main",
     "evidence": "Bot tool provisioning and runtime attestation enforce exact AUTO authorization grants, bind read-only question tools to caller identity and RLS ownership in PostgreSQL, and prohibit unreviewed shell commands; guarded by authorization-tool.spec.ts (22/22 pass), authorization-tool-policy.spec.ts (17/17 pass), app-tool-ownership.spec.ts (7/7 pass), bot-node-read-only-tools-owner-scope-postgres.spec.ts (20/20 pass), and attribution-scrub-tooling.spec.ts (2/2 pass)."
   },
   {
-    "title": "Guide bots that operate their apps",
+    "title": "World Intelligence: the market-hours pulse saturates the series store (2026-09-14)",
     "date": "2026-09-24",
     "pr": "main",
-    "evidence": "The presentations deck-builder guide drives the editor through a signed-in /guide route with whitelisted, bounded set_title, set_outline, update_slide, add_slide, and set_theme actions; invalid or anonymous requests are refused. Guarded by presentations-guide.test.mjs (2/2 pass) in the installed presentations package and the deployed persona/registration guards (17/17 pass)."
+    "evidence": "Deployed image sha256:e0a4645a7be601ea9772a9a1bb6fcc06c0c373ca7e4bb2dd2c3ff2b164240048 (source 94d1d2b2b0c0daa5cea17873eaf2b2a2d3dc5e75), API log 2026-09-24T23:06:46.924Z: app_world-ticker-pulse completed 184 entities with elapsedMs=69741, seriesStatements=736, seriesMaxInFlight=4, errors=0, inside its 300-second window. Independently verified from docker logs and image labels on 2026-09-24. Local gate: world-series-read-gate.spec.ts (10/10 pass)."
+  },
+  {
+    "title": "Person-model maintenance never runs on a box that restarts daily",
+    "date": "2026-09-24",
+    "pr": "main",
+    "evidence": "Deployed image sha256:e0a4645a7be601ea9772a9a1bb6fcc06c0c373ca7e4bb2dd2c3ff2b164240048 (source 94d1d2b2b0c0daa5cea17873eaf2b2a2d3dc5e75), fresh API boot 2026-09-24T20:42:23.363Z: person-model maintenance runtime started at 20:43:18.547Z and pass complete at 20:45:47.802Z. Independently verified from docker inspect/logs on 2026-09-24. Local guards: person-model-maintenance-runtime.spec.ts (6/6 pass) and compose-env-passthrough.spec.ts."
   },
   {
     "title": "Data-model explorer: schema drift as an alarm, not a page someone remembers to open",
