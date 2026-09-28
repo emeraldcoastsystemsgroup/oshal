@@ -140,8 +140,13 @@ Run the linked suites locally with `npm run test:world-congress`. The real-bound
 (`tests/unit/world-metrics-observed-at-postgres.spec.ts`) starts its own TimescaleDB with
 `world_metrics` in the pre-change shape (hypertable, legacy rows, the daily continuous aggregate) and
 runs the real collector against a local feed server. It proves the ReportDate keying, the `observed_at`
-column, that a second run appends nothing, and the bounded recent-disclosure read. That is local
-evidence; only a pass of the live step shows the installed collector ran.
+column, that a second run appends nothing, and the bounded recent-disclosure read. The second
+real-boundary suite (`tests/unit/world-depth-collectors-postgres.spec.ts`) fires the world depth
+schedule through the real dispatch against its own TimescaleDB and a local feed server, holds the
+subject sweep open, and proves the collector has already written observed rows before the first
+subject starts; it also proves the ticker pulse never calls the flow collectors and that a collector
+turned off by `WORLD_FLOW_ENABLED`, `WORLD_EVENTS_ENABLED` or `WORLD_GOV_ENABLED` is logged at WARN.
+That is local evidence; only a pass of the live step shows the installed collector ran.
 
 ### Token Chase checkpoint and tail replay
 

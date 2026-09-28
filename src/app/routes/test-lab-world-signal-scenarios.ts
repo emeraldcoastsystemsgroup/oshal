@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | AI Test Lab card for the congressional (STOCK Act) disclosure signal. One read-only step reports what the installed collector has actually written: how many names carry an observed disclosure in the last 90 days, the newest disclosure (ReportDate) day and the newest observed_at. It makes no write and no feed call. The ReportDate keying, observed_at, idempotent re-runs and the reserved congress_* namespace are proven by the attached suites on a disposable TimescaleDB; this step is the live half, and says which half it is.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Attach tests/unit/world-depth-collectors-postgres.spec.ts: the depth fire runs the congress collector before its subject sweep (real dispatch, real collector, real feed fetch, disposable TimescaleDB), because the collector sat behind that sweep and wrote once between 2026-06-26 and 2026-09-28.
  *
  * @module routes/test-lab-world-signal-scenarios
  */
@@ -84,6 +85,7 @@ export const WORLD_SIGNAL_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/world-congress-provenance.spec.ts' },
     { level: 'unit', path: 'tests/unit/world-series-read-gate.spec.ts' },
     { level: 'integration', path: 'tests/unit/world-metrics-observed-at-postgres.spec.ts' },
+    { level: 'integration', path: 'tests/unit/world-depth-collectors-postgres.spec.ts' },
     { level: 'unit', path: 'tests/unit/world-signal-test-lab.spec.ts' },
   ],
   steps: [{ id: 'live-coverage', app: APP, label: LABEL, run: async () => congressCoverageStep(createWorldIntelligenceService()) }],
