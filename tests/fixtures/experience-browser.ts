@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Homebase gap routes (`homebaseGapRoutes`): Little Monsters teacher analytics (pg-shaped counts, server-side summary), classwork through assignments-with-events (teacher-of-class check, calendar event on a due date), a ticket read and its status transition (only approval_required to approved), and the caller's saved content drafts, each with a controllable status. They register with the other lane routes ahead of the default routes, whose `/api` 404 catch-all stays last (as row 6 says).
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Integration review: fullSwarmGapRoutes seats Little Monsters' summary probe at its real path (`/api/little-monsters/home-summary`, status `lm-home-summary`, 403 with the package's setup sentence) so the Jarvis agenda's probe gate is exercised, and can answer the user directory with a refusal code (`fullSwarm.directoryError`); nexusGapRoutes no longer serves POST /api/jarvis/tasks/:id/delivered (the shell never sends it; the request log proves it); the synthetic ticket status transition writes `metadata.lastStatusTransition` the way the ticket service mirrors every transition, keeping the row-level reason/nextAction.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Phase-4 assemblies: the synthetic app-view page provides a classroom builder (a new-tab tile and list item, a tile handled on the page) and `?provides=` limits the builders it registers, so "requested but not provided" stays provable; the host page frames `?audience=` of its choice; assemblyHostRoutes answers the ribbon profile of an installed application from `state.assembly.ribbons`, and installAssemblyHosts gives the ten hosts the presets gained ribbon items shaped like their manifests' surfaces (several for Intelligent Communication, Social and Marketing Engine), installing the nine the default catalog lacks; the default catalog itself is unchanged.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Composed front pages: installFrontPageHosts installs the card applications the assemblies did not (Calendar, Federal CRM with four of its surfaces, Calling Assistant) through the same installHosts helper installAssemblyHosts now uses; each is a synthetic app with the default probe (`/fixture/probe/<name>`, status `probe:<name>`), so a card's tiles, items, refusal and D10 silence are provable per application.
  */
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -420,9 +421,32 @@ function assemblyHostRoutes(app: express.Application, state: ExperienceState) {
  * @param state The case's synthetic state (from the running fixture).
  * @returns The names installed, in ASSEMBLY_HOSTS order.
  */
-export function installAssemblyHosts(state: ExperienceState): string[] {
+export function installAssemblyHosts(state: ExperienceState): string[] { return installHosts(state, ASSEMBLY_HOSTS); }
+
+/**
+ * The applications the composed front pages add beyond the assemblies (lane "front pages"), each with its suite and its
+ * `ui.static` surfaces (toolName, label) as its manifest lists them: Calendar, Federal CRM (the first four of its twenty)
+ * and Calling Assistant. Email, documents and payroll come from the assemblies and the default catalog.
+ */
+const FRONT_PAGE_HOSTS: Record<string, { suite: string; surfaces: Array<[string, string]> }> = {
+  calendar: { suite: 'ai-productivity', surfaces: [['calendar-review', 'Calendar']] },
+  'capture-crm': { suite: 'ai-knowledge', surfaces: [['federal-home', 'Home'], ['federal-leads', 'Leads'], ['federal-opps', 'Opportunities'], ['federal-import', 'Import']] },
+  'calling-assistant': { suite: 'ai-productivity', surfaces: [['calling-settings', 'Calling']] },
+};
+
+/**
+ * @description Install the front-page card applications the same way installAssemblyHosts does (a synthetic app with a
+ * probe, and its ribbon items). A case calls it before opening a preset, after installAssemblyHosts when it wants the
+ * assembly hosts too; the default catalog is otherwise left as it was.
+ * @param state The case's synthetic state (from the running fixture).
+ * @returns The names installed, in FRONT_PAGE_HOSTS order.
+ */
+export function installFrontPageHosts(state: ExperienceState): string[] { return installHosts(state, FRONT_PAGE_HOSTS); }
+
+/** @description Add each host to the catalog when absent and seat its ribbon items for the assembly-host profile route. */
+function installHosts(state: ExperienceState, hosts: Record<string, { suite: string; surfaces: Array<[string, string]> }>): string[] {
   const assembly = (state as AssemblyState).assembly;
-  return Object.entries(ASSEMBLY_HOSTS).map(([name, host]) => {
+  return Object.entries(hosts).map(([name, host]) => {
     if (!state.apps.some(a => a.summary.name === name)) state.apps.push(syntheticApp(name, host.suite));
     assembly.ribbons[name] = host.surfaces.map(([tool, label]) => ({ id: `tool-${tool}`, label: `Synthetic ${label}`, icon: 'codicon codicon-circle-outline', section: 'top', toolUi: { iframeUrl: `/fixture/surface/${tool}` } }));
     return name;

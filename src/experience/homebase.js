@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Fix round 1: row 8's reason corrected. Ticket creation also writes the row-level reason/nextAction (ticket-service createTicket, with no lastStatusTransition), so a ticket created directly in approval_required shows State alone; no dialog behaviour changed.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Acceptance fixes: the family and company homes read Little Monsters' read-only home-summary probe first and call /api/education/* only when it answers 200 (those routes can provision a learner row), and send nothing for an entry the plan does not admit; the family home's Little Monsters ribbon profile is gated the same way, because the profile asks the package's visibility route, which provisions too (proven in the acceptance sandbox). The classroom still reads them. A refusal names itself: not admitted reads "Little Monsters is not available to you", no school profile reads "Open Little Monsters once to set up your school profile", anything else shows its status. Due, event and last-active dates are read as the calendar day they name (LIVE.calendarDay). The learner card drops the classwork done/total count and progress bar (assignment status is class-wide, not per learner). Tickets awaiting approval lead the six project rows. A timed calendar event shows its day as well as its time.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | A hosted tool opens in view: after the tool page renders, the tool shell is scrolled to the top of the viewport (smoothly, or at once when the reader prefers reduced motion) and the frame is then focused without a second scroll. Opening a tool from low in a long sidebar kept the old scroll offset and left the frame above the viewport (Business preset, Marketing: frame top at -908px).
+ * 12 | maintainer@emeraldcoastsystemsgroup.com | Composed front pages: the home page renders the preset's declared `modules` (two ordered columns of core modules, teacher/otherwise pairs and package summary cards) instead of a fixed triple per preset. A summary card is one generic renderer over the application's own ADR-145 probe (tiles, the first three items, the probe's timestamp), shown only for an application in the caller's plan that declares a probe (nothing rendered and nothing asked otherwise, ADR-164 D10), with a refusal shown as its status and nothing assumed; its action opens the named hosted tool in place when this caller is admitted to it, else links to the application. Consecutive cards in the main column share a two-up grid. The About dialog names each card's source and status. The shopping heading follows the preset.
  */
 (() => {
   'use strict';
@@ -70,7 +71,7 @@
     render();
     // Work, tasks and the overview arrive in the second phase; repaint then unless a tool is open (a repaint would reload its frame).
     LIVE.ready.then(() => { if (state.page !== 'tool') render(); }).catch(() => { /* a home paints without work */ });
-    await Promise.all([loadEducation(), loadTools(), loadShopping(), loadFinance(), loadHome(), loadDirectory(), loadUpdates()]);
+    await Promise.all([loadEducation(), loadTools(), loadShopping(), loadFinance(), loadHome(), loadDirectory(), loadUpdates(), loadCards()]);
     if (state.page !== 'tool') render();
   }
 
@@ -153,6 +154,21 @@
     const featured = featuredApps().slice(0, 4);
     const rows = await Promise.all(featured.map(async a => ({ app: a, summary: await LIVE.probeSummary(a) })));
     data.updates = rows.flatMap(({ app: a, summary }) => summary.ok ? summary.items.slice(0, 2).map(i => ({ who: a.name, what: i.text, detail: i.detail, when: summary.asOf ? LIVE.relativeTime(new Date(summary.asOf)) : 'now', tone: i.tone })) : []);
+  }
+  /** The front page's module entries that name a package summary card, both columns in order. */
+  const cardEntries = () => ['main', 'aside'].flatMap(col => ((preset.modules || {})[col] || [])).filter(m => m && typeof m === 'object' && m.card);
+  /** Whether a card applies to this caller: its application is in the caller's plan and declares a summary probe. */
+  const cardApp = name => { const a = app(name); return a && a.probes.length ? a : null; };
+  /**
+   * @description Read each declared card's summary through the application's own probe, only for applications in the
+   * caller's plan that declare one: an application the caller is not admitted to renders nothing and is asked nothing
+   * (ADR-164 D10). live-data caches a probe briefly, so a card on an app the noticeboard already read costs no request.
+   * @returns {Promise<void>} Resolves when every applicable card has an answer or a status.
+   */
+  async function loadCards() {
+    const cards = new Map(), names = [...new Set(cardEntries().map(m => m.card))].filter(cardApp);
+    await Promise.all(names.map(async n => cards.set(n, await LIVE.probeSummary(app(n)))));
+    data.cards = cards;
   }
   function featuredApps() {
     const lead = preset.featured.map(app).filter(a => a && a.navigable);
@@ -259,7 +275,7 @@
   function shopping() {
     const s = data.shop;
     const body = !s ? '<p class="subtle">Reading your list…</p>' : !s.installed ? '<p class="subtle">The Purchasing application is not installed on this swarm, so there is no shared shopping list here.</p>' : !s.ok ? `<p class="subtle">Your shopping list could not be read (HTTP ${s.status}).</p>` : !s.list ? '<p class="subtle">You have no shopping list yet. Add the first item below to create one in Purchasing.</p>' : `<div class="list-items">${s.items.map(i => `<label class="list-item"><input type="checkbox" data-shopping-item="${esc(i.item_id)}"><span><span class="item-title">${esc(i.title)}</span><small>${i.quantity > 1 ? `×${i.quantity} · ` : ''}${i.unit_price ? `${money(Number(i.unit_price))} · ` : ''}added ${esc(LIVE.relativeTime(LIVE.parseDate(i.created_at)))}</small></span></label>`).join('') || '<p class="subtle">Nothing pending on this list.</p>'}</div>`;
-    return `<section class="panel" data-module="shopping">${head('One list. Fewer texts.', s && s.list ? pill(`${s.items.length} to get`) : '')}${body}${s && s.installed && s.ok ? '<form id="shopping-form" class="add-form"><label class="screenreader" for="shopping-input">Add to the shopping list</label><input id="shopping-input" maxlength="100" placeholder="Anything else we need?" required><button class="button" type="submit" aria-label="Add item">+</button></form><p class="subtle">Ticking an item removes it from the list in Purchasing.</p>' : ''}</section>`;
+    return `<section class="panel" data-module="shopping">${head(esc(preset.shoppingHeading || 'One list. Fewer texts.'), s && s.list ? pill(`${s.items.length} to get`) : '')}${body}${s && s.installed && s.ok ? '<form id="shopping-form" class="add-form"><label class="screenreader" for="shopping-input">Add to the shopping list</label><input id="shopping-input" maxlength="100" placeholder="Anything else we need?" required><button class="button" type="submit" aria-label="Add item">+</button></form><p class="subtle">Ticking an item removes it from the list in Purchasing.</p>' : ''}</section>`;
   }
   function homeFacts() {
     const h = data.home; if (!h || !h.installed) return '';
@@ -392,14 +408,56 @@
     const art = key === 'family' ? '<div class="family-scene" role="img" aria-label="A little house among green trees"><span class="plant"></span><span class="little-house"></span><span class="plant"></span></div>' : key === 'classroom' ? (data.edu && data.edu.installed ? '<img class="hero-monster" src="/api/education/logo-256.png" alt="Little Monsters study companion">' : '') : '<div class="company-emblem" aria-hidden="true"><span></span><span></span><span></span></div>';
     return `<section class="hero ${key === 'company' ? 'professional-hero' : ''}"><div><div class="eyebrow">${esc(preset.eyebrow)}</div><h1>${esc(heading)}</h1><p>${learner ? 'Your own learning space, with the shared moments close by.' : esc(preset.subtitle)}</p><div class="hero-cta">${pill(badgeText)}</div></div>${art}</section>`;
   }
+  /* ── package summary cards and the declared front page ───────── */
+  /** A tile row from a probe's tiles (live-data already caps them at four). */
+  const cardTiles = tiles => tiles.length ? `<div class="card-tiles">${tiles.map(t => `<div class="card-tile tone-${esc(t.tone)}"><strong>${esc(t.value)}</strong><span>${esc(t.label)}</span></div>`).join('')}</div>` : '';
+  /** The first three items of a probe as rows. */
+  const cardItems = items => items.length ? `<div class="card-items">${items.slice(0, 3).map(i => `<div class="card-item tone-${esc(i.tone)}">${esc(i.text)}${i.detail ? `<small>${esc(i.detail)}</small>` : ''}</div>`).join('')}</div>` : '';
+  /** @description The body of a summary card from the application's own probe answer: still reading, refused (its status and reason, nothing assumed in its place), empty, or tiles and items with the probe's own timestamp. */
+  function cardBody(sm) {
+    if (!sm) return '<p class="subtle">Reading…</p>';
+    if (!sm.ok) return `<p class="subtle">${sm.status === 401 || sm.status === 403 ? 'Not available to you' : 'Unavailable right now'} (HTTP ${sm.status || 'network'}${sm.error ? `: ${esc(sm.error)}` : ''}). Nothing is shown in its place.</p>`;
+    const body = cardTiles(sm.tiles) + cardItems(sm.items);
+    const foot = sm.asOf ? `<p class="card-foot">As of ${esc(LIVE.relativeTime(new Date(sm.asOf)))}${sm.partial ? ' · partial' : ''}</p>` : (sm.partial ? '<p class="card-foot">Partial summary.</p>' : '');
+    return (body || '<p class="subtle">Nothing to report from this application yet.</p>') + foot;
+  }
+  /**
+   * @description One package summary card of the front page, rendered only for an application in the caller's plan that
+   * declares a summary probe (otherwise nothing, and nothing asked). The action opens the named hosted tool in place when
+   * this caller is admitted to it, else the application itself.
+   * @param {{card: string, title?: string, kicker?: string, action?: {label: string, tool: string}}} entry The preset's module entry.
+   * @returns {string} Markup, or '' when the card does not apply to this caller.
+   */
+  function summaryCard(entry) {
+    const a = cardApp(entry.card); if (!a) return '';
+    const tool = entry.action ? toolById(entry.action.tool) : null;
+    const action = tool ? btn(esc(entry.action.label), 'tool', 'text-button', `data-tool="${esc(tool.id)}"`) : link(`Open ${esc(a.name)} ↗`, a.href, 'text-button');
+    return `<section class="panel summary-card" data-module="card" data-card="${esc(entry.card)}"><div class="panel-kicker">${esc(entry.kicker || a.name.toUpperCase())}</div>${head(esc(entry.title || a.name), action)}${cardBody(data.cards ? data.cards.get(entry.card) : null)}</section>`;
+  }
+  /** The About dialog's line per applicable card: the application and the status its own probe answered. */
+  const cardSources = () => cardEntries().map(m => ({ m, a: cardApp(m.card) })).filter(x => x.a).map(({ m, a }) => { const sm = data.cards && data.cards.get(m.card); return `<li>${esc(m.title || a.name)}: ${esc(a.name)}’s own summary probe ${!sm ? '(reading)' : sm.ok ? `(HTTP ${sm.status})` : sm.status === 401 || sm.status === 403 ? '(not available to you)' : `(HTTP ${sm.status || 'network'})`}.</li>`; }).join('');
+  const MODULES = { calendar, shopping, 'home-facts': homeFacts, finance, learning, requirements, roster, projects, personal, updates, apps };
+  /** @description One declared module entry to markup: a named core module, a role pair ({teacher, otherwise}) or a package summary card ({card}). Anything else renders nothing. */
+  function moduleHtml(entry) {
+    if (typeof entry === 'string') return MODULES[entry] ? MODULES[entry]() : '';
+    if (!entry || typeof entry !== 'object') return '';
+    if (entry.card) return summaryCard(entry);
+    if (entry.teacher || entry.otherwise) return moduleHtml(isTeacher() ? entry.teacher : entry.otherwise);
+    return '';
+  }
+  /** @description A column of the declared front page; in the main column, consecutive cards share a two-up grid. */
+  function columnHtml(entries, grid) {
+    const out = []; let run = [];
+    const flush = () => { if (run.length) out.push(grid && run.length > 1 ? `<div class="card-grid">${run.join('')}</div>` : run.join('')); run = []; };
+    (entries || []).forEach(e => { const html = moduleHtml(e); if (!html) return; if (e && typeof e === 'object' && e.card) run.push(html); else { flush(); out.push(html); } });
+    flush();
+    return out.join('');
+  }
   function content() {
     if (state.page === 'tool') return `<div class="home-content is-tool">${toolPanel()}</div>`;
     let main = [], aside = [];
-    if (state.page === 'home') {
-      if (key === 'family') { main = [calendar(), homeFacts(), apps()]; aside = [personal(), shopping(), updates()]; }
-      else if (key === 'classroom') { main = [requirements(), isTeacher() ? roster() : calendar(), apps()]; aside = [isTeacher() ? calendar() : personal(), updates()]; }
-      else { main = [projects(), calendar(), apps()]; aside = [personal(), updates()]; }
-    } else if (state.page === 'calendar') { main = [calendar()]; aside = [updates()]; }
+    if (state.page === 'home') { const m = preset.modules || {}; main = [columnHtml(m.main, true)]; aside = [columnHtml(m.aside, false)]; }
+    else if (state.page === 'calendar') { main = [calendar()]; aside = [updates()]; }
     else if (state.page === 'shopping') { main = [shopping()]; aside = [homeFacts()]; }
     else if (state.page === 'people') { main = [people(), key === 'classroom' && isTeacher() ? roster() : ''].filter(Boolean); aside = [updates()]; }
     else if (state.page === 'requirements') { main = [requirements()]; aside = [isTeacher() ? roster() : personal()]; }
@@ -440,7 +498,7 @@
     if (kind === 'project') return projectDialog(id);
     if (kind === 'policy') return ['The same home, different access', `<p>Signed in as ${esc(displayName())}${data.edu && data.edu.me ? ` · ${esc(data.edu.me.role)} in Little Monsters` : ''}.</p><ul class="policy-list"><li>Applications appear only when this swarm’s authorization admits you to them.</li><li>Personal records require explicit, server-enforced access; a parent, teacher or admin label alone grants nothing.</li><li>Only a swarm administrator installs applications.</li><li>Class rosters are visible to each class’s teacher; students never see them.</li><li>Skins, density and pins are saved on this device and never change permissions.</li></ul>`];
     if (kind === 'ask') return [key === 'classroom' ? 'Ask your study companion' : 'Ask your assistant', `<p>Answered by your own Jarvis, in the same thread the cockpit uses.</p><form id="ask-form"><label class="field">Your question<input id="ask-input" maxlength="600" required placeholder="What should I focus on today?"${thread.busy ? ' disabled' : ''}></label><button class="button primary" type="submit"${thread.busy ? ' disabled' : ''}>Ask</button></form><div id="ask-answer" role="status">${thread.turns.slice(-4).map(t => t.role === 'user' ? `<p><strong>${esc(t.text)}</strong></p>` : t.pending ? `<p class="subtle">${esc(t.text)}</p>` : S.answerHtml(t.text)).join('')}</div>`];
-    if (kind === 'about') { const e = data.edu || {}, s = data.shop || {}, f = data.fin || {}; return ['What this home reads', `<ul class="policy-list"><li>Applications, suites and availability: your authorized home plan and installed listing (HTTP ${snapshot.sources.plan}/${snapshot.sources.apps}).</li><li>Work items: your tickets (HTTP ${snapshot.sources.tickets}) and Jarvis tasks (HTTP ${snapshot.sources.tasks}).</li><li>Calendar, classes, classwork and rosters: Little Monsters ${e.installed ? (e.refusal === 'not-granted' && !e.status ? '(not available to you)' : `(HTTP ${e.status})`) : '(not installed)'}.</li><li>Shopping list: Purchasing ${s.installed ? `(HTTP ${s.status})` : '(not installed)'}.</li><li>Money: Finance ${f.installed ? (f.available ? `(HTTP ${f.status})` : '(not available to you)') : '(not installed)'}.</li><li>Assistant: your Jarvis thread <code>${esc(thread.sessionId.slice(0, 18))}…</code>.</li></ul><p>No check-in, location or presence source exists on this swarm, so no such module is shown.</p>`]; }
+    if (kind === 'about') { const e = data.edu || {}, s = data.shop || {}, f = data.fin || {}; return ['What this home reads', `<ul class="policy-list"><li>Applications, suites and availability: your authorized home plan and installed listing (HTTP ${snapshot.sources.plan}/${snapshot.sources.apps}).</li><li>Work items: your tickets (HTTP ${snapshot.sources.tickets}) and Jarvis tasks (HTTP ${snapshot.sources.tasks}).</li><li>Calendar, classes, classwork and rosters: Little Monsters ${e.installed ? (e.refusal === 'not-granted' && !e.status ? '(not available to you)' : `(HTTP ${e.status})`) : '(not installed)'}.</li><li>Shopping list: Purchasing ${s.installed ? `(HTTP ${s.status})` : '(not installed)'}.</li><li>Money: Finance ${f.installed ? (f.available ? `(HTTP ${f.status})` : '(not available to you)') : '(not installed)'}.</li>${cardSources()}<li>Assistant: your Jarvis thread <code>${esc(thread.sessionId.slice(0, 18))}…</code>.</li></ul><p>No check-in, location or presence source exists on this swarm, so no such module is shown.</p>`]; }
     return ['', ''];
   }
   function openDialog(kind, id) {
