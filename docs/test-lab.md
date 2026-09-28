@@ -340,6 +340,15 @@ caller's personal grant, and LOGIN refusal. Run them locally with
 `npx vitest run tests/unit/imap-mail-reader.spec.ts tests/unit/connector-yahoo.spec.ts`. Signing
 in to a real Yahoo mailbox is an operator acceptance step, and no suite here performs it.
 
+**ESPN Fantasy league reads (fantasy-leagues kernel skill)** (`espn-fantasy-league-reads`, Tools)
+checks that the ESPN Fantasy cookies stay behind sign-in. Its linked suites run the
+`fantasy-leagues` kernel skill ([ADR-146](adr/146-fantasy-football-draft-platform.md) D2) against a
+loopback host shaped like ESPN's fantasy API: both cookies on league reads and none on the public
+feed, the fixed ESPN host under a hostile league id, a refused, an unavailable and an unreachable
+ESPN kept apart, and `espn_s2` absent from every log event and returned value. Run them locally with
+`npx vitest run tests/unit/fantasy-leagues-espn-client.spec.ts tests/unit/kernel-skills.spec.ts`.
+Reading a real league is an operator acceptance step behind a signed-in session.
+
 Eligible offline package Node suites now use a disposable runner with Run/Cancel controls and
 durable versioned history. See [package test execution](testing/package-test-execution.md) for
 supported prerequisites, current-user authorization, isolation and local regression commands.
