@@ -5,6 +5,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - live acceptance for "Career scoring/tailoring bot-node migration" (career-hunter 1.24.0 replaced the app's only model path with the worker rail: every engine model call is a loopback POST /api/career-hunter/engine/complete that runs on the dedicated Career bot cb000000-0000-0000-0000-000000000001 through the kernel's accounted bot rail). As the operator automation identity it starts the smallest real engine run that reaches the rail (the owner-scoped manual `score` run; `match` is deterministic and `pull` scores 150 in-lane jobs), watches the owner's run list, cancels the run as soon as its first rail call is admitted so the spend is bounded, and then requires the kernel's own attribution: the chat_tasks rollup row for this owner and the Career bot plus at least one oshal_cost_events ledger row written since the run started, both read under the owner's own RLS identity. A rail call the kernel refused before package code (authorization_identity_required, 401, 403 - the shape tests/unit/career-rail-enforce-posture.spec.ts proves an enforce box answers) fails LOUDLY naming the refusal, as does a run that ends on any rail failure. The proof creates no synthetic rows: the scores it produces are the owner's own scoring work, exactly what the nightly pass writes, and stay; what it does create - the engine run and its rail token - it leaves terminal and revoked, and anything still running afterwards is reported as incomplete cleanup. Same host/container split as lora-import-live-proof.js.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Attribute by what the proof can know. The first live run (2026-09-28, career-hunter 1.25.1 under enforce, run 517a4078: 8 rail calls admitted) reported "no cost" although the kernel had written two oshal_cost_events rows for the Career bot under the owner: career-hunter declares a catalog, so it is a protected application, and the bot node keys a protected execution's history `protected-<sha256>::<agent>` (src/app/bot-node-execution-handler.ts:264-265 over src/app/bot-node-protected-workspace.ts:28-40, a digest over issuer, subject, application, agent, tenant, workspace and the execution id), never the `career-engine-<owner>::<agent>` id this proof derived. The digest is the isolation boundary and changes per execution, so the proof no longer predicts a task id: the verdict requires oshal_cost_events rows with agent_id = the Career bot, owner_sub = the resolved owner and ts at or after the run's start (read under the owner's RLS identity as before), no more of them than the rail calls the run itself admitted (GET /runs railCalls). The chat_tasks rollup is optional evidence: the owner's rows whose task id ends `::<Career bot>` touched since the start, whatever the workspace shape. The refusal naming and the cleanup contract are unchanged; the pre-run baseline read (only the exact rollup needed it) is gone.
  */
 
 'use strict';
@@ -40,25 +41,22 @@ const DEFAULT_BUDGETS = Object.freeze({ runBudgetMs: 600_000, ledgerBudgetMs: 18
 const RAIL_REFUSALS = Object.freeze(['authorization_identity_required', 'authorization_app_admin_required',
   'authorization_app_unavailable', 'http-401', 'http-403', 'trusted-subject-required', 'run-token-refused']);
 
-/** The owner's accumulated rollup for this bot: the row the node writes under the rail's workspace. */
-const ROLLUP_SQL = `SELECT task_id, agent_id, owner_sub, status, total_requests, total_cost, updated_at
-  FROM chat_tasks WHERE task_id = $1 AND agent_id = $2 AND owner_sub = $3`;
-/** Per-call ledger rows for the same task since the run started (migration 078; 090 adds tokens/duration). */
-const LEDGER_SQL = `SELECT count(*)::int AS calls, coalesce(sum(cost_usd), 0)::float8 AS cost_usd,
-    coalesce(sum(input_tokens), 0)::bigint AS input_tokens, coalesce(sum(output_tokens), 0)::bigint AS output_tokens
-  FROM oshal_cost_events WHERE task_id = $1 AND agent_id = $2 AND owner_sub = $3 AND ts >= $4`;
-
 /**
- * @description The chat_tasks task id the Career bot records the rail's calls under: the node scopes
- * every request to `<canonical workspace>::<agent>`, and the rail's workspace is `career-engine-<owner>`
- * (career-hunter/src-routes/career-worker-rail.ts workerRequest).
- * @param {(value: string) => string} canonical - The kernel's canonicalBotWorkspaceId.
- * @param {string} ownerSub - The run owner's exact subject.
- * @returns {string} The rollup task id.
+ * The node records every call as `<workspace>::<agent>` (src/app/bot-node-execution-handler.ts). For
+ * a protected application the workspace is a per-execution digest the proof cannot and must not
+ * derive (src/app/bot-node-protected-workspace.ts), so rows are matched on this suffix, never on a
+ * predicted task id.
  */
-function railTaskId(canonical, ownerSub) {
-  return `${canonical(`career-engine-${ownerSub}`)}::${CAREER_AGENT_ID}`;
-}
+const RAIL_TASK_SUFFIX = `::${CAREER_AGENT_ID}`;
+/** Per-call ledger rows the Career bot wrote for this owner since the run started (migration 078; 090 adds tokens). */
+const LEDGER_SQL = `SELECT count(*)::int AS calls, coalesce(sum(cost_usd), 0)::float8 AS cost_usd,
+    coalesce(sum(input_tokens), 0)::bigint AS input_tokens, coalesce(sum(output_tokens), 0)::bigint AS output_tokens,
+    coalesce(array_agg(DISTINCT task_id), '{}') AS task_ids
+  FROM oshal_cost_events WHERE agent_id = $1 AND owner_sub = $2 AND ts >= $3`;
+/** Optional evidence: the owner's Career-bot rollup rows touched since the run started, in any workspace shape. */
+const ROLLUP_SQL = `SELECT task_id, total_requests, total_cost, updated_at FROM chat_tasks
+  WHERE owner_sub = $1 AND updated_at >= $2 AND right(task_id, char_length($3::text)) = $3::text
+  ORDER BY updated_at DESC, task_id LIMIT 50`;
 
 /**
  * @description Whether an installed package version has the worker rail.
@@ -86,17 +84,20 @@ function detectRailRefusal(texts) {
 }
 
 /**
- * @description Read the kernel's attribution for this owner and the Career bot as the owner.
- * @param {object} ports - query, withOwner, ownerSub, taskId.
- * @param {Date} since - Only ledger rows written at or after this instant count.
- * @returns {Promise<{rollup: object|null, ledger: {calls: number, costUsd: number, inputTokens: number, outputTokens: number}}>} What the database holds.
+ * @description Read the kernel's attribution for this owner and the Career bot as the owner: the
+ * ledger rows since the run started (the verdict) and the rollup rows touched since then (evidence).
+ * @param {object} ports - query, withOwner, ownerSub.
+ * @param {Date} since - Only rows written or touched at or after this instant count.
+ * @returns {Promise<{rollups: Array<{taskId: string, totalRequests: number}>, ledger: {calls: number, costUsd: number, inputTokens: number, outputTokens: number, taskIds: string[]}}>} What the database holds.
  */
 async function readAttribution(ports, since) {
   return ports.withOwner(async () => {
-    const rollup = (await ports.query(ROLLUP_SQL, [ports.taskId, CAREER_AGENT_ID, ports.ownerSub])).rows[0] || null;
-    const row = (await ports.query(LEDGER_SQL, [ports.taskId, CAREER_AGENT_ID, ports.ownerSub, since])).rows[0] || {};
-    return { rollup, ledger: { calls: Number(row.calls || 0), costUsd: Number(row.cost_usd || 0),
-      inputTokens: Number(row.input_tokens || 0), outputTokens: Number(row.output_tokens || 0) } };
+    const row = (await ports.query(LEDGER_SQL, [CAREER_AGENT_ID, ports.ownerSub, since])).rows[0] || {};
+    const rollups = (await ports.query(ROLLUP_SQL, [ports.ownerSub, since, RAIL_TASK_SUFFIX])).rows
+      .map((rollup) => ({ taskId: String(rollup.task_id), totalRequests: Number(rollup.total_requests || 0) }));
+    return { rollups, ledger: { calls: Number(row.calls || 0), costUsd: Number(row.cost_usd || 0),
+      inputTokens: Number(row.input_tokens || 0), outputTokens: Number(row.output_tokens || 0),
+      taskIds: Array.isArray(row.task_ids) ? row.task_ids.map(String).sort() : [] } };
   });
 }
 
@@ -157,12 +158,12 @@ async function observeRun(ports, budgets) {
  * @param {object} ports - query, withOwner, sleep, now.
  * @param {Date} since - The run's start.
  * @param {object} budgets - ledgerBudgetMs, pollMs.
- * @returns {Promise<{rollup: object|null, ledger: {calls: number, costUsd: number, inputTokens: number, outputTokens: number}}>} The last read.
+ * @returns {Promise<{rollups: Array<object>, ledger: {calls: number, costUsd: number, inputTokens: number, outputTokens: number, taskIds: string[]}}>} The last read.
  */
 async function awaitAttribution(ports, since, budgets) {
   const started = ports.now();
   let last = await readAttribution(ports, since);
-  while (!(last.rollup && last.ledger.calls >= 1) && ports.now() - started < budgets.ledgerBudgetMs) {
+  while (last.ledger.calls < 1 && ports.now() - started < budgets.ledgerBudgetMs) {
     await ports.sleep(budgets.pollMs);
     last = await readAttribution(ports, since);
   }
@@ -190,9 +191,34 @@ function startVerdict(response) {
 }
 
 /**
+ * @description The verdict for a run that admitted rail calls: the Career bot's ledger rows for this
+ * owner since the start must exist, and there may not be more of them than calls the run admitted
+ * (each admitted call settles at most one row; more means rows this run cannot account for).
+ * @param {object} run - The observed, ended run.
+ * @param {string} how - How the run ended, for the message.
+ * @param {{rollups: Array<{taskId: string, totalRequests: number}>, ledger: {calls: number, costUsd: number, inputTokens: number, outputTokens: number, taskIds: string[]}}|null} attribution - What the database holds.
+ * @param {object} budgets - For the messages.
+ * @returns {{state: 'pass'|'fail', detail: string}} The verdict before cleanup.
+ */
+function attributionVerdict(run, how, attribution, budgets) {
+  const rollups = attribution ? attribution.rollups : [];
+  const rolled = `${rollups.length} rollup row(s) ending ${RAIL_TASK_SUFFIX} touched`;
+  if (!attribution || attribution.ledger.calls < 1) {
+    const seen = attribution ? `0 ledger rows since the run started, ${rolled}` : 'not read';
+    return { state: 'fail', detail: `Run ${run.runId} was ${how}, but the kernel recorded no cost for agent ${CAREER_AGENT_ID} under this owner within ${Math.round(budgets.ledgerBudgetMs / 1000)}s (${seen}).` };
+  }
+  const ledger = attribution.ledger;
+  if (ledger.calls > Number(run.railCalls)) {
+    return { state: 'fail', detail: `Run ${run.runId} was ${how}, but the kernel holds ${ledger.calls} ledger rows for agent ${CAREER_AGENT_ID} under this owner since the run started, more than the ${run.railCalls} rail calls the run admitted: the cost cannot be attributed to this run (task ids ${ledger.taskIds.join(', ')}).` };
+  }
+  const requests = rollups.reduce((sum, rollup) => sum + rollup.totalRequests, 0);
+  return { state: 'pass', detail: `Run ${run.runId} was ${how}; the Career bot ${CAREER_AGENT_ID} recorded ${ledger.calls} ledger row(s) for this owner since the run started (${ledger.inputTokens} in / ${ledger.outputTokens} out tokens, $${ledger.costUsd.toFixed(6)}, task ids ${ledger.taskIds.join(', ')}), no more than the ${run.railCalls} admitted rail calls; ${rolled} since then (${requests} requests).` };
+}
+
+/**
  * @description Decide the verdict from the observed run, the route's answer and the attribution.
  * @param {{run: object|null, response: object|null, cancelledByProof: boolean, timedOut: boolean}} observed - observeRun's outcome.
- * @param {{rollup: object|null, ledger: {calls: number, costUsd: number, inputTokens: number, outputTokens: number}}|null} attribution - What the database holds, or null when never read.
+ * @param {{rollups: Array<object>, ledger: {calls: number, costUsd: number, inputTokens: number, outputTokens: number, taskIds: string[]}}|null} attribution - What the database holds, or null when never read.
  * @param {object} budgets - For the messages.
  * @returns {{state: 'pass'|'fail'|'unavailable', detail: string}} The verdict before cleanup.
  */
@@ -218,12 +244,7 @@ function decideVerdict(observed, attribution, budgets) {
     return { state: 'unavailable', detail: `Run ${run.runId} ended ${run.state} without a single rail call: no posting of this owner needed scoring, so the rail was not exercised and there is nothing to attribute.` };
   }
   const how = cancelledByProof ? `cancelled by the proof after its first admitted rail call (${run.railCalls} admitted)` : `ended ${run.state} after ${run.railCalls} rail calls`;
-  if (!attribution || !attribution.rollup || attribution.ledger.calls < 1) {
-    const seen = attribution ? `rollup ${attribution.rollup ? 'present' : 'absent'}, ${attribution.ledger.calls} ledger rows since the run started` : 'not read';
-    return { state: 'fail', detail: `Run ${run.runId} was ${how}, but the kernel recorded no cost for agent ${CAREER_AGENT_ID} under this owner within ${Math.round(budgets.ledgerBudgetMs / 1000)}s (${seen}).` };
-  }
-  const ledger = attribution.ledger;
-  return { state: 'pass', detail: `Run ${run.runId} was ${how}; the Career bot ${CAREER_AGENT_ID} recorded ${ledger.calls} ledger row(s) for this owner since the run started (${ledger.inputTokens} in / ${ledger.outputTokens} out tokens, $${ledger.costUsd.toFixed(6)}), and the owner's rollup row ${attribution.rollup.task_id} stands at ${attribution.rollup.total_requests} requests.` };
+  return attributionVerdict(run, how, attribution, budgets);
 }
 
 /**
@@ -248,7 +269,7 @@ async function cleanUpRun(ports, run, budgets) {
 
 /**
  * @description Run the whole case once; cleanup always runs once a run was observed.
- * @param {object} ports - api, query, withOwner, ownerSub, taskId, careerVersion, sleep?, now?.
+ * @param {object} ports - api, query, withOwner, ownerSub, careerVersion, sleep?, now?.
  * @param {object} [options] - Budget overrides.
  * @returns {Promise<{caseId: string, state: string, detail: string, evidence: object}>} The result.
  */
@@ -257,19 +278,17 @@ async function runCareerRailAcceptance(ports, options = {}) {
   const budgets = { ...DEFAULT_BUDGETS };
   for (const key of Object.keys(DEFAULT_BUDGETS)) if (Number(options[key]) > 0) budgets[key] = Number(options[key]);
   const since = new Date(io.now());
-  const evidence = { verb: VERB, careerVersion: io.careerVersion || null, agentId: CAREER_AGENT_ID, taskId: io.taskId, startedAt: since.toISOString() };
+  const evidence = { verb: VERB, careerVersion: io.careerVersion || null, agentId: CAREER_AGENT_ID, startedAt: since.toISOString() };
   let observed = { run: null, response: null, cancelledByProof: false, timedOut: false };
   let verdict = { state: 'fail', detail: 'The case did not finish.' };
   try {
-    const before = await readAttribution(io, since);
-    evidence.rollupRequestsBefore = before.rollup ? Number(before.rollup.total_requests) : null;
     observed = await observeRun(io, budgets);
     const { run, response } = observed;
     Object.assign(evidence, { runId: run ? run.runId : null, runState: run ? run.state : null, runReason: run ? run.reason : null,
       railCalls: run ? run.railCalls : null, cancelledByProof: observed.cancelledByProof, routeStatus: response ? response.status : null });
     const attributable = run && !observed.timedOut && run.state !== 'running' && run.state !== 'failed' && Number(run.railCalls) >= 1;
     const attribution = attributable ? await awaitAttribution(io, since, budgets) : null;
-    if (attribution) Object.assign(evidence, { ledger: attribution.ledger, rollupRequestsAfter: attribution.rollup ? Number(attribution.rollup.total_requests) : null });
+    if (attribution) Object.assign(evidence, { ledger: attribution.ledger, rollups: attribution.rollups });
     verdict = decideVerdict(observed, attribution, budgets);
   } catch (error) {
     verdict = { state: 'fail', detail: error instanceof Error ? error.message : String(error) };
@@ -340,12 +359,11 @@ async function runInContainer() {
   /* eslint-disable @typescript-eslint/no-require-imports */
   const { createOptionalPostgresPool } = require(path.join(dist, 'shared/services/database/optional-postgres-pool.js'));
   const { runWithRequestIdentity } = require(path.join(dist, 'shared/services/database/request-identity.js'));
-  const { canonicalBotWorkspaceId } = require(path.join(dist, 'app/bot-node-request-scope.js'));
   /* eslint-enable @typescript-eslint/no-require-imports */
   const pool = createOptionalPostgresPool('career-rail-live-proof');
   if (!pool) return unavailable('This container has no PostgreSQL configuration; nothing was started.');
   const result = await runCareerRailAcceptance({
-    api, ownerSub, careerVersion: career.version, taskId: railTaskId(canonicalBotWorkspaceId, ownerSub),
+    api, ownerSub, careerVersion: career.version,
     query: (sql, params) => pool.query(sql, params),
     withOwner: (fn) => runWithRequestIdentity({ sub: ownerSub, isOperator: false }, fn),
   }, { runBudgetMs: process.env.OSHAL_CAREER_RAIL_RUN_BUDGET_MS, ledgerBudgetMs: process.env.OSHAL_CAREER_RAIL_LEDGER_BUDGET_MS, pollMs: process.env.OSHAL_CAREER_RAIL_POLL_MS });
@@ -362,6 +380,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  CASE_ID, CAREER_AGENT_ID, PACKAGE, VERB, RAIL_REFUSALS, ROLLUP_SQL, LEDGER_SQL, railTaskId, hasRail, detectRailRefusal,
+  CASE_ID, CAREER_AGENT_ID, PACKAGE, VERB, RAIL_REFUSALS, RAIL_TASK_SUFFIX, ROLLUP_SQL, LEDGER_SQL, hasRail, detectRailRefusal,
   readAttribution, decideVerdict, runCareerRailAcceptance,
 };
