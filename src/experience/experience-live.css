@@ -79,3 +79,7 @@ a.action.primary,a.action{display:inline-flex;align-items:center;gap:6px;cursor:
 .routine-toggle{display:inline-flex;align-items:center;gap:8px;font-size:12px;white-space:nowrap}
 .routine-toggle input{accent-color:var(--accent);width:18px;height:18px}
 .routine-note:empty{display:none}
+/* Day focus: the picker sits with the skin picker; Orbit rings the focus's suites. */
+.study-caption select.scene-picker{max-width:170px}
+.suite-node.in-focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--soft,transparent),0 10px 24px #0000000f}
+@media (max-width:760px){.study-caption select.scene-picker{max-width:120px}}

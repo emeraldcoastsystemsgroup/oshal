@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com | The attention list reads the shared status groups (LIVE.STATUS_GROUPS.attention), so an approval gate, a customer action and a parked (dead-letter) ticket lead the briefing with the other items that wait on the person.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Work panels for layouts that opt in (hooks.workActions, with shell-panels.js loaded): a ticket, or the ticket behind a swarm task, reads its workflow (GET /api/v1/tickets/:id/workflow) and state (GET /api/tickets/:id) once per panel; the panel shows recorded progress and stages, a full ticket-workflow panel, Approve (approval_required to approved through PUT /api/tickets/:id/status, only when a person is what it waits for) and Cancel behind a confirmation (PUT /api/tickets/:id/cancel). A refusal is shown in the panel as returned; a success reloads the caller's work and re-renders through hooks.onWorkChanged. Working rows carry an indeterminate bar. Homebase and the central assistant do not opt in and are unchanged.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Routines panel (kind 'routines', layouts that opt in): reads the caller's schedules and the Workflow Studio definitions once per page, and each own prompt schedule's switch pauses or resumes it through POST /api/v1/agent/schedules/:id/pause|resume; a refusal puts the switch back and says why. The application panel offers 'Its routines' (that application's routines first).
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Day focus picker in the study bar for layouts that opt in (hooks.scenes): 'A workday' or 'An evening at home', saved per layout on this device (oshal-experience:scene:<layout>, ADR-164 D9), never sent to a server; setScene re-renders the layout through hooks.onSceneChanged.
  */
 (() => {
   'use strict';
@@ -114,6 +115,7 @@
     const suiteOf = id => suites.find(s => s.id === id) || LIVE.SUITE_META[id] && Object.assign({ id, count: 0, apps: [] }, LIVE.SUITE_META[id]) || suites[suites.length - 1];
     const state = { modal: null, dirSuite: 'all', dirQuery: '', returnFocus: null, pins: null, summaries: new Map(), embed: false, details: new Map(), detailReads: new Map(), roster: null, rosterRead: null, workFlows: new Map(), workReads: new Set(), routines: null, workflowsList: null, routinesRead: false };
     state.embedView = LIVE.prefs.get('embed-view:' + layoutId, 'summary') === 'full' ? 'full' : 'summary';
+    state.scene = window.OSHAL_LIVE_VIEWS ? window.OSHAL_LIVE_VIEWS.sceneOf(LIVE.prefs.get('scene:' + layoutId, 'workday')).id : 'workday';
     const savedPins = LIVE.prefs.get('pins:' + layoutId, null);
     const busiest = s => s.apps.map(a => [a, work.filter(w => w.app === a.id).length]).sort((x, y) => y[1] - x[1] || Number(y[0].probes.length > 0) - Number(x[0].probes.length > 0))[0];
     const defaultPins = suites.map(s => (busiest(s) || [])[0] || s.spotlight).filter(a => a && a.navigable).map(a => a.id).slice(0, 6);
@@ -141,9 +143,20 @@
     const workRow = item => button(`${item.app && byId(item.app) ? appMark(byId(item.app)) : avatar(item.kind === 'task' ? 'J' : 'Q')}<span><strong>${esc(item.title)}</strong><small>${esc(item.appName)} · ${esc(item.typeLabel)} · ${esc(timeAgo(item))}</small></span><span class="work-status">${esc(item.status.label)}</span>${panels() ? panels().movingBar(item) : ''}`, 'work-item', 'work-item', `data-work="${esc(item.id)}"`);
     const artifactTile = item => button(`<span class="file-icon">${item.kind === 'task' ? 'TASK' : 'TKT'}</span><span><strong>${esc(item.title)}</strong><small>${esc(item.appName)} · ${esc(item.status.label)} · ${esc(timeAgo(item))}</small></span><span class="arrow">↗</span>`, 'work-item', 'file-tile', `data-work="${esc(item.id)}"`);
 
+    /** The day focus picker, for layouts that opt in (hooks.scenes): a device-local ordering choice, never a server setting. */
+    function scenePicker() {
+      const V = window.OSHAL_LIVE_VIEWS; if (!hooks.scenes || !V) return '';
+      return `<label class="screenreader" for="scene-picker">Day focus</label><select id="scene-picker" class="layout-picker scene-picker" title="Orders your work and suites for this part of the day; hides nothing">${Object.values(V.SCENES).map(sc => `<option value="${sc.id}"${state.scene === sc.id ? ' selected' : ''}>${esc(sc.label)}</option>`).join('')}</select>`;
+    }
+    /** @description Change the day focus: saved on this device per layout, then the layout re-renders through hooks.onSceneChanged. */
+    function setScene(id) {
+      state.scene = window.OSHAL_LIVE_VIEWS.sceneOf(id).id;
+      LIVE.prefs.set('scene:' + layoutId, state.scene);
+      if (hooks.onSceneChanged) hooks.onSceneChanged(state.scene);
+    }
     function studyBar(caption = '') {
       const current = experienceFor(layoutId);
-      return `<div class="study-bar"><div class="study-links"><a href="/cockpit/">← Cockpit</a>${pickerMarkup(current ? current.id : layoutId)}<span class="full-label">LIVE SWARM / ${apps.length} APPS</span></div><div class="study-caption">${caption}<span>${esc(snapshot.me.name)} · ${openWork().length} open · ${snapshot.botsOnline}/${snapshot.bots.length} assistants online</span>${skinPicker()}<a href="/portal">All experiences</a></div></div>`;
+      return `<div class="study-bar"><div class="study-links"><a href="/cockpit/">← Cockpit</a>${pickerMarkup(current ? current.id : layoutId)}<span class="full-label">LIVE SWARM / ${apps.length} APPS</span></div><div class="study-caption">${caption}<span>${esc(snapshot.me.name)} · ${openWork().length} open · ${snapshot.botsOnline}/${snapshot.bots.length} assistants online</span>${scenePicker()}${skinPicker()}<a href="/portal">All experiences</a></div></div>`;
     }
 
     /** Summary section for an application panel; filled asynchronously from the app's own probes. */
@@ -468,6 +481,7 @@ ${workExtras(item)}
       root.addEventListener('input', e => { if (e.target.id === 'app-search') { state.dirQuery = e.target.value; updateDirectory(); } });
       root.addEventListener('change', e => {
         if (e.target.dataset.role === 'experience-picker') { const exp = experienceFor(e.target.value); if (exp) location.href = exp.href; }
+        if (e.target.id === 'scene-picker' && hooks.scenes) setScene(e.target.value);
         if (e.target.dataset.routine && panels()) toggleRoutine(e.target);
         if (e.target.id === 'universal-skin-picker' && window.OSHAL_STYLE_SWITCHER) window.OSHAL_STYLE_SWITCHER.applySkin(e.target.value);
       });
@@ -508,7 +522,7 @@ ${workExtras(item)}
     const threadNote = thread => thread.unavailable ? 'Earlier turns could not be loaded.' : thread.turns.length ? `${thread.turns.length} turns in this thread` : 'A new conversation. Ask anything across your swarm.';
 
     return { state, apps, suites, work, byId, suiteOf, pinned, isPinned, togglePin, workFor, openWork, attention, timeAgo, appMark, statusBadge, miniApp, workRow, artifactTile, personRow, studyBar, appPanel, workPanel, open, close, renderModal, handle, bind, toast, createThread, threadHtml, threadNote, summaryFor, summaryMarkup, fillSummary,
-      gameApps, hostedUrl, embedControls, embedFrame, detailSlot, fillDetail, rosterSlot, fillRoster };
+      gameApps, hostedUrl, embedControls, embedFrame, detailSlot, fillDetail, rosterSlot, fillRoster, scene: () => state.scene, setScene };
   }
 
   window.OSHAL_SHELL = { esc, button, primary, link, avatar, badge, chip, fileLink, answerHtml, withAudience, isGameApp, GAMES_TITLE, EXPERIENCES, experienceFor, currentExperience, pickerMarkup, skinPicker, createShell };

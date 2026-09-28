@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Drive the full-swarm build in headless Chromium through the real static route registration over the isolated synthetic swarm: tickets in every canonical state land on the Commons board and in the Jarvis briefing where the shared status groups put them.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Work panels: a ticket's recorded workflow (stages, step progress, gates, history, children) and its full view, Approve for an approval gate that waits on a person with the route's refusal shown, Cancel behind a confirmation with its refusal, the indeterminate bar on Working items only, and the not-visible / unreadable states.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Routines panel: own routines with a switch, managed ones without, somebody else's absent, workflows by version; pause/resume and the 404 refusal that puts the switch back; an application's routines first; the ask-Jarvis empty state and the refused reads.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Day focus: Studio's ordering, heading and device-only memory; Jarvis's evening copy and the games prompt; Orbit's ringed suites and stream; Commons moving to the Game room and back.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -258,6 +259,70 @@ describe('Routines panel over the schedules and Workflow Studio routes', () => {
     await page.locator('.jarvis-rail [data-action="routines"]').click();
     await page.waitForFunction(() => document.getElementById('routines-body')?.textContent?.includes('HTTP 500'));
     expect(await page.locator('#routines-body').innerText()).toContain('Your routines could not be read (HTTP 500).');
+    expect(errors).toEqual([]);
+  });
+});
+
+/** @description A finished Jarvis task attributed (by its title prefix) to the synthetic Home & life application. */
+function homeTask() {
+  fixture.state.tasks.unshift({ id: 'task-home', title: 'Synthetic hearth: evening lights', status: 'running', kind: 'simple', result: '', createdAt: iso(-4 * HOUR), finishedAt: iso(-4 * HOUR) } as typeof fixture.state.tasks[number]);
+}
+const focus = (value: string) => page.selectOption('#scene-picker', value);
+
+describe('day focus (workday / evening at home)', () => {
+  it('Studio orders its work by the focus, changes its heading and remembers the choice on this device only', async () => {
+    homeTask();
+    await open('/studio', '.running-row');
+    expect(await page.locator('#scene-picker').inputValue()).toBe('workday');
+    expect(await page.locator('.studio-conversation h1').innerText()).toBe('Your whole swarm, within reach.');
+    const rows = () => page.locator('.running-row').evaluateAll(es => es.map(e => e.getAttribute('data-work')));
+    expect(await rows()).not.toContain('task:task-home');
+    await focus('evening');
+    await page.waitForFunction(() => document.querySelector('.studio-conversation h1')?.textContent === 'A little work. A little play.');
+    const evening = await rows();
+    expect(evening.indexOf('task:task-home')).toBeGreaterThanOrEqual(0);
+    expect(evening.indexOf('task:task-home')).toBeLessThan(evening.indexOf(`ticket:${LEDGER}`));
+    expect(await page.locator('.running-row').count()).toBe(4);
+    expect(await page.locator('.studio-conversation .user-message').first().innerText()).toContain('What is ready for this evening?');
+    expect(await page.locator('#toast').innerText()).toContain('Nothing is hidden');
+    expect(await page.locator('.context-app small').innerText()).toMatch(/^(Home & life|Creative & games)/);
+    expect(await page.evaluate(() => localStorage.getItem('oshal-experience:scene:studio'))).toBe('"evening"');
+    await page.reload(); await page.waitForSelector('.running-row');
+    expect(await page.locator('#scene-picker').inputValue()).toBe('evening');
+    expect(fixture.state.calls.some(c => /scene/i.test(c))).toBe(false);
+    expect(errors).toEqual([]);
+  });
+
+  it('Jarvis greets the evening, offers what to play from the installed games and asks Jarvis with their names', async () => {
+    await open('/jarvis', '.full-jarvis');
+    expect(await page.getByRole('button', { name: 'What can I play tonight?' }).count()).toBe(0);
+    await focus('evening');
+    await page.waitForFunction(() => document.querySelector('.jarvis-greeting h1')?.textContent?.includes('Your evening is here.'));
+    expect(await page.locator('.briefing-card .badge').first().innerText()).toBe('This evening · from your queue');
+    expect(await page.locator('.briefing-card h2').innerText()).toMatch(/things? before you switch off\./);
+    await page.getByRole('button', { name: 'What can I play tonight?' }).click();
+    await page.waitForSelector('.conversation-list .message-content p strong');
+    expect(fixture.state.asks[0].message).toBe('Which of my games could we play tonight: Synthetic arcade-games? Suggest one and what it needs.');
+    expect(errors).toEqual([]);
+  });
+
+  it('Orbit rings the focus suites and streams their work first; Commons moves to the Game room and back', async () => {
+    homeTask();
+    await open('/orbit', '.full-orbit');
+    expect(await page.locator('.suite-node.in-focus').count()).toBe(4);
+    await focus('evening');
+    await page.waitForFunction(() => document.querySelectorAll('.suite-node.in-focus').length === 2);
+    const ringed = await page.locator('.suite-node.in-focus').evaluateAll(es => es.map(e => e.getAttribute('data-suite')).sort());
+    expect(ringed).toEqual(['ai-creative', 'ai-home']);
+    const stream = await page.locator('.orbit-stream .work-item').evaluateAll(es => es.map(e => e.getAttribute('data-work')));
+    expect(stream.slice(0, 2)).toContain('task:task-home');
+    expect(await page.locator('.orbit-map-heading .eyebrow').innerText()).toMatch(/an evening at home/i);
+    await open('/commons', '.full-commons');
+    expect(await page.locator('.room-header h1').innerText()).toContain('Finance room');
+    await focus('evening');
+    await page.waitForFunction(() => document.querySelector('.room-header h1')?.textContent?.includes('Game room'));
+    await focus('workday');
+    await page.waitForFunction(() => document.querySelector('.room-header h1')?.textContent?.includes('Finance room'));
     expect(errors).toEqual([]);
   });
 });
