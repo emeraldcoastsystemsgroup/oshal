@@ -4,13 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L3: the one /api/location router (later slices add their routes here rather than minting a second mount). Browser ingest (POST /presence) and the person's consent over their own location (the Settings, Location tab's reads and changes), behind the service-rail refusal and the browser-session principal of location-session.ts. Every route that raises exposure spends a step-up proof for exactly the parameters it acts on (opt-in always; a precision change only when it raises; accepting a member share always); LOCATION_ROUTE_POLICY declares each route's rule and tests/unit/location-route-policy.spec.ts fails when a route is added without a declaration. Statements run under the person's own owner session (never is_operator); refusals are LocationRequestError codes, never a coordinate or a subject.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L4: mount the places and device-enrolment routes (location-place-routes.ts) on this router and merge their declarations into LOCATION_ROUTE_POLICY, so the route-policy spec still sees every route; none spends a proof. The error mapper also answers the location kernel's own refusals: LocationInputError 400 and LocationNotFoundError 404.
  *
  * @module app/routes/location-routes
  */
 
 import express, { Router, type Request, type Response } from 'express';
 import type { Pool } from 'pg';
-import { LocationPrincipalError, purgeOwnLocationHistory } from '@/features/location';
+import { LocationInputError, LocationNotFoundError, LocationPrincipalError, purgeOwnLocationHistory } from '@/features/location';
 import { createChildLogger, locationSafeError } from '@/shared/logger';
 import { changeDefaultPrecision, changeDevicePrecision, optInBrowserDevice, optOutDevice } from '../location-consent';
 import { acceptMemberShare, parseShareRequest, revokeMemberShare } from '../location-member-shares';
@@ -18,6 +19,7 @@ import { readLocationOverview } from '../location-overview';
 import { ingestBrowserFix, parseBrowserFix } from '../location-presence';
 import { LocationRequestError, requireLocationId, requirePrecisionClass } from '../location-request';
 import { locationStepUpStore, type LocationStepUpOperation, type LocationStepUpStore } from '../location-step-up';
+import { LOCATION_PLACE_ROUTE_POLICY, mountLocationPlaceRoutes } from './location-place-routes';
 import { locationContext, refuseLocationServiceRail, requireLocationBrowserSession } from './location-session';
 import {
   LOCATION_STEP_UP_BASE, createLocationStepUpRoutes, spendLocationStepUp, stepUpRequired, type LocationStepUpParamsNormalizer,
@@ -55,6 +57,7 @@ export const LOCATION_ROUTE_POLICY: Readonly<Record<string, LocationRoutePolicy>
   'GET /step-up/:id/start': { stepUp: null, why: 'Begins the fresh sign-in; top-level navigation only.' },
   'GET /step-up/:id/complete': { stepUp: null, why: 'Accepts a fresh sign-in; top-level navigation only.' },
   'POST /step-up/:id/totp': { stepUp: null, why: 'Accepts a second-factor code for a local-auth session.' },
+  ...LOCATION_PLACE_ROUTE_POLICY,
 });
 
 /** @description Canonical parameters for each operation a route here performs; the challenge and the route digest the same form. */
@@ -105,6 +108,10 @@ function sendLocationError(res: Response, error: unknown): void {
   }
   if (error instanceof LocationPrincipalError) {
     res.status(403).json({ error: error.code, message: error.message });
+    return;
+  }
+  if (error instanceof LocationInputError || error instanceof LocationNotFoundError) {
+    res.status(error instanceof LocationInputError ? 400 : 404).json({ error: error.code, message: error.message });
     return;
   }
   log.error({ op: 'request', outcome: 'failed', err: locationSafeError(error) }, 'location request failed');
@@ -230,6 +237,7 @@ export function createLocationRoutes(options: LocationRoutesOptions): Router {
   }));
   mountConsentRoutes(router, options.pool, store);
   mountDataRoutes(router, options.pool, store, options.ingestMinIntervalMs ?? locationIngestMinIntervalFromEnv());
+  mountLocationPlaceRoutes(router, options.pool, guarded);
   log.info({ op: 'mount', outcome: 'ok', count: Object.keys(LOCATION_ROUTE_POLICY).length }, 'location routes ready');
   return router;
 }

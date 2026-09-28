@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L3: a localhost server shaped like the real one for the location consent specs. The REAL MOCK_OIDC middleware set from createOidcMiddleware (with the header override on, so each browser context or request picks its synthetic person), the same request-identity stamp server.ts installs, the real /api/location mount exactly as server.ts writes it (service-rail refusal, requiresAuth, createLocationRoutes), the real cockpit tool pages and shared UI assets, and a same-origin page standing in for a packaged surface, over a private PostgreSQL whose tables are owned by the NOSUPERUSER NOBYPASSRLS runtime role (FORCE row-level security is what holds). Synthetic identities and coordinates only; nothing reaches a deployment database.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L4: seedNodeBinding writes a node's durable ADR-114 owner binding (remote_task_journal_client_owners) as the superuser, the way the remote-client registry records it on registration, so the enrolment specs can prove that only a node's owner may enrol it.
  */
 
 import express from 'express';
@@ -110,4 +111,16 @@ export async function seedOwnPlace(server: LocationBrowserServer, sub: string,
  */
 export async function countRows(server: LocationBrowserServer, fromWhere: string, params: unknown[] = []): Promise<number> {
   return Number((await server.db.pool.query(`SELECT count(*)::int AS n FROM ${fromWhere}`, params)).rows[0].n);
+}
+
+/**
+ * @description Record a node's durable ADR-114 owner binding, as the remote-client registry does on
+ * registration (superuser write: the binding is the registry's, not the person's).
+ * @param server - The fixture.
+ * @param clientId - The node's client id (synthetic).
+ * @param ownerSub - Its owner.
+ * @returns Nothing.
+ */
+export async function seedNodeBinding(server: LocationBrowserServer, clientId: string, ownerSub: string): Promise<void> {
+  await server.db.pool.query('INSERT INTO remote_task_journal_client_owners (client_id, owner_sub) VALUES ($1, $2)', [clientId, ownerSub]);
 }

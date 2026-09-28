@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L3 (D3 "Browser ingest"): a browser fix from the signed-in person. The parser reads exactly deviceId, lat, lon, accuracyM and observedAt from the body and nothing else, so an owner, subject, issuer, source, precision or place a caller puts in the body never reaches a statement; the owner is the session principal the router passes in. The fix is accepted only for the person's own opted-in browser device, at most once per minimum interval per device. It is placed against the places the person can see (their own and their groups') at full precision in memory, then minimised to the device's precision class before anything is written (D3 "Precision minimisation"): the observation (history, kept until the owner purges it, Q4), the person's location_current row and the device's last_seen_at, in one transaction under the person's own identity.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L4: the current row keeps place_since (migration 176), the time its place last changed, so currentPlace and the Settings tab can say "since". A fix in the same place (or in no place, again) keeps it; a fix in a different place moves it to this fix's receipt time.
  *
  * @module app/location-presence
  */
@@ -153,12 +154,13 @@ async function writeFix(client: PoolClient, who: LocationPrincipal, fix: Browser
   const current = [...values, place?.placeId ?? null, receivedAt];
   const updated = await client.query(`UPDATE location_current
        SET device_id = $3, source = 'browser', precision_class = $4, lat = $5, lon = $6, alt_m = NULL, accuracy_m = $7,
-           mock_location = false, place_id = $9, observed_at = $8, received_at = $10, updated_at = NOW()
+           mock_location = false, place_id = $9, observed_at = $8, received_at = $10, updated_at = NOW(),
+           place_since = CASE WHEN place_id IS NOT DISTINCT FROM $9::uuid AND place_since IS NOT NULL THEN place_since ELSE $10 END
      WHERE tenant_id IS NULL AND owner_sub = $1 AND principal_issuer = $2 AND subject_ref = $1`, current);
   if (!updated.rowCount) {
     await client.query(`INSERT INTO location_current
-        (owner_sub, principal_issuer, subject_ref, device_id, source, precision_class, lat, lon, accuracy_m, place_id, observed_at, received_at)
-      VALUES ($1, $2, $1, $3, 'browser', $4, $5, $6, $7, $9, $8, $10)`, current);
+        (owner_sub, principal_issuer, subject_ref, device_id, source, precision_class, lat, lon, accuracy_m, place_id, observed_at, received_at, place_since)
+      VALUES ($1, $2, $1, $3, 'browser', $4, $5, $6, $7, $9, $8, $10, $10)`, current);
   }
   await client.query('UPDATE location_devices SET last_seen_at = $2 WHERE device_id = $1', [fix.deviceId, receivedAt]);
   return receivedAt;

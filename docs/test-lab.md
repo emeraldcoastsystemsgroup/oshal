@@ -440,6 +440,39 @@ No real person's location is read or written. The linked suites:
 Run them with `npm run test:location`. That is local evidence. After a deploy, run the card from the
 Test Lab.
 
+### Location places and devices at places (ADR-169 L4)
+
+**Location — places and devices at places (ADR-169 L4)** (`location-places-devices`, Tools) runs two
+steps on the build that is running:
+
+- `place-routes` runs as the signed-in person. The places and devices lists must carry no coordinate and
+  no address. A camera with no group, a node the person does not own, and a place for a group they do not
+  administer are each refused, and the person's places and devices must not change.
+- `places-lifecycle` runs the place, enrolment and kernel-read services for three uniquely tagged
+  synthetic people on the real database. An admin makes a group with a member, a place of their own and a
+  group place, records a synthetic node binding of their own, enrols that node, a camera (to the group) and
+  a TV with places, and moves the TV. The member must not be able to change the camera or find the node,
+  and the stranger must not find the camera. The member reads the camera's place by reference through
+  `currentPlace`, `distanceBand` and `placeAt`. Everything created is deleted (devices, places, the group
+  and its memberships, the binding) and a zero-row check runs; incomplete cleanup fails the step.
+
+No real person's location is read or written. The linked suites:
+
+- `tests/unit/location-place-reads-postgres.spec.ts`: containment edges, "since", bands and the
+  operation-only address, each read refusing SYSTEM and an identity without an issuer.
+- `tests/unit/location-places-devices-postgres.spec.ts`: places and enrolment over HTTP, who may change
+  what, and migration 176's identity fence at the database.
+- `tests/unit/location-places-browser.spec.ts`: the Settings, Location page in Chromium on localhost with
+  `MOCK_OIDC`. An admin adds places and enrols a node, a camera and a TV at places; a member sees the
+  group camera view-only and cannot change any of the three.
+- `tests/unit/location-fleet-id-shape.spec.ts`: the location slice's copy of the camera and drone fleet id
+  shape stays equal to `CAMERA_ID_RE` and `DRONE_ID_RE`.
+- `tests/unit/test-lab-location-places-registration.spec.ts`: this card on the fixture server, green and
+  red.
+
+Run them with `npm run test:location` (Docker is required for the PostgreSQL suites). That is local
+evidence. After a deploy, run the card from the Test Lab.
+
 ---
 
 ## Application-installed smoke cases
