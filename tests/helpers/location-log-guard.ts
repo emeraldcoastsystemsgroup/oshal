@@ -4,13 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation (ADR-169 L1): the static log guard over src/features/location and the location routes. Pino redaction reaches top-level keys and one `*.` level only, so a fix nested as telemetry.position.lat, or a coordinate inside an error message or URL, cannot be caught at runtime; this AST scan is the control ADR-169 D3 names. Scope is DERIVED, not listed: every source file under the location slice, every src/app file with a path segment named location*, every src/app/routes file that declares a /api/location route (string, const or template path), and the router module behind every `.use('/api/location…')` mount, followed through imports, local consts and barrel re-exports. A /api/location handler declared outside src/app/routes and a mount whose router cannot be found are violations (fail closed). In scope, a logger call may pass only an inline object literal of allowlisted id, count and literal-label fields plus a literal or scalar-only message; an error goes through locationSafeError from '@/shared/logger'.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review fixes. (a) A log method (or child) destructured off a logger - `const { info } = log`, a parameter defaulting to or typed as a logger, a nested `{ log: { error } }` pattern, or `({ info } = log)` - is now 'indirect-logger'; before, the later bare info(...) call escaped every rule. (b) Element access is held to the same rules as dot access: `log[level](...)` has its arguments checked as a log call, and `log['warn']` / `log[level]` used as a value is 'indirect-logger'. (c) A route path held in an IMPORTED const (named or namespace import, through barrels and renaming re-exports, composed from further consts) or in a function-local const now resolves, and every src/app file is parsed rather than only files containing the word location, so `app.use(GEO_BASE, …)` with GEO_BASE imported from a paths module is followed. (d) JSDoc on every exported constant.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
 
-/** One place a location-scoped file could put location data into a log line, or escape the guard. */
+/** @description One place a location-scoped file could put location data into a log line, or escape the guard. */
 export interface LocationLogViolation {
   file: string;
   line: number;
@@ -18,31 +19,44 @@ export interface LocationLogViolation {
   detail: string;
 }
 
-/** The guard's result over a tree: the files it scanned and every violation it found. */
+/** @description The guard's result over a tree: the files it scanned and every violation it found. */
 export interface LocationLogGuardResult {
   files: string[];
   violations: LocationLogViolation[];
 }
 
+/** @description The location feature slice: every source file under it is in the guard's scope. */
 export const LOCATION_SLICE_DIR = 'src/features/location';
+/**
+ * @description The app layer the guard searches for location code: files with a location* path
+ * segment, and every file that declares or mounts a /api/location route.
+ */
 export const LOCATION_APP_DIR = 'src/app';
+/**
+ * @description The only directory a /api/location handler may be declared in, and a home for the
+ * router a /api/location mount leads to.
+ */
 export const LOCATION_ROUTES_DIR = 'src/app/routes';
-/** The one error projection the guard admits, and the barrel it must be imported from. */
+/** @description The one error projection the guard admits as an `err` field. */
 export const SANCTIONED_ERROR_HELPER = 'locationSafeError';
+/**
+ * @description The barrel the sanctioned error helper (and createChildLogger) must be imported
+ * from; a local function of the same name is not the helper.
+ */
 export const SANCTIONED_LOGGER_MODULE = '@/shared/logger';
 
-/** Id fields: opaque references whose rows sit behind RLS. No subject, user or owner id (ADR-169 D4). */
+/** @description Id fields: opaque references whose rows sit behind RLS. No subject, user or owner id (ADR-169 D4). */
 export const LOCATION_LOG_ID_KEYS: readonly string[] = [
   'requestId', 'ruleId', 'fireId', 'deviceId', 'placeId', 'shareId', 'anchorId', 'tenantId',
   'transitionId', 'credentialId', 'inviteId', 'restrictionId', 'observationId', 'mapRef',
 ];
-/** Count fields: numbers about work done, never about where. */
+/** @description Count fields: numbers about work done, never about where. */
 export const LOCATION_LOG_COUNT_KEYS: readonly string[] = [
   'count', 'total', 'rowCount', 'attempt', 'durationMs', 'placeCount', 'ruleCount', 'deviceCount',
   'shareCount', 'observationCount', 'fireCount', 'purgedCount', 'claimedCount', 'dispatchedCount',
   'skippedCount', 'memberCount',
 ];
-/** Label fields: accepted only with a literal value (or a conditional between literals). */
+/** @description Label fields: accepted only with a literal value (or a conditional between literals). */
 export const LOCATION_LOG_LABEL_KEYS: readonly string[] = ['module', 'component', 'op', 'outcome', 'reason', 'status'];
 
 const ID_OR_COUNT = new Set([...LOCATION_LOG_ID_KEYS, ...LOCATION_LOG_COUNT_KEYS]);
@@ -99,11 +113,23 @@ class SourceCache {
   get(rel: string): ts.SourceFile {
     let sf = this.parsed.get(rel);
     if (!sf) {
-      const text = fs.readFileSync(path.join(this.root, rel), 'utf8');
-      sf = ts.createSourceFile(rel, text, ts.ScriptTarget.ES2022, true, scriptKind(rel));
+      sf = this.peek(rel);
       this.parsed.set(rel, sf);
     }
     return sf;
+  }
+
+  /**
+   * @description Parse a file without keeping it: the route sweep reads every src/app file once,
+   * and holding all of their trees would cost far more memory than re-parsing the few it follows.
+   * @param rel - Repo-relative path.
+   * @returns The memoised tree when there is one, otherwise a fresh one that is not stored.
+   */
+  peek(rel: string): ts.SourceFile {
+    const cached = this.parsed.get(rel);
+    if (cached) return cached;
+    const text = fs.readFileSync(path.join(this.root, rel), 'utf8');
+    return ts.createSourceFile(rel, text, ts.ScriptTarget.ES2022, true, scriptKind(rel));
   }
 
   /**
@@ -151,45 +177,85 @@ function unwrap(expr: ts.Expression): ts.Expression {
 
 // ───────────────────────── static path text ─────────────────────────
 
+/** A file being read for static path text: the cache (to follow imports), its path and its tree. */
+interface TextScope { cache: SourceCache; rel: string; sf: ts.SourceFile }
+
 /**
- * @description The string value of a top-level `const NAME = <static string>` in a file.
+ * @description The initializer of a top-level variable of this name in a file.
  * @param sf - The file.
- * @param name - The const's name.
- * @returns Its static text, or null.
+ * @param name - The variable name.
+ * @returns Its initializer, or null.
  */
-function constText(sf: ts.SourceFile, name: string): string | null {
+function topLevelInitializer(sf: ts.SourceFile, name: string): ts.Expression | null {
   for (const stmt of sf.statements) {
     if (!ts.isVariableStatement(stmt)) continue;
-    for (const decl of stmt.declarationList.declarations) {
-      if (ts.isIdentifier(decl.name) && decl.name.text === name && decl.initializer) {
-        return staticText(decl.initializer, sf, new Set([name]));
-      }
-    }
+    const decl = stmt.declarationList.declarations.find((d) => ts.isIdentifier(d.name) && d.name.text === name);
+    if (decl) return decl.initializer ?? null;
   }
   return null;
 }
 
 /**
+ * @description The static text of a name used in a file: its own top-level const, else a const
+ * declared anywhere in the file (a route path held in a function-local const), else the imported
+ * const it is bound to, followed to the declaring file.
+ * @param scope - The file the name is used in.
+ * @param name - The name.
+ * @param seen - `file#name` pairs on the current resolution path (cycle guard).
+ * @returns Its static text, or null.
+ */
+function constText(scope: TextScope, name: string, seen: Set<string>): string | null {
+  const key = `${scope.rel}#${name}`;
+  if (seen.has(key)) return null;
+  seen.add(key);
+  const init = topLevelInitializer(scope.sf, name) ?? localInitializer(scope.sf, name);
+  const text = init ? staticText(init, scope, seen) : importedConstText(scope, name, undefined, seen);
+  seen.delete(key);
+  return text;
+}
+
+/**
+ * @description The static text of an imported const: `import { X }` (renamed or not), or
+ * `ns.X` through `import * as ns`, followed through barrels and renaming re-exports to the file
+ * that declares it.
+ * @param scope - The importing file.
+ * @param local - The local binding (the namespace alias when member is given).
+ * @param member - For `ns.member`, the member name.
+ * @param seen - `file#name` pairs on the current resolution path (cycle guard).
+ * @returns Its static text, or null for a package, a default import or anything unresolvable.
+ */
+function importedConstText(scope: TextScope, local: string, member: string | undefined, seen: Set<string>): string | null {
+  const imp = importOf(scope.sf, local);
+  if (!imp || imp.imported === 'default') return null;
+  // `ns.X` needs a namespace import; a bare name needs a named one.
+  if ((imp.imported === '*') !== (member !== undefined)) return null;
+  const moduleFile = resolveModule(scope.cache, scope.rel, imp.spec);
+  const found = moduleFile ? declaringExport(scope.cache, moduleFile, member ?? imp.imported) : null;
+  if (!found) return null;
+  return constText({ cache: scope.cache, rel: found.file, sf: scope.cache.get(found.file) }, found.name, seen);
+}
+
+/**
  * @description The static string an expression evaluates to: literals, templates, `+`
- * concatenation and top-level string consts. An unknown part becomes '*'.
+ * concatenation, and consts (local, function-local or imported). An unknown part becomes '*'.
  * @param expr - The expression.
- * @param sf - Its file, for const lookup.
- * @param seen - Const names already being resolved (cycle guard).
+ * @param scope - Its file, for const lookup and import following.
+ * @param seen - `file#name` pairs already being resolved (cycle guard).
  * @returns The text, or null when nothing about it is static.
  */
-function staticText(expr: ts.Expression, sf: ts.SourceFile, seen: Set<string> = new Set()): string | null {
+function staticText(expr: ts.Expression, scope: TextScope, seen: Set<string> = new Set()): string | null {
   const e = unwrap(expr);
   if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) return e.text;
   if (ts.isTemplateExpression(e)) {
-    return e.head.text + e.templateSpans.map((s) => (staticText(s.expression, sf, seen) ?? '*') + s.literal.text).join('');
+    return e.head.text + e.templateSpans.map((s) => (staticText(s.expression, scope, seen) ?? '*') + s.literal.text).join('');
   }
   if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-    const left = staticText(e.left, sf, seen);
-    return left === null ? null : left + (staticText(e.right, sf, seen) ?? '*');
+    const left = staticText(e.left, scope, seen);
+    return left === null ? null : left + (staticText(e.right, scope, seen) ?? '*');
   }
-  if (ts.isIdentifier(e) && !seen.has(e.text)) {
-    seen.add(e.text);
-    return constText(sf, e.text);
+  if (ts.isIdentifier(e)) return constText(scope, e.text, seen);
+  if (ts.isPropertyAccessExpression(e) && ts.isIdentifier(e.expression)) {
+    return importedConstText(scope, e.expression.text, e.name.text, seen);
   }
   return null;
 }
@@ -230,31 +296,49 @@ function declaresExport(sf: ts.SourceFile, name: string): boolean {
   });
 }
 
+/** Where an exported name is declared: the file, and the name it has there (re-exports can rename). */
+interface DeclaredExport { file: string; name: string }
+
 /**
- * @description Follow `export { x } from` / `export * from` re-exports to the file that declares a name.
+ * @description Follow `export { x as y } from`, `export * from` and local `export { x as y }` lists
+ * to the file that declares a name, keeping track of renames.
  * @param cache - The source cache.
  * @param rel - The file to start from (a module or a barrel).
  * @param name - The exported name.
  * @param hops - Re-export hops already taken.
- * @returns The declaring file, or null.
+ * @returns The declaring file and the declared name, or null.
  */
-function declaringFile(cache: SourceCache, rel: string, name: string, hops = 0): string | null {
+function declaringExport(cache: SourceCache, rel: string, name: string, hops = 0): DeclaredExport | null {
   if (hops > MAX_REEXPORT_HOPS) return null;
   const sf = cache.get(rel);
-  if (declaresExport(sf, name)) return rel;
+  if (declaresExport(sf, name)) return { file: rel, name };
   for (const stmt of sf.statements) {
-    if (!ts.isExportDeclaration(stmt) || !stmt.moduleSpecifier || !ts.isStringLiteral(stmt.moduleSpecifier)) continue;
-    const target = resolveModule(cache, rel, stmt.moduleSpecifier.text);
-    if (!target) continue;
-    if (!stmt.exportClause) {
-      const found = declaringFile(cache, target, name, hops + 1);
-      if (found) return found;
-    } else if (ts.isNamedExports(stmt.exportClause)) {
-      const el = stmt.exportClause.elements.find((e) => e.name.text === name);
-      if (el) return declaringFile(cache, target, el.propertyName?.text ?? name, hops + 1);
-    }
+    if (!ts.isExportDeclaration(stmt)) continue;
+    const found = followExportDeclaration(cache, rel, stmt, name, hops);
+    if (found) return found;
   }
   return null;
+}
+
+/**
+ * @description Follow one export declaration of a file for a name.
+ * @param cache - The source cache.
+ * @param rel - The file holding the declaration.
+ * @param stmt - The `export … from` or local `export { … }` declaration.
+ * @param name - The exported name being looked for.
+ * @param hops - Re-export hops already taken.
+ * @returns The declaring file and name, or null when this declaration does not export it.
+ */
+function followExportDeclaration(
+  cache: SourceCache, rel: string, stmt: ts.ExportDeclaration, name: string, hops: number,
+): DeclaredExport | null {
+  const clause = stmt.exportClause;
+  const el = clause && ts.isNamedExports(clause) ? clause.elements.find((e) => e.name.text === name) : undefined;
+  const origin = el?.propertyName?.text ?? name;
+  if (!stmt.moduleSpecifier) return el ? { file: rel, name: origin } : null;
+  if (!ts.isStringLiteral(stmt.moduleSpecifier) || (clause && !el)) return null;
+  const target = resolveModule(cache, rel, stmt.moduleSpecifier.text);
+  return target ? declaringExport(cache, target, origin, hops + 1) : null;
 }
 
 /**
@@ -294,7 +378,7 @@ function resolveBinding(cache: SourceCache, rel: string, local: string, member?:
   if (!moduleFile) return null;
   if (imp.imported === 'default') return moduleFile;
   const name = imp.imported === '*' ? member : imp.imported;
-  return name ? declaringFile(cache, moduleFile, name) : null;
+  return name ? declaringExport(cache, moduleFile, name)?.file ?? null : null;
 }
 
 /**
@@ -323,22 +407,23 @@ function localInitializer(sf: ts.SourceFile, name: string): ts.Expression | null
 interface LocationRouteCall { call: ts.CallExpression; kind: 'declare' | 'mount' }
 
 /**
- * @description Every `.get/.post/…/.route/.use` call in a file whose static path is under /api/location.
- * @param sf - The file.
+ * @description Every `.get/.post/…/.route/.use` call in a file whose static path is under
+ * /api/location, however the path is spelled (literal, template, local or imported const).
+ * @param scope - The file.
  * @returns The calls with their kind.
  */
-function locationRouteCalls(sf: ts.SourceFile): LocationRouteCall[] {
+function locationRouteCalls(scope: TextScope): LocationRouteCall[] {
   const out: LocationRouteCall[] = [];
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.arguments.length) {
       const method = node.expression.name.text;
       const isRoute = ROUTE_DECLARE_METHODS.has(method) || method === 'use';
-      const text = isRoute ? staticText(node.arguments[0], sf) : null;
+      const text = isRoute ? staticText(node.arguments[0], scope) : null;
       if (text !== null && LOCATION_API_PATH.test(text)) out.push({ call: node, kind: method === 'use' ? 'mount' : 'declare' });
     }
     ts.forEachChild(node, visit);
   };
-  visit(sf);
+  visit(scope.sf);
   return out;
 }
 
@@ -411,7 +496,9 @@ function scopeFromRouteCall(cache: SourceCache, rel: string, route: LocationRout
 }
 
 /**
- * @description Derive the files the log guard covers, plus discovery violations.
+ * @description Derive the files the log guard covers, plus discovery violations. Every src/app
+ * file is parsed: a route path can come from an imported const, so a file need not contain the
+ * word "location" to declare or mount a /api/location route.
  * @param root - Repository (or scratch tree) root.
  * @returns The sorted file set and any route placement or mount violations.
  */
@@ -421,8 +508,7 @@ export function discoverLocationLogScope(root: string): LocationLogGuardResult {
   const violations: LocationLogViolation[] = [];
   for (const rel of sourcesUnder(root, LOCATION_APP_DIR)) {
     if (isLocationNamed(rel)) files.add(rel);
-    if (!/location/i.test(fs.readFileSync(path.join(root, rel), 'utf8'))) continue;
-    for (const route of locationRouteCalls(cache.get(rel))) {
+    for (const route of locationRouteCalls({ cache, rel, sf: cache.peek(rel) })) {
       const found = scopeFromRouteCall(cache, rel, route);
       found.files.forEach((f) => files.add(f));
       violations.push(...found.violations);
@@ -658,34 +744,156 @@ function checkCall(ctx: FileContext, call: ts.CallExpression): void {
     if (ctx.loggerBindings.get(callee.text) === 'createChildLogger') checkChildCall(ctx, call);
     return;
   }
-  const method = ts.isPropertyAccessExpression(callee) ? callee.name.text
-    : ts.isElementAccessExpression(callee) && ts.isStringLiteral(unwrap(callee.argumentExpression))
-      ? (unwrap(callee.argumentExpression) as ts.StringLiteral).text : null;
-  if (!method) return;
-  const receiver = (callee as ts.PropertyAccessExpression | ts.ElementAccessExpression).expression;
+  if (!ts.isPropertyAccessExpression(callee) && !ts.isElementAccessExpression(callee)) return;
+  const method = memberKey(callee);
+  const receiver = callee.expression;
   if (dottedName(receiver) === 'console') { report(ctx, call, 'console', 'use the Pino logger; console output bypasses redaction'); return; }
+  if (method === null) {
+    // log[level](...): any method could be behind the key, so hold its arguments to the log-call rules.
+    if (isLoggerShaped(ctx, receiver)) checkLogCall(ctx, call);
+    return;
+  }
   if (LOG_METHODS.has(method)) { checkLogCall(ctx, call); return; }
   if (method === 'child') { checkChildCall(ctx, call); return; }
-  const target = unwrap(receiver);
-  if (['call', 'apply', 'bind'].includes(method) && ts.isPropertyAccessExpression(target) && LOG_METHODS.has(target.name.text)) {
+  if (['call', 'apply', 'bind'].includes(method) && isLoggerMethodRef(ctx, receiver)) {
     report(ctx, call, 'indirect-logger', 'call the logger method directly so its arguments can be checked');
   }
 }
 
 /**
- * @description Flag a logger method used as a value (passed as a callback or assigned), where its
- * arguments can no longer be checked.
+ * @description The static member name of `a.b` or `a['b']`.
+ * @param access - The member access.
+ * @returns The name, or null for a computed key that is not a literal.
+ */
+function memberKey(access: ts.PropertyAccessExpression | ts.ElementAccessExpression): string | null {
+  if (ts.isPropertyAccessExpression(access)) return access.name.text;
+  const key = unwrap(access.argumentExpression);
+  return ts.isStringLiteral(key) || ts.isNoSubstitutionTemplateLiteral(key) ? key.text : null;
+}
+
+/**
+ * @description Whether an expression reads as a logger: a name like log / logger / this.log, or a
+ * createChildLogger(...) / .child(...) call.
+ * @param ctx - The file context (for the createChildLogger import).
+ * @param expr - The expression.
+ * @returns true when it does.
+ */
+function isLoggerShaped(ctx: FileContext, expr: ts.Expression): boolean {
+  const e = unwrap(expr);
+  if (!ts.isCallExpression(e)) return LOGGER_RECEIVER.test(e.getText());
+  const callee = unwrap(e.expression);
+  if (ts.isIdentifier(callee)) return callee.text === 'createChildLogger' || ctx.loggerBindings.get(callee.text) === 'createChildLogger';
+  return ts.isPropertyAccessExpression(callee) && callee.name.text === 'child';
+}
+
+/**
+ * @description Whether an expression names a logger method: `x.info`, or `log['info']` / `log[level]`
+ * on a logger-shaped receiver.
  * @param ctx - The file context.
- * @param access - A property access naming a log method.
+ * @param expr - The expression.
+ * @returns true when it does.
+ */
+function isLoggerMethodRef(ctx: FileContext, expr: ts.Expression): boolean {
+  const e = unwrap(expr);
+  if (ts.isPropertyAccessExpression(e)) return LOG_METHODS.has(e.name.text);
+  if (!ts.isElementAccessExpression(e) || !isLoggerShaped(ctx, e.expression)) return false;
+  const key = memberKey(e);
+  return key === null || LOG_METHODS.has(key);
+}
+
+/**
+ * @description Flag a logger method used as a value (passed as a callback or assigned), where its
+ * arguments can no longer be checked: `log.warn`, `log['warn']` or `log[level]` not being called.
+ * @param ctx - The file context.
+ * @param access - A member access.
  * @returns Nothing; violations are recorded on ctx.
  */
-function checkDetachedMethod(ctx: FileContext, access: ts.PropertyAccessExpression): void {
-  if (!LOG_METHODS.has(access.name.text)) return;
+function checkDetachedMethod(ctx: FileContext, access: ts.PropertyAccessExpression | ts.ElementAccessExpression): void {
+  const key = memberKey(access);
+  if (key !== null && !LOG_METHODS.has(key)) return;
   const parent = access.parent;
   if (ts.isCallExpression(parent) && parent.expression === access) return;
-  if (ts.isPropertyAccessExpression(parent) && parent.expression === access) return;
-  if (!LOGGER_RECEIVER.test(access.expression.getText())) return;
+  if ((ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) && parent.expression === access) return;
+  if (!isLoggerShaped(ctx, access.expression)) return;
   report(ctx, access, 'indirect-logger', `do not pass '${access.getText()}' around; call it with checked arguments`);
+}
+
+/**
+ * @description The static name of a destructured or assigned property: `info`, `info: i`, `['info']: i`.
+ * @param name - The property name node.
+ * @returns The name, or null when it is computed from something other than a literal.
+ */
+function propertyKey(name: ts.Node): string | null {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name) || ts.isNoSubstitutionTemplateLiteral(name)) return name.text;
+  if (!ts.isComputedPropertyName(name)) return null;
+  const inner = unwrap(name.expression);
+  return ts.isStringLiteral(inner) || ts.isNoSubstitutionTemplateLiteral(inner) ? inner.text : null;
+}
+
+/**
+ * @description Report a property taken off a logger when it is a log method, `child`, or a key that
+ * cannot be read statically (it could be either).
+ * @param ctx - The file context.
+ * @param node - The binding element or property.
+ * @param key - Its static name, or null.
+ * @returns Nothing; violations are recorded on ctx.
+ */
+function reportLoggerMember(ctx: FileContext, node: ts.Node, key: string | null): void {
+  if (key !== null && !LOG_METHODS.has(key) && key !== 'child') return;
+  report(ctx, node, 'indirect-logger', `do not destructure '${key ?? node.getText()}' off a logger; call it on the logger with checked arguments`);
+}
+
+/** What a destructuring pattern reads from: dotted source text, and the source expression when there is one. */
+interface PatternSource { text: string; expr?: ts.Expression }
+
+/**
+ * @description What an object binding pattern destructures: the initializer of its declaration or
+ * parameter (else a parameter's declared type), or for a nested pattern the outer source plus the
+ * property it sits under (`{ log: { info } } = deps` reads `deps.log`).
+ * @param pattern - The pattern.
+ * @returns Its source, or null when the pattern sits somewhere else (array patterns, catch clauses).
+ */
+function patternSource(pattern: ts.ObjectBindingPattern): PatternSource | null {
+  const parent = pattern.parent;
+  if (ts.isVariableDeclaration(parent) || ts.isParameter(parent)) {
+    if (parent.initializer) return { text: unwrap(parent.initializer).getText(), expr: parent.initializer };
+    return { text: parent.type ? parent.type.getText() : '' };
+  }
+  if (!ts.isBindingElement(parent) || !ts.isObjectBindingPattern(parent.parent)) return null;
+  const outer = patternSource(parent.parent);
+  const key = propertyKey(parent.propertyName ?? parent.name);
+  return outer && key !== null ? { text: `${outer.text}.${key}` } : null;
+}
+
+/**
+ * @description Flag log methods destructured off a logger (`const { info } = log`, a parameter
+ * `({ error } = log)` or `({ info }: Logger)`), where later calls to them escape every other rule.
+ * @param ctx - The file context.
+ * @param pattern - An object binding pattern.
+ * @returns Nothing; violations are recorded on ctx.
+ */
+function checkLoggerPattern(ctx: FileContext, pattern: ts.ObjectBindingPattern): void {
+  const src = patternSource(pattern);
+  if (!src) return;
+  if (!LOGGER_RECEIVER.test(src.text) && !(src.expr && isLoggerShaped(ctx, src.expr))) return;
+  for (const el of pattern.elements) {
+    if (!el.dotDotDotToken) reportLoggerMember(ctx, el, propertyKey(el.propertyName ?? el.name));
+  }
+}
+
+/**
+ * @description Flag log methods taken off a logger by destructuring assignment (`({ info } = log)`).
+ * @param ctx - The file context.
+ * @param bin - A binary expression.
+ * @returns Nothing; violations are recorded on ctx.
+ */
+function checkLoggerAssignment(ctx: FileContext, bin: ts.BinaryExpression): void {
+  if (bin.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return;
+  const left = unwrap(bin.left);
+  if (!ts.isObjectLiteralExpression(left) || !isLoggerShaped(ctx, bin.right)) return;
+  for (const prop of left.properties) {
+    if (ts.isShorthandPropertyAssignment(prop) || ts.isPropertyAssignment(prop)) reportLoggerMember(ctx, prop, propertyKey(prop.name));
+  }
 }
 
 /**
@@ -699,7 +907,9 @@ export function scanLocationLogSource(file: string, text: string): LocationLogVi
   const ctx: FileContext = { file, loggerBindings: sharedLoggerBindings(sf), violations: [] };
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node)) checkCall(ctx, node);
-    if (ts.isPropertyAccessExpression(node)) checkDetachedMethod(ctx, node);
+    if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) checkDetachedMethod(ctx, node);
+    if (ts.isObjectBindingPattern(node)) checkLoggerPattern(ctx, node);
+    if (ts.isBinaryExpression(node)) checkLoggerAssignment(ctx, node);
     ts.forEachChild(node, visit);
   };
   visit(sf);
