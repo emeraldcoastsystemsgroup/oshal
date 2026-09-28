@@ -4,27 +4,50 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the Career worker-rail live acceptance's own logic. Pure cases over an in-memory run registry in the package's real response shapes: a run that ends on its own with an admitted rail call passes on the kernel's attribution; a longer run is cancelled after its first admitted call and still passes; the kernel's enforce-mode refusal (the engine's stderr `career worker unavailable: authorization_identity_required`) fails LOUDLY naming it, as does a run that ends on a rail failure; a run with no rail call is not-runnable; admitted calls with no cost row are red; a caller the package does not admit is not-runnable; a run still running after cancellation is incomplete cleanup. The task id the proof reads is derived through the kernel's real canonicalBotWorkspaceId. Real boundary for the attribution read: the exact ROLLUP_SQL and LEDGER_SQL run against a disposable PostgreSQL carrying the shipped chat/cost migrations (005, 055, 078, 090) and count only this owner's rows for the Career bot written since the run started. The case is registered on the Access Administration Test Lab card beside the enforce-posture boundary spec.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The proof no longer predicts a task id (the first live run reported "no cost" over two real ledger rows keyed `protected-<sha256>::<Career bot>`, the per-execution digest a protected application's bot history carries), so the cases follow it: fixture rows are keyed through the REAL protectedBotWorkspaceId with one execution id per call, and the verdict rests on the Career bot's ledger rows for the owner since the start, no more than the admitted rail calls. Real boundary widened to the read the container mode performs: the whole acceptance runs over a disposable PostgreSQL carrying the chat/cost migrations plus owner-or-operator RLS (112 on oshal_cost_events, the conversation schema's chat_tasks policy via buildOwnerRlsPolicyStatements), read through a NOSUPERUSER NOBYPASSRLS role behind the production GUC wrapper under the owner's request identity. A run shaped like the live one (8 admitted, 2 settled under protected keys) passes; the same fixture with no ledger row since the start fails naming "no cost"; another owner's rows never count (RLS for the identity read, and the SQL's own owner filter read as the superuser); the canonical `career-engine-<owner>` rollup shape is still accepted as evidence; more ledger rows than admitted calls fail. The in-memory verdict cases no longer expect a pre-run baseline read.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import type { Pool } from 'pg';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { protectedBotWorkspaceId } from '@/app/bot-node-protected-workspace';
 import { canonicalBotWorkspaceId } from '@/app/bot-node-request-scope';
 import { AUTHORIZATION_SCENARIOS } from '@/app/routes/test-lab-authorization-scenarios';
 import { SCENARIOS } from '@/app/routes/test-lab-scenarios';
+import { wrapPoolWithGuc } from '../../src/shared/services/database/guc-pool';
+import { buildOwnerRlsPolicyStatements } from '../../src/shared/services/database/owner-rls-policy';
+import { runWithRequestIdentity } from '../../src/shared/services/database/request-identity';
 import { DisposablePostgres } from '../helpers/disposable-postgres';
 
 const requireCjs = createRequire(import.meta.url);
 const proof = requireCjs('../../scripts/operations/career-rail-live-proof.js');
 
-const OWNER = 'auth0|career-rail-owner';
+/** A plain subject, like the live owner's: its canonical rail workspace is `career-engine-<owner>` verbatim. */
+const OWNER = '100000000000000000001';
+const OTHER = '100000000000000000002';
 const AGENT = 'cb000000-0000-0000-0000-000000000001';
+const OTHER_AGENT = 'fixture-other-bot';
+const ISSUER = 'https://oshal.example.com/';
 const RUN_ID = '11111111-2222-4333-8444-555555555555';
+/** The fake clock's origin; the proof's `since` is its first tick. */
+const EPOCH = 1_700_000_000_000;
+const PROTECTED_TASK = /^protected-[0-9a-f]{64}::cb000000-0000-0000-0000-000000000001$/;
+
+/**
+ * The task id the Career node records one call of a protected execution under: the REAL kernel
+ * digest over the rail's binding (one execution id per call), then the agent.
+ */
+function protectedTaskId(owner: string, executionId: string, agent = AGENT): string {
+  return `${protectedBotWorkspaceId({ principalIssuer: ISSUER, userSub: owner, app: 'career-hunter', agentId: agent,
+    workspaceFolderId: `career-engine-${owner}`, executionId })}::${agent}`;
+}
 
 interface FakeOptions {
   /** Rail calls the run admits before it ends (default 1). */
   calls?: number;
+  /** Rail calls admitted per poll of the run list (default 1). */
+  perPoll?: number;
   /** How the run ends once its calls are admitted; 'never' keeps it running until cancelled. */
   finish?: 'succeeded' | 'failed' | 'never';
   /** The reason the registry records for a failed run. */
@@ -35,47 +58,54 @@ interface FakeOptions {
   refuseStart?: { status: number; error: string };
   /** The kernel never records a cost row (the node's recordCost failed). */
   noLedger?: boolean;
+  /** Extra in-window ledger rows for this owner and bot that no admitted call explains. */
+  unexplainedRows?: number;
+  /** Settle an admitted call somewhere real instead of in memory (call is 1-based). */
+  admit?: (at: Date, call: number) => Promise<void>;
   /** Cancellation is acknowledged but the child never exits. */
   stayRunningAfterCancel?: boolean;
 }
 
 interface FakeRun { runId: string; verb: string; state: string; reason: string | null; startedAt: number; finishedAt: number | null; railCalls: number }
+type RouteAnswer = { status: number; json: Record<string, unknown> };
+interface FakeState { clock: number; run: FakeRun | null; settle: null | ((value: RouteAnswer) => void); ledger: Array<{ ts: number; taskId: string }>; cancels: number; posts: number }
 
-/** The package's run registry, the owner's run routes and the kernel's two cost tables, in memory. */
-function fake(options: FakeOptions = {}) {
-  let clock = 1_700_000_000_000;
-  const now = () => (clock += 1_000);
+/** Settle one admitted call the way the node does: one ledger row under a fresh protected execution. */
+async function settleCall(state: FakeState, options: FakeOptions, call: number): Promise<void> {
+  if (options.admit) return options.admit(new Date(state.clock), call);
+  if (!options.noLedger) state.ledger.push({ ts: state.clock, taskId: protectedTaskId(OWNER, `execution-${call}`) });
+}
+
+/** One poll's worth of engine progress: admit rail calls while calls remain, then end the run. */
+async function advanceRun(state: FakeState, options: FakeOptions): Promise<void> {
+  const run = state.run!;
   const calls = options.calls ?? 1;
   const finish = options.finish ?? 'succeeded';
-  const state = { run: null as FakeRun | null, settle: null as null | ((value: { status: number; json: Record<string, unknown> }) => void),
-    rollupRequests: 0, ledger: [] as Array<{ ts: number }>, cancels: 0, posts: 0 };
-  const taskId = proof.railTaskId(canonicalBotWorkspaceId, OWNER) as string;
+  for (let admitted = 0; admitted < (options.perPoll ?? 1) && run.railCalls < calls; admitted += 1) {
+    run.railCalls += 1;
+    await settleCall(state, options, run.railCalls);
+    if (run.railCalls === 1) for (let i = 0; i < (options.unexplainedRows ?? 0); i += 1) state.ledger.push({ ts: state.clock, taskId: protectedTaskId(OWNER, `elsewhere-${i}`) });
+  }
+  if (run.railCalls >= calls && finish !== 'never') {
+    run.state = finish; run.reason = finish === 'failed' ? (options.reason ?? 'engine-failed') : null; run.finishedAt = state.clock;
+    const tail = { out: '', err: options.stderr ?? '' };
+    state.settle?.(finish === 'failed'
+      ? { status: run.reason === 'career-worker-unavailable' ? 503 : 502, json: { ok: false, error: run.reason, runId: run.runId, state: run.state, ...tail } }
+      : { status: 200, json: { ok: true, out: 'AI-scored 1 postings (0 skipped).', runId: run.runId } });
+  }
+}
 
-  /** One poll's worth of engine progress: admit a rail call while calls remain, then end the run. */
-  const progress = (): void => {
-    const run = state.run!;
-    if (run.railCalls < calls) {
-      run.railCalls += 1;
-      if (!options.noLedger) { state.rollupRequests += 1; state.ledger.push({ ts: clock }); }
-    }
-    if (run.railCalls >= calls && finish !== 'never') {
-      run.state = finish; run.reason = finish === 'failed' ? (options.reason ?? 'engine-failed') : null; run.finishedAt = clock;
-      const tail = { out: '', err: options.stderr ?? '' };
-      state.settle?.(finish === 'failed'
-        ? { status: run.reason === 'career-worker-unavailable' ? 503 : 502, json: { ok: false, error: run.reason, runId: run.runId, state: run.state, ...tail } }
-        : { status: 200, json: { ok: true, out: 'AI-scored 1 postings (0 skipped).', runId: run.runId } });
-    }
-  };
-
-  const api = vi.fn(async (method: string, route: string) => {
+/** The owner's run routes over the package's run registry, in the compiled routes' response shapes. */
+function fakeRunRoutes(state: FakeState, options: FakeOptions) {
+  return vi.fn(async (method: string, route: string): Promise<RouteAnswer> => {
     if (method === 'POST' && route === '/api/career-hunter/run/score') {
       state.posts += 1;
       if (options.refuseStart) return { status: options.refuseStart.status, json: { ok: false, error: options.refuseStart.error, err: options.refuseStart.error } };
-      state.run = { runId: RUN_ID, verb: 'score', state: 'running', reason: null, startedAt: clock, finishedAt: null, railCalls: 0 };
-      return new Promise<{ status: number; json: Record<string, unknown> }>((settle) => { state.settle = settle; });
+      state.run = { runId: RUN_ID, verb: 'score', state: 'running', reason: null, startedAt: state.clock, finishedAt: null, railCalls: 0 };
+      return new Promise<RouteAnswer>((settle) => { state.settle = settle; });
     }
     if (method === 'GET' && route === '/api/career-hunter/runs') {
-      if (state.run?.state === 'running') progress();
+      if (state.run?.state === 'running') await advanceRun(state, options);
       return { status: 200, json: { runs: state.run ? [{ ...state.run }] : [] } };
     }
     if (method === 'POST' && route === `/api/career-hunter/run/${RUN_ID}/cancel`) {
@@ -83,36 +113,40 @@ function fake(options: FakeOptions = {}) {
       const run = state.run!;
       if (run.state !== 'running') return { status: 409, json: { error: 'run already finished', state: run.state } };
       if (!options.stayRunningAfterCancel) {
-        run.state = 'cancelled'; run.reason = 'cancelled-by-owner'; run.finishedAt = clock;
+        run.state = 'cancelled'; run.reason = 'cancelled-by-owner'; run.finishedAt = state.clock;
         state.settle?.({ status: 409, json: { ok: false, error: 'cancelled', runId: run.runId, state: 'cancelled', out: '', err: '' } });
       }
       return { status: 202, json: { ok: true, runId: run.runId, cancelled: true } };
     }
     throw new Error(`unexpected ${method} ${route}`);
   });
-
-  const query = vi.fn(async (sql: string, params: unknown[]) => {
-    expect(params[0]).toBe(taskId); expect(params[1]).toBe(AGENT); expect(params[2]).toBe(OWNER);
-    if (sql === proof.ROLLUP_SQL) {
-      return { rows: state.rollupRequests ? [{ task_id: taskId, agent_id: AGENT, owner_sub: OWNER, status: 'completed', total_requests: state.rollupRequests, total_cost: 0.01, updated_at: new Date(clock) }] : [] };
-    }
-    const since = (params[3] as Date).getTime();
-    const rows = state.ledger.filter((row) => row.ts >= since);
-    return { rows: [{ calls: rows.length, cost_usd: rows.length * 0.001, input_tokens: rows.length * 900, output_tokens: rows.length * 120 }] };
-  });
-
-  const ports = { api, query, withOwner: <T>(fn: () => Promise<T>) => fn(), ownerSub: OWNER, taskId, careerVersion: '1.25.0', sleep: async () => undefined, now };
-  return { ports, state, taskId };
 }
 
-describe('the rail task id and the package version gate', () => {
-  it('derives the rollup task id the node records under: the canonical rail workspace of the owner, then the Career bot', () => {
-    const taskId = proof.railTaskId(canonicalBotWorkspaceId, OWNER);
-    expect(taskId).toBe(`${canonicalBotWorkspaceId(`career-engine-${OWNER}`)}::${AGENT}`);
-    expect(taskId).toMatch(/^scope-[0-9a-f]{64}::cb000000-0000-0000-0000-000000000001$/);
-    expect(proof.railTaskId(canonicalBotWorkspaceId, 'plainowner')).toBe(`career-engine-plainowner::${AGENT}`);
+/** The kernel's two cost tables in memory, answering the proof's exact two statements. */
+function fakeCostTables(state: FakeState) {
+  return vi.fn(async (sql: string, params: unknown[]) => {
+    if (sql === proof.LEDGER_SQL) {
+      expect(params.slice(0, 2)).toEqual([AGENT, OWNER]);
+      const rows = state.ledger.filter((row) => row.ts >= (params[2] as Date).getTime());
+      return { rows: [{ calls: rows.length, cost_usd: rows.length * 0.001, input_tokens: rows.length * 900, output_tokens: rows.length * 120, task_ids: rows.map((row) => row.taskId) }] };
+    }
+    expect(sql).toBe(proof.ROLLUP_SQL);
+    expect([params[0], params[2]]).toEqual([OWNER, `::${AGENT}`]);
+    const rows = state.ledger.filter((row) => row.ts >= (params[1] as Date).getTime());
+    return { rows: rows.map((row) => ({ task_id: row.taskId, total_requests: 1, total_cost: 0.001, updated_at: new Date(row.ts) })) };
   });
+}
 
+/** The package's run registry, the owner's run routes and the kernel's two cost tables, in memory. */
+function fake(options: FakeOptions = {}) {
+  const state: FakeState = { clock: EPOCH, run: null, settle: null, ledger: [], cancels: 0, posts: 0 };
+  const now = () => (state.clock += 1_000);
+  const ports = { api: fakeRunRoutes(state, options), query: fakeCostTables(state), withOwner: <T>(fn: () => Promise<T>) => fn(),
+    ownerSub: OWNER, careerVersion: '1.25.1', sleep: async () => undefined, now };
+  return { ports, state };
+}
+
+describe('the package version gate and the refusal naming', () => {
   it('runs only against a package that has the rail (1.24.0 and later)', () => {
     expect(proof.hasRail('1.23.0')).toBe(false);
     expect(proof.hasRail('1.24.0')).toBe(true);
@@ -136,9 +170,12 @@ describe('runCareerRailAcceptance', () => {
     expect(result.state, result.detail).toBe('pass');
     expect(result.detail).toContain('ended succeeded after 1 rail calls');
     expect(result.detail).toContain(`the Career bot ${AGENT} recorded 1 ledger row(s) for this owner`);
+    expect(result.detail).toContain('no more than the 1 admitted rail calls');
     expect(result.detail).toContain("the scores it wrote are the owner's own and stay");
-    expect(result.evidence).toMatchObject({ verb: 'score', taskId: f.taskId, runId: RUN_ID, runState: 'succeeded', railCalls: 1,
-      cancelledByProof: false, routeStatus: 200, rollupRequestsBefore: null, rollupRequestsAfter: 1, ledger: { calls: 1 }, cleanupErrors: [] });
+    expect(result.evidence).toMatchObject({ verb: 'score', runId: RUN_ID, runState: 'succeeded', railCalls: 1,
+      cancelledByProof: false, routeStatus: 200, ledger: { calls: 1 }, rollups: [{ totalRequests: 1 }], cleanupErrors: [] });
+    expect(result.evidence.ledger.taskIds).toEqual([protectedTaskId(OWNER, 'execution-1')]);
+    expect(result.evidence).not.toHaveProperty('taskId');
     expect(f.state.cancels).toBe(0);
   });
 
@@ -158,7 +195,7 @@ describe('runCareerRailAcceptance', () => {
     expect(result.state).toBe('fail');
     expect(result.detail).toContain('The kernel refused the rail call before package code ran: authorization_identity_required');
     expect(result.detail).toContain(`run ${RUN_ID} failed with reason engine-failed, 0 calls admitted`);
-    expect(f.ports.query).toHaveBeenCalledTimes(2); // the baseline read only; nothing is attributed to a refused run
+    expect(f.ports.query).not.toHaveBeenCalled(); // nothing is attributed to a refused run
     expect(result.evidence).toMatchObject({ runState: 'failed', runReason: 'engine-failed', railCalls: 0, routeStatus: 502 });
   });
 
@@ -182,7 +219,15 @@ describe('runCareerRailAcceptance', () => {
     const result = await proof.runCareerRailAcceptance(f.ports);
     expect(result.state).toBe('fail');
     expect(result.detail).toContain(`the kernel recorded no cost for agent ${AGENT} under this owner`);
-    expect(result.detail).toContain('rollup absent, 0 ledger rows since the run started');
+    expect(result.detail).toContain(`0 ledger rows since the run started, 0 rollup row(s) ending ::${AGENT} touched`);
+  });
+
+  it('fails when the ledger holds more rows for the owner and bot than the run admitted rail calls', async () => {
+    const f = fake({ unexplainedRows: 2 });
+    const result = await proof.runCareerRailAcceptance(f.ports);
+    expect(result.state).toBe('fail');
+    expect(result.detail).toContain('holds 3 ledger rows for agent');
+    expect(result.detail).toContain('more than the 1 rail calls the run admitted: the cost cannot be attributed to this run');
   });
 
   it('is not runnable when the package does not admit the operator automation identity, and starts nothing', async () => {
@@ -218,29 +263,91 @@ describe('Test Lab registration', () => {
   });
 });
 
-describe('the attribution read against the shipped chat/cost schema (real PostgreSQL)', () => {
+describe('the attribution against the shipped chat/cost schema and owner RLS (real PostgreSQL)', () => {
+  const READER = 'career_rail_reader';
   const database = new DisposablePostgres({
     purpose: 'career-rail-live-proof', database: 'career_rail_fixture', memory: '256m', max: 2,
-    connectionTimeoutMillis: 5_000, statementTimeoutMs: 30_000,
-    migrations: ['005-conversation-history-and-usage.sql', '055-chat-tasks-owner-sub.sql', '078-cost-governance.sql', '090-cost-event-tokens-duration.sql'],
+    connectionTimeoutMillis: 5_000, statementTimeoutMs: 30_000, roles: [READER],
+    migrations: ['005-conversation-history-and-usage.sql', '055-chat-tasks-owner-sub.sql', '078-cost-governance.sql',
+      '090-cost-event-tokens-duration.sql', '112-owner-column-rls.sql'],
   });
   let pool: Pool;
-  beforeAll(async () => { pool = await database.start(); }, 180_000);
+  let reader: Pool;
+  beforeAll(async () => {
+    pool = await database.start();
+    for (const statement of buildOwnerRlsPolicyStatements('chat_tasks', 'owner_sub')) await pool.query(statement);
+    await pool.query(`GRANT SELECT ON chat_tasks, oshal_cost_events TO ${READER}`);
+    reader = wrapPoolWithGuc(database.rolePool(READER));
+  }, 180_000);
   afterAll(async () => { await database.stop(); });
+  beforeEach(async () => { await pool.query('TRUNCATE oshal_cost_events, chat_tasks CASCADE'); });
 
-  it('returns this owner\'s rollup for the Career bot and counts only ledger rows written since the run started', async () => {
-    const taskId = proof.railTaskId(canonicalBotWorkspaceId, OWNER);
-    const otherTask = proof.railTaskId(canonicalBotWorkspaceId, 'auth0|someone-else');
-    const since = new Date('2026-09-28T09:00:00.000Z');
-    await pool.query(`INSERT INTO chat_tasks (task_id, agent_id, owner_sub, status, total_requests, total_cost) VALUES ($1, $2, $3, 'completed', 7, 0.05), ($4, $2, $5, 'completed', 2, 0.01)`,
-      [taskId, AGENT, OWNER, otherTask, 'auth0|someone-else']);
-    await pool.query(`INSERT INTO oshal_cost_events (ts, task_id, owner_sub, agent_id, cost_usd, input_tokens, output_tokens) VALUES
-        ($1, $2, $3, $4, 0.002, 800, 100), ($5, $2, $3, $4, 0.003, 900, 150), ($6, $2, $3, $4, 0.004, 700, 90), ($5, $7, $8, $4, 0.009, 1, 1)`,
-      [new Date(since.getTime() - 60_000), taskId, OWNER, AGENT, since, new Date(since.getTime() + 60_000), otherTask, 'auth0|someone-else']);
-    const read = await proof.readAttribution({ query: (sql: string, params: unknown[]) => pool.query(sql, params), withOwner: <T>(fn: () => Promise<T>) => fn(), ownerSub: OWNER, taskId }, since);
-    expect(read.rollup).toMatchObject({ task_id: taskId, agent_id: AGENT, owner_sub: OWNER, total_requests: 7 });
-    expect(read.ledger).toEqual({ calls: 2, costUsd: 0.007, inputTokens: 1600, outputTokens: 240 });
-    const nobody = await proof.readAttribution({ query: (sql: string, params: unknown[]) => pool.query(sql, params), withOwner: <T>(fn: () => Promise<T>) => fn(), ownerSub: 'auth0|third', taskId }, since);
-    expect(nobody).toEqual({ rollup: null, ledger: { calls: 0, costUsd: 0, inputTokens: 0, outputTokens: 0 } });
+  /** What the Career node writes for one settled call: its rollup row and its ledger row (seeded as the superuser). */
+  const settle = async (taskId: string, owner: string, at: Date, agent = AGENT): Promise<void> => {
+    await pool.query(`INSERT INTO chat_tasks (task_id, agent_id, owner_sub, status, total_requests, total_cost, updated_at)
+      VALUES ($1, $2, $3, 'completed', 1, 0.002, $4)`, [taskId, agent, owner, at]);
+    await pool.query(`INSERT INTO oshal_cost_events (ts, task_id, owner_sub, agent_id, provider_id, model_id, cost_usd, input_tokens, output_tokens)
+      VALUES ($1, $2, $3, $4, 'fixture-provider', 'fixture-model', 0.002, 18000, 160)`, [at, taskId, owner, agent]);
+  };
+  /** Rows that must never count for OWNER's run: another owner's, OWNER's before the start, OWNER's for another bot. */
+  const seedNoise = async (): Promise<void> => {
+    await settle(protectedTaskId(OTHER, 'other-1'), OTHER, new Date(EPOCH + 5_000));
+    await settle(protectedTaskId(OTHER, 'other-2'), OTHER, new Date(EPOCH + 6_000));
+    await settle(protectedTaskId(OWNER, 'before-start'), OWNER, new Date(EPOCH - 60_000));
+    await settle(protectedTaskId(OWNER, 'job-guide', OTHER_AGENT), OWNER, new Date(EPOCH + 5_000), OTHER_AGENT);
+  };
+  /** The container mode's read: the GUC-wrapped non-superuser pool under the owner's request identity. */
+  const asOwner = (owner: string) => ({
+    ownerSub: owner,
+    query: (sql: string, params: unknown[]) => reader.query(sql, params),
+    withOwner: <T>(fn: () => Promise<T>) => runWithRequestIdentity({ sub: owner, isOperator: false }, fn),
+  });
+
+  it('the fixture enforces owner RLS on both tables and keys calls the way the node keys a protected execution', async () => {
+    const forced = await pool.query(`SELECT relname, relforcerowsecurity FROM pg_class WHERE relname IN ('chat_tasks', 'oshal_cost_events') ORDER BY relname`);
+    expect(forced.rows).toEqual([{ relname: 'chat_tasks', relforcerowsecurity: true }, { relname: 'oshal_cost_events', relforcerowsecurity: true }]);
+    expect(protectedTaskId(OWNER, 'execution-1')).toMatch(PROTECTED_TASK);
+    expect(protectedTaskId(OWNER, 'execution-2')).not.toBe(protectedTaskId(OWNER, 'execution-1'));
+    expect(protectedTaskId(OWNER, 'execution-1')).not.toBe(`${canonicalBotWorkspaceId(`career-engine-${OWNER}`)}::${AGENT}`);
+  });
+
+  it('passes a run shaped like the live one: 8 admitted, 2 settled under protected-<64 hex> task ids, read as the owner under RLS', async () => {
+    await seedNoise();
+    const f = fake({ calls: 40, perPoll: 8, admit: async (at, call) => { if (call <= 2) await settle(protectedTaskId(OWNER, `execution-${call}`), OWNER, at); } });
+    const result = await proof.runCareerRailAcceptance({ ...f.ports, ...asOwner(OWNER) }, { ledgerBudgetMs: 10_000 });
+    expect(result.state, result.detail).toBe('pass');
+    expect(result.detail).toContain('cancelled by the proof after its first admitted rail call (8 admitted)');
+    expect(result.detail).toContain(`the Career bot ${AGENT} recorded 2 ledger row(s) for this owner since the run started (36000 in / 320 out tokens`);
+    const settled = [protectedTaskId(OWNER, 'execution-1'), protectedTaskId(OWNER, 'execution-2')].sort();
+    expect(result.evidence.ledger).toEqual({ calls: 2, costUsd: 0.004, inputTokens: 36000, outputTokens: 320, taskIds: settled });
+    for (const taskId of result.evidence.ledger.taskIds) expect(taskId).toMatch(PROTECTED_TASK);
+    expect(result.evidence.rollups.map((row: { taskId: string }) => row.taskId).sort()).toEqual(settled);
+  });
+
+  it('fails naming "no cost" when the same fixture holds no ledger row of this owner and bot since the run started', async () => {
+    await seedNoise();
+    const f = fake({ calls: 40, perPoll: 8, admit: async () => undefined });
+    const result = await proof.runCareerRailAcceptance({ ...f.ports, ...asOwner(OWNER) }, { ledgerBudgetMs: 10_000 });
+    expect(result.state).toBe('fail');
+    expect(result.detail).toContain(`(8 admitted), but the kernel recorded no cost for agent ${AGENT} under this owner within 10s`);
+    expect(result.detail).toContain(`0 ledger rows since the run started, 0 rollup row(s) ending ::${AGENT} touched`);
+  });
+
+  it("never counts another owner's rows: RLS hides them from the owner's identity, and the query's own owner filter excludes them without RLS", async () => {
+    await seedNoise();
+    const since = new Date(EPOCH);
+    await settle(protectedTaskId(OWNER, 'execution-1'), OWNER, new Date(EPOCH + 5_000));
+    const legacy = `${canonicalBotWorkspaceId(`career-engine-${OWNER}`)}::${AGENT}`;
+    await settle(legacy, OWNER, new Date(EPOCH + 7_000));
+    const mine = { calls: 2, costUsd: 0.004, inputTokens: 36000, outputTokens: 320, taskIds: [legacy, protectedTaskId(OWNER, 'execution-1')].sort() };
+    const owned = await proof.readAttribution(asOwner(OWNER), since);
+    expect(owned.ledger).toEqual(mine);
+    expect(owned.rollups.map((row: { taskId: string }) => row.taskId)).toEqual([legacy, protectedTaskId(OWNER, 'execution-1')]);
+    // The superuser sees every row; the query itself still counts only OWNER's.
+    const unwalled = await proof.readAttribution({ ownerSub: OWNER, query: (sql: string, params: unknown[]) => pool.query(sql, params), withOwner: <T>(fn: () => Promise<T>) => fn() }, since);
+    expect(unwalled.ledger).toEqual(mine);
+    // OWNER's subject asked for through OTHER's request identity: RLS leaves nothing to count.
+    const walled = await proof.readAttribution({ ...asOwner(OWNER), withOwner: asOwner(OTHER).withOwner }, since);
+    expect(walled).toEqual({ rollups: [], ledger: { calls: 0, costUsd: 0, inputTokens: 0, outputTokens: 0, taskIds: [] } });
   });
 });
