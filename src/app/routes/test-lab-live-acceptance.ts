@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the signed-in Test Lab adapter for the automated live-acceptance sweep. The cases live once in scripts/lib/live-acceptance-*.js (the host runner scripts/operations/live-acceptance.js drives the same code with the operator token); this file only binds their ports to the running server as the initiating caller: loopback JSON and multipart calls carrying the caller's session cookie, the closed named-statement set on the request-identity pool, the ticket service, and the shared workspace root for fixture-tagged ask workspaces. The headless Chromium and `docker logs` ports exist only on the host, so the commerce and Jarvis-cache cards answer a named gap here before any call.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | An `anonymous` port: the same loopback JSON request with no session cookie, so a case can prove a route refuses an unauthenticated caller (the dev-workspace query route must answer 401/403).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Every case now runs with an empty runner environment (`env: {}`). The case modules read runner inputs such as OSHAL_VERIFY_DEV_NOTES_PROBE from process.env on the host, but inside the api that is the api's environment, and no compose file forwards any OSHAL_VERIFY_* variable to the api. The dev-workspace card used to fall back to it and told operators to set a variable the api never receives. Now it reports the handover ask as host-runner-only, naming the command.
  */
 import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 import { createChildLogger } from '@/shared/logger';
@@ -59,6 +60,15 @@ const statements = require('../../../scripts/lib/live-acceptance-sql.js') as { s
 
 /** Every registered live-acceptance case, in run order. */
 export const LIVE_ACCEPTANCE_CASES: readonly LiveAcceptanceCaseEntry[] = registry.CASES;
+
+/**
+ * The options every Lab card passes its case. The case modules read runner inputs (the dev-workspace
+ * probe words, OSHAL_VERIFY_DEV_*_PROBE) from the `env` option, then from process.env. On the host,
+ * process.env is the host runner's own environment. Here it would be the api's, which compose never
+ * gives an OSHAL_VERIFY_* variable. An empty `env` makes a case that needs such an input report it as a
+ * host-runner step instead of reading a variable that cannot be set here.
+ */
+const LAB_CASE_OPTIONS: Readonly<Record<string, unknown>> = Object.freeze({ env: Object.freeze({}) });
 
 /** How a case state shows on a Lab card: a deployment that cannot exercise the claim is a gap. */
 const LAB_STATE: Record<LiveAcceptanceResult['state'], State> = { pass: 'pass', fail: 'fail', degraded: 'degraded', unavailable: 'gap' };
@@ -139,7 +149,7 @@ export async function runLiveAcceptanceCase(key: string, cookie: string, runtime
     return { app: LIVE_ACCEPTANCE_APP, label, state: 'degraded', detail: 'A signed-in session is required; nothing was written.' };
   }
   const started = Date.now();
-  const result = await entry.module.run(labPorts(cookie, runtime));
+  const result = await entry.module.run(labPorts(cookie, runtime), LAB_CASE_OPTIONS);
   logger.info({ caseId: result.caseId, state: result.state, durationMs: Date.now() - started }, 'live acceptance case finished');
   return {
     app: LIVE_ACCEPTANCE_APP, label, state: LAB_STATE[result.state] ?? 'fail',

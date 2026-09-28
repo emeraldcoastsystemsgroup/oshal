@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the developer-workspace live-acceptance case's own logic over a doubled HTTP transport that keeps the package's dev-mode state: one tagged Jarvis conversation opened through the ask route, then a cited ADR answer in dev mode plus a refusal outside it, both in that conversation = pass, with dev mode left exactly as found (off or on) and the conversation removed and proven gone; a refused-but-still-cited answer = fail; a closed deployment gate or an unbuilt index = unavailable with the configuration step and no conversation; a dev mode that will not switch back = red cleanup; every action carries the page's same-origin headers. The package's own seam suites (store dev-workspace-index jarvis.core / refusal.core) prove the route and the refusal on the real core seam; the real companion for this case is `node scripts/operations/live-acceptance.js dev-workspace` on the box.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The completed case: four asks (ADR number, BACKLOG entry title, runbook, local-notes handover) in the one conversation, each passing only on a doc_id-carrying result of its path family; all four refused outside dev mode; an unauthenticated GET of the query route through the credential-free port answering 401/403. Red on: an uncited reply (a family hit with no doc_id), a wrong family (only the runbooks README), the anonymous probe answered 200, the anonymous port missing. Unavailable, with no conversation, on an index that holds no local-notes documents (naming --notes-dir), an index that does not report its sources, and a handover probe that was not supplied (naming OSHAL_VERIFY_DEV_NOTES_PROBE). The probe texts come from options or the injected env, never the host environment.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The probe gap names the host runner as the only source of the words: a missing handover probe, and an oversized one, each answer with the exact host command OSHAL_VERIFY_DEV_NOTES_PROBE="<its words>" node scripts/operations/live-acceptance.js dev-workspace and say the Test Lab card cannot supply them (compose forwards no OSHAL_VERIFY_* variable to the api). An empty `env` option wins over the process environment, which is what the Lab card relies on to never read the api's own. The Lab side is guarded in tests/unit/test-lab-live-acceptance-registration.spec.ts.
  */
 import { describe, expect, it } from 'vitest';
 import { createRequire } from 'node:module';
@@ -21,6 +22,8 @@ const NOTES_PROBE = 'handover fixture night';
 const BACKLOG_PROBE: string = devWorkspace.DEFAULT_PROBES.backlog;
 const RUNBOOK_PROBE: string = devWorkspace.DEFAULT_PROBES.runbook;
 const ENV = { OSHAL_VERIFY_DEV_NOTES_PROBE: NOTES_PROBE };
+/** The only command that supplies the handover words: the host runner, with the variable in its environment. */
+const HOST_COMMAND = 'OSHAL_VERIFY_DEV_NOTES_PROBE="<its words>" node scripts/operations/live-acceptance.js dev-workspace';
 
 type Result = { doc_id?: string; path: string };
 /** What the package tool answers per ask in dev mode: the runbook ranks second, as the lexical search does. */
@@ -186,12 +189,32 @@ describe('developer workspace index live acceptance', () => {
     const result = await devWorkspace.run(w.ports, { tag: TAG, env: {} });
     expect(result.state).toBe('unavailable');
     expect(result.detail).toContain('the handover ask needs OSHAL_VERIFY_DEV_NOTES_PROBE');
+    expect(result.detail).toContain(`run ${HOST_COMMAND}`);
+    expect(result.detail).toContain('the Test Lab card cannot supply it');
     expect(w.sessions).toEqual([]);
     const both = await devWorkspace.run(world({ sources: { checkout: 212 } }).ports, { tag: TAG, env: {} });
     expect(both.detail).toContain('no local-notes documents');
     expect(both.detail).toContain('OSHAL_VERIFY_DEV_NOTES_PROBE');
     const tooLong = await run(world(), { notesProbe: 'x'.repeat(201) });
     expect(tooLong.state).toBe('unavailable');
+    expect(tooLong.detail).toContain(`run ${HOST_COMMAND}`);
+  });
+
+  it('never reads the process environment when the caller passes an empty env (the Test Lab card does)', async () => {
+    const saved = process.env.OSHAL_VERIFY_DEV_NOTES_PROBE;
+    process.env.OSHAL_VERIFY_DEV_NOTES_PROBE = NOTES_PROBE;
+    try {
+      const w = world();
+      const lab = await devWorkspace.run(w.ports, { tag: TAG, env: {} });
+      expect(lab.state).toBe('unavailable');
+      expect(lab.detail).toContain(`run ${HOST_COMMAND}`);
+      expect(w.sessions).toEqual([]);
+      expect(w.anonymous.calls).toEqual([]);
+      const host = await devWorkspace.run(world().ports, { tag: TAG });
+      expect(host.state).toBe('pass');
+    } finally {
+      if (saved === undefined) delete process.env.OSHAL_VERIFY_DEV_NOTES_PROBE; else process.env.OSHAL_VERIFY_DEV_NOTES_PROBE = saved;
+    }
   });
 
   it('turns a dev mode that will not switch back into a red cleanup', async () => {

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - live acceptance for "Jarvis in dev mode should see what this workspace sees" (dev-workspace-index). As the caller: read the package's gate (super-admin, dev console, package flag); turn dev mode on through the package's same-origin route and require the index built; open one tagged Jarvis conversation through the real /api/jarvis/ask asking about the ADR (package-tool proposals must name a Jarvis session the caller owns, and only the ask route creates one issuer-bound); drive the Jarvis package-tool flow (preview, execute) in that conversation naming the ADR number and require the cited doc_id of that ADR's file; turn dev mode off and require the same ask refused with no citation; then restore the caller's original dev-mode state and remove the conversation. The deployment flags need an api restart, so when a gate is closed the case reports the configuration step and writes nothing.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Cover the rest of the entry's Done-when in the same tagged conversation. Four dev-mode asks - the ADR number, a docs/BACKLOG.md entry title, a docs/runbooks/*.md runbook (the runbooks index README is not a runbook) and a local-notes/ handover document from the index's --notes-dir set - are each judged by path family: the first returned result of the family must carry a doc_id (an uncited reply is a fail), and its rank is reported because the package's search is lexical. With dev mode off all four asks must be refused with no citation, and an unauthenticated GET of the query route (a new `anonymous` port with no credential) must answer 401 or 403. The backlog and runbook asks have tracked defaults; the handover ask has none and arrives by name (option `notesProbe` or OSHAL_VERIFY_DEV_NOTES_PROBE), so no untracked file name is written here. An index that holds no local-notes documents (read from /status `sources`) is UNAVAILABLE naming the --notes-dir build step, and a missing handover probe is UNAVAILABLE naming its variable; neither is ever a pass.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The probe words are a host-runner input: options first, then the `env` option, then this process's environment. No compose file forwards any OSHAL_VERIFY_* variable to the api, so the Test Lab card now passes an empty `env` and never reads the api's own environment. A missing or oversized probe names the one command that supplies it: OSHAL_VERIFY_DEV_NOTES_PROBE="<its words>" node scripts/operations/live-acceptance.js dev-workspace. Before this, the Lab card's description pointed operators at the api's environment, which never receives the variable.
  */
 
 'use strict';
@@ -25,8 +26,13 @@ const DEFAULT_ADR = '077';
 const ASK_LIMIT = 5;
 /** The package tool refuses a query longer than this (its inputSchema maxLength). */
 const MAX_PROBE_LENGTH = 200;
-/** Where the probe texts come from when the caller passes no option. */
+/**
+ * Where the probe texts come from when the caller passes no option: the host runner's environment.
+ * Compose forwards none of these to the api, so the Test Lab card (which runs inside the api) has no source for them.
+ */
 const PROBE_ENV = Object.freeze({ backlog: 'OSHAL_VERIFY_DEV_BACKLOG_PROBE', runbook: 'OSHAL_VERIFY_DEV_RUNBOOK_PROBE', notes: 'OSHAL_VERIFY_DEV_NOTES_PROBE' });
+/** The one command that supplies a probe's words: the host runner, with the variable in its environment. */
+const HOST_RUN = (variable) => `${variable}="<its words>" node scripts/operations/live-acceptance.js ${KEY}`;
 /**
  * Tracked defaults: an open docs/BACKLOG.md entry title and the words of a runbook's title. There is
  * no default for the handover: it is an untracked local note, so its words are supplied by name.
@@ -67,7 +73,8 @@ function closedGate(res) {
 
 /**
  * @description The four asks of one run, in the order they are asked, and the named gap when the
- * handover ask has no text. Options win over the environment; the environment over the defaults.
+ * handover ask has no text. Options win over the environment; the environment over the defaults. The
+ * environment is `options.env` when given (the Test Lab passes an empty one), else this process's: the host runner's.
  * @param {string} adr - The ADR number.
  * @param {object} options - Caller options (`backlogProbe`, `runbookProbe`, `notesProbe`, `env`).
  * @returns {{probes: Array<{key: string, label: string, family: string, re: RegExp, query: string}>, gap: string|null}} The asks.
@@ -79,7 +86,10 @@ function probesFor(adr, options = {}) {
   const gaps = [];
   for (const key of ['backlog', 'runbook', 'notes']) {
     const query = text(key);
-    if (!query || query.length > MAX_PROBE_LENGTH) gaps.push(`the ${FAMILIES[key].label} ask needs ${PROBE_ENV[key]} (or the ${key}Probe option) set to 1-${MAX_PROBE_LENGTH} characters of its words`);
+    if (!query || query.length > MAX_PROBE_LENGTH) {
+      gaps.push(`the ${FAMILIES[key].label} ask needs ${PROBE_ENV[key]} set to 1-${MAX_PROBE_LENGTH} characters of its words in the host runner's environment `
+        + `(the api never receives it, so the Test Lab card cannot supply it): run ${HOST_RUN(PROBE_ENV[key])}`);
+    }
     probes.push({ key, ...FAMILIES[key], query });
   }
   return { probes, gap: gaps.length ? gaps.join('; ') : null };
@@ -257,7 +267,8 @@ async function restoreDevMode(io, initial, ledger) {
  * @description Run the case once.
  * @param {object} ports - api, anonymous, origin, sql, workspace, ownerSub.
  * @param {object} [options] - `adr` (a three-digit ADR number), `backlogProbe` / `runbookProbe` / `notesProbe` (the words
- *   each ask sends; otherwise OSHAL_VERIFY_DEV_*_PROBE from `env`, default process.env), budget overrides, `tag` (tests only).
+ *   each ask sends; otherwise OSHAL_VERIFY_DEV_*_PROBE from `env`, default process.env, which carries them only on the host runner), budget
+ *   overrides, `tag` (tests only).
  * @returns {Promise<object>} The result with its cleanup receipt.
  */
 async function run(ports, options = {}) {
