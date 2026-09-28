@@ -1,0 +1,308 @@
+{
+  "evidenceKind": "public JSON inspection; no n8n runtime execution",
+  "privacy": "No credential IDs/names/values, code bodies or item payloads retained",
+  "samples": [
+    {
+      "sample": "starter-chat",
+      "url": "https://raw.githubusercontent.com/n8n-io/self-hosted-ai-starter-kit/refs/heads/main/n8n/demo-data/workflows/srOnR8PAY3u4RSwb.json",
+      "fetchedAt": "2026-09-25T19:44:07.017Z",
+      "bytes": 1864,
+      "sha256": "e4e3112000b61db5fed114b026b000912b90ff832f163c3e7cc0d839bb1b7bad",
+      "name": "Demo workflow",
+      "active": false,
+      "settings": {
+        "executionOrder": "v1"
+      },
+      "nodeCount": 3,
+      "edgeCount": 2,
+      "nodes": [
+        {
+          "id": "74003dcd-2ac7-4caa-a1cd-adecc5143c07",
+          "name": "Chat Trigger",
+          "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+          "typeVersion": 1,
+          "parameterKeys": [],
+          "credentialTypes": [],
+          "containsCode": false
+        },
+        {
+          "id": "ce8c3da4-899c-4cc4-af73-8096c64eec64",
+          "name": "Basic LLM Chain",
+          "type": "@n8n/n8n-nodes-langchain.chainLlm",
+          "typeVersion": 1.7,
+          "parameterKeys": [],
+          "credentialTypes": [],
+          "containsCode": false
+        },
+        {
+          "id": "3dee878b-d748-4829-ac0a-cfd6705d31e5",
+          "name": "Ollama Chat Model",
+          "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+          "typeVersion": 1,
+          "parameterKeys": [
+            "model",
+            "options"
+          ],
+          "credentialTypes": [
+            "ollamaApi"
+          ],
+          "containsCode": false
+        }
+      ],
+      "edges": [
+        {
+          "source": "Chat Trigger",
+          "channel": "main",
+          "sourceOutputIndex": 0,
+          "target": "Basic LLM Chain",
+          "targetInputIndex": 0,
+          "targetChannel": "main"
+        },
+        {
+          "source": "Ollama Chat Model",
+          "channel": "ai_languageModel",
+          "sourceOutputIndex": 0,
+          "target": "Basic LLM Chain",
+          "targetInputIndex": 0,
+          "targetChannel": "ai_languageModel"
+        }
+      ],
+      "pinnedItemCounts": {},
+      "directTypeCopy": {
+        "accepted": false,
+        "error": "node \"Chat Trigger\" has unsupported type \"@n8n/n8n-nodes-langchain.chatTrigger\""
+      }
+    },
+    {
+      "sample": "merge-template-655",
+      "url": "https://api.n8n.io/workflows/templates/655",
+      "fetchedAt": "2026-09-25T19:44:06.994Z",
+      "bytes": 1815,
+      "sha256": "65e153cb155893245f335a0144278eef4c1050ea775bb2d39106e395ba6a78e5",
+      "name": "Merge greetings with the users based on the language",
+      "active": "not specified",
+      "settings": {},
+      "nodeCount": 4,
+      "edgeCount": 4,
+      "nodes": [
+        {
+          "id": "f7f8068b-52c9-4038-bd67-9ee50136e4fd",
+          "name": "When clicking ‘Test workflow’",
+          "type": "n8n-nodes-base.manualTrigger",
+          "typeVersion": 1,
+          "parameterKeys": [],
+          "credentialTypes": [],
+          "containsCode": false
+        },
+        {
+          "id": "860e5e46-a04d-41cb-b91a-c9f02603bcdf",
+          "name": "Sample data (name + language)",
+          "type": "n8n-nodes-base.code",
+          "typeVersion": 2,
+          "parameterKeys": [
+            "jsCode"
+          ],
+          "credentialTypes": [],
+          "containsCode": true
+        },
+        {
+          "id": "5c6a867b-fd8a-49b7-ac35-ff84ed6d89f7",
+          "name": "Sample data (greeting + language)",
+          "type": "n8n-nodes-base.code",
+          "typeVersion": 2,
+          "parameterKeys": [
+            "jsCode"
+          ],
+          "credentialTypes": [],
+          "containsCode": true
+        },
+        {
+          "id": "08fca489-8f4c-4327-9919-922bd1be1cd5",
+          "name": "Merge (name + language + greeting)",
+          "type": "n8n-nodes-base.merge",
+          "typeVersion": 3,
+          "parameterKeys": [
+            "mode",
+            "options",
+            "fieldsToMatchString"
+          ],
+          "credentialTypes": [],
+          "containsCode": false,
+          "mode": "combine",
+          "matchingFields": "language"
+        }
+      ],
+      "edges": [
+        {
+          "source": "Sample data (name + language)",
+          "channel": "main",
+          "sourceOutputIndex": 0,
+          "target": "Merge (name + language + greeting)",
+          "targetInputIndex": 0,
+          "targetChannel": "main"
+        },
+        {
+          "source": "Sample data (greeting + language)",
+          "channel": "main",
+          "sourceOutputIndex": 0,
+          "target": "Merge (name + language + greeting)",
+          "targetInputIndex": 1,
+          "targetChannel": "main"
+        },
+        {
+          "source": "When clicking ‘Test workflow’",
+          "channel": "main",
+          "sourceOutputIndex": 0,
+          "target": "Sample data (name + language)",
+          "targetInputIndex": 0,
+          "targetChannel": "main"
+        },
+        {
+          "source": "When clicking ‘Test workflow’",
+          "channel": "main",
+          "sourceOutputIndex": 0,
+          "target": "Sample data (greeting + language)",
+          "targetInputIndex": 0,
+          "targetChannel": "main"
+        }
+      ],
+      "pinnedItemCounts": {},
+      "directTypeCopy": {
+        "accepted": false,
+        "error": "node \"When clicking ‘Test workflow’\" has unsupported type \"n8n-nodes-base.manualTrigger\""
+      }
+    },
+    {
+      "sample": "if-boolean-fixture",
+      "url": "https://raw.githubusercontent.com/n8n-io/n8n/master/packages/nodes-base/nodes/If/test/v2/IfV2.boolean.json",
+      "fetchedAt": "2026-09-25T19:44:06.874Z",
+      "bytes": 3100,
+      "sha256": "c9ba81ad6fbf3a2a16b87fab1a64cc3693fb0ea651637bfec8d4905b9c2f8203",
+      "name": "Filter test: boolean",
+      "active": false,
+      "settings": {
+        "executionOrder": "v1"
+      },
+      "nodeCount": 5,
+      "edgeCount": 4,
+      "nodes": [
+        {
+          "id": "9e2c2dc5-bd37-460b-a5a4-943860dcc03e",
+          "name": "When clicking \"Execute Workflow\"",
+          "type": "n8n-nodes-base.manualTrigger",
+          "typeVersion": 1,
+          "parameterKeys": [],
+          "credentialTypes": [],
+          "containsCode": false
+        },
+        {
+          "id": "3184fda2-b1d0-400a-a882-5844bbe99ae3",
+          "name": "false",
+          "type": "n8n-nodes-base.noOp",
+          "typeVersion": 1,
+          "parameterKeys": [],
+          "credentialTypes": [],
+          "containsCode": false
+        },
+        {
+          "id": "85de5f5c-0a4c-4da1-805b-9e056089bcd5",
+          "name": "Code",
+          "type": "n8n-nodes-testing.testData",
+          "typeVersion": 1,
+          "parameterKeys": [
+            "data"
+          ],
+          "credentialTypes": [],
+          "containsCode": false,
+          "inputItemCount": 5
+        },
+        {
+          "id": "8577ab3b-b9f8-4c4d-a3a1-abb6a9269473",
+          "name": "true",
+          "type": "n8n-nodes-base.noOp",
+          "typeVersion": 1,
+          "parameterKeys": [],
+          "credentialTypes": [],
+          "containsCode": false
+        },
+        {
+          "id": "d5d17556-45e6-44a1-8580-a08395ca38c4",
+          "name": "loose",
+          "type": "n8n-nodes-base.if",
+          "typeVersion": 2.2,
+          "parameterKeys": [
+            "conditions",
+            "looseTypeValidation",
+            "options"
+          ],
+          "credentialTypes": [],
+          "containsCode": false,
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "307e4ea0-3a82-4722-aca6-68d882115e8b",
+                "leftValue": "={{ $json.admin }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "source": "When clicking \"Execute Workflow\"",
+          "channel": "main",
+          "sourceOutputIndex": 0,
+          "target": "Code",
+          "targetInputIndex": 0,
+          "targetChannel": "main"
+        },
+        {
+          "source": "Code",
+          "channel": "main",
+          "sourceOutputIndex": 0,
+          "target": "loose",
+          "targetInputIndex": 0,
+          "targetChannel": "main"
+        },
+        {
+          "source": "loose",
+          "channel": "main",
+          "sourceOutputIndex": 0,
+          "target": "true",
+          "targetInputIndex": 0,
+          "targetChannel": "main"
+        },
+        {
+          "source": "loose",
+          "channel": "main",
+          "sourceOutputIndex": 1,
+          "target": "false",
+          "targetInputIndex": 0,
+          "targetChannel": "main"
+        }
+      ],
+      "pinnedItemCounts": {
+        "true": 2,
+        "false": 3
+      },
+      "directTypeCopy": {
+        "accepted": false,
+        "error": "node \"When clicking \"Execute Workflow\"\" has unsupported type \"n8n-nodes-base.manualTrigger\""
+      }
+    }
+  ]
+}
+

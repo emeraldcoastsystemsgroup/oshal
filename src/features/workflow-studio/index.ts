@@ -7,12 +7,15 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Exported the workflow run-history store (runs + step records for the studio Runs panel / run inspector)
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | FSD deep-import burn-down: surfaced the process-definition execution engine, its schema/state contracts, and the engine-services node/result types consumers were deep-importing from ./engine and ./schemas
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Surfaced the NodeExecutor / NodeExecutionResult contract and the EngineState type so the multi-app planner's plan-step executor can register a custom node executor through the barrel (no deep import).
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Exported the analysis-only n8n import surface (analyzeN8nImport, N8nImportAnalysisError, buildN8nImportPackDraft and their report types) so the Packs route and the tool executor reach it through the barrel instead of deep imports.
  */
 
 export * from './schemas/workflow-studio-schemas';
 export * from './services/workflow-studio-compiler';
 export * from './services/workflow-studio-service';
 export * from './services/workflow-run-history-store';
+export * from './services/n8n-import-analyzer';
+export * from './services/n8n-import-pack-draft';
 
 // FSD deep-import burn-down (2026-07-24): process-definition engine surface through the barrel.
 export { ProcessDefinitionExecutionEngine } from './engine/process-definition-execution-engine';

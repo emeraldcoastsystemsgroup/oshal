@@ -1,0 +1,103 @@
+{
+  "observedAt": "2026-09-25T19:44:06.638Z",
+  "head": "34b9065992405765738369923652fe02a5141e97",
+  "node": "v24.11.0",
+  "evidenceKind": "Actual compiler/graph walker; fixture service callbacks; no DB, provider or n8n execution",
+  "sourceSha256": {
+    "src/features/swarm-apps/services/workflow-publish-compiler.ts": "20787ec429bdd5d4b2c8bdb283f66ab4d507e770403719ad4d50dbd77a529d86",
+    "src/features/workflow-studio/engine/process-definition-execution-engine.ts": "ac7319f21256b00aee3b9ecdef09958bd22ed6cc1375c7f8dd583b751747cf06",
+    "src/features/workflow-studio/engine/expression-evaluator.ts": "969ee5af8897e64b67f22b49478b9de96a82c6b46c7b6da03ed638268bbd2800",
+    "src/features/workflow-studio/engine/engine-state.ts": "f476290122eb4f30fa6f26e41136183de489ddbe548f3123cecd6f622b8d86a4",
+    "src/features/workflow-studio/schemas/process-definition-schema.ts": "82ca8cd6ba502c53be2996d9aa26e70787259c6d0ac9511ccc7a29ed8e892042",
+    "src/app/routes/swarm-app-routes.ts": "94e925fb2c8c75c87e3292cfa0bf0def94e3963a6b47c032e2ffc51840de34c3"
+  },
+  "passed": 11,
+  "failed": 0,
+  "results": [
+    {
+      "id": "deterministic-only-graph-rejected",
+      "status": "pass",
+      "observed": "Publisher requires a bot/cluster node even for an otherwise valid graph."
+    },
+    {
+      "id": "port-metadata-not-emitted",
+      "status": "pass",
+      "observed": "Extra channel/input/output metadata on a synthetic edge is dropped by the existing compiler."
+    },
+    {
+      "id": "unsupported-expression-is-false",
+      "status": "pass",
+      "observed": "Raw n8n expression returns false; strict OSHAL Boolean does not match the public loose-Boolean fixture for numeric 1."
+    },
+    {
+      "id": "mapped-native-branches-execute",
+      "status": "pass",
+      "observed": [
+        {
+          "complexity": "high",
+          "called": [
+            "fixture-yes"
+          ],
+          "outcome": "completed"
+        },
+        {
+          "complexity": "low",
+          "called": [
+            "fixture-no"
+          ],
+          "outcome": "completed"
+        }
+      ]
+    },
+    {
+      "id": "declared-node-retry-and-error-branch-not-applied",
+      "status": "pass",
+      "observed": {
+        "configuredTries": 3,
+        "actualCalls": [
+          "fixture-bot"
+        ],
+        "result": "exception propagated; error handler not called"
+      }
+    },
+    {
+      "id": "subprocess-placeholder-still-reaches-deliver",
+      "status": "pass",
+      "observed": "Compiler accepts sub-process, but the default executor returns not-implemented and the graph completes."
+    },
+    {
+      "id": "unknown-direct-runtime-node-skipped",
+      "status": "pass",
+      "observed": "Only a direct engine call bypassing publish validation skips the unsupported node; publisher correctly rejects it."
+    },
+    {
+      "id": "step-output-binding-not-applied",
+      "status": "pass",
+      "observed": "The named output binding did not populate variables; outputs still exist under engine nodeOutputs."
+    },
+    {
+      "id": "ticket-item-array-does-not-drive-per-item-execution",
+      "status": "pass",
+      "observed": {
+        "inputItems": 5,
+        "executionCalls": 1,
+        "note": "No automatic n8n item-stream semantics."
+      }
+    },
+    {
+      "id": "ordinary-fanout-takes-first-edge",
+      "status": "pass",
+      "observed": "Plain fanout follows only the first edge; parallel-split is concurrent, not n8n v1 branch ordering."
+    },
+    {
+      "id": "cycle-is-regression-not-item-loop",
+      "status": "pass",
+      "observed": {
+        "actualCalls": 4,
+        "outcome": "escalated",
+        "reason": "Regression budget exhausted after 4 loops"
+      }
+    }
+  ]
+}
+

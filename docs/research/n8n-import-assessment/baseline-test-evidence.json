@@ -1,0 +1,11 @@
+{
+  "observedAt": "2026-09-25T19:47:52.406Z",
+  "command": "node node_modules/vitest/vitest.mjs run tests/unit/workflow-publish-compiler.spec.ts tests/unit/process-definition-engine-decision.spec.ts tests/unit/process-definition-engine-parallel.spec.ts tests/unit/process-definition-engine-durable.spec.ts tests/unit/process-definition-engine-suspend.spec.ts tests/unit/process-definition-terminal-outcome.spec.ts --no-file-parallelism --reporter=dot",
+  "evidenceKind": "Existing focused unit tests, not live or n8n runtime acceptance",
+  "chunk_id": "b69172",
+  "wall_time_seconds": 2.6125688,
+  "exit_code": 0,
+  "original_token_count": 66,
+  "output": "\n RUN  v4.1.9 C:/Projects/oshal\n\n······························\n\n Test Files  6 passed (6)\n      Tests  30 passed (30)\n   Start at  14:47:50\n   Duration  1.51s (transform 191ms, setup 0ms, import 471ms, tests 43ms, environment 0ms)\n\n"
+}
+
