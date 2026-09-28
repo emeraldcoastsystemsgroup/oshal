@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Register one explicit-only Test Lab card per automated live-acceptance case (scripts/lib/live-acceptance-cases.js): shared response renderer + Tutor, congressional disclosures + watchlist Add, developer workspace index in and out of dev mode, the ADR-160 Floater budget, the LinkedIn queue to a reviewed draft (never published), the commerce surfaces through the confirm gate (host runner only), the Little Monsters class-material hand-off and the Jarvis prompt-cache measurement (host runner only). Each writes only tagged synthetic fixtures and removes them, or spends a real model turn, so none runs from "Run live scenarios". Guard: tests/unit/test-lab-live-acceptance-registration.spec.ts.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The trading-parity card description: the parity readback card, the plan route and the two unconfirmed promotion paths, read-only.
  */
 import type { Scenario } from './test-lab-scenarios';
 import { LIVE_ACCEPTANCE_APP, LIVE_ACCEPTANCE_CASES, runLiveAcceptanceCase } from './test-lab-live-acceptance';
@@ -17,6 +18,7 @@ const DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
   linkedin: 'Files one tagged synthetic LinkedIn content ticket, waits for the social-writer to produce a graded pending-approval draft that names the ticket and carries its citation, and requires publish-without-confirmation to be refused 428. It never approves or publishes; the draft is rejected and deleted and the ticket removed. Spends real model turns.',
   commerce: 'Drives the installed Rides, Eats and Shopping surfaces at 390 px in headless Chromium up to the confirm card and cancels it, counting any hand-off POST or window.open. Needs the host runner (Chromium); from the Lab it reports that gap without touching anything.',
   'lm-class-material': 'Creates a tagged synthetic Little Monsters class, sends one generated PDF to it through a Send-to handle and the class-material import, requires 201 approved and the material listed in the class, then deletes the material and the class.',
+  'trading-parity': 'Runs the trading paper-to-live parity card (gap filter, exit plans, yield sleeve: each must be armed on the paper book), reads the trading package plan route for the paper book, and sends both promotion paths (plan amend, parity mix edit) a change WITHOUT confirm, requiring 428 from each. Read-only: nothing it sends carries confirm.',
   'jarvis-cache': 'Opens three fresh Jarvis conversations and reads the Jarvis bot call log for the invariant-preamble cache state (created, then hit with cached tokens) and token counts. Needs the host runner (docker logs); from the Lab it reports that gap before any model turn.',
 });
 
