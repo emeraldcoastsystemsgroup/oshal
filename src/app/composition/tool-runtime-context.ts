@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read two of the six and fell back to <cwd>/workspace where everything else falls back to workspace-shared - and what it writes is the file the agent then reads back through its sandboxed read_file, so the two roots disagreeing means the agent cannot see its own input.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | CKR-15 / D11: the chat path assembles its system prompt through assembleContainedPrompt instead of a bare sections.join, so the 23 registry rows that execute inline in the api container get the same containment frame the layered swarm path has had - TRUST CONTRACT first, the server authority rebind last. The three fragments are unchanged in content, and all three are server-authored (the persona YAML on disk, the tool catalogue from the registry, environment facts the server holds), so each declares that and names its own contentSource. Severity here is defence in depth, not a live hole: no untrusted party can author this prompt today - every input traced is operator- or server-authored, and the one raw interpolation is whitespace-collapsed and 120-char capped - but one path having a frame while its sibling does not is the divergence that becomes a hole the first time an input changes hands. Deliberately the SAME function rather than a second assembly, for the reason CKR-5 exists.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | Discover n8n analysis through the seeded registry only; no fallback advertises an import when registry readiness is unknown.
  */
 
 import type { AgentProfileService } from '@/features/agent-profile';
@@ -54,6 +55,7 @@ const EXECUTABLE_REGISTRY_TOOL_NAMES = new Set([
   'analyze-spending',
   'check-budget',
   'workflow-studio',
+  'n8n-import-analyze',
 ]);
 const SERVER_EXECUTABLE_TOOL_FALLBACKS: LLMToolDefinition[] = [
   {

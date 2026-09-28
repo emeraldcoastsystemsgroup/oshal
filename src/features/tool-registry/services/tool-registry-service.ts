@@ -15,12 +15,14 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Extracted baseline/persona seed catalogs into dedicated modules to satisfy file-size governance limits
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Existence checks now use getToolByName instead of scanning getAllTools() (capped at LIMIT 100) — once the tools table passed 100 rows, seeding collided on the unique name constraint and aborted; seeding also tolerates the concurrent-container 23505 race
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Protect the code-owned authorization family from package registration and mutation.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | Seed the bounded n8n import analyzer with the dedicated workflow tool catalog.
  */
 
 import { Tool } from '@/shared/types/tool';
 import { ToolRepository, ToolFiltersSchema, type CreateToolInput, type UpdateToolInput } from '@/entities/tool';
 import { TOOL_REGISTRY_BASELINE_TOOLS } from './tool-registry-baseline-tools';
 import { TOOL_REGISTRY_PERSONA_TOOLS } from './tool-registry-persona-tools';
+import { TOOL_REGISTRY_WORKFLOW_TOOLS } from './tool-registry-workflow-tools';
 import { z } from 'zod';
 import { isAuthorizationTool } from '@/shared/security/authorization-tool-contract';
 type ToolFilters = z.infer<typeof ToolFiltersSchema>;
@@ -258,6 +260,7 @@ export class ToolRegistryService {
     const baselineTools: CreateToolInput[] = [
       ...TOOL_REGISTRY_BASELINE_TOOLS,
       ...TOOL_REGISTRY_PERSONA_TOOLS,
+      ...TOOL_REGISTRY_WORKFLOW_TOOLS,
     ];
 
     const registered: string[] = [];
