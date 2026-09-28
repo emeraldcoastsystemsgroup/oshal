@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | A dependency absent from the caller's catalog is labelled 'not in your catalog': the catalog lists active apps visible to this viewer, so an installed but inactive or person-scoped app is not proof of 'not installed'
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Integration review: every server-provided link the shell puts in an href (the shared hand-off chip, a '/' link in an answer, a file download) goes through LIVE.localHref, so a target that resolves off this origin ('//host', '/\host', a tab-split path) is never linked; the Games chip's visible label carries the hedge ('Looks like a game'); a roster 403 with roster_scope_denied says this session is not permitted to read the roster instead of blaming a missing admin role.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Fix round 1: states the one exception to row 5. Only '/' answer links, hand-off chips, file downloads and admitted workspace links go through LIVE.localHref; an absolute http(s) answer link is outside the same-origin guard by design and opens in a new tab with noopener noreferrer. A dot-segment answer link such as '[x](/..//host/y)' now stays literal text because the guard refuses it.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | The attention list reads the shared status groups (LIVE.STATUS_GROUPS.attention), so an approval gate, a customer action and a parked (dead-letter) ticket lead the briefing with the other items that wait on the person.
  */
 (() => {
   'use strict';
@@ -120,7 +121,8 @@
     const isPinned = id => state.pins.includes(id);
     const workFor = appId => work.filter(w => w.app === appId);
     const openWork = () => work.filter(w => w.status.open);
-    const attention = () => work.filter(w => ['Review', 'Escalated', 'Blocked', 'Failed'].includes(w.status.label)).concat(openWork().filter(w => !['Review', 'Escalated', 'Blocked', 'Failed'].includes(w.status.label)));
+    const needsYou = w => LIVE.STATUS_GROUPS.attention.includes(w.status.label);
+    const attention = () => work.filter(needsYou).concat(openWork().filter(w => !needsYou(w)));
     const timeAgo = item => LIVE.relativeTime(item.at);
     let toastTimer = 0;
 

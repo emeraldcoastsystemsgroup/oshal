@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Integration review: one same-origin guard, localHref, resolves a server-provided link against the page origin the way the browser will (tab/CR/LF stripped, a backslash read as a slash) and keeps only a path that stays on this origin, so '//host', '/\host' and a tab-split '/<TAB>/host' can never become a link. ask()'s poll-limit result carries code 'poll_limit' so a caller can say the page stopped checking instead of calling the request failed. The roster read keeps the route's refusal code (roster_scope_denied vs roster_administrator_required). markDelivered is removed: the Jarvis page stays the one surface that announces and marks results.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Fix round 1: localHref checks the path it returns as well as the URL it resolved. Dot segments normalise '/..//host', '/.//host' and '/%2e%2e//host' to a pathname that starts with '//', which the guard returned as a protocol-relative link that opens another origin; now a returned path must not start with '//' and must itself resolve to the page origin. The admitted navigation href from GET /api/ui/workspaces goes through the same guard and falls back to the cockpit link when refused, so every catalog Open link stays on this origin.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Acceptance fixes: calendarDay reads a date-only field ('YYYY-MM-DD' or exactly UTC midnight, how a Postgres DATE reaches JSON) as that local calendar day, so a Little Monsters due date no longer prints a day early west of Greenwich (due_date was the only field read through `new Date(iso)`); event and last-active dates were already read as local days and now share the helper, as do the agenda's class events. probeSummary carries the first probe's refusal code as `error`, and littleMonstersRefusal names an application-authorization refusal (403 app_access_* / authorization_*) apart from the package's no-school-profile sentence, so a shell stops telling an unadmitted caller to open Little Monsters.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Every canonical ticket state now folds to a label a shell can place: approved (Approved, waiting for the queue), approval_required (Approval required) and customer_action (Needs you) wait on a person, dead_letter reads Blocked, and every in_process_* phase is Working (they printed as "In process build" and fell off the Commons board, and an approval gate was never counted as needing you). STATUS_GROUPS names the attention / moving / done label sets the shells share for briefings and board columns.
  */
 (function attach(root, factory) {
   'use strict';
@@ -33,22 +34,37 @@
   };
   var SUITE_ORDER = ['ai-finance', 'ai-engineering', 'ai-creative', 'ai-productivity', 'ai-home', 'ai-knowledge', 'platform'];
 
-  /** Raw ticket / Jarvis task statuses seen on the platform, folded to the vocabulary the shells show. */
+  /**
+   * Raw ticket / Jarvis task statuses seen on the platform, folded to the vocabulary the shells show. The canonical
+   * ticket states (OshalTicketStateSchema) are all named: approved waits for the queue, approval_required and
+   * customer_action wait on a person, dead_letter is parked until an operator requeues it, and every in_process_*
+   * phase is Working (statusOf folds the prefix).
+   */
   var STATUS_LABELS = {
     complete: 'Ready', completed: 'Ready', done: 'Ready', resolved: 'Ready', delivered: 'Ready', closed: 'Closed',
     in_process: 'Working', in_progress: 'Working', running: 'Working', processing: 'Working', summarizing: 'Working', active: 'Working',
     pending: 'Queued', queued: 'Queued', backlog: 'Queued', created: 'Queued', new: 'Queued', open: 'Queued', scheduled: 'Queued',
+    approved: 'Approved', approval_required: 'Approval required', customer_action: 'Needs you', dead_letter: 'Blocked',
     review: 'Review', in_review: 'Review', pending_approval: 'Review', awaiting_approval: 'Review', approval: 'Review',
     escalated: 'Escalated', blocked: 'Blocked', paused: 'Paused',
     error: 'Failed', failed: 'Failed', cancelled: 'Cancelled', canceled: 'Cancelled'
   };
-  var TONE_BY_LABEL = { Ready: 'good', Working: 'neutral', Queued: 'neutral', Review: 'warn', Escalated: 'warn', Blocked: 'warn', Paused: 'neutral', Failed: 'warn', Cancelled: 'neutral', Closed: 'neutral' };
+  var TONE_BY_LABEL = { Ready: 'good', Working: 'neutral', Queued: 'neutral', Approved: 'neutral', Review: 'warn', 'Approval required': 'warn', 'Needs you': 'warn', Escalated: 'warn', Blocked: 'warn', Paused: 'neutral', Failed: 'warn', Cancelled: 'neutral', Closed: 'neutral' };
   var CLOSED_LABELS = { Ready: true, Closed: true, Cancelled: true, Failed: true };
+  /**
+   * The three places a work item belongs on a board or in a briefing: it waits on a person (attention), it is moving
+   * through the swarm (moving), or it is finished (done). Every label statusOf can produce for a known state is in one.
+   */
+  var STATUS_GROUPS = {
+    attention: ['Review', 'Approval required', 'Needs you', 'Escalated', 'Blocked', 'Failed'],
+    moving: ['Working', 'Queued', 'Approved', 'Paused'],
+    done: ['Ready', 'Closed', 'Cancelled']
+  };
 
   /** @description Fold a raw platform status into a display label, tone and open/closed flag. */
   function statusOf(raw) {
     var key = String(raw || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
-    var label = STATUS_LABELS[key] || (key ? key.replace(/_/g, ' ').replace(/^\w/, function (c) { return c.toUpperCase(); }) : 'Unknown');
+    var label = STATUS_LABELS[key] || (/^in_process_/.test(key) ? 'Working' : key ? key.replace(/_/g, ' ').replace(/^\w/, function (c) { return c.toUpperCase(); }) : 'Unknown');
     return { raw: String(raw || ''), label: label, tone: TONE_BY_LABEL[label] || 'neutral', open: !CLOSED_LABELS[label] };
   }
 
@@ -723,7 +739,7 @@
   }
 
   var api = {
-    SUITE_META: SUITE_META, SUITE_ORDER: SUITE_ORDER, statusOf: statusOf, initials: initials, deriveIdentity: deriveIdentity,
+    SUITE_META: SUITE_META, SUITE_ORDER: SUITE_ORDER, STATUS_GROUPS: STATUS_GROUPS, statusOf: statusOf, initials: initials, deriveIdentity: deriveIdentity,
     mergeApps: mergeApps, buildSuites: buildSuites, mergeWork: mergeWork, normalizeTicket: normalizeTicket, normalizeTask: normalizeTask,
     atPointer: atPointer, normalizeSummary: normalizeSummary, relativeTime: relativeTime, clockTime: clockTime, parseDate: parseDate,
     calendarDay: calendarDay, littleMonstersRefusal: littleMonstersRefusal, dependencyTiers: dependencyTiers, declaredAssistants: declaredAssistants, directoryPeople: directoryPeople, classEvents: classEvents,
