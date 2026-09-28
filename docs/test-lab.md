@@ -332,6 +332,15 @@ and prerequisites without running application smokes. **Connector sign-in callba
 identities without installing packages or changing trust. Their linked local suites run using
 `npm run test:platform-readiness`.
 
+**Exact-SHA package audit gate** (`package-audit-exact-sha`, Tools, explicit-only) installs the
+first store package that has an audited catalog binding. It uses the real installer in `enforce`
+mode and writes into a temporary directory. The directory is removed afterwards and the removal is
+verified. Nothing is deployed or loaded. A pass means the installed commit is exactly the audited
+SHA. A gap means the store publishes an attestation it cannot prove: the audited commit is not
+served there, or the source changed after the audit. The linked real-Git suites cover the evidence
+re-hash, the stale-source and version refusals, and the unpinned compatible fallback. Run them with
+`npx vitest run tests/unit/package-audit-installer.spec.ts tests/unit/test-lab-package-audit-registration.spec.ts`.
+
 **Yahoo Mail connector (app password, read-only IMAP)** (`yahoo-mail-connector`, Tools) checks that
 the Yahoo credential stays behind sign-in. Its linked suites run the real IMAP client against a
 loopback responder. They cover the closed `address:app-password` schema, the fixed

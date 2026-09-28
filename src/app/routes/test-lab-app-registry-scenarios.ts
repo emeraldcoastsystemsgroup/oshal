@@ -5,7 +5,12 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Attach the ADR-147 D10 fetch-fence suite to multi-store discovery: the hostname half of the fence is a registry-read behaviour, so it belongs to the scenario that reads registries rather than to a new live step - a Lab step that proved it would have to make the running swarm resolve a name into private space.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Register the catalog connector-readiness scenario. The applications page joins two token-free feeds - the bundle's declared providers from the app listing and the caller's own state from the connector broker - and a live step is the only place their AGREEMENT can be checked: a listing that predates the projection, or a broker that answers for nobody, both leave the catalog unable to tell connected from credential-needed. Read-only: it lists apps and reads the caller's own connector states, and never starts a consent flow or changes a connection.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Register the dependency-tier scenario: a read-only live step checks one install preview reports required/optional tiers with closed states and never offers an install the installer would refuse; its contract, installer and App Loader browser suites are attached.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Backlog #33: register the exact-SHA package-audit gate. Its live step runs the REAL installer in enforce mode for the first catalog package that carries an audited binding, into a disposable temporary directory (never deployed-apps, nothing loaded), and reports pass only for an exact audited pin; an attestation the configured store cannot serve or that no longer describes the catalog source reports a gap. The temporary directory is removed and its removal verified. The installer's real-Git evidence, stale-source and version suites are attached.
  */
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFile } from 'node:child_process';
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
 /** GET a JSON API path with the initiating operator's cookie. */
@@ -95,6 +100,104 @@ async function catalogConnectorReadiness(cookie: string): Promise<StepResult> {
   return result('pass', `${bundles} bundle(s) declare ${declared.size} provider id(s); ${offered.length} are offered by this deployment's broker and the rest render as unavailable here. Nothing was connected or changed.`);
 }
 
+const UNAUDITED = '0'.repeat(40);
+const AUDIT_LABEL = 'Exact-SHA install in enforce mode';
+
+/** One catalog package, as the exact-SHA step needs it. */
+export interface AuditedCatalogPackage {
+  name: string;
+  status: string;
+  source: { url: string; ref: string } | null;
+  audit: { sourceSha: string } | null;
+}
+
+/** What one disposable installer run produced. */
+export interface AuditInstallRun {
+  code: number;
+  output: string;
+  provenance: { sha?: string; audit?: { mode?: string; verified?: boolean; sourceSha?: string | null } } | null;
+}
+
+/**
+ * @description Judge one disposable enforce-mode install. Pass only for an exact audited pin (the
+ * installed commit IS the catalog's audited SHA); an attestation the store cannot serve or that
+ * no longer matches the catalog source is a gap in the promoted catalog, not an installer defect.
+ * @param pkg - The catalog package that was installed.
+ * @param run - Installer exit code, combined output, and the provenance stamp when it installed.
+ * @returns The step state and a one-sentence detail.
+ */
+export function packageAuditInstallVerdict(pkg: AuditedCatalogPackage, run: AuditInstallRun): Pick<StepResult, 'state' | 'detail'> {
+  const expected = pkg.audit?.sourceSha;
+  if (run.code === 0) {
+    const pinned = run.provenance?.audit?.mode === 'enforce' && run.provenance.audit.verified === true
+      && run.provenance.sha === expected && run.provenance.audit.sourceSha === expected;
+    return pinned
+      ? { state: 'pass', detail: `${pkg.name} installed from exactly its audited commit ${String(expected).slice(0, 12)} in enforce mode, into a temporary directory that was then removed.` }
+      : { state: 'fail', detail: `${pkg.name} installed in enforce mode without an exact audited pin; the provenance does not name ${String(expected).slice(0, 12)}.` };
+  }
+  const reason = run.output.split('\n').map((line) => line.trim()).find((line) => /re-audit|cannot be read from this store|changed since the audit/.test(line));
+  if (reason) return { state: 'gap', detail: `${pkg.name}: enforce mode refused it because the catalog's attestation is not bound to this store's source (${reason.slice(0, 240)}).` };
+  if (/install failed:/.test(run.output)) return { state: 'degraded', detail: `${pkg.name}: the installer could not reach the store (${run.output.split('\n').find((line) => /install failed:/.test(line))?.trim().slice(0, 240)}).` };
+  return { state: 'fail', detail: `${pkg.name}: enforce mode refused an attestation the catalog publishes as audited (${run.output.split('\n').find((line) => line.trim())?.trim().slice(0, 240) ?? 'no output'}).` };
+}
+
+/** Run the canonical installer CLI for one package into a disposable destination. */
+async function runAuditedInstaller(pkg: AuditedCatalogPackage, destination: string): Promise<AuditInstallRun> {
+  const { buildRemoteAppInstallerProcessEnv } = await import('./app-store-remote');
+  const { resolveStoreToken } = await import('./update-check-cron');
+  const args = [path.join(process.cwd(), 'scripts', 'oshal-app.js'), 'install', pkg.name,
+    '--repo', pkg.source!.url, '--ref', pkg.source!.ref, '--dest', destination, '--audit-mode', 'enforce'];
+  const env = { ...buildRemoteAppInstallerProcessEnv(resolveStoreToken()), OSHAL_PACKAGE_AUDIT_MODE: 'enforce' };
+  const outcome = await new Promise<{ code: number; output: string }>((resolve) => {
+    execFile(process.execPath, args, { cwd: process.cwd(), timeout: 180_000, maxBuffer: 1024 * 1024, env }, (err, stdout, stderr) => {
+      const raw = err ? (err as NodeJS.ErrnoException).code : 0;
+      resolve({ code: typeof raw === 'number' ? raw : (err ? 1 : 0), output: `${stdout}\n${stderr}` });
+    });
+  });
+  const stamp = path.join(destination, pkg.name, '.oshal-install.json');
+  const provenance = outcome.code === 0 && existsSync(stamp) ? JSON.parse(readFileSync(stamp, 'utf8')) : null;
+  return { ...outcome, provenance };
+}
+
+/** Collaborators the exact-SHA step uses; tests replace them, the Lab uses the real ones. */
+export interface PackageAuditStepDeps {
+  catalog: () => Promise<{ available: boolean; reason?: string; apps: AuditedCatalogPackage[] }>;
+  install: (pkg: AuditedCatalogPackage, destination: string) => Promise<AuditInstallRun>;
+  tempRoot: string;
+}
+
+/** The real collaborators: the configured store catalog, the canonical installer, the OS temp dir. */
+async function defaultPackageAuditDeps(): Promise<PackageAuditStepDeps> {
+  const { fetchStoreCatalog } = await import('./app-store-remote');
+  return { catalog: () => fetchStoreCatalog(true), install: runAuditedInstaller, tempRoot: os.tmpdir() };
+}
+
+/**
+ * @description Install the first audited catalog package in enforce mode into a disposable
+ * temporary directory, judge the pin, and remove the directory. Nothing is deployed or loaded;
+ * incomplete cleanup fails the step.
+ * @param deps - Injected collaborators (defaults to the real catalog, installer and temp dir).
+ * @returns The step result.
+ */
+export async function exactShaEnforceInstall(deps?: PackageAuditStepDeps): Promise<StepResult> {
+  const use = deps ?? await defaultPackageAuditDeps();
+  const result = (state: StepResult['state'], detail: string): StepResult => ({ app: 'app-loader', label: AUDIT_LABEL, state, detail });
+  const catalog = await use.catalog();
+  if (!catalog.available) return result('degraded', `Store catalog unavailable: ${catalog.reason ?? 'unknown reason'}.`);
+  const pkg = catalog.apps.find((app) => app.status === 'ready' && app.source && app.audit
+    && /^[0-9a-f]{40}$/.test(app.audit.sourceSha) && app.audit.sourceSha !== UNAUDITED);
+  if (!pkg) return result('gap', 'No installable package in the configured store catalog carries an audited binding yet, so enforce mode would refuse every install.');
+  const destination = mkdtempSync(path.join(use.tempRoot, 'oshal-lab-package-audit-'));
+  let verdict: Pick<StepResult, 'state' | 'detail'>;
+  try {
+    verdict = packageAuditInstallVerdict(pkg, await use.install(pkg, destination));
+  } finally {
+    rmSync(destination, { recursive: true, force: true });
+  }
+  if (existsSync(destination)) return result('fail', `Cleanup incomplete: ${destination} still exists after the disposable install.`);
+  return result(verdict.state, verdict.detail);
+}
+
 export const APP_REGISTRY_SCENARIOS: Scenario[] = [{
   id: 'multi-store-discovery', title: 'Application stores and source selection', group: 'tool',
   description: 'Read trusted store discovery. Local regression suites prove source replacement confirmation, legacy install refusal, dependency preservation, browser trust controls and the fetch fence (a registry hostname that resolves into private space is refused, and the approved address is what the connection reaches) using disposable stores and a local DNS server.',
@@ -130,4 +233,15 @@ export const APP_REGISTRY_SCENARIOS: Scenario[] = [{
     app: 'app-loader', label: 'Focused entry regressions', state: 'degraded',
     detail: 'Run npx vitest run tests/unit/host-app-map.spec.ts locally. This Lab step does not execute host commands or change application access.',
   }) }],
+}, {
+  id: 'package-audit-exact-sha', title: 'Exact-SHA package audit gate', group: 'tool',
+  // It clones a package over the network and installs it (into a temporary directory), so it runs from its own card only.
+  explicitOnly: true,
+  description: 'Install the first store package that carries an audited binding with the real installer in enforce mode, into a disposable temporary directory that is removed afterwards; nothing is deployed or loaded. Pass means the installed commit is exactly the audited one. A gap means the catalog publishes an attestation this store cannot prove (its audited commit is not served here, or the package source changed after the audit). Local real-Git suites prove the evidence re-hash, the stale-source and version refusals, and the unpinned compatible fallback.',
+  regressionTests: [
+    { level: 'integration', path: 'tests/unit/package-audit-installer.spec.ts' },
+    { level: 'unit', path: 'tests/unit/app-package-audit-boundaries.spec.ts' },
+    { level: 'unit', path: 'tests/unit/test-lab-package-audit-registration.spec.ts' },
+  ],
+  steps: [{ id: 'enforce-install', app: 'app-loader', label: 'Exact-SHA install in enforce mode', run: () => exactShaEnforceInstall() }],
 }];
