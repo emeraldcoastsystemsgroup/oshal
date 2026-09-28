@@ -27,6 +27,7 @@
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six, and it is where an installed store package is discovered.
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | P8 concierge coverage: every manifest read resolves the fail-closed OSHAL_CONCIERGE_COVERAGE_MODE. A package with a real cockpit surface and no canonical concierge emits one stable structured warning in the migration default (`warn`) or fails the load in `enforce`; there is no package-name allowlist.
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | Complete the P8 rollout after the store backfill: surfaced packages without a canonical concierge now fail under the unset `enforce` default; `warn` remains an explicit temporary observation/rollback posture.
+ * 24 | maintainer@emeraldcoastsystemsgroup.com   | readManifest refuses an unknown `scope:` by name (unknown_app_scope) through the contract `oshal-app validate` shares (@/shared/app-scope). loadApp calls readManifest before any database read or write, so dev-workspace-index 0.2.0's `scope: deployment` now fails here instead of at the swarm_applications CHECK mid-install.
  */
 
 import { validateBriefingDeclarations } from '@/shared/briefings';
@@ -53,6 +54,7 @@ import { loadApplicationAuthorization } from '@/shared/application-authorization
 import { validatePackageTools } from '@/shared/package-tools';
 import { loadPackageTestCatalog } from '@/shared/package-testing';
 import { readAppDependencies } from '@/shared/app-dependencies';
+import { validateAppScope } from '@/shared/app-scope';
 import { validateGroupManifest, validateReadinessDeclarations, validateGuestSeedDeclaration, validateSummaryDeclaration } from './swarm-app-group';
 import { validateAppIntegrations } from './app-integrations';
 import { containsFixtureInterpolation, probeBelongsToRoute, validateScheduleDeclarations } from './manifest-schedule-validation';
@@ -672,6 +674,8 @@ export function readManifest(manifestPath: string): SwarmAppManifest {
   if (missing.length > 0) {
     throw new Error(`Manifest ${absPath} missing required fields: ${missing.join(', ')}`);
   }
+  // scope is stored under a database CHECK: refuse an unknown one here, before loadApp writes anything.
+  try { validateAppScope(manifest); } catch (err) { throw Object.assign(new Error(`Manifest ${absPath}: ${(err as Error).message}`), { code: (err as { code?: string }).code }); }
   // This is a deployment-wide enforcement posture, not a package hint. Resolve it for EVERY
   // read (including headless manifests) so a typo cannot quietly turn intended enforcement off.
   const conciergeCoverageMode = resolveConciergeCoverageMode();

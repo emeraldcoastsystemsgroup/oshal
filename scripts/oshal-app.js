@@ -23,6 +23,7 @@
  * 17 | maintainer@emeraldcoastsystemsgroup.com | Dependency tiers through the shared contract (oshal-app-dependencies.js): `validate` checks required/optional (or the legacy flat form); `install` resolves REQUIRED apps fail-closed as before and installs OPTIONAL apps only when asked (`--with a,b` / `--with-optional`), recording both tiers in .oshal-install.json; `uninstall` blocks on required dependents only and reports optional ones; `init` scaffolds the tiered form.
  * 18 | maintainer@emeraldcoastsystemsgroup.com | `build` stages a package's sources in its own src/__oshal_build_<random>/ directory instead of copying them FLAT into the framework's src/app/routes/. The copies were removed in a `finally` that a kill, an OOM or a closed terminal never reaches — on 2026-09-09 seventeen package sources sat untracked in the kernel's src/app/routes/ after such a build, passing every tracked-path gate and one `git add -A` from landing application code in the kernel (Rule 0c). Staging outside src/app/ means an interrupted build leaves kernel source byte-identical, and the surviving staging directory is a path check-repo-separation.js refuses by name.
  * 19 | maintainer@emeraldcoastsystemsgroup.com | Backlog #33: `install` sparse-checks-out the attestation's evidence directory (audits/evidence/<app>/<sourceSha>/) so the audit loader re-hashes it, and a verified record must still describe the catalog source: the package tree at the catalog ref must equal the tree at sourceSha (fetched when the shallow clone lacks it) and the evidence must name that tree. Enforce mode refuses a stale or unreadable attestation ("re-audit required"); compatible mode installs the catalog ref with a NOT AUDIT-VERIFIED warning and no pin. Before this, enforce mode quietly installed the OLDER audited commit when the source had changed since the audit.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com | `validate` refuses an unknown `scope:` through the shared contract the loader also applies (oshal-app-scope.js). dev-workspace-index 0.2.0 declared `scope: deployment`, validated clean here, and was refused by the swarm_applications CHECK only once the install reached the database.
  *
  * The npm-of-OSHAL-apps helper. An OSHAL app package is a folder with a definition
  * file (oshal-app.yaml — the package.json analog), personas, compiled routes, migrations,
@@ -49,6 +50,7 @@ const { validateScheduleDeclarations } = require('./oshal-app-schedules');
 const { loadApplicationAuthorization } = require('./oshal-authorization-contract');
 const { validatePackageTools } = require('./oshal-package-tools');
 const { loadPackageTestCatalog } = require('./oshal-test-catalog');
+const { validateAppScope } = require('./oshal-app-scope');
 const { inspectAppDependencies, readAppDependencies, DEPENDENCY_TIERS_SKILL } = require('./oshal-app-dependencies');
 const {
   auditEvidenceDirectory,
@@ -108,6 +110,7 @@ function validatePackage(dir) {
   try { loadApplicationAuthorization(dir, m); } catch (error) { err(error.message); }
   try { validatePackageTools(m); } catch (error) { err(error.message); }
   try { loadPackageTestCatalog(dir, m); } catch (error) { err(error.message); }
+  try { validateAppScope(m); } catch (error) { err(error.message); }
 
   // ── identity ──────────────────────────────────────────────────────────────
   if (!m.name) err('missing required field: name');

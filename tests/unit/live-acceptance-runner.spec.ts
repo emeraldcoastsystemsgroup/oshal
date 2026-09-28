@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the shared live-acceptance machinery: fixture tags; the cleanup ledger (anything created and not removed, or any cleanup error, turns the result red); fixture-workspace removal that refuses non-fixture ids and frames stamped for another owner (real files on disk); the closed statement set (every statement owner-scoped by $1, unknown names refused); the in-container helper (validated requests, every database operation inside the owner's request identity); and the host runner (the operator token only ever in the Authorization header of the runner's own requests, never on a docker command line; the helper's request forwarded by name; exit codes; list and no-token paths).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The host runner's `anonymous` port sends the same JSON request with no Authorization header at all (the dev-workspace case proves its query route refuses such a caller), while `api` keeps sending the token.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -126,6 +127,19 @@ describe('the host runner', () => {
     expect(seen[0].init.redirect).toBe('manual');
     expect(seen[1].init.body).toBeInstanceOf(FormData);
     expect(seen.every((s) => s.url.startsWith('http://127.0.0.1:35457/'))).toBe(true);
+  });
+
+  it('sends no credential on the anonymous port', async () => {
+    const seen: Array<{ url: string; init: RequestInit }> = [];
+    const fetchImpl = async (url: string, init: RequestInit) => { seen.push({ url, init }); return new Response('{"error":"unauthorized"}', { status: 401, headers: { 'content-type': 'application/json' } }); };
+    const ports = runner.httpPorts('http://127.0.0.1:35457', TOKEN, fetchImpl);
+    const res = await ports.anonymous('GET', '/api/dev-workspace-index/query?q=ADR-077');
+    await ports.api('GET', '/api/dev-workspace-index/dev-mode');
+    expect(res).toMatchObject({ status: 401, json: { error: 'unauthorized' } });
+    expect(seen[0].url).toBe('http://127.0.0.1:35457/api/dev-workspace-index/query?q=ADR-077');
+    expect(seen[0].init.headers).toEqual({});
+    expect(JSON.stringify(seen[0].init)).not.toContain(TOKEN);
+    expect(seen[1].init.headers).toEqual({ authorization: `Bearer ${TOKEN}` });
   });
 
   it('forwards the helper request by name and never puts it or the token on a docker command line', async () => {

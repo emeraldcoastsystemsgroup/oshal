@@ -20,6 +20,7 @@
  * 2026-09-27 21:30:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin the four ADR-052 addendum parity arms (TRADING_MARKET_GAP_FILTER / _PCT, TRADING_EXIT_PLANS / _PLAN_SESSIONS): the paper soak is armed from .env, and an unforwarded arm is a soak that silently never runs.
  * 2026-09-28 16:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin the three ADR-052 addendum P6 yield-sleeve settings (TRADING_YIELD_SLEEVE, _FLOAT_PCT, _SYMBOL) to the api for the same reason.
  * 2026-09-28 22:30:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin WORLD_POLITICAL_TOKEN (the congress disclosure feed credential) to the api and keep it off every bot: the default feed answered HTTP 401 without it on 2026-09-28, and an unforwarded token is a collector that keeps being refused while the operator believes it is configured.
+ * 2026-09-28 22:50:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin OSHAL_DEV_WORKSPACE_INDEX_ENABLED (the dev-workspace-index package flag) and its two ADR-077 gates together: the deploy lane set the flag in .env on 2026-09-28 and the package still answered disabled, because compose forwarded only OSHAL_DEV_CONSOLE_ENABLED and OSHAL_SUPERADMIN_SUBS.
  */
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
@@ -126,6 +127,11 @@ const REQUIRED_ON_API: ReadonlyArray<{ name: string; readBy: string }> = [
   // 2026-09-28: the congress disclosure feed answered HTTP 401 without a credential. Unforwarded,
   // the token sits in .env and the depth cycle keeps logging the refusal.
   { name: 'WORLD_POLITICAL_TOKEN', readBy: 'political-trades fetchCongressTrades — the congress feed Bearer credential' },
+  // 2026-09-28: the deploy lane set this in .env and the package still answered disabled - compose
+  // forwarded the two ADR-077 gates it sits behind but not the package flag itself.
+  { name: 'OSHAL_DEV_CONSOLE_ENABLED', readBy: 'superadmin superAdminEnabled — the ADR-077 dev console capability' },
+  { name: 'OSHAL_SUPERADMIN_SUBS', readBy: 'superadmin isSuperAdminSub — the ADR-077 super-admin allowlist' },
+  { name: 'OSHAL_DEV_WORKSPACE_INDEX_ENABLED', readBy: 'dev-workspace-index routes/dev-workspace.js packageEnabled — the package flag behind dev mode' },
 ];
 
 // This list is CURATED, not exhaustive, and that is a deliberate trade rather than laziness:

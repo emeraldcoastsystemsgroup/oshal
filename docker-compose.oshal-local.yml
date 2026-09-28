@@ -47,6 +47,7 @@
 # 39 | maintainer@emeraldcoastsystemsgroup.com | ADR-052 addendum (paper-to-live parity): forward TRADING_MARKET_GAP_FILTER / TRADING_MARKET_GAP_PCT (the market-wide gap-down entry filter) and TRADING_EXIT_PLANS / TRADING_EXIT_PLAN_SESSIONS (per-position exit plans) beside the earnings gate. All four default OFF/blank (= the code default), so an untouched box fires byte-identically; the knob-not-in-compose trap is why they are forwarded at all. Guard: tests/unit/compose-env-passthrough.spec.ts.
 # 40 | maintainer@emeraldcoastsystemsgroup.com | ADR-052 addendum P6 (idle-cash yield sleeve): forward TRADING_YIELD_SLEEVE (the mode-aware arm), TRADING_YIELD_SLEEVE_FLOAT_PCT (the working float) and TRADING_YIELD_SLEEVE_SYMBOL (the fund) beside the other parity arms. The arm defaults OFF and the other two blank (= the code defaults 5% and SGOV), so an untouched box fires byte-identically. Guard: tests/unit/compose-env-passthrough.spec.ts.
 # 41 | maintainer@emeraldcoastsystemsgroup.com | Forward WORLD_POLITICAL_TOKEN to the api only: the congress disclosure feed (Quiver beta/live/congresstrading, political-trades.ts) answered HTTP 401 without a credential on 2026-09-28, so the collector sends this token as a Bearer header. Blank by default (the collector then logs a refusal naming the setting); kept off x-bot-env so no bot container carries it. Guard: tests/unit/compose-env-passthrough.spec.ts.
+# 42 | maintainer@emeraldcoastsystemsgroup.com | Forward OSHAL_DEV_WORKSPACE_INDEX_ENABLED beside the ADR-077 dev-console gates it sits behind. The dev-workspace-index store package's route and Jarvis tool read it from process.env in the api, and compose forwarded only OSHAL_DEV_CONSOLE_ENABLED and OSHAL_SUPERADMIN_SUBS, so setting it in .env could not enable the package (found by the deploy lane 2026-09-28). Default false, so an untouched box is unchanged. Guard: tests/unit/compose-env-passthrough.spec.ts.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -461,6 +462,9 @@ x-bot-env: &bot-env
   OSHAL_DEV_CONSOLE_ENABLED: ${OSHAL_DEV_CONSOLE_ENABLED:-false}
   OSHAL_SUPERADMIN_EMAILS: ${OSHAL_SUPERADMIN_EMAILS:-}
   OSHAL_SUPERADMIN_SUBS: ${OSHAL_SUPERADMIN_SUBS:-}
+  # The dev-workspace-index package (a dev-mode developer corpus for Jarvis) answers only when this
+  # is on AND both gates above pass AND the super-admin turned dev mode on. Default off.
+  OSHAL_DEV_WORKSPACE_INDEX_ENABLED: ${OSHAL_DEV_WORKSPACE_INDEX_ENABLED:-false}
   # Dev-Node (ADR-077 Option B): the containerized api can't run the self-edit engine (no .git), so
   # it PROXIES session requests to a host dev-node over host.docker.internal, authed by a shared
   # secret. Both empty ⇒ the Dev panel reports the runtime unavailable. The engine runs on the host.
