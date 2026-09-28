@@ -4,11 +4,13 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | E2E test: gear modal → provider select → save → send message → verify response
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The webServer origin comes from the shared baseOrigin() helper (tests/helpers/test-origins.ts), which resolves PLAYWRIGHT_PORT and the MOCK_OIDC default exactly as playwright.config.ts does, instead of a spec-built origin whose fallback diverged from the config (localhost, fallback 3456); PLAYWRIGHT_BASE_URL still wins when set.
  */
 
 import { test, expect } from '@playwright/test';
+import { baseOrigin } from './helpers';
 
-const BASE_URL = process.env.PLAYWRIGHT_BASE_URL || `http://localhost:${process.env.PLAYWRIGHT_PORT || 3456}`;
+const BASE_URL = process.env.PLAYWRIGHT_BASE_URL || baseOrigin();
 
 test.describe('Chat UI Provider Selection E2E', () => {
   test('should load chat page, open gear modal, show providers, select one, save, send message, get response', async ({ page }) => {

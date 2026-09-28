@@ -5,12 +5,13 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-141 application groups, end to end: a group loads active, its synthesised ribbon is the kernel setup-dashboard tile followed by every toolbar surface borrowed BY REFERENCE from the member's own manifest, the setup plan resolves each member's declared readiness probe, the probes answer as the caller, and the dashboard page serves. Real loader, real routes, real gate — the unit spec doubles the repository; this one doubles nothing. Runs against the Playwright-managed server on the permanent fixture group by default; point SWARM_APPS_TEST_BASE_URL + SWARM_APP_GROUP_UNDER_TEST (+ SWARM_APPS_TEST_PAT on a real-OIDC box) at a live stack to prove a real group such as intelligent-career.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-145 D4: an ordinary member app no longer 404s on /setup. The plan route addresses an active app as well as an active group, so this asserts the app's own one-member plan instead of its absence; a name nothing installed is what still 404s.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The webServer origin comes from the shared baseOrigin() helper (tests/helpers/test-origins.ts), which resolves PLAYWRIGHT_PORT and the MOCK_OIDC default exactly as playwright.config.ts does, instead of a spec-built origin whose fallback diverged from the config (any non-empty MOCK_OIDC, including 'false', picked 4458); SWARM_APPS_TEST_BASE_URL still wins when set.
  */
 
 import { test, expect, request, type APIRequestContext } from '@playwright/test';
+import { baseOrigin } from './helpers';
 
-const DEFAULT_PORT = process.env.PLAYWRIGHT_PORT || (process.env.MOCK_OIDC ? '4458' : '3456');
-const API_BASE = process.env.SWARM_APPS_TEST_BASE_URL || `http://127.0.0.1:${DEFAULT_PORT}`;
+const API_BASE = process.env.SWARM_APPS_TEST_BASE_URL || baseOrigin();
 const GROUP = process.env.SWARM_APP_GROUP_UNDER_TEST || 'oshal-ci-fixture-group';
 const PAT = process.env.SWARM_APPS_TEST_PAT || '';
 

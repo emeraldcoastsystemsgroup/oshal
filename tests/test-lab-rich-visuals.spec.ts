@@ -6,11 +6,13 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | E2E: the expanded AI Test Lab
  *            | serves each rendered visual kind, runs a visual scenario, and shows the image on the
  *            | surface — proving the "ask for weather, see the image" rich-delivery contract.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The webServer origin comes from the shared baseOrigin() helper (tests/helpers/test-origins.ts), which resolves PLAYWRIGHT_PORT and the MOCK_OIDC default exactly as playwright.config.ts does, instead of a spec-built origin whose fallback diverged from the config (localhost, fallback 4458 whatever MOCK_OIDC was).
  */
 
 import { expect, test } from '@playwright/test';
+import { baseOrigin } from './helpers';
 
-const BASE = `http://localhost:${process.env.PLAYWRIGHT_PORT ?? '4458'}`;
+const BASE = baseOrigin();
 const KINDS = ['weather', 'priority-email', 'table', 'chart', 'summary', 'timeline', 'diagram', 'gallery', 'map', 'gauge', 'checklist', 'agenda', 'comparison', 'profile', 'image'];
 
 test('every visual kind is served as a real SVG image', async ({ request }) => {

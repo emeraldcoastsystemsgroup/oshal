@@ -31,12 +31,13 @@
  * 26 | maintainer@emeraldcoastsystemsgroup.com   | Updated cockpit tests for header audit: profileBtn replaces settingsBtn/loginBtn/historyBtn, operations replaces advanced ribbon, removed CM-4 workspace buttons
  * 27 | maintainer@emeraldcoastsystemsgroup.com   | Removed the retired Presentron header-button assertion and the "Presentron activates workspace focus" test (button removed)
  * 28 | maintainer@emeraldcoastsystemsgroup.com | Expand native Settings runtime help before checking its retained ownership endpoint guidance.
+ * 29 | maintainer@emeraldcoastsystemsgroup.com   | The webServer origin comes from the shared baseOrigin() helper (tests/helpers/test-origins.ts), which resolves PLAYWRIGHT_PORT and the MOCK_OIDC default exactly as playwright.config.ts does, instead of a spec-built origin whose fallback diverged from the config (localhost, then the generic PORT, then 3456); APP_URL still wins when set.
  */
 
 import { test, expect } from '@playwright/test';
+import { baseOrigin } from './helpers';
 
-const PLAYWRIGHT_PORT = process.env.PLAYWRIGHT_PORT ?? process.env.PORT ?? '3456';
-const BASE_URL = process.env.APP_URL ?? `http://localhost:${PLAYWRIGHT_PORT}`;
+const BASE_URL = process.env.APP_URL ?? baseOrigin();
 
 /**
  * @description Helper to navigate to cockpit and wait for JS modules to load.

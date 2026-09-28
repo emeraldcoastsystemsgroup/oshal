@@ -5,12 +5,13 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added focused Playwright coverage for cockpit embedded-history task restores so selected-bot conversation loads stay inside the right rail with embed context preserved
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Normalized Change Log attribution for governance compliance during engineering-screen retrofit work
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The webServer origin comes from the shared baseOrigin() helper (tests/helpers/test-origins.ts), which resolves PLAYWRIGHT_PORT and the MOCK_OIDC default exactly as playwright.config.ts does, instead of a spec-built origin whose fallback diverged from the config (localhost, then the generic PORT, then 3456); APP_URL still wins when set.
  */
 
 import { test, expect } from '@playwright/test';
+import { baseOrigin } from './helpers';
 
-const PLAYWRIGHT_PORT = process.env.PLAYWRIGHT_PORT ?? process.env.PORT ?? '3456';
-const BASE_URL = process.env.APP_URL ?? `http://localhost:${PLAYWRIGHT_PORT}`;
+const BASE_URL = process.env.APP_URL ?? baseOrigin();
 
 /**
  * @description Navigate to cockpit and wait for the OSHAL shell bootstrap to finish.
