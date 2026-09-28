@@ -6,6 +6,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - live acceptance for "ADR-139 - LoRA has no image-ingest route at all" (Done-when: one image sent from the gallery lands in a named dataset and is visible in the LoRA surface). As the operator automation identity it creates a synthetic `testlab-import-<hex>` character, mints a Send-to handle carrying one generated PNG through core's artifact-exchange upload route, imports it through the installed package's POST /api/lora/dataset/import, waits for the receipt the studio shows as "ready on worker", reads the character's curated folder on the GPU worker through the same remote-client shell.exec rail LoRA dispatches on (read-only probe), then removes the box files, the import ticket and the character (its receipt, staging and grants cascade). Core rather than a package test-lab.yaml case: it orchestrates core artifact exchange, the core remote-client rail and the store package on a real worker, and the package catalog leaves live external-write cases pending.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The box probe emits plain values. The 2026-09-28 run on LoRA 1.7.1 wrote the pair to the GPU box in 3 s and the probe found it, yet the verdict was "the worker probe returned nothing readable": Windows PowerShell 5.1's `Get-Content -Raw` returns the caption as a string decorated with provider NoteProperties (PSPath, PSParentPath, PSChildName, PSDrive, PSProvider), and `ConvertTo-Json -Depth 4` serialized that as a 25 KB nested object (caption = {value, PSPath, PSDrive: {...}}) instead of a string. The caption is now read with [IO.File]::ReadAllText (UTF-8, the encoding the package writes with) and png/txt/bytes are cast to plain bool/long, so the line is exactly {"expanded":{png,bytes,txt,caption},"literal":{...}}. The verdict also names an unreadable or wrong-shaped probe (which field, the task exit, the first 300 redacted chars of the worker stdout) instead of "nothing readable", the removal path quotes its stdout the same way, and the redaction covers JSON-escaped and drive-less user-profile paths. The remove command already emitted plain Test-Path booleans; it is unchanged.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The redaction is case-insensitive again. Entry 2 folded the Windows-form pattern (which carried the `i` flag on main) into one regex with the JSON-escaped, drive-less and POSIX forms and dropped that flag, so a lowercased `c:\users\x` or an upper-cased `C:\USERS\x` passed through unredacted. Windows paths are case-insensitive and PowerShell keeps the casing it is given (on 5.1, Convert-Path/FullName/PSPath keep a lowercased input lowercased), so a non-canonical LORA_BOX_ROOT would have put the operator's username into the verdict text that lands in PR bodies and COLLABORATE. `/gi` restores the guard; the spec now pins both spellings.
  */
 
 'use strict';
@@ -152,12 +153,13 @@ function buildBoxRemoveCommand(boxRoot, storageKey) {
 /**
  * @description Replace user-profile folder names in worker output with a neutral one: `C:\Users\x`,
  * its JSON-escaped form `C:\\Users\\x`, a drive-less `Users\x` (PSDrive's CurrentLocation), and
- * `/Users/x` or `/home/x`.
+ * `/Users/x` or `/home/x` - in any letter case, because Windows paths are case-insensitive and
+ * PowerShell keeps the casing it is given (a lowercased LORA_BOX_ROOT stays lowercased in PSPath).
  * @param {unknown} text - Worker stdout/stderr.
  * @returns {string} The redacted text.
  */
 function redactWorkerText(text) {
-  return String(text ?? '').replace(/(Users\\{1,2}|\/Users\/|\/home\/)[^\\/\s"']+/g, '$1user');
+  return String(text ?? '').replace(/(Users\\{1,2}|\/Users\/|\/home\/)[^\\/\s"']+/gi, '$1user');
 }
 
 /**

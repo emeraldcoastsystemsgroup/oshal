@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the LoRA gallery-import live acceptance's own logic: the generated image is a valid unique PNG, box commands refuse any non-fixture path and only prune literal-variable parents, worker output is redacted, and a run passes only when the receipt reaches "ready on worker" AND the pair is in the curated folder training reads with the exact bytes and caption. Not-ready, literal-path-only and surviving-row runs are red; cleanup always removes the box directory, the import ticket and the character.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Real-boundary probe cases. The in-memory worker above answered the probe with the JSON the script HOPED for, so it never caught what real Windows PowerShell 5.1 prints: `Get-Content -Raw` hands `ConvertTo-Json` a provider-decorated string and the caption serializes as a 25 KB nested object, which sank the 2026-09-28 live run as "nothing readable" although the pair was on the GPU box. The new cases run the exact `buildBoxProbeCommand` and `buildBoxRemoveCommand` output through powershell.exe with USERPROFILE pointed at a temp home (the DEFAULT `$env:USERPROFILE/lora-characters` root, so expansion is exercised) and pin one JSON line of plain values (png/txt booleans, bytes = the PNG's size, caption = the exact string, UTF-8 without a BOM) that the verdict passes on; removal likewise prints plain booleans and never climbs above the character directory. Pure cases pin that a decorated, truncated or empty probe is named (which field, the task exit, the first 300 redacted chars of stdout) and that a removal whose stdout is unreadable quotes it. Off win32 the shell cases print one PLATFORM SKIP line, never a silent green.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The redaction case pins letter case. Entry 2's script change dropped the `i` flag main's Windows-form regex carried and no case covered it: a lowercased `c:\users\someone\x` and the JSON-escaped upper-cased `C:\\USERS\\someone\\x` must both redact to `user`, because Windows paths are case-insensitive and PowerShell keeps the casing it is given, so a non-canonical LORA_BOX_ROOT would otherwise put the operator's username into verdict text.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
@@ -156,10 +157,14 @@ describe('fixture and box commands', () => {
     expect(proof.buildBoxRemoveCommand('D:/lora', STORAGE_KEY)).not.toContain('Split-Path');
   });
 
-  it('redacts user-profile folder names from worker output, JSON-escaped and drive-less spellings included', () => {
+  it('redacts user-profile folder names from worker output, JSON-escaped, drive-less and any-case spellings included', () => {
     expect(proof.redactWorkerText('at C:\\Users\\someone\\lora and /home/someone/x')).toBe('at C:\\Users\\user\\lora and /home/user/x');
     expect(proof.redactWorkerText('"PSPath":"C:\\\\Users\\\\someone\\\\x","CurrentLocation":"Users\\\\someone\\\\y"'))
       .toBe('"PSPath":"C:\\\\Users\\\\user\\\\x","CurrentLocation":"Users\\\\user\\\\y"');
+    // Windows paths are case-insensitive and PowerShell keeps the casing it is given (a lowercased
+    // LORA_BOX_ROOT stays lowercased in Convert-Path/PSPath), so every spelling of "users" must redact.
+    expect(proof.redactWorkerText('c:\\users\\someone\\x')).toBe('c:\\users\\user\\x');
+    expect(proof.redactWorkerText('"PSPath":"C:\\\\USERS\\\\someone\\\\x"')).toBe('"PSPath":"C:\\\\USERS\\\\user\\\\x"');
   });
 });
 
