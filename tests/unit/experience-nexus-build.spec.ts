@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | The central assistant built to the demo, in headless Chromium through the real static routes over the synthetic fixture (routes mirror the real shapes): the welcome's connected capabilities from the Google connection, Travel's provider mode and the caller's preferences (Travel asked nothing when the plan does not admit it); the idle briefing readback from live counts; the Calendar view over the caller's busy windows (free weekends highlighted, busy days dotted, refusals named, unknown never free, retry, month navigation, the opening month under a pinned clock); the Travel view (only when admitted) from free weekend to Travel's search, offer cards, nonstop / after-3pm / sort / budget filters and the honest empty state, the source line and price read, sample-offer labelling, save to this device, the fare dialog and an explicit fare watch, and the shelf listing both; text refinements that stay on the page; preferences writing the departure airport through Travel and keeping the budget on the device; the trip suggestion opening its answer on Calendar; keyboard tabs across the dynamic tab list; speech stopping when the page is hidden and the transcript opening when no voice engine exists; and a phone-width layout without horizontal scroll.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Frame parity: the study bar, rail actions, topline brand, core caption, headline, live counts in the eyebrow, privacy footer, and the swarm and sources dialogs over the live snapshot (no Travel row for a caller Travel does not admit).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | The preferences case also renames the assistant (brand, rail mark and page title follow) and refuses an empty name in the dialog.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -289,9 +290,14 @@ describe('refinements, preferences, suggestion, keyboard and voice', () => {
     await page.click('.top-options [data-action="settings"]');
     await page.fill('#trip-budget', '10'); await page.click('#settings-form button[type="submit"]');
     expect(await page.locator('#settings-error').innerText()).toContain('from 50 to 20000');
-    await page.fill('#trip-budget', '250'); await page.fill('#home-airport', 'atl');
+    await page.fill('#assistant-name', ''); await page.fill('#trip-budget', '250'); await page.click('#settings-form button[type="submit"]');
+    expect(await page.locator('#settings-error').innerText()).toContain('display name of 1 to 16 characters');
+    await page.fill('#assistant-name', 'Nova'); await page.fill('#home-airport', 'atl');
     await page.click('#settings-form button[type="submit"]');
     await page.waitForFunction(() => !document.getElementById('nexus-dialog'));
+    expect(await page.locator('.assistant-brand strong').innerText()).toBe('NOVA');
+    expect(await page.locator('.rail-logo').innerText()).toBe('n');
+    expect(await page.title()).toBe('Nova / Your swarm, in conversation');
     expect(lane().travel.profileWrites).toEqual([{ homeAirport: 'ATL' }]);
     expect(await page.evaluate(() => localStorage.getItem('oshal-experience:nexus:budget'))).toBe('250');
     await page.getByRole('tab', { name: 'Travel' }).click();
