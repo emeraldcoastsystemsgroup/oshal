@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Private Packs review draft over the real router and a headless browser: authentication before buffering, 512 KiB and multipart limits, slug and collision refusals, redacted files on disk, no source export retained, and the deploy route refusing an n8n-analysis draft.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Typecheck-clean under tsconfig.tests.json: a Buffer source is copied into a Uint8Array before it becomes a Blob part, and the fake session is attached through an unknown-typed cast like the other route specs, so the gate sees no new unquarantined errors.
  */
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -42,7 +43,8 @@ function sourceJson(): string {
 function form(name: string, source: string | Buffer): FormData {
   const data = new FormData();
   data.set('name', name);
-  data.set('file', new Blob([source], { type: 'application/json' }), 'workflow.json');
+  const part = typeof source === 'string' ? source : new Uint8Array(source);
+  data.set('file', new Blob([part], { type: 'application/json' }), 'workflow.json');
   return data;
 }
 
@@ -58,7 +60,7 @@ describe('n8n → private Packs review draft', () => {
     // Production mounts a 100kb JSON parser before this router. Multipart must pass it untouched.
     app.use(express.json({ limit: '100kb' }));
     app.use((req: Request, _res: Response, next: NextFunction) => {
-      if (currentSub) (req as Request & { oidc?: { user: { sub: string } } }).oidc = { user: { sub: currentSub } };
+      if (currentSub) (req as { oidc?: unknown }).oidc = { user: { sub: currentSub } };
       next();
     });
     app.use('/api/swarm/packs', createSwarmPackRoutes({ loadApp: async () => { loads++; } }));

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Workflow tab renderer: registered for every process, escapes every untrusted field, labels the definition as current rather than a run snapshot, refuses to pair one decision to a repeated gate visit, and drops a stale response.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Typecheck-clean under tsconfig.tests.json: the stub tab body is passed through an unknown cast to the HTMLElement the renderer declares, since the test only needs innerHTML and querySelectorAll.
  */
 import { describe, expect, it, vi } from 'vitest';
 import { resolveDetailTabs } from '../../src/pages/cockpit/js/views/ticket-detail-tabs.js';
@@ -63,7 +64,7 @@ describe('ticket workflow cockpit tab', () => {
   it('fetches the ticket-specific endpoint and ignores a stale tab response', async () => {
     const body = { innerHTML: '', querySelectorAll: vi.fn(() => []) };
     const fetchImpl = vi.fn(async () => ({ ok: true, json: async () => ({ success: true, ticket: { title: 'Ticket' } }) }));
-    await renderWorkflowTab(body, { id: 'ticket / 1' }, { fetchImpl, isCurrent: () => false });
+    await renderWorkflowTab(body as unknown as HTMLElement, { id: 'ticket / 1' }, { fetchImpl, isCurrent: () => false });
     expect(fetchImpl).toHaveBeenCalledWith('/api/v1/tickets/ticket%20%2F%201/workflow', { headers: { Accept: 'application/json' } });
     expect(body.innerHTML).toBe('<p>Loading workflow…</p>');
   });
