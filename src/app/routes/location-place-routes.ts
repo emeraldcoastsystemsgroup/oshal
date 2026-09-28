@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L4: the places and device-enrolment routes of the one /api/location router (mounted by createLocationRoutes, behind its service-rail refusal and browser-session principal; declared in LOCATION_ROUTE_POLICY). Places: list (no centre, no address text), create, change and delete, a person's own or, for a group admin, the group's. Devices: list the placed devices and the nodes the person owns, enrol an existing node, camera, drone, TV or hub device, set or clear its assigned place and room, and remove its location record. None of these spends a step-up proof: they create no reporting and expose no person's position (D3 lists the routes that raise exposure; these are not among them). Every service runs as the session person with is_operator off, so row-level security and migration 176's identity fence decide; the services turn a refusal into a coded answer.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The exported GuardedLocationHandler type's doc comment carries @description, as every exported member's must.
  *
  * @module app/routes/location-place-routes
  */
@@ -16,7 +17,7 @@ import {
 } from '../location-places';
 import { locationContext } from './location-session';
 
-/** A location handler wrapped so every refusal and failure is answered by the router's one error mapper. */
+/** @description A location handler wrapped so every refusal and failure is answered by the router's one error mapper. */
 export type GuardedLocationHandler = (handler: (req: Request, res: Response) => Promise<void>) => (req: Request, res: Response) => void;
 
 /** @description The route policy rows for this file, merged into LOCATION_ROUTE_POLICY. */

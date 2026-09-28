@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L4 (D1): enrolling an existing node, camera, drone, TV or smart-home hub device as a location_devices row, and setting or clearing its assigned place and room, from the Settings, Location tab. The row records who owns the device's LOCATION DATA and grants no control or execution right; canUseDevice and remote_task_journal_client_owners are untouched (ADR-114 is not amended). A node is enrolled only by its ADR-114 owner (the durable binding, checked here under the person's own row-level security and again by migration 176's identity fence), as the person's own or, when they are an admin of the group, as the group's. Cameras and drones have no owner record: only a group admin enrols one, and only to that group. A TV is named by the room its screen registers and a hub device by its id; both references carry the person's own namespace key, so nobody can claim another person's TV or hub device. The assigned place must be one the device's owner may use (their own or a group's place for a person's device, the same group's place for a group device). Only the owner, or a group admin for a group device, changes a device's place or room; everyone else is refused. Reporting stays off: a stationary device has an assigned place, not a track (D7), and a drone's credential arrives with L6.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The LOCATION_FLEET_ID_SHAPE doc names the spec that holds it equal to CAMERA_ID_RE and DRONE_ID_RE (tests/unit/location-fleet-id-shape.spec.ts, added in the same change).
  *
  * @module app/location-devices
  */
@@ -25,8 +26,8 @@ export const LOCATION_GROUP_ONLY_KINDS: readonly string[] = Object.freeze(['came
 
 /**
  * @description The camera and drone fleet id shape. Equal to CAMERA_ID_RE and DRONE_ID_RE; it is
- * restated here so the location code does not import the drone slice (ADR-169 D3), and a spec
- * fails if the three ever drift apart.
+ * restated here so the location code does not import the drone slice (ADR-169 D3), and
+ * tests/unit/location-fleet-id-shape.spec.ts fails if the three ever drift apart.
  */
 export const LOCATION_FLEET_ID_SHAPE = /^[a-z0-9][a-z0-9_-]{0,31}$/i;
 

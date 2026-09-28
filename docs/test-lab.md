@@ -465,6 +465,8 @@ No real person's location is read or written. The linked suites:
 - `tests/unit/location-places-browser.spec.ts`: the Settings, Location page in Chromium on localhost with
   `MOCK_OIDC`. An admin adds places and enrols a node, a camera and a TV at places; a member sees the
   group camera view-only and cannot change any of the three.
+- `tests/unit/location-fleet-id-shape.spec.ts`: the location slice's copy of the camera and drone fleet id
+  shape stays equal to `CAMERA_ID_RE` and `DRONE_ID_RE`.
 - `tests/unit/test-lab-location-places-registration.spec.ts`: this card on the fixture server, green and
   red.
 

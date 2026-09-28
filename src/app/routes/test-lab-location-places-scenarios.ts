@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | AI Test Lab registration for ADR-169 slice L4 (places and device enrolment). Two steps on the running build. The route step, as the Lab's signed-in person over the loopback: the places and devices lists answer without a coordinate or an address, and three refusals hold without writing anything (a camera with no group, a node the person does not own, a place for a group they do not administer); the person's place and device counts do not move. The lifecycle step runs the same place, enrolment and kernel-read services the routes and packages call, for three uniquely tagged synthetic people on the real database: an admin makes a group with a member, a place of their own and a group place, records a synthetic node binding of their own, enrols that node, a camera (to the group) and a TV with places and changes the TV's place; the member cannot change the camera (403) or find the node (404), the stranger cannot find the camera, and the member's currentPlace, distanceBand and placeAt read the camera's place by reference. Everything the step created is then deleted (devices, places, the group with its memberships, the binding) and a zero-row check runs; incomplete cleanup is a failure. No real person's location is read or written.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | regressionTests lists tests/unit/location-fleet-id-shape.spec.ts, which holds the restated camera and drone fleet id shape equal to CAMERA_ID_RE and DRONE_ID_RE.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -196,6 +197,7 @@ export const LOCATION_PLACES_SCENARIOS: Scenario[] = [{
     { level: 'browser', path: 'tests/unit/location-places-browser.spec.ts' },
     { level: 'unit', path: 'tests/unit/location-route-policy.spec.ts' },
     { level: 'unit', path: 'tests/unit/location-rls-no-operator-guard.spec.ts' },
+    { level: 'unit', path: 'tests/unit/location-fleet-id-shape.spec.ts' },
     { level: 'integration', path: 'tests/unit/test-lab-location-places-registration.spec.ts' },
   ],
   steps: [

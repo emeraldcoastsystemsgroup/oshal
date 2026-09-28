@@ -967,6 +967,8 @@ on; what remains is order by dependency.
   - `tests/unit/location-places-devices-postgres.spec.ts`;
   - `tests/unit/location-places-browser.spec.ts` (Chromium, localhost, `MOCK_OIDC`);
   - `tests/unit/location-rls-no-operator-guard.spec.ts` and `tests/unit/location-route-policy.spec.ts`;
+  - `tests/unit/location-fleet-id-shape.spec.ts` (the restated fleet id shape equals `CAMERA_ID_RE` and
+    `DRONE_ID_RE`);
   - the Test Lab card `location-places-devices`.
 - **L5: Reminders.** The rules, state and fire tables with their subject, dispatch-recovery and projection
   paths; `location_share_presence` and the grantee projection; the evaluator; two-rail delivery with
