@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | The Routines panel: the caller's schedules (GET /api/v1/agent/schedules) with their cadence, next and last run and an "On for me" switch only on their own prompt schedules (an application's or an operator's schedule says who manages it), an application's own routines first when opened from its panel, an empty state that offers to ask Jarvis for one, and the Workflow Studio definitions by name and version with a link to Workflow Studio, where workflows are edited, published and restored.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Visual cards (the demo's mini visuals) over real facts: the suite and latest work state as the label, the latest work's title (or the application's name) as the heading, its source as the footer; engineering, game, home and document pictures are labelled illustrations, and only Finance draws data, bars of monthly spend from its own summary when the caller's plan admits it, with the no-data, empty and failed states.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Package facts (the demo's "Catalog source and package facts"): identity, version, kind, suite, listing status, plan admission, ticket type and queue, first surface, skin, declared tools and providers from the caller's catalog, then the viewer-scoped record's scope, kernel skills, registered agents and status, or why the record is not shown.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Household and team membership rows (GET /api/tenants, /:id/members): the caller first with their own place from their location overview, then each member by role, named only where the roster has the same subject; the not-a-member, refused and members-refused states say so, and the note says it is membership, not presence.
  */
 (() => {
   'use strict';
@@ -240,5 +241,32 @@
     return `<details class="package-facts"><summary>Package facts</summary><dl>${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl><p class="note-line">From this swarm’s app registry, read in your session (GET /api/swarm/apps, /home-plan and /${esc(app.id)}).</p></details>`;
   }
 
-  window.OSHAL_SHELL_PANELS = { movingBar, ticketOf, currentTransition, actionsMarkup, cancelConfirm, workflowSection, workflowPanel, routineRow, routinesPanel, visualKind, visual, financeInner, packageFacts };
+  const ROLE_WORDS = { admin: 'Admin', member: 'Member', owner: 'Owner', guardian: 'Guardian' };
+  const roleWord = role => ROLE_WORDS[role] || String(role || 'member').replace(/^\w/, c => c.toUpperCase());
+
+  /**
+   * @description The members of the caller's household or team (GET /api/tenants and /:id/members): the caller first with
+   * their own place (ADR-169, their own location only), then each member by role. The route publishes no names, so a
+   * member is named only where the swarm roster (read by layouts that opt in) has the same subject.
+   * @param {object|null} m LIVE_VIEWS.membershipView output, or null while reading.
+   * @param {object|null} place LIVE_VIEWS.placeView output for the caller, or null while reading.
+   * @param {{me: object, roster: object|null, personRow: Function, limit: number}} ctx The caller, the roster read and the row renderer.
+   * @returns {string} Markup: the members, or the honest not-a-member / refused state.
+   */
+  function membershipRows(m, place, ctx) {
+    if (!m) return '<p class="note-line">Reading your households and teams…</p>';
+    if (!m.ok) return `<p class="note-line">Your households and teams could not be read (HTTP ${esc(m.status || 'unreachable')}).</p>`;
+    if (!m.tenant) return '<p class="note-line">You belong to no household or team on this swarm yet, so nobody is listed with you.</p>';
+    if (m.membersStatus !== 200) return `<p class="note-line">${esc(m.tenant.name)}: its members could not be read (HTTP ${esc(m.membersStatus || 'unreachable')}).</p>`;
+    const named = sub => { const r = ctx.roster && ctx.roster.ok ? ctx.roster.people.find(p => p.sub === sub) : null; return r ? r.name : 'Member'; };
+    const members = m.members.slice().sort((a, b) => Number(b.self) - Number(a.self));
+    const rows = members.slice(0, ctx.limit).map(x => x.self
+      ? ctx.personRow(ctx.me.initials, `${ctx.me.name} · you`, [roleWord(x.role), place ? place.text : 'Reading your place…'].join(' · '), 'person')
+      : ctx.personRow(window.OSHAL_LIVE.initials(named(x.sub)), named(x.sub), roleWord(x.role), 'person')).join('');
+    const more = members.length > ctx.limit ? `<p class="note-line">…and ${members.length - ctx.limit} more members.</p>` : '';
+    const kind = m.tenant.kind === 'org' ? 'team' : 'household';
+    return `${rows}${more}<p class="note-line">${esc(m.tenant.name)} · your ${kind} · ${members.length} member${members.length === 1 ? '' : 's'}. Membership, not presence: nobody’s availability or place but yours is shown.</p>`;
+  }
+
+  window.OSHAL_SHELL_PANELS = { movingBar, ticketOf, currentTransition, actionsMarkup, cancelConfirm, workflowSection, workflowPanel, routineRow, routinesPanel, visualKind, visual, financeInner, packageFacts, membershipRows };
 })();

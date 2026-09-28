@@ -15,6 +15,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Day focus picker in the study bar for layouts that opt in (hooks.scenes): 'A workday' or 'An evening at home', saved per layout on this device (oshal-experience:scene:<layout>, ADR-164 D9), never sent to a server; setScene re-renders the layout through hooks.onSceneChanged.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Visual cards for layouts that opt in: visualFor(app, latest) pictures an application or a work item (the application panel and the work panel carry one) and fillVisuals draws the Finance picture from one GET /api/finance/summary per page, only for a Finance the caller's plan admits.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | The application panel carries its package facts (a 'facts' detail part for layouts with shell-panels.js); a detail slot can render related applications with another action (select-app navigates instead of opening a panel); pinning in the directory keeps the keyboard on the same application's pin after the grid is rebuilt; appCard is exported for the Commons room grid.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com | Household and team membership and the caller's own place for layouts with shell-panels.js: fillPeople reads GET /api/tenants, the chosen tenant's GET /api/tenants/:id/members and the caller's GET /api/location/state once per page; the People panel adds 'Your household or team', the caller's roster row carries their place, and a roster read afterwards names the members it knows.
  */
 (() => {
   'use strict';
@@ -115,7 +116,7 @@
     const apps = snapshot.apps, suites = snapshot.suites, work = snapshot.work;
     const byId = id => apps.find(a => a.id === id) || null;
     const suiteOf = id => suites.find(s => s.id === id) || LIVE.SUITE_META[id] && Object.assign({ id, count: 0, apps: [] }, LIVE.SUITE_META[id]) || suites[suites.length - 1];
-    const state = { modal: null, dirSuite: 'all', dirQuery: '', returnFocus: null, pins: null, summaries: new Map(), embed: false, details: new Map(), detailReads: new Map(), roster: null, rosterRead: null, workFlows: new Map(), workReads: new Set(), routines: null, workflowsList: null, routinesRead: false, spend: null, spendRead: null };
+    const state = { modal: null, dirSuite: 'all', dirQuery: '', returnFocus: null, pins: null, summaries: new Map(), embed: false, details: new Map(), detailReads: new Map(), roster: null, rosterRead: null, workFlows: new Map(), workReads: new Set(), routines: null, workflowsList: null, routinesRead: false, spend: null, spendRead: null, membership: null, membershipRead: null, place: null, placeRead: null };
     state.embedView = LIVE.prefs.get('embed-view:' + layoutId, 'summary') === 'full' ? 'full' : 'summary';
     state.scene = window.OSHAL_LIVE_VIEWS ? window.OSHAL_LIVE_VIEWS.sceneOf(LIVE.prefs.get('scene:' + layoutId, 'workday')).id : 'workday';
     const savedPins = LIVE.prefs.get('pins:' + layoutId, null);
@@ -249,11 +250,11 @@
     function fillRoster() {
       if (state.roster) return;
       if (!state.rosterRead) state.rosterRead = LIVE.packages.people(snapshot.me.sub).then(r => { state.roster = r; return r; });
-      state.rosterRead.then(r => document.querySelectorAll('[data-roster-slot]').forEach(slot => { slot.innerHTML = rosterMarkup(r, slot.dataset.rosterSlot); }));
+      state.rosterRead.then(r => { document.querySelectorAll('[data-roster-slot]').forEach(slot => { slot.innerHTML = rosterMarkup(r, slot.dataset.rosterSlot); }); document.querySelectorAll('[data-membership-slot]').forEach(slot => { slot.innerHTML = membershipMarkup(slot.dataset.membershipSlot); }); });
     }
     const rosterSlot = variant => `<div class="roster-slot" data-roster-slot="${variant}">${rosterMarkup(state.roster, variant)}</div>`;
     function rosterMarkup(roster, variant) {
-      const self = personRow(snapshot.me.initials, `${snapshot.me.name} · you`, snapshot.me.email || 'Signed in', 'person');
+      const self = personRow(snapshot.me.initials, `${snapshot.me.name} · you`, [snapshot.me.email || 'Signed in', state.place ? state.place.text : ''].filter(Boolean).join(' · '), 'person');
       if (!roster) return `${self}<p class="note-line">Reading the swarm roster…</p>`;
       if (!roster.ok) return `${self}<p class="note-line">${rosterRefusal(roster)}</p>`;
       const others = roster.people.filter(p => !p.self), limit = variant === 'room' ? 6 : 40;
@@ -261,6 +262,29 @@
       return `${self}${others.slice(0, limit).map(p => personRow(LIVE.initials(p.name), p.name, p.detail || 'Account', 'person')).join('')}${more}<p class="note-line">${others.length ? `${roster.people.length} accounts on this swarm’s user directory.` : 'Nobody else is on this swarm’s user directory.'} A roster, not presence or room membership.</p>`;
     }
 
+    /** @description Membership of the caller's household or team, then the members of the chosen one (the route answers members only). */
+    async function readMembership() {
+      const V = window.OSHAL_LIVE_VIEWS, tenants = await LIVE.packages.tenants();
+      const chosen = V.membershipView(tenants, null, snapshot.me.sub).tenant;
+      return V.membershipView(tenants, chosen ? await LIVE.packages.tenantMembers(chosen.id) : null, snapshot.me.sub);
+    }
+    /**
+     * @description Read the caller's household/team membership and their own place once per page (layouts with shell-panels.js),
+     * then repaint every membership and roster slot. The place is the caller's own location overview (ADR-169), never anyone else's.
+     * @returns {Promise<void>} Resolves once both reads have answered and the slots are painted.
+     */
+    function fillPeople() {
+      if (!panels()) return Promise.resolve();
+      if (!state.membershipRead) state.membershipRead = readMembership().then(m => { state.membership = m; });
+      if (!state.placeRead) state.placeRead = LIVE.packages.locationState().then(r => { state.place = window.OSHAL_LIVE_VIEWS.placeView(r); });
+      return Promise.all([state.membershipRead, state.placeRead]).then(paintPeople);
+    }
+    const membershipMarkup = variant => panels() ? panels().membershipRows(state.membership, state.place, { me: snapshot.me, roster: state.roster, personRow, limit: variant === 'room' ? 6 : 40 }) : '';
+    const membershipSlot = variant => `<div class="membership-slot" data-membership-slot="${variant}">${membershipMarkup(variant)}</div>`;
+    function paintPeople() {
+      document.querySelectorAll('[data-membership-slot]').forEach(slot => { slot.innerHTML = membershipMarkup(slot.dataset.membershipSlot); });
+      document.querySelectorAll('[data-roster-slot]').forEach(slot => { slot.innerHTML = rosterMarkup(state.roster, slot.dataset.rosterSlot); });
+    }
     function appPanel(id) {
       const app = byId(id); if (!app) return '<p>That application is not in your catalog.</p>';
       const suite = suiteOf(app.suite), items = workFor(app.id).slice(0, 4);
@@ -428,7 +452,8 @@ ${workExtras(item)}
       const people = hooks.peopleDirectory
         ? `<p>People listed here come from this swarm’s user directory, read in your session. It is an account roster: it shows nobody’s presence and no room membership.</p><h3>People on this swarm</h3>${rosterSlot('panel')}`
         : `<p>People appear here when an installed application publishes membership you belong to (a classroom roster, a team workspace). This deployment does not expose a general people directory to this view.</p><h3>You</h3>${personRow(snapshot.me.initials, snapshot.me.name, snapshot.me.email || (snapshot.me.authenticated ? 'Signed in' : 'Not signed in'), 'person')}`;
-      return `${people}<hr class="rule"><h3>Assistants in this swarm</h3><p class="note-line">${snapshot.botsOnline} of ${snapshot.bots.length} registered assistants are online${bots.some(b => b.active) ? '; highlighted ones worked in the last two minutes' : ''}.</p>${bots.map(b => personRow(LIVE.initials(b.name), b.name, `${b.role || 'assistant'}${b.active ? ' · working now' : b.online ? ' · online' : ' · offline'}`, b.active ? 'bot active' : 'bot')).join('') || '<p class="note-line">The assistant roster is unavailable right now.</p>'}`;
+      const household = panels() ? `<h3>Your household or team</h3>${membershipSlot('panel')}` : '';
+      return `${people}${household}<hr class="rule"><h3>Assistants in this swarm</h3><p class="note-line">${snapshot.botsOnline} of ${snapshot.bots.length} registered assistants are online${bots.some(b => b.active) ? '; highlighted ones worked in the last two minutes' : ''}.</p>${bots.map(b => personRow(LIVE.initials(b.name), b.name, `${b.role || 'assistant'}${b.active ? ' · working now' : b.online ? ' · online' : ' · offline'}`, b.active ? 'bot active' : 'bot')).join('') || '<p class="note-line">The assistant roster is unavailable right now.</p>'}`;
     }
     const personRow = (mark, name, status, cls = 'bot') => `<div class="person-row">${avatar(mark, cls)}<span><strong>${esc(name)}</strong><small>${esc(status)}</small></span></div>`;
     function provenancePanel() {
@@ -477,6 +502,7 @@ ${workExtras(item)}
       if (kind === 'app' || kind === 'work') fillVisuals();
       if ((kind === 'work' || kind === 'ticket-workflow') && panels()) { const item = work.find(w => w.id === id); if (item && !state.workFlows.has(id)) fillWork(item); }
       if (kind === 'people' && hooks.peopleDirectory) fillRoster();
+      if (kind === 'people') fillPeople();
     }
     function togglePin(id) {
       state.pins = isPinned(id) ? state.pins.filter(x => x !== id) : [...state.pins, id];
@@ -553,7 +579,7 @@ ${workExtras(item)}
     const threadNote = thread => thread.unavailable ? 'Earlier turns could not be loaded.' : thread.turns.length ? `${thread.turns.length} turns in this thread` : 'A new conversation. Ask anything across your swarm.';
 
     return { state, apps, suites, work, byId, suiteOf, pinned, isPinned, togglePin, workFor, openWork, attention, timeAgo, appMark, statusBadge, miniApp, workRow, artifactTile, personRow, studyBar, appPanel, workPanel, open, close, renderModal, handle, bind, toast, createThread, threadHtml, threadNote, summaryFor, summaryMarkup, fillSummary,
-      gameApps, hostedUrl, embedControls, embedFrame, detailSlot, fillDetail, rosterSlot, fillRoster, scene: () => state.scene, setScene, visualFor, fillVisuals, appCard };
+      gameApps, hostedUrl, embedControls, embedFrame, detailSlot, fillDetail, rosterSlot, fillRoster, scene: () => state.scene, setScene, visualFor, fillVisuals, appCard, fillPeople, membershipSlot, membership: () => state.membership };
   }
 
   window.OSHAL_SHELL = { esc, button, primary, link, avatar, badge, chip, fileLink, answerHtml, withAudience, isGameApp, GAMES_TITLE, EXPERIENCES, experienceFor, currentExperience, pickerMarkup, skinPicker, createShell };

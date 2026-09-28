@@ -15,6 +15,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Composed front pages: installFrontPageHosts installs the card applications the assemblies did not (Calendar, Federal CRM with four of its surfaces, Calling Assistant) through the same installHosts helper installAssemblyHosts now uses; each is a synthetic app with the default probe (`/fixture/probe/<name>`, status `probe:<name>`), so a card's tiles, items, refusal and D10 silence are provable per application.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Full-swarm build routes (portalBuildRoutes, lane "portal", registered first among the lane routes): one ticket's workflow read model shaped like GET /api/v1/tickets/:ticketId/workflow with per-ticket overrides and statuses, and a cancel pre-handler that moves the synthetic ticket to cancelled whenever the existing cancel route will answer 200.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | portalBuildRoutes gains the schedule and workflow-definition reads (scheduleRoutes): an owner-scoped schedule list, pause/resume with the controller's 404 / managed-manifest 403 / operator 403 refusals, and Workflow Studio definition summaries, each with a controllable status.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com | portalBuildRoutes gains the membership and own-location reads (peopleRoutes): GET /api/tenants with a controllable status, members-only GET /api/tenants/:id/members, and the caller's GET /api/location/state overview (no coordinates) with a controllable status.
  */
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -466,6 +467,12 @@ export type PortalFixtureState = {
   /** Workflow Studio definition summaries ({ id, name, description, version, updatedAt, nodeCount, edgeCount }). */
   workflows: Array<Record<string, unknown>>;
   workflowsStatus: number;
+  /** The caller's memberships as GET /api/tenants lists them, and each tenant's members (subject and role) for GET /api/tenants/:id/members. */
+  tenants: Array<{ tenant_id: string; kind: string; name: string; role: string }>;
+  tenantsStatus: number;
+  members: Record<string, Array<{ user_sub: string; role: string }>>;
+  /** The caller's location overview (GET /api/location/state) and its status; no coordinates, like the real read. */
+  location: { status: number; body: Record<string, unknown> };
 };
 
 /**
@@ -487,7 +494,8 @@ export function portalState(state: ExperienceState): PortalFixtureState { return
  * @returns Nothing; the routes are registered on `app`.
  */
 function portalBuildRoutes(app: express.Application, state: ExperienceState) {
-  const portal: PortalFixtureState = { ticketWorkflows: {}, workflowStatus: {}, schedules: [], schedulesStatus: 200, workflows: [], workflowsStatus: 200 };
+  const portal: PortalFixtureState = { ticketWorkflows: {}, workflowStatus: {}, schedules: [], schedulesStatus: 200, workflows: [], workflowsStatus: 200,
+    tenants: [], tenantsStatus: 200, members: {}, location: { status: 200, body: { settings: { defaultPrecisionClass: 'place' }, devices: [], current: null, history: { observationCount: 0 }, visibility: { memberShares: [], guardianShares: [], restrictions: [] } } } };
   Object.assign(state, { portal });
   const router = express.Router();
   router.get('/api/v1/tickets/:ticketId/workflow', (req, res) => {
@@ -497,6 +505,7 @@ function portalBuildRoutes(app: express.Application, state: ExperienceState) {
       definition: null, run: null, runHistoryAvailable: true, otherRunCount: 0, history: [], historyAvailable: true, approvalGates: [], children: [], childrenAvailable: true, ...portal.ticketWorkflows[id] });
   });
   scheduleRoutes(router, state, portal);
+  peopleRoutes(router, state, portal);
   router.put('/api/tickets/:ticketId/cancel', (req, _res, next) => {
     const lane = (state as ExperienceState & { nexusGap?: { cancelStatus: Record<string, number> } }).nexusGap;
     const ticket = state.tickets.find(t => t.ticketId === req.params.ticketId);
@@ -535,4 +544,26 @@ function scheduleRoutes(router: express.Router, state: ExperienceState, portal: 
     if (portal.workflowsStatus !== 200) { res.status(portal.workflowsStatus).json({ success: false, error: 'Synthetic definitions unavailable' }); return; }
     res.json({ success: true, count: portal.workflows.length, definitions: portal.workflows });
   });
+}
+
+/**
+ * @description The membership and own-location reads of portalBuildRoutes, mirroring the real routes: GET /api/tenants lists the
+ * caller's memberships (or the status `tenantsStatus` names), GET /api/tenants/:id/members answers members only (403 "not a
+ * member" otherwise) with subject and role, and GET /api/location/state answers the caller's own overview or its status.
+ * @param router The lane router.
+ * @param state The per-case synthetic state (for the caller's subject).
+ * @param portal The lane state.
+ * @returns Nothing; the routes are registered on `router`.
+ */
+function peopleRoutes(router: express.Router, state: ExperienceState, portal: PortalFixtureState) {
+  router.get('/api/tenants', (_req, res) => {
+    if (portal.tenantsStatus !== 200) { res.status(portal.tenantsStatus).json({ error: 'Synthetic tenants unavailable' }); return; }
+    res.json({ tenants: portal.tenants });
+  });
+  router.get('/api/tenants/:id/members', (req, res) => {
+    const members = portal.members[req.params.id] || [];
+    if (!members.some(m => m.user_sub === state.user.sub)) { res.status(403).json({ error: 'not a member' }); return; }
+    res.json({ members });
+  });
+  router.get('/api/location/state', (_req, res) => { res.status(portal.location.status).json(portal.location.status === 200 ? portal.location.body : { error: 'location_session_required' }); });
 }

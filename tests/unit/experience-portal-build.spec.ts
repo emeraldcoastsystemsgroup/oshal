@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Day focus: Studio's ordering, heading and device-only memory; Jarvis's evening copy and the games prompt; Orbit's ringed suites and stream; Commons moving to the Game room and back.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Visual cards: the selected workspace's document picture from the latest work, Finance's monthly spend bars read once, the no-data state, a Finance outside the plan never read, Orbit's engineering illustration, the Game room table and the work panel's picture.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Package facts (registry and record, the listed-only and not-visible states), Orbit's cross-suite follow and Studio's related context, pin focus in the directory and the Commons room grid with the sidebar following, and Orbit's six hubs clear of the legend.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Membership and the caller's place: Commons' team name, members by role with the caller's place and each source read once; the no-team state; Studio's People panel without a directory read; the tenants and location refusals.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -468,5 +469,65 @@ describe('package facts, relationship navigation and pins', () => {
     expect(boxes.nodes).toHaveLength(6);
     for (const n of boxes.nodes) expect(n.bottom <= boxes.legend.top || n.top >= boxes.legend.bottom || n.right <= boxes.legend.left || n.left >= boxes.legend.right).toBe(true);
     expect(await page.locator('.suite-node[data-suite="ai-productivity"]').getAttribute('style')).toContain('--node-y:84.0%');
+  });
+});
+
+/** @description The caller belongs to a synthetic household and a synthetic team (admin of the team, with two other members). */
+function seedTeam() {
+  const p = portalState(fixture.state);
+  p.tenants.push({ tenant_id: 't-home', kind: 'space', name: 'Synthetic household', role: 'member' }, { tenant_id: 't-team', kind: 'org', name: 'Synthetic team', role: 'admin' });
+  p.members['t-team'] = [{ user_sub: 'synthetic-user', role: 'admin' }, { user_sub: 'other', role: 'member' }, { user_sub: 'unlisted-sub', role: 'member' }];
+  p.members['t-home'] = [{ user_sub: 'synthetic-user', role: 'member' }];
+  p.location.body = { ...p.location.body, current: { deviceId: 'd1', source: 'browser', precisionClass: 'place', accuracyM: 30, receivedAt: iso(-300000), ageSeconds: 300, place: { placeId: 'p1', name: 'Synthetic home', label: 'home' } } };
+}
+const callsTo = (entry: string) => fixture.state.calls.filter(c => c === entry).length;
+
+describe('household and team membership, and the caller’s own place', () => {
+  it('Commons names the team, lists its members by role with the caller’s place, and reads each source once', async () => {
+    seedTeam();
+    await open('/commons', '.full-commons');
+    await page.waitForFunction(() => document.querySelector('.workspace-name h2')?.textContent === 'Synthetic team');
+    expect(await page.locator('.workspace-name small').innerText()).toMatch(/^Your team · 19 applications · 6 suites$/);
+    await page.waitForFunction(() => (document.querySelector('.presence-panel [data-membership-slot="room"]')?.textContent || '').includes('Other Person'));
+    const team = await page.locator('.presence-panel [data-membership-slot="room"]').innerText();
+    expect(team).toMatch(/synthetic · you\s*Admin · At Synthetic home · 5 min ago/);
+    expect(team).toMatch(/Other Person\s*Member/); expect(team).toMatch(/\nMember\s*\nMember/);
+    expect(team).toContain('Synthetic team · your team · 3 members. Membership, not presence');
+    expect(await page.locator('.room-header .avatars').getAttribute('aria-label')).toBe('3 members of Synthetic team, and Jarvis');
+    expect(await page.locator('.presence-panel').innerText()).toMatch(/Your team[\s\S]*People on this swarm/i);
+    for (const call of ['GET /api/tenants', 'GET /api/tenants/t-team/members', 'GET /api/location/state', 'GET /api/user-directory']) expect(callsTo(call), call).toBe(1);
+    expect(callsTo('GET /api/tenants/t-home/members')).toBe(0);
+    expect(errors).toEqual([]);
+  });
+
+  it('without a household or team Commons stays the caller’s swarm and the People panel says so', async () => {
+    await open('/commons', '.full-commons');
+    await page.waitForFunction(() => document.querySelector('.presence-panel [data-roster-slot="room"]')?.textContent?.includes('Location sharing is off'));
+    expect(await page.locator('.workspace-name h2').innerText()).toBe('synthetic’s swarm');
+    expect(await page.locator('.presence-panel [data-membership-slot]').count()).toBe(0);
+    await page.locator('.commons-rail [data-action="people"]').click();
+    await page.waitForFunction(() => document.querySelector('#full-dialog [data-membership-slot="panel"]')?.textContent?.includes('no household or team'));
+    expect(errors).toEqual([]);
+  });
+
+  it('Studio’s People panel lists the team by role without reading the directory; refusals read as such', async () => {
+    seedTeam();
+    await open('/studio', '.full-studio');
+    await page.locator('.studio-sidebar [data-action="people"]').click();
+    await page.waitForFunction(() => (document.querySelector('#full-dialog [data-membership-slot="panel"]')?.textContent || '').includes('3 members'));
+    const panel = await page.locator('#full-dialog [data-membership-slot="panel"]').innerText();
+    expect(panel).toMatch(/synthetic · you\s*Admin · At Synthetic home/); expect(panel).not.toContain('Other Person');
+    expect(callsTo('GET /api/user-directory')).toBe(0);
+    portalState(fixture.state).tenantsStatus = 500;
+    portalState(fixture.state).location.status = 403;
+    await page.reload(); await page.waitForSelector('.full-studio');
+    await page.locator('.studio-sidebar [data-action="people"]').click();
+    await page.waitForFunction(() => (document.querySelector('#full-dialog [data-membership-slot="panel"]')?.textContent || '').includes('HTTP 500'));
+    expect(await page.locator('#full-dialog [data-membership-slot="panel"]').innerText()).toBe('Your households and teams could not be read (HTTP 500).');
+    await page.keyboard.press('Escape');
+    await open('/commons', '.full-commons');
+    await page.waitForFunction(() => (document.querySelector('.presence-panel [data-roster-slot="room"]')?.textContent || '').includes('HTTP 403'));
+    expect(await page.locator('.presence-panel [data-roster-slot="room"]').innerText()).toContain('Location is not available to this session (HTTP 403)');
+    expect(errors).toEqual([]);
   });
 });
