@@ -56,7 +56,9 @@ So the gate can stand aside into earnings and the miner can test event-proximity
 
 ### 4. Informed-money flow signals (free, per-ticker → `world_metrics`)
 Each isolated, on the 6h depth cycle; the miner auto-discovers them:
-- **Congress** (`political-trades.ts`) — Quiver live congress-trading (keyless): `congress_buys/sells/net/
+- **Congress** (`political-trades.ts`) — Quiver live congress-trading. It needs an API token
+  (`WORLD_POLITICAL_TOKEN`, sent as a Bearer credential): on 2026-09-28 the endpoint answered HTTP 401
+  without one, and the collector logs that as a refusal naming the setting. `congress_buys/sells/net/
   sentiment/notional`, aggregated by ticker and disclosure (ReportDate) day. The metric timestamp is
   the feed's ReportDate — the day the trade became public — never the TransactionDate, so the series is
   never dated before the information existed; a row without a real ReportDate is refused. Each point
@@ -85,9 +87,10 @@ calendar (NKE 6/30, banks 7/14, FOMC 7/29, jobs 7/3); congress 277 tickers, insi
 gov 63/100 ($29.4B/180d); `world_contribute` round-trip (node + fact landed).
 
 **Risks / sharp edges:**
-1. **Alt-data sources are scraped/3rd-party** (openinsider HTML, Quiver keyless, Nasdaq browser-UA): they
+1. **Alt-data sources are scraped/3rd-party** (openinsider HTML, Quiver congress with an API token, Nasdaq browser-UA): they
    can change or block. Each is isolated + circuit-broken; failures degrade, never cascade. Quiver insiders
-   and a clean Congress JSON both need keys/are gone — current paths are best-available-free.
+   need keys; the Quiver congress feed stopped being keyless (401 without a token, 2026-09-28), so congress
+   needs `WORLD_POLITICAL_TOKEN`. The other current paths are best-available-free.
 2. **FOMC dates are a hardcoded list; jobs = first-Friday** (approximation). Override / exact-source later.
 3. **`WORLD_INGEST_TOKEN` dev default** — must be a real secret in prod (the contribute route mounts without
    OIDC for machine senders).

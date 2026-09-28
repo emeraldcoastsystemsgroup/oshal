@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The congressional disclosure card is registered exactly once, its attached suites exist, and its live step reports honestly: degraded when world is off or nothing observed exists, fail when the store cannot be read, pass only with observed feed points - reading the congress_* metrics under the quiver-congress source, bounded, and never writing.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The degraded detail also names the credential refusal line and WORLD_POLITICAL_TOKEN (the default feed answered 401 without it on 2026-09-28).
  */
 
 import { existsSync } from 'node:fs';
@@ -42,6 +43,8 @@ describe('congressional disclosure Test Lab card', () => {
     const r = await congressCoverageStep(svc);
     expect(r.state).toBe('degraded');
     expect(r.detail).toContain('political trades collected');
+    expect(r.detail).toContain('congress trades feed refused');
+    expect(r.detail).toContain('WORLD_POLITICAL_TOKEN');
     expect(r.detail).toContain('not live-proven');
     expect(calls).toEqual([[CONGRESS_LAB_METRICS, 'quiver-congress', 90, 100]]);
   });

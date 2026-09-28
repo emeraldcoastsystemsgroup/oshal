@@ -26,6 +26,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — deterministic world-refresh loop (enumerate tracked subjects → re-ingest+classify each via ingestFeeds), replacing the subject-less LLM dispatch that never pulled.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Log the global classify-budget snapshot in the completion line — the 2026-06-29 burn ran 9 HOURS before a human noticed because spend was invisible; now every cycle's record says how much of the LLM budget the world layer has used and whether it was denied any.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Bound the rollup fan-out from config (WORLD_ROLLUP_CONCURRENCY, default 4 instead of a compiled-in 8) and record what each fire costs the series store: entity count, statements issued, statements coalesced and wall time at INFO, plus a WARN once a pulse crosses a configured fraction of its window. On 2026-09-14 the 184-entity fan-out put 19 concurrent aggregates on oshal-local-tsdb (282% CPU) because an abandoned dispatch keeps running while the next fire starts, and the only evidence a human had was pg_stat_activity while it was happening.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Run the depth cycle's feed collectors (market events, congress, insider, short volume, gov contracts) BEFORE the sequential subject sweep instead of after it. They sat behind a sweep that took about 33 minutes on 2026-06-26 (that run's congress rows carry ts 00:33 UTC, the write time the collector stamped before seq 2 of political-trades.ts, for the 00:00 UTC fire), while the scheduler abandons a dispatch after 240 s and the run then lives only as long as the api process, so a restart inside the sweep can end it before the collectors; running them first removes that exposure. It is not shown to be why no congress row was written after 06-26: the default congress feed answered HTTP 401 on 2026-09-28 (political-trades.ts seq 4), and a run that reached the collector while the feed answered 401 wrote nothing either, so the series store cannot tell the two apart. A collector turned off by WORLD_EVENTS_ENABLED / WORLD_FLOW_ENABLED / WORLD_GOV_ENABLED now logs a WARN on every depth fire instead of being skipped silently.
  *
  * @module world-schedule-dispatch
  */
@@ -251,6 +252,64 @@ function logFireOutcome(o: FireOutcome): void {
   }, 'world ticker pulse used most of its window — the next fire will start on top of this one if it grows');
 }
 
+/** The world service the dispatch works through (always non-null once a fire gets past the disabled check). */
+type WorldService = NonNullable<ReturnType<typeof createWorldIntelligenceService>>;
+
+/**
+ * @description Run one depth-cycle collector, isolated: its failure is logged and never stops the
+ * collectors after it or the subject sweep.
+ * @param scheduleId - The firing schedule (log correlation).
+ * @param name - Log prefix (`<name> collected` / `<name> failed`).
+ * @param collect - The collector call.
+ * @returns Nothing; the outcome is logged.
+ */
+async function runDepthCollector(scheduleId: string, name: string, collect: () => Promise<object>): Promise<void> {
+  try {
+    logger.info({ scheduleId, ...(await collect()) }, `${name} collected`);
+  } catch (e) {
+    logger.warn({ err: e, scheduleId }, `${name} failed`);
+  }
+}
+
+/**
+ * @description The depth cycle's feed collectors: the forward market-events calendar (earnings / FOMC /
+ * jobs → world_events + days_to_* metrics) and the informed-money flow signals (congress, insider Form 4,
+ * short volume, gov contracts → world_metrics). Each is a fixed set of time-boxed feed reads written
+ * straight to the series store; none depends on the subject sweep.
+ *
+ * They run BEFORE the subject sweep. They used to run after it, and the sweep is sequential over every
+ * topic and tracked non-ticker subject: on 2026-06-26 it took about 33 minutes to reach them. The
+ * scheduler abandons a dispatch after 240 s and the run then lives only as long as the api process, so
+ * a restart inside the sweep can end it before the collectors, with nothing logged. Running them first
+ * removes that exposure. A collector a flag turns off is reported at WARN on every fire, because a
+ * silently absent signal is indistinguishable from a broken one; the congress collector reports its
+ * own feed outcome (a refused credential is logged at ERROR by political-trades.ts).
+ * @param svc - The world service.
+ * @param scheduleId - The firing schedule (log correlation).
+ * @param env - Environment carrying WORLD_EVENTS_ENABLED / WORLD_FLOW_ENABLED / WORLD_GOV_ENABLED.
+ * @returns Nothing; every outcome, including a skip, is logged.
+ */
+async function collectDepthSignals(svc: WorldService, scheduleId: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  if (env.WORLD_EVENTS_ENABLED === 'false') {
+    logger.warn({ scheduleId, flag: 'WORLD_EVENTS_ENABLED' }, 'market events collector skipped — disabled by flag');
+  } else {
+    await runDepthCollector(scheduleId, 'market events', () => collectMarketEvents(svc));
+  }
+  if (env.WORLD_FLOW_ENABLED === 'false') {
+    logger.warn({ scheduleId, flag: 'WORLD_FLOW_ENABLED', skipped: ['congress trades', 'insider trades', 'short interest', 'gov contracts'] },
+      'flow signal collectors skipped — disabled by flag');
+    return;
+  }
+  await runDepthCollector(scheduleId, 'congress trades', () => collectPoliticalTrades(svc));
+  await runDepthCollector(scheduleId, 'insider trades', () => collectInsiderTrades(svc));
+  await runDepthCollector(scheduleId, 'short interest', () => collectShortInterest(svc));
+  if (env.WORLD_GOV_ENABLED === 'false') {
+    logger.warn({ scheduleId, flag: 'WORLD_GOV_ENABLED' }, 'gov contracts collector skipped — disabled by flag');
+  } else {
+    await runDepthCollector(scheduleId, 'gov contracts', () => collectGovContracts(svc));
+  }
+}
+
 /**
  * @description Dispatch a world-intelligence schedule that just came due. Two modes, keyed off taskType,
  * BOTH bounded so neither hogs the single-flight scheduler cycle (which would starve the other):
@@ -294,6 +353,9 @@ export async function dispatchWorldSchedule(_ctx: AppContext, schedule: Schedule
       for (const m of movers) deep.add(m);
     }
 
+    // DEPTH: the feed collectors run BEFORE the subject sweep, never after it (see collectDepthSignals).
+    if (!pulse) await collectDepthSignals(svc, schedule.id);
+
     // Pulse: refresh the universe concurrently so all 100 names land inside the 5-min window (deep slice
     // gets the full fan-out, the rest lean). Depth: sequential (no rush at 6h, gentler on feeds + LLM).
     const results: SubjectResult[] = pulse
@@ -321,32 +383,6 @@ export async function dispatchWorldSchedule(_ctx: AppContext, schedule: Schedule
             logger.info({ scheduleId: schedule.id, deepened: dd.deepened }, 'world firehose deep-dive');
           } catch (e) { logger.warn({ err: e, scheduleId: schedule.id }, 'world firehose deep-dive failed'); }
         }
-      }
-    }
-
-    // FORWARD MARKET-EVENTS CALENDAR (earnings / FOMC / jobs) — refreshed on the 6h DEPTH cycle (a calendar
-    // doesn't change intraday). Writes world_events + days_to_* metrics the gate/miner read. Isolated.
-    if (!pulse && process.env.WORLD_EVENTS_ENABLED !== 'false') {
-      try {
-        const ev = await collectMarketEvents(svc);
-        logger.info({ scheduleId: schedule.id, ...ev }, 'market events collected');
-      } catch (e) {
-        logger.warn({ err: e, scheduleId: schedule.id }, 'market events collect failed');
-      }
-    }
-
-    // INFORMED-MONEY FLOW SIGNALS (depth cycle): congress trades, corporate insider (Form 4), short volume.
-    // Each isolated — one source failing never blocks the others. Lagged/slow signals (positioning, not catalysts).
-    if (!pulse && process.env.WORLD_FLOW_ENABLED !== 'false') {
-      try { const p = await collectPoliticalTrades(svc); logger.info({ scheduleId: schedule.id, ...p }, 'congress trades collected'); }
-      catch (e) { logger.warn({ err: e, scheduleId: schedule.id }, 'congress trades failed'); }
-      try { const ins = await collectInsiderTrades(svc); logger.info({ scheduleId: schedule.id, ...ins }, 'insider trades collected'); }
-      catch (e) { logger.warn({ err: e, scheduleId: schedule.id }, 'insider trades failed'); }
-      try { const sh = await collectShortInterest(svc); logger.info({ scheduleId: schedule.id, ...sh }, 'short interest collected'); }
-      catch (e) { logger.warn({ err: e, scheduleId: schedule.id }, 'short interest failed'); }
-      if (process.env.WORLD_GOV_ENABLED !== 'false') {
-        try { const gv = await collectGovContracts(svc); logger.info({ scheduleId: schedule.id, ...gv }, 'gov contracts collected'); }
-        catch (e) { logger.warn({ err: e, scheduleId: schedule.id }, 'gov contracts failed'); }
       }
     }
 

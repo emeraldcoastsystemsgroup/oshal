@@ -4,6 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | AI Test Lab card for the congressional (STOCK Act) disclosure signal. One read-only step reports what the installed collector has actually written: how many names carry an observed disclosure in the last 90 days, the newest disclosure (ReportDate) day and the newest observed_at. It makes no write and no feed call. The ReportDate keying, observed_at, idempotent re-runs and the reserved congress_* namespace are proven by the attached suites on a disposable TimescaleDB; this step is the live half, and says which half it is.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Attach tests/unit/world-depth-collectors-postgres.spec.ts: the depth fire runs the congress collector before its subject sweep (real dispatch, real collector, real feed fetch, disposable TimescaleDB). The collector used to sit behind that sweep, which took about 33 minutes on 2026-06-26, against a 240 s dispatch abandonment.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The degraded detail names the credential refusal line too: on 2026-09-28 the default congress feed answered HTTP 401 without WORLD_POLITICAL_TOKEN, and a refused feed writes nothing, so "nothing observed" has that as a cause to check.
  *
  * @module routes/test-lab-world-signal-scenarios
  */
@@ -63,7 +65,7 @@ export async function congressCoverageStep(reader: CoverageReader | null): Promi
   }
   const names = [...new Set(points.map((p) => p.entity.replace(/^world:ticker:/, '').toUpperCase()))];
   if (!names.length) {
-    return result('degraded', `No observed congressional disclosure in the last ${CONGRESS_LAB_WINDOW_DAYS} days. The 6-hour depth cycle has not written one with observed_at yet, or the feed returned nothing - check the api log for "political trades collected" or "congress trades fetch failed". Locally tested only; not live-proven.`);
+    return result('degraded', `No observed congressional disclosure in the last ${CONGRESS_LAB_WINDOW_DAYS} days. The 6-hour depth cycle has not written one with observed_at yet, or the feed returned nothing - check the api log for "political trades collected", "congress trades feed refused" (the feed needs WORLD_POLITICAL_TOKEN) or "congress trades fetch failed". Locally tested only; not live-proven.`);
   }
   const newestDisclosure = points.reduce((a, p) => (p.ts > a ? p.ts : a), '').slice(0, 10);
   const lastObservedAt = points.reduce((a, p) => (p.observedAt && p.observedAt > a ? p.observedAt : a), '');
@@ -84,6 +86,7 @@ export const WORLD_SIGNAL_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/world-congress-provenance.spec.ts' },
     { level: 'unit', path: 'tests/unit/world-series-read-gate.spec.ts' },
     { level: 'integration', path: 'tests/unit/world-metrics-observed-at-postgres.spec.ts' },
+    { level: 'integration', path: 'tests/unit/world-depth-collectors-postgres.spec.ts' },
     { level: 'unit', path: 'tests/unit/world-signal-test-lab.spec.ts' },
   ],
   steps: [{ id: 'live-coverage', app: APP, label: LABEL, run: async () => congressCoverageStep(createWorldIntelligenceService()) }],
