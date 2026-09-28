@@ -19,6 +19,7 @@
  * 2026-09-27 00:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin the four inbound chat-channel settings (DISCORD_BOT_TOKEN, TWILIO_INBOUND_NUMBER, TWILIO_INBOUND_PUBLIC_URL, TWILIO_WHATSAPP_FROM) to the api, and keep the Discord bot token on the controller only.
  * 2026-09-27 21:30:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin the four ADR-052 addendum parity arms (TRADING_MARKET_GAP_FILTER / _PCT, TRADING_EXIT_PLANS / _PLAN_SESSIONS): the paper soak is armed from .env, and an unforwarded arm is a soak that silently never runs.
  * 2026-09-28 16:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin the three ADR-052 addendum P6 yield-sleeve settings (TRADING_YIELD_SLEEVE, _FLOAT_PCT, _SYMBOL) to the api for the same reason.
+ * 2026-09-28 22:30:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin WORLD_POLITICAL_TOKEN (the congress disclosure feed credential) to the api and keep it off every bot: the default feed answered HTTP 401 without it on 2026-09-28, and an unforwarded token is a collector that keeps being refused while the operator believes it is configured.
  */
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
@@ -122,6 +123,9 @@ const REQUIRED_ON_API: ReadonlyArray<{ name: string; readBy: string }> = [
   { name: 'TWILIO_INBOUND_NUMBER', readBy: 'chat-channel-routes inboundSmsNumber — the number SMS users text LINK <code> to' },
   { name: 'TWILIO_INBOUND_PUBLIC_URL', readBy: 'sms-inbound-routes — the exact URL the Twilio signature is verified against' },
   { name: 'TWILIO_WHATSAPP_FROM', readBy: 'chat-channel-routes whatsAppSenderNumber + twilio-whatsapp transport sender' },
+  // 2026-09-28: the congress disclosure feed answered HTTP 401 without a credential. Unforwarded,
+  // the token sits in .env and the depth cycle keeps logging the refusal.
+  { name: 'WORLD_POLITICAL_TOKEN', readBy: 'political-trades fetchCongressTrades — the congress feed Bearer credential' },
 ];
 
 // This list is CURATED, not exhaustive, and that is a deliberate trade rather than laziness:
@@ -183,6 +187,13 @@ describe('compose forwards every env var the api actually reads', () => {
     expect(mappings, 'DISCORD_BOT_TOKEN must have one compose mapping, owned only by oshal-api').toHaveLength(1);
     expect(apiBlock).toMatch(/^[ \t]+DISCORD_BOT_TOKEN:[ \t]/m);
     expect(sharedAnchor).not.toMatch(/^[ \t]+DISCORD_BOT_TOKEN:[ \t]/m);
+  });
+
+  it('keeps the congress feed token on the controller only', () => {
+    const mappings = compose.match(/^[ \t]+WORLD_POLITICAL_TOKEN:[ \t]/gm) || [];
+    expect(mappings, 'WORLD_POLITICAL_TOKEN must have one compose mapping, owned only by oshal-api').toHaveLength(1);
+    expect(apiBlock).toMatch(/^[ \t]+WORLD_POLITICAL_TOKEN:[ \t]/m);
+    expect(sharedAnchor).not.toMatch(/^[ \t]+WORLD_POLITICAL_TOKEN:[ \t]/m);
   });
 
   it('declares rides routing and geocoding knobs on rides-bot', () => {

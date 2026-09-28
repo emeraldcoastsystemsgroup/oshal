@@ -146,7 +146,10 @@ schedule through the real dispatch against its own TimescaleDB and a local feed 
 subject sweep open, and proves the collector has already written observed rows before the first
 subject starts; it also proves the ticker pulse never calls the flow collectors and that a collector
 turned off by `WORLD_FLOW_ENABLED`, `WORLD_EVENTS_ENABLED` or `WORLD_GOV_ENABLED` is logged at WARN.
-That is local evidence; only a pass of the live step shows the installed collector ran.
+Its local feed also answers the default feed's 2026-09-28 reply (HTTP 401, "Authentication credentials
+were not provided.") when the credential is absent: the fire must log "congress trades feed refused"
+at ERROR naming `WORLD_POLITICAL_TOKEN`, write no row, and write once the token is set and sent as a
+Bearer credential. That is local evidence; only a pass of the live step shows the installed collector ran.
 
 ### Token Chase checkpoint and tail replay
 

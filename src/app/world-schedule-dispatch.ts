@@ -26,7 +26,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — deterministic world-refresh loop (enumerate tracked subjects → re-ingest+classify each via ingestFeeds), replacing the subject-less LLM dispatch that never pulled.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Log the global classify-budget snapshot in the completion line — the 2026-06-29 burn ran 9 HOURS before a human noticed because spend was invisible; now every cycle's record says how much of the LLM budget the world layer has used and whether it was denied any.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Bound the rollup fan-out from config (WORLD_ROLLUP_CONCURRENCY, default 4 instead of a compiled-in 8) and record what each fire costs the series store: entity count, statements issued, statements coalesced and wall time at INFO, plus a WARN once a pulse crosses a configured fraction of its window. On 2026-09-14 the 184-entity fan-out put 19 concurrent aggregates on oshal-local-tsdb (282% CPU) because an abandoned dispatch keeps running while the next fire starts, and the only evidence a human had was pg_stat_activity while it was happening.
- * 4 | maintainer@emeraldcoastsystemsgroup.com   | Run the depth cycle's feed collectors (market events, congress, insider, short volume, gov contracts) BEFORE the sequential subject sweep instead of after it. The only run that ever reached them did so 33 minutes after its fire, and the scheduler abandons a dispatch after 4 minutes, so an api restart inside the sweep ends the run before the collectors: the congress collector wrote once between 2026-06-26 and 2026-09-28. A collector turned off by WORLD_EVENTS_ENABLED / WORLD_FLOW_ENABLED / WORLD_GOV_ENABLED now logs a WARN on every depth fire instead of being skipped silently.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Run the depth cycle's feed collectors (market events, congress, insider, short volume, gov contracts) BEFORE the sequential subject sweep instead of after it. They sat behind a sweep that took about 33 minutes on 2026-06-26 (that run's congress rows carry ts 00:33 UTC, the write time the collector stamped before seq 2 of political-trades.ts, for the 00:00 UTC fire), while the scheduler abandons a dispatch after 240 s and the run then lives only as long as the api process, so a restart inside the sweep can end it before the collectors; running them first removes that exposure. It is not shown to be why no congress row was written after 06-26: the default congress feed answered HTTP 401 on 2026-09-28 (political-trades.ts seq 4), and a run that reached the collector while the feed answered 401 wrote nothing either, so the series store cannot tell the two apart. A collector turned off by WORLD_EVENTS_ENABLED / WORLD_FLOW_ENABLED / WORLD_GOV_ENABLED now logs a WARN on every depth fire instead of being skipped silently.
  *
  * @module world-schedule-dispatch
  */
@@ -278,12 +278,12 @@ async function runDepthCollector(scheduleId: string, name: string, collect: () =
  * straight to the series store; none depends on the subject sweep.
  *
  * They run BEFORE the subject sweep. They used to run after it, and the sweep is sequential over every
- * topic and tracked non-ticker subject: the only congress write the box recorded between 2026-06-26 and
- * 2026-09-28 landed 33 minutes after its 00:00 UTC fire. The scheduler abandons a dispatch after 4
- * minutes (the promise keeps running), so anything that restarts the api inside the sweep (on 09-28 the
- * api was recreated at 18:29 UTC, 29 minutes after the 18:00 fire) ends the run before it reaches them,
- * and nothing is logged. A collector a flag turns off is reported at WARN on every fire for the same
- * reason: a silently absent signal is indistinguishable from a broken one.
+ * topic and tracked non-ticker subject: on 2026-06-26 it took about 33 minutes to reach them. The
+ * scheduler abandons a dispatch after 240 s and the run then lives only as long as the api process, so
+ * a restart inside the sweep can end it before the collectors, with nothing logged. Running them first
+ * removes that exposure. A collector a flag turns off is reported at WARN on every fire, because a
+ * silently absent signal is indistinguishable from a broken one; the congress collector reports its
+ * own feed outcome (a refused credential is logged at ERROR by political-trades.ts).
  * @param svc - The world service.
  * @param scheduleId - The firing schedule (log correlation).
  * @param env - Environment carrying WORLD_EVENTS_ENABLED / WORLD_FLOW_ENABLED / WORLD_GOV_ENABLED.

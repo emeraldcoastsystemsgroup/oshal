@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Real-boundary guard for "the congress collector never runs in the world depth cycle". The depth fire (`app:world-world-refresh`, the store world manifest's `world-refresh` schedule) is dispatched through the real dispatchWorldSchedule, which calls the real collectPoliticalTrades, which reads a real local HTTP feed and writes a private TimescaleDB through the real world service. The subject sweep is held open (it never finishes until the spec releases it) — the shape of a sweep that an api restart ends: the collector must already have written observed congress_* rows by the time the first subject starts. Also proves the pulse never calls the flow collectors, a flag-disabled collector is logged at WARN on every depth fire, and one collector failing does not stop the congress collector or the sweep.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The feed credential across the same boundary. On 2026-09-28 the default congress feed answered HTTP 401 {"detail":"Authentication credentials were not provided."} to the collector's request, so a depth fire that reaches the collector can still write nothing. The local feed now answers exactly that when the configured credential is absent: the fire must log the refusal at ERROR naming WORLD_POLITICAL_TOKEN, report `feed: 'refused'` on the depth line, write no row and still run the sweep; with WORLD_POLITICAL_TOKEN set, the same fire sends it as a Bearer credential and writes.
  */
 
 /**
@@ -33,6 +34,10 @@ const h = vi.hoisted(() => ({
   events: [] as string[],
   sweepGate: Promise.resolve() as Promise<void>,
   failMarketEvents: false,
+  /** When set, the local feed answers 401 unless the request carries `Bearer <requiredToken>` (the Quiver shape). */
+  requiredToken: null as string | null,
+  /** The Authorization header of every feed request. */
+  auth: [] as Array<string | undefined>,
   logs: [] as Array<{ level: 'info' | 'warn' | 'error'; msg: string; obj: Record<string, unknown> }>,
 }));
 
@@ -76,7 +81,7 @@ const daysAgo = (n: number): string => new Date(Date.now() - n * DAY_MS).toISOSt
 /** `app:${appName}-${scheduleId}` (swarm-app-schedule-wiring.ts) for the world package's two schedules. */
 const DEPTH_TASK = 'app:world-world-refresh';
 const PULSE_TASK = 'app:world-ticker-pulse';
-const FLAG_KEYS = ['WORLD_EVENTS_ENABLED', 'WORLD_FLOW_ENABLED', 'WORLD_GOV_ENABLED', 'WORLD_FIREHOSE_ENABLED', 'WORLD_POLITICAL_URL'] as const;
+const FLAG_KEYS = ['WORLD_EVENTS_ENABLED', 'WORLD_FLOW_ENABLED', 'WORLD_GOV_ENABLED', 'WORLD_FIREHOSE_ENABLED', 'WORLD_POLITICAL_URL', 'WORLD_POLITICAL_TOKEN'] as const;
 const savedEnv = Object.fromEntries(FLAG_KEYS.map((k) => [k, process.env[k]]));
 
 const noGraph = {
@@ -118,8 +123,14 @@ beforeAll(async () => {
   await pool.query('CREATE EXTENSION IF NOT EXISTS timescaledb');
   h.svc = new WorldIntelligenceService(noGraph, pool);
 
-  server = createServer((_req, res) => {
+  server = createServer((req, res) => {
     h.events.push('congress-feed');
+    h.auth.push(req.headers.authorization);
+    if (h.requiredToken && req.headers.authorization !== `Bearer ${h.requiredToken}`) {
+      res.writeHead(401, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ detail: req.headers.authorization ? 'Invalid token.' : 'Authentication credentials were not provided.' }));
+      return;
+    }
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify(feedRows));
   });
@@ -139,7 +150,9 @@ beforeEach(() => {
   h.logs.length = 0;
   h.sweepGate = Promise.resolve();
   h.failMarketEvents = false;
-  for (const k of ['WORLD_EVENTS_ENABLED', 'WORLD_FLOW_ENABLED', 'WORLD_GOV_ENABLED'] as const) delete process.env[k];
+  h.requiredToken = null;
+  h.auth.length = 0;
+  for (const k of ['WORLD_EVENTS_ENABLED', 'WORLD_FLOW_ENABLED', 'WORLD_GOV_ENABLED', 'WORLD_POLITICAL_TOKEN'] as const) delete process.env[k];
 });
 
 describe('world depth fire → congress collector → world_metrics (real TimescaleDB, real feed fetch)', () => {
@@ -205,5 +218,33 @@ describe('world depth fire → congress collector → world_metrics (real Timesc
     expect(logged('market events failed', 'warn')).toHaveLength(1);
     expect(logged('congress trades collected', 'info')).toHaveLength(1);
     expect(h.events.some((e) => e.startsWith('sweep:'))).toBe(true);
+  }, 120_000);
+
+  it('a feed refusing the missing credential is logged naming WORLD_POLITICAL_TOKEN and writes nothing; with the token set the same fire writes', async () => {
+    const REFUSED = 'congress trades feed refused — WORLD_POLITICAL_TOKEN missing or rejected';
+    const TOKEN = 'placeholder-congress-feed-credential';
+    h.requiredToken = TOKEN;
+    const before = await observedCongressRows();
+    await expect(dispatchWorldSchedule(ctx, schedule(DEPTH_TASK))).resolves.toMatchObject({ success: true });
+    expect(h.events).toContain('congress-feed');
+    expect(h.auth).toEqual([undefined]);
+    const refused = logged(REFUSED, 'error');
+    expect(refused).toHaveLength(1);
+    expect(refused[0].obj).toMatchObject({ status: 401, setting: 'WORLD_POLITICAL_TOKEN', tokenConfigured: false });
+    expect(logged('congress trades collected', 'info')[0]?.obj).toMatchObject({ scheduleId: 'app_world-world-refresh', feed: 'refused', tickers: 0, written: 0 });
+    expect(await observedCongressRows(), 'a refused feed writes no row').toBe(before);
+    expect(h.events.some((e) => e.startsWith('sweep:')), 'the refusal does not stop the sweep').toBe(true);
+
+    h.events.length = 0;
+    h.logs.length = 0;
+    h.auth.length = 0;
+    process.env.WORLD_POLITICAL_TOKEN = TOKEN;
+    feedRows.push({ Ticker: 'MSFT', Transaction: 'Purchase', TransactionDate: daysAgo(20), ReportDate: daysAgo(1), Amount: '2,500' });
+    await expect(dispatchWorldSchedule(ctx, schedule(DEPTH_TASK))).resolves.toMatchObject({ success: true });
+    expect(h.auth).toEqual([`Bearer ${TOKEN}`]);
+    expect(logged(REFUSED)).toEqual([]);
+    expect(logged('congress trades collected', 'info')[0]?.obj).toMatchObject({ feed: 'ok', tickers: 3, written: 5, unchanged: 10 });
+    expect(await observedCongressRows(), 'MSFT: five new observed metrics').toBe(before + 5);
+    expect(JSON.stringify(h.logs)).not.toContain(TOKEN);
   }, 120_000);
 });

@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — congressional ("political") trade signal: STOCK Act disclosures aggregated per ticker into world_metrics. "Trade the things getting free money from the gov." Gov-contracting award data is a future sibling.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Preserve transaction dates by aggregating per ticker/day and writing dated metric points, so downstream watchlists can show the feed-backed disclosure date instead of the collector's observation time.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Key every point on the disclosure ReportDate and refuse a row without a real calendar ReportDate. Seq 2 used `TransactionDate || ReportDate`, so the day the Trading watchlist labels "disclosed" was the trade day, up to ~45 days before the trade became public. Each point now also records when the collector read the feed (observed_at), and a re-run writes only points whose value changed: the 6-hourly depth cycle re-read the whole 90-day window and appended an identical copy of every point each time.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The default feed is no longer keyless: on 2026-09-28 GET https://api.quiverquant.com/beta/live/congresstrading answered HTTP 401 {"detail":"Authentication credentials were not provided."} to this collector's exact request, and "Invalid token." once any Bearer credential was sent. Forward WORLD_POLITICAL_TOKEN as `Authorization: Bearer <token>`, log a 401/403 at ERROR as a refusal that names the setting (and whether one was configured), never the token, and report the feed outcome (ok / refused / failed / world-disabled) in the result so the depth-cycle line says what happened instead of "collected" with zero tickers.
  */
 
 /**
@@ -17,8 +18,10 @@
  * every point is keyed on the disclosure (report) day: that is the first day the information existed
  * publicly, so a series keyed on the trade day would claim knowledge weeks before anyone had it.
  *
- * Source: Quiver Quantitative's live congress-trading endpoint (keyless, browser UA). We aggregate recent
- * disclosures per ticker and report day into world_metrics (the miner auto-discovers them):
+ * Source: Quiver Quantitative's live congress-trading endpoint. It needs an API token
+ * (WORLD_POLITICAL_TOKEN, sent as a Bearer credential): without one it answers HTTP 401, which is logged
+ * as a refusal naming that setting. We aggregate recent disclosures per ticker and report day into
+ * world_metrics (the miner auto-discovers them):
  *   congress_buys / congress_sells (counts), congress_net (buys−sells),
  *   congress_sentiment ((buys−sells)/total, [-1,1]), congress_notional (summed lower-bound $).
  * This collector is the only writer of that namespace: world contributions refuse `congress_*` facts and
@@ -35,6 +38,8 @@ import { createChildLogger } from '@/shared/logger';
 const logger = createChildLogger({ module: 'political-trades' });
 
 const DEFAULT_CONGRESS_URL = 'https://api.quiverquant.com/beta/live/congresstrading';
+/** The setting that carries the feed credential; named in every refusal log. */
+const TOKEN_SETTING = 'WORLD_POLITICAL_TOKEN';
 /** Quiver serves this to a browser UA. Override via WORLD_POLITICAL_UA. */
 const DEFAULT_POLITICAL_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
 /** Lookback window (days) over the disclosure ReportDate (default 90 — covers the ~45d lag + a tail). */
@@ -54,7 +59,15 @@ export interface PoliticalTradeObservation {
   notional: number;
 }
 
+/**
+ * How the run's feed read ended: `ok` (a list was read), `refused` (401/403 — the credential in
+ * WORLD_POLITICAL_TOKEN is missing or rejected), `failed` (any other error, status or non-list body),
+ * `world-disabled` (no world service, so the feed was not read).
+ */
+export type PoliticalFeedOutcome = 'ok' | 'refused' | 'failed' | 'world-disabled';
+
 export interface PoliticalTradesResult {
+  feed: PoliticalFeedOutcome;
   tickers: number;
   trades: number;
   /** Points appended this run (new, or a changed value for an existing disclosure day). */
@@ -63,7 +76,8 @@ export interface PoliticalTradesResult {
   unchanged: number;
 }
 
-const EMPTY_RESULT: PoliticalTradesResult = { tickers: 0, trades: 0, written: 0, unchanged: 0 };
+/** A run that wrote nothing, with the reason. */
+const emptyResult = (feed: PoliticalFeedOutcome): PoliticalTradesResult => ({ feed, tickers: 0, trades: 0, written: 0, unchanged: 0 });
 
 /**
  * @description Read the feed's ReportDate as a real calendar day. Only the literal leading
@@ -125,26 +139,48 @@ export function aggregatePoliticalTrades(
   return { observations, trades };
 }
 
+/** One feed read: the rows, or why there are none. */
+type FeedRead = { outcome: 'ok'; rows: CongressTrade[] } | { outcome: 'refused' | 'failed' };
+
 /**
- * @description Fetch the live disclosure feed. The URL and UA are read at call time so an operator
- * override (WORLD_POLITICAL_URL / WORLD_POLITICAL_UA) applies to the next run.
- * @returns The raw rows, or null when the feed failed or answered something that is not a list.
+ * @description The request headers: the browser UA the feed expects, plus the Bearer credential when
+ * one is configured.
+ * @param token - The trimmed WORLD_POLITICAL_TOKEN value ('' when unset).
+ * @returns The header map for the feed request.
  */
-async function fetchCongressTrades(): Promise<CongressTrade[] | null> {
+function feedHeaders(token: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    'User-Agent': process.env.WORLD_POLITICAL_UA || DEFAULT_POLITICAL_UA,
+    Accept: 'application/json',
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return headers;
+}
+
+/**
+ * @description Fetch the live disclosure feed. The URL, UA and credential are read at call time so an
+ * operator override (WORLD_POLITICAL_URL / WORLD_POLITICAL_UA / WORLD_POLITICAL_TOKEN) applies to the
+ * next run. A 401/403 means the credential is missing or rejected: it is logged at ERROR naming the
+ * setting and whether one was configured, never the token itself.
+ * @returns The rows (`ok`), or `refused` / `failed` with nothing to write.
+ */
+async function fetchCongressTrades(): Promise<FeedRead> {
   const url = process.env.WORLD_POLITICAL_URL || DEFAULT_CONGRESS_URL;
-  const userAgent = process.env.WORLD_POLITICAL_UA || DEFAULT_POLITICAL_UA;
+  const token = (process.env[TOKEN_SETTING] || '').trim();
   try {
-    const res = await fetch(url, {
-      headers: { 'User-Agent': userAgent, Accept: 'application/json' },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
-    if (!res.ok) { logger.warn({ status: res.status }, 'congress trades fetch failed'); return null; }
+    const res = await fetch(url, { headers: feedHeaders(token), signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    if (res.status === 401 || res.status === 403) {
+      logger.error({ status: res.status, setting: TOKEN_SETTING, tokenConfigured: Boolean(token), feedHost: new URL(url).host },
+        'congress trades feed refused — WORLD_POLITICAL_TOKEN missing or rejected');
+      return { outcome: 'refused' };
+    }
+    if (!res.ok) { logger.warn({ status: res.status }, 'congress trades fetch failed'); return { outcome: 'failed' }; }
     const body = await res.json() as unknown;
-    if (!Array.isArray(body)) { logger.warn({ bodyType: typeof body }, 'congress trades feed answered a non-list body'); return null; }
-    return body as CongressTrade[];
+    if (!Array.isArray(body)) { logger.warn({ bodyType: typeof body }, 'congress trades feed answered a non-list body'); return { outcome: 'failed' }; }
+    return { outcome: 'ok', rows: body as CongressTrade[] };
   } catch (err) {
     logger.error({ err }, 'congress trades fetch error');
-    return null;
+    return { outcome: 'failed' };
   }
 }
 
@@ -189,21 +225,22 @@ async function writeObservations(
 
 /**
  * @description Fetch + aggregate recent congressional disclosures per ticker into world_metrics.
- * Network/parse failures return zeros so a feed outage never breaks the refresh. Runs on the 6h
- * depth cycle; a re-run over the same feed appends nothing.
+ * A refused or failed feed read returns zeros with its outcome, so a feed outage never breaks the
+ * refresh and never reads as a successful empty run. Runs on the 6h depth cycle; a re-run over the
+ * same feed appends nothing.
  * @param svcInput - Existing world service, or omitted to build one (skips quietly when world is disabled).
- * @returns Ticker/trade counts plus how many points were written and how many were already current.
+ * @returns The feed outcome, ticker/trade counts, and how many points were written and already current.
  */
 export async function collectPoliticalTrades(svcInput?: WorldIntelligenceService | null): Promise<PoliticalTradesResult> {
   const svc = svcInput ?? createWorldIntelligenceService();
-  if (!svc) return { ...EMPTY_RESULT };
+  if (!svc) return emptyResult('world-disabled');
   const now = new Date();
-  const raw = await fetchCongressTrades();
-  if (!raw) return { ...EMPTY_RESULT };
+  const read = await fetchCongressTrades();
+  if (read.outcome !== 'ok') return emptyResult(read.outcome);
 
-  const { observations, trades } = aggregatePoliticalTrades(raw, now);
+  const { observations, trades } = aggregatePoliticalTrades(read.rows, now);
   const { written, unchanged } = await writeObservations(svc, observations, now.toISOString());
   const tickers = new Set(observations.map((e) => e.ticker)).size;
-  logger.info({ tickers, trades, observations: observations.length, written, unchanged }, 'political trades collected');
-  return { tickers, trades, written, unchanged };
+  logger.info({ feed: 'ok', tickers, trades, observations: observations.length, written, unchanged }, 'political trades collected');
+  return { feed: 'ok', tickers, trades, written, unchanged };
 }

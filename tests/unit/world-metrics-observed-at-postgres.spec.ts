@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Real-boundary guard for congressional disclosure provenance on the series store. A private TimescaleDB (the image the stack runs) starts with world_metrics in its PRE-change shape — a hypertable with no observed_at, legacy transaction-day rows, and the world_metrics_daily continuous aggregate already over it — and the real service + the real collector run against it, fed by a real local HTTP feed. Proves: the ALTER lands on that hypertable without back-stamping old rows; points are keyed on the ReportDate day with observed_at recorded; an identical second run appends nothing; a revised value is appended and wins the same-day tie on observed_at; the ALTER is not re-issued once the column exists; and the recent-feed read returns observed disclosures only, newest first, bounded.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The collector result now carries its feed outcome; each run here reads the local feed, so it reports `feed: 'ok'`.
  */
 
 /**
@@ -95,7 +96,7 @@ describe('world_metrics.observed_at on a real TimescaleDB hypertable with its co
       { Ticker: 'MSFT', Transaction: 'Purchase', TransactionDate: daysAgo(2) },
     ];
     const result = await collectPoliticalTrades(svc());
-    expect(result).toEqual({ tickers: 2, trades: 2, written: 10, unchanged: 0 });
+    expect(result).toEqual({ feed: 'ok', tickers: 2, trades: 2, written: 10, unchanged: 0 });
 
     const column = await pool.query(
       `SELECT is_nullable, column_default FROM information_schema.columns WHERE table_name = 'world_metrics' AND column_name = 'observed_at'`,
@@ -119,7 +120,7 @@ describe('world_metrics.observed_at on a real TimescaleDB hypertable with its co
   it('run 2 over the same feed appends nothing', async () => {
     const before = await pool.query('SELECT count(*)::int AS n FROM world_metrics');
     const result = await collectPoliticalTrades(svc());
-    expect(result).toEqual({ tickers: 2, trades: 2, written: 0, unchanged: 10 });
+    expect(result).toEqual({ feed: 'ok', tickers: 2, trades: 2, written: 0, unchanged: 10 });
     const after = await pool.query('SELECT count(*)::int AS n FROM world_metrics');
     expect(after.rows[0].n).toBe(before.rows[0].n);
   });
@@ -132,7 +133,7 @@ describe('world_metrics.observed_at on a real TimescaleDB hypertable with its co
     ];
     const result = await collectPoliticalTrades(svc());
     // buys 1->2, net 1->2, notional 1001->1501 change; sells 0 and sentiment 1 do not.
-    expect(result).toEqual({ tickers: 2, trades: 3, written: 3, unchanged: 7 });
+    expect(result).toEqual({ feed: 'ok', tickers: 2, trades: 3, written: 3, unchanged: 7 });
 
     const [latest] = await svc().latestMetricPoints(['world:ticker:nvda'], ['congress_buys']);
     expect(latest).toMatchObject({ value: 2, ts: `${REPORT_NVDA}T00:00:00.000Z`, source: 'quiver-congress' });

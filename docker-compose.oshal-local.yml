@@ -46,6 +46,7 @@
 # 38 | maintainer@emeraldcoastsystemsgroup.com | Forward the inbound chat-channel settings to the api only: DISCORD_BOT_TOKEN (without it the Discord DM Gateway never starts on this stack and POST /api/channels/discord/link answers 503), TWILIO_INBOUND_NUMBER (the number SMS users text their LINK code to), TWILIO_INBOUND_PUBLIC_URL (the exact public URL the Twilio signature is verified against; unforwarded, the api falls back to the URL it reconstructs from the request, sms-inbound-routes requestUrl) and TWILIO_WHATSAPP_FROM (the WhatsApp sender users message). All four were read by the api and never forwarded. The Discord token stays off x-bot-env so no bot container carries it. Guard: tests/unit/compose-env-passthrough.spec.ts.
 # 39 | maintainer@emeraldcoastsystemsgroup.com | ADR-052 addendum (paper-to-live parity): forward TRADING_MARKET_GAP_FILTER / TRADING_MARKET_GAP_PCT (the market-wide gap-down entry filter) and TRADING_EXIT_PLANS / TRADING_EXIT_PLAN_SESSIONS (per-position exit plans) beside the earnings gate. All four default OFF/blank (= the code default), so an untouched box fires byte-identically; the knob-not-in-compose trap is why they are forwarded at all. Guard: tests/unit/compose-env-passthrough.spec.ts.
 # 40 | maintainer@emeraldcoastsystemsgroup.com | ADR-052 addendum P6 (idle-cash yield sleeve): forward TRADING_YIELD_SLEEVE (the mode-aware arm), TRADING_YIELD_SLEEVE_FLOAT_PCT (the working float) and TRADING_YIELD_SLEEVE_SYMBOL (the fund) beside the other parity arms. The arm defaults OFF and the other two blank (= the code defaults 5% and SGOV), so an untouched box fires byte-identically. Guard: tests/unit/compose-env-passthrough.spec.ts.
+# 41 | maintainer@emeraldcoastsystemsgroup.com | Forward WORLD_POLITICAL_TOKEN to the api only: the congress disclosure feed (Quiver beta/live/congresstrading, political-trades.ts) answered HTTP 401 without a credential on 2026-09-28, so the collector sends this token as a Bearer header. Blank by default (the collector then logs a refusal naming the setting); kept off x-bot-env so no bot container carries it. Guard: tests/unit/compose-env-passthrough.spec.ts.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -1215,6 +1216,9 @@ services:
       WORLD_FLOW_ENABLED: ${WORLD_FLOW_ENABLED:-true}
       WORLD_POLITICAL_DAYS: ${WORLD_POLITICAL_DAYS:-90}
       WORLD_POLITICAL_URL: ${WORLD_POLITICAL_URL:-}
+      # Congress feed credential (Quiver API token, sent as a Bearer header). Blank: the feed answers 401
+      # and the collector logs a refusal naming this setting. api only, never on a bot.
+      WORLD_POLITICAL_TOKEN: ${WORLD_POLITICAL_TOKEN:-}
       WORLD_INSIDER_URLS: ${WORLD_INSIDER_URLS:-}
       # Federal contract-award signal (USAspending) — "who's getting gov money".
       WORLD_GOV_ENABLED: ${WORLD_GOV_ENABLED:-true}
