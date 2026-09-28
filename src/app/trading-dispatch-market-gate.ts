@@ -22,6 +22,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ParityControls, resolveParityControls (market-gap bar + plan ledger per fire), evaluateMarketGap (SPY latest print vs its prior SESSION close through the dated daily series, fail-open with a logged reason), marketGapHolds (the one-line hold every entry leg calls: logs, writes the would-be buys as 'market-gap' counterfactuals fire-and-forget, returns true) and freshTargets (a rotation leaderboard's not-yet-held names as counterfactual rows). Logs as module 'trading-schedule-dispatch' — the autopilot's log stream is the watchdog/operator contract.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-052 addendum P6 — ParityControls gains the optional idle-cash yield sleeve (yieldSleeve, trading-dispatch-yield-sleeve.ts). resolveParityControls takes an optional fifth argument, the fire's pool and marked positions, and resolves the sleeve from them; without it (every caller but runAutopilot) the sleeve is not resolved. Unarmed, the sleeve resolves to null with no I/O, so the controls every leg sees are unchanged.
  *
  * @module trading-dispatch-market-gate
  */
@@ -34,6 +35,7 @@ import {
 import type { ConfigOverrideRow } from './trading-config-overrides';
 import { recordGateBlocks, type GateBlock } from './trading-gate-block-store';
 import { resolvePlanLedger, type PlanLedger } from './trading-position-plans';
+import { resolveYieldSleeve, type YieldSleeveControl } from './trading-dispatch-yield-sleeve';
 import { createChildLogger } from '@/shared/logger';
 
 // Module name kept as the dispatch's: the log stream is the watchdog/operator contract.
@@ -50,6 +52,8 @@ export interface ParityControls {
   marketGap: MarketGapVerdict | null;
   /** The per-position plan ledger for this fire, or null when plans are off for the book. */
   plans: PlanLedger | null;
+  /** The idle-cash yield sleeve for this fire (ADR-052 addendum P6); null/absent when it is off for the book. */
+  yieldSleeve?: YieldSleeveControl | null;
 }
 
 /** The controls an unarmed fire carries: nothing, so every leg takes its pre-existing path. */
@@ -87,12 +91,17 @@ export async function evaluateMarketGap(thresholdPct: number, now: number = Date
  * @param book - The book firing.
  * @param override - The applied Strategy Library override, when one is active.
  * @param policy - The risk policy in force for the fire (the dials a plan stamps).
- * @returns The controls — {@link NO_PARITY_CONTROLS}-shaped when both features are off.
+ * @param fire - The fire's pool and marked positions, which the yield sleeve resolves from; omitted = no sleeve.
+ * @returns The controls — {@link NO_PARITY_CONTROLS}-shaped when every feature is off.
  */
-export async function resolveParityControls(sub: string, book: TradingBook, override: ConfigOverrideRow | null, policy: RiskPolicy): Promise<ParityControls> {
+export async function resolveParityControls(
+  sub: string, book: TradingBook, override: ConfigOverrideRow | null, policy: RiskPolicy,
+  fire?: { pool: AppContext['pool']; positions: Position[] },
+): Promise<ParityControls> {
   const pct = marketGapFilterPct(override?.config.marketGapFilterPct, book.kind);
   const plans = resolvePlanLedger(sub, book, override, policy);
-  if (pct <= 0) return plans ? { marketGap: null, plans } : NO_PARITY_CONTROLS;
+  const yieldSleeve = fire ? await resolveYieldSleeve(fire.pool, sub, book, override, fire.positions) : null;
+  if (pct <= 0) return plans || yieldSleeve ? { marketGap: null, plans, yieldSleeve } : NO_PARITY_CONTROLS;
   const marketGap = await evaluateMarketGap(pct);
   if (marketGap.blocked) {
     logger.warn({ sub, bookRef: book.ref, gapPct: marketGap.gapPct, spy: marketGap.spyPrice, priorClose: marketGap.spyPriorClose, thresholdPct: pct },
@@ -100,7 +109,7 @@ export async function resolveParityControls(sub: string, book: TradingBook, over
   } else if (marketGap.gapPct == null) {
     logger.warn({ sub, bookRef: book.ref, thresholdPct: pct }, 'market-gap filter could not measure SPY — failing OPEN (entries proceed)');
   }
-  return { marketGap, plans };
+  return { marketGap, plans, yieldSleeve };
 }
 
 /**

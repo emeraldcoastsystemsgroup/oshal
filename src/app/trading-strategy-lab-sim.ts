@@ -25,6 +25,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | earningsGateDays knob (0=off, rotation kind only) — the live TRADING_EARNINGS_GATE as a LAB permutation, so gate-on/gate-off twin rows forward-walk side by side instead of the rule living untested outside the matrix. attachEarningsGate builds a per-session blackout map from world_events (scheduledEventsBetween; session-distance semantics on the walk's own calendar); the rotation branch excludes gated names from the leaderboard (never bought; a HELD printing name drops off and is sold — mirrors live rotateSleeve). Honest limits: calendar exists only from 2026-06-25 (earlier backtest segments are ungated = identical to the gate-off twin; the FORWARD walk is the real A/B), blends zero the knob (blendPartConfig) rather than silently ignoring it, and a calendar-read failure runs ungated exactly like the live gate.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-052 addendum (paper-to-live parity) — two StrategyConfig knobs, each read here AND by the dispatch through the same resolver (marketGapFilterPct / exitPlanSessions; a Lab walk passes mode null, so an absent knob is off here): marketGapFilterPct (percent; null = inherit the book's env default in dispatch) holds a session's ENTRIES when SPY OPENED at or beyond the bar below its prior close — attachSpyOpens carries SPY's daily opens in the aligned window, a rotation rebalance that falls on a held session is deferred to the next unheld one (the live 'slot not consumed' rule at session grain), the ensemble scan skips its buys and keeps its sells, and WalkState.gapHeldSessions counts the holds; exitPlanSessions (sessions; null = inherit) gives every lot its own plan — the stop/take-profit/trailing judge the price the lot was last underwritten at and a lot not re-underwritten for N sessions exits on the clock (WalkState.planExpiries), with a rotation re-selection or an ensemble buy call on a held name re-underwriting it. Blends zero both knobs (blendPartConfig), like earningsGateDays. Honest limits: the Lab judges the gap at the open and fills at the close, where live judges every fire's print; an unarmed walk never reads or writes a new field, so every existing run replays unchanged.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | stepDay no longer grows with the knobs (108 lines against 109 before them; the house rule is extract, do not grow). The protective leg (mark, trailing peaks, stop/take-profit/trailing judged on the plan basis) moves to protectiveExits, the plan-clock sweep to expirePlanLots, the gap-hold tally to tallyGapHold, and the cadence-or-deferred rebalance decision to rotationDue. Same statements in the same order, so an unarmed walk and an armed walk both replay unchanged (trading-strategy-lab-sim.spec.ts). attachSpyOpens gains its @returns.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-052 addendum P6 — the idle-cash yield sleeve knob, yieldSleeveFloatPct (percent of equity kept as working cash; null = inherit the book's env default in dispatch, 0 = off), read here and by the dispatch through the same resolver (yieldSleeveFloatPct; a walk passes mode null, so an absent knob is off here). An armed walk fetches the sleeve fund's adjusted closes beside the universe, keeps the fund out of the ranked and scanned universe (walkUniverse, as the dispatch exempts it), records the cash above the float at each close (WalkState.sleeveParked) and credits that cash with the fund's close-to-close return at the next session (accrueSleeveYield; WalkState.sleeveYieldUsd totals it). Entries spend parked cash at the same close, which models the dispatch's sell-first funding without its settle wait. stepDay does not grow: its session-close tail moves verbatim into closeSession, which also parks. Blends zero the knob (blendPartConfig) like the other three. Honest limits: no settlement delay, no bid/ask on the fund, and the fund's return is its dividend-adjusted close series; an unarmed walk never reads or writes a new field, so every existing run replays unchanged.
  *
  * @module trading-strategy-lab-sim
  */
@@ -32,6 +33,7 @@
 import {
   barsBatchSince, barsBatchSinceOhlcv, decideSymbol, DEFAULT_UNIVERSE, RISK_POLICIES,
   sizeEntry, exitsToRun, trailingExits, nextPeaks, rotationBenches, marketGapBlock, marketGapFilterPct, exitPlanSessions,
+  yieldSleeveFloatPct, yieldSleeveSymbol,
 } from '@/features/trading';
 import type {
   DatedClose, Timeframe, RiskPosture, RiskPolicy, NameStrength, Position, BrokerAccount,
@@ -101,6 +103,13 @@ export interface StrategyConfig {
    * 0 = off; null/absent = inherit (TRADING_EXIT_PLANS / TRADING_EXIT_PLAN_SESSIONS in dispatch; off in a walk).
    */
   exitPlanSessions?: number | null;
+  /**
+   * Idle-cash yield sleeve working float, percent of equity (ADR-052 addendum P6). N > 0 arms the sleeve:
+   * cash above N% of equity is parked in the sleeve fund (TRADING_YIELD_SLEEVE_SYMBOL, default SGOV) and
+   * earns its return; entries spend it first. 0 = off; null/absent = inherit (TRADING_YIELD_SLEEVE /
+   * TRADING_YIELD_SLEEVE_FLOAT_PCT in dispatch; off in a walk).
+   */
+  yieldSleeveFloatPct?: number | null;
 }
 
 /** One open lot in the walk book. `planEntry`/`planBar` exist only while exit plans are armed. */
@@ -130,6 +139,10 @@ export interface WalkState {
   gapHeldSessions?: number;
   /** Exit-plan knob only: lots that left on the plan clock. */
   planExpiries?: number;
+  /** Yield-sleeve knob only: cash above the float at the last close — what earns the fund's next return. */
+  sleeveParked?: number;
+  /** Yield-sleeve knob only: dollars the parked cash has earned across the walk. */
+  sleeveYieldUsd?: number;
 }
 
 /** One point on a strategy's equity timeline (strategy equity + SPY benchmark, both from 100k). */
@@ -204,6 +217,7 @@ export function normalizeConfig(raw: unknown): StrategyConfig {
     earningsGateDays: Math.round(num(r.earningsGateDays, 0, 0, 10)),
     marketGapFilterPct: knobOrNull(r.marketGapFilterPct, 50),
     exitPlanSessions: knobOrNull(r.exitPlanSessions, 252, true),
+    yieldSleeveFloatPct: knobOrNull(r.yieldSleeveFloatPct, 95),
   };
 }
 
@@ -249,7 +263,7 @@ function normalizeBlend(r: Record<string, unknown>, num: (v: unknown, def: numbe
     warmupDays: Math.max(...components.map((c) => c.config.warmupDays)),
     windowDays: Math.round(num(r.windowDays, 780, 200, 2000)),
     earningsGateDays: 0, // blend walks are not gate-instrumented; components carry their own knob
-    marketGapFilterPct: null, exitPlanSessions: null, // a blend book inherits its env default in dispatch
+    marketGapFilterPct: null, exitPlanSessions: null, yieldSleeveFloatPct: null, // a blend book inherits its env default in dispatch
   };
 }
 
@@ -258,7 +272,7 @@ function normalizeBlend(r: Record<string, unknown>, num: (v: unknown, def: numbe
  *  earningsGateDays 0 (blend walks don't attach the calendar map — a component knob would be
  *  silently ignored, which is worse than an honest "not supported in blends"). */
 export function blendPartConfig(c: BlendComponent): StrategyConfig {
-  return { ...c.config, corePct: 0, earningsGateDays: 0, marketGapFilterPct: 0, exitPlanSessions: 0 };
+  return { ...c.config, corePct: 0, earningsGateDays: 0, marketGapFilterPct: 0, exitPlanSessions: 0, yieldSleeveFloatPct: 0 };
 }
 
 /** Resolved-universe snapshot for regression replay: DEFAULT_UNIVERSE changes between deploys, so
@@ -482,7 +496,7 @@ export async function fetchAligned(cfg: StrategyConfig, startIso: string): Promi
   const universe = cfg.kind === 'blend'
     ? [...new Set((cfg.components ?? []).flatMap((c) => (c.config.universe.length ? c.config.universe : DEFAULT_UNIVERSE)))]
     : cfg.universe.length ? cfg.universe : DEFAULT_UNIVERSE;
-  const symbols = [...new Set([...universe, cfg.coreSymbol, 'SPY'])];
+  const symbols = [...new Set([...universe, cfg.coreSymbol, 'SPY', ...(walkSleeve(cfg) ? [yieldSleeveSymbol()] : [])])];
   let raw: Map<string, DatedClose[]>;
   let feed: 'sip' | 'iex' = 'sip';
   try {
@@ -563,7 +577,8 @@ function equityAt(a: Aligned, cfg: StrategyConfig, state: WalkState, t: number):
  * @returns The book equity at that session's close.
  */
 export function stepDay(a: Aligned, cfg: StrategyConfig, policy: RiskPolicy, state: WalkState, t: number): number {
-  const universe = cfg.universe.length ? cfg.universe : DEFAULT_UNIVERSE;
+  const universe = walkUniverse(cfg);
+  accrueSleeveYield(a, cfg, state, t);
   const exiting = new Set<string>();
   const sell = (sym: string): void => {
     const lot = state.lots[sym];
@@ -663,12 +678,71 @@ export function stepDay(a: Aligned, cfg: StrategyConfig, policy: RiskPolicy, sta
     }
   }
 
+  return closeSession(a, cfg, state, t);
+}
+
+/**
+ * @description The walk's session close: roll the bar count and date, mark equity, track the peak and
+ * drawdown, and (yield sleeve armed) record the cash above the float as parked for the next session.
+ * @param a - Aligned bars.
+ * @param cfg - The strategy config.
+ * @param state - The walk state (mutated).
+ * @param t - Calendar index of the session.
+ * @returns The book equity at the session's close.
+ */
+function closeSession(a: Aligned, cfg: StrategyConfig, state: WalkState, t: number): number {
   state.barCount++;
   state.lastDate = a.dates[t];
   const equity = equityAt(a, cfg, state, t);
   state.peakEquity = Math.max(state.peakEquity, equity);
   state.maxDD = Math.max(state.maxDD, state.peakEquity > 0 ? (state.peakEquity - equity) / state.peakEquity : 0);
+  const sleeve = walkSleeve(cfg);
+  if (sleeve) state.sleeveParked = Math.max(0, state.cash - (sleeve.floatPct / 100) * equity);
   return equity;
+}
+
+/**
+ * @description The yield sleeve a walk runs, through the dispatch's own resolver (mode null: only the
+ * config's knob can arm it), or null when it is off.
+ * @param cfg - The strategy config.
+ * @returns The fund and the float, or null.
+ */
+function walkSleeve(cfg: StrategyConfig): { symbol: string; floatPct: number } | null {
+  const floatPct = yieldSleeveFloatPct(cfg.yieldSleeveFloatPct, null);
+  return floatPct > 0 ? { symbol: yieldSleeveSymbol(), floatPct } : null;
+}
+
+/**
+ * @description The universe a walk ranks and scans: the config's own (or the default), minus an armed
+ * sleeve's fund, which the dispatch exempts from every sleeve leg. Unarmed, the same array.
+ * @param cfg - The strategy config.
+ * @returns The walk universe.
+ */
+function walkUniverse(cfg: StrategyConfig): string[] {
+  const universe = cfg.universe.length ? cfg.universe : DEFAULT_UNIVERSE;
+  const sleeve = walkSleeve(cfg);
+  return sleeve ? universe.filter((s) => s.toUpperCase() !== sleeve.symbol) : universe;
+}
+
+/**
+ * @description Credit the cash parked at the prior close with the sleeve fund's close-to-close return
+ * into session t (its dividend-adjusted series, so the distributions count). A no-op when the sleeve is
+ * off, nothing is parked, or the fund has no price on either session.
+ * @param a - Aligned bars.
+ * @param cfg - The strategy config.
+ * @param state - The walk state (cash and sleeveYieldUsd mutated).
+ * @param t - Calendar index of the session.
+ * @returns Nothing; the state is mutated.
+ */
+export function accrueSleeveYield(a: Aligned, cfg: StrategyConfig, state: WalkState, t: number): void {
+  const sleeve = walkSleeve(cfg);
+  if (!sleeve || !(Number(state.sleeveParked) > 0) || t < 1) return;
+  const now = priceAt(a, sleeve.symbol, t);
+  const prev = priceAt(a, sleeve.symbol, t - 1);
+  if (!now || !prev) return;
+  const credit = (state.sleeveParked as number) * (now / prev - 1);
+  state.cash += credit;
+  state.sleeveYieldUsd = (state.sleeveYieldUsd ?? 0) + credit;
 }
 
 /**

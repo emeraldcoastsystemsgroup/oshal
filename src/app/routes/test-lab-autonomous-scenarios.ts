@@ -19,6 +19,7 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Register the nightly backup diagnostic's round-trip guard on the isolated nightly scenario. The backup/restore leg had no Lab scenario at all, which is how a diagnostic that published passing evidence off a partial restore stayed unwatched; the guard owns its PostgreSQL and executes a real pg_dump and psql, so this scenario is the only gate that can run it.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Register the partial-scan secret-scan proof beside the other two. It is the only one of the three that makes the real gitleaks image actually skip a path and exit 0, which is the failure shape the gate was written for, so the scenario now lists a run that exercises the refusal as well as the detection.
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | Register the two ADR-052 addendum parity guards on the isolated nightly scenario: the per-position exit-plan table spec (immutable terms at the database, supersede/close/amend paths, (user_sub, book_id) scoping, owner RLS against a NOSUPERUSER NOBYPASSRLS role) and the parity fire spec (real dispatchTradingSchedule fires: the market-gap hold of every entry leg with its counterfactual rows and kept rotation slot, and plans stamped, honored, expired and closed with their doors). Both start and destroy their own PostgreSQL and read no address, so this runner is the gate that executes them.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com   | Register the ADR-052 addendum P6 yield-sleeve fire spec on the isolated nightly scenario: real dispatchTradingSchedule fires that sell the armed sleeve before the entries it funds (scan and rotation), keep it out of every exit leg, park idle cash on a quiet fire, idle it while its own order works, and read the Test Lab sleeve ledger back from the same database. It starts and destroys its own PostgreSQL and reads no address, so this runner is the gate that executes it.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -78,6 +79,7 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/trading-spec-bare-cluster-prerequisites.spec.ts' },
     { level: 'integration', path: 'tests/unit/trading-position-plans-postgres.spec.ts' },
     { level: 'integration', path: 'tests/unit/trading-parity-fire.spec.ts' },
+    { level: 'integration', path: 'tests/unit/trading-dispatch-yield-sleeve-fire.spec.ts' },
   ],
   steps: [{ id: 'runner', app: 'test-lab', label: 'Local isolated runner', run: async () => ({
     app: 'test-lab', label: 'Local isolated runner', state: 'degraded',

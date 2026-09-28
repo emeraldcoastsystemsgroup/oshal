@@ -22,6 +22,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Export the detached Futures replay observation contract.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | ADR-168: export MULTI_MARKET_UNIVERSE and MULTI_MARKET_EXTENSION (multi-timeframe) and MULTI_MARKET_BUCKETS (portfolio), so the Strategy Lab, the Test Lab card and the store package name the multi-market universe through the barrel instead of a second hand-typed list.
  * 13 | maintainer@emeraldcoastsystemsgroup.com | ADR-052 addendum (paper-to-live parity): export the market-wide gap-down filter's pure half from entry-guards (marketGapBlock, marketGapFilterPct, modeArmed, DEFAULT_MARKET_GAP_PCT, MarketGapVerdict) and the per-position exit-plan math from the new position-plan module (exitPlanSessions, planTermsFor, addSessions, planExits, DEFAULT_EXIT_PLAN_SESSIONS, PlanTerms, PlanDials, PositionPlan), plus the PlanExitDoor type beside ExitOrder.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com | ADR-052 addendum P6 (paper-to-live parity): export the idle-cash yield sleeve's pure half from the new yield-sleeve module (yieldSleeveFloatPct, yieldSleeveSymbol, sleeveRebalancePlan, sleeveFundingQty, DEFAULT_YIELD_SLEEVE_SYMBOL, DEFAULT_YIELD_SLEEVE_FLOAT_PCT, YIELD_SLEEVE_BAND_PCT, SleeveRebalance, SleeveBook).
  *
  * @module trading
  */
@@ -54,6 +55,9 @@ export { maxGapDownPct, gapPct, priorSessionClose, etSessionDate, entryBlock, se
 // ADR-052 addendum — per-position exit plans (stamped at entry, judged on their own terms, expire on a clock).
 export type { PlanTerms, PlanDials, PositionPlan } from './services/position-plan';
 export { exitPlanSessions, planTermsFor, addSessions, planExits, DEFAULT_EXIT_PLAN_SESSIONS } from './services/position-plan';
+// ADR-052 addendum P6 — the idle-cash yield sleeve (cash above a working float parked in a T-bill fund; sold first to fund entries).
+export type { SleeveRebalance, SleeveBook } from './services/yield-sleeve';
+export { yieldSleeveFloatPct, yieldSleeveSymbol, sleeveRebalancePlan, sleeveFundingQty, DEFAULT_YIELD_SLEEVE_SYMBOL, DEFAULT_YIELD_SLEEVE_FLOAT_PCT, YIELD_SLEEVE_BAND_PCT } from './services/yield-sleeve';
 // Short signals — purpose-built bearish entries + the market-regime gate (classic untuned params).
 export { marketBearGate, donchianBreakdown, donchianCover, trendBroken, relativeReturn, shortEntrySignal, sma } from './services/short-signals';
 // Per-mode market-data source (Alpaca paper feed | Schwab live feed) — the trade engine's price inputs.

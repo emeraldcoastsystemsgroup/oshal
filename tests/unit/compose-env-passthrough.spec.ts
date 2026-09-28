@@ -18,6 +18,7 @@
  * 2026-09-24 00:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin OSHAL_ROUTING_URL, OSHAL_GEOCODER_URL, and OSHAL_GEOCODE_CACHE_PATH to oshal-api and rides-bot — operator-owned geocode/routing overrides and durable address cache for rideshare routing.
  * 2026-09-27 00:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin the four inbound chat-channel settings (DISCORD_BOT_TOKEN, TWILIO_INBOUND_NUMBER, TWILIO_INBOUND_PUBLIC_URL, TWILIO_WHATSAPP_FROM) to the api, and keep the Discord bot token on the controller only.
  * 2026-09-27 21:30:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin the four ADR-052 addendum parity arms (TRADING_MARKET_GAP_FILTER / _PCT, TRADING_EXIT_PLANS / _PLAN_SESSIONS): the paper soak is armed from .env, and an unforwarded arm is a soak that silently never runs.
+ * 2026-09-28 16:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin the three ADR-052 addendum P6 yield-sleeve settings (TRADING_YIELD_SLEEVE, _FLOAT_PCT, _SYMBOL) to the api for the same reason.
  */
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
@@ -47,6 +48,9 @@ const REQUIRED_ON_API: ReadonlyArray<{ name: string; readBy: string }> = [
   { name: 'TRADING_MARKET_GAP_PCT', readBy: 'entry-guards marketGapFilterPct — the pre-registered SPY gap bar' },
   { name: 'TRADING_EXIT_PLANS', readBy: 'position-plan exitPlanSessions — the per-position exit plan arm' },
   { name: 'TRADING_EXIT_PLAN_SESSIONS', readBy: 'position-plan exitPlanSessions — the pre-registered plan expiry' },
+  { name: 'TRADING_YIELD_SLEEVE', readBy: 'yield-sleeve yieldSleeveFloatPct — the idle-cash yield sleeve arm' },
+  { name: 'TRADING_YIELD_SLEEVE_FLOAT_PCT', readBy: 'yield-sleeve yieldSleeveFloatPct — the pre-registered working float' },
+  { name: 'TRADING_YIELD_SLEEVE_SYMBOL', readBy: 'yield-sleeve yieldSleeveSymbol — the fund the sleeve parks in' },
   { name: 'JARVIS_SELECTOR_SHADOW', readBy: 'jarvis-selector-shadow buildToolsBlockWithShadow — the tool-selector shadow candidate' },
   { name: 'OSHAL_CONCIERGE_COVERAGE_MODE', readBy: 'swarm-app-loader P8 surfaced-package concierge contract' },
   // Added 2026-07-30 after a browser walk of a real customer deployment. server.ts read

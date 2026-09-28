@@ -174,7 +174,8 @@ live posture — live stays gated and is the subject of the open questions below
 Two features the operator queued on 2026-07-09 change the tested algorithm, so neither may reach
 the live book except as the same algorithm the paper book has already run. This addendum records
 the one config path each uses, the values pre-registered before any evidence, and how each is
-promoted. The third queued feature, the idle-cash yield sleeve, is not covered here.
+promoted. The third queued feature, the idle-cash yield sleeve, follows the same rules and is recorded
+in P6 (2026-09-28).
 
 ### P1. One config path per feature
 
@@ -284,6 +285,68 @@ Changing any of these follows the existing strategy-log rule: a row with harness
   normalizes a saved strategy through this core's `normalizeConfig`. Not done yet in the store: the
   Strategy Lab knob list (`GET /api/trading/lab/knobs`) does not document the two knobs, there is no
   store-side spec pinning the 428 refusal for them, and there is no plan view or amend route.
+
+### P6. Idle-cash yield sleeve (2026-09-28)
+
+Cash the book is not using earns next to nothing at the broker's sweep. The sleeve parks the cash
+above a working float in an intraday-liquid T-bill fund, and the entry legs treat that holding as
+spendable: they sell it first, then buy. The engine sizes off broker cash, so a sleeve that did not
+sell first would starve every entry.
+
+- **One config path.** The knob is `yieldSleeveFloatPct` (the working float, in percent of equity),
+  read by the dispatch and the Strategy Lab through `yieldSleeveFloatPct()` in
+  [yield-sleeve.ts](../../src/features/trading/services/yield-sleeve.ts). The precedence is P1's:
+  a finite knob decides (`0` is an explicit off), an absent knob inherits
+  `TRADING_YIELD_SLEEVE` (`paper | live | both | true`, off by default) with
+  `TRADING_YIELD_SLEEVE_FLOAT_PCT`, and a Lab walk runs off unless the knob is set.
+  `TRADING_YIELD_SLEEVE_SYMBOL` names the fund. Blend walks zero the knob.
+- **Pre-registered values.**
+
+  | Value | Pre-registered | Why this number |
+  |---|---|---|
+  | Fund | **SGOV** | The operator's 2026-07-09 spec ("SGOV or equivalent T-bill ETF"): 0-3 month Treasury bills, intraday-liquid. |
+  | Working float | **5%** of equity | The pop-catcher's default reserve (1% tranches x 5) and one full name at the balanced posture's per-name cap. |
+  | Dead band | **1%** of equity | The beta core's own band, so neither trades a rounding error. |
+
+- **Exempt.** While armed, the dispatch
+  ([trading-dispatch-yield-sleeve.ts](../../src/app/trading-dispatch-yield-sleeve.ts)) removes the
+  holding from every leg's view and adds the fund to the core exemption set:
+  - no stop, trailing exit, cap trim, rotation drop-out, bench, breakdown or technical sell touches it;
+  - it takes no `maxPositions` slot and does not count as deployed exposure;
+  - no scan or rotation buys it as an entry.
+- **Sell first, then buy.**
+  - The scan leg sizes its entries as if the sleeve were cash and defers them.
+  - It sells the sleeve for the shortfall (decision reason `yield-sleeve-fund`), waits the rotation's
+    6 s settle, re-reads the account through `capAccount`, and places the entries in order, each
+    clipped to min(re-read cash, cash on hand + the sale).
+  - Each rotation path sells the sleeve right before its own settle wait and real-cash re-read, for
+    what its buy loop needs beyond the opening cash and the rebalance's own sale proceeds.
+  - The pop-catcher and the beta-core top-up do not sell the sleeve. They fund from cash, which the
+    float keeps available.
+- **Settled cash.**
+  - `capAccount` clamps a cash-type book to settled cash (ADR-134 D8), so a sleeve sale's unsettled
+    proceeds are never spent the day they are raised.
+  - The same proceeds, read from the book's own ledger, count toward the float and toward any
+    shortfall, so a cash book does not sell again for cash already on its way.
+  - While a sleeve order is still working, the sleeve places nothing.
+- **Rebalances itself.** On a quiet fire the sleeve parks the spendable cash above the float plus the
+  band, or sells enough of the fund to bring the float back. A quiet fire is one where all of these
+  hold: regular hours, the book is enabled, no working order in the book, no order placed this fire.
+- **Disarmed for the fire** when the fund is a beta-core symbol, or when the held fund shares are
+  ones the engine cannot account for (ADR-159). The holding then stays monitored, not managed.
+- **Lab twin.** An armed walk credits the cash above the float at each close with the fund's next
+  close-to-close return (its dividend-adjusted series) and tallies it as `sleeveYieldUsd`. Entries
+  spend parked cash at the same close. The honest limits: no settlement delay and no bid/ask on the
+  fund.
+- **Unarmed**, the dispatch makes no new read and no new write, and the golden plan passes
+  unchanged.
+- **Evidence and promotion** follow P5:
+  - at least one week of paper operation, with ledger rows showing `yield-sleeve-fund` sells before
+    the buys they funded;
+  - the Test Lab card `trading-parity-features`, whose `yield-sleeve-readback` step reads it back and
+    never claims the soak;
+  - promotion to live through the env arm or the confirm-gated per-book strategy apply, under the
+    live double opt-in.
 
 ## Operator sign-off — answered as built (reconciled 2026-08-02)
 

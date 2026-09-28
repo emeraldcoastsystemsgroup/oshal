@@ -49,6 +49,7 @@
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 round 2 — the two SCAN-sleeve sell legs were left reading the book through the plain quantity map (`held`), which carries no mark: the 2a short-timeframe breakdown exit could still sell a holding the engine cannot account for, and unlike 2b/2c/2d it runs on EVERY fire rather than only when rotation does not own the sleeve — so the one leg that was always live was the one still trading hand-bought shares. Both 2a and 2b now read `unmanagedSymbols(positions)` beside `held`. `held` itself is deliberately unchanged: it is also placeEntries' dedup guard, so removing a withheld name from it would let the engine BUY what it just refused to manage. A withheld name is likewise NOT added to `exiting`, so it keeps consuming its maxPositions slot and its exposure exactly as today — withholding can only remove an order, never free capital for another target. Guard: tests/unit/trading-dispatch-unmanaged-fire.spec.ts drives a full dispatchTradingSchedule fire over a book with one uncovered position and asserts no order of any kind for it.
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | ADR-134 book resolution gains a FOURTH hard rule: a resolved NON-LEGACY book with no arming acknowledgement on its row hard-skips the fire. Enabling a second book was already inert for trading - this function resolves exactly ONE book from its own schedule's taskData and never enumerates enabled books - but that safety was a property of the code with nothing pinning it and nothing standing between a hand-written schedule row and roughly $224k of hand-picked positions in the rollover account. The gate is suppressive by construction (it can only withhold a fire) and the two legacy books are excluded, so the running first leg is byte-identical. The four rules move into resolveScheduleBook() - a pure code move, branch for branch - because dispatchTradingSchedule was already 121 lines and adding the gate inline would have grown it further past the 50-line rule; its early returns become a null the caller turns back into the same logged no-op result.
  * 25 | maintainer@emeraldcoastsystemsgroup.com   | ADR-052 addendum (paper-to-live parity): runAutopilot resolves the fire's ParityControls ONCE, right after the earnings blackout (resolveParityControls, trading-dispatch-market-gate.ts — the market-wide gap-down verdict and the per-position exit-plan ledger, each null unless armed by the applied strategy's knob or the mode-aware env default), and threads them to computeExits, both rotation paths, placePopCatches, placeEntries and the four sell sites here (placeManaged's plan ledger, so a full exit closes the position's plan with its door). A market-gap-held rotation does not consume the day's rotation slot. All logic lives in the new modules; runAutopilot does not grow (the resolve joins the earnings-blackout read in one Promise.all; every other change is an argument or a condition on an existing line). Unarmed = the null controls every leg already treats as absent, so the plan is byte-identical (tests/unit/trading-dispatch-golden-plan.spec.ts, unchanged).
+ * 26 | maintainer@emeraldcoastsystemsgroup.com   | ADR-052 addendum P6 (idle-cash yield sleeve, trading-dispatch-yield-sleeve.ts): the marked positions resolve the sleeve inside the same resolveParityControls call (its fifth argument), and every leg then reads sleevePositions(marked) — the armed sleeve's holding removed, because it is parked cash, not a position (no stop, trim, bench or rotation sell can touch it, it takes no slot and no exposure) — while its symbol joins the core exemption set so no scan or rotation buys it as an entry. After every leg, rebalanceYieldSleeve parks the cash above the float or refills the float, on a quiet fire only. The entry legs' sell-first funding lives in their own modules. Unarmed, sleevePositions returns the same array, the exemption set is unchanged and the rebalance returns before any I/O, so the plan is byte-identical (tests/unit/trading-dispatch-golden-plan.spec.ts, unchanged). runAutopilot grows by two statements (the view and the rebalance); every other change is an argument on an existing line.
  *
  * @module trading-schedule-dispatch
  */
@@ -91,6 +92,7 @@ import { rotationConfig, rotateSleeve, rotateBlendSleeve } from './trading-dispa
 import { computeExits, placeEntries, placePopCatches } from './trading-dispatch-exits-entries';
 import { withEngineCostBasis } from './trading-engine-cost-basis';
 import { resolveParityControls } from './trading-dispatch-market-gate';
+import { sleevePositions, sleeveExemptSymbols, rebalanceYieldSleeve } from './trading-dispatch-yield-sleeve';
 import { createChildLogger } from '@/shared/logger';
 
 const logger = createChildLogger({ module: 'trading-schedule-dispatch' });
@@ -223,7 +225,7 @@ async function runAutopilot(ctx: AppContext, sub: string, bookOrMode: TradingBoo
   // below takes THIS array, so the core top-up, the protective exits and the rotation all withhold for
   // the same position. A failed ledger read marks nothing and logs, so the fire behaves exactly as it
   // does today rather than losing every stop in the book to a database blip.
-  const positions = await withEngineCostBasis(ctx, sub, book, overlaid);
+  const marked = await withEngineCostBasis(ctx, sub, book, overlaid);
   // Snapshot the REAL equity for the honest day-P&L baseline (latest-per-ET-day ≈ that day's close)
   // BEFORE the sizing cap — the store is the truth source for recaps/guards and must never carry the
   // capped sizing fiction (07-07: capped paper equity=20000 was recorded and poisoned the day P&L).
@@ -238,13 +240,15 @@ async function runAutopilot(ctx: AppContext, sub: string, bookOrMode: TradingBoo
   // EARNINGS BLACKOUT (TRADING_EARNINGS_GATE, default off; mode-aware: paper|live|both) — read ONCE
   // per fire. Empty set unless armed for THIS book, so the default path is byte-identical.
   // Evidence: 2026-07-14 earnings-proximity study; counterfactuals accrue in the gate-block ledger. Beside it: the ADR-052 parity controls (null unless armed).
-  const [noBuy, parity] = await Promise.all([earningsBlackout(worldSvc, mode), resolveParityControls(sub, book, override, policy)]);
+  const [noBuy, parity] = await Promise.all([earningsBlackout(worldSvc, mode), resolveParityControls(sub, book, override, policy, { pool: ctx.pool, positions: marked })]);
   if (noBuy.size) logger.info({ sub, mode, blackout: [...noBuy].join(','), days: EARNINGS_BLACKOUT_DAYS }, 'earnings blackout active — these names will not be bought');
+  // ADR-052 addendum P6: an armed yield sleeve is parked cash, not a position of any leg (unarmed: the same array).
+  const positions = sleevePositions(marked, parity.yieldSleeve);
 
   // 0) Beta core — deploy idle cash into a market-index core (captures the market beta the active
   //    sleeve can't ride). Cash-only, regular-hours only; exempt from every sleeve sell below.
   const core = coreConfig(override);
-  const coreSet = new Set(core.symbols);
+  const coreSet = new Set([...core.symbols, ...sleeveExemptSymbols(parity.yieldSleeve)]);
   let coreSpent = 0;
   if (core.symbols.length && core.targetPct > 0 && !extHours) {
     try { coreSpent = await ensureCore(ctx, sub, book, account, positions, core, orders, errors); }
@@ -417,6 +421,8 @@ async function runAutopilot(ctx: AppContext, sub: string, bookOrMode: TradingBoo
     }
   }
 
+  // ADR-052 addendum P6: on a quiet fire the armed sleeve parks the cash above its float, or refills it.
+  await rebalanceYieldSleeve(ctx, sub, book, parity.yieldSleeve, orders, errors, extHours);
   return {
     scanned: scan.size, entries: orders.filter((o) => o.side === 'buy').length,
     exits: orders.filter((o) => o.side === 'sell').length, orders, errors, posture: policy.posture,
