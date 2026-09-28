@@ -8,10 +8,11 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Hosted pages carry `?audience=` instead of `?view=`
  * 4 | maintainer@emeraldcoastsystemsgroup.com | The Studio app panel's relationship to Synthetic finance is now a declared app dependency read from the package record (waited for, never labelled an integration source), and its in-place frame requests the Studio's company audience
  * 5 | maintainer@emeraldcoastsystemsgroup.com | The learner view is recognised by its open classwork count: the classwork done/total count was removed (Little Monsters records no per-learner completion)
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Phase-4 assemblies: the classroom lists AI Office ("Make and share") and Circuit Lab ("Build and test"), Home lists Watch / Listen / Go, and Business lists its Office, Communications and Growth hosts, each host in its own group in both the sidebar and the tile row, each opened with the preset's audience, and only the view page of a host whose ribbon lists several surfaces. The Little Monsters case reads its own section now that the classroom hosts more than one application.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
-import { startExperienceBrowserFixture } from '../fixtures/experience-browser';
+import { installAssemblyHosts, startExperienceBrowserFixture } from '../fixtures/experience-browser';
 
 vi.mock('@/shared/logger', () => ({ createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }) }));
 vi.setConfig({ testTimeout: 90000, hookTimeout: 60000 });
@@ -47,6 +48,25 @@ async function open(path: string, ready: string) {
 }
 const bodyText = () => page.evaluate(() => document.body.innerText);
 const stored = (key: string) => page.evaluate(k => localStorage.getItem(k), key);
+/**
+ * @description A homebase's hosted-tool groups in page order: each group's kicker and the tool ids it offers.
+ * @param groupSelector The group containers (sidebar sections or tile-row groups).
+ * @param toolSelector The tool buttons inside one group.
+ * @returns One entry per group that offers at least one tool.
+ */
+const railGroups = (groupSelector: string, toolSelector: string) => page.evaluate(([g, t]) => Array.from(document.querySelectorAll(g))
+  .map(section => ({ kicker: section.querySelector('.side-kicker')?.textContent || '', tools: Array.from(section.querySelectorAll(t)).map(b => b.getAttribute('data-tool') || '') }))
+  .filter(group => group.tools.length > 0), [groupSelector, toolSelector]);
+/**
+ * @description Open a hosted tool from the homebase sidebar and wait for its frame to carry the expected src.
+ * @param toolId The admitted tool's id.
+ * @param src The frame src the preset must request (surface plus its audience).
+ * @returns Nothing; fails when the frame never carries `src`.
+ */
+async function openHosted(toolId: string, src: string) {
+  await page.locator(`.home-sidebar [data-tool="${toolId}"]`).click();
+  await expect.poll(() => page.locator('#tool-frame').getAttribute('src')).toBe(src);
+}
 
 describe('experience shells over the real routes', () => {
   it('gates every experience path behind the real requiresAuth seat and redirects the old classroom path', async () => {
@@ -197,10 +217,12 @@ describe('experience shells over the real routes', () => {
   it('Classroom preset hosts the Little Monsters tools in place: admitted tools by role, opened in a frame, bridge navigation honoured', async () => {
     await open('/homebase?preset=classroom', '.home-shell');
     await page.waitForSelector('.tool-nav');
-    const nav = await page.locator('.tool-nav').innerText();
+    // The classroom hosts more than Little Monsters (the default catalog installs AI Office), so read its own section.
+    const lmNav = page.locator('.home-sidebar .side-section').filter({ has: page.locator('.side-kicker', { hasText: /^LITTLE MONSTERS$/ }) }).locator('.tool-nav');
+    const nav = await lmNav.innerText();
     expect(nav).toContain('Home'); expect(nav).toContain('My Day'); expect(nav).toContain('Teacher'); expect(nav).not.toContain('Synthetic Science');
-    expect(await page.locator('.tools-row .app-tile').count()).toBe(3);
-    await page.locator('.tool-nav button', { hasText: 'My Day' }).click();
+    expect(await page.locator('.tool-group').filter({ has: page.locator('.side-kicker', { hasText: /^LITTLE MONSTERS$/ }) }).locator('.app-tile').count()).toBe(3);
+    await lmNav.locator('button', { hasText: 'My Day' }).click();
     await page.waitForSelector('#tool-frame');
     expect(await page.locator('#tool-frame').getAttribute('src')).toBe('/fixture/surface/lm-myday?audience=classroom');
     expect(await page.locator('.breadcrumb').innerText()).toContain('My Day');
@@ -213,8 +235,8 @@ describe('experience shells over the real routes', () => {
     await page.waitForSelector('.hero');
     fixture.state.education.me = { ...fixture.state.education.me, role: 'student' };
     await page.reload(); await page.waitForSelector('.tool-nav');
-    expect(await page.locator('.tool-nav').innerText()).not.toContain('Teacher');
-    await page.locator('.tool-nav button', { hasText: 'Home' }).click(); await page.waitForSelector('#tool-frame');
+    expect(await lmNav.innerText()).not.toContain('Teacher');
+    await lmNav.locator('button', { hasText: 'Home' }).click(); await page.waitForSelector('#tool-frame');
     await page.frameLocator('#tool-frame').locator('#post-teacher').click();
     await page.waitForFunction(() => document.getElementById('toast')?.textContent?.includes('not available to you here'));
     expect(await page.locator('#tool-frame').getAttribute('src')).toBe('/fixture/surface/lm-dashboard?audience=classroom');
@@ -245,6 +267,56 @@ describe('experience shells over the real routes', () => {
     await page.locator('.tool-nav button', { hasText: 'Synthetic presentations home' }).first().click();
     await page.waitForSelector('#tool-frame');
     expect(await page.locator('#tool-frame').getAttribute('src')).toBe('/fixture/surface/presentations?audience=company');
+    expect(errors).toEqual([]);
+  });
+
+  it('the classroom also hosts AI Office and Circuit Lab, each in its own group, opened with the classroom audience', async () => {
+    installAssemblyHosts(fixture.state);
+    await open('/homebase?preset=classroom', '.home-shell');
+    await page.waitForSelector('[data-tool="tool-circuit-lab"]');
+    const groups = await railGroups('.home-sidebar .side-section', '.tool-nav [data-tool]');
+    expect(groups.map(g => g.kicker)).toEqual(['LITTLE MONSTERS', 'MAKE AND SHARE', 'BUILD AND TEST']);
+    expect(groups[1].tools).toEqual(['tool-presentations-studio']); expect(groups[2].tools).toEqual(['tool-circuit-lab']);
+    expect((await railGroups('.tool-group', '.app-tile[data-tool]')).map(g => g.kicker)).toEqual(['LITTLE MONSTERS', 'MAKE AND SHARE', 'BUILD AND TEST']);
+    await openHosted('tool-presentations-studio', '/fixture/surface/presentations-studio?audience=classroom');
+    expect(await page.locator('.breadcrumb').innerText()).toContain('Synthetic AI Office');
+    await openHosted('tool-circuit-lab', '/fixture/surface/circuit-lab?audience=classroom');
+    expect(errors).toEqual([]);
+  });
+
+  it('Home adds Watch, Listen and Go (Movies & TV, Music, Travel), each in its own group, opened with the family audience', async () => {
+    installAssemblyHosts(fixture.state);
+    await open('/homebase?preset=family', '.home-shell');
+    await page.waitForSelector('[data-tool="tool-travel-concierge"]');
+    const groups = await railGroups('.home-sidebar .side-section', '.tool-nav [data-tool]');
+    expect(groups.map(g => g.kicker)).toEqual(['SMART HOME', 'SHOPPING', 'MONEY', 'LITTLE MONSTERS', 'WATCH', 'LISTEN', 'GO']);
+    expect(groups.slice(4).map(g => g.tools)).toEqual([['tool-movies-concierge'], ['tool-spotify-concierge'], ['tool-travel-concierge']]);
+    expect(await page.locator('.tool-group').count()).toBe(7);
+    for (const [tool, surface] of [['tool-movies-concierge', 'movies-concierge'], ['tool-spotify-concierge', 'spotify-concierge'], ['tool-travel-concierge', 'travel-concierge']]) {
+      await openHosted(tool, `/fixture/surface/${surface}?audience=family`);
+    }
+    expect(errors).toEqual([]);
+  });
+
+  it('Business adds Office, Communications and Growth hosts beside its own, shows only each one’s view page, and asks for the company audience', async () => {
+    installAssemblyHosts(fixture.state);
+    await open('/homebase?preset=company', '.home-shell');
+    await page.waitForSelector('[data-tool="tool-venture-home"]');
+    const groups = await railGroups('.home-sidebar .side-section', '.tool-nav [data-tool]');
+    expect(groups.map(g => g.kicker)).toEqual(['PRESENTATIONS', 'OFFICE · EMAIL', 'OFFICE · WORLD BRIEFING', 'FINANCE', 'COMMUNICATIONS', 'COMMUNICATIONS · SOCIAL',
+      'GROWTH · MARKETING', 'GROWTH · VENTURES', 'PAYROLL', 'PAYMENTS', 'IDENTITY', 'ENGINEERING']);
+    const byKicker = Object.fromEntries(groups.map(g => [g.kicker, g.tools]));
+    // Where the ribbon lists several surfaces, only the page that carries the audience view is offered.
+    expect(byKicker['OFFICE · EMAIL']).toEqual(['tool-email-myday']);
+    expect(byKicker['COMMUNICATIONS · SOCIAL']).toEqual(['tool-social-composer']);
+    expect(byKicker['GROWTH · MARKETING']).toEqual(['tool-marketing-engine']);
+    expect(byKicker['OFFICE · WORLD BRIEFING']).toEqual(['tool-world-dashboard']); expect(byKicker['GROWTH · VENTURES']).toEqual(['tool-venture-home']);
+    expect(await page.locator('.tool-group').count()).toBe(12);
+    const hidden = ['tool-email-inbox', 'tool-email-social', 'tool-social-workspace', 'tool-linkedin-assistant', 'tool-social-signals', 'tool-social-accounts', 'tool-marketing-content-studio', 'tool-marketing-linkedin-assistant'];
+    for (const id of hidden) expect(await page.locator(`[data-tool="${id}"]`).count(), id).toBe(0);
+    for (const [tool, surface] of [['tool-email-myday', 'email-myday'], ['tool-world-dashboard', 'world-dashboard'], ['tool-social-composer', 'social-composer'], ['tool-marketing-engine', 'marketing-engine'], ['tool-venture-home', 'venture-home']]) {
+      await openHosted(tool, `/fixture/surface/${surface}?audience=company`);
+    }
     expect(errors).toEqual([]);
   });
 

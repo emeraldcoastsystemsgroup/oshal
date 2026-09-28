@@ -1,9 +1,12 @@
 /* Shared audience-view kit (ADR-164 D6). Companion of /shared/ui/js/app-view.js.
    One grammar per audience: [data-audience="family"] is roomy, rounded and tile-forward for the Home shell;
-   [data-audience="company"] is dense, squared and table-forward for the Business shell. Both paint only with
+   [data-audience="company"] is dense, squared and table-forward for the Business shell;
+   [data-audience="classroom"] is big, round and friendly for the Little Monsters classroom (every tile, button
+   and clickable row at least 48px tall, a larger type scale, generous spacing). All three paint only with
    the framework theme tokens the skin sets (surface-themes.css + the saved cockpit theme), so a family
-   view in the Forest skin and a company view in Graphite each look like their room. Nothing here hardcodes
-   a palette; the fallbacks after each token keep a page legible when a theme omits one. */
+   view in the Forest skin, a company view in Graphite and a classroom view in the classroom skin each look
+   like their room. Nothing here hardcodes a palette; the fallbacks after each token keep a page legible when
+   a theme omits one. */
 
 html[data-audience] body { margin: 0; padding: 0; background: var(--bg-primary, #101216); color: var(--text-primary, #e8e9ec); }
 html[data-audience] body > :not(#av-root) { display: none !important; }
@@ -183,6 +186,65 @@ html[data-audience] body > :not(#av-root) { display: none !important; }
 .av[data-audience="company"] .av-bar { height: 8px; border-radius: 3px; }
 .av[data-audience="company"] .av-escape { margin-top: 16px; padding: 10px 14px; font-size: 12.5px; }
 
+/* ---- Classroom grammar: the Little Monsters classroom. Big, round, friendly and calm. ----
+   Touch first: every tile, button, link and clickable row is at least 48px tall. Colour comes from the classroom
+   skin's tokens only (accent, card, line, text-on-accent, accent-glow); soft accent washes instead of loud fills. */
+.av[data-audience="classroom"] { --av-radius: 26px; --av-pad: 22px; --av-gap: 20px; --av-wash: color-mix(in srgb, var(--av-accent) 10%, var(--av-card)); --av-glow: var(--accent-glow, color-mix(in srgb, var(--av-accent) 24%, transparent)); padding-top: 30px; font-size: 16px; line-height: 1.55; }
+.av[data-audience="classroom"] .av-hero { margin-bottom: 26px; padding: 26px 28px; border-radius: var(--av-radius); background: var(--av-wash); border: 2px solid color-mix(in srgb, var(--av-accent) 22%, var(--av-line)); }
+.av[data-audience="classroom"] .av-kicker { font-size: 13px; letter-spacing: 0.08em; color: var(--av-accent); }
+.av[data-audience="classroom"] .av-title { margin-top: 8px; font-size: 34px; line-height: 1.12; letter-spacing: -0.015em; }
+.av[data-audience="classroom"] .av-lede { font-size: 17px; }
+.av[data-audience="classroom"] .av-actions { gap: 12px; margin-top: 18px; }
+.av[data-audience="classroom"] .av-btn { min-height: 48px; padding: 12px 22px; border-width: 2px; border-radius: 999px; font-size: 16px; font-weight: 700; justify-content: center; }
+.av[data-audience="classroom"] .av-btn.is-primary { color: var(--text-on-accent, #fff); box-shadow: 0 10px 22px -12px var(--av-glow); }
+.av[data-audience="classroom"] .av-btn:hover, .av[data-audience="classroom"] .av-btn:focus-visible { transform: translateY(-2px); }
+.av[data-audience="classroom"] .av-link { min-height: 48px; padding: 10px 16px; border-radius: 999px; font-size: 15px; font-weight: 700; }
+.av[data-audience="classroom"] .av-stats { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; margin-bottom: 26px; }
+.av[data-audience="classroom"] .av-stat { padding: 18px 20px; border: 2px solid color-mix(in srgb, var(--av-accent) 18%, var(--av-line)); border-radius: 22px; background: var(--av-card); text-align: center; }
+.av[data-audience="classroom"] .av-stat-value { font-size: 34px; color: var(--av-accent); }
+.av[data-audience="classroom"] .av-stat-label { margin-top: 6px; font-size: 14px; color: var(--av-text); }
+.av[data-audience="classroom"] .av-stat-hint { font-size: 13px; }
+.av[data-audience="classroom"] .av-section { border-width: 2px; box-shadow: 0 16px 34px -28px var(--av-glow); }
+.av[data-audience="classroom"] .av-section-head { margin-bottom: 14px; }
+.av[data-audience="classroom"] .av-section-title { font-size: 20px; }
+.av[data-audience="classroom"] .av-section-note { margin-top: -6px; font-size: 14.5px; }
+.av[data-audience="classroom"] .av-empty { padding: 26px 14px; font-size: 16px; border-width: 2px; border-radius: 20px; }
+.av[data-audience="classroom"] .av-tiles { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 16px; }
+.av[data-audience="classroom"] .av-tile { display: flex; flex-direction: column; gap: 6px; min-height: 112px; padding: 20px; border: 2px solid var(--av-line); border-radius: 22px; background: var(--av-card); }
+.av[data-audience="classroom"] .av-tile.is-link:hover, .av[data-audience="classroom"] .av-tile.is-link:focus-visible { transform: translateY(-3px); background: var(--av-wash); box-shadow: 0 14px 26px -18px var(--av-glow); }
+.av[data-audience="classroom"] .av-tile-icon { display: grid; place-items: center; width: 52px; height: 52px; margin-bottom: 6px; border-radius: 50%; background: var(--av-wash); font-size: 28px; }
+.av[data-audience="classroom"] .av-tile-title { font-size: 18px; font-weight: 800; }
+.av[data-audience="classroom"] .av-tile-text { margin-top: 0; font-size: 15px; }
+.av[data-audience="classroom"] .av-item-meta { margin-top: auto; padding-top: 6px; font-size: 13.5px; }
+.av[data-audience="classroom"] .av-list { display: flex; flex-direction: column; gap: 10px; }
+.av[data-audience="classroom"] .av-item { align-items: center; min-height: 56px; padding: 12px 14px; border-top: 0; border-radius: 18px; background: var(--av-wash); }
+.av[data-audience="classroom"] .av-item.is-link { border-radius: 18px; }
+.av[data-audience="classroom"] .av-item-icon { font-size: 24px; }
+.av[data-audience="classroom"] .av-item-title { font-size: 16px; font-weight: 700; }
+.av[data-audience="classroom"] .av-item-text { font-size: 14.5px; }
+.av[data-audience="classroom"] .av-item .av-item-meta { padding-top: 0; }
+.av[data-audience="classroom"] .av-badge { padding: 4px 12px; border-radius: 999px; font-size: 12.5px; }
+.av[data-audience="classroom"] .av-table { font-size: 15px; }
+.av[data-audience="classroom"] .av-table th { font-size: 12.5px; letter-spacing: 0.04em; padding: 8px 10px; }
+.av[data-audience="classroom"] .av-table td { padding: 12px 10px; height: 48px; vertical-align: middle; }
+.av[data-audience="classroom"] .av-progress { gap: 16px; }
+.av[data-audience="classroom"] .av-progress-head { font-size: 15px; margin-bottom: 8px; }
+.av[data-audience="classroom"] .av-bar { height: 18px; }
+.av[data-audience="classroom"] .av-time { grid-template-columns: 112px 1fr; align-items: center; gap: 14px; padding: 10px 0; }
+.av[data-audience="classroom"] .av-time-when { padding: 6px 10px; border-radius: 999px; background: var(--av-wash); color: var(--av-accent); font-size: 13.5px; font-weight: 700; text-align: center; }
+.av[data-audience="classroom"] .av-time-title { font-size: 16px; }
+.av[data-audience="classroom"] .av-time-text { font-size: 14.5px; }
+.av[data-audience="classroom"] .av-escape { margin-top: 30px; padding: 16px 20px; border-width: 2px; border-radius: 22px; font-size: 15px; }
+.av[data-audience="classroom"] .av-escape-link { display: inline-flex; align-items: center; min-height: 48px; padding: 0 20px; border-radius: 999px; background: var(--av-accent); color: var(--text-on-accent, #fff); }
+.av[data-audience="classroom"] .av-escape-link:hover { text-decoration: none; filter: brightness(1.08); }
+.av[data-audience="classroom"] .is-link:focus-visible, .av[data-audience="classroom"] .av-btn:focus-visible, .av[data-audience="classroom"] .av-link:focus-visible,
+.av[data-audience="classroom"] .av-escape-link:focus-visible { outline: 3px solid var(--av-accent); outline-offset: 3px; }
+.av[data-audience="classroom"] .av-sk { border-radius: 20px; }
+@media (prefers-reduced-motion: reduce) {
+  .av[data-audience="classroom"] .av-btn:hover, .av[data-audience="classroom"] .av-btn:focus-visible,
+  .av[data-audience="classroom"] .av-tile.is-link:hover, .av[data-audience="classroom"] .av-tile.is-link:focus-visible { transform: none; }
+}
+
 /* Narrow screens: one column everywhere. */
 @media (max-width: 760px) {
   .av { padding-left: 14px; padding-right: 14px; }
@@ -192,4 +254,21 @@ html[data-audience] body > :not(#av-root) { display: none !important; }
   .av[data-audience="company"] .av-stats { grid-template-columns: repeat(2, 1fr); }
   .av[data-audience="company"] .av-stat:nth-child(2n) { border-right: 0; }
   .av[data-audience="company"] .av-stat { border-bottom: 1px solid var(--av-line); }
+  .av[data-audience="classroom"] { --av-gap: 16px; --av-pad: 18px; padding-top: 20px; }
+  .av[data-audience="classroom"] .av-hero { padding: 20px; }
+  .av[data-audience="classroom"] .av-title { font-size: 28px; }
+  .av[data-audience="classroom"] .av-lede { font-size: 16px; }
+  .av[data-audience="classroom"] .av-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .av[data-audience="classroom"] .av-stat-value { font-size: 28px; }
+  .av[data-audience="classroom"] .av-tiles { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+  .av[data-audience="classroom"] .av-time { grid-template-columns: 96px 1fr; }
+}
+
+/* Phone width in the classroom: one tile per row and full-width buttons, still 48px tall. */
+@media (max-width: 480px) {
+  .av[data-audience="classroom"] .av-tiles { grid-template-columns: 1fr; }
+  .av[data-audience="classroom"] .av-actions .av-btn { flex: 1 1 100%; }
+  .av[data-audience="classroom"] .av-time { grid-template-columns: 1fr; gap: 6px; }
+  .av[data-audience="classroom"] .av-time-when { justify-self: start; }
+  .av[data-audience="classroom"] .av-escape-link { width: 100%; justify-content: center; }
 }

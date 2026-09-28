@@ -6,10 +6,12 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Drive the homebase gap closure in headless Chromium through the real static route registration over the isolated synthetic swarm: learner activity pills and the class summary from the teacher analytics read (and its 403/404 notes), teacher classwork posted to assignments-with-events with the class picker limited to taught classes and refusals rendered as text, the learner checklist opening My Day in place, the ticket project dialog's approval transition with its refusal and no-approval states, the caller's saved drafts and newest finished Jarvis task with empty and failure states, and "Configure home" hidden for guests.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Integration review: the ticket dialog's Reason and Next action rows appear only when metadata.lastStatusTransition describes the current status (after an approval, and for a mirror of an older state, only State shows); the drafts dialog names Content Studio drafts in its heading, empty and failure copy.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Acceptance fixes: family and company send no /api/education request, and Home no Little Monsters ribbon-profile read, unless Little Monsters' read-only probe answers 200 (and none for an entry outside the plan) while the classroom still reads; authorization refusals read "not available to you", the no-profile refusal says to open Little Monsters once, other refusals show their status; UTC-midnight due and event dates show their own day in America/Chicago; the learner card has no completion count or progress bar; an approval_required ticket leads the six project rows; a timed event shows its day. The context setup moved into openContext so a case can choose a zone and locale.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | A hosted tool opens in view: on the Business preset with every assembly host installed, scrolled to the bottom of the sidebar (the page is scrolled, the precondition), opening the last host's tool puts the frame's top inside the viewport and focuses the frame, both for a reader who prefers reduced motion and for one who does not. openContext also takes reducedMotion.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | The reduced-motion pass reads the frame position once, right after the frame appears, so only an instant scroll passes it; the other pass still polls for the smooth scroll
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
-import { startExperienceBrowserFixture } from '../fixtures/experience-browser';
+import { installAssemblyHosts, startExperienceBrowserFixture } from '../fixtures/experience-browser';
 
 vi.mock('@/shared/logger', () => ({ createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }) }));
 vi.setConfig({ testTimeout: 90000, hookTimeout: 60000 });
@@ -25,10 +27,11 @@ beforeAll(async () => { browser = await chromium.launch({ headless: true }); });
 afterAll(async () => { await browser?.close(); });
 /**
  * @description A browser context over the fixture only (every other origin aborted) with speech stubbed, and its page.
- * @param zone Optional timezoneId/locale, so a case can read the page as a reader in a US zone would.
+ * @param zone Optional timezoneId/locale, so a case can read the page as a reader in a US zone would, and an optional
+ * reducedMotion so a case can read the page as a reader who has not asked for reduced motion.
  * @returns Nothing; sets the shared context and page.
  */
-async function openContext(zone: { timezoneId?: string; locale?: string } = {}) {
+async function openContext(zone: { timezoneId?: string; locale?: string; reducedMotion?: 'reduce' | 'no-preference' } = {}) {
   context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce', ...zone });
   await context.route('**/*', route => new URL(route.request().url()).origin === fixture.origin ? route.continue() : route.abort());
   await context.addInitScript(() => {
@@ -410,4 +413,36 @@ describe('acceptance fixes: Little Monsters reads, dates, the learner card, proj
     expect(await time('Synthetic recital')).toBe(`2:30 PM ${onCalendar(day(3), { weekday: 'short', month: 'short', day: 'numeric' })}`);
     expect(errors).toEqual([]);
   });
+
+  it('a tool opened from the bottom of a long sidebar opens in view, with and without reduced motion', async () => {
+    installAssemblyHosts(fixture.state);
+    for (const reducedMotion of ['reduce', 'no-preference'] as const) {
+      await context.close();
+      await openContext({ reducedMotion });
+      await openFromSidebarBottom(reducedMotion);
+      expect(errors).toEqual([]);
+    }
+  });
 });
+
+/**
+ * @description Open the Business home, scroll to the bottom of its sidebar, open the last host's tool from there, and
+ * assert the frame's top lands inside the viewport and the frame holds focus.
+ * @param reducedMotion The context's motion preference: under 'reduce' the scroll must be instant, so the frame is read once
+ * right after it appears, with no polling (a smooth scroll would still be above the viewport).
+ * @returns Nothing; fails when the page was never scrolled (no precondition) or the frame opens out of view.
+ */
+async function openFromSidebarBottom(reducedMotion: 'reduce' | 'no-preference') {
+  await open('/homebase?preset=company', '[data-tool="tool-cad-studio-more"]');
+  const last = page.locator('.home-sidebar .tool-nav [data-tool]').last();
+  expect(await last.getAttribute('data-tool')).toBe('tool-cad-studio-more');
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  // Precondition: the sidebar is taller than the viewport, so the page really is scrolled when the tool opens.
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  await last.click();
+  await expect.poll(() => page.locator('#tool-frame').getAttribute('src')).toBe('/fixture/surface/cad-studio-more?audience=company');
+  const frameTop = () => page.evaluate(() => { const top = document.getElementById('tool-frame')!.getBoundingClientRect().top; return top >= 0 && top < window.innerHeight ? 'in view' : `top ${Math.round(top)}px`; });
+  if (reducedMotion === 'reduce') expect(await frameTop()).toBe('in view');
+  else await expect.poll(frameTop).toBe('in view');
+  expect(await page.evaluate(() => document.activeElement && document.activeElement.id)).toBe('tool-frame');
+}

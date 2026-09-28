@@ -7,15 +7,20 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Date-only strings (YYYY-MM-DD, what pay dates, statement dates and transaction dates arrive as) format as that calendar day: `new Date('2026-09-15')` is UTC midnight, which the reader's local zone west of Greenwich showed as Sep 14 in every table.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The hero, headings and escape are neutral elements with heading roles: a page's own `header { ... }` / `h1 { ... }` rules boxed the CAD Studio hero, and a shared view must not inherit the host page's tag styling.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | AppView.day(value) formats a date-only field whose value is 'YYYY-MM-DD' or exactly UTC midnight (how a Postgres DATE reaches JSON from a UTC server) as that calendar day, so DATE columns such as Payroll's pay dates no longer print a day early in US zones; other values format as AppView.date does.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | A tile, list item or table row may carry `target: '_blank'`: its href then opens in a new tab with `noopener` and the framed view stays where it is. Before, an item href always navigated the frame (only hero and section actions honoured `target`), so a store view could not hand a reader to an outside page (a playlist, a source article) without leaving the shell; everything else is unchanged.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | AppView.when reads 'just now' within 60 seconds either side of now: a timestamp equal to the reader's clock (a record saved this instant) returned 'soon', so a just-saved record read "Written soon.". A future time more than a minute ahead within the hour still reads 'soon', and earlier within the hour still reads 'just now'.
  * -----------------------------------------------------------------------------
  *
  * Usage (in a store page, after the theme bootstrap):
  *   <link rel="stylesheet" href="/shared/ui/css/app-view.css"><script src="/shared/ui/js/app-view.js"></script>
- *   AppView.boot({ app: 'finance', full: init, audiences: { family: buildFamily, company: buildCompany } });
+ *   AppView.boot({ app: 'finance', full: init, audiences: { family: buildFamily, company: buildCompany, classroom: buildClassroom } });
  * A builder receives { audience, root, refresh, app } and returns (or resolves) a model:
- *   { kicker, title, lede, actions:[{label, href|onClick, primary}], stats:[{label, value, hint, tone}],
+ *   { kicker, title, lede, actions:[{label, href|onClick, primary, target}], stats:[{label, value, hint, tone}],
  *     sections:[{kind:'tiles'|'list'|'table'|'progress'|'timeline'|'custom', title, items|columns+rows|render, empty}],
  *     escape:{label, href} }
+ * A tile, list item or table row is { title, text, icon, meta, badge, tone } plus, to make it clickable, onClick or
+ * href; with href, `target: '_blank'` opens it in a new tab (`noopener`) instead of navigating the frame. onClick wins
+ * over href when both are given.
  * Everything is built with DOM nodes and textContent: model strings are never parsed as HTML.
  */
 (function () {
@@ -110,14 +115,20 @@
     return m ? date(new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))) : date(value);
   }
 
-  /** @returns {string} A relative phrase (today · tomorrow · in 3 days · 2 h ago · Mar 4 beyond two weeks). */
+  /**
+   * @description A relative phrase for a timestamp. Within a minute either side of now reads 'just now': a record saved
+   * this instant carries a timestamp equal to (or, with clock skew, a moment ahead of) the reader's clock, and 'soon'
+   * made it read "Written soon.". Later within the hour reads 'soon'; earlier within the hour reads 'just now'.
+   * @param {string|number|Date|null|undefined} value The timestamp, or a 'YYYY-MM-DD' calendar day.
+   * @returns {string} just now · soon · in 3 h · 2 h ago · today · tomorrow · in 3 days · Mar 4 beyond two weeks; an em dash when unreadable.
+   */
   function when(value) {
     var d = toDate(value); if (!value || isNaN(d.getTime())) return '—';
     var dayOnly = typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value), now = new Date();
     var diffMs = d.getTime() - now.getTime(), hours = Math.round(diffMs / 36e5);
     // A date-only value is a calendar day: compare days from the start of today, never hours.
     var days = dayOnly ? Math.round((d.getTime() - new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()) / 864e5) : Math.round(diffMs / 864e5);
-    if (!dayOnly && Math.abs(diffMs) < 36e5) return diffMs >= 0 ? 'soon' : 'just now';
+    if (!dayOnly && Math.abs(diffMs) < 36e5) return diffMs > 6e4 ? 'soon' : 'just now';
     if (!dayOnly && Math.abs(hours) < 24) return hours > 0 ? 'in ' + hours + ' h' : Math.abs(hours) + ' h ago';
     if (days === 0) return 'today';
     if (days === 1) return 'tomorrow';
@@ -169,10 +180,21 @@
     return el('div', { class: 'av-item-meta' }, [item.meta ? el('span', { class: 'av-meta', text: item.meta }) : null, item.badge ? badge(item.badge, item.tone) : null]);
   }
 
+  /**
+   * @description Follow an item's href. `target: '_blank'` opens a new tab with `noopener`, so an outside page never
+   * replaces the framed view and never gets a handle back to it; any other item navigates this frame, as before.
+   * @param {{href: string, target?: string}} item The clicked tile, list item or table row.
+   * @returns {void}
+   */
+  function follow(item) {
+    if (item.target === '_blank') window.open(item.href, '_blank', 'noopener');
+    else window.location.assign(item.href);
+  }
+
   function clickable(node, item) {
     if (item.onClick || item.href) {
       node.classList.add('is-link'); node.setAttribute('tabindex', '0'); node.setAttribute('role', 'link');
-      var go = function (e) { if (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ') return; e.preventDefault(); if (item.onClick) item.onClick(e); else window.location.assign(item.href); };
+      var go = function (e) { if (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ') return; e.preventDefault(); if (item.onClick) item.onClick(e); else follow(item); };
       node.addEventListener('click', go); node.addEventListener('keydown', go);
     }
     return node;
