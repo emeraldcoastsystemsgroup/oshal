@@ -4,12 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify real ticket HTTP surfaces enforce current protected-result rights and immutable queue ownership.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Resume records the authenticated actor: a non-owner resume answers 404, and the owner's resume writes approval_required to approved with the caller as changedBy instead of system. Tickets are created through CreateInternalTicketSchema so the fixture matches the store's input contract.
  */
 import express, { type Request } from 'express';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createTicketRoutes } from '@/app/routes/ticket-routes';
+import { CreateInternalTicketSchema } from '@/entities/ticket';
 import { InMemoryTicketStore, TicketService } from '@/features/ticketing';
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
 import { runWithApplicationAuthorizationActor } from '@/shared/application-authorization-context';
@@ -19,7 +21,7 @@ import { createProtectedResultFixture, RESULT_ISSUER } from '../fixtures/protect
 let fixture: Awaited<ReturnType<typeof createProtectedResultFixture>>, server: Server, base: string, ticketId: string;
 beforeEach(async () => {
   fixture = await createProtectedResultFixture(); fixture.ctx.ticketService = new TicketService(new InMemoryTicketStore());
-  const ticket = await fixture.ctx.ticketService.createTicket({ title: 'PRIVATE TICKET', ownerSub: 'alice', ticketType: 'task' });
+  const ticket = await fixture.ctx.ticketService.createTicket(CreateInternalTicketSchema.parse({ title: 'PRIVATE TICKET', ownerSub: 'alice', ticketType: 'task' }));
   ticketId = ticket.ticketId; await fixture.seed(ticketId);
   const app = express(); app.use(express.json());
   app.use((req, _res, next) => {
@@ -67,4 +69,21 @@ it('rejects owner reassignment through the real PATCH path', async () => {
   const response = await call(`/${ticketId}`, 'alice', 'PATCH', { ownerSub: 'admin' });
   expect(response.status).toBeGreaterThanOrEqual(400);
   expect((await fixture.ctx.ticketService.getTicket(ticketId))!.ownerSub).toBe('alice');
+});
+
+it('records the authenticated resume actor on an approval transition', async () => {
+  await fixture.ctx.ticketService.updateStatus(ticketId, 'approved');
+  await fixture.ctx.ticketService.updateStatus(ticketId, 'paused');
+  await fixture.ctx.ticketService.updateStatus(ticketId, 'approval_required', { reason: 'approval_gate' });
+
+  expect((await call(`/${ticketId}/resume`, 'bob', 'PUT')).status).toBe(404);
+  const response = await call(`/${ticketId}/resume`, 'alice', 'PUT');
+  expect(response.status).toBe(200);
+  const history = await fixture.ctx.ticketService.getStatusHistory(ticketId, 1);
+  expect(history[0]).toMatchObject({
+    fromStatus: 'approval_required',
+    toStatus: 'approved',
+    changedBy: 'alice',
+    changedByLabel: 'Operator alice',
+  });
 });

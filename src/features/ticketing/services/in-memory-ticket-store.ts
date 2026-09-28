@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | buildTicketRowStatusMetadataPatch always returns a patch now, so the row's transition mirror is merged on every status update instead of being skipped for a metadata-less one
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Honor expected-status compare-and-set writes and fail closed on atomic DLQ contexts, which memory cannot persist, instead of reporting a false successful terminalization.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Reject the reverse atomic DLQ requeue context as well; memory cannot truthfully reset a PostgreSQL quarantine row.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Preserve newest-first status history when rapid transitions share the same millisecond by breaking timestamp ties with insertion order.
  */
 
 import { randomUUID } from 'crypto';
@@ -397,9 +398,10 @@ export class InMemoryTicketStore implements ITicketStore {
    */
   async getStatusHistory(ticketId: string, limit = 50): Promise<TicketStatusHistoryRecord[]> {
     const entries = [...(this.statusHistoryByTicket.get(ticketId) ?? [])]
-      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .map((entry, index) => ({ entry, index }))
+      .sort((left, right) => right.entry.createdAt.localeCompare(left.entry.createdAt) || right.index - left.index)
       .slice(0, limit)
-      .map(cloneStatusHistoryRecord);
+      .map(({ entry }) => cloneStatusHistoryRecord(entry));
     logger.debug({ ticketId, count: entries.length }, 'Read ticket status history from memory');
     return entries;
   }

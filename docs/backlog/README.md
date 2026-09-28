@@ -5,6 +5,7 @@ queue is [../BACKLOG.md](../BACKLOG.md). Active entries state only reproducible 
 its done-when evidence; resolved history is preserved in the [archive](./archive/README.md), the
 relevant ADR or feature documentation, release notes, and git history.
 
+- [n8n-import-forward-plan.md](./n8n-import-forward-plan.md) — ADR-165 delivery queue: review rollout, versioned adapters, item/port execution, durable ticket assignments and approvals, native process packing, comparison fixtures and searchable proven workflows.
 - [closeout-2026-09-22.md](./closeout-2026-09-22.md) — current core/store backlog counts, merged-work reconciliation, and the acceptance that remains open.
 - [session-handover-2026-09-17.md](./session-handover-2026-09-17.md) — historical September 17 stopping point; its PR and role-assignment status was superseded by later merges and the rollout record.
 - [triage-2026-09-15.md](./triage-2026-09-15.md) — **read this before triaging the backlog again.** Every entry in `docs/BACKLOG.md` given a verdict against the code: 137 actionable, 75 need the operator, 46 need live proof, 11 blocked, and 14 claimed done-or-stale that an independent verifier refuted and so were kept open. Only one "already done" claim survived two refuting verifiers. Machine-readable, keyed by entry title so it survives line shifts: [triage-2026-09-15.json](./triage-2026-09-15.json).

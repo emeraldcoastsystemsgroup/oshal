@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard that an escalation reason recorded by a status transition survives all the way to the cockpit activity payload: derived from a real TicketService escalation (not a hand-built row), read back over the real HTTP route, and still null when no reason was ever recorded. Also pins selectEscalationDetail so an empty durable swarm_escalations lookup cannot erase it.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard that a ticket escalated more than once is dated by its CURRENT escalation: the payload carries escalatedAt over the real route even when that escalation recorded no reason, and selectEscalationDetail discards a durable record written for an earlier run rather than presenting it as the current explanation.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-163 D3 flipped the precedence these cases pinned: the canonical transition detail now explains an escalation and the run-scoped swarm_escalations record enriches it, instead of the run record winning outright whenever it named a reason. The two cases are rewritten to assert the merged shape — the canonical reason AND the run record's retryClass, which the old single-record assertions could not both check — not relaxed.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Pin the same-timestamp tie: two escalations stamped in one millisecond and returned newest first must resolve to the first row, so the newer escalation (which recorded no reason) is not replaced by the older one's stale reason. Deterministic rows, not a race on the store clock.
  */
 
 import express, { type NextFunction, type Request, type Response } from 'express';
@@ -225,6 +226,19 @@ describe('ticket escalation detail derivation', () => {
     ];
 
     expect(readTicketEscalatedAt(rows, null)).toBe('2026-06-22T14:27:24.373Z');
+  });
+
+  it('resolves two escalations stamped in the same millisecond to the first row returned', () => {
+    // Both ticket stores return history newest first; a same-millisecond pair keeps that order.
+    const tied = '2026-06-22T14:27:24.373Z';
+    const rows = [
+      buildHistoryRow('3', 'approved', 'escalated', {}, tied),
+      buildHistoryRow('2', 'escalated', 'approved', {}, tied),
+      buildHistoryRow('1', 'approved', 'escalated', { reason: 'first_escalation' }, tied),
+    ];
+
+    expect(deriveTicketEscalationDetail(rows, null)).toBeNull();
+    expect(readTicketEscalatedAt(rows, null)).toBe(tied);
   });
 });
 

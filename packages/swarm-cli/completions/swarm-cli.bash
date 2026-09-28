@@ -15,7 +15,7 @@ _swarm_cli() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # Full command + flag surface.
-    local subcommands="login logout whoami ask chat history catalog tasks tokens completion version help"
+    local subcommands="login logout whoami ask chat history catalog tasks tokens skins experience completion version help"
     local global_flags="--url --token --secret --sub --context --label --session --new --json --timeout --poll --quiet --no-banner --version --help"
 
     # Flags that consume the following word as their value.

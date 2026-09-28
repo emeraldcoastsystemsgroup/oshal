@@ -59,6 +59,8 @@ _swarm-cli() {
         'catalog:list the apps/agents Jarvis can reach'
         'tasks:list durable handed-off work items and results'
         'tokens:list or revoke personal access tokens'
+        'skins:list supported visual skins and core themes'
+        'experience:show available UX layouts and audience presets'
         'completion:print a shell-completion script'
         'version:print the CLI version'
         'help:show usage'
@@ -86,7 +88,7 @@ _swarm-cli() {
             '*:message:' \
             && ret=0
           ;;
-        login|logout|whoami|chat|history|catalog|tasks|version|help)
+        login|logout|whoami|chat|history|catalog|tasks|skins|experience|version|help)
           _arguments "${_global_flags[@]}" && ret=0
           ;;
         *)

@@ -1,3 +1,10 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Change Log added. A bot scoped for workflow work does not see n8n-import-analyze; a bot scoped with n8n-import-analysis does.
+ */
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -55,6 +62,18 @@ describe('tool capability scoping', () => {
 
     expect(names).toContain('career_database');
     expect(names).not.toContain('finance-report');
+  });
+
+  it('exposes n8n analysis only to a bot explicitly scoped for import assessment', async () => {
+    const resolveTools = createToolResolver(
+      { getAllTools: async () => [buildTool('n8n-import-analyze', ['n8n-import-analysis'])] },
+      { info: () => undefined, error: () => undefined },
+      undefined,
+      async (agentId) => agentId === 'import-analyst' ? ['n8n-import-analysis'] : ['workflow'],
+    );
+
+    expect((await resolveTools('workflow-assistant')).map((tool) => tool.name)).not.toContain('n8n-import-analyze');
+    expect((await resolveTools('import-analyst')).map((tool) => tool.name)).toContain('n8n-import-analyze');
   });
 
   it('prefers composed selector data and falls back to manifest capabilities', async () => {

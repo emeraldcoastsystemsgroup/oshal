@@ -24,6 +24,8 @@
  * 19 | maintainer@emeraldcoastsystemsgroup.com | Execute activation-scoped package handlers with exact caller and selected tenant authority.
  * 20 | maintainer@emeraldcoastsystemsgroup.com | Keep package input and domain error payloads off the legacy conversation event stream.
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read two of the six and fell back to <cwd>/workspace where everything else falls back to workspace-shared - this is the root the SHELL tool runs in, so the two roots disagreeing is the bot writing somewhere nobody reads.
+ * 22 | maintainer@emeraldcoastsystemsgroup.com   | Expose bounded n8n workflow analysis as a non-executing builtin; omit source JSON from stream events and return a valid size-limited report.
+ * 23 | maintainer@emeraldcoastsystemsgroup.com   | The n8n report sizing lives in workflow-studio (renderN8nImportToolReport, imported through the barrel) so this file only dispatches the reserved name and stays clear of the 1000-line cap. Package tools keep their existing "Package tool execution failed" stream error (jarvis-package-tools-chat asserts it); only the n8n tool reports the generic sensitive-tool failure.
  */
 import { runWithApplicationExecution } from '@/shared/application-authorization-execution';
 import { executePackageTool, packageToolTenant, requiresPackageTool } from '@/shared/package-tools';
@@ -52,6 +54,7 @@ import { FollowupQuestionSignal } from './followup-question-signal';
 import { guardTemplateValue } from './runtime-template-guard';
 import { isAuthorizationTool, type AuthorizationToolExecutor, type AuthorizationToolInvocation } from '@/shared/security/authorization-tool-contract';
 import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
+import { renderN8nImportToolReport } from '@/features/workflow-studio';
 
 const execAsync = promisify(execCallback);
 const execFileAsync = promisify(execFileCallback);
@@ -159,10 +162,11 @@ export class ToolExecutorService {
     authorizationInvocation?: AuthorizationToolInvocation,
   ): Promise<string> {
     const packageTool = requiresPackageTool(toolName) || this.dynamicToolExecutorRegistry?.resolve(toolName)?.builtinKey === 'package';
+    const sensitiveToolInput = packageTool || toolName === 'n8n-import-analyze';
     const tenantId = packageTool ? packageToolTenant(toolInput) : undefined;
     return runWithApplicationExecution({ kind: 'tools', operation: toolName, userSub, ...(tenantId ? { tenantId } : {}) }, async () => {
     const startedAt = Date.now();
-    this.streamManager.broadcastToolExecution(taskId, { name: toolName, ...(packageTool ? {} : { input: toolInput }) }, 'started');
+    this.streamManager.broadcastToolExecution(taskId, { name: toolName, ...(sensitiveToolInput ? {} : { input: toolInput }) }, 'started');
 
     try {
       const result = isAuthorizationTool(toolName)
@@ -178,7 +182,7 @@ export class ToolExecutorService {
       if (error instanceof FollowupQuestionSignal) {
         this.streamManager.broadcastToolExecution(
           taskId,
-          { name: toolName, durationMs: Date.now() - startedAt, ...(packageTool ? {} : { question: error.question }) },
+          { name: toolName, durationMs: Date.now() - startedAt, ...(sensitiveToolInput ? {} : { question: error.question }) },
           'waiting_for_input',
         );
         throw error;
@@ -186,7 +190,7 @@ export class ToolExecutorService {
       const errMsg = error instanceof Error ? error.message : String(error);
       this.streamManager.broadcastToolExecution(
         taskId,
-        { name: toolName, durationMs: Date.now() - startedAt, error: packageTool ? 'Package tool execution failed' : errMsg },
+        { name: toolName, durationMs: Date.now() - startedAt, error: packageTool ? 'Package tool execution failed' : sensitiveToolInput ? 'Sensitive tool execution failed' : errMsg },
         'failed',
       );
       throw error;
@@ -218,6 +222,8 @@ export class ToolExecutorService {
     agentId?: string,
     userSub?: string,
   ): Promise<string> {
+    // This name is code-owned: runtime descriptors must not turn an import into an API/CLI call.
+    if (toolName === 'n8n-import-analyze') return renderN8nImportToolReport(toolInput.jsonText as string, DEFAULT_OUTPUT_LIMIT);
     const descriptor = this.dynamicToolExecutorRegistry?.resolve(toolName);
     if (requiresPackageTool(toolName) || descriptor?.builtinKey === 'package') return executePackageTool(toolName, toolInput, userSub);
     if (descriptor && descriptor.executorType !== 'builtin') {

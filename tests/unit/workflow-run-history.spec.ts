@@ -1,3 +1,10 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Change Log added. The approval-gate suspension now asserts the transition metadata carries the gate node id and the run id alongside reason approval_gate.
+ */
 import { describe, it, expect, vi } from 'vitest';
 import type { Pool } from 'pg';
 import {
@@ -269,6 +276,11 @@ describe('dispatch-graph-worker run recording', () => {
     });
     expect(recorder.finishRun).toHaveBeenCalledWith('run-123', expect.objectContaining({ status: 'suspended' }));
     expect(ticketService.statusCalls.map((c) => c.status)).toEqual(['paused', 'approval_required']);
+    expect(ticketService.statusCalls.at(-1)?.meta).toMatchObject({
+      reason: 'approval_gate',
+      gateNodeId: 'gate',
+      workflowRunId: 'run-123',
+    });
     // The run id survives suspension so operator approval re-opens the SAME run.
     expect(ticketService.metadataWrites.at(-1)?.workflowRunId).toBe('run-123');
   });

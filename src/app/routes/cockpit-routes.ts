@@ -28,6 +28,7 @@
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | Scoped GET /tickets/hierarchy to the caller's own tickets by default (owner_sub), with ?scope=all operator override, for multi-user isolation
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | Inline bots no longer show OFFLINE. /metrics/agents, swarmAgentCount, and buildSwarmHealth now (a) read getActiveRegistry() at REQUEST time (the module-load snapshot ran before app bots registered, so dnd/spaces were absent) and (b) compute online/healthy via resolveDisplayOnline(heartbeat, container) — inline/api-hosted bots (container oshal-api) are online when the api is up; only dedicated bot-nodes stay heartbeat-gated. Fixes dnd (122 real runs) rendering offline. Routing/eligibility untouched.
  * 25 | maintainer@emeraldcoastsystemsgroup.com   | Gated the ?scope=all override behind operator privilege (isOperator). Previously ANY authenticated user could pass ?scope=all to enumerate every tenant's tickets; non-operators are now always scoped to their own ownerSub regardless of the query param.
+ * 26 | maintainer@emeraldcoastsystemsgroup.com   | Mount GET /tickets/:ticketId/workflow (handleGetCockpitTicketWorkflow) before the generic ticket-detail route so the cockpit Workflow tab reads one owner- and application-scoped projection of the registered definition, recorded run, status history, gate receipts and child tickets.
  */
 
 import { Router } from 'express';
@@ -54,6 +55,7 @@ import { handleGetCockpitEscalationSummary } from './cockpit-escalation-summary-
 import { handleGetCockpitQueueHealth } from './cockpit-queue-health-route';
 import { handleGetCockpitTicketActivity } from './cockpit-ticket-activity-route';
 import { handleGetCockpitTicketDetail } from './cockpit-ticket-detail-route';
+import { handleGetCockpitTicketWorkflow } from './cockpit-ticket-workflow-route';
 import { getActiveRegistry } from '../extensions/swarm/swarm-bot-registry';
 import { resolveDisplayOnline } from '@/features/agent-management';
 // Type anchor only — element type is SwarmBotDefinition. The RUNTIME reads below call
@@ -189,6 +191,7 @@ export function createCockpitRoutes(ctx: AppContext): Router {
   router.get('/metrics/queue-health', handleGetCockpitQueueHealth(ctx));
 
   router.get('/tickets/:ticketId/activity', handleGetCockpitTicketActivity(ctx));
+  router.get('/tickets/:ticketId/workflow', handleGetCockpitTicketWorkflow(ctx));
   router.get('/tickets/:ticketId', handleGetCockpitTicketDetail(ctx));
 
   /**

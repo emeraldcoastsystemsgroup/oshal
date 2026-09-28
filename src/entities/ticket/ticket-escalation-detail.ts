@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Derive the operator-facing escalation detail from the transition record every escalation already writes (a ticket_status_history row, mirrored onto the ticket row as metadata.lastStatusTransition) so a cockpit escalation panel can show the recorded reason without a second durable store carrying the same fact
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Read back WHEN the ticket's current escalation was recorded, separately from whether it recorded a reason. A ticket that escalates, is de-escalated and escalates again leaves an older durable swarm record behind, and a reader can only tell that record apart from a current one by dating it against the escalation on screen.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Break a same-timestamp tie between escalating rows in favour of the row that comes first. Both ticket stores return status history newest first (PostgreSQL ORDER BY created_at DESC, the memory store now breaking same-millisecond ties by insertion order), so the first of two tied rows is the newer one; keeping the last one returned the older escalation and its stale reason.
  */
 
 import type { TicketStatusHistoryRecord, TicketStatusMetadata } from './ticket-store';
@@ -75,8 +76,11 @@ export function readTicketEscalatedAt(
 }
 
 /**
- * @description Picks the newest row whose transition landed on `escalated`.
- * @param history - Status history rows in any order.
+ * @description Picks the newest row whose transition landed on `escalated`. Rows with
+ * distinct timestamps may arrive in any order. When two escalating rows share a
+ * timestamp the first one wins, because both ticket stores return history newest
+ * first and two transitions can land in the same millisecond.
+ * @param history - Status history rows, newest first when timestamps tie.
  * @returns The newest escalating row, or null when there is none.
  */
 function selectLatestEscalationRow(
@@ -93,7 +97,7 @@ function selectLatestEscalationRow(
     if (!latest) {
       return row;
     }
-    return timestampOf(row.createdAt) >= timestampOf(latest.createdAt) ? row : latest;
+    return timestampOf(row.createdAt) > timestampOf(latest.createdAt) ? row : latest;
   }, null);
 }
 
