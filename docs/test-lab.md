@@ -370,6 +370,31 @@ with allowlisted id, count and literal-label fields and `err: locationSafeError(
 Run the linked suites locally with `npm run test:location`. That is local evidence; registration
 in source does not mean the card has run on the deployed instance.
 
+### Location storage with no operator bypass (ADR-169 L2)
+
+**Location — storage has no operator bypass (ADR-169 L2)** (`location-storage-rls`, Tools) runs two
+steps against the database the running build uses:
+
+- `rls-posture` reads only the catalog. Every location table must exist with ENABLE and FORCE and at
+  least one policy. No policy, and no function a policy reaches, may mention `oshal.is_operator`
+  (operator decision Q2). The membership fence, the creator fence and `oshal_is_tenant_admin` must be
+  installed. A connecting role that bypasses row-level security grades as a gap, not a pass.
+- `two-identity-probe` runs in one transaction that is always rolled back. A synthetic owner writes a
+  fix. A synthetic stranger, the same stranger operator-stamped, and the SYSTEM stamp each read none
+  of it. An operator-stamped session cannot add itself to a synthetic group. The owner then purges
+  the fix.
+
+Nothing persists, and no real person's row is read. The linked suites prove the same rules on a private
+PostgreSQL as the enforcing runtime role:
+
+- `tests/unit/location-storage-rls-postgres.spec.ts`: owner and stranger, member and admin, the
+  membership fence, SYSTEM, the purge, member and guardian shares, and restrictions.
+- `tests/unit/location-erasure-routes-postgres.spec.ts`: both account-erasure routes.
+- `tests/unit/location-rls-no-operator-guard.spec.ts`: the static guard over `scripts/migrations`.
+
+Run them with `npm run test:location` (Docker is required for the PostgreSQL suites). That is local
+evidence. After a deploy, run the card from the Test Lab to check the deployed database.
+
 ---
 
 ## Application-installed smoke cases

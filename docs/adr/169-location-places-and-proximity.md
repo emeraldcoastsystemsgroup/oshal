@@ -1,7 +1,7 @@
 # ADR-169: Location, places and proximity
 
 Date: 2026-09-28
-Status: **Proposed; the operator answered Q1-Q7 on 2026-09-28 (see "Operator decisions"). Slice L1 is built (shared geo maths, namespaced location redaction keys, static log guard); L2-L9 are not.**
+Status: **Proposed; the operator answered Q1-Q7 on 2026-09-28 (see "Operator decisions"). Slices L1 (shared geo maths, namespaced location redaction keys, static log guard) and L2 (storage and row-level security with no operator bypass, the membership fence, the location erase in both erasure routes) are built; L3-L9 are not.**
 The Context records what exists at core `main` `e1fd5b0f` and store `main` `6fdc1a1`. The Decision carries
 the operator's answers; each Rollout slice is still accepted on its own.
 
@@ -843,6 +843,28 @@ on; what remains is order by dependency.
 
   Also: the static no-`is_operator` guard goes red on a planted bypass, and `rls-core-table-coverage-live`
   passes.
+  **Built:** migration 174 (`oshal_is_tenant_admin`; the membership fence trigger; and `created_by_sub`
+  on `oshal_tenants` fixed at creation, because the creator exception is keyed on it and an
+  operator-stamped session could otherwise empty a group's memberships, rewrite its creator and re-enter
+  as the first row); migration 175 (the eight tables with ENABLE + FORCE and hand-written policies, the
+  share predicates, `location_places_digest` over an approved place set, and a CHECK that stored
+  coordinates are no finer than their precision class). Choices made here: the D6 radius floor is 50 m
+  for `exact` (the trigger minimum) and 1.1 km for `place-only` (the coarsest class the ADR defines); a
+  guardian share uses the coarsest precision class any of the minor's settings rows names; a restriction
+  cannot be re-pointed at another member by an update; a revoked share need not be re-approved, so
+  revoking works after its places changed. `src/features/location` (the `location` kernel skill) holds
+  the owner-stamped transaction every storage operation runs in, the owner's purge, a group admin's
+  purge of a group device, the owner's export, `eraseLocationData` (revoke the location device
+  credentials, delete the person's rows, run every registered state eraser) and a catalog read of the
+  posture. Both `/api/me/delete-confirm` (through a location store that leads the registry, with the
+  location tables kept out of discovery) and `DELETE /api/privacy/me` call it. `/api/location` is guest
+  Tier C. Evidence: `tests/unit/location-storage-rls-postgres.spec.ts` and
+  `tests/unit/location-erasure-routes-postgres.spec.ts` (the runtime role owns the tables, so FORCE is
+  what holds), `tests/unit/location-rls-no-operator-guard.spec.ts` and the Test Lab card
+  `location-storage-rls`. Left to later slices, as the ADR orders them: the device-subject policies and
+  the location credential (L6); the rules, state, fire and share-presence tables, restricted invitations,
+  the acceptance function and its fence branch, the grantee projection and the evaluator whose state the
+  erase clears (L5).
 - **L3: Browser ingest, consent and step-up.** `/api/location/presence`, the step-up proof, and the Settings
   Location tab (per-device opt-in, precision, purge, "who can see me"). Done when a human on `localhost` with
   `MOCK_OIDC` can opt a browser in, see their current place, opt out and see ingest stop while the history

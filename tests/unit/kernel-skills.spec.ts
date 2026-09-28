@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Pin the forward-receipt capability required by the matching Futures console.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Pin the explicit archive-import approval capability and build anchor.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | ADR-146 D2: pin fantasy-leagues in the exact contracted list, pin its single package-facing specifier (the barrel sports-edge imports), and prove the manifest validator accepts it under uses:. A package naming it on a core without it is refused at load, which is the compatibility floor sports-edge now relies on.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | ADR-169 L2: pin location in the exact contracted list, pin its single package-facing specifier (the slice barrel), and prove the manifest validator accepts it under uses:, so a package that names it is refused on a core that predates it.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -100,6 +101,7 @@ describe('kernel-skill contract (ADR-085 Tier-0b / ADR-090 D8)', () => {
         'specialist-context',
         'test-catalog',
         'jarvis-briefings',
+        'location',
         'deck-generation',
         'fantasy-leagues',
         'google-calendar',
@@ -138,6 +140,13 @@ describe('kernel-skill contract (ADR-085 Tier-0b / ADR-090 D8)', () => {
     ]);
   });
 
+  // Packages reach the location store only through its barrel; nothing under it is contracted.
+  it('pins location as the single barrel packages import', () => {
+    expect(KERNEL_SKILLS.find((skill) => skill.id === 'location')?.modules).toEqual([
+      { specifier: '@/features/location', distFile: 'dist/features/location/index.js' },
+    ]);
+  });
+
   it.each(allModules)('skill $skill: $specifier has a source file', ({ specifier }) => {
     expect(resolveSource(specifier)).not.toBeNull();
   });
@@ -171,6 +180,11 @@ describe('manifest `uses:` validation (fail-closed)', () => {
   it('accepts fantasy-leagues, the floor sports-edge declares for the ESPN client', () => {
     const m = readTempManifest(`${base}uses:\n  - fantasy-leagues\n`);
     expect(m.uses).toEqual(['fantasy-leagues']);
+  });
+
+  it('accepts location, the floor a location consumer declares', () => {
+    const m = readTempManifest(`${base}uses:\n  - location\n`);
+    expect(m.uses).toEqual(['location']);
   });
 
   it('accepts a manifest with no uses at all', () => {
