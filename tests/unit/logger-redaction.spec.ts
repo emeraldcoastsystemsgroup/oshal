@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Regression guard for the shared logger's secret redaction: builds a real pino logger from the SHIPPED LOG_REDACT_OPTIONS (the same object the production singleton uses) against a capturing destination, plants a sentinel at every configured redact path (generated from the config, so a new path is exercised automatically), and asserts the sentinel never reaches serialized output while '[REDACTED]' does. Pins the 2026-07-19 additions (accessToken/access_token/refreshToken/refresh_token/bearer + wildcard variants), the nested req.headers.authorization case, and child-logger inheritance.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L1: pins the four namespaced location keys (location, *.location, coords, *.coords), proves a fix under either key is censored at top level, one level down and through a child logger, and pins the ADR decision that the generic words accuracy, address and position are NOT platform-wide redact keys (other slices log them with unrelated meanings; the location slice is covered by the static log guard instead).
  */
 
 import { describe, expect, it } from 'vitest';
@@ -23,6 +24,11 @@ const ADDED_KEYS = [
   '*.refresh_token',
   '*.bearer',
 ];
+
+/** The ADR-169 L1 namespaced location keys, pinned so a trim of the list fails loudly. */
+const LOCATION_KEYS = ['location', '*.location', 'coords', '*.coords'];
+/** Generic words ADR-169 D3 deliberately keeps OUT of the platform-wide list. */
+const NOT_PLATFORM_WIDE = ['accuracy', 'address', 'position', '*.accuracy', '*.address', '*.position'];
 
 /**
  * @description Build a real pino logger over the SHIPPED redact config, writing synchronously
@@ -137,5 +143,29 @@ describe('shared logger redaction (LOG_REDACT_OPTIONS — the shipped config)', 
 
   it('pins the censor marker itself', () => {
     expect(LOG_REDACT_OPTIONS.censor).toBe('[REDACTED]');
+  });
+});
+
+describe('shared logger redaction: the ADR-169 namespaced location keys', () => {
+  it('ADR-169: a fix under the namespaced location keys is censored at top level, one level down and in a child', () => {
+    for (const key of LOCATION_KEYS) {
+      expect(LOG_REDACT_OPTIONS.paths, `'${key}' was trimmed from the redact list`).toContain(key);
+    }
+    const { log, output } = buildCapturingLogger();
+    log.info({ location: { lat: -12.34567, lon: -31.98765 }, coords: [-12.34568, -31.98766] }, 'top level');
+    log.info({ device: { location: 'leak-loc-nested -12.34569', coords: 'leak-coords-nested -31.98767' } }, 'one level');
+    log.child({ module: 'unit-location' }).warn({ fix: { coords: 'leak-coords-child' } }, 'child');
+    const out = output();
+    for (const leak of ['-12.3456', '-31.9876', 'leak-loc-nested', 'leak-coords-nested', 'leak-coords-child']) {
+      expect(out, `location value '${leak}' reached serialized output`).not.toContain(leak);
+    }
+    expect((out.match(/\[REDACTED\]/g) ?? []).length).toBe(5);
+  });
+
+  it('ADR-169: generic words stay loggable platform-wide (the location slice has its static guard instead)', () => {
+    for (const word of NOT_PLATFORM_WIDE) expect(LOG_REDACT_OPTIONS.paths).not.toContain(word);
+    const { log, output } = buildCapturingLogger();
+    log.info({ accuracy: 0.93, address: 'queue-7', position: 3 }, 'unrelated slice metrics');
+    expect(output()).toContain('"accuracy":0.93');
   });
 });
