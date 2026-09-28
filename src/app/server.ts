@@ -204,6 +204,7 @@
  * 188 | maintainer@emeraldcoastsystemsgroup.com   | Wire the durable refusal recorder and authenticated caller-scoped /api/ops/refusals read API for P1 refusal visibility.
  * 189 | maintainer@emeraldcoastsystemsgroup.com   | Server bootstrap decomposition (BACKLOG #1788): extracted post-bootstrap installs (provider-switch snapshot, autoload, wiring audit, demo seeding) to composition/server-bootstrap-tasks.ts, and auxiliary route clusters to server-auxiliary-routes.ts, bringing server.ts under the 800-line decomposition threshold.
  * 190 | maintainer@emeraldcoastsystemsgroup.com | Share the explorer service with the periodic schema detector and its shutdown lifecycle.
+ * 191 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L3: mounted /api/location (routes/location-routes.ts): browser ingest, the person's location consent and the step-up ceremony. The service-secret rail is refused (401) before requiresAuth, so a machine caller never reaches a location handler whatever session rides along; the router itself admits only an interactive browser session with a verified issuer and runs every statement as that person with is_operator off.
  */
 
 require('dotenv').config();
@@ -248,6 +249,8 @@ import { registerReadinessRoutes } from './routes/readiness-routes';
 import { createTvPairingRoutes, createTvTokenAuthMiddleware } from './routes/tv-pairing-routes';
 import { createCliTokenAuthMiddleware, createCliTokenRoutes } from './routes/cli-token-routes';
 import { createArtifactExchangeRoutes } from './routes/artifact-exchange-routes';
+import { createLocationRoutes } from './routes/location-routes';
+import { refuseLocationServiceRail } from './routes/location-session';
 import { createLocalAuthRoutes, isLocalAuthEnabled } from './routes/local-auth-routes';
 import { createSwarmRolesRoutes, initializeSwarmRoles } from './routes/swarm-roles-routes';
 import { createAppRegistryRoutes, initializeAppRegistries } from './routes/app-registry-routes';
@@ -1455,6 +1458,9 @@ function createApp(): express.Application {
 
   // Governance: audit export, data lifecycle, privacy, and LLM governance
   mountGovernanceRoutes(app, ctx, requiresAuth);
+  // ADR-169 L3: location consent, browser ingest and the step-up ceremony. The service rail is
+  // refused first (401), then the person's own browser session is required.
+  app.use('/api/location', refuseLocationServiceRail, requiresAuth, createLocationRoutes({ pool: ctx.pool }));
   // NOT wrapped in requiresAuth on purpose: this route has its own fail-closed
   // authorizeRemoteClient gate (valid OIDC session OR REMOTE_CLIENT_SHARED_SECRET
   // bearer). Wrapping it in requiresAuth would reject the bearer path that remote

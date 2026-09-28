@@ -17,6 +17,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Dropped the retired Presentron + deprecated Google Search MCP config loads and health probes from Global Settings; RAG remains the only shared service-runtime surface
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Added a "Chat channels" settings tab that embeds the self-serve channels page (/cockpit/tools/channels.html), the same way Connections embeds /utilities, so linking Discord/Telegram/SMS/WhatsApp and the operator's Discord bot setup are reachable from Settings as well as the platform-tools rail.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Added a first-class "Knowledge" (RAG) settings tab (SettingsKnowledgeTab): ingestion tool + permission-aware visibility, replacing the flaky embedded-chat RAG popup. Data-driven tab bar honors a one-shot deep-link tab hint so the cockpit header RAG icon lands directly on Knowledge
+ * 15 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L3: a "Location" settings tab that embeds /cockpit/tools/location.html the way Chat channels embeds its page: per-browser opt-in, precision, where you are (as a place), who can see you, and deleting your history. The frame is allowed geolocation; its sign-in-again confirmations open in their own window.
  */
 
 import { ApiClient } from '../api-client.js';
@@ -34,6 +35,7 @@ const SETTINGS_TABS = [
   ['knowledge', 'Knowledge'],
   ['connections', 'Connections'],
   ['channels', 'Chat channels'],
+  ['location', 'Location'],
 ];
 
 /**
@@ -163,6 +165,13 @@ export class SettingsView {
       // code, unlink, and (operator) paste the deployment's Discord bot token. Same static page
       // the platform-tools rail opens, embedded so Settings is one home for account wiring.
       body.innerHTML = '<iframe src="/cockpit/tools/channels.html" title="Chat channels" style="width:100%;height:72vh;border:none;border-radius:8px;"></iframe>';
+      return;
+    }
+
+    if (this.currentTab === 'location') {
+      // ADR-169 L3: the person's own location consent. Same-origin page, allowed geolocation; the
+      // step-up confirmations it needs open in their own window, never inside this frame.
+      body.innerHTML = '<iframe src="/cockpit/tools/location.html" title="Location" allow="geolocation" style="width:100%;height:72vh;border:none;border-radius:8px;"></iframe>';
       return;
     }
 

@@ -15,6 +15,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Inventory artifact-exchange-routes.ts (ADR-139). It authenticates a machine caller over the service rail and threads that sub explicitly, but owns no owner-scoped write: the handle ledger and destination registry are in-process Maps, the storage built-in writes the caller's own filesystem path, and the email built-in only reads their connector token. Same no-owner-scoped-write shape as connector-oauth-ceremony-core.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Inventory guest-seed-orchestrator.ts (ADR-144 guest-seed contract). Discovery caught it the moment the guest-seed work landed a machine-auth surface under src/app/routes with no entry. It is the inventory's first OUTBOUND caller rather than an inbound route: nothing authenticates TO it, it PRESENTS the service rail on the loopback and stamps x-oshal-user-sub = the fresh guest sub. It owns no database access at all, so it takes the no-owner-scoped-write shape - but it is precisely the place the accountable identity for every downstream app seed is established, which is the question this inventory exists to answer.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Inventory ambient-test-fixture-routes.ts (ADR-100 Test Lab attributed-ingest fixture). Discovery caught it the moment the router landed: a strict requireServiceSecret over eight owner-scoped ambient/person-model tables. It is caller-scoped by construction — the owner comes only from the validated OIDC session and the handler runs inside runWithRequestIdentity(isOperator:false), so the operator stamp a valid secret earns from the global middleware never reaches the writes.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | Exempt src/app/routes/location-session.ts (ADR-169 L3): discovery matches it because it names the service secret, but it names it only to REFUSE it - every /api/location request presenting x-service-secret or an asserted subject header gets 401 before any handler runs, and the location handlers write only under the signed-in person's own owner session with is_operator off. No machine caller is admitted, so there is no machine write to inventory; the refusal is proven in tests/unit/location-browser-consent-postgres.spec.ts.
  */
 
 /**
@@ -711,6 +712,15 @@ export const DISCOVERY_EXEMPT_FILES: readonly { file: string; why: string }[] = 
       + 'env gates; the auth checks themselves live in the routers, each of which has its own entry '
       + 'above. It is also where the ambient identity middleware lives, which the gate asserts '
       + 'separately.',
+  },
+  {
+    file: 'src/app/routes/location-session.ts',
+    why:
+      'ADR-169 L3 location session gate. It names the service secret only to REFUSE it: any /api/location '
+      + 'request presenting x-service-secret or an asserted subject header gets 401 before a handler runs, and '
+      + 'every location write runs in an owner session of the signed-in person (is_operator off). No machine '
+      + 'caller is admitted, so there is no machine write; the refusal is proven in '
+      + 'tests/unit/location-browser-consent-postgres.spec.ts.',
   },
 ];
 
