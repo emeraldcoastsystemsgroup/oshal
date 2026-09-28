@@ -1,5 +1,6 @@
 # Jarvis routing metadata. Version 1.
 # CHANGE LOG: 1 | maintainer@emeraldcoastsystemsgroup.com | Move catalog into validated semantic metadata; preserve internal role restrictions.
+# CHANGE LOG: 2 | maintainer@emeraldcoastsystemsgroup.com | Advertise the synthetic phone-call test tool without implying live call authority.
 version: 1
 tools:
   - kind: shell
@@ -63,6 +64,22 @@ tools:
       - listening
     useWhen: Find music or inspect listening and playlists.
     context: Music playback.
+  - kind: shell
+    script: oshal-voice-sim.js
+    usage: >-
+      Synthetic phone-call simulator ONLY. `scenarios` lists fixtures; `start <scenario-id>`
+      launches a background mock IVR run; `status <run-id>` and `report <run-id>` read its
+      assessable trace. `dial <manual-run-id>` and `feed <manual-run-id> <event-json>` drive
+      a manual fake call; `callback <manual-run-id> <callback-json>` simulates carrier status.
+      Never claims to contact an insurer or a real phone.
+    keywords:
+      - mock call
+      - simulate call
+      - ivr test
+      - phone test
+      - hold music
+    useWhen: Test a synthetic insurance phone tree, music handling, or handoff without dialing anyone.
+    context: Simulation only; never use as proof a live insurer call was placed.
   - kind: shell
     script: oshal-tmdb.js
     usage: Movies & TV. `search "<q>"` · `trending` · `where-to-watch <movie|tv> <id>`

@@ -205,6 +205,7 @@
  * 189 | maintainer@emeraldcoastsystemsgroup.com   | Server bootstrap decomposition (BACKLOG #1788): extracted post-bootstrap installs (provider-switch snapshot, autoload, wiring audit, demo seeding) to composition/server-bootstrap-tasks.ts, and auxiliary route clusters to server-auxiliary-routes.ts, bringing server.ts under the 800-line decomposition threshold.
  * 190 | maintainer@emeraldcoastsystemsgroup.com | Share the explorer service with the periodic schema detector and its shutdown lifecycle.
  * 191 | maintainer@emeraldcoastsystemsgroup.com   | Mount owner-scoped Jarvis calling setup at /api/jarvis/calling (requiresAuth) before the broader Jarvis gate. It stores one explicitly selected Twilio connection, transfer phone, limits and consent per user and always reports calling as not effective; no call path is added.
+ * 192 | maintainer@emeraldcoastsystemsgroup.com   | Mount authenticated, synthetic-only phone-call simulation at /api/voice-sim (serviceSecretOr(requiresAuth) inside the router, with a trusted-service user binding) beside Jarvis without enabling live dialing.
  */
 
 require('dotenv').config();
@@ -254,6 +255,7 @@ import { createSwarmRolesRoutes, initializeSwarmRoles } from './routes/swarm-rol
 import { createAppRegistryRoutes, initializeAppRegistries } from './routes/app-registry-routes';
 import { createApplicationAuthMiddlewareSet } from './middleware/application-auth';
 import { createJarvisVoiceRoutes } from './routes/jarvis-voice-routes';
+import { createVoiceCallSimRoutes } from './routes/voice-call-sim-routes';
 import { createPersonModelRoutes } from './routes/person-model-routes';
 import { ensurePersonModelSchema } from '@/features/person-model';
 import { startAmbientEnrichmentRuntime, startPersonModelMaintenanceRuntime } from './ambient-enrichment-runtime';
@@ -1262,6 +1264,8 @@ function createApp(): express.Application {
   // enforce also removes the compatibility fleet secret from Jarvis actions.
   app.use('/api/jarvis', delegatedUserRouteAuth,
     createJarvisRoutes(ctx, apiDir, artifactVisibleApps, createJarvisPackageToolService(ctx, packageTools)));
+  // Synthetic phone-tree fixtures only: no real carrier transport or live phone numbers.
+  app.use('/api/voice-sim', createVoiceCallSimRoutes(requiresAuth));
   // Vision describe (the visual analog of /api/voice/transcribe): base64 images exceed the global
   // 100kb JSON cap, so this mount is excluded from the default parser above and carries its own
   // 12MB one. serviceSecretOr(requiresAuth): browser session OR the trusted-service identity.

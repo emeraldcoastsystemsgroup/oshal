@@ -19,6 +19,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Exercise real YAML metadata, contextual ordering, authority ceilings and malformed config rejection.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Count the synthetic voice-call simulator as a Jarvis-visible tool.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Two-sided guard that the rides CLI's geocode/reverse subcommands stay advertised in the Jarvis tool block and stay implemented in the CLI. Closes the "Jarvis cannot use the new geocoding subcommands" rides follow-up.
  */
 import { describe, expect, it } from 'vitest';
@@ -84,7 +85,7 @@ function mutatedCatalog(change: (value: any) => void): string {
 describe('Jarvis YAML routing catalog', () => {
   it('loads actual versioned YAML and feeds keyword/context hints to Jarvis', () => {
     const catalog = parseToolCatalog(YAML_SOURCE);
-    expect(catalog.tools).toHaveLength(44);
+    expect(catalog.tools).toHaveLength(45);
     const block = buildToolsBlock({ message: 'I want a playlist of music on spotify' });
     const lines = block.split('\n').filter((line) => line.startsWith('- '));
     expect(lines[0]).toContain('oshal-spotify.js');

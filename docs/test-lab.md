@@ -11,6 +11,10 @@ A black-box harness that answers two questions on demand or on a nightly schedul
 
 See [ADR-063](adr/063-ai-test-lab.md) for the decision record.
 
+The synthetic phone/IVR harness is separate from this Lab's real-endpoint runner; see
+[Synthetic phone-call simulator](testing/voice-call-simulator.md) for mock endpoints, traces,
+scenarios, and its explicit no-real-call boundary.
+
 ---
 
 ## Part 1 — Interactive Test Lab (manual)
