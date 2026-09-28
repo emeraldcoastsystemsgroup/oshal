@@ -344,6 +344,28 @@ client. Everything else is a double:
 All of this is local evidence. Registration in source does not mean the card has run on the deployed
 instance.
 
+### Location log safety (ADR-169 L1)
+
+**Location — logs never carry a position (ADR-169 L1)** (`location-log-safety`, Tools) runs two
+credential-free steps inside the server process, on the build that is running:
+
+- `log-redaction`: the shipped pino redact list holds the namespaced keys `location`, `*.location`,
+  `coords` and `*.coords`, a synthetic fix logged under them (top level and one level down) never
+  reaches the serialised line, and `locationSafeError` reduces an error whose message carries a
+  provider URL with coordinates to its class name, code and scrubbed stack frames;
+- `geo-canary`: the shared geo maths in `src/shared/utils/geo.ts` answers six synthetic checks
+  (haversine, containment either side of a 100 m edge, `block` rounding, `place-only`, a distance band).
+
+Neither step reads, stores or logs anyone's location. The control ADR-169 D3 names for everything
+deeper than one redact level, the static log guard over `src/features/location` and the location
+routes, runs in the unit suite: `tests/unit/location-log-guard.spec.ts` derives its scope from the
+tree (slice files, `location*` paths under `src/app`, `/api/location` declarations in
+`src/app/routes`, and the router behind every `/api/location` mount) and admits a logger call only
+with allowlisted id, count and literal-label fields and `err: locationSafeError(error)`.
+
+Run the linked suites locally with `npm run test:location`. That is local evidence; registration
+in source does not mean the card has run on the deployed instance.
+
 ---
 
 ## Application-installed smoke cases

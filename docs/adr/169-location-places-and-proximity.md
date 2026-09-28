@@ -1,7 +1,7 @@
 # ADR-169: Location, places and proximity
 
 Date: 2026-09-28
-Status: **Proposed; the operator answered Q1-Q7 on 2026-09-28 (see "Operator decisions"); nothing is built.**
+Status: **Proposed; the operator answered Q1-Q7 on 2026-09-28 (see "Operator decisions"). Slice L1 is built (shared geo maths, namespaced location redaction keys, static log guard); L2-L9 are not.**
 The Context records what exists at core `main` `e1fd5b0f` and store `main` `6fdc1a1`. The Decision carries
 the operator's answers; each Rollout slice is still accepted on its own.
 
@@ -809,6 +809,11 @@ on; what remains is order by dependency.
   log guard over `src/features/location` and the location routes. Done when the guard's spec goes red on a
   planted logger call that passes a depth-3 telemetry object (`telemetry.position.lat`) or an error carrying a
   URL, and typecheck passes on the committed tree.
+  **Built:** `src/shared/utils/geo.ts` (haversine, circle containment, the four precision classes and their
+  rounding, distance bands); `location`, `*.location`, `coords` and `*.coords` in `LOG_REDACT_OPTIONS`;
+  `locationSafeError` in `@/shared/logger`, the one error shape the guard admits; the guard itself
+  (`tests/helpers/location-log-guard.ts`, run by `tests/unit/location-log-guard.spec.ts`), whose scope is
+  derived from the tree; and the Test Lab card `location-log-safety`. The drone copies are unchanged.
 - **L2: Storage and RLS (no operator bypass; history kept until the owner purges it).** Migrations for
   `location_settings`, `location_devices`, `location_observations`, `location_current`, `location_places`,
   `location_shares`, `location_guardian_shares` and `location_member_restrictions`, with the no-bypass
