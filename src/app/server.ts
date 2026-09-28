@@ -204,6 +204,7 @@
  * 188 | maintainer@emeraldcoastsystemsgroup.com   | Wire the durable refusal recorder and authenticated caller-scoped /api/ops/refusals read API for P1 refusal visibility.
  * 189 | maintainer@emeraldcoastsystemsgroup.com   | Server bootstrap decomposition (BACKLOG #1788): extracted post-bootstrap installs (provider-switch snapshot, autoload, wiring audit, demo seeding) to composition/server-bootstrap-tasks.ts, and auxiliary route clusters to server-auxiliary-routes.ts, bringing server.ts under the 800-line decomposition threshold.
  * 190 | maintainer@emeraldcoastsystemsgroup.com | Share the explorer service with the periodic schema detector and its shutdown lifecycle.
+ * 191 | maintainer@emeraldcoastsystemsgroup.com   | Mount owner-scoped Jarvis calling setup at /api/jarvis/calling (requiresAuth) before the broader Jarvis gate. It stores one explicitly selected Twilio connection, transfer phone, limits and consent per user and always reports calling as not effective; no call path is added.
  */
 
 require('dotenv').config();
@@ -289,6 +290,7 @@ import { createDataModelService } from '@/features/data-model';
 import { startSchemaDriftMonitor } from './schema-drift-runtime';
 import { createJoinRoutes } from './routes/join-routes';
 import { createJarvisRoutes } from './routes/jarvis-routes';
+import { createJarvisCallingConfigRoutes } from './routes/jarvis-calling-config-routes';
 import { createJarvisPackageToolService } from './composition/jarvis-package-tool-wiring';
 import { createJarvisBriefRoutes } from './routes/jarvis-brief-routes';
 import { createJarvisBriefingRoutes } from './routes/jarvis-briefing-routes';
@@ -1254,6 +1256,8 @@ function createApp(): express.Application {
   // other Jarvis path through to the later SEC-01 gate (the ambient routes use the same ordering).
   app.use('/api/jarvis', createJarvisBriefRoutes(requiresAuth, ctx));
   app.use('/api/jarvis/briefings', createJarvisBriefingRoutes(jarvisBriefings.service, requiresAuth, jarvisBriefings.resolveActor));
+  // A Twilio connector by itself never activates Jarvis calling; each owner must select it here.
+  app.use('/api/jarvis/calling', createJarvisCallingConfigRoutes(ctx.pool, requiresAuth));
   // Same durable SEC-01 gate as Graph. Legacy reads retain immediate containment in every mode;
   // enforce also removes the compatibility fleet secret from Jarvis actions.
   app.use('/api/jarvis', delegatedUserRouteAuth,

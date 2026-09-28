@@ -81,6 +81,10 @@ OSHAL pipelines and surfaces. One file per procedure.
 
 ## Enable / operate a feature
 
+- [jarvis-calling-setup.md](./jarvis-calling-setup.md) — the configuration-only Jarvis calling
+  screen (`/api/jarvis/calling/settings`): selecting one connected Twilio account, the transfer
+  phone, limits and the owner opt-in; why a saved configuration still reports
+  `effectiveEnabled: false`; and what happens when the selected connection is revoked.
 - [remote-install-self-developing-swarm.md](./remote-install-self-developing-swarm.md) — standing
   up oshal on a second machine as a self-healing, self-developing swarm: why a fresh box has no
   App Loader (operator gating is fail-closed, and `MOCK_OIDC` fabricates a different identity than
