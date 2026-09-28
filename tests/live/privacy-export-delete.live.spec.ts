@@ -7,16 +7,18 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Fail (not skip) when CI runs without MOCK_OIDC_ALLOW_HEADER — passing-by-skipping in the nightly green set is the guard-that-isn't. Local runs still skip politely.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | BASE_URL host pinned to 127.0.0.1 — "localhost" resolves to ::1 where a stale wslrelay squats the port (ECONNREFUSED ::1:3456, 2026-07-23 ci-local --head run); same change as playwright.config.ts BASE_URL. Port resolution unchanged.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | In nightly evidence mode, prove export/delete fixtures were database-backed and the other owner's Postgres rows survive deletion.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The webServer origin comes from the shared baseOrigin() helper (tests/helpers/test-origins.ts), which resolves PLAYWRIGHT_PORT and the MOCK_OIDC default exactly as playwright.config.ts does, instead of a spec-built origin whose fallback diverged from the config (fallback 4458 whatever MOCK_OIDC was).
  */
 
 import { expect, request as apiRequest, test, type APIRequestContext } from '@playwright/test';
+import { baseOrigin } from '../helpers';
 import { PRIVACY_DELETE_CONFIRMATION } from '../../src/app/routes/privacy-routes';
 import { readOwnDataDatabaseEvidence } from '../helpers/own-data-database-evidence';
 
 const HEADER_GATE_ENABLED = ['true', '1', 'yes'].includes(
   (process.env.MOCK_OIDC_ALLOW_HEADER ?? '').toLowerCase().trim(),
 );
-const BASE_URL = `http://127.0.0.1:${process.env.PLAYWRIGHT_PORT ?? '4458'}`;
+const BASE_URL = baseOrigin();
 const PROOF_ID = `privacy-export-delete-${Date.now()}`;
 
 const USER_A = {

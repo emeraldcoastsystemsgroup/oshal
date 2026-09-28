@@ -4,6 +4,14 @@
 # Categorized 2026-07-06: 66 green / 87 red (913 pass / 527 fail across the full suite).
 # Run via: npm run test:e2e:green. Add specs here only once they pass; never remove to hide a
 # regression. Full-suite normalization tracked in docs/BACKLOG.md.
+# Every spec NOT listed here has a row in tests/e2e-dispositions.json (guard:
+# tests/unit/e2e-dispositions.spec.ts). Every path listed here must exist, and no listed spec may
+# skip under the CI e2e env unless that one test is recorded there (guard:
+# tests/unit/real-boundary-doctrine.spec.ts).
+# 2026-09-28: removed tests/cockpit-current-state-probe.spec.ts (no such file - Playwright ignores a
+# filter that matches nothing, so the line ran nothing) and tests/dynamic-agent-live-e2e.spec.ts
+# (skips unless RUN_DYNAMIC_AGENT_E2E=true against a docker stack, so it passed by skipping; now an
+# unsupported-in-ci disposition).
 #
 tests/agent-memory-and-swarm-memory.spec.ts
 tests/agent-profile-bulk-config.spec.ts
@@ -28,14 +36,12 @@ tests/calendar-app-queue-browser.spec.ts
 tests/calendar-schedule-scope.spec.ts
 tests/cline-provider-key-sync.spec.ts
 tests/cockpit-calendar-agent-visibility.spec.ts
-tests/cockpit-current-state-probe.spec.ts
 tests/config-ownership-runtime.spec.ts
 tests/config-sync-service.spec.ts
 tests/connector-token-crypto.spec.ts
 tests/content-studio-quality.spec.ts
 tests/cred-wipe.spec.ts
 tests/dispatch-routing.spec.ts
-tests/dynamic-agent-live-e2e.spec.ts
 tests/dynamic-registration-framework.spec.ts
 tests/eval-results-store.spec.ts
 tests/eval-scorer-assert.spec.ts
