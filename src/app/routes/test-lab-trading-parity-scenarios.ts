@@ -244,7 +244,7 @@ async function runStep<F>(
   }
 }
 
-/** @description The ADR-052 addendum parity card. @returns One read-only scenario with two steps. */
+/** @description The ADR-052 addendum parity card. @returns One read-only scenario with three steps. */
 export const TRADING_PARITY_SCENARIOS: Scenario[] = [{
   id: 'trading-parity-features', title: 'Trading paper-to-live parity — gap filter, exit plans and yield sleeve (ADR-052)', group: 'tool',
   description: 'The market-wide gap-down entry filter, per-position exit plans and the idle-cash yield sleeve (ADR-052 addendum): one config path per feature (an applied strategy knob, else a mode-aware env default, OFF by default), read the same way by the Strategy Lab and both books. The steps read the signed-in caller\'s own books and ledgers only; they write nothing and never claim the paper soak.',

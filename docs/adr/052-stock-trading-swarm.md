@@ -281,10 +281,24 @@ Changing any of these follows the existing strategy-log rule: a row with harness
 
   Either way, the live autopilot still fires only under the double opt-in (`TRADING_LIVE_ENABLED`
   and `TRADING_AUTOPILOT_LIVE`).
-- **Store side.** The store's per-book strategy apply route already carries the knobs, because it
-  normalizes a saved strategy through this core's `normalizeConfig`. Not done yet in the store: the
-  Strategy Lab knob list (`GET /api/trading/lab/knobs`) does not document the two knobs, there is no
-  store-side spec pinning the 428 refusal for them, and there is no plan view or amend route.
+- **Store side.** Trading 1.32.0 (oshal-applications #350) carries the three knobs
+  (`marketGapFilterPct`, `exitPlanSessions` and P6's `yieldSleeveFloatPct`):
+  - `POST /accounts/books/:bookId/strategy` and `POST /accounts/books/:bookId/mix` store them through
+    this core's `normalizeConfig`. Without `confirm: true` both answer 428 and read and write
+    nothing. `trading/tests/trading-parity-feature-promotion.spec.ts` pins that refusal for all three
+    knobs.
+  - `GET /api/trading/position-plans` lists a book's plans and says whether plans are armed for it
+    and why.
+  - `POST /api/trading/position-plans/amend` re-prices open plans through `amendPlans()`. Without
+    `confirm: true` it answers 428 before any read.
+  - The positions table shows each open plan as a pill beside the position's governance badge.
+
+  Not done yet:
+  - The Strategy Lab knob list (`GET /api/trading/lab/knobs`) documents none of the three knobs.
+  - Amending is API-only. The surface has no amend button.
+  - `positionGovernance()` in
+    [trading-position-governance.ts](../../src/app/trading-position-governance.ts) does not mark an
+    armed sleeve fund as exempt.
 
 ### P6. Idle-cash yield sleeve (2026-09-28)
 
