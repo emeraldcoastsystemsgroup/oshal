@@ -9,6 +9,7 @@ SEQ | AUTHOR | DESCRIPTION
 3 | maintainer@emeraldcoastsystemsgroup.com | Focus application editing, condense permission summaries and provide explicit local expiry controls.
 4 | maintainer@emeraldcoastsystemsgroup.com | Adopt the shared live theme bootstrap and semantic surface colors.
 5 | maintainer@emeraldcoastsystemsgroup.com | Feed required package dependencies into the existing explicit-role reviewed batch flow.
+6 | maintainer@emeraldcoastsystemsgroup.com | Sole-operator self-approval on the single-change review: a change that needs approval (the caller's own sensitive access, or a sensitive group mapping) stays unappliable until the caller types "approve", and is then sent with the approval reference bound to that exact preview. The server still decides; it refuses whenever the caller is not the swarm root or another swarm administrator exists.
 -->
 <!doctype html>
 <html lang="en" data-theme="midnight">
@@ -197,6 +198,10 @@ SEQ | AUTHOR | DESCRIPTION
           <h2 id="review-title">Review change</h2>
           <div id="preview-details" class="details"></div>
           <p id="preview-expiry" class="hint"></p>
+          <div id="self-approval" hidden>
+            <label for="self-approval-confirm">Only administrator of this swarm? Type <strong>approve</strong> to approve this change yourself. The approval is recorded with the change.</label>
+            <input id="self-approval-confirm" type="text" autocomplete="off" spellcheck="false" />
+          </div>
           <div class="actions"><button id="apply" class="primary" type="button">Apply change</button><button id="cancel" type="button">Cancel</button></div>
         </section>
       </div>
@@ -213,7 +218,12 @@ const auditState = { cursor: null, entries: [], generation: 0 };
 const applicationRows = { generation: 0, rows: [] };
 const escapeHtml = value => String(value == null ? '' : value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
 function status(message, kind) { $('status').textContent = message; $('status').className = 'status' + (kind ? ' ' + kind : ''); }
-function discardPreview() { state.previewGeneration++; state.preview = null; state.idempotencyKey = null; $('review').hidden = true; }
+function discardPreview() {
+  state.previewGeneration++; state.preview = null; state.idempotencyKey = null; $('review').hidden = true;
+  $('self-approval').hidden = true; $('self-approval-confirm').value = '';
+}
+/** Sole-operator self-approval: the caller typed the confirmation for the preview on screen. */
+function selfApprovalConfirmed() { return $('self-approval-confirm').value.trim().toLowerCase() === 'approve'; }
 async function request(path, body) {
   const response = await fetch(API + path, {
     credentials: 'same-origin', cache: 'no-store',
@@ -256,7 +266,7 @@ function setBusy(busy) {
   const scopes = application()?.managementScopes || [];
   const permits = permission => scopes.some(scope => scope.permissions.includes(permission) && (!scope.tenantId || scope.tenantId === tenant));
   $('preview-button').disabled = busy || !application() || !target() || !permits('assign') || (group && !permits('directory'));
-  $('apply').disabled = busy || !state.preview || state.preview.requiresApproval;
+  $('apply').disabled = busy || !state.preview || (state.preview.requiresApproval && !selfApprovalConfirmed());
   applicationRows.rows.forEach(updateRowControls);
   window.oshalAccessBulk?.busy();
 }
@@ -743,7 +753,9 @@ function changeInput() {
 async function report(error) {
   discardPreview();
   if (error.status === 409) await loadCatalog();
-  status(error.status === 409 ? 'Access changed while you were reviewing it. Review the current assignments and create a new preview.' : error.message, 'error');
+  status(error.status === 409 ? 'Access changed while you were reviewing it. Review the current assignments and create a new preview.'
+    : error.message === 'authorization_approval_required' ? 'Self-approval was refused: only the swarm owner may approve this, and only while no other swarm administrator exists. A separate, verified approval is required.'
+    : error.message, 'error');
 }
 $('refresh').addEventListener('click', () => { void loadCatalog(); });
 $('target-kind').addEventListener('change', () => {
@@ -787,16 +799,19 @@ $('change-form').addEventListener('submit', async event => {
     state.preview = preview; state.idempotencyKey = crypto.randomUUID();
     $('preview-details').textContent = JSON.stringify(preview.change, null, 2);
     $('preview-expiry').textContent = `Policy revision ${preview.revision} · Catalog ${preview.catalogRevision}\nExpires ${preview.expiresAt}`
-      + (preview.requiresApproval ? '\nThis change requires a separate, verified approval. Applying it here is unavailable until that approval workflow is provided.' : '');
+      + (preview.requiresApproval ? '\nThis change involves sensitive access and requires a separate, verified approval. On a swarm with a single administrator, the swarm owner may approve it below.' : '');
+    $('self-approval').hidden = !preview.requiresApproval; $('self-approval-confirm').value = '';
     $('review').hidden = false; status('Review the exact change below before applying it.');
   } catch (error) { if (previewGeneration === state.previewGeneration) await report(error); }
   finally { setBusy(false); }
 });
+$('self-approval-confirm').addEventListener('input', () => setBusy(state.busy));
 $('apply').addEventListener('click', async () => {
-  if (state.busy || !state.preview || state.preview.requiresApproval) return;
+  if (state.busy || !state.preview || (state.preview.requiresApproval && !selfApprovalConfirmed())) return;
   const preview = state.preview; setBusy(true);
   try {
-    const receipt = await request('/apply', { previewId: preview.previewId, idempotencyKey: state.idempotencyKey });
+    const receipt = await request('/apply', { previewId: preview.previewId, idempotencyKey: state.idempotencyKey,
+      ...(preview.requiresApproval ? { approvalReference: 'sole-operator-self-approval:' + preview.previewId } : {}) });
     $('receipt').hidden = false; $('receipt').textContent = `Last applied change: audit ${receipt.auditId}, policy revision ${receipt.revision}.`;
     await loadCatalog('Change applied and current access reloaded.');
   } catch (error) { await report(error); }

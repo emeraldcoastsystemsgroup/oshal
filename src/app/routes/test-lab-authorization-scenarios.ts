@@ -19,6 +19,7 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com | AUTH-03: register the Kubernetes first-root chart guard (tests/unit/chart-installer-root.spec.ts) and the Users-page identity-provider root browser proof (tests/unit/installer-root-oidc-browser.spec.ts) beside the installer-root suite, which now also proves the exact identity-provider issuer+subject election.
  * 15 | maintainer@emeraldcoastsystemsgroup.com | Register the guard for scripts/operations/verify-authorization-registration.js, the read-only automated acceptance that an installed swarm's Test Lab lists the authorization suites and the Little Monsters pilot cases.
  * 16 | maintainer@emeraldcoastsystemsgroup.com | AUTH-07: register the reviewed catalog migration proofs - the pure catalog diff classifier, the disposable-PostgreSQL upgrade/refusal/no-revival/concurrency suite under the forced-RLS runtime role, and the guard for scripts/operations/little-monsters-upgrade-proof.js (the read-only post-staging acceptance that Little Monsters loaded at the new version with its assignments carried).
+ * 17 | maintainer@emeraldcoastsystemsgroup.com | Register the sole-operator self-approval proofs: the PostgreSQL census and approval/audit spec and the Access Administration browser flow.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -122,6 +123,8 @@ export const AUTHORIZATION_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/authorization-catalog-diff.spec.ts' },
     { level: 'integration', path: 'tests/unit/authorization-catalog-migration-postgres.spec.ts' },
     { level: 'integration', path: 'tests/unit/little-monsters-upgrade-proof.spec.ts' },
+    { level: 'integration', path: 'tests/unit/sole-operator-approval-postgres.spec.ts' },
+    { level: 'browser', path: 'tests/unit/sole-operator-approval-browser.spec.ts' },
   ],
   steps: [{ id: 'catalog', app: 'authorization', label: 'Caller-visible access catalog', run: authorizationCatalog }],
 }, {
