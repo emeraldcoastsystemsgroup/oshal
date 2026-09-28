@@ -16,14 +16,28 @@ Eight selectable experiences over one unchanged backend:
 | Jarvis | `/jarvis` | Warm assistant home: briefing from the real queue, recent work, an agenda from the overview calendar feed plus the caller's Little Monsters calendar, suites; hosts apps with the `family` view requested |
 | Orbit | `/orbit` | Suites as connected worlds around Jarvis; drill into a suite, inspect an app with its declared assistants and relationships; hosts apps with the `company` view requested |
 | Commons | `/commons` | Suite rooms (plus a Game room) with applications, declared assistants, a work board, one Jarvis thread per room and the swarm roster; hosts apps with the `company` view requested |
-| Home · family homebase | `/homebase?preset=family` | Calendar, shopping list, Smart Home facts, people, personal finance; hosts Smart Home, Shopping, Money, Little Monsters, and Movies & TV, Music and Travel (as Watch, Listen and Go) in place with the `family` view requested |
+| Home · family homebase | `/homebase?preset=family` | Front page: the shared calendar, then money (a parent) or school (a learner), Smart Home facts, the tools; the shopping list, a Recent documents card (AI Office's own summary) and the noticeboard beside; people; hosts Smart Home, Shopping, Money, Little Monsters, Movies & TV, Music and Travel (as Watch, Listen and Go) and AI Office in place with the `family` view requested |
 | Little Monsters · classroom | `/homebase?preset=classroom` | Classwork, class calendar, teacher roster with each learner's activity (level, streak, quiz average, cards reviewed) or learner checklist by real role; teachers post classwork from the shell; the learner checklist opens My Day in place; the Little Monsters tools the caller is admitted to open in place, beside AI Office (Make and share) and Circuit Lab (Build and test) with the `classroom` view requested |
-| Business · company swarm | `/homebase?preset=company` | Open tickets as projects (six rows, tickets awaiting approval first and the rest newest first; a ticket awaiting a human approval can be approved from its dialog), team calendar, people, dense account table, and, where Finance is not installed, a personal workspace card whose "My drafts" lists the caller's saved Content Studio drafts and newest finished Jarvis task; hosts Presentations, Office (Intelligent Communication's My Day, World Intelligence), Finance, Communications (Switchboard, Social's Composer), Growth (Marketing Engine, Venture Plan), Payroll, Payments, Identity and Engineering in place with the `company` view requested |
+| Business · company swarm | `/homebase?preset=company` | Front page: Today (Intelligent Communication's saved digest), Office calendar (the Calendar package's snapshot), Recent documents (AI Office) and Capture pipeline (Federal CRM) as summary cards, then open tickets as projects (six rows, tickets awaiting approval first and the rest newest first; a ticket awaiting a human approval can be approved from its dialog) and the tools; Payroll and Calls cards, lists, the personal card (the dense account table, or, where Finance is not installed, a personal workspace whose "My drafts" lists the caller's saved Content Studio drafts and newest finished Jarvis task) and the team feed beside; team calendar and people pages; hosts Presentations, Office (Intelligent Communication's My Day, Calendar, World Intelligence), Finance, Communications (Switchboard, Social's Composer, Calling Assistant), Growth (Marketing Engine, Venture Plan), Federal CRM (its pipeline surfaces), Payroll, Payments, Identity and Engineering in place with the `company` view requested |
 | Central assistant | `/nexus` | Intent composer with push-to-talk dictation, a "Request progress" ledger of observed phases, a typed answer workspace (answer, owner-checked visual, handoffs, background work, approval card, fallback provider), lifecycle states (running, ready, partial, failed, setup needed, stopped waiting, still running (poll limit)), speaking core |
 
 `/portal` (also `/experience`) is the chooser. The cockpit header's **Experiences** menu links the
 same eight entries, every shell carries an experience picker in its top bar, and `/little-monsters`
 redirects to the classroom preset. Plain `/cockpit/` is unchanged: the experiences are opt-in.
+
+**Front-page modules.** Each homebase preset declares its front page in
+[homebase-config.js](../../src/experience/homebase-config.js) as two ordered columns (`modules.main`,
+`modules.aside`) of three entry kinds: a core module by name (`calendar`, `shopping`, `home-facts`,
+`finance`, `learning`, `requirements`, `roster`, `projects`, `personal`, `updates`, `apps`), a role pair
+(`{ teacher, otherwise }`), or a package summary card (`{ card, title, kicker, action }`). A card is one
+generic renderer over the application's own ADR-145 `home-summary` probe from the caller's plan (tiles,
+the first three items, the probe's timestamp); it is rendered only for an application in the caller's
+plan that declares a probe, so an application the caller is not admitted to renders nothing and is asked
+nothing (ADR-164 D10), and a refusal is shown as its status with nothing assumed in its place. The
+card's action opens the named hosted tool in place (with the preset's audience requested) when the
+caller is admitted to it, otherwise it links to the application. No package-specific logic lives in
+core: the package decides its tiles and items. Presets carry no data; the other navigation pages keep
+their fixed pairs.
 
 ## Where the data comes from
 

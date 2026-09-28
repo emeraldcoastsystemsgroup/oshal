@@ -295,7 +295,9 @@ describe('acceptance fixes: Little Monsters reads, dates, the learner card, proj
     fixture.state.status['lm-home-summary'] = 403;
     for (const preset of ['family', 'company']) {
       fixture.state.calls.length = 0;
-      await open(`/homebase?preset=${preset}`, '[data-module="calendar"]');
+      // The Business front page leads with package cards; its Little Monsters calendar module lives on the Team calendar page.
+      await open(`/homebase?preset=${preset}`, preset === 'family' ? '[data-module="calendar"]' : '[data-module="projects"]');
+      if (preset === 'company') await page.locator('[data-action="page"][data-page="calendar"]').click();
       await moduleHas('calendar', 'school profile');
       expect(await moduleText('calendar')).toContain('Open Little Monsters once to set up your school profile.');
       expect(fixture.state.calls).toContain('GET /api/little-monsters/home-summary');
@@ -331,7 +333,8 @@ describe('acceptance fixes: Little Monsters reads, dates, the learner card, proj
     const lm = fixture.state.apps.find(a => a.summary.name === 'little-monsters')!;
     lm.plan = null;
     fixture.state.calls.length = 0;
-    await open('/homebase?preset=company', '[data-module="calendar"]');
+    await open('/homebase?preset=company', '[data-module="projects"]');
+    await page.locator('[data-action="page"][data-page="calendar"]').click();
     await moduleHas('calendar', 'not available to you');
     expect(await moduleText('calendar')).toContain('Little Monsters is not available to you.');
     expect(fixture.state.calls).not.toContain('GET /api/little-monsters/home-summary');

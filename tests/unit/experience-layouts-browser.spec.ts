@@ -247,8 +247,9 @@ describe('experience shells over the real routes', () => {
     await open('/homebase?preset=family', '.home-shell');
     await page.waitForSelector('.tool-nav');
     const kickers = await page.locator('.home-sidebar .side-kicker').allInnerTexts();
-    expect(kickers).toEqual(expect.arrayContaining(['SMART HOME', 'SHOPPING', 'MONEY', 'LITTLE MONSTERS']));
-    expect(await page.locator('.tool-group').count()).toBe(4);
+    expect(kickers).toEqual(expect.arrayContaining(['SMART HOME', 'SHOPPING', 'MONEY', 'LITTLE MONSTERS', 'OFFICE']));
+    // Five hosts in the default catalog: the four above plus AI Office (the Recent documents card's application).
+    expect(await page.locator('.tool-group').count()).toBe(5);
     const labels = await page.locator('.tool-nav button').allInnerTexts();
     expect(labels.join('|')).toContain('Synthetic home home'); expect(labels.join('|')).not.toContain('Synthetic Science');
     await page.locator('.tool-nav button', { hasText: 'Synthetic home home' }).first().click();
@@ -289,9 +290,11 @@ describe('experience shells over the real routes', () => {
     await open('/homebase?preset=family', '.home-shell');
     await page.waitForSelector('[data-tool="tool-travel-concierge"]');
     const groups = await railGroups('.home-sidebar .side-section', '.tool-nav [data-tool]');
-    expect(groups.map(g => g.kicker)).toEqual(['SMART HOME', 'SHOPPING', 'MONEY', 'LITTLE MONSTERS', 'WATCH', 'LISTEN', 'GO']);
-    expect(groups.slice(4).map(g => g.tools)).toEqual([['tool-movies-concierge'], ['tool-spotify-concierge'], ['tool-travel-concierge']]);
-    expect(await page.locator('.tool-group').count()).toBe(7);
+    // OFFICE (AI Office) comes last: it backs the Recent documents card and matters less at home.
+    expect(groups.map(g => g.kicker)).toEqual(['SMART HOME', 'SHOPPING', 'MONEY', 'LITTLE MONSTERS', 'WATCH', 'LISTEN', 'GO', 'OFFICE']);
+    expect(groups.slice(4, 7).map(g => g.tools)).toEqual([['tool-movies-concierge'], ['tool-spotify-concierge'], ['tool-travel-concierge']]);
+    expect(groups[7].tools).toEqual(['tool-presentations-studio']);
+    expect(await page.locator('.tool-group').count()).toBe(8);
     for (const [tool, surface] of [['tool-movies-concierge', 'movies-concierge'], ['tool-spotify-concierge', 'spotify-concierge'], ['tool-travel-concierge', 'travel-concierge']]) {
       await openHosted(tool, `/fixture/surface/${surface}?audience=family`);
     }
