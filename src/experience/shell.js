@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Work panels for layouts that opt in (hooks.workActions, with shell-panels.js loaded): a ticket, or the ticket behind a swarm task, reads its workflow (GET /api/v1/tickets/:id/workflow) and state (GET /api/tickets/:id) once per panel; the panel shows recorded progress and stages, a full ticket-workflow panel, Approve (approval_required to approved through PUT /api/tickets/:id/status, only when a person is what it waits for) and Cancel behind a confirmation (PUT /api/tickets/:id/cancel). A refusal is shown in the panel as returned; a success reloads the caller's work and re-renders through hooks.onWorkChanged. Working rows carry an indeterminate bar. Homebase and the central assistant do not opt in and are unchanged.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Routines panel (kind 'routines', layouts that opt in): reads the caller's schedules and the Workflow Studio definitions once per page, and each own prompt schedule's switch pauses or resumes it through POST /api/v1/agent/schedules/:id/pause|resume; a refusal puts the switch back and says why. The application panel offers 'Its routines' (that application's routines first).
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Day focus picker in the study bar for layouts that opt in (hooks.scenes): 'A workday' or 'An evening at home', saved per layout on this device (oshal-experience:scene:<layout>, ADR-164 D9), never sent to a server; setScene re-renders the layout through hooks.onSceneChanged.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | Visual cards for layouts that opt in: visualFor(app, latest) pictures an application or a work item (the application panel and the work panel carry one) and fillVisuals draws the Finance picture from one GET /api/finance/summary per page, only for a Finance the caller's plan admits.
  */
 (() => {
   'use strict';
@@ -113,7 +114,7 @@
     const apps = snapshot.apps, suites = snapshot.suites, work = snapshot.work;
     const byId = id => apps.find(a => a.id === id) || null;
     const suiteOf = id => suites.find(s => s.id === id) || LIVE.SUITE_META[id] && Object.assign({ id, count: 0, apps: [] }, LIVE.SUITE_META[id]) || suites[suites.length - 1];
-    const state = { modal: null, dirSuite: 'all', dirQuery: '', returnFocus: null, pins: null, summaries: new Map(), embed: false, details: new Map(), detailReads: new Map(), roster: null, rosterRead: null, workFlows: new Map(), workReads: new Set(), routines: null, workflowsList: null, routinesRead: false };
+    const state = { modal: null, dirSuite: 'all', dirQuery: '', returnFocus: null, pins: null, summaries: new Map(), embed: false, details: new Map(), detailReads: new Map(), roster: null, rosterRead: null, workFlows: new Map(), workReads: new Set(), routines: null, workflowsList: null, routinesRead: false, spend: null, spendRead: null };
     state.embedView = LIVE.prefs.get('embed-view:' + layoutId, 'summary') === 'full' ? 'full' : 'summary';
     state.scene = window.OSHAL_LIVE_VIEWS ? window.OSHAL_LIVE_VIEWS.sceneOf(LIVE.prefs.get('scene:' + layoutId, 'workday')).id : 'workday';
     const savedPins = LIVE.prefs.get('pins:' + layoutId, null);
@@ -261,6 +262,7 @@
       return `<div class="app-detail-header">${appMark(app)}<div><span class="eyebrow muted">${esc(suite.name)}</span><p class="app-package">${esc(app.id)}${app.version ? ` · v${esc(app.version)}` : ''}</p></div>${button(isPinned(app.id) ? '★ Pinned' : '☆ Pin app', 'pin', 'action', `data-app="${esc(app.id)}" aria-pressed="${isPinned(app.id)}"`)}</div>
 <p class="app-description">${esc(app.description)}</p>
 <div class="scope-callout">${availability}<small>${app.botCount} assistant${app.botCount === 1 ? '' : 's'} · ${app.toolCount} tool${app.toolCount === 1 ? '' : 's'} declared${app.theme ? ` · ${esc(app.theme)} skin` : ''}</small></div>
+${visualFor(app)}
 <h3>From the application</h3><div data-summary-slot="${esc(app.id)}">${summaryMarkup(app, state.summaries.get(app.id) || null)}</div>
 ${app.todos.length ? `<h3>Setup steps</h3><ol class="artifact-steps">${app.todos.map(t => `<li>${esc(t.label)}</li>`).join('')}</ol>` : ''}
 ${items.length ? `<h3>Recent work</h3>${items.map(workRow).join('')}` : ''}
@@ -278,11 +280,28 @@ ${(app.connectors.required || []).length || (app.connectors.optional || []).leng
       const app = item.app ? byId(item.app) : null;
       const body = item.kind === 'task' ? (item.error ? `<p class="tone-warn">${esc(item.error)}</p>` : answerHtml(item.result)) : `<p>${esc(item.detail || 'No description was recorded on this ticket.')}</p>`;
       return `<div class="row between">${statusBadge(item.status)}<span class="small-label">${esc(item.appName)} · ${esc(item.typeLabel)} · ${esc(item.at ? item.at.toLocaleString() : '')}</span></div>
-<h2 class="artifact-title">${esc(item.title)}</h2>${body}
+${item.app && byId(item.app) ? visualFor(byId(item.app), item) : ''}<h2 class="artifact-title">${esc(item.title)}</h2>${body}
 ${item.files.length ? `<h3>Files</h3><ul class="artifact-steps">${item.files.map(f => `<li>${fileLink(f) || esc(f.name || 'file')}</li>`).join('')}</ul>` : ''}
 ${workExtras(item)}
 <div class="drawer-actions">${link(item.kind === 'task' && !item.ticketId ? 'Open in Jarvis ↗' : 'Open in cockpit ↗', item.href, 'action primary')}${app ? button(`About ${esc(app.name)}`, 'open-app', 'action', `data-app="${esc(app.id)}"`) : ''}${button('Ask Jarvis about this', 'prompt', 'action', `data-prompt="${esc(`Tell me about ${item.kind === 'task' ? 'the task' : 'ticket'} “${item.title}” (${item.ref}).`)}"`)}</div>
 <p class="note-line">${item.kind === 'task' ? 'Recorded on your Jarvis shelf' : 'Recorded in the swarm ticket queue'} · ${esc(item.ref)}</p>`;
+    }
+    /**
+     * @description The picture beside an application or a work item, for layouts that opt in (shell-panels.js).
+     * @param {object} app The catalog entry.
+     * @param {object|null} [latest] The work item the picture speaks for; defaults to the application's newest work.
+     * @returns {string} Markup, empty where the layout does not opt in.
+     */
+    function visualFor(app, latest) {
+      const P = panels(); if (!P || !app) return '';
+      return P.visual(app, latest === undefined ? workFor(app.id)[0] || null : latest, a => suiteOf(a.suite), state.spend || undefined);
+    }
+    /** @description Fill every Finance picture on screen from one GET /api/finance/summary per page (only drawn for a Finance the caller's plan admits). */
+    async function fillVisuals() {
+      const P = panels(); if (!P || !document.querySelector('[data-visual-finance]')) return;
+      if (!state.spendRead) state.spendRead = LIVE.packages.finance.summary().then(r => { state.spend = window.OSHAL_LIVE_VIEWS.spendBars(r); return state.spend; });
+      const spend = await state.spendRead;
+      document.querySelectorAll('[data-visual-finance]').forEach(el => { el.innerHTML = P.financeInner(spend); });
     }
     /** The workflow and action slots of a work panel, filled from the ticket's own reads once the panel shows. */
     function workExtras(item) {
@@ -448,6 +467,7 @@ ${workExtras(item)}
       if (kind === 'directory') { updateDirectory(); document.getElementById('app-search').focus(); }
       if (kind === 'app' && byId(id)) { fillSummary(byId(id)); fillDetail(byId(id)); }
       if (kind === 'routines' && panels()) fillRoutines();
+      if (kind === 'app' || kind === 'work') fillVisuals();
       if ((kind === 'work' || kind === 'ticket-workflow') && panels()) { const item = work.find(w => w.id === id); if (item && !state.workFlows.has(id)) fillWork(item); }
       if (kind === 'people' && hooks.peopleDirectory) fillRoster();
     }
@@ -522,7 +542,7 @@ ${workExtras(item)}
     const threadNote = thread => thread.unavailable ? 'Earlier turns could not be loaded.' : thread.turns.length ? `${thread.turns.length} turns in this thread` : 'A new conversation. Ask anything across your swarm.';
 
     return { state, apps, suites, work, byId, suiteOf, pinned, isPinned, togglePin, workFor, openWork, attention, timeAgo, appMark, statusBadge, miniApp, workRow, artifactTile, personRow, studyBar, appPanel, workPanel, open, close, renderModal, handle, bind, toast, createThread, threadHtml, threadNote, summaryFor, summaryMarkup, fillSummary,
-      gameApps, hostedUrl, embedControls, embedFrame, detailSlot, fillDetail, rosterSlot, fillRoster, scene: () => state.scene, setScene };
+      gameApps, hostedUrl, embedControls, embedFrame, detailSlot, fillDetail, rosterSlot, fillRoster, scene: () => state.scene, setScene, visualFor, fillVisuals };
   }
 
   window.OSHAL_SHELL = { esc, button, primary, link, avatar, badge, chip, fileLink, answerHtml, withAudience, isGameApp, GAMES_TITLE, EXPERIENCES, experienceFor, currentExperience, pickerMarkup, skinPicker, createShell };

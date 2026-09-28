@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Work panels: a ticket's recorded workflow (stages, step progress, gates, history, children) and its full view, Approve for an approval gate that waits on a person with the route's refusal shown, Cancel behind a confirmation with its refusal, the indeterminate bar on Working items only, and the not-visible / unreadable states.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Routines panel: own routines with a switch, managed ones without, somebody else's absent, workflows by version; pause/resume and the 404 refusal that puts the switch back; an application's routines first; the ask-Jarvis empty state and the refused reads.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Day focus: Studio's ordering, heading and device-only memory; Jarvis's evening copy and the games prompt; Orbit's ringed suites and stream; Commons moving to the Game room and back.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Visual cards: the selected workspace's document picture from the latest work, Finance's monthly spend bars read once, the no-data state, a Finance outside the plan never read, Orbit's engineering illustration, the Game room table and the work panel's picture.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -323,6 +324,74 @@ describe('day focus (workday / evening at home)', () => {
     await page.waitForFunction(() => document.querySelector('.room-header h1')?.textContent?.includes('Game room'));
     await focus('workday');
     await page.waitForFunction(() => document.querySelector('.room-header h1')?.textContent?.includes('Finance room'));
+    expect(errors).toEqual([]);
+  });
+});
+
+const financeReads = () => fixture.state.calls.filter(c => c === 'GET /api/finance/summary').length;
+/** @description Make Synthetic finance the Studio's selected application through the directory's "Use as my context". */
+async function selectFinance() {
+  await page.keyboard.press('Control+k'); await page.fill('#app-search', 'Synthetic finance');
+  await page.locator('.catalog-card[data-catalog-app="finance"] .catalog-main').click();
+  await page.locator('#full-dialog [data-action="use-context"]').click();
+  await page.waitForSelector('.full-context [data-visual-finance="finance"]');
+}
+
+describe('visual cards over real facts', () => {
+  it('Studio pictures the selected application with its latest work, and Finance draws the caller’s monthly spend', async () => {
+    await open('/studio', '.full-context');
+    const ledger = page.locator('.full-context [data-visual="ledger"]');
+    expect(await ledger.getAttribute('class')).toContain('document-visual');
+    expect(await ledger.locator('.visual-label').innerText()).toBe('FINANCE / WORKING');
+    expect(await ledger.locator('h3').innerText()).toBe('Synthetic ledger review');
+    expect(await ledger.locator('.visual-footer').innerText()).toMatch(/^Synthetic ledger · ledger review · 1 h ago$/);
+    await selectFinance();
+    await page.waitForSelector('.full-context .finance-bars span');
+    const money = page.locator('.full-context [data-visual-finance="finance"]');
+    expect(await money.locator('.finance-bars small').allInnerTexts()).toEqual(['Aug', 'Sep']);
+    expect(await money.locator('.finance-bars span').first().getAttribute('style')).toBe('height:50%');
+    expect(await money.locator('h3').innerText()).toMatch(/200 spent\s*in Sep\./);
+    expect(await money.locator('.visual-footer').innerText()).toBe('Synced 2 d ago · from Finance');
+    expect(await money.locator('.finance-bars').getAttribute('aria-label')).toBe('Monthly spend from your synced accounts: Aug 100, Sep 200');
+    expect(financeReads()).toBe(1);
+    expect(errors).toEqual([]);
+  });
+
+  it('Finance with nothing synced says so; a Finance outside the caller’s plan is never read and gets an illustration', async () => {
+    fixture.state.finance.status = 404;
+    await open('/studio', '.full-context');
+    await selectFinance();
+    await page.waitForFunction(() => document.querySelector('.full-context [data-visual-finance] h3')?.textContent === 'No synced accounts yet.');
+    await fixture.close();
+    fixture = await startExperienceBrowserFixture();
+    const finance = fixture.state.apps.find(a => a.summary.name === 'finance')!;
+    (finance as { plan: unknown }).plan = null;
+    await open('/studio', '.full-context');
+    await page.keyboard.press('Control+k'); await page.fill('#app-search', 'Synthetic finance');
+    await page.locator('.catalog-card[data-catalog-app="finance"] .catalog-main').click();
+    await page.waitForSelector('#full-dialog [data-visual="finance"]');
+    expect(await page.locator('#full-dialog [data-visual="finance"]').getAttribute('class')).toContain('document-visual');
+    expect(await page.locator('#full-dialog [data-visual-finance]').count()).toBe(0);
+    expect(financeReads()).toBe(0);
+    expect(errors).toEqual([]);
+  });
+
+  it('Orbit pictures an engineering application as a labelled illustration; the Game room and a work panel carry theirs', async () => {
+    await open('/orbit', '.full-orbit');
+    await page.locator('.suite-node[data-suite="ai-engineering"]').click();
+    await page.locator('.orbit-app[data-app="forge"]').click();
+    const forge = page.locator('.orbit-inspector [data-visual="forge"]');
+    expect(await forge.getAttribute('class')).toContain('engineering-visual');
+    expect(await forge.locator('svg').count()).toBe(1);
+    expect(await forge.locator('.visual-footer').innerText()).toBe('Illustration · Synthetic forge has no recorded work yet');
+    await open('/commons', '.full-commons');
+    await page.locator('.commons-sidebar [data-action="room"][data-suite="games"]').click();
+    const table = page.locator('.room-feed [data-visual="arcade-games"]');
+    expect(await table.getAttribute('class')).toContain('game-visual');
+    expect(await table.locator('h3').innerText()).toMatch(/Synthetic arcade-games\s*awaits\./);
+    await open('/studio', '.running-row');
+    await page.locator(`.running-row[data-work="ticket:${LEDGER}"]`).click();
+    expect(await page.locator('#full-dialog [data-visual="ledger"] h3').innerText()).toBe('Synthetic ledger review');
     expect(errors).toEqual([]);
   });
 });

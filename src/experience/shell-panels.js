@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Markup for the full-swarm work panels over existing routes: a moving item's indeterminate progress (the queue reports no percentage), a ticket's workflow (GET /api/v1/tickets/:id/workflow: stages with their recorded state, progress only from a recorded run, approval gates, status history, child tickets) and its actions: Approve only for a ticket held at approval_required whose current transition waits on a person (the homebase rule), Cancel through the owner-checked cancel route behind a confirmation. The server decides every action; a refusal is shown as returned.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | The Routines panel: the caller's schedules (GET /api/v1/agent/schedules) with their cadence, next and last run and an "On for me" switch only on their own prompt schedules (an application's or an operator's schedule says who manages it), an application's own routines first when opened from its panel, an empty state that offers to ask Jarvis for one, and the Workflow Studio definitions by name and version with a link to Workflow Studio, where workflows are edited, published and restored.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Visual cards (the demo's mini visuals) over real facts: the suite and latest work state as the label, the latest work's title (or the application's name) as the heading, its source as the footer; engineering, game, home and document pictures are labelled illustrations, and only Finance draws data, bars of monthly spend from its own summary when the caller's plan admits it, with the no-data, empty and failed states.
  */
 (() => {
   'use strict';
@@ -155,5 +156,54 @@
     return `<p>Routines are your own scheduled requests. A switch here pauses or resumes one for you only; nobody else is enrolled or changed.</p>${routinesSection(routines, app)}<hr class="rule"><h3>Workflows</h3><p class="note-line">How work moves through the swarm. They are edited, published and restored in Workflow Studio.</p>${workflowsSection(workflows)}<div class="drawer-actions">${S().link('Open Workflow Studio ↗', '/workflow-studio/', 'action')}</div>`;
   }
 
-  window.OSHAL_SHELL_PANELS = { movingBar, ticketOf, currentTransition, actionsMarkup, cancelConfirm, workflowSection, workflowPanel, routineRow, routinesPanel };
+  const ART = {
+    engineering: '<svg viewBox="0 0 260 150" aria-hidden="true"><path d="M52 54 154 25 213 62 113 94Z M52 54 52 103 113 137 113 94 M113 137 213 104 213 62" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M73 52 152 32 190 59 112 82Z" fill="currentColor" opacity=".08"/><ellipse cx="84" cy="60" rx="8" ry="4" fill="none" stroke="currentColor"/><ellipse cx="155" cy="40" rx="8" ry="4" fill="none" stroke="currentColor"/><path d="M124 106 184 87M124 113 184 94" stroke="currentColor" opacity=".6"/></svg>',
+    game: '<div class="game-moon" aria-hidden="true"></div><div class="game-mountains" aria-hidden="true"></div>',
+    home: '<div class="home-window" aria-hidden="true"></div>',
+    document: '<div class="paper-line"></div><div class="paper-line"></div><div class="paper-line short"></div>'
+  };
+
+  /**
+   * @description Which picture an application gets: the Finance package's own spend bars (only when the caller's plan
+   * admits Finance), otherwise an illustration by suite (engineering drawing, game table, home window, document).
+   * @param {object} app A catalog entry.
+   * @returns {'finance'|'game'|'engineering'|'home'|'document'} The visual kind.
+   */
+  function visualKind(app) {
+    if (app.id === 'finance' && app.inPlan) return 'finance';
+    if (S().isGameApp(app)) return 'game';
+    return app.suite === 'ai-engineering' ? 'engineering' : app.suite === 'ai-home' ? 'home' : 'document';
+  }
+
+  /** @description The Finance picture from its summary read: bars of the last months' spend, or the no-data / failed / reading state. */
+  function financeInner(spend) {
+    if (!spend) return '<span class="visual-label">MONTHLY SPEND / YOUR SYNCED ACCOUNTS</span><h3>Reading your spending…</h3><span class="visual-footer">From Finance, in your session</span>';
+    if (spend.state === 'no-data') return '<span class="visual-label">MONTHLY SPEND / YOUR SYNCED ACCOUNTS</span><h3>No synced accounts yet.</h3><span class="visual-footer">Sync accounts in Finance to see your spending here</span>';
+    if (spend.state !== 'ready') return `<span class="visual-label">MONTHLY SPEND / YOUR SYNCED ACCOUNTS</span><h3>Spending is unavailable.</h3><span class="visual-footer">${spend.state === 'empty' ? 'Finance has no monthly spend recorded yet' : `Finance answered HTTP ${esc(spend.status || 'unreachable')}`}</span>`;
+    const last = spend.bars[spend.bars.length - 1];
+    const bars = spend.bars.map(b => `<span style="height:${b.pct}%" title="${esc(`${b.label}: ${Math.round(b.value).toLocaleString()}`)}"><small>${esc(b.label)}</small></span>`).join('');
+    return `<span class="visual-label">MONTHLY SPEND / YOUR SYNCED ACCOUNTS</span><h3>${esc(Math.round(last.value).toLocaleString())} spent<br>in ${esc(last.label)}.</h3><div class="finance-bars" role="img" aria-label="${esc(`Monthly spend from your synced accounts: ${spend.bars.map(b => `${b.label} ${Math.round(b.value)}`).join(', ')}`)}">${bars}</div><span class="visual-footer">${spend.syncedAt ? `Synced ${esc(window.OSHAL_LIVE.relativeTime(spend.syncedAt))}` : 'Sync time not reported'} · from Finance</span>`;
+  }
+
+  /**
+   * @description The picture beside an application or a work item (the demo's mini visual) over real facts: the label names
+   * the suite and the latest work's state, the heading is that work's title (or the application's name), and the footer
+   * says where it came from. Illustrations are labelled as such; only Finance draws data, from its own summary.
+   * @param {object} app A catalog entry.
+   * @param {object|null} latest The application's newest work item, or the item the panel shows.
+   * @param {(app: object) => {name: string}} suiteOf The shell's suite lookup.
+   * @param {object|undefined} spend LIVE_VIEWS.spendBars output once read (Finance only).
+   * @returns {string} Markup.
+   */
+  function visual(app, latest, suiteOf, spend) {
+    const kind = visualKind(app);
+    if (kind === 'finance') return `<div class="mini-visual finance-visual" data-visual-finance="${esc(app.id)}">${financeInner(spend)}</div>`;
+    const label = `${suiteOf(app).name} / ${latest ? latest.status.label : 'No recorded work'}`.toUpperCase();
+    const foot = latest ? `${latest.appName} · ${latest.typeLabel} · ${window.OSHAL_LIVE.relativeTime(latest.at)}` : `Illustration · ${app.name} has no recorded work yet`;
+    const art = kind === 'document' ? '' : ART[kind];
+    const h = latest ? esc(latest.title) : kind === 'game' ? `${esc(app.name)}<br>awaits.` : esc(app.name);
+    return `<div class="mini-visual ${kind}-visual" data-visual="${esc(app.id)}"><span class="visual-label">${esc(label)}</span>${art}<h3>${h}</h3>${kind === 'document' ? ART.document : ''}<span class="visual-footer">${esc(foot)}</span></div>`;
+  }
+
+  window.OSHAL_SHELL_PANELS = { movingBar, ticketOf, currentTransition, actionsMarkup, cancelConfirm, workflowSection, workflowPanel, routineRow, routinesPanel, visualKind, visual, financeInner };
 })();
