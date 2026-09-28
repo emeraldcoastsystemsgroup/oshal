@@ -420,7 +420,8 @@ No real person's location is read or written. The linked suites:
 - `tests/unit/location-oidc-step-up-browser.spec.ts`: real OIDC against a local identity provider.
   `max_age=0` is sent, and a stale `auth_time`, a skipped round trip or a different account prove nothing.
 - `tests/unit/location-step-up-totp-postgres.spec.ts`: a local-auth session proves it with a second-factor
-  code.
+  code. Once a person has spent their failed-code budget, every fresh challenge gets 429 and even the
+  right code is not checked.
 - `tests/unit/location-step-up.spec.ts` and `tests/unit/location-route-policy.spec.ts`: the proof store
   and the declared step-up rule of every `/api/location` route.
 

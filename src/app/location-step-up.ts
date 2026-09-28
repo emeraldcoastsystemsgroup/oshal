@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L3 (D3 "Routes and step-up"): the step-up proof. A packaged surface runs same-origin as the signed-in person, so a location route that raises exposure (opt-in, precision raise, accepting a share, creating a guardian share, approving a location enrolment, arming a device-action rule) must see a proof that script on the page cannot supply. A proof is a single-use challenge bound to one principal (subject AND verified issuer), one operation and a digest of that operation's exact parameters. It becomes usable only when a fresh authentication completes after the challenge was created: an OIDC re-authentication whose auth_time and iat are no older than the challenge, a local-auth TOTP code, or, under MOCK_OIDC only, a top-level navigation. Consuming it re-checks principal, operation and parameters, so a proof the person gave for one change can never authorise another. The store is in memory with bounded size and lifetimes, and registers a location state eraser so an account erasure drops the person's open challenges.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review fix: a per-person failed-code budget for the local-auth rail. The per-challenge attempt limit alone let same-origin script open challenge after challenge (creating one only dropped the oldest) and guess codes without end, because nothing else throttles this path on a LAN or localhost box. Every code check is now also charged to a budget keyed on the person (subject AND issuer), held apart from the challenges so creating, trimming or cancelling challenges never resets it; a verified code is refunded, so only failures count. Once a person spends OSHAL_LOCATION_STEP_UP_TOTP_FAILURES (default 10) inside OSHAL_LOCATION_STEP_UP_TOTP_WINDOW_SEC (default 900), every challenge of theirs is refused before a code is checked until the oldest failure leaves the window. The location state eraser clears the budget with the challenges.
  *
  * @module app/location-step-up
  */
@@ -31,7 +32,8 @@ export type LocationStepUpState = 'pending' | 'proven' | 'consumed' | 'expired';
 /** @description Why a challenge could not be proven or used. */
 export type LocationStepUpRefusal =
   | 'unknown' | 'expired' | 'not-proven' | 'already-used' | 'already-proven' | 'operation-mismatch'
-  | 'params-mismatch' | 'method-mismatch' | 'stale-authentication' | 'different-account' | 'too-many-attempts';
+  | 'params-mismatch' | 'method-mismatch' | 'stale-authentication' | 'different-account' | 'too-many-attempts'
+  | 'too-many-failures';
 
 /** @description What the person's page may see of a challenge; never its principal or digest. */
 export interface LocationStepUpView {
@@ -76,6 +78,10 @@ export interface LocationStepUpOptions {
   maxOpenPerPrincipal?: number;
   /** Code attempts one TOTP challenge allows before it dies. */
   maxTotpAttempts?: number;
+  /** Failed codes one person may spend, across all their challenges, inside the failure window. */
+  totpFailureBudget?: number;
+  /** How long a failed code counts against the person's budget. */
+  totpFailureWindowMs?: number;
 }
 
 interface Challenge {
@@ -140,8 +146,22 @@ function envSeconds(name: string, fallbackSec: number, maxSec: number): number {
 }
 
 /**
- * @description The deployment's step-up lifetimes: OSHAL_LOCATION_STEP_UP_COMPLETE_SEC (default 600),
- * OSHAL_LOCATION_STEP_UP_USE_SEC (default 300) and OSHAL_LOCATION_STEP_UP_SKEW_SEC (default 5).
+ * @description Read a positive whole count from the environment.
+ * @param name - The variable.
+ * @param fallback - Used when unset or not a positive number.
+ * @param max - Upper bound.
+ * @returns The count.
+ */
+function envCount(name: string, fallback: number, max: number): number {
+  const raw = Math.floor(Number(process.env[name]));
+  return Number.isFinite(raw) && raw > 0 ? Math.min(raw, max) : fallback;
+}
+
+/**
+ * @description The deployment's step-up lifetimes and bounds: OSHAL_LOCATION_STEP_UP_COMPLETE_SEC
+ * (default 600), OSHAL_LOCATION_STEP_UP_USE_SEC (default 300), OSHAL_LOCATION_STEP_UP_SKEW_SEC
+ * (default 5), and the per-person failed-code budget OSHAL_LOCATION_STEP_UP_TOTP_FAILURES (default 10,
+ * at most 100) inside OSHAL_LOCATION_STEP_UP_TOTP_WINDOW_SEC (default 900, at most 86400).
  * @returns Options for {@link LocationStepUpStore}.
  */
 export function locationStepUpOptionsFromEnv(): LocationStepUpOptions {
@@ -149,6 +169,8 @@ export function locationStepUpOptionsFromEnv(): LocationStepUpOptions {
     completeWithinMs: envSeconds('OSHAL_LOCATION_STEP_UP_COMPLETE_SEC', 600, 3600),
     useWithinMs: envSeconds('OSHAL_LOCATION_STEP_UP_USE_SEC', 300, 1800),
     skewMs: envSeconds('OSHAL_LOCATION_STEP_UP_SKEW_SEC', 5, 120),
+    totpFailureBudget: envCount('OSHAL_LOCATION_STEP_UP_TOTP_FAILURES', 10, 100),
+    totpFailureWindowMs: envSeconds('OSHAL_LOCATION_STEP_UP_TOTP_WINDOW_SEC', 900, 86_400),
   };
 }
 
@@ -168,6 +190,13 @@ export class LocationStepUpStore {
 
   private readonly maxTotpAttempts: number;
 
+  /** Failed-code times per person, kept apart from the challenges so no challenge change resets them. */
+  private readonly totpFailures = new Map<string, number[]>();
+
+  private readonly totpFailureBudget: number;
+
+  private readonly totpFailureWindowMs: number;
+
   constructor(options: LocationStepUpOptions = {}) {
     this.now = options.now ?? Date.now;
     this.completeWithinMs = options.completeWithinMs ?? 600_000;
@@ -175,6 +204,8 @@ export class LocationStepUpStore {
     this.skewMs = options.skewMs ?? 5_000;
     this.maxOpenPerPrincipal = options.maxOpenPerPrincipal ?? 10;
     this.maxTotpAttempts = options.maxTotpAttempts ?? 5;
+    this.totpFailureBudget = options.totpFailureBudget ?? 10;
+    this.totpFailureWindowMs = options.totpFailureWindowMs ?? 900_000;
   }
 
   /**
@@ -244,22 +275,45 @@ export class LocationStepUpStore {
   }
 
   /**
-   * @description Count one second-factor attempt against a TOTP challenge; the challenge dies after
-   * the allowed number, so a code cannot be guessed through one challenge.
+   * @description Admit one second-factor code check, before the code is checked. It is refused when
+   * the person has spent their failed-code budget (whatever challenge it names, so opening new
+   * challenges cannot buy more guesses), and a challenge dies after its own allowed number. An
+   * admitted check is charged to the budget as a failure straight away, so concurrent checks cannot
+   * all pass the limit; {@link LocationStepUpStore.refundTotpAttempt} returns the charge when the
+   * code turns out to be right.
    * @param challengeId - The handle.
    * @param principal - The signed-in person.
    * @returns ok while attempts remain, or why not.
    */
   noteAttempt(challengeId: string, principal: LocationPrincipal): LocationStepUpOutcome {
+    const nowMs = this.now();
     const challenge = this.owned(challengeId, principal);
     if (!challenge) return this.refuse('unknown');
-    if (this.stateOf(challenge, this.now()) !== 'pending') return this.refuse('already-proven');
+    if (this.stateOf(challenge, nowMs) !== 'pending') return this.refuse('already-proven');
+    const failures = this.recentFailures(principal, nowMs);
+    if (failures.length >= this.totpFailureBudget) return this.refuse('too-many-failures');
     challenge.attempts += 1;
     if (challenge.attempts > this.maxTotpAttempts) {
       this.challenges.delete(challengeId);
       return this.refuse('too-many-attempts');
     }
+    failures.push(nowMs);
+    this.totpFailures.set(principalKey(principal), failures);
     return { ok: true };
+  }
+
+  /**
+   * @description Return the charge of one admitted code check that did not fail (the code was right,
+   * or the account has no second factor to guess), so the budget counts failures only.
+   * @param principal - The signed-in person.
+   * @returns Nothing.
+   */
+  refundTotpAttempt(principal: LocationPrincipal): void {
+    const key = principalKey(principal);
+    const failures = this.totpFailures.get(key);
+    if (!failures) return;
+    failures.pop();
+    if (failures.length === 0) this.totpFailures.delete(key);
   }
 
   /**
@@ -296,9 +350,10 @@ export class LocationStepUpStore {
   }
 
   /**
-   * @description Drop every challenge one person holds (the location state eraser).
+   * @description Drop every challenge one person holds and their failed-code budget (the location
+   * state eraser).
    * @param principal - The person being erased.
-   * @returns How many went.
+   * @returns How many challenges went.
    */
   clearPrincipal(principal: LocationPrincipal): number {
     let removed = 0;
@@ -308,6 +363,7 @@ export class LocationStepUpStore {
         removed += 1;
       }
     }
+    this.totpFailures.delete(principalKey(principal));
     return removed;
   }
 
@@ -358,6 +414,14 @@ export class LocationStepUpStore {
       const state = this.stateOf(challenge, nowMs);
       if (state === 'expired' || (state === 'consumed' && nowMs > challenge.completeByMs)) this.challenges.delete(id);
     }
+    for (const [key, failures] of this.totpFailures) {
+      const recent = failures.filter((atMs) => nowMs - atMs < this.totpFailureWindowMs);
+      if (recent.length) this.totpFailures.set(key, recent); else this.totpFailures.delete(key);
+    }
+  }
+
+  private recentFailures(principal: LocationPrincipal, nowMs: number): number[] {
+    return (this.totpFailures.get(principalKey(principal)) ?? []).filter((atMs) => nowMs - atMs < this.totpFailureWindowMs);
   }
 
   private trimPrincipal(principal: LocationPrincipal): void {
@@ -378,6 +442,16 @@ export class LocationStepUpStore {
  */
 function samePrincipal(challenge: Challenge, principal: LocationPrincipal): boolean {
   return challenge.sub === principal.sub && challenge.issuer === principal.principalIssuer;
+}
+
+/**
+ * @description The budget key of a principal: subject AND issuer, encoded so no pair can collide
+ * with another.
+ * @param principal - The principal.
+ * @returns The key.
+ */
+function principalKey(principal: LocationPrincipal): string {
+  return JSON.stringify([principal.sub, principal.principalIssuer]);
 }
 
 /** @description The process's step-up store, with the deployment's lifetimes. */

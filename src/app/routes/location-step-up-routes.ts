@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L3 (D3 "Routes and step-up"): the step-up ceremony under /api/location/step-up. The page opens a challenge for one operation and its exact parameters (normalised here by the same function the gated route uses, so the digests meet). How it is proven follows the session: a real OIDC session is sent through a fresh interactive sign-in (max_age=0) and the callback's auth_time and iat must be no older than the challenge, so an identity provider that silently reuses its session proves nothing; a local-auth session proves it with a TOTP or recovery code (verifySecondFactor, which refuses a replayed step); MOCK_OIDC issues the fresh authentication on a top-level navigation, so localhost works without an identity provider. The start and complete endpoints answer only a top-level document navigation (Sec-Fetch-Mode navigate, Sec-Fetch-Dest document), which a fetch or a framed page cannot produce. spendLocationStepUp is what a gated route calls: it reads the proof handle from the X-Oshal-Location-Step-Up header and spends it for exactly the operation and parameters the route is about to act on.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review fix: the TOTP route is also bounded per person. The store's admission (noteAttempt) now refuses with 429 too-many-failures once the person (subject AND issuer) has spent the failed-code budget, before verifySecondFactor runs and whichever challenge the request names, so opening fresh challenges no longer buys more guesses. A code that verifies, or an account with no second factor, has its admission charge refunded, so the budget counts failures only.
  *
  * @module app/routes/location-step-up-routes
  */
@@ -201,6 +202,9 @@ function completeChallenge(options: LocationStepUpRoutesOptions) {
 
 /**
  * @description POST /:id/totp : a local-auth session proves the challenge with a second-factor code.
+ * The store admits the check first (429 once the person's failed-code budget is spent, whichever
+ * challenge is named, or once this challenge used its attempts), so no code reaches
+ * verifySecondFactor past the budget; a check that did not fail has its charge refunded.
  * @param options - Route options.
  * @returns The handler.
  */
@@ -214,6 +218,7 @@ function totpChallenge(options: LocationStepUpRoutesOptions) {
     const code = typeof req.body?.code === 'string' ? req.body.code : '';
     try {
       const factor = await verifySecondFactor(options.pool, principal.sub, code);
+      if (factor !== 'invalid') options.store.refundTotpAttempt(principal);
       if (factor === 'not-enrolled') { res.status(409).json({ error: 'totp_not_enrolled', message: 'Turn on two-factor sign-in at /2fa first.' }); return; }
       if (factor !== 'ok') { res.status(403).json({ error: 'totp_invalid' }); return; }
       const outcome = options.store.prove(view.challengeId, { method: 'local-totp', principal, authTimeMs: options.store.clock() });

@@ -892,6 +892,13 @@ on; what remains is order by dependency.
     The start and complete endpoints answer only a top-level document navigation. Lifetimes are
     `OSHAL_LOCATION_STEP_UP_{COMPLETE,USE,SKEW}_SEC` (600, 300 and 5 s). Challenges are held in memory,
     and the location erase clears a person's.
+
+    A TOTP challenge allows 5 code attempts. A person's failed codes also count against one budget
+    across all their challenges, keyed on subject and issuer:
+    `OSHAL_LOCATION_STEP_UP_TOTP_FAILURES` (default 10) inside
+    `OSHAL_LOCATION_STEP_UP_TOTP_WINDOW_SEC` (default 900 s). Opening, trimming or cancelling challenges
+    does not reset it. Once it is spent, every code check answers 429 before the code is checked. The
+    location erase clears the budget with the challenges.
   - **Gated routes.** Three routes spend a proof: opting in (always), raising the precision of a device
     or of the default (only when it raises, checked in the transaction that reads the current class),
     and accepting a member share (always). Opting out, revoking a share and the purge need none.

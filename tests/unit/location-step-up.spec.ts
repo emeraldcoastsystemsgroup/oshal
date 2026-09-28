@@ -4,12 +4,13 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L3: the step-up proof store on a fixed clock. A challenge is usable only after a fresh authentication for the same subject AND issuer and the same method, and only for the operation and exact parameters it was opened for, once. An authentication (or the token carrying it) older than the challenge proves nothing, which is what stops an identity provider's silent session reuse or a login that happened before the page asked. Lifetimes, the per-person bound, the TOTP attempt limit, cancellation and the account-erasure hook (the registered location state eraser) are each pinned.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review fix: the per-person failed-code budget. The per-challenge attempt limit (a challenge dies after its attempts) held for one challenge only; these cases pin the budget that spans every challenge of one person (subject AND issuer): it survives create, trim and cancel, a spent budget refuses a fresh challenge before its code is checked, it frees as failures leave the window, a right code is refunded, other people and the same subject under another issuer keep their own, the account erasure clears it, and its environment overrides are read and capped.
  */
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { eraseLocationData, type LocationPrincipal } from '@/features/location';
 import {
-  LocationStepUpStore, canonicalLocationJson, locationStepUpDigest, locationStepUpStore,
+  LocationStepUpStore, canonicalLocationJson, locationStepUpDigest, locationStepUpOptionsFromEnv, locationStepUpStore,
 } from '@/app/location-step-up';
 
 const ISSUER = 'https://login.oshal.example.com';
@@ -18,9 +19,29 @@ const SAME_SUB_OTHER_ISSUER: LocationPrincipal = { sub: 'person-a', principalIss
 const SOMEONE_ELSE: LocationPrincipal = { sub: 'person-b', principalIssuer: ISSUER };
 const OPT_IN = { deviceId: null, precisionClass: 'block' };
 
+const ERASED: LocationPrincipal = { sub: 'person-erased', principalIssuer: ISSUER };
+
+afterEach(() => { vi.unstubAllEnvs(); });
+
+/**
+ * Spend one person's failed-code budget in the process store, opening a new challenge each time one
+ * dies, and return the refusal that ended it (bounded, so a missing budget fails instead of hanging).
+ */
+function spendProcessBudget(who: LocationPrincipal) {
+  for (let opened = 0; opened < 100; opened += 1) {
+    const challenge = locationStepUpStore.create(who, 'opt-in', OPT_IN, 'local-totp');
+    for (let tries = 0; tries < 100; tries += 1) {
+      const outcome = locationStepUpStore.noteAttempt(challenge.challengeId, who);
+      if (!outcome.ok && outcome.reason === 'too-many-failures') return outcome;
+      if (!outcome.ok) break;
+    }
+  }
+  return { ok: true as const };
+}
+
 function storeAt(start = 1_000_000) {
   const clock = { now: start };
-  const store = new LocationStepUpStore({ now: () => clock.now, completeWithinMs: 60_000, useWithinMs: 30_000, skewMs: 2_000, maxOpenPerPrincipal: 3, maxTotpAttempts: 2 });
+  const store = new LocationStepUpStore({ now: () => clock.now, completeWithinMs: 60_000, useWithinMs: 30_000, skewMs: 2_000, maxOpenPerPrincipal: 3, maxTotpAttempts: 2, totpFailureBudget: 3, totpFailureWindowMs: 60_000 });
   return { clock, store };
 }
 
@@ -127,12 +148,83 @@ describe('location step-up: bounds and erasure', () => {
     expect(store.view(theirs.challengeId, SOMEONE_ELSE)).not.toBeNull();
   });
 
-  it('the account erasure clears the process store through its registered state eraser', async () => {
+  it('the account erasure clears the process store through its registered state eraser: challenges and the failed-code budget', async () => {
     const view = locationStepUpStore.create(ME, 'opt-in', OPT_IN, 'mock-oidc');
+    expect(spendProcessBudget(ERASED)).toEqual({ ok: false, reason: 'too-many-failures' });
     const client = { query: async () => ({ rows: [], rowCount: 0 }), release: () => undefined };
-    const result = await eraseLocationData({ connect: async () => client } as never, ME);
-    expect(result.stateErasersFailed).toEqual([]);
-    expect(result.stateErasersRun).toBeGreaterThanOrEqual(1);
+    for (const who of [ME, ERASED]) {
+      const result = await eraseLocationData({ connect: async () => client } as never, who);
+      expect(result.stateErasersFailed).toEqual([]);
+      expect(result.stateErasersRun).toBeGreaterThanOrEqual(1);
+    }
     expect(locationStepUpStore.view(view.challengeId, ME)).toBeNull();
+    const fresh = locationStepUpStore.create(ERASED, 'opt-in', OPT_IN, 'local-totp');
+    expect(locationStepUpStore.noteAttempt(fresh.challengeId, ERASED)).toEqual({ ok: true });
+  });
+});
+
+describe('location step-up: the per-person failed-code budget', () => {
+  it('spans a person\'s challenges and survives create, trim and cancel; a spent budget refuses a fresh challenge before its code is checked', () => {
+    const { clock, store } = storeAt();
+    const first = store.create(ME, 'opt-in', OPT_IN, 'local-totp');
+    expect(store.noteAttempt(first.challengeId, ME)).toEqual({ ok: true });
+    expect(store.cancel(first.challengeId, ME)).toBe(true);
+    clock.now += 10_000;
+    const second = store.create(ME, 'opt-in', OPT_IN, 'local-totp');
+    expect(store.noteAttempt(second.challengeId, ME)).toEqual({ ok: true });
+    expect(store.noteAttempt(second.challengeId, ME)).toEqual({ ok: true });
+    for (let i = 0; i < 3; i += 1) store.create(ME, 'opt-in', OPT_IN, 'local-totp');
+    expect(store.view(second.challengeId, ME)).toBeNull();
+    const fresh = store.create(ME, 'opt-in', OPT_IN, 'local-totp');
+    expect(store.noteAttempt(fresh.challengeId, ME)).toEqual({ ok: false, reason: 'too-many-failures' });
+    expect(store.noteAttempt(fresh.challengeId, ME)).toEqual({ ok: false, reason: 'too-many-failures' });
+    expect(store.view(fresh.challengeId, ME)?.state).toBe('pending');
+    for (const other of [SOMEONE_ELSE, SAME_SUB_OTHER_ISSUER]) {
+      const theirs = store.create(other, 'opt-in', OPT_IN, 'local-totp');
+      expect(store.noteAttempt(theirs.challengeId, other)).toEqual({ ok: true });
+    }
+  });
+
+  it('frees one failure at a time as each leaves the window', () => {
+    const { clock, store } = storeAt();
+    const first = store.create(ME, 'opt-in', OPT_IN, 'local-totp');
+    store.noteAttempt(first.challengeId, ME);
+    clock.now += 10_000;
+    const second = store.create(ME, 'opt-in', OPT_IN, 'local-totp');
+    store.noteAttempt(second.challengeId, ME);
+    store.noteAttempt(second.challengeId, ME);
+    const fresh = store.create(ME, 'opt-in', OPT_IN, 'local-totp');
+    expect(store.noteAttempt(fresh.challengeId, ME)).toEqual({ ok: false, reason: 'too-many-failures' });
+    clock.now += 49_999;
+    expect(store.noteAttempt(fresh.challengeId, ME)).toEqual({ ok: false, reason: 'too-many-failures' });
+    clock.now += 1;
+    expect(store.noteAttempt(fresh.challengeId, ME)).toEqual({ ok: true });
+    expect(store.noteAttempt(fresh.challengeId, ME)).toEqual({ ok: false, reason: 'too-many-failures' });
+  });
+
+  it('a code that turns out right is refunded, so only failures count', () => {
+    const { store } = storeAt();
+    const first = store.create(ME, 'opt-in', OPT_IN, 'local-totp');
+    store.noteAttempt(first.challengeId, ME);
+    store.refundTotpAttempt(ME);
+    store.refundTotpAttempt(SOMEONE_ELSE);
+    store.noteAttempt(first.challengeId, ME);
+    const second = store.create(ME, 'opt-in', OPT_IN, 'local-totp');
+    expect(store.noteAttempt(second.challengeId, ME)).toEqual({ ok: true });
+    expect(store.noteAttempt(second.challengeId, ME)).toEqual({ ok: true });
+    const third = store.create(ME, 'opt-in', OPT_IN, 'local-totp');
+    expect(store.noteAttempt(third.challengeId, ME)).toEqual({ ok: false, reason: 'too-many-failures' });
+  });
+
+  it('reads its size and window from the environment, with defaults and caps', () => {
+    vi.stubEnv('OSHAL_LOCATION_STEP_UP_TOTP_FAILURES', '4');
+    vi.stubEnv('OSHAL_LOCATION_STEP_UP_TOTP_WINDOW_SEC', '120');
+    expect(locationStepUpOptionsFromEnv()).toMatchObject({ totpFailureBudget: 4, totpFailureWindowMs: 120_000 });
+    vi.stubEnv('OSHAL_LOCATION_STEP_UP_TOTP_FAILURES', '5000');
+    vi.stubEnv('OSHAL_LOCATION_STEP_UP_TOTP_WINDOW_SEC', '999999');
+    expect(locationStepUpOptionsFromEnv()).toMatchObject({ totpFailureBudget: 100, totpFailureWindowMs: 86_400_000 });
+    vi.stubEnv('OSHAL_LOCATION_STEP_UP_TOTP_FAILURES', 'none');
+    vi.stubEnv('OSHAL_LOCATION_STEP_UP_TOTP_WINDOW_SEC', '-3');
+    expect(locationStepUpOptionsFromEnv()).toMatchObject({ totpFailureBudget: 10, totpFailureWindowMs: 900_000 });
   });
 });
