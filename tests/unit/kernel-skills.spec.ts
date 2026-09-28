@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Pin the bound-workflow-results capability and its executable build anchor.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Pin the forward-receipt capability required by the matching Futures console.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Pin the explicit archive-import approval capability and build anchor.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | ADR-146 D2: pin fantasy-leagues in the exact contracted list, pin its single package-facing specifier (the barrel sports-edge imports), and prove the manifest validator accepts it under uses:. A package naming it on a core without it is refused at load, which is the compatibility floor sports-edge now relies on.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -100,6 +101,7 @@ describe('kernel-skill contract (ADR-085 Tier-0b / ADR-090 D8)', () => {
         'test-catalog',
         'jarvis-briefings',
         'deck-generation',
+        'fantasy-leagues',
         'google-calendar',
         'graph',
         'media-generation',
@@ -126,6 +128,14 @@ describe('kernel-skill contract (ADR-085 Tier-0b / ADR-090 D8)', () => {
         '@/features/world-data/world-intelligence-service',
         '@/features/world-data/world-types',
       ]);
+  });
+
+  // sports-edge imports exactly this barrel. A deep import would bypass the one place the fixed
+  // ESPN host and the credential rule live, so the contract is the barrel and nothing under it.
+  it('pins fantasy-leagues as the single barrel sports-edge imports', () => {
+    expect(KERNEL_SKILLS.find((skill) => skill.id === 'fantasy-leagues')?.modules).toEqual([
+      { specifier: '@/features/fantasy-leagues', distFile: 'dist/features/fantasy-leagues/index.js' },
+    ]);
   });
 
   it.each(allModules)('skill $skill: $specifier has a source file', ({ specifier }) => {
@@ -156,6 +166,11 @@ describe('manifest `uses:` validation (fail-closed)', () => {
   it('accepts a manifest that uses declared kernel skills', () => {
     const m = readTempManifest(`${base}uses:\n  - deck-generation\n  - rag\n`);
     expect(m.uses).toEqual(['deck-generation', 'rag']);
+  });
+
+  it('accepts fantasy-leagues, the floor sports-edge declares for the ESPN client', () => {
+    const m = readTempManifest(`${base}uses:\n  - fantasy-leagues\n`);
+    expect(m.uses).toEqual(['fantasy-leagues']);
   });
 
   it('accepts a manifest with no uses at all', () => {

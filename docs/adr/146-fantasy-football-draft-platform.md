@@ -1,8 +1,11 @@
 # ADR-146: Fantasy football — its own package, one kernel skill, and a draft assistant that needs no new rail
 
-- Status: Proposed — designed, nothing built. **Amended the same day** (Amendment A: managing comes
-  before drafting) after the operator reported the draft already happened.
-- Date: 2026-09-09
+- Status: Accepted 2026-09-27 — the operator answered Q1, Q2 and Q4 (recorded as DECIDED under
+  [Open questions](#open-questions-for-the-operator)); Q2 replaces D3's commissioner model with per-user
+  ownership. D2's kernel skill `fantasy-leagues` is built (`src/features/fantasy-leagues`, the ESPN read
+  client). **Amended 2026-09-09** (Amendment A: managing comes before drafting) after the operator
+  reported the draft already happened.
+- Date: 2026-09-09; decisions recorded 2026-09-27
 - Related: [ADR-085](085-remote-app-packages-and-registries.md) (one app, one package),
   [ADR-090](090-skills-as-first-class-packages.md) + [kernel skills](../apps/kernel-skills.md) (the package-facing API and
   the test for what earns core), [ADR-141](141-application-groups.md) (application groups — how two apps
@@ -94,6 +97,14 @@ sports-edge then declares `uses: [fantasy-leagues]` and imports rather than bund
 The scorer is the part that most needs a single home: it is the module where a hardcoded stat table would
 be invisible, and one guarded implementation is cheaper to keep honest than two.
 
+**Built 2026-09-27 (Q1 decided: extract now).** `src/features/fantasy-leagues` holds the read client
+(`sports-fantasy-espn.ts`, moved unchanged in behaviour), its bounded GET with the transport / unavailable /
+refused classification, the season's current-week read that sports-edge's routes had made with a private
+copy of the fantasy host, and the three league-shape types (`ScoringItem`, `LineupSlot`, `FantasyPlayer`).
+It is declared in the kernel-skill registry, pinned by the build anchor, and guarded by
+`tests/unit/fantasy-leagues-espn-client.spec.ts` against a loopback host. The scoring engine
+(`sports-fantasy-scoring.ts`) has not moved and is still sports-edge's.
+
 ### D3 — A league is a shared multi-member object, and core grows no rail for it
 
 A fantasy league is one object with 8–14 members, one commissioner, rows every member reads and only some
@@ -113,6 +124,13 @@ re-deriving it.
 
 This ADR records the occurrence. **Extraction trigger:** if a third package needs a member-list-with-one-
 authority object, the rail is extracted then — not now, on one instance.
+
+**Superseded by Q2, 2026-09-27 — ownership is per user, not per commissioner.** The operator: *"the table
+and connection should be user based.. only i can control my team.. no one else can see my team and
+connection."* So there is no commissioner who reads or edits another member's team. Every fantasy table
+row and every ESPN connection is keyed to `user_sub` under FORCED owner row-level security; a user sees and
+controls only their own team; no role — commissioner, operator or service — can read another user's team or
+connection. The "core grows no rail" half of D3 stands: per-user ownership is ADR-036's existing pattern.
 
 ### D4 — The live-draft assistant rides the existing remote-client rail with short cursor reads
 
@@ -226,15 +244,27 @@ one of those routes has only ever been exercised against fixtures.
 
 ## Open questions for the operator
 
+Q1, Q2 and Q4 were answered by the operator on 2026-09-27; each answer is recorded below as **DECIDED**. Q3 was
+not part of that answer.
+
 1. **Is the skill extraction taken now, or does fantasy-football start by duplicating the client and
    converge later?** Taking it now is the smaller total change; deferring it means the second copy exists
    for a while and D2 is a promise rather than a fact.
+   **DECIDED 2026-09-27: extract now.** The ESPN fantasy client becomes ONE kernel skill, `fantasy-leagues`
+   (D2), before any second package reads a league. Built the same day; see D2.
 2. **Does P1 ship single-operator (you are the commissioner and every team's manager) or multi-member from
    the start?** Single-operator is the whole near-term ask and avoids nineteen migrations' worth of
    identity work; multi-member is a different schema from day one.
+   **DECIDED 2026-09-27: per-user ownership, not a commissioner model.** In the operator's words: *"the
+   table and connection should be user based.. only i can control my team.. no one else can see my team
+   and connection."* Every fantasy table row and every ESPN connection is keyed to `user_sub` under FORCED
+   owner row-level security; a user sees and controls only their own team; no role can read another
+   user's team or connection. This supersedes D3's single-commissioner model (see the note under D3).
 3. **What are the league's scoring rules and roster slots, and is there a usable ESPN credential — or
    is the first pass hand-typed?** P0 cannot rank a waiver claim without knowing what a reception is
    worth, and cannot find a trade without the other nine rosters. This is the only input that blocks
    building anything.
 4. **Package name and suite** — `fantasy-football` under `ai-productivity`, or something else, and whether
    the group with sports-edge is `intelligent-sports` or the two ship ungrouped for now.
+   **DECIDED 2026-09-27:** a NEW store package `fantasy-football` under suite `ai-productivity`, grouped with
+   sports-edge as the ADR-141 application group `intelligent-sports`.

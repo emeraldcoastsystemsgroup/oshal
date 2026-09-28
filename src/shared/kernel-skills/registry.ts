@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Declare confirmed archive imports so older cores refuse console packages without the shared-write approval boundary.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | ADR-045: declare the world-data engine and every module imported by the World package as a kernel skill, so package compatibility and build-artifact checks cover deep imports.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Declare the signed provider-callback compatibility floor so packages cannot mount anonymous callbacks without a verified owner and current application permission.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com | ADR-146 D2 (operator decision 2026-09-27): declare 'fantasy-leagues', the ESPN fantasy read client moved out of sports-edge. Two packages need the same league reads (sports-edge today, fantasy-football next) and the store has no package-to-package rail, so the choice was one kernel client or a copy per package; the client's host already moved once inside a season. Declaring it here is what pins @/features/fantasy-leagues into dist and lets the loader refuse a package that names it on an older core.
  */
 
 /**
@@ -48,7 +49,8 @@ export type KernelSkillId =
   | 'bound-workflow-results'
   | 'futures-forward-receipts'
   | 'futures-archive-import'
-  | 'world-data';
+  | 'world-data'
+  | 'fantasy-leagues';
 
 /**
  * @description One importable module behind a skill.
@@ -96,6 +98,9 @@ export interface KernelSkillDeclaration {
  * docs/apps/kernel-skills.md. The CI guard then enforces it forever.
  */
 export const KERNEL_SKILLS: readonly KernelSkillDeclaration[] = [
+  { id: 'fantasy-leagues', title: 'Fantasy league reads (ESPN)',
+    why: 'One ESPN fantasy client for every fantasy package (ADR-146 D2): league settings, rosters, schedule and the public projection feed, with the caller cookies put on exactly the outbound league request and never logged, stored or returned. A copy per package would drift on a host that has already moved once.',
+    modules: [{ specifier: '@/features/fantasy-leagues', distFile: 'dist/features/fantasy-leagues/index.js' }] },
   { id: 'world-data', title: 'World intelligence engine',
     why: 'The shared world index feeds Jarvis and Trading as well as the World package; its engine stays in core while its surface is installed separately (ADR-045, ADR-093).',
     modules: [

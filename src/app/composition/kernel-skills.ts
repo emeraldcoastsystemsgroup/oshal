@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Pin the Futures forward receipt ledger and its bounded worker into the runtime build.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Pin confirmed Futures archive import and worker boundaries into deployable artifacts.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Pin the World package's barrel and four deep world-data imports as the ADR-045 kernel-skill contract.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com | ADR-146 D2: pin @/features/fantasy-leagues, the ESPN fantasy read client moved out of sports-edge. No core module imports it, so this re-export is the only thing carrying it into dist for the packages that resolve it at mount.
  */
 
 /**
@@ -127,3 +128,8 @@ export * as jarvisBriefingTaskStore from '@/app/routes/jarvis-task-store';
 // ── google-calendar: OAuth-injected Calendar v3 client ───────────────────────
 export * as googleCalendar from '@/features/google-calendar';
 export * as boundWorkflowResults from '@/features/swarm-orchestration';
+
+// ── fantasy-leagues: the one ESPN fantasy read client (ADR-146 D2) ───────────
+// No core module imports it; the sports-edge package resolves it from dist at mount, so this
+// re-export is its only anchor.
+export * as fantasyLeagues from '@/features/fantasy-leagues';

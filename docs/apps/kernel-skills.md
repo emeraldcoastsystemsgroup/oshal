@@ -43,6 +43,7 @@ the carve doesn't prune them out of `dist/` (the google-calendar/notifications b
 | `payments` | `@/features/payments` | Provider-agnostic money rails: the Stripe `PaymentAdapter` half (finance package) + the Square/PayPal merchant half (payments package). Pinned at the finance carve (ADR-085 Wave 1 #5) — until then it survived in dist only through finance-routes' import. |
 | `spatial-mapping` | `@/features/spatial-mapping` | 3D reconstruction engine and scan store; pinned at spaces carve (ADR-111, ADR-093). |
 | `google-calendar` | `@/features/google-calendar` | OAuth-injected Google Calendar v3 client; calendar store package uses it for event sync. Requires core `>= 2.1.0-beta.1`. |
+| `fantasy-leagues` | `@/features/fantasy-leagues` | The one ESPN fantasy read client ([ADR-146](../adr/146-fantasy-football-draft-platform.md) D2): league settings (scoring rules, starting slots), rosters, schedule, current week and the public projection feed. The package resolves the caller's `SWID` + `espn_s2` per request and passes them in; the client puts them on exactly the outbound league request, on a fixed ESPN host, and never logs, stores or returns them. sports-edge imports it instead of carrying its own copy. |
 
 Source of truth: [`src/shared/kernel-skills/registry.ts`](../../src/shared/kernel-skills/registry.ts).
 
