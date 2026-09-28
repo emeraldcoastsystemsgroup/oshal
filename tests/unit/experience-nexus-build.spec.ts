@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | The central assistant built to the demo, in headless Chromium through the real static routes over the synthetic fixture (routes mirror the real shapes): the welcome's connected capabilities from the Google connection, Travel's provider mode and the caller's preferences (Travel asked nothing when the plan does not admit it); the idle briefing readback from live counts; the Calendar view over the caller's busy windows (free weekends highlighted, busy days dotted, refusals named, unknown never free, retry, month navigation, the opening month under a pinned clock); the Travel view (only when admitted) from free weekend to Travel's search, offer cards, nonstop / after-3pm / sort / budget filters and the honest empty state, the source line and price read, sample-offer labelling, save to this device, the fare dialog and an explicit fare watch, and the shelf listing both; text refinements that stay on the page; preferences writing the departure airport through Travel and keeping the budget on the device; the trip suggestion opening its answer on Calendar; keyboard tabs across the dynamic tab list; speech stopping when the page is hidden and the transcript opening when no voice engine exists; and a phone-width layout without horizontal scroll.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Frame parity: the study bar, rail actions, topline brand, core caption, headline, live counts in the eyebrow, privacy footer, and the swarm and sources dialogs over the live snapshot (no Travel row for a caller Travel does not admit).
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -80,6 +81,28 @@ beforeEach(async () => {
   page.setDefaultTimeout(20000);
 });
 afterEach(async () => { await context?.close(); await fixture?.close(); });
+
+describe('frame regions the demo shows, over the live snapshot', () => {
+  it('renders the study bar, rail, topline, core caption, headline, footer and the swarm and sources dialogs', async () => {
+    await open();
+    expect(await page.locator('.study-bar').innerText()).toContain('CENTRAL ASSISTANT · LIVE');
+    expect(await page.locator('.rail [data-action]').evaluateAll(els => els.map(e => (e as HTMLElement).dataset.action))).toEqual(['home', 'new', 'saved', 'swarm', 'settings']);
+    expect(await page.locator('.assistant-brand').innerText()).toMatch(/JARVIS[\s\S]*Your swarm, in conversation\./);
+    expect(await page.locator('.orb-caption').innerText()).toBe('YOUR WORLD. CONNECTED.');
+    expect(await page.locator('.welcome h1').innerText()).toMatch(/A little ambition\.[\s\S]*A whole swarm behind you\./);
+    expect(await page.locator('.welcome .eyebrow').innerText()).toContain(`${fixture.state.apps.length} APPS`);
+    expect(await page.locator('.privacy-line').innerText()).toContain('never saves, sends, books or schedules');
+    await page.click('.rail [data-action="swarm"]');
+    const swarm = await page.locator('.nexus-dialog').innerText();
+    expect(swarm).toContain(`${fixture.state.apps.length} applications across`); expect(swarm).toContain('Synthetic ledger');
+    expect(await page.locator('.nexus-dialog a[href="/orbit"]').count()).toBe(1);
+    await page.keyboard.press('Escape');
+    await page.click('.privacy-line [data-action="sources"]');
+    const sources = await page.locator('.nexus-dialog').innerText();
+    expect(sources).toContain('Calendar availability'); expect(sources).toContain('Your preferences'); expect(sources).not.toContain('Travel offers');
+    expect(errors).toEqual([]);
+  });
+});
 
 describe('welcome: connected capabilities and the briefing', () => {
   it('shows Calendar, Travel and preferences from their own reads, and reads the briefing from live counts', async () => {
