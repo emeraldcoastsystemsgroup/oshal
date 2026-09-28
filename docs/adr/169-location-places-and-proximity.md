@@ -1,7 +1,7 @@
 # ADR-169: Location, places and proximity
 
 Date: 2026-09-28
-Status: **Proposed; the operator answered Q1-Q7 on 2026-09-28 (see "Operator decisions"). Slices L1 (shared geo maths, namespaced location redaction keys, static log guard) and L2 (storage and row-level security with no operator bypass, the membership fence, the location erase in both erasure routes) are built; L3-L9 are not.**
+Status: **Proposed; the operator answered Q1-Q7 on 2026-09-28 (see "Operator decisions"). Slices L1 (shared geo maths, namespaced location redaction keys, static log guard), L2 (storage and row-level security with no operator bypass, the membership fence, the location erase in both erasure routes) and L3 (browser ingest, the step-up proof, the Settings Location tab) are built; L4-L9 are not.**
 The Context records what exists at core `main` `e1fd5b0f` and store `main` `6fdc1a1`. The Decision carries
 the operator's answers; each Rollout slice is still accepted on its own.
 
@@ -871,6 +871,59 @@ on; what remains is order by dependency.
   stays, then purge and see the rows gone. Specs prove that a body-supplied owner is ignored, that a
   service-secret request is refused, and that a fetch from a packaged surface without a fresh proof cannot opt
   in, raise precision, accept a share, create a guardian share, approve a location enrolment or arm a rule.
+  **Built:**
+  - **The router.** One `/api/location` router (`src/app/routes/location-routes.ts`), mounted after
+    requiresAuth. A request that carries the service secret or an asserted-subject header gets 401 first,
+    whether or not a session comes with it. After that the router admits only an interactive browser
+    session (OIDC, `MOCK_OIDC` or local-auth) with a verified issuer. Personal access, TV-pairing and
+    guest tokens get 403.
+  - **Browser ingest.** `POST /api/location/presence` reads only `deviceId`, `lat`, `lon`, `accuracyM`
+    and `observedAt`. The owner comes from the session. A fix is accepted only for the person's own
+    opted-in browser device, at most once per `OSHAL_LOCATION_INGEST_MIN_INTERVAL_SEC` (default 5 s).
+    It is placed in memory against the person's own and their groups' places, then minimised to the
+    device's class before it is written.
+  - **The step-up proof.** A proof is a single-use challenge. It is bound to one subject and issuer, one
+    operation and a digest of that operation's parameters. It is proven in one of three ways:
+    - OIDC: a re-authentication sent with `max_age=0`. Its `auth_time` and `iat` must be no older than
+      the challenge.
+    - Local-auth: a TOTP or recovery code, through `verifySecondFactor`.
+    - `MOCK_OIDC`: a top-level navigation.
+
+    The start and complete endpoints answer only a top-level document navigation. Lifetimes are
+    `OSHAL_LOCATION_STEP_UP_{COMPLETE,USE,SKEW}_SEC` (600, 300 and 5 s). Challenges are held in memory,
+    and the location erase clears a person's.
+
+    A TOTP challenge allows 5 code attempts. A person's failed codes also count against one budget
+    across all their challenges, keyed on subject and issuer:
+    `OSHAL_LOCATION_STEP_UP_TOTP_FAILURES` (default 10) inside
+    `OSHAL_LOCATION_STEP_UP_TOTP_WINDOW_SEC` (default 900 s). Opening, trimming or cancelling challenges
+    does not reset it. Once it is spent, every code check answers 429 before the code is checked. The
+    location erase clears the budget with the challenges.
+  - **Gated routes.** Three routes spend a proof: opting in (always), raising the precision of a device
+    or of the default (only when it raises, checked in the transaction that reads the current class),
+    and accepting a member share (always). Opting out, revoking a share and the purge need none.
+    `LOCATION_ROUTE_POLICY` declares every route, and `tests/unit/location-route-policy.spec.ts` fails on
+    an undeclared one. Creating a guardian share, approving an enrolment and arming a rule have no route
+    yet, and a challenge for them is refused. Their slices add the route and its parameter normaliser.
+  - **The Settings Location tab** (`/cockpit/tools/location.html`, embedded by `SettingsView`): opt in
+    per browser, precision, where you are (as a place), your devices, who can see you, delete your
+    history, and the default precision.
+
+  Choices made here:
+  - The consent services live in the app layer (`src/app/location-*.ts`), not in the `location` kernel
+    skill's barrel. `uses: location` therefore never reaches a consent change or the proof store.
+  - No owner coordinate read is built; the page shows places, not coordinates.
+  - "Since" on the current place comes with L4's `currentPlace`.
+  - The member-share accept route exists, but choosing a group's places in the page comes with L5.
+
+  Evidence:
+  - `tests/unit/location-settings-browser.spec.ts` (Chromium, localhost, `MOCK_OIDC`);
+  - `tests/unit/location-browser-consent-postgres.spec.ts`;
+  - `tests/unit/location-oidc-step-up-browser.spec.ts` (express-openid-connect against a local identity
+    provider);
+  - `tests/unit/location-step-up-totp-postgres.spec.ts`;
+  - `tests/unit/location-step-up.spec.ts` and `tests/unit/location-route-policy.spec.ts`;
+  - the Test Lab card `location-browser-consent`.
 - **L4: Places and device enrolment.** Circle places, tenant places, `placeAt`, `currentPlace`,
   `distanceBand` and `operationAddress`. Enrolling an existing node, camera, TV or hub as a `location_devices`
   row, and setting or clearing its assigned place and room, all in the Settings Location tab. Done when specs

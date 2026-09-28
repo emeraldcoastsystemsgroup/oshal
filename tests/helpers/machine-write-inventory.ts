@@ -16,6 +16,8 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Inventory guest-seed-orchestrator.ts (ADR-144 guest-seed contract). Discovery caught it the moment the guest-seed work landed a machine-auth surface under src/app/routes with no entry. It is the inventory's first OUTBOUND caller rather than an inbound route: nothing authenticates TO it, it PRESENTS the service rail on the loopback and stamps x-oshal-user-sub = the fresh guest sub. It owns no database access at all, so it takes the no-owner-scoped-write shape - but it is precisely the place the accountable identity for every downstream app seed is established, which is the question this inventory exists to answer.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Inventory ambient-test-fixture-routes.ts (ADR-100 Test Lab attributed-ingest fixture). Discovery caught it the moment the router landed: a strict requireServiceSecret over eight owner-scoped ambient/person-model tables. It is caller-scoped by construction — the owner comes only from the validated OIDC session and the handler runs inside runWithRequestIdentity(isOperator:false), so the operator stamp a valid secret earns from the global middleware never reaches the writes.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Inventory voice-call-sim-routes.ts (synthetic phone-call simulator). Discovery caught it when the router landed: serviceSecretOr(requiresAuth) plus hasValidServiceSecret in its same-origin check. It writes no table at all: VoiceCallSimService keeps runs in an in-process Map and saves each run as a JSON file under the voice-sim root, so it takes the no-owner-scoped-write shape. requireTrustedServiceUserIdentity still binds a service caller to one user, which is what keeps one owner's run files away from another.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | Exempt src/app/routes/location-session.ts (ADR-169 L3): discovery matches it because it names the service secret, but it names it only to REFUSE it - every /api/location request presenting x-service-secret or an asserted subject header gets 401 before any handler runs, and the location handlers write only under the signed-in person's own owner session with is_operator off. No machine caller is admitted, so there is no machine write to inventory; the refusal is proven in tests/unit/location-browser-consent-postgres.spec.ts.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | Exempt src/app/routes/test-lab-location-consent-scenarios.ts (ADR-169 L3 Test Lab card). Discovery matches it because its service-rail step sends x-service-secret on the loopback - but only as a negative probe that must be answered 401 by refuseLocationServiceRail, so no request it sends on the machine rail is admitted and nothing is written under it. Its only database writes are the lifecycle step's in-process calls for a uniquely tagged synthetic person, each inside withLocationOwnerSession (owner sub = that person, is_operator off), erased and counted back to zero at the end. The round-1 PR omitted this entry and the discovery test went red on the branch.
  */
 
 /**
@@ -735,6 +737,26 @@ export const DISCOVERY_EXEMPT_FILES: readonly { file: string; why: string }[] = 
       + 'env gates; the auth checks themselves live in the routers, each of which has its own entry '
       + 'above. It is also where the ambient identity middleware lives, which the gate asserts '
       + 'separately.',
+  },
+  {
+    file: 'src/app/routes/location-session.ts',
+    why:
+      'ADR-169 L3 location session gate. It names the service secret only to REFUSE it: any /api/location '
+      + 'request presenting x-service-secret or an asserted subject header gets 401 before a handler runs, and '
+      + 'every location write runs in an owner session of the signed-in person (is_operator off). No machine '
+      + 'caller is admitted, so there is no machine write; the refusal is proven in '
+      + 'tests/unit/location-browser-consent-postgres.spec.ts.',
+  },
+  {
+    file: 'src/app/routes/test-lab-location-consent-scenarios.ts',
+    why:
+      'ADR-169 L3 Test Lab card. It PRESENTS the service secret on the loopback only as a negative probe: the '
+      + 'service-rail step POSTs /api/location/presence with x-service-secret and passes only on the 401 that '
+      + 'refuseLocationServiceRail answers before any handler, so no request it sends on the machine rail is '
+      + 'admitted and nothing is written under it. Its database writes are the in-process service calls of the '
+      + 'lifecycle step for a uniquely tagged synthetic person, each inside withLocationOwnerSession (owner sub = '
+      + 'that person, is_operator off), erased and counted back to zero; the 401 and the zero-row cleanup are '
+      + 'driven by tests/unit/test-lab-location-consent-registration.spec.ts.',
   },
 ];
 

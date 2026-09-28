@@ -1,0 +1,448 @@
+<!doctype html>
+<!--
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ | AUTHOR                                  | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1   | maintainer@emeraldcoastsystemsgroup.com | ADR-169 L3: Settings, Location. Off by default: a person turns location on per browser at a precision class they choose, sees where they are as a place (never coordinates), stops reporting (the current place clears, the history stays), sees who can see them, and deletes their history. Turning on, raising precision and accepting a share need a fresh sign-in (the step-up): a sign-in window for an identity-provider or mock session, a two-factor code for a local account. The browser reports only while this page is open, at most every 30 seconds.
+-->
+<html lang="en" data-theme="midnight">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Location — your location, your choice</title>
+<link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+<script src="/shared/ui/js/surface-theme.js"></script>
+<style>
+  :root {
+    --bg: var(--bg-primary);
+    --panel: var(--bg-card);
+    --panel2: var(--bg-tertiary);
+    --line: var(--border-color);
+    --text: var(--text-primary);
+    --muted: var(--text-muted);
+    --accent: var(--accent-primary, #5b8cff);
+    --ok: var(--status-success, #36d399);
+    --warn: var(--status-warning, #f4bf50);
+    --bad: var(--status-error, #ff8585);
+    --chip: var(--bg-tertiary);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
+  .wrap { max-width: 820px; margin: 0 auto; padding: 24px 20px 80px; }
+  h1 { font-size: 25px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 14px; font-size: 13.5px; max-width: 74ch; }
+  .status { color: var(--muted); font-size: 12.5px; margin: 8px 0 14px; min-height: 17px; }
+  .status.err { color: var(--bad); }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin: 24px 0 10px; }
+  .card { border: 1px solid var(--line); border-radius: 11px; padding: 14px 16px; margin-bottom: 12px; background: var(--panel); }
+  .card h3 { margin: 0 0 4px; font-size: 16px; }
+  .meta { color: var(--muted); font-size: 12.5px; margin: 2px 0 8px; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; align-items: center; }
+  select, input { border: 1px solid var(--line); background: var(--panel2); color: var(--text); border-radius: 8px;
+    padding: 7px 10px; font: inherit; font-size: 13.5px; }
+  button, a.btn { cursor: pointer; border: 1px solid var(--line); background: var(--chip); color: var(--text);
+    border-radius: 9px; padding: 8px 14px; font: inherit; font-size: 13.5px; font-weight: 600; text-decoration: none; }
+  button.primary { background: var(--accent); color: #04122e; border-color: transparent; }
+  button.danger { border-color: var(--bad); color: var(--bad); }
+  button:disabled { opacity: .55; cursor: default; }
+  .pill { display: inline-block; border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; font-size: 11.5px; color: var(--muted); }
+  .pill.on { border-color: var(--ok); color: var(--ok); }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 7px 0; border-top: 1px solid var(--line); font-size: 13.5px; }
+  .row:first-child { border-top: none; }
+  .row .grow { flex: 1; min-width: 160px; }
+  .empty { color: var(--muted); font-size: 13.5px; }
+  .place { font-size: 20px; font-weight: 600; }
+  .stepup { border-color: var(--warn); }
+  .foot { color: var(--muted); font-size: 12px; margin-top: 26px; border-top: 1px solid var(--line); padding-top: 12px; max-width: 84ch; }
+</style>
+<link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+<div class="wrap" id="app">
+  <h1>Location</h1>
+  <p class="sub">Off until you turn it on. Your location is yours: no group admin and no swarm administrator can see it.
+  A group sees your arrivals and departures only at places you approve in a share, and never your coordinates.</p>
+  <div class="status" id="status" data-testid="status">Loading…</div>
+
+  <section id="stepUp" class="card stepup" data-testid="step-up-panel" hidden>
+    <h3>Confirm it is you</h3>
+    <p class="meta" id="stepUpText"></p>
+    <div class="actions" id="stepUpTotp" hidden>
+      <input id="totpCode" data-testid="totp-code" inputmode="numeric" autocomplete="one-time-code" placeholder="6-digit code" />
+      <button class="primary" id="totpSubmit" data-testid="totp-submit" type="button">Confirm</button>
+    </div>
+    <div class="actions">
+      <button id="stepUpReopen" data-testid="step-up-reopen" type="button" hidden>Open the sign-in window</button>
+      <button id="stepUpCancel" data-testid="step-up-cancel" type="button">Cancel</button>
+    </div>
+  </section>
+
+  <h2>This browser</h2>
+  <section class="card" data-testid="browser-card">
+    <h3 id="browserTitle">Location is off for this browser</h3>
+    <p class="meta" id="browserMeta">Turn it on to let the swarm know which of your places you are at while this page is open.</p>
+    <div class="actions">
+      <label for="precision" class="meta">Precision</label>
+      <select id="precision" data-testid="precision-select">
+        <option value="exact">Exact (about 1 m)</option>
+        <option value="block">Block (about 110 m)</option>
+        <option value="city">City (about 1 km)</option>
+        <option value="place-only">Place only (no coordinates kept)</option>
+      </select>
+      <button class="primary" id="optIn" data-testid="opt-in" type="button">Turn on for this browser</button>
+      <button id="changePrecision" data-testid="change-precision" type="button" hidden>Save precision</button>
+      <button id="optOut" data-testid="opt-out" type="button" hidden>Stop reporting</button>
+    </div>
+  </section>
+
+  <h2>Where you are</h2>
+  <section class="card">
+    <div class="place" id="currentPlace" data-testid="current-place">No position yet</div>
+    <p class="meta" id="currentMeta" data-testid="current-meta"></p>
+  </section>
+
+  <h2>Your devices</h2>
+  <section class="card" id="devices" data-testid="devices"></section>
+
+  <h2>Who can see you</h2>
+  <section class="card" id="visibility" data-testid="visibility"></section>
+
+  <h2>History</h2>
+  <section class="card">
+    <p class="meta" id="historyCount" data-testid="history-count"></p>
+    <div class="actions">
+      <button class="danger" id="purge" data-testid="purge" type="button">Delete my location history</button>
+    </div>
+  </section>
+
+  <h2>Default precision</h2>
+  <section class="card">
+    <p class="meta">Used for new devices, and the finest group place a share of yours may use.</p>
+    <div class="actions">
+      <select id="defaultPrecision" data-testid="default-precision">
+        <option value="exact">Exact</option><option value="block">Block</option>
+        <option value="city">City</option><option value="place-only">Place only</option>
+      </select>
+      <button id="saveDefault" data-testid="save-default" type="button">Save</button>
+    </div>
+  </section>
+
+  <p class="foot">Your location history is kept until you delete it here. Deleting your account deletes all of it.
+  Turning location on, choosing a finer precision and sharing with a group each ask you to sign in again first.</p>
+</div>
+<script>
+(function () {
+  'use strict';
+  const API = '/api/location';
+  const DEVICE_KEY = 'oshal.location.browserDeviceId';
+  const STEP_UP_HEADER = 'X-Oshal-Location-Step-Up';
+  const POST_EVERY_MS = 30000;
+  const RANK = { 'place-only': 0, city: 1, block: 2, exact: 3 };
+  const params = new URLSearchParams(location.search);
+
+  if (params.get('stepUpDone') === '1') {
+    const ok = params.get('ok') === '1';
+    document.getElementById('app').innerHTML = '';
+    const note = document.createElement('p');
+    note.className = 'sub';
+    note.dataset.testid = 'step-up-done';
+    note.textContent = ok ? 'Confirmed. You can close this window.' : 'Not confirmed (' + (params.get('reason') || 'refused') + '). You can close this window.';
+    document.getElementById('app').appendChild(note);
+    try { if (window.opener) window.opener.postMessage({ type: 'oshal-location-step-up', ok: ok }, location.origin); } catch (e) { /* the opener may be gone */ }
+    if (window.opener) setTimeout(function () { window.close(); }, 400);
+    return;
+  }
+
+  const $ = (id) => document.getElementById(id);
+  let state = null;
+  let watchId = null;
+  let lastPost = 0;
+  let pendingStepUp = null;
+
+  function setStatus(text, isError) {
+    $('status').textContent = text;
+    $('status').className = 'status' + (isError ? ' err' : '');
+  }
+
+  function readDeviceId() { try { return localStorage.getItem(DEVICE_KEY); } catch (e) { return null; } }
+  function writeDeviceId(id) { try { localStorage.setItem(DEVICE_KEY, id); } catch (e) { /* private mode */ } }
+
+  async function api(method, path, body, headers) {
+    const init = { method: method, credentials: 'same-origin', headers: Object.assign({ Accept: 'application/json' }, headers || {}) };
+    if (body !== undefined) { init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(body); }
+    const res = await fetch(API + path, init);
+    let json = {};
+    try { json = await res.json(); } catch (e) { json = {}; }
+    return { status: res.status, json: json };
+  }
+
+  function thisDevice() {
+    const id = readDeviceId();
+    return (state && state.devices || []).find((d) => d.deviceId === id && d.kind === 'browser') || null;
+  }
+
+  function el(tag, cls, text) {
+    const node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function ago(seconds) {
+    if (seconds < 60) return seconds + ' s ago';
+    if (seconds < 3600) return Math.round(seconds / 60) + ' min ago';
+    return Math.round(seconds / 3600) + ' h ago';
+  }
+
+  function renderBrowser() {
+    const device = thisDevice();
+    const on = Boolean(device && device.reportingEnabled);
+    $('browserTitle').textContent = on ? 'Reporting from this browser' : (device ? 'Reporting is off for this browser' : 'Location is off for this browser');
+    $('browserMeta').textContent = on
+      ? 'Reporting at ' + device.precisionClass + ' precision while this page is open.'
+      : 'Turn it on to let the swarm know which of your places you are at while this page is open.';
+    $('precision').value = device ? device.precisionClass : state.settings.defaultPrecisionClass;
+    $('optIn').hidden = on;
+    $('optIn').textContent = device ? 'Turn back on' : 'Turn on for this browser';
+    $('optOut').hidden = !on;
+    $('changePrecision').hidden = !device;
+  }
+
+  function renderCurrent() {
+    const current = state.current;
+    if (!current) {
+      $('currentPlace').textContent = 'No position yet';
+      $('currentMeta').textContent = '';
+      return;
+    }
+    $('currentPlace').textContent = current.place ? 'At ' + current.place.name : 'Not at a saved place';
+    $('currentMeta').textContent = 'Updated ' + ago(current.ageSeconds) + ' · ' + current.precisionClass + ' precision'
+      + (current.place ? ' · ' + current.place.label : '');
+  }
+
+  function renderDevices() {
+    const box = $('devices');
+    box.textContent = '';
+    if (!state.devices.length) { box.appendChild(el('p', 'empty', 'No devices report your location.')); return; }
+    const mine = readDeviceId();
+    state.devices.forEach((d) => {
+      const row = el('div', 'row');
+      row.dataset.testid = 'device-row';
+      row.appendChild(el('span', 'grow', (d.deviceId === mine ? 'This browser' : d.kind) + ' · ' + d.precisionClass
+        + (d.lastSeenAt ? ' · last seen ' + new Date(d.lastSeenAt).toLocaleString() : '')));
+      row.appendChild(el('span', 'pill' + (d.reportingEnabled ? ' on' : ''), d.reportingEnabled ? 'reporting' : 'off'));
+      if (d.reportingEnabled) {
+        const stop = el('button', '', 'Stop');
+        stop.type = 'button';
+        stop.addEventListener('click', () => optOut(d.deviceId));
+        row.appendChild(stop);
+      }
+      box.appendChild(row);
+    });
+  }
+
+  function renderVisibility() {
+    const box = $('visibility');
+    const v = state.visibility;
+    box.textContent = '';
+    box.appendChild(el('p', 'meta', 'Group admins and the swarm\'s administrators cannot see your location. Only the people listed here see anything, and only your arrivals and departures at the places named.'));
+    const active = v.memberShares.filter((s) => s.active);
+    if (!active.length && !v.guardianShares.length) box.appendChild(el('p', 'empty', 'Nobody but you.'));
+    active.forEach((s) => {
+      const row = el('div', 'row');
+      row.dataset.testid = 'share-row';
+      row.appendChild(el('span', 'grow', 'Group ' + (s.groupName || 'unnamed') + ' · at ' + (s.places.map((p) => p.name).join(', ') || s.placeCount + ' places')));
+      const revoke = el('button', '', 'Stop sharing');
+      revoke.type = 'button';
+      revoke.addEventListener('click', () => revokeShare(s.shareId));
+      row.appendChild(revoke);
+      box.appendChild(row);
+    });
+    v.guardianShares.filter((g) => g.active).forEach((g) => {
+      const row = el('div', 'row');
+      row.dataset.testid = 'guardian-row';
+      row.appendChild(el('span', 'grow', 'Shared for you by an admin of ' + (g.groupName || 'a group') + ' with '
+        + g.grantees.map((x) => x.sub).join(', ') + ' · at ' + g.places.map((p) => p.name).join(', ')));
+      box.appendChild(row);
+    });
+    v.restrictions.forEach((r) => box.appendChild(el('p', 'meta', 'In ' + (r.groupName || 'a group') + ' your account is restricted: you cannot share your own location there.')));
+  }
+
+  function render() {
+    renderBrowser();
+    renderCurrent();
+    renderDevices();
+    renderVisibility();
+    $('historyCount').textContent = state.history.observationCount + ' position' + (state.history.observationCount === 1 ? '' : 's') + ' stored. Kept until you delete them.';
+    $('defaultPrecision').value = state.settings.defaultPrecisionClass;
+  }
+
+  async function load() {
+    const r = await api('GET', '/state');
+    if (r.status !== 200) { setStatus('Could not load your location settings (' + (r.json.error || r.status) + ').', true); return false; }
+    state = r.json;
+    render();
+    syncReporting();
+    return true;
+  }
+
+  function stepUpDone(result) {
+    if (pendingStepUp) { const done = pendingStepUp.resolve; pendingStepUp = null; $('stepUp').hidden = true; done(result); }
+  }
+
+  async function pollStepUp(challengeId, deadline) {
+    while (pendingStepUp && pendingStepUp.challengeId === challengeId && Date.now() < deadline) {
+      const r = await api('GET', '/step-up/' + encodeURIComponent(challengeId));
+      if (r.status !== 200 || r.json.state === 'expired' || r.json.state === 'consumed') { stepUpDone(false); return; }
+      if (r.json.state === 'proven') { stepUpDone(true); return; }
+      await new Promise((resolve) => setTimeout(resolve, 800));
+    }
+    stepUpDone(false);
+  }
+
+  function openSignIn(url) {
+    const win = window.open(url, 'oshal-location-step-up', 'popup,width=520,height=680');
+    $('stepUpReopen').hidden = Boolean(win);
+    return win;
+  }
+
+  function startStepUp(challenge) {
+    return new Promise((resolve) => {
+      pendingStepUp = { challengeId: challenge.challengeId, resolve: resolve, challenge: challenge };
+      $('stepUp').hidden = false;
+      $('stepUpTotp').hidden = challenge.method !== 'local-totp';
+      $('stepUpReopen').hidden = true;
+      if (challenge.method === 'local-totp') {
+        $('stepUpText').textContent = 'Enter the code from your authenticator app to confirm this change.';
+        $('totpCode').value = '';
+        $('totpCode').focus();
+      } else {
+        $('stepUpText').textContent = 'A sign-in window opened. Sign in again there to confirm this change.';
+        openSignIn(challenge.startUrl);
+      }
+      pollStepUp(challenge.challengeId, Date.parse(challenge.expiresAt) || Date.now() + 600000);
+    });
+  }
+
+  async function withStepUp(operation, stepParams, perform) {
+    const open = await api('POST', '/step-up', { operation: operation, params: stepParams });
+    if (open.status !== 201) { setStatus('Could not start the confirmation (' + (open.json.error || open.status) + ').', true); return null; }
+    const proven = await startStepUp(open.json);
+    if (!proven) { setStatus('Not confirmed; nothing was changed.', true); return null; }
+    const headers = {};
+    headers[STEP_UP_HEADER] = open.json.challengeId;
+    return perform(headers);
+  }
+
+  async function optIn() {
+    const device = thisDevice();
+    const precisionClass = $('precision').value;
+    const body = { deviceId: device ? device.deviceId : null, precisionClass: precisionClass };
+    const r = await withStepUp('opt-in', body, (headers) => api('POST', '/devices/browser/opt-in', body, headers));
+    if (!r) return;
+    if (r.status !== 201) { setStatus('Could not turn location on (' + (r.json.error || r.status) + ').', true); return; }
+    writeDeviceId(r.json.device.deviceId);
+    lastPost = 0;
+    setStatus('Location is on for this browser.');
+    await load();
+  }
+
+  async function optOut(deviceId) {
+    const r = await api('POST', '/devices/' + encodeURIComponent(deviceId) + '/opt-out');
+    if (r.status !== 200) { setStatus('Could not stop reporting (' + (r.json.error || r.status) + ').', true); return; }
+    setStatus('Reporting stopped. Your history is kept until you delete it.');
+    await load();
+  }
+
+  async function changePrecision() {
+    const device = thisDevice();
+    if (!device) return;
+    const next = $('precision').value;
+    const path = '/devices/' + encodeURIComponent(device.deviceId) + '/precision';
+    const body = { precisionClass: next };
+    const r = RANK[next] > RANK[device.precisionClass]
+      ? await withStepUp('raise-precision', { scope: device.deviceId, precisionClass: next }, (headers) => api('PUT', path, body, headers))
+      : await api('PUT', path, body);
+    if (!r) return;
+    setStatus(r.status === 200 ? 'Precision saved.' : 'Could not save precision (' + (r.json.error || r.status) + ').', r.status !== 200);
+    await load();
+  }
+
+  async function saveDefault() {
+    const next = $('defaultPrecision').value;
+    const body = { defaultPrecisionClass: next };
+    const r = RANK[next] > RANK[state.settings.defaultPrecisionClass]
+      ? await withStepUp('raise-precision', { scope: 'default', precisionClass: next }, (headers) => api('PUT', '/settings', body, headers))
+      : await api('PUT', '/settings', body);
+    if (!r) return;
+    setStatus(r.status === 200 ? 'Default precision saved.' : 'Could not save (' + (r.json.error || r.status) + ').', r.status !== 200);
+    await load();
+  }
+
+  async function revokeShare(shareId) {
+    const r = await api('POST', '/shares/' + encodeURIComponent(shareId) + '/revoke');
+    setStatus(r.status === 200 ? 'You stopped sharing with that group.' : 'Could not stop sharing (' + (r.json.error || r.status) + ').', r.status !== 200);
+    await load();
+  }
+
+  async function purge() {
+    if (!window.confirm('Delete every stored position and your current place? Your devices and settings stay.')) return;
+    const r = await api('POST', '/history/purge');
+    if (r.status !== 200) { setStatus('Could not delete your history (' + (r.json.error || r.status) + ').', true); return; }
+    setStatus('Deleted ' + r.json.observationCount + ' stored position' + (r.json.observationCount === 1 ? '' : 's') + '.');
+    await load();
+  }
+
+  async function onPosition(pos) {
+    const device = thisDevice();
+    if (!device || !device.reportingEnabled) return;
+    const now = Date.now();
+    if (now - lastPost < POST_EVERY_MS) return;
+    lastPost = now;
+    const r = await api('POST', '/presence', { deviceId: device.deviceId, lat: pos.coords.latitude, lon: pos.coords.longitude,
+      accuracyM: pos.coords.accuracy, observedAt: new Date(pos.timestamp || now).toISOString() });
+    if (r.status === 201) { await load(); return; }
+    if (r.status === 409 || r.status === 404) { await load(); return; }
+    if (r.status !== 429) setStatus('A position was not accepted (' + (r.json.error || r.status) + ').', true);
+  }
+
+  function syncReporting() {
+    const device = thisDevice();
+    const on = Boolean(device && device.reportingEnabled);
+    if (on && watchId === null && navigator.geolocation) {
+      watchId = navigator.geolocation.watchPosition(onPosition, (err) => setStatus('This browser did not share its position (' + err.message + ').', true),
+        { enableHighAccuracy: device.precisionClass === 'exact', maximumAge: 15000, timeout: 30000 });
+    } else if (!on && watchId !== null) {
+      navigator.geolocation.clearWatch(watchId);
+      watchId = null;
+    }
+  }
+
+  $('optIn').addEventListener('click', optIn);
+  $('optOut').addEventListener('click', () => { const d = thisDevice(); if (d) optOut(d.deviceId); });
+  $('changePrecision').addEventListener('click', changePrecision);
+  $('saveDefault').addEventListener('click', saveDefault);
+  $('purge').addEventListener('click', purge);
+  $('stepUpCancel').addEventListener('click', () => {
+    if (pendingStepUp) api('DELETE', '/step-up/' + encodeURIComponent(pendingStepUp.challengeId));
+    stepUpDone(false);
+  });
+  $('stepUpReopen').addEventListener('click', () => { if (pendingStepUp) openSignIn(pendingStepUp.challenge.startUrl); });
+  $('totpSubmit').addEventListener('click', async () => {
+    if (!pendingStepUp) return;
+    const r = await api('POST', '/step-up/' + encodeURIComponent(pendingStepUp.challengeId) + '/totp', { code: $('totpCode').value });
+    if (r.status !== 200) setStatus('That code was not accepted (' + (r.json.error || r.status) + ').', true);
+  });
+  window.addEventListener('message', (event) => {
+    if (event.origin !== location.origin || !event.data || event.data.type !== 'oshal-location-step-up' || !pendingStepUp) return;
+    const challengeId = pendingStepUp.challengeId;
+    api('GET', '/step-up/' + encodeURIComponent(challengeId)).then((r) => { if (r.json.state === 'proven') stepUpDone(true); });
+  });
+
+  load().then((ok) => { if (ok) setStatus(''); });
+})();
+</script>
+</body>
+</html>

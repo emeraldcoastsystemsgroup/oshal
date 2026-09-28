@@ -395,6 +395,43 @@ PostgreSQL as the enforcing runtime role:
 Run them with `npm run test:location` (Docker is required for the PostgreSQL suites). That is local
 evidence. After a deploy, run the card from the Test Lab to check the deployed database.
 
+### Location browser ingest, consent and the step-up (ADR-169 L3)
+
+**Location — browser ingest, consent and the step-up (ADR-169 L3)** (`location-browser-consent`, Tools)
+runs three steps on the build that is running:
+
+- `service-rail-refused` posts to `/api/location/presence` over the loopback with the service secret
+  (the configured one when set; it is never printed) and expects 401.
+- `step-up-gate` runs as the signed-in person. Opting in and accepting a share are each refused
+  without a fresh sign-in, including with a challenge the Lab opened but did not prove. Arming a rule
+  has no route to reach. The person's devices and shares must not change, and the Lab must withdraw its
+  challenge; a failed or refused withdrawal fails the step.
+- `consent-lifecycle` runs the consent and ingest services the routes call, for a uniquely tagged
+  synthetic person on the real database. It opts a browser in and posts a fix whose body names another
+  owner. The fix must be stored for the synthetic person at `block` precision and placed in their
+  synthetic place. Opting out must clear the current place and keep the history, and further fixes are
+  refused. The purge removes the history, and an erase must leave no row of the synthetic person.
+  Incomplete cleanup fails the step.
+
+No real person's location is read or written. The linked suites:
+
+- `tests/unit/location-settings-browser.spec.ts`: the Settings, Location page in Chromium on localhost
+  with `MOCK_OIDC`. It opts a browser in through the sign-in-again window, shows the current place,
+  opts out (the history stays and ingest stops) and purges. Script on a same-origin packaged surface
+  cannot opt in, raise precision, accept a share or arm a rule.
+- `tests/unit/location-browser-consent-postgres.spec.ts`: a body-supplied owner is ignored, the service
+  secret is refused, and proofs are single use and bound to their parameters and person.
+- `tests/unit/location-oidc-step-up-browser.spec.ts`: real OIDC against a local identity provider.
+  `max_age=0` is sent, and a stale `auth_time`, a skipped round trip or a different account prove nothing.
+- `tests/unit/location-step-up-totp-postgres.spec.ts`: a local-auth session proves it with a second-factor
+  code. Once a person has spent their failed-code budget, every fresh challenge gets 429 and even the
+  right code is not checked.
+- `tests/unit/location-step-up.spec.ts` and `tests/unit/location-route-policy.spec.ts`: the proof store
+  and the declared step-up rule of every `/api/location` route.
+
+Run them with `npm run test:location`. That is local evidence. After a deploy, run the card from the
+Test Lab.
+
 ---
 
 ## Application-installed smoke cases
