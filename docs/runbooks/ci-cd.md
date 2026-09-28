@@ -50,45 +50,41 @@ build and Trivy scan are SKIPPED** — decoupling or greening the e2e also unblo
 Green: **Lint, TypeCheck, Secret Scan, Quickstart Smoke, and the unit step of Test** (~869 tests).
 Red: **the Playwright e2e half of the Test job** — see below.
 
-## The Playwright e2e situation
+## The Playwright e2e suite
 
-The Test job runs the full Playwright suite (~132 specs under `tests/`, excluding `tests/unit/**`
-and `tests/live/**`) after the unit tests. It is a **large, partly-unmaintained suite** and is not
-green. Fixes already landed so it at least **boots and connects**:
+Every spec the default config (`playwright.config.ts`) discovers under `tests/` (the vitest tree
+`tests/unit/**` aside) is in exactly one of two places, and a unit guard fails the moment one is in
+neither or both:
 
-- **Provider:** the test webServer defaults to `FORCE_LLM_PROVIDER=noop` (playwright.config.ts) —
-  otherwise it boots the `claude-code` provider and throws "no ANTHROPIC_API_KEY / OAuth" at boot
-  on a keyless runner, so Playwright reports "webServer was not able to start".
-- **Database:** the Test job now has **Postgres + Redis service containers**; the Run-tests step
-  sets `DATABASE_URL`/`REDIS_URL`/`RUN_MIGRATIONS=true` so DB-dependent specs have a real DB.
-- **Port:** `PLAYWRIGHT_PORT=3456` in CI. ~18 specs hardcode `http://localhost:3456`, but under
-  `MOCK_OIDC` the webServer defaults to `4458` (chosen to avoid clashing with the operator's live
-  runtime — irrelevant in CI), which caused mass `ERR_CONNECTION_REFUSED`.
+- **`tests/e2e-green-suite.txt` — the green ratchet.** Specs proven all-passing under the CI e2e env
+  (Postgres + Redis, `PLAYWRIGHT_PORT=3456`, `FORCE_LLM_PROVIDER=noop`, `OSHAL_NO_AI=true`,
+  `OSHAL_OPERATOR_SUBS=mock-user-001`, `MOCK_OIDC` + `MOCK_OIDC_ALLOW_HEADER`). The CI step runs
+  `npm run test:e2e:green` → `scripts/e2e-green.mjs` → `playwright test <the listed files>`. Add a
+  spec only after three consecutive zero-retry CI-mirror passes; never remove one to hide a
+  regression.
+- **`tests/e2e-dispositions.json` — everything else, one row each, with a reason.** Classes:
+  `unsupported-in-ci` (needs a signed-in hosted browser over CDP, a Keycloak on :8080, a real model,
+  the default-OFF A2A gateway, a docker stack, or is not a Playwright spec — each row says where it
+  CAN run in `runWith`), `product-defect` (names the `docs/BACKLOG.md` heading that owns the fix),
+  `fixture-defect`, and `awaiting-classification` (not yet run under the zero-retry CI mirror).
 
-Even with all three, individual specs still fail on real assertions, and base-URL conventions are
-inconsistent across the suite (some `:3456`, one `:35457`, others read `PLAYWRIGHT_PORT`/`baseURL`).
-Full green is a **spec-by-spec normalization project** — tracked in `docs/BACKLOG.md`
-("CI Playwright e2e suite normalization").
+What the guards hold (all vitest, no server):
 
-### The green ratchet (LIVE since 2026-07-06)
+| Guard | Holds |
+|---|---|
+| `tests/unit/e2e-dispositions.spec.ts` | green list + registry partition the discovered specs; every row carries what its class needs; the real config, loaded through Playwright's own loader and file matcher, leaves out exactly the `unsupported-in-ci` rows and nothing green |
+| `tests/unit/real-boundary-doctrine.spec.ts` | the runner hands Playwright exactly the parsed list; every listed path exists; no listed spec passes by skipping under the env `ci.yml` / `ci-local.sh` actually set (a single by-design skip must be recorded in the registry's `skippedTests`) |
+| `tests/unit/e2e-configured-origin.spec.ts` | no spec builds the server origin itself — origins come from `tests/helpers/test-origins.ts` (`baseOrigin`/`baseHost`/`apiOrigin`) or a relative path on the config `baseURL`; reviewed exceptions (ephemeral self-hosted servers, semantic literals) are listed in the guard and cannot go stale |
 
-CI gates on a curated **green set**, not all-or-nothing:
+**`testIgnore` is generated from the registry.** A plain `npx playwright test` no longer collects the
+`unsupported-in-ci` specs. To run one deliberately with the harness its row names, set
+`OSHAL_E2E_INCLUDE_UNSUPPORTED=true` (the CDP-attached `tests/live` proofs run under
+`playwright.live.config.ts` instead, as before).
 
-- **`tests/e2e-green-suite.txt`** lists the spec files proven all-passing under the CI e2e env.
-  First categorization (full suite, no retries, ~57 min): **66 green files / 87 red**
-  (913 tests pass, 527 fail, 42 skip).
-- CI's "Run e2e (green ratchet set)" step runs `npm run test:e2e:green -- --retries=1`, which
-  invokes `scripts/e2e-green.mjs` → `playwright test <the 66 files>`. Green today, can't silently
-  regress.
-- **Growing it:** re-categorize periodically (run the full suite locally, recipe below), fix/adopt
-  newly-green specs into the list. Add specs only once they pass; **never remove one to hide a
-  regression**. Full-suite normalization is tracked in `docs/BACKLOG.md`.
-- The full ~132-spec suite still runs via `npm test` (used for local categorization); it is not a
-  required CI gate while it's red. The red files are dominated by heavy cockpit-UI interaction
-  specs (e.g. `cockpit-bot-interaction`, `cockpit-views`, `tool-management-ui`).
-
-Re-categorize with the local recipe below plus `--reporter=json`, then group by spec file (files
-with zero failures are green) and refresh `tests/e2e-green-suite.txt`.
+**Still open** (`docs/BACKLOG.md` "CI Playwright red-baseline retirement"): the
+`awaiting-classification` rows need the zero-retry CI-mirror classification run; the ratchet itself
+still has recorded reds (`docs/runbooks/local-ci.md`); and the CI step still passes
+`--retries=1` (`ci-local.sh` `--retries=2`), so a pass on retry is not yet a failure.
 
 ## Reproducing / verifying CI locally
 
