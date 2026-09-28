@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Fix round 1: states the one exception to row 5. Only '/' answer links, hand-off chips, file downloads and admitted workspace links go through LIVE.localHref; an absolute http(s) answer link is outside the same-origin guard by design and opens in a new tab with noopener noreferrer. A dot-segment answer link such as '[x](/..//host/y)' now stays literal text because the guard refuses it.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | The attention list reads the shared status groups (LIVE.STATUS_GROUPS.attention), so an approval gate, a customer action and a parked (dead-letter) ticket lead the briefing with the other items that wait on the person.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Work panels for layouts that opt in (hooks.workActions, with shell-panels.js loaded): a ticket, or the ticket behind a swarm task, reads its workflow (GET /api/v1/tickets/:id/workflow) and state (GET /api/tickets/:id) once per panel; the panel shows recorded progress and stages, a full ticket-workflow panel, Approve (approval_required to approved through PUT /api/tickets/:id/status, only when a person is what it waits for) and Cancel behind a confirmation (PUT /api/tickets/:id/cancel). A refusal is shown in the panel as returned; a success reloads the caller's work and re-renders through hooks.onWorkChanged. Working rows carry an indeterminate bar. Homebase and the central assistant do not opt in and are unchanged.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Routines panel (kind 'routines', layouts that opt in): reads the caller's schedules and the Workflow Studio definitions once per page, and each own prompt schedule's switch pauses or resumes it through POST /api/v1/agent/schedules/:id/pause|resume; a refusal puts the switch back and says why. The application panel offers 'Its routines' (that application's routines first).
  */
 (() => {
   'use strict';
@@ -111,7 +112,7 @@
     const apps = snapshot.apps, suites = snapshot.suites, work = snapshot.work;
     const byId = id => apps.find(a => a.id === id) || null;
     const suiteOf = id => suites.find(s => s.id === id) || LIVE.SUITE_META[id] && Object.assign({ id, count: 0, apps: [] }, LIVE.SUITE_META[id]) || suites[suites.length - 1];
-    const state = { modal: null, dirSuite: 'all', dirQuery: '', returnFocus: null, pins: null, summaries: new Map(), embed: false, details: new Map(), detailReads: new Map(), roster: null, rosterRead: null, workFlows: new Map(), workReads: new Set() };
+    const state = { modal: null, dirSuite: 'all', dirQuery: '', returnFocus: null, pins: null, summaries: new Map(), embed: false, details: new Map(), detailReads: new Map(), roster: null, rosterRead: null, workFlows: new Map(), workReads: new Set(), routines: null, workflowsList: null, routinesRead: false };
     state.embedView = LIVE.prefs.get('embed-view:' + layoutId, 'summary') === 'full' ? 'full' : 'summary';
     const savedPins = LIVE.prefs.get('pins:' + layoutId, null);
     const busiest = s => s.apps.map(a => [a, work.filter(w => w.app === a.id).length]).sort((x, y) => y[1] - x[1] || Number(y[0].probes.length > 0) - Number(x[0].probes.length > 0))[0];
@@ -250,7 +251,7 @@
 <h3>From the application</h3><div data-summary-slot="${esc(app.id)}">${summaryMarkup(app, state.summaries.get(app.id) || null)}</div>
 ${app.todos.length ? `<h3>Setup steps</h3><ol class="artifact-steps">${app.todos.map(t => `<li>${esc(t.label)}</li>`).join('')}</ol>` : ''}
 ${items.length ? `<h3>Recent work</h3>${items.map(workRow).join('')}` : ''}
-<div class="drawer-actions">${app.navigable ? link('Open ↗', app.href, 'action primary') : ''}${app.surface && hooks.allowEmbed ? button('Open here', 'embed', 'action', `data-app="${esc(app.id)}"`) : ''}${hooks.contextAction ? button(hooks.contextAction, 'use-context', 'action', `data-app="${esc(app.id)}"`) : ''}</div>
+<div class="drawer-actions">${app.navigable ? link('Open ↗', app.href, 'action primary') : ''}${app.surface && hooks.allowEmbed ? button('Open here', 'embed', 'action', `data-app="${esc(app.id)}"`) : ''}${hooks.contextAction ? button(hooks.contextAction, 'use-context', 'action', `data-app="${esc(app.id)}"`) : ''}${panels() ? button('Its routines', 'routines', 'action', `data-app="${esc(app.id)}"`) : ''}</div>
 <h3>Declared assistants</h3>${detailSlot(app, 'assistants')}
 <h3>Declared application relationships</h3>${detailSlot(app, 'relations')}
 ${(app.connectors.required || []).length || (app.connectors.optional || []).length ? `<h3>Providers</h3><p class="bot-identifiers">${esc([...(app.connectors.required || []).map(c => `${c} (required)`), ...(app.connectors.optional || [])].join(' · '))}</p>` : ''}`;
@@ -326,6 +327,39 @@ ${workExtras(item)}
       if (hooks.onWorkChanged) hooks.onWorkChanged(); else if (state.modal) renderModal();
       toast(kind === 'approve' ? `Approved: ${item.title} waits for the queue.` : `Cancelled: ${item.title}.`);
     }
+    /** @description Read the caller's schedules and the Workflow Studio definitions once per page and paint the Routines panel. */
+    async function fillRoutines() {
+      if (state.routinesRead) return;
+      state.routinesRead = true;
+      const V = window.OSHAL_LIVE_VIEWS;
+      const [routines, workflows] = await Promise.all([LIVE.packages.routines.list(), LIVE.packages.workflows()]);
+      state.routines = V.routinesView(routines); state.workflowsList = V.workflowsView(workflows);
+      const body = document.getElementById('routines-body');
+      if (body && state.modal && state.modal.kind === 'routines') body.innerHTML = panels().routinesPanel(state.routines, state.workflowsList, byId(state.modal.id));
+    }
+    /**
+     * @description Pause or resume one of the caller's routines from its switch. The schedules route decides (404 for a
+     * schedule that is not theirs, 403 for a managed one); a refusal puts the switch back and says why.
+     * @param {HTMLInputElement} input The routine's checkbox.
+     * @returns {Promise<void>} Resolves once the row is repainted or the refusal is shown.
+     */
+    async function toggleRoutine(input) {
+      const id = input.dataset.routine, on = input.checked, list = state.routines ? state.routines.routines : [];
+      const at = list.findIndex(r => r.id === id); if (at < 0) return;
+      input.disabled = true;
+      const r = await LIVE.packages.routines.setOn(id, on);
+      const note = () => document.querySelector(`[data-routine-note="${CSS.escape(id)}"]`);
+      if (!r.ok || !r.body || !r.body.schedule) {
+        input.checked = !on; input.disabled = false;
+        const n = note(); if (n) n.textContent = `Could not ${on ? 'resume' : 'pause'} this routine (HTTP ${r.status || 'network'}${refusalOf(r)}).`;
+        return;
+      }
+      list[at] = window.OSHAL_LIVE_VIEWS.routineView(r.body.schedule);
+      const row = document.querySelector(`[data-routine-row="${CSS.escape(id)}"]`);
+      if (row) { row.outerHTML = panels().routineRow(list[at]).replace(/<p class="note-line routine-note"[\s\S]*$/, ''); }
+      const n = note(); if (n) n.textContent = list[at].on ? 'Resumed for you.' : 'Paused for you. Nobody else’s routines changed.';
+      const fresh = document.querySelector(`[data-routine="${CSS.escape(id)}"]`); if (fresh) fresh.focus();
+    }
     function filtered() {
       const q = state.dirQuery.toLowerCase().trim();
       const inFilter = a => state.dirSuite === 'all' || (state.dirSuite === 'pinned' ? isPinned(a.id) : state.dirSuite === 'games' ? isGameApp(a) : a.suite === state.dirSuite);
@@ -374,7 +408,7 @@ ${workExtras(item)}
       if (state.returnFocus && state.returnFocus.isConnected) state.returnFocus.focus();
     }
     function titleFor(kind, id) {
-      const titles = { directory: 'Your application swarm', app: byId(id) ? byId(id).name : 'Application', embed: byId(id) ? byId(id).name : 'Application', work: (work.find(w => w.id === id) || {}).title || 'Work item', 'work-list': 'Work across the swarm', people: 'People & assistants', provenance: 'What is live in this view', 'ticket-workflow': `Workflow · ${(work.find(w => w.id === id) || {}).title || 'work item'}` };
+      const titles = { directory: 'Your application swarm', app: byId(id) ? byId(id).name : 'Application', embed: byId(id) ? byId(id).name : 'Application', work: (work.find(w => w.id === id) || {}).title || 'Work item', 'work-list': 'Work across the swarm', people: 'People & assistants', provenance: 'What is live in this view', routines: 'Routines and workflows', 'ticket-workflow': `Workflow · ${(work.find(w => w.id === id) || {}).title || 'work item'}` };
       return titles[kind] || (hooks.modalTitle ? hooks.modalTitle(kind, id) : '');
     }
     function contentFor(kind, id) {
@@ -384,6 +418,7 @@ ${workExtras(item)}
       if (kind === 'work') return workPanel(id);
       if (kind === 'work-list') return workListPanel();
       if (kind === 'ticket-workflow') return ticketWorkflowPanel(id);
+      if (kind === 'routines' && panels()) return `<div id="routines-body">${panels().routinesPanel(state.routines, state.workflowsList, byId(id))}</div>`;
       if (kind === 'people') return peoplePanel();
       if (kind === 'provenance') return provenancePanel();
       return hooks.modalContent ? hooks.modalContent(kind, id) : '';
@@ -399,6 +434,7 @@ ${workExtras(item)}
       dialog.addEventListener('click', e => { if (e.target === dialog) close(); });
       if (kind === 'directory') { updateDirectory(); document.getElementById('app-search').focus(); }
       if (kind === 'app' && byId(id)) { fillSummary(byId(id)); fillDetail(byId(id)); }
+      if (kind === 'routines' && panels()) fillRoutines();
       if ((kind === 'work' || kind === 'ticket-workflow') && panels()) { const item = work.find(w => w.id === id); if (item && !state.workFlows.has(id)) fillWork(item); }
       if (kind === 'people' && hooks.peopleDirectory) fillRoster();
     }
@@ -425,12 +461,14 @@ ${workExtras(item)}
       if (action === 'work-approve' || action === 'work-cancel-confirm') { ticketAction(target, action === 'work-approve' ? 'approve' : 'cancel'); return true; }
       if (action === 'work-cancel' || action === 'work-cancel-keep') { workCancelStep(target, action === 'work-cancel'); return true; }
       if (action === 'ticket-workflow') { open('ticket-workflow', target.dataset.work); return true; }
+      if (action === 'routines' && panels()) { open('routines', id || ''); return true; }
       return false;
     }
     function bind(root) {
       root.addEventListener('input', e => { if (e.target.id === 'app-search') { state.dirQuery = e.target.value; updateDirectory(); } });
       root.addEventListener('change', e => {
         if (e.target.dataset.role === 'experience-picker') { const exp = experienceFor(e.target.value); if (exp) location.href = exp.href; }
+        if (e.target.dataset.routine && panels()) toggleRoutine(e.target);
         if (e.target.id === 'universal-skin-picker' && window.OSHAL_STYLE_SWITCHER) window.OSHAL_STYLE_SWITCHER.applySkin(e.target.value);
       });
       document.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); state.dirSuite = 'all'; state.dirQuery = ''; open('directory'); } });

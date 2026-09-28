@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Phase-4 assemblies: the synthetic app-view page provides a classroom builder (a new-tab tile and list item, a tile handled on the page) and `?provides=` limits the builders it registers, so "requested but not provided" stays provable; the host page frames `?audience=` of its choice; assemblyHostRoutes answers the ribbon profile of an installed application from `state.assembly.ribbons`, and installAssemblyHosts gives the ten hosts the presets gained ribbon items shaped like their manifests' surfaces (several for Intelligent Communication, Social and Marketing Engine), installing the nine the default catalog lacks; the default catalog itself is unchanged.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Composed front pages: installFrontPageHosts installs the card applications the assemblies did not (Calendar, Federal CRM with four of its surfaces, Calling Assistant) through the same installHosts helper installAssemblyHosts now uses; each is a synthetic app with the default probe (`/fixture/probe/<name>`, status `probe:<name>`), so a card's tiles, items, refusal and D10 silence are provable per application.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Full-swarm build routes (portalBuildRoutes, lane "portal", registered first among the lane routes): one ticket's workflow read model shaped like GET /api/v1/tickets/:ticketId/workflow with per-ticket overrides and statuses, and a cancel pre-handler that moves the synthetic ticket to cancelled whenever the existing cancel route will answer 200.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com | portalBuildRoutes gains the schedule and workflow-definition reads (scheduleRoutes): an owner-scoped schedule list, pause/resume with the controller's 404 / managed-manifest 403 / operator 403 refusals, and Workflow Studio definition summaries, each with a controllable status.
  */
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -459,6 +460,12 @@ function installHosts(state: ExperienceState, hosts: Record<string, { suite: str
 export type PortalFixtureState = {
   ticketWorkflows: Record<string, Record<string, unknown>>;
   workflowStatus: Record<string, number>;
+  /** Schedule records as GET /api/v1/agent/schedules returns them; ownerSub decides visibility and the pause/resume refusal. */
+  schedules: Array<Record<string, unknown> & { id: string; taskType: string; status: string; ownerSub?: string | null }>;
+  schedulesStatus: number;
+  /** Workflow Studio definition summaries ({ id, name, description, version, updatedAt, nodeCount, edgeCount }). */
+  workflows: Array<Record<string, unknown>>;
+  workflowsStatus: number;
 };
 
 /**
@@ -480,7 +487,7 @@ export function portalState(state: ExperienceState): PortalFixtureState { return
  * @returns Nothing; the routes are registered on `app`.
  */
 function portalBuildRoutes(app: express.Application, state: ExperienceState) {
-  const portal: PortalFixtureState = { ticketWorkflows: {}, workflowStatus: {} };
+  const portal: PortalFixtureState = { ticketWorkflows: {}, workflowStatus: {}, schedules: [], schedulesStatus: 200, workflows: [], workflowsStatus: 200 };
   Object.assign(state, { portal });
   const router = express.Router();
   router.get('/api/v1/tickets/:ticketId/workflow', (req, res) => {
@@ -489,6 +496,7 @@ function portalBuildRoutes(app: express.Application, state: ExperienceState) {
     res.json({ success: true, ticket: { ticketId: id, title: ticket.title, ticketType: ticket.ticketType, queueId: '', queueName: '', status: ticket.status, assignedAgentId: '' },
       definition: null, run: null, runHistoryAvailable: true, otherRunCount: 0, history: [], historyAvailable: true, approvalGates: [], children: [], childrenAvailable: true, ...portal.ticketWorkflows[id] });
   });
+  scheduleRoutes(router, state, portal);
   router.put('/api/tickets/:ticketId/cancel', (req, _res, next) => {
     const lane = (state as ExperienceState & { nexusGap?: { cancelStatus: Record<string, number> } }).nexusGap;
     const ticket = state.tickets.find(t => t.ticketId === req.params.ticketId);
@@ -496,4 +504,35 @@ function portalBuildRoutes(app: express.Application, state: ExperienceState) {
     next();
   });
   app.use(router);
+}
+
+/**
+ * @description The schedule and workflow-definition reads of portalBuildRoutes, mirroring the real controllers: the list is
+ * owner-scoped (unowned system schedules stay visible), pause/resume answer 404 for a schedule the caller does not own,
+ * 403 for an app: / app-route: schedule (managed by its manifest) and for a workflow: schedule (the synthetic caller is no
+ * operator), and otherwise flip the status and return the schedule.
+ * @param router The lane router.
+ * @param state The per-case synthetic state (for the caller's subject).
+ * @param portal The lane state.
+ * @returns Nothing; the routes are registered on `router`.
+ */
+function scheduleRoutes(router: express.Router, state: ExperienceState, portal: PortalFixtureState) {
+  const visible = (s: PortalFixtureState['schedules'][number]) => !s.ownerSub || s.ownerSub === state.user.sub;
+  router.get('/api/v1/agent/schedules', (_req, res) => {
+    if (portal.schedulesStatus !== 200) { res.status(portal.schedulesStatus).json({ success: false, error: 'Synthetic schedules unavailable' }); return; }
+    res.json({ success: true, schedules: portal.schedules.filter(visible) });
+  });
+  router.post('/api/v1/agent/schedules/:id/:verb', (req, res, next) => {
+    if (!['pause', 'resume'].includes(req.params.verb)) { next(); return; }
+    const schedule = portal.schedules.find(s => s.id === req.params.id);
+    if (!schedule || !visible(schedule)) { res.status(404).json({ success: false, error: 'Schedule not found' }); return; }
+    if (/^app(-route)?:/.test(schedule.taskType)) { res.status(403).json({ success: false, error: 'Schedule is managed by an active app manifest' }); return; }
+    if (/^workflow:/.test(schedule.taskType)) { res.status(403).json({ success: false, error: 'Operator privilege required' }); return; }
+    schedule.status = req.params.verb === 'pause' ? 'paused' : 'active';
+    res.json({ success: true, schedule });
+  });
+  router.get('/api/workflow-studio/definitions', (_req, res) => {
+    if (portal.workflowsStatus !== 200) { res.status(portal.workflowsStatus).json({ success: false, error: 'Synthetic definitions unavailable' }); return; }
+    res.json({ success: true, count: portal.workflows.length, definitions: portal.workflows });
+  });
 }

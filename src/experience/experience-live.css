@@ -71,3 +71,11 @@ a.action.primary,a.action{display:inline-flex;align-items:center;gap:6px;cursor:
 .live-stages .stage-pending{opacity:.72}
 .work-flow,.work-state{margin-top:14px}
 .work-actions{margin-top:10px}
+/* Routines panel: one row per schedule with the caller's own switch. */
+.routine-row{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:12px 0;border-bottom:1px solid var(--line)}
+.routine-copy{min-width:0}
+.routine-copy strong{display:block;font-size:13px}
+.routine-copy small{display:block;color:var(--muted);font-size:11px;margin-top:3px;overflow-wrap:anywhere}
+.routine-toggle{display:inline-flex;align-items:center;gap:8px;font-size:12px;white-space:nowrap}
+.routine-toggle input{accent-color:var(--accent);width:18px;height:18px}
+.routine-note:empty{display:none}

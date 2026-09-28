@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Drive the full-swarm build in headless Chromium through the real static route registration over the isolated synthetic swarm: tickets in every canonical state land on the Commons board and in the Jarvis briefing where the shared status groups put them.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Work panels: a ticket's recorded workflow (stages, step progress, gates, history, children) and its full view, Approve for an approval gate that waits on a person with the route's refusal shown, Cancel behind a confirmation with its refusal, the indeterminate bar on Working items only, and the not-visible / unreadable states.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Routines panel: own routines with a switch, managed ones without, somebody else's absent, workflows by version; pause/resume and the 404 refusal that puts the switch back; an application's routines first; the ask-Jarvis empty state and the refused reads.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -173,6 +174,90 @@ describe('work panels over the ticket routes', () => {
     await page.keyboard.press('Escape');
     await page.locator('.running-row[data-work="task:task-1"]').click();
     expect(await page.locator('#full-dialog [data-work-flow]').count()).toBe(0);
+    expect(errors).toEqual([]);
+  });
+});
+
+/** @description Seed the caller's routines (one of their own, one an application manages, one an operator's workflow, one somebody else's) and two workflows. */
+function seedRoutines() {
+  const p = portalState(fixture.state), at = (h: number) => iso(h * HOUR);
+  p.schedules.push(
+    { id: 'own-1', taskType: 'jarvis-routine', cron: '0 8 * * 1-5', timezone: 'America/Chicago', taskData: { prompt: 'Synthetic weekday briefing' }, status: 'active', createdAt: at(-48), updatedAt: at(-48), nextRunAt: at(14), lastRunAt: at(-10), executionCount: 3, ownerSub: 'synthetic-user', queue: 'ledger' },
+    { id: 'app-1', taskType: 'app:finance', cron: '0 6 * * *', taskData: { kind: 'manifest-service-route', scheduleKey: 'sync' }, status: 'active', createdAt: at(-48), updatedAt: at(-48), nextRunAt: at(12), lastRunAt: null, executionCount: 0, ownerSub: null, queue: 'finance' },
+    { id: 'wf-1', taskType: 'workflow:ledger-review', cron: '30 7 * * 1', taskData: { prompt: 'Synthetic weekly ledger review' }, status: 'paused', createdAt: at(-48), updatedAt: at(-48), nextRunAt: null, lastRunAt: null, executionCount: 0, ownerSub: 'synthetic-user', queue: 'ledger' },
+    { id: 'other-1', taskType: 'jarvis-routine', cron: '0 9 * * *', taskData: { prompt: 'Somebody else’s routine' }, status: 'active', createdAt: at(-48), updatedAt: at(-48), nextRunAt: at(3), lastRunAt: null, executionCount: 0, ownerSub: 'another-user', queue: null },
+  );
+  p.workflows.push({ id: 'wf-def-1', name: 'Synthetic delivery flow', description: '', version: 4, updatedAt: at(-24), nodeCount: 6, edgeCount: 7 },
+    { id: 'wf-def-2', name: 'Synthetic intake flow', description: '', version: 1, updatedAt: at(-72), nodeCount: 3, edgeCount: 2 });
+}
+const routineRow = (id: string) => page.locator(`[data-routine-row="${id}"]`);
+
+describe('Routines panel over the schedules and Workflow Studio routes', () => {
+  it('Jarvis Routines lists the caller’s routines with a switch only on their own, and the workflows by version', async () => {
+    seedRoutines();
+    await open('/jarvis', '.full-jarvis');
+    await page.locator('.jarvis-rail [data-action="routines"]').click();
+    await page.waitForSelector('[data-routine-row="own-1"]');
+    expect(await page.locator('#full-dialog-title').innerText()).toBe('Routines and workflows');
+    expect(await routineRow('own-1').innerText()).toMatch(/Synthetic weekday briefing\s*Weekdays at 08:00 \(America\/Chicago\) · next .* · 3 runs · last 10 h ago/);
+    expect(await routineRow('own-1').locator('input[type="checkbox"]').isChecked()).toBe(true);
+    expect(await routineRow('app-1').innerText()).toContain('Managed by its application');
+    expect(await routineRow('wf-1').innerText()).toContain('Managed by an operator');
+    expect(await routineRow('app-1').locator('input').count()).toBe(0);
+    expect(await page.locator('#full-dialog').innerText()).not.toContain('Somebody else’s routine');
+    const flows = await page.locator('#routines-body .flow-step').allInnerTexts();
+    expect(flows[0]).toMatch(/v4\s*Synthetic delivery flow\s*6 steps · updated 1 d ago/); expect(flows).toHaveLength(2);
+    expect(await page.locator('#full-dialog a', { hasText: 'Open Workflow Studio' }).getAttribute('href')).toBe('/workflow-studio/');
+    expect(errors).toEqual([]);
+  });
+
+  it('the switch pauses and resumes only the caller’s routine; a refusal puts it back and says why', async () => {
+    seedRoutines();
+    await open('/jarvis', '.full-jarvis');
+    await page.locator('.jarvis-rail [data-action="routines"]').click();
+    const toggle = () => routineRow('own-1').locator('input[type="checkbox"]');
+    await toggle().uncheck();
+    await page.waitForFunction(() => document.querySelector('[data-routine-note="own-1"]')?.textContent?.includes('Paused for you'));
+    expect(portalState(fixture.state).schedules.find(s => s.id === 'own-1')?.status).toBe('paused');
+    expect(fixture.state.calls).toContain('POST /api/v1/agent/schedules/own-1/pause');
+    expect(await routineRow('own-1').innerText()).toContain('paused');
+    await toggle().check();
+    await page.waitForFunction(() => document.querySelector('[data-routine-note="own-1"]')?.textContent === 'Resumed for you.');
+    expect(portalState(fixture.state).schedules.find(s => s.id === 'own-1')?.status).toBe('active');
+    portalState(fixture.state).schedules.find(s => s.id === 'own-1')!.ownerSub = 'another-user';
+    await toggle().uncheck();
+    await page.waitForFunction(() => document.querySelector('[data-routine-note="own-1"]')?.textContent?.includes('HTTP 404'));
+    expect(await page.locator('[data-routine-note="own-1"]').innerText()).toBe('Could not pause this routine (HTTP 404: Schedule not found).');
+    expect(await toggle().isChecked()).toBe(true);
+    expect(errors).toEqual([]);
+  });
+
+  it('an application’s own routines come first when the panel opens from that application', async () => {
+    seedRoutines();
+    await open('/orbit', '.full-orbit');
+    await page.keyboard.press('Control+k'); await page.fill('#app-search', 'ledger');
+    await page.locator('.catalog-card .catalog-main').click();
+    await page.locator('#full-dialog [data-action="routines"]').click();
+    await page.waitForSelector('[data-routine-row="own-1"]');
+    const body = await page.locator('#routines-body').innerText();
+    expect(body).toMatch(/For Synthetic ledger[\s\S]*Synthetic weekday briefing[\s\S]*Synthetic weekly ledger review[\s\S]*Your other routines[\s\S]*app:finance/);
+    expect(errors).toEqual([]);
+  });
+
+  it('without routines the panel offers to ask Jarvis for one, and refused reads say so', async () => {
+    portalState(fixture.state).workflowsStatus = 503;
+    await open('/jarvis', '.full-jarvis');
+    await page.locator('.jarvis-rail [data-action="routines"]').click();
+    await page.waitForSelector('#routines-body [data-action="prompt"]');
+    expect(await page.locator('#routines-body').innerText()).toContain('Workflow Studio definitions could not be read (HTTP 503).');
+    await page.locator('#routines-body [data-action="prompt"]').click();
+    await page.waitForSelector('.conversation-list .message-content p strong');
+    expect(fixture.state.asks[0].message).toBe('Every weekday at 8am, brief me on what is waiting for me across my swarm.');
+    portalState(fixture.state).schedulesStatus = 500;
+    await page.reload(); await page.waitForSelector('.full-jarvis');
+    await page.locator('.jarvis-rail [data-action="routines"]').click();
+    await page.waitForFunction(() => document.getElementById('routines-body')?.textContent?.includes('HTTP 500'));
+    expect(await page.locator('#routines-body').innerText()).toContain('Your routines could not be read (HTTP 500).');
     expect(errors).toEqual([]);
   });
 });

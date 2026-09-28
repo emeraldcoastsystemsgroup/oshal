@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Markup for the full-swarm work panels over existing routes: a moving item's indeterminate progress (the queue reports no percentage), a ticket's workflow (GET /api/v1/tickets/:id/workflow: stages with their recorded state, progress only from a recorded run, approval gates, status history, child tickets) and its actions: Approve only for a ticket held at approval_required whose current transition waits on a person (the homebase rule), Cancel through the owner-checked cancel route behind a confirmation. The server decides every action; a refusal is shown as returned.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | The Routines panel: the caller's schedules (GET /api/v1/agent/schedules) with their cadence, next and last run and an "On for me" switch only on their own prompt schedules (an application's or an operator's schedule says who manages it), an application's own routines first when opened from its panel, an empty state that offers to ask Jarvis for one, and the Workflow Studio definitions by name and version with a link to Workflow Studio, where workflows are edited, published and restored.
  */
 (() => {
   'use strict';
@@ -110,5 +111,49 @@
     return `${view.name ? `<span class="eyebrow muted">${esc(view.name)}</span>` : ''}${progressLine(view, item)}${run}${stagesList(view, 40)}${gates}<h3>Recent status changes</h3>${history}${children}<div class="drawer-actions">${S().link('Open the cockpit’s Workflow tab ↗', `/cockpit/?ticket=${encodeURIComponent(ticketOf(item))}`, 'action primary')}</div><p class="note-line">The stages are the workflow registered for this ticket type today, not a snapshot of the run.</p>`;
   }
 
-  window.OSHAL_SHELL_PANELS = { movingBar, ticketOf, currentTransition, actionsMarkup, cancelConfirm, workflowSection, workflowPanel };
+  const whenNext = d => d.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const ROUTINE_PROMPT = 'Every weekday at 8am, brief me on what is waiting for me across my swarm.';
+
+  /** @description One routine row: what it asks, when it runs, and the caller's switch (or who manages it). */
+  function routineRow(r) {
+    const timing = [r.cadence, r.on ? (r.next ? `next ${whenNext(r.next)}` : 'no next run scheduled') : 'paused', `${r.runs} run${r.runs === 1 ? '' : 's'}`, r.last ? `last ${window.OSHAL_LIVE.relativeTime(r.last)}` : ''].filter(Boolean).join(' · ');
+    const control = r.switchable
+      ? `<label class="routine-toggle"><span>On for me</span><input type="checkbox" data-routine="${esc(r.id)}"${r.on ? ' checked' : ''} aria-label="${esc(`${r.on ? 'Pause' : 'Resume'} ${r.title}`)}"></label>`
+      : `<span class="small-label">${r.managed === 'app' ? 'Managed by its application' : 'Managed by an operator'}</span>`;
+    return `<div class="routine-row" data-routine-row="${esc(r.id)}"><span class="routine-copy"><strong>${esc(r.title)}</strong><small>${esc(timing)}</small></span>${control}</div><p class="note-line routine-note" data-routine-note="${esc(r.id)}" role="status"></p>`;
+  }
+
+  /** @description The routines half of the panel, an application's own routines first when one is named. */
+  function routinesSection(view, app) {
+    if (!view) return '<p class="note-line">Reading your routines…</p>';
+    if (!view.ok) return `<p class="note-line">Your routines could not be read (HTTP ${esc(view.status || 'unreachable')}).</p>`;
+    if (!view.routines.length) return `<p>You have no routines yet. Ask Jarvis for one in plain words; nothing is scheduled until you send it.</p><div class="drawer-actions">${S().button('Ask Jarvis for a weekday briefing', 'prompt', 'action', `data-prompt="${esc(ROUTINE_PROMPT)}"`)}</div>`;
+    const own = app ? view.routines.filter(r => r.queue === app.id) : [];
+    const rest = view.routines.filter(r => own.indexOf(r) < 0);
+    const block = (title, list) => list.length ? `<h3>${esc(title)}</h3>${list.map(routineRow).join('')}` : '';
+    return (app ? (own.length ? block(`For ${app.name}`, own) : `<p class="note-line">${esc(app.name)} has no routines of yours.</p>`) : '') + block(app ? 'Your other routines' : 'Your routines', rest);
+  }
+
+  /** @description The workflows half: Workflow Studio definitions by name, version and size, edited where they live. */
+  function workflowsSection(view) {
+    if (!view) return '<p class="note-line">Reading the workflows…</p>';
+    if (!view.ok) return `<p class="note-line">Workflow Studio definitions could not be read (HTTP ${esc(view.status || 'unreachable')}).</p>`;
+    const rows = view.workflows.slice(0, 8).map(w => `<div class="flow-step"><span>v${esc(w.version)}</span><span><strong>${esc(w.name)}</strong><small>${esc([`${w.nodeCount} step${w.nodeCount === 1 ? '' : 's'}`, w.updatedAt ? `updated ${window.OSHAL_LIVE.relativeTime(w.updatedAt)}` : ''].filter(Boolean).join(' · '))}</small></span></div>`).join('');
+    const more = view.workflows.length > 8 ? `<p class="note-line">…and ${view.workflows.length - 8} more in Workflow Studio.</p>` : '';
+    return `${rows || '<p class="note-line">No workflows are defined in Workflow Studio yet.</p>'}${more}`;
+  }
+
+  /**
+   * @description The Routines panel: the caller's own schedules with a switch each (pause/resume only their own), and
+   * the Workflow Studio definitions, which stay edited, published and restored in Workflow Studio.
+   * @param {object|null} routines LIVE_VIEWS.routinesView output, or null while reading.
+   * @param {object|null} workflows LIVE_VIEWS.workflowsView output, or null while reading.
+   * @param {object|null} app The application the panel was opened from, if any.
+   * @returns {string} Markup.
+   */
+  function routinesPanel(routines, workflows, app) {
+    return `<p>Routines are your own scheduled requests. A switch here pauses or resumes one for you only; nobody else is enrolled or changed.</p>${routinesSection(routines, app)}<hr class="rule"><h3>Workflows</h3><p class="note-line">How work moves through the swarm. They are edited, published and restored in Workflow Studio.</p>${workflowsSection(workflows)}<div class="drawer-actions">${S().link('Open Workflow Studio ↗', '/workflow-studio/', 'action')}</div>`;
+  }
+
+  window.OSHAL_SHELL_PANELS = { movingBar, ticketOf, currentTransition, actionsMarkup, cancelConfirm, workflowSection, workflowPanel, routineRow, routinesPanel };
 })();
