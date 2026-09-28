@@ -22,6 +22,7 @@
  * 16 | maintainer@emeraldcoastsystemsgroup.com | Validate fixed in-process package tool declarations and required capabilities before installation.
  * 17 | maintainer@emeraldcoastsystemsgroup.com | Dependency tiers through the shared contract (oshal-app-dependencies.js): `validate` checks required/optional (or the legacy flat form); `install` resolves REQUIRED apps fail-closed as before and installs OPTIONAL apps only when asked (`--with a,b` / `--with-optional`), recording both tiers in .oshal-install.json; `uninstall` blocks on required dependents only and reports optional ones; `init` scaffolds the tiered form.
  * 18 | maintainer@emeraldcoastsystemsgroup.com | `build` stages a package's sources in its own src/__oshal_build_<random>/ directory instead of copying them FLAT into the framework's src/app/routes/. The copies were removed in a `finally` that a kill, an OOM or a closed terminal never reaches — on 2026-09-09 seventeen package sources sat untracked in the kernel's src/app/routes/ after such a build, passing every tracked-path gate and one `git add -A` from landing application code in the kernel (Rule 0c). Staging outside src/app/ means an interrupted build leaves kernel source byte-identical, and the surviving staging directory is a path check-repo-separation.js refuses by name.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com | Backlog #33: `install` sparse-checks-out the attestation's evidence directory (audits/evidence/<app>/<sourceSha>/) so the audit loader re-hashes it, and a verified record must still describe the catalog source: the package tree at the catalog ref must equal the tree at sourceSha (fetched when the shallow clone lacks it) and the evidence must name that tree. Enforce mode refuses a stale or unreadable attestation ("re-audit required"); compatible mode installs the catalog ref with a NOT AUDIT-VERIFIED warning and no pin. Before this, enforce mode quietly installed the OLDER audited commit when the source had changed since the audit.
  *
  * The npm-of-OSHAL-apps helper. An OSHAL app package is a folder with a definition
  * file (oshal-app.yaml — the package.json analog), personas, compiled routes, migrations,
@@ -50,8 +51,10 @@ const { validatePackageTools } = require('./oshal-package-tools');
 const { loadPackageTestCatalog } = require('./oshal-test-catalog');
 const { inspectAppDependencies, readAppDependencies, DEPENDENCY_TIERS_SKILL } = require('./oshal-app-dependencies');
 const {
+  auditEvidenceDirectory,
   loadPackageAuditAssessment,
   resolvePackageAuditMode,
+  sourceCurrencyProblems,
 } = require('./oshal-package-audit');
 
 // The default app store: the PUBLIC store, the same one scripts/oshal-install.sh downloads and
@@ -536,13 +539,53 @@ function auditProvenance(assessment) {
   };
 }
 
-/** Assess one cloned catalog record, report its posture, and pin a verified checkout. */
-function acceptAuditAssessment(git, tmp, name, ref, auditMode) {
-  const assessment = loadPackageAuditAssessment(tmp, name, auditMode);
+/**
+ * @description Read the package tree at the catalog ref and at the audited commit, fetching that
+ * commit when the shallow clone does not hold it, and judge whether the attestation is still current.
+ * @param {Function} git - Scoped Git runner for the temporary store clone.
+ * @param {string} tmp - Temporary sparse clone at the catalog ref.
+ * @param {string} sourcePath - Confined catalog source.path.
+ * @param {object} assessment - A verified loadPackageAuditAssessment result.
+ * @returns {string[]} Currency problems (empty when the catalog ref still holds the audited tree).
+ */
+function auditSourceCurrencyProblems(git, tmp, sourcePath, assessment) {
+  // Authenticated: in a blob-less partial clone a missing object is fetched lazily from the store.
+  const read = (rev) => { try { return git(['-C', tmp, 'rev-parse', '--verify', '--quiet', rev], true); } catch { return null; } };
+  const catalogTree = read(`HEAD:${sourcePath}`);
+  let fetchError;
+  if (!read(`${assessment.sourceSha}^{commit}`)) {
+    try { git(['-C', tmp, 'fetch', '--depth', '1', 'origin', assessment.sourceSha], true); }
+    catch (error) { fetchError = String(error?.stderr || error?.message || error).split('\n').find((line) => line.trim()) || 'fetch failed'; }
+  }
+  const auditedTree = fetchError ? null : read(`${assessment.sourceSha}:${sourcePath}`);
+  return sourceCurrencyProblems({
+    sourceSha: assessment.sourceSha, sourcePath, catalogTree, auditedTree, evidenceTrees: assessment.evidenceTrees, fetchError,
+  });
+}
+
+/** Refuse (enforce) or downgrade to an unpinned warning (compatible) an attestation that is no longer current. */
+function staleAuditDecision(assessment, stale, name, auditMode) {
+  if (auditMode === 'enforce') {
+    console.error(C.red(`refusing to install "${name}" — its audit no longer describes the catalog source (enforce mode):`));
+    stale.forEach((reason) => console.error(`  ${C.red('error')} ${reason}`));
+    return null;
+  }
+  return { ...assessment, verified: false, sourceSha: null, reasons: [...assessment.reasons, ...stale] };
+}
+
+/** Assess one cloned catalog record, report its posture, and pin a verified, current checkout. */
+function acceptAuditAssessment(git, tmp, selected, ref, auditMode) {
+  const { name } = selected;
+  let assessment = loadPackageAuditAssessment(tmp, name, auditMode);
   if (!assessment.allowed) {
     console.error(C.red(`refusing to install "${name}" — package audit denied it in ${auditMode} mode:`));
     assessment.reasons.forEach((reason) => console.error(`  ${C.red('error')} ${reason}`));
     return null;
+  }
+  if (assessment.verified) {
+    const stale = auditSourceCurrencyProblems(git, tmp, selected.sourcePath, assessment);
+    if (stale.length) assessment = staleAuditDecision(assessment, stale, name, auditMode);
+    if (!assessment) return null;
   }
   if (assessment.verified) {
     pinCheckoutToAudit(git, tmp, assessment);
@@ -642,7 +685,12 @@ function resolveStorePackage(root, requestedName) {
     throw new Error('catalog source.path must be a confined relative package directory');
   }
   if (entry.audit?.record !== `audits/${entry.name}.json`) throw new Error('invalid catalog audit record path');
-  return { name: entry.name, sourcePath, auditRecord: entry.audit.record };
+  // An attestation's evidence lives beside its record. Only a well-formed, non-sentinel SHA names a
+  // directory, so the pattern handed to sparse-checkout is always a fixed, confined path.
+  const auditSha = entry.audit?.sourceSha;
+  const evidenceDir = /^[0-9a-f]{40}$/.test(String(auditSha)) && auditSha !== '0'.repeat(40)
+    ? `${auditEvidenceDirectory(entry.name, auditSha)}/` : null;
+  return { name: entry.name, sourcePath, auditRecord: entry.audit.record, evidenceDir };
 }
 
 /**
@@ -671,8 +719,9 @@ function installPackage(name, opts, seen) {
     console.log(C.dim(`fetching ${name} from ${repo}#${ref} …`));
     git(['clone', '--depth', '1', '--filter=blob:none', '--sparse', '-b', ref, repo, tmp], true);
     const selected = resolveStorePackage(tmp, name);
-    git(['-C', tmp, 'sparse-checkout', 'set', '--no-cone', 'marketplace.json', selected.auditRecord, selected.sourcePath], true);
-    const assessment = acceptAuditAssessment(git, tmp, selected.name, ref, auditMode);
+    git(['-C', tmp, 'sparse-checkout', 'set', '--no-cone', 'marketplace.json', selected.auditRecord, selected.sourcePath,
+      ...(selected.evidenceDir ? [selected.evidenceDir] : [])], true);
+    const assessment = acceptAuditAssessment(git, tmp, selected, ref, auditMode);
     if (!assessment) return 1;
     const src = path.join(tmp, selected.sourcePath);
     if (fs.existsSync(src)) {

@@ -546,9 +546,24 @@ Every official `marketplace.json` entry must bind an immutable record:
 
 The record binds the exact app name, semantic version, and source SHA under profile version 1.
 Its fixed controls are `manifest`, `authz`, `rls`, `dependencies`, `installLifecycle`, and
-`surface`; a passed record requires all six to be `passed` plus at least one named lowercase
-SHA-256 evidence digest. Extra fields, missing/unsafe record paths, malformed profiles, and any
-catalog/record binding mismatch block installation in every mode.
+`surface`. A passed or failed record names exactly seven evidence documents: the six controls plus
+`goldenPath`. A pending record names none. Extra fields, missing/unsafe record paths, malformed
+profiles, and any catalog/record binding mismatch block installation in every mode.
+
+Each evidence document is canonical JSON stored in the store repository at
+`audits/evidence/<app>/<sourceSha>/<name>.json`. It has sorted keys and no timestamps. The
+installer sparse-checks-out that directory and re-hashes every document against the record's
+`sha256`. It also checks that each document names this app, version, source SHA and package tree,
+and that the record's control statuses match the documents. A changed or missing evidence byte
+blocks installation in every mode. The store's `scripts/security/run-package-audit.mjs` writes
+these documents and reproduces them with `--verify`.
+
+A passed record is current only while the package tree at the catalog ref equals the tree at
+`sourceSha`. The installer compares the two, fetching `sourceSha` when its shallow clone lacks it.
+In `enforce` mode it refuses an install when the source changed after the audit, when a version
+bump was made without a re-audit, or when the store cannot serve the audited commit. The last
+case covers a single-commit public snapshot. Each refusal reads "re-audit required". In
+`compatible` mode the same record installs the catalog ref with **NOT AUDIT-VERIFIED** and no pin.
 
 `OSHAL_PACKAGE_AUDIT_MODE=compatible` is the rollout default. It may install a structurally valid
 `pending` or `failed` record from the mutable catalog ref, but prints **NOT AUDIT-VERIFIED**, grants

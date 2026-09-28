@@ -5,10 +5,12 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | APP-02: implement the checkout-independent package-audit profile, safe catalog-record loader, staged install assessment, and native-installer CLI.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Evidence contract (backlog #33, mirrors the store validator): a passed or failed record names exactly the seven evidence documents (six controls plus goldenPath) and a pending one names none; the loader re-hashes every document from audits/evidence/<app>/<sourceSha>/<name>.json and checks it agrees with the record, so a changed digest or a changed evidence byte is refused in every mode instead of being trusted. Adds sourceCurrencyProblems: the installer compares the package tree at the catalog ref with the tree at sourceSha, because a source change after an audit used to install the older audited commit silently. Profile version stays 1.
  */
 
 'use strict';
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
@@ -24,9 +26,16 @@ const PACKAGE_AUDIT_CONTROLS = Object.freeze([
   'installLifecycle',
   'surface',
 ]);
+/** The seven evidence documents an attestation carries: one per control plus the golden path. */
+const PACKAGE_AUDIT_EVIDENCE_NAMES = Object.freeze([...PACKAGE_AUDIT_CONTROLS, 'goldenPath']);
 const RECORD_FIELDS = Object.freeze([
   'profileVersion', 'app', 'version', 'sourceSha', 'status', 'auditedAt', 'controls', 'evidence',
 ]);
+const EVIDENCE_DOCUMENT_FIELDS = Object.freeze([
+  'profileVersion', 'app', 'version', 'sourceSha', 'sourcePath', 'packageTree', 'control', 'result', 'checks',
+]);
+const EVIDENCE_RESULTS = new Set(['passed', 'failed']);
+const MAX_EVIDENCE_BYTES = 1024 * 1024;
 const RECORD_STATUSES = new Set(['pending', 'passed', 'failed']);
 const CONTROL_STATUSES = new Set(['pending', 'passed', 'failed']);
 const SHA1 = /^[0-9a-f]{40}$/;
@@ -117,15 +126,19 @@ function controlProblems(record) {
   return problems;
 }
 
-/** @description Validate evidence shape, digest format, uniqueness, and passed-record presence. */
+/** @description Validate evidence shape, digest format, uniqueness, and the exact seven-document set. */
 function recordEvidenceProblems(record) {
   if (!Array.isArray(record.evidence)) return ['evidence must be an array'];
   const problems = [];
   record.evidence.forEach((item, index) => problems.push(...evidenceProblems(item, index)));
   const names = record.evidence.map((item) => item?.name).filter((name) => typeof name === 'string');
   if (new Set(names).size !== names.length) problems.push('evidence names must be unique');
-  if (record.status === 'passed' && record.evidence.length === 0) {
-    problems.push('passed audit requires at least one content-addressed evidence item');
+  if (record.status === 'pending' && record.evidence.length) problems.push('pending audit evidence must be empty');
+  if (record.status === 'passed' || record.status === 'failed') {
+    const missing = PACKAGE_AUDIT_EVIDENCE_NAMES.filter((name) => !names.includes(name));
+    const extra = names.filter((name) => !PACKAGE_AUDIT_EVIDENCE_NAMES.includes(name));
+    if (missing.length) problems.push(`${record.status} audit evidence is missing ${missing.join(', ')}`);
+    if (extra.length) problems.push(`${record.status} audit evidence names unsupported item(s) ${extra.join(', ')}`);
   }
   return problems;
 }
@@ -203,6 +216,162 @@ function assessPackageAuditForInstall(entry, record, modeValue, extraStructuralP
   };
 }
 
+/**
+ * @description Serialize a value as canonical audit JSON (keys sorted at every depth, two-space
+ * indentation, one trailing newline) - the exact bytes the store's audit runner writes.
+ * @param {unknown} value - JSON-compatible value.
+ * @returns {string} Canonical text.
+ */
+function canonicalAuditJson(value) {
+  const sortDeep = (item) => {
+    if (Array.isArray(item)) return item.map(sortDeep);
+    if (!item || typeof item !== 'object') return item;
+    return Object.fromEntries(Object.keys(item).sort().map((key) => [key, sortDeep(item[key])]));
+  };
+  return `${JSON.stringify(sortDeep(value), null, 2)}\n`;
+}
+
+/**
+ * @description SHA-256 of evidence text after folding CRLF to LF; canonical JSON holds no carriage
+ * return, so the fold only undoes a Windows checkout's line-ending conversion.
+ * @param {string} text - Evidence file text.
+ * @returns {string} Lowercase hex digest.
+ */
+function auditEvidenceDigest(text) {
+  return crypto.createHash('sha256').update(String(text).replace(/\r\n/g, '\n'), 'utf8').digest('hex');
+}
+
+/**
+ * @description Repository-relative directory holding one attestation's evidence documents.
+ * @param {string} app - Package slug.
+ * @param {string} sourceSha - Audited commit.
+ * @returns {string} POSIX directory path.
+ */
+function auditEvidenceDirectory(app, sourceSha) {
+  return `audits/evidence/${app}/${sourceSha}`;
+}
+
+/** @description The record's control statuses must be exactly what the evidence says. */
+function evidenceAgreementProblems(document, name, record) {
+  if (!EVIDENCE_RESULTS.has(document.result)) return [];
+  if (name === 'goldenPath') {
+    return document.result !== 'passed' && record.controls?.authz === 'passed'
+      ? ['controls.authz=passed requires a passed goldenPath evidence document'] : [];
+  }
+  return record.controls?.[name] === document.result
+    ? [] : [`controls.${name}=${record.controls?.[name]} disagrees with evidence ${name} (${document.result})`];
+}
+
+/** @description Check one parsed evidence document against its record and catalog entry. */
+function evidenceDocumentProblems(document, name, record, entry) {
+  const label = `evidence ${name}`;
+  const problems = exactKeyProblems(document, EVIDENCE_DOCUMENT_FIELDS, label);
+  if (!document || typeof document !== 'object' || Array.isArray(document)) return problems;
+  if (document.profileVersion !== PACKAGE_AUDIT_PROFILE_VERSION) problems.push(`${label} profileVersion must equal 1`);
+  for (const key of ['app', 'version', 'sourceSha']) {
+    if (document[key] !== record[key]) problems.push(`${label} ${key} does not match the audit record`);
+  }
+  if (document.sourcePath !== entry?.source?.path) problems.push(`${label} sourcePath does not match catalog source.path`);
+  if (typeof document.packageTree !== 'string' || !SHA1.test(document.packageTree)) problems.push(`${label} packageTree must be a Git tree id`);
+  if (document.control !== name) problems.push(`${label} control must equal ${name}`);
+  if (!EVIDENCE_RESULTS.has(document.result)) problems.push(`${label} result must be passed or failed`);
+  const checks = Array.isArray(document.checks) ? document.checks : [];
+  if (!checks.length || checks.some((check) => typeof check?.name !== 'string' || !EVIDENCE_RESULTS.has(check?.result))) {
+    problems.push(`${label} checks must be a non-empty list of named passed/failed checks`);
+  } else if (document.result !== (checks.every((check) => check.result === 'passed') ? 'passed' : 'failed')) {
+    problems.push(`${label} result disagrees with its checks`);
+  }
+  return [...problems, ...evidenceAgreementProblems(document, name, record)];
+}
+
+/** @description Reject a symlinked or non-directory component on the fixed evidence path. */
+function assertEvidenceDirectories(root, app, sourceSha) {
+  let current = root;
+  for (const part of ['audits', 'evidence', app, sourceSha]) {
+    current = path.join(current, part);
+    const stat = fs.lstatSync(current);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`${path.relative(root, current)} must be a regular directory`);
+  }
+}
+
+/** @description Read, re-hash and parse one named evidence document; returns problems or the document. */
+function readEvidenceDocument(root, record, item) {
+  const relative = `${auditEvidenceDirectory(record.app, record.sourceSha)}/${item.name}.json`;
+  let text;
+  try {
+    text = readRegularFile(path.join(root, ...relative.split('/')), MAX_EVIDENCE_BYTES, relative);
+  } catch (error) {
+    return { problems: [`evidence ${item.name}: ${error.code === 'ENOENT' ? `${relative} is missing` : error.message}`] };
+  }
+  if (auditEvidenceDigest(text) !== item.sha256) {
+    return { problems: [`evidence ${item.name} bytes do not match the recorded sha256; re-audit required`] };
+  }
+  let document;
+  try { document = JSON.parse(text); } catch (error) {
+    return { problems: [`evidence ${item.name} is not JSON: ${error.message}`] };
+  }
+  const canonical = text.replace(/\r\n/g, '\n') === canonicalAuditJson(document);
+  return { document, problems: canonical ? [] : [`evidence ${item.name} is not canonical audit JSON`] };
+}
+
+/**
+ * @description Re-hash and read every evidence document a passed/failed record names. A missing,
+ * changed, non-canonical or contradicting document is a structural problem: the attestation no
+ * longer proves what it claims, so no mode may trust it.
+ * @param {string} root - Store checkout root (the evidence directory is sparse-checked-out).
+ * @param {object} entry - Catalog entry.
+ * @param {object} record - Parsed audit record.
+ * @returns {{problems: string[], packageTrees: string[]}} Problems plus the trees the evidence describes.
+ */
+function packageAuditEvidenceProblems(root, entry, record) {
+  if (!record || (record.status !== 'passed' && record.status !== 'failed') || !Array.isArray(record.evidence)) {
+    return { problems: [], packageTrees: [] };
+  }
+  if (!SLUG.test(String(record.app)) || !SHA1.test(String(record.sourceSha))) {
+    return { problems: ['evidence cannot be located without a valid app and sourceSha'], packageTrees: [] };
+  }
+  try {
+    assertEvidenceDirectories(root, record.app, record.sourceSha);
+  } catch (error) {
+    const directory = auditEvidenceDirectory(record.app, record.sourceSha);
+    return { problems: [`evidence directory ${directory} is unavailable: ${error.code === 'ENOENT' ? 'missing' : error.message}`], packageTrees: [] };
+  }
+  const problems = [];
+  const trees = new Set();
+  for (const item of record.evidence) {
+    if (!PACKAGE_AUDIT_EVIDENCE_NAMES.includes(item?.name)) continue;
+    const read = readEvidenceDocument(root, record, item);
+    problems.push(...read.problems);
+    if (!read.document) continue;
+    problems.push(...evidenceDocumentProblems(read.document, item.name, record, entry));
+    trees.add(read.document.packageTree);
+  }
+  return { problems: [...new Set(problems)], packageTrees: [...trees] };
+}
+
+/**
+ * @description Decide whether an audited attestation still describes the source a catalog ref would
+ * install. The package tree at the catalog ref must be the tree at sourceSha, and the evidence must
+ * describe exactly that tree; otherwise the source (or its version) changed without a re-audit.
+ * @param {{sourceSha:string, sourcePath:string, catalogTree:string|null, auditedTree:string|null, evidenceTrees:string[], fetchError?:string}} input
+ *   Tree ids read from Git by the installer, plus the trees the evidence documents name.
+ * @returns {string[]} Currency problems; empty when the attestation is current.
+ */
+function sourceCurrencyProblems(input) {
+  const { sourceSha, sourcePath, catalogTree, auditedTree, evidenceTrees = [], fetchError } = input;
+  if (fetchError || !auditedTree) {
+    return [`audited source ${sourceSha} (${sourcePath}) cannot be read from this store${fetchError ? `: ${fetchError}` : ''}; re-audit against this store required`];
+  }
+  const problems = [];
+  if (!catalogTree || catalogTree !== auditedTree) {
+    problems.push(`package source ${sourcePath} changed since the audit (catalog tree ${catalogTree || 'missing'}, audited tree ${auditedTree}); re-audit required`);
+  }
+  if (evidenceTrees.length !== 1 || evidenceTrees[0] !== auditedTree) {
+    problems.push('evidence does not describe the audited source tree; re-audit required');
+  }
+  return problems;
+}
+
 /** @description Read a bounded regular file, rejecting symlinks and non-files before parsing. */
 function readRegularFile(filePath, maxBytes, label) {
   const stat = fs.lstatSync(filePath);
@@ -252,7 +421,11 @@ function loadPackageAuditAssessment(rootValue, app, modeValue) {
   const canonicalProblems = normalizedRecordSource === `${JSON.stringify(record, null, 2)}\n`
     ? []
     : ['audit record is not canonical two-space JSON'];
-  return { entry, record, recordPath, ...assessPackageAuditForInstall(entry, record, mode, canonicalProblems) };
+  const evidence = packageAuditEvidenceProblems(root, entry, record);
+  return {
+    entry, record, recordPath, evidenceTrees: evidence.packageTrees,
+    ...assessPackageAuditForInstall(entry, record, mode, [...canonicalProblems, ...evidence.problems]),
+  };
 }
 
 /** @description Parse the native-installer CLI without accepting ambiguous positional arguments. */
@@ -306,13 +479,18 @@ if (require.main === module) {
 
 module.exports = {
   PACKAGE_AUDIT_CONTROLS,
+  PACKAGE_AUDIT_EVIDENCE_NAMES,
   PACKAGE_AUDIT_MODE_COMPATIBLE,
   PACKAGE_AUDIT_MODE_ENFORCE,
   PACKAGE_AUDIT_PROFILE_VERSION,
   UNAUDITED_SOURCE_SHA,
   assessPackageAuditForInstall,
+  auditEvidenceDigest,
+  auditEvidenceDirectory,
+  canonicalAuditJson,
   loadPackageAuditAssessment,
   packageAuditBindingProblems,
   packageAuditRecordProblems,
   resolvePackageAuditMode,
+  sourceCurrencyProblems,
 };
