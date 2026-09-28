@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Read actor-bound previews before approval and writer-lock acquisition.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | ADR-157: an assignment may carry `grantSource`, the provenance of a kernel-written grant (today only `service-activation:<id>`). `source` stays the app's installation source because matchingAssignments binds on it; the tag is what lets a deactivation revoke exactly the assignments its activation created.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | AUTH-07: durable catalog snapshots keyed by catalog revision (so an upgrade can classify the catalog its assignments were granted under after the old files are gone), reviewable catalog migration records in the locked policy state, a transaction port that records the activating catalog, and a `catalog-migration` audit event carrying who, when, from/to revision and the change summary.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Keep the approval reference a verified apply named: on the stored catalog-migration approval and on the audit event, so a self-approved change stays distinguishable from one an independent approver signed.
  */
 import type { AuthorizationActor, AuthorizationCatalog, AuthorizationCatalogChange, AuthorizationChange, AuthorizationPreview, AuthorizationReceipt } from '@/shared/application-authorization';
 export interface AuthorizationAssignment {
@@ -43,7 +44,8 @@ export interface StoredCatalogMigration {
   /** Roles sensitive in either catalog; decide whether applying needs an approval reference. */
   sensitiveRoles: string[];
   createdAt: string; expiresAt: string;
-  approval?: { actor: { sub: string; issuer: string }; at: string; idempotencyKey: string; revision: number };
+  /** `reference` is the approval reference the verifier accepted, present only when one was required. */
+  approval?: { actor: { sub: string; issuer: string }; at: string; idempotencyKey: string; revision: number; reference?: string };
   appliedAt?: string; appliedRevision?: number;
 }
 /** What one catalog migration did, recorded in the applied-change history. */
@@ -56,6 +58,8 @@ export interface AuthorizationAudit {
   id: string; actor: Pick<AuthorizationActor, 'sub' | 'issuer'>; at: string;
   change: Omit<AuthorizationChange, 'action'> & { action: AuthorizationChange['action'] | 'catalog-migration' };
   revision: number; previewId: string; migration?: AuthorizationCatalogMigrationAudit;
+  /** The verified approval reference, when the change needed one. Stored; not part of the redacted history projection. */
+  approvalReference?: string;
 }
 export interface AuthorizationTransaction {
   state: AuthorizationState; audit(event: AuthorizationAudit): void;

@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Expose the registered application names for read-only review surfaces. effective() already answers one app at a time, but a joined access review has to ask about every registered app INCLUDING the ones the subject is denied — which is the half of the answer ownCatalog() cannot give, because it returns only what is already permitted.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Add packageGrantPlan: one application plus the applications it declares it cannot run without, each classified into the ONE /access change it needs. Read-only by construction — it opens no transaction, writes no assignment and bumps no revision — and every application in the set is gated on the CALLER'S own management read, so a prerequisite the caller cannot administer reports its name and nothing else.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | AUTH-07 reviewed catalog migration. validateRegistration classifies a changed catalog against the recorded catalog its assignments were granted under instead of refusing every change: a non-widening revision passes, and registerApp re-stamps the assignments in the same policy transaction that records the new catalog and writes the audit event. A widening or breaking revision still refuses, now with one stored review (previewId) that an application-wide administrator lists and approves through catalogMigrations/applyCatalogMigration; the next activation of exactly that revision applies it. Grants the new catalog does not define are removed, never carried, so they cannot revive.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Record the approval reference a verified apply named: on the audit event of an access change that required approval, and on a catalog-migration approval (which the activation audit event then carries). Before this no approval could be verified at all, so there was nothing to record.
  */
 /** ADR-149 authoritative management and execution service. No swarm-admin business bypass. */
 import { randomUUID } from 'node:crypto';
@@ -166,18 +167,21 @@ export class ApplicationAuthorizationService implements ApplicationAuthorization
     if (!review) throw new ApplicationAuthorizationError(404, 'authorization_preview_not_found');
     const rows = (await this.store.read()).assignments.filter(row => review.assignmentIds.includes(row.id));
     requireMigrationAuthority(current, review, rows);
-    if (!review.approval && catalogMigrationNeedsApproval(review, rows, current) && (!input.approvalReference
+    const needsApproval = !review.approval && catalogMigrationNeedsApproval(review, rows, current);
+    if (needsApproval && (!input.approvalReference
       || !this.options.verifyCatalogMigrationApproval
       || !await this.options.verifyCatalogMigrationApproval(current, publicCatalogMigration(review, this.now()), input.approvalReference))) {
       throw new ApplicationAuthorizationError(403, 'authorization_approval_required');
     }
     // Approval and account lookups must not hold a pool client or the policy writer lock.
     const fresh = await this.currentActor(actor);
-    const receipt = await this.store.transaction(async ({ state }) => this.approveCatalogMigration(fresh, input, state));
+    const reference = needsApproval ? input.approvalReference : undefined;
+    const receipt = await this.store.transaction(async ({ state }) => this.approveCatalogMigration(fresh, input, state, reference));
     logger.info({ app: receipt.app, previewId: receipt.previewId, toRevision: receipt.toRevision }, 'Authorization catalog migration approved');
     return receipt;
   }
-  private approveCatalogMigration(current: AuthorizationActor, input: AuthorizationApplyInput, state: AuthorizationState): AuthorizationCatalogMigrationReceipt {
+  private approveCatalogMigration(current: AuthorizationActor, input: AuthorizationApplyInput, state: AuthorizationState,
+    reference: string | undefined): AuthorizationCatalogMigrationReceipt {
     const actor = this.managementActor(current, state); const now = this.now();
     const review = state.migrations?.find(row => row.id === input.previewId);
     if (!review) throw new ApplicationAuthorizationError(404, 'authorization_preview_not_found');
@@ -193,7 +197,8 @@ export class ApplicationAuthorizationService implements ApplicationAuthorization
     if (rows.some(row => row.source !== review.source) || rows.map(row => row.id).sort().join('\0') !== review.assignmentIds.join('\0')) {
       throw new ApplicationAuthorizationError(409, 'authorization_revision_conflict');
     }
-    review.approval = { actor: { sub: actor.sub, issuer: actor.issuer }, at: new Date(now).toISOString(), idempotencyKey: input.idempotencyKey, revision: state.revision };
+    review.approval = { actor: { sub: actor.sub, issuer: actor.issuer }, at: new Date(now).toISOString(), idempotencyKey: input.idempotencyKey,
+      revision: state.revision, ...(reference ? { reference } : {}) };
     review.expiresAt = new Date(now + CATALOG_MIGRATION_REVIEW_TTL_MS).toISOString();
     return migrationReceipt(review);
   }
@@ -426,7 +431,8 @@ export class ApplicationAuthorizationService implements ApplicationAuthorization
         catalogRevision: app.catalogRevision, targetSub: change.targetSub, targetIssuer: change.targetIssuer, tenantId: change.tenantId,
         group: change.group, role: change.role, permission: change.permission, deny: change.action === 'deny', expiresAt: change.expiresAt });
       state.revision += 1; const auditId = randomUUID();
-      audit({ id: auditId, actor: { sub: actor.sub, issuer: actor.issuer }, at: new Date(this.now()).toISOString(), change, revision: state.revision, previewId: preview.previewId });
+      audit({ id: auditId, actor: { sub: actor.sub, issuer: actor.issuer }, at: new Date(this.now()).toISOString(), change, revision: state.revision, previewId: preview.previewId,
+        ...(preview.requiresApproval && input.approvalReference ? { approvalReference: input.approvalReference } : {}) });
       const receipt: AuthorizationReceipt = { previewId: preview.previewId, revision: state.revision, auditId, applied: true };
       preview.receipt = receipt; preview.idempotencyKey = input.idempotencyKey; return receipt;
   }
