@@ -5,11 +5,12 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Strategy Lab sim (ADR-092): config normalization, tearsheet metric math, and the rotation walk's core invariants (buys the leader, protective stop fires, no NaN poisoning, resumable state) on synthetic bars — no network, no DB.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-052 addendum knobs: normalizeConfig keeps an absent knob null (inherit) and clamps a set one; an UNARMED walk writes no new state field (existing runs replay unchanged); marketGapFilterPct holds a rotation rebalance on a gapped-down SPY open and defers it to the next unheld session, fails OPEN with no opens, and holds the ensemble scan's buys; exitPlanSessions sells a lot on the plan clock and a rotation re-selection re-underwrites it; blends zero both knobs.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-052 addendum P6 knob yieldSleeveFloatPct: normalizeConfig keeps an absent knob null (inherit), clamps a set one to 95 and keeps an explicit 0; an armed walk credits the cash above the float with the fund's close-to-close return (its equity exceeds the unarmed twin's by exactly the credited dollars) while the twin writes no new field; the fund is never ranked or bought while armed, even when it leads the universe; nothing accrues without a fund price; blends zero the knob.
  */
 
 import { describe, expect, it } from 'vitest';
 import {
-  LAB_START_CASH, metricsFor, normalizeConfig, policyFor, stepDay, sessionGapHeld, blendPartConfig,
+  LAB_START_CASH, metricsFor, normalizeConfig, policyFor, stepDay, sessionGapHeld, blendPartConfig, accrueSleeveYield,
   type EquityPoint, type StrategyConfig, type WalkState,
 } from '../../src/app/trading-strategy-lab-sim';
 
@@ -224,5 +225,56 @@ describe('ADR-052 addendum knobs — marketGapFilterPct and exitPlanSessions', (
   it('blends zero both knobs rather than silently ignoring them', () => {
     const part = blendPartConfig({ name: 'x', weightPct: 50, config: rotationCfg({ marketGapFilterPct: 2, exitPlanSessions: 5 }) });
     expect(part).toMatchObject({ marketGapFilterPct: 0, exitPlanSessions: 0, earningsGateDays: 0, corePct: 0 });
+  });
+});
+
+describe('ADR-052 addendum P6 — yieldSleeveFloatPct (the idle-cash yield sleeve)', () => {
+  it('normalizeConfig keeps an absent knob null (inherit), clamps a set one and keeps an explicit 0; blends zero it', () => {
+    expect(normalizeConfig({}).yieldSleeveFloatPct).toBeNull();
+    expect(normalizeConfig({ yieldSleeveFloatPct: 400 }).yieldSleeveFloatPct).toBe(95);
+    expect(normalizeConfig({ yieldSleeveFloatPct: 0 }).yieldSleeveFloatPct).toBe(0);
+    expect(normalizeConfig({ yieldSleeveFloatPct: 'junk' }).yieldSleeveFloatPct).toBeNull();
+    expect(blendPartConfig({ name: 'x', weightPct: 50, config: rotationCfg({ yieldSleeveFloatPct: 5 }) }).yieldSleeveFloatPct).toBe(0);
+  });
+
+  it('an armed walk credits the cash above the float with the fund\'s return; the unarmed twin earns nothing and writes no new field', () => {
+    const a = makeAligned(90, { UPP: 0.004, DWN: -0.003, SGOV: 0.0002 });
+    const armed = rotationCfg({ cadenceDays: 63, yieldSleeveFloatPct: 5 }); // one rebalance, then the book sits mostly in cash
+    const off = rotationCfg({ cadenceDays: 63 });
+    const s1 = freshState(a.dates[64]);
+    const s0 = freshState(a.dates[64]);
+    let e1 = 0; let e0 = 0;
+    for (let t = 65; t < 90; t++) { e1 = stepDay(a, armed, policyFor(armed), s1, t); e0 = stepDay(a, off, policyFor(off), s0, t); }
+    expect(s1.trades, 'the credit changes no decision: both walks trade alike').toBe(s0.trades);
+    expect(s1.sleeveParked, 'the cash above the 5% float is parked').toBeGreaterThan(0.9 * LAB_START_CASH);
+    expect(s1.sleeveYieldUsd).toBeGreaterThan(300);
+    expect(e1 - e0).toBeCloseTo(s1.sleeveYieldUsd as number, 6);
+    expect(Object.keys(s0).sort()).toEqual(Object.keys(freshState()).sort());
+  });
+
+  it('the fund is never ranked or bought while the sleeve is armed, even when it leads the universe', () => {
+    const a = makeAligned(90, { UPP: 0.001, SGOV: 0.004 });
+    const cfg = (knob: number | null) => rotationCfg({ universe: ['UPP', 'SGOV'], yieldSleeveFloatPct: knob });
+    const armed = freshState(a.dates[64]);
+    stepDay(a, cfg(5), policyFor(cfg(5)), armed, 65);
+    expect(Object.keys(armed.lots)).toEqual(['UPP']);
+    const twin = freshState(a.dates[64]);
+    stepDay(a, cfg(null), policyFor(cfg(null)), twin, 65);
+    expect(Object.keys(twin.lots), 'unarmed, the fund is just another name the ranker can pick').toEqual(['SGOV']);
+  });
+
+  it('accrues nothing without a fund price on both sessions, or with nothing parked', () => {
+    const a = makeAligned(90, { UPP: 0.004 });
+    const cfg = rotationCfg({ yieldSleeveFloatPct: 5 });
+    const st = { ...freshState(a.dates[64]), sleeveParked: 50_000 };
+    accrueSleeveYield(a, cfg, st, 70);
+    expect(st.cash).toBe(LAB_START_CASH);
+    expect(st.sleeveYieldUsd).toBeUndefined();
+    const b = makeAligned(90, { UPP: 0.004, SGOV: 0.001 });
+    const empty = freshState(b.dates[64]);
+    accrueSleeveYield(b, cfg, empty, 70);
+    expect(empty.cash).toBe(LAB_START_CASH);
+    accrueSleeveYield(b, cfg, st, 70);
+    expect(st.cash).toBeCloseTo(LAB_START_CASH + 50, 6); // 50,000 parked x the fund's 0.1% session return
   });
 });

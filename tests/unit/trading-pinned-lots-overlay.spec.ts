@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-138 D3 pure guards: the overlay math (no pin, partial pin scales pro rata, full pin removes the symbol, over-pin never opens a short), the rules normalizer (pct XOR price per leg; stop XOR trailing; clamps), and the `lot-` request-id convention; plus SOURCE guards that the dispatcher applies the overlay BEFORE positions feed any decision and that freeStaleSells skips lot orders, and that the engine maps extended_hours for LIMIT orders only.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 moved the cost-basis attachment up into runAutopilot, so the SOURCE guard that the overlay feeds every decision now has two arrays to distinguish: `overlaid` (the pinned-lot subtraction) and the marked array withEngineCostBasis returns from it. The assertions follow that split — the overlay must still be applied before any leg reads positions, AND the mark must be applied to the overlaid array rather than the raw broker read, so a pinned lot can never be accounted for as an engine fill.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-052 addendum P6: the marked array is now `marked`, and what every leg reads is `positions = sleevePositions(marked, parity.yieldSleeve)` — the same array while the yield sleeve is off, the armed fund's holding removed while it is on. The guard follows the chain: the overlay feeds the mark, the mark feeds the view, and every consumer reads the view.
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
@@ -64,12 +65,15 @@ describe('source guards — the hooks exist where they must', () => {
     const overlay = dispatch.indexOf('const overlaid = subtractPinnedLots(positionsRead.positions, pinnedRead.m);');
     expect(overlay).toBeGreaterThan(0);
     expect(dispatch.slice(0, overlay)).toMatch(/if \(!pinnedRead\.ok\) \{[\s\S]{0,400}return \{ scanned: 0/);
-    // ADR-159 threads the overlaid array through the cost-basis mark; `positions` — what every leg
-    // reads — is that marked array, so the overlay still precedes every consumer.
-    const marked = dispatch.indexOf('const positions = await withEngineCostBasis(ctx, sub, book, overlaid);');
+    // ADR-159 threads the overlaid array through the cost-basis mark, and `positions` — what every leg
+    // reads — is derived from that marked array (ADR-052 P6: the armed yield sleeve's holding removed),
+    // so the overlay still precedes every consumer.
+    const marked = dispatch.indexOf('const marked = await withEngineCostBasis(ctx, sub, book, overlaid);');
     expect(marked, 'the unmanaged mark must be applied to the OVERLAID array').toBeGreaterThan(overlay);
+    const view = dispatch.indexOf('const positions = sleevePositions(marked, parity.yieldSleeve);');
+    expect(view, 'every leg must read the view derived from the MARKED array').toBeGreaterThan(marked);
     for (const consumer of ['ensureCore(ctx, sub, book, account, positions', 'computeExits(ctx, sub, book, positions', 'rotateSleeve(ctx, sub, book, account, positions']) {
-      expect(dispatch.indexOf(consumer), `${consumer} must run AFTER the overlay`).toBeGreaterThan(marked);
+      expect(dispatch.indexOf(consumer), `${consumer} must run AFTER the overlay`).toBeGreaterThan(view);
     }
     expect(dispatch).not.toMatch(/const positions = positionsRead\.positions;/);
     expect(dispatch).not.toMatch(/const overlaid = positionsRead\.positions;/);

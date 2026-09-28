@@ -17,6 +17,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Comment-only: rotationConfig's section banner opened with `/*` so its @description/@param/@returns tags were invisible to JSDoc tooling; opened as `/**`. No code line changed.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 — both rotation paths withhold every decision for a held long the engine cannot account for from its own filled orders: it is not rotated out, not trimmed to target weight and not topped up. This is the path that actually traded the operator's hand-bought shares — rotation OWNS the sleeve wherever TRADING_SLEEVE_ROTATION is on, and a name it no longer targets is sold in full. Withholding the drop-out sell deliberately leaves the name in `heldNow`, so the buy leg still sees the shares and cannot mistake it for a fresh entry. The withheld BUY notional is reserved out of `cashAvail`, so withholding can only ever REMOVE orders from the plan — no other name's order can grow because of it.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-052 addendum (paper-to-live parity) — both rotation paths take the fire's optional ParityControls as a trailing argument; null/absent (every fire while both features are off) is the pre-existing path. A blocked market-wide gap verdict holds the WHOLE rebalance before its first order — a rebalance is funded by its drop-out sells, and selling into a gap to buy nothing is the worst trade it can make — and records the leaderboard's not-yet-held targets as 'market-gap' counterfactuals; the caller keeps the day's rotation slot open. Every placeManaged call carries the plan ledger, so a rotation buy stamps a FRESH plan at its own entry, a drop-out sell closes the plan with door 'rotation' and a trim leaves it open; a held leader the rebalance re-selected without buying has its open plan re-underwritten at its current mark.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-052 addendum P6 (idle-cash yield sleeve) — both rotation paths sell an armed sleeve FIRST: right before the existing settle wait, fundRotation (trading-dispatch-yield-sleeve.ts) sells the sleeve for what the buy loop will need beyond the opening cash and this rebalance's own drop-out and trim proceeds, so the unchanged wait and real-cash re-read then fund the buys, and capAccount's settled-cash clamp keeps a cash-type book from spending the unsettled proceeds. The positions arrive with the sleeve holding already removed (runAutopilot), so it is never dropped out, trimmed or counted as a slot. rotateBlendSleeve computes its buy order before the wait instead of after (it reads only the plan and the refusals). One statement each; off = no call.
  *
  * @module trading-dispatch-rotation
  */
@@ -35,6 +36,7 @@ import { placeManaged, bookBinding, capAccount, type RunOrder } from './trading-
 import { coreConfig, sizingPrice } from './trading-dispatch-core';
 import { marketGapHolds, freshTargets, type ParityControls } from './trading-dispatch-market-gate';
 import { reunderwritePlans, heldCandidates } from './trading-position-plans';
+import { fundRotation } from './trading-dispatch-yield-sleeve';
 import { createChildLogger } from '@/shared/logger';
 
 // Module name kept as the monolith's: the log stream is the watchdog/operator contract.
@@ -316,6 +318,13 @@ export async function rotateSleeve(
       indicators: { reason: 'rotation-trim', rank: cfg.rank, weighting: cfg.weighting }, price: px, source: 'gravity-rotation',
     }, orders, errors, 'rotation', parity?.plans);
   }
+  // ADR-052 addendum P6: an armed yield sleeve is sold FIRST for what the buys need beyond this rebalance's own proceeds.
+  if (parity?.yieldSleeve) {
+    await fundRotation(ctx, sub, book, parity.yieldSleeve, account, {
+      targets: buyTargets, goalOf, heldNow, dust, open: positions.filter((p) => p.qty > 0).length - sold.size, maxPositions: policy.maxPositions,
+      soldValue: currentSleeve.filter((p) => sold.has(p.symbol.toUpperCase())).reduce((s, p) => s + Math.max(0, p.marketValue), 0), skip: unaccounted,
+    }, orders, errors, 'rotation');
+  }
   // LEVERAGE-PROOF FUNDING: wait for the drop-out sells + trims above to actually SETTLE, then re-read the
   // REAL cash and fund buys ONLY from that — never spend anticipated proceeds. A rejected or slow sell then
   // just means less cash and fewer buys, NEVER an over-deploy. (Fixes the 2026-07-01 bug where a sell's
@@ -453,13 +462,20 @@ export async function rotateBlendSleeve(
       indicators: { reason: 'rotation-trim', rank: 'blend-multi' }, price: px, source: 'gravity-rotation',
     }, orders, errors, 'rotation', parity?.plans);
   }
+  const buyOrder = [...plan.goals.entries()].filter(([sym]) => !refused.has(sym.toUpperCase())).sort((x, y) => y[1].score - x[1].score);
+  // ADR-052 addendum P6: an armed yield sleeve is sold FIRST for what the buys need beyond this rebalance's own proceeds.
+  if (parity?.yieldSleeve) {
+    await fundRotation(ctx, sub, book, parity.yieldSleeve, account, {
+      targets: buyOrder.map(([sym]) => sym), goalOf: (sym) => plan.goals.get(sym)?.goal ?? 0, heldNow, dust, open: positions.filter((p) => p.qty > 0).length - sold.size,
+      maxPositions: policy.maxPositions, soldValue: currentSleeve.filter((p) => sold.has(p.symbol.toUpperCase())).reduce((s, p) => s + Math.max(0, p.marketValue), 0), skip: unaccounted,
+    }, orders, errors, 'blend-rotation');
+  }
   // LEVERAGE-PROOF FUNDING: wait for sells/trims to settle, re-read REAL cash, fund buys only from it.
   await new Promise((r) => setTimeout(r, 6000));
   const acctNow = capAccount((await getBrokerAdapter(mode, sub, bookBinding(book)).getAccount().catch(() => null)) ?? account, book);
   let cashAvail = Math.max(0, Number((acctNow && acctNow.cash) ?? account.cash) || 0);
   // 2) BUY every target BELOW its merged goal, strongest merged score first.
   let openCount = positions.filter((p) => p.qty > 0).length - sold.size;
-  const buyOrder = [...plan.goals.entries()].filter(([sym]) => !refused.has(sym.toUpperCase())).sort((x, y) => y[1].score - x[1].score);
   for (const [sym, g] of buyOrder) {
     if (openCount >= policy.maxPositions) break;
     const cur = heldNow.get(sym) ?? 0;

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the live-acceptance Test Lab cards: exactly one explicit-only card per registered case (so "Run live scenarios" never writes fixtures or spends a model turn), each naming the host command and its backlog entry, every attached suite on disk, the shared case modules shipped in the api image; the signed-in adapter binds the caller's cookie to every loopback call and the named statements to the request pool, maps an unavailable case to a gap, and the host-only cases (commerce, Jarvis cache) answer that gap without a single call.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The registry gains the trading-parity case.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
@@ -15,7 +16,7 @@ import type { AppContext } from '@/app/composition/app-context';
 describe('live-acceptance Test Lab cards', () => {
   it('registers one explicit-only card per case, with its host command and suites on disk', () => {
     expect(LIVE_ACCEPTANCE_SCENARIOS).toHaveLength(LIVE_ACCEPTANCE_CASES.length);
-    expect(LIVE_ACCEPTANCE_CASES.map((c) => c.module.KEY)).toEqual(['response-renderer', 'congress', 'dev-workspace', 'floater', 'linkedin', 'commerce', 'lm-class-material', 'jarvis-cache']);
+    expect(LIVE_ACCEPTANCE_CASES.map((c) => c.module.KEY)).toEqual(['response-renderer', 'congress', 'dev-workspace', 'floater', 'linkedin', 'commerce', 'lm-class-material', 'jarvis-cache', 'trading-parity']);
     for (const scenario of LIVE_ACCEPTANCE_SCENARIOS) {
       const key = scenario.id.replace(/^live-acceptance-/, '');
       expect(SCENARIOS.filter((s) => s.id === scenario.id)).toEqual([scenario]);
