@@ -15,6 +15,109 @@
      matters — without it the surface would have no colors at all. -->
 <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
 <script src="/shared/ui/js/surface-theme.js"></script>
+<!-- ADR-164 D6 audience view kit: loaded right after the theme bootstrap so a shell's ?audience= request is decided before the page paints. -->
+<link rel="stylesheet" href="/shared/ui/css/app-view.css" />
+<script src="/shared/ui/js/app-view.js"></script>
+<script>
+/* Audience view (ADR-164 D6). Framed by a whole-portal shell with ?audience=company (Studio, Orbit, Commons) or
+   ?audience=family (Jarvis), this page paints an at-a-glance card of the live swarm the signed-in caller can see and
+   the bots waiting to be injected, instead of the full page. It reads only the two GETs the full page makes on load
+   (/api/swarm/apps?status=active and /api/swarm/apps/pending); a refused read is said in the card with no figure in
+   its place. Without an audience, with one this page does not provide, or on a core without the kit, the full page
+   below runs exactly as before. */
+(function () {
+  var A = window.AppView; if (!A) return;
+  var SUITE = { 'ai-finance': 'Finance', 'ai-engineering': 'Engineering', 'ai-creative': 'Creative & games', 'ai-productivity': 'Productivity',
+    'ai-home': 'Home & life', 'ai-knowledge': 'Knowledge & career', platform: 'Platform' };
+  var NO_SHELF = 'No shelf';
+  var LEDE = 'Bots described in plain language are packed and injected into the running swarm with no redeploy. This is what is live now and what is waiting to go in.';
+
+  /** @description The sentence for a refused read: what failed and why, never a figure. */
+  function refusal(status) {
+    if (status === 401) return 'You are not signed in (HTTP 401). Sign in, then open the Bot Forge again.';
+    if (status === 403) return 'This account is not allowed to read the live swarm (HTTP 403).';
+    if (status === 404) return 'The live swarm did not answer on this core (HTTP 404).';
+    if (status >= 500) return 'The live swarm failed to answer (HTTP ' + status + ').';
+    return 'The live swarm refused the read (HTTP ' + status + ').';
+  }
+
+  /** @description One of the page's own GETs; resolves { ok, body } or { ok: false, why } and never rejects. */
+  function read(url, valid) {
+    return fetch(url, { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' } }).then(function (r) {
+      if (!r.ok) return { ok: false, why: refusal(r.status) };
+      return r.json().then(function (body) {
+        return valid(body) ? { ok: true, body: body } : { ok: false, why: 'The live swarm answered in a shape this view cannot read.' };
+      }, function () { return { ok: false, why: 'The live swarm answered with something that is not JSON.' }; });
+    }, function () { return { ok: false, why: 'The live swarm could not be reached (network failure).' }; });
+  }
+  function isMap(v) { return !!v && typeof v === 'object' && !Array.isArray(v); }
+  function validApps(b) { return isMap(b) && Array.isArray(b.apps); }
+  function validPending(b) { return isMap(b) && Array.isArray(b.pending); }
+  /** @description A manifest count as the full page reads it: a missing count is zero. */
+  function n(v) { var x = Number(v); return v !== null && v !== undefined && isFinite(x) ? x : 0; }
+  function plural(count, word) { return A.num(count) + ' ' + word + (count === 1 ? '' : 's'); }
+  function label(a) { return String(a.displayName || a.name || 'Unnamed application'); }
+  function shelf(a) { return a.suite ? (SUITE[a.suite] || String(a.suite)) : NO_SHELF; }
+  function stamp(a) { var t = new Date(a.loadedAt).getTime(); return isFinite(t) ? t : 0; }
+
+  /** @description The glance figures: live applications, the bots and tools they declare, the newest injection, and the queue waiting to go live. */
+  function stats(apps, p) {
+    var bots = apps.reduce(function (s, a) { return s + n(a.botCount); }, 0), tools = apps.reduce(function (s, a) { return s + n(a.toolCount); }, 0);
+    var surfaces = apps.filter(function (a) { return a.hasSurface === true; }).length, newest = apps.slice().sort(function (x, y) { return stamp(y) - stamp(x); })[0];
+    var out = [
+      { id: 'live', label: 'Live applications', value: A.num(apps.length), hint: A.num(surfaces) + ' with a cockpit surface', tone: apps.length ? 'ok' : null },
+      { id: 'bots', label: 'Bots declared', value: A.num(bots), hint: 'Summed over live applications' },
+      { id: 'tools', label: 'Tools declared', value: A.num(tools), hint: 'Summed over live applications' },
+      { id: 'newest', label: 'Newest injection', value: newest ? A.when(newest.loadedAt) : 'None yet', hint: newest ? label(newest) : 'Nothing is live yet.' }
+    ];
+    if (p.ok) out.push({ id: 'pending', label: 'Ready to inject', value: A.num(p.body.pending.length), hint: 'Authored, not yet live', tone: p.body.pending.length ? 'warn' : null });
+    return out;
+  }
+
+  /** @description The manifests the Forge authored but has not injected, or the refusal said in their place. Paths stay out of the card. */
+  function pendingSection(p) {
+    var head = { id: 'pending', kind: 'list', title: 'Ready to inject' };
+    if (!p.ok) return Object.assign(head, { items: [], empty: 'Bots waiting to be injected could not be read. ' + p.why });
+    var list = p.body.pending.filter(isMap);
+    return Object.assign(head, { note: list.length > 6 ? 'Showing 6 of ' + A.num(list.length) + '.' : null, empty: 'Nothing is waiting to be injected.',
+      items: list.slice(0, 6).map(function (x) { return { title: label(x), text: String(x.description || 'Authored by the Forge, not yet live.'), badge: 'Not live', tone: 'warn' }; }) });
+  }
+
+  /** @description The applications most recently injected into the swarm, newest first. */
+  function newestSection(apps) {
+    var sorted = apps.slice().sort(function (x, y) { return stamp(y) - stamp(x); });
+    return { id: 'newest', kind: 'list', title: 'Newest in the swarm', wide: true, empty: 'No bots are live in the swarm yet.',
+      note: sorted.length > 6 ? 'Showing 6 of ' + A.num(sorted.length) + '.' : null,
+      items: sorted.slice(0, 6).map(function (a) {
+        return { title: label(a), text: a.description ? String(a.description) : null, badge: a.suite ? shelf(a) : null, tone: 'info',
+          meta: [plural(n(a.botCount), 'bot'), plural(n(a.toolCount), 'tool'), 'injected ' + A.when(a.loadedAt)].join(' · ') };
+      }) };
+  }
+
+  /** @description Live applications and their declared bots per catalog shelf, most applications first, unshelved last. */
+  function shelvesSection(apps) {
+    var by = {};
+    apps.forEach(function (a) { var k = shelf(a); by[k] = by[k] || { apps: 0, bots: 0 }; by[k].apps += 1; by[k].bots += n(a.botCount); });
+    var keys = Object.keys(by).sort(function (x, y) { return (x === NO_SHELF) - (y === NO_SHELF) || by[y].apps - by[x].apps || (x < y ? -1 : x > y ? 1 : 0); });
+    return { id: 'shelves', kind: 'table', title: 'Live applications by shelf', empty: 'No bots are live in the swarm yet.',
+      columns: ['Shelf', { label: 'Applications', align: 'right' }, { label: 'Bots', align: 'right' }],
+      rows: keys.map(function (k) { return [k, A.num(by[k].apps), A.num(by[k].bots)]; }) };
+  }
+
+  /** @description The card for both shells: figures from the two reads, or the refusal said with no figure. */
+  function card(ctx) {
+    var open = { label: 'Open Bot Forge', primary: true, onClick: function () { window.location.assign(window.location.pathname); } };
+    return Promise.all([read('/api/swarm/apps?status=active', validApps), read('/api/swarm/apps/pending', validPending)]).then(function (r) {
+      var s = r[0], p = r[1], head = { kicker: 'Live swarm injection', title: 'Bot Forge' };
+      if (!s.ok) return Object.assign(head, { lede: s.why, actions: [open, { label: 'Try again', onClick: function () { ctx.refresh(); } }], stats: [], sections: [] });
+      var apps = s.body.apps.filter(isMap);
+      return Object.assign(head, { lede: LEDE, actions: [open], stats: stats(apps, p), sections: [pendingSection(p), newestSection(apps), shelvesSection(apps)] });
+    });
+  }
+
+  A.boot({ app: 'codex-packer', escapeLabel: 'Open Bot Forge in the cockpit', audiences: { company: card, family: card } });
+})();
+</script>
 <style>
   /* Keep the surface's own short alias names, but DERIVE each from a framework theme token so all
      eleven themes work — not just the dark one the old literal hex happened to match. Status colors
@@ -284,8 +387,12 @@ document.getElementById('injectFile').addEventListener('change', async (ev) => {
   finally { ev.target.value = ''; }
 });
 
-refresh();
-setInterval(refresh, 15000); // pick up bots the Forge agent authors/injects mid-conversation
+// The full page starts only when no audience view is active (ADR-164 D6): without the kit, without ?audience=,
+// or with an audience this page does not provide, it runs exactly as before.
+if (!window.AppView || !AppView.active()) {
+  refresh();
+  setInterval(refresh, 15000); // pick up bots the Forge agent authors/injects mid-conversation
+}
 </script>
 
 <!--
@@ -313,6 +420,9 @@ function bridgeLog(level, message, context) {
   method.call(console, `[oshal-ui][forge-surface-bridge] ${message}`, context || {});
 }
 
+// The bridge wires up only when no audience view is active (ADR-164 D6): a framed card is not a packer surface,
+// so it neither renders relayed ops nor re-polls the trays. Without the kit or an audience it runs as before.
+if (!window.AppView || !AppView.active()) {
 // Own listener instead of bridge.attach(): the client returns WHY it did not handle a message, and an
 // op the Forge cannot honor must be visible in the console rather than silently dropped. (attach()
 // would also wire field_change auto-emit, which this surface has no bot-drivable field for.)
@@ -344,6 +454,7 @@ document.addEventListener('surface-bridge:custom', (event) => {
 // Exposed so the gallery's inject handler can emit `app-injected`, and for manual verification from
 // the surface console. Never posts on its own.
 window.__forgeBridge = bridge;
+}
 </script>
 </body>
 </html>
