@@ -15,6 +15,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com  | Route execution-bound framework-tool bridge credentials only to providers that explicitly support the bridge.
  * 11 | maintainer@emeraldcoastsystemsgroup.com  | Token Chase workspace-bound checkpoint (BACKLOG "Workspace-bound checkpoint and tail replay"): the loop now PRODUCES the provenance the capture lane previously only accepted from options nobody set. Each executed (or failed) tool call is recorded through turn-provenance.js and drained into the next frame's per-frame `pins`, so a live read marks that frame non-replayable; the run-level options.workspaceCommit/ownerStoreVersion pass-through is gone (the capture lane commits the tree and versions the store itself); and a finally block writes the end-of-run checkpoint (final.json) on completion, max-turns and error alike. Every addition is a no-op with TOKEN_CHASE_CAPTURE off.
  * 12 | maintainer@emeraldcoastsystemsgroup.com  | Forward the caller's hostToolsOnly marker to the provider call of this loop (and only this call). This loop brokers every tool it offers - the model answers with an XML call, the loop runs it through the request-scoped registry and returns the result - so an interactive (direct) turn needs nothing native from a CLI brain. AntigravityProvider uses it to run agy with no native tools; every other provider ignores it.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com  | The completion text is the literal result the model wrote, always a string (completion-result-text.js). The attempt_completion branch stored toolInput.result, which ToolUseParser has already converted: an answer of 5 was saved as the number 5 and an answer of true as a Boolean, and the bot-node handler threw "m.text.trim is not a function" reading the message back, so a Jarvis ask for "just the number" lost its answer (live case jarvis-cache, 2026-09-29, 3 of 3). An answer of 0 or false fell through to the raw XML reply instead. The conversion the parser applies to real tool parameters is unchanged.
  */
 
 /**
@@ -35,6 +36,7 @@ const { tokenChase } = require('../services/token-chase/TokenChaseCapture');
 // below stays byte-identical. See services/token-chase/turn-provenance.js.
 const { createTurnProvenance } = require('../services/token-chase/turn-provenance');
 const { shouldAutoApproveTool } = require('./tool-approval-policy');
+const { completionResultText } = require('./completion-result-text');
 const {
   authorizeCapability,
   captureDispatchCapabilities,
@@ -590,7 +592,8 @@ class AgenticController {
 
           // Completion is a protocol control, not an implicit shell/git capability.
           if (toolName === 'attempt_completion') {
-            const completionResult = toolInput.result || responseText;
+            // The literal text the model wrote, never the type-converted parameter.
+            const completionResult = completionResultText(toolUse, responseText);
             isComplete = true;
             finalResult = {
               success: true,
