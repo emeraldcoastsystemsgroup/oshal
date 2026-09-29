@@ -4,6 +4,7 @@
  * SEQ | AUTHOR                                    | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prepare production grant lifecycle tests on disposable enforcing-role PostgreSQL. SOURCE ONLY until a coordinated runtime window; no provider or endpoint proof.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Prepare exact UUID metadata lookup success and foreign/missing refusal under the actual enforcing role.
  */
 import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
@@ -11,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { DisposablePostgres } from '../helpers/disposable-postgres';
 import {
   createFreshQualifiedGrant as create, reconnectFreshQualifiedGrant as reconnect,
-  revokeQualifiedGrant as revoke, listQualifiedGrants as list,
+  revokeQualifiedGrant as revoke, listQualifiedGrants as list, getQualifiedGrant as get,
   type FreshQualifiedGrantInput, type QualifiedGrantMetadata,
 } from '@/app/routes/connector-qualified-grants';
 import { decryptQualifiedConnectorToken as decrypt, type QualifiedConnectorPrincipal } from '@/app/routes/connector-qualified-token-crypto';
@@ -103,6 +104,21 @@ describe('qualified grants actual PostgreSQL companion (requires explicitly sche
     expect(refused.reason).toMatchObject({ code: 'conflict' });
     const stored = await bound(A, client => client.query("SELECT connection_id FROM oshal_qualified_connections WHERE account_key='racing-account-sentinel'"));
     expect(stored.rows).toHaveLength(1);
+  });
+
+  it('gets an exact UUID beyond page one; foreign/missing and misbound reads reveal no metadata', async () => {
+    const who = { ...A, sub: 'get-owner-sentinel' };
+    const rows = await Promise.all(['get-one-sentinel', 'get-two-sentinel', 'get-three-sentinel'].map(account => make(account, who)));
+    rows.sort((a, b) => a.connectionId.localeCompare(b.connectionId));
+    expect((await bound(who, client => list(client, who, { limit: 1 })))[0].connectionId).not.toBe(rows[2].connectionId);
+    expect(await bound(who, client => get(client, who, { connectionId: rows[2].connectionId }))).toEqual(rows[2]);
+    for (const foreign of [{ ...who, principalIssuer: B.principalIssuer }, { ...who, sub: 'get-foreign-sub-sentinel' }]) {
+      await expect(bound(foreign, client => get(client, foreign, { connectionId: rows[2].connectionId }), true))
+        .rejects.toMatchObject({ code: 'not_found_or_stale' });
+      await expect(bound(foreign, client => get(client, who, { connectionId: rows[2].connectionId }), true))
+        .rejects.toMatchObject({ code: 'not_found_or_stale' });
+    }
+    await expect(bound(who, client => get(client, who, { connectionId: randomUUID() }))).rejects.toMatchObject({ code: 'not_found_or_stale' });
   });
 
   it.each([undefined, null, 'postgres-new-refresh-token-sentinel'])('reconnect uses only fresh credentials; refresh %s and database revision', async refreshToken => {
