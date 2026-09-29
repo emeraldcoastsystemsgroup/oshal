@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L3 (D3 "Browser ingest"): a browser fix from the signed-in person. The parser reads exactly deviceId, lat, lon, accuracyM and observedAt from the body and nothing else, so an owner, subject, issuer, source, precision or place a caller puts in the body never reaches a statement; the owner is the session principal the router passes in. The fix is accepted only for the person's own opted-in browser device, at most once per minimum interval per device. It is placed against the places the person can see (their own and their groups') at full precision in memory, then minimised to the device's precision class before anything is written (D3 "Precision minimisation"): the observation (history, kept until the owner purges it, Q4), the person's location_current row and the device's last_seen_at, in one transaction under the person's own identity.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L4: the current row keeps place_since (migration 176), the time its place last changed, so currentPlace and the Settings tab can say "since". A fix in the same place (or in no place, again) keeps it; a fix in a different place moves it to this fix's receipt time.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L5: the fix is evaluated in the same transaction, on its full-precision point in memory and under the person's own identity, against the rules live for them and their share presence (location-rule-evaluation.ts); the receipt time is now the server clock the evaluation uses, written explicitly, so every timing decision (enter spacing, exit dwell, cooldown, freshness) reads one clock. Fires are claimed in the ledger before commit and handed to the caller's dispatcher only after commit (durable before acknowledged); the page learns only how many fired.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L6: the point, accuracy and observed-time parsing (parseFixCore) and the smallest-containing-place lookup (containingPlace) are exported for the device ingest (location-device-ingest.ts), which reads the same fields with the same limits and places a device's fix against the places its owner may use; the browser parser is the same function plus the browser device id.
  *
  * @module app/location-presence
  */
@@ -31,12 +32,17 @@ const OBSERVED_AT_FUTURE_SLACK_MS = 120_000;
 /** @description The largest accuracy radius accepted, metres; a worse fix says nothing about a place. */
 const MAX_ACCURACY_M = 100_000;
 
-/** @description A parsed browser fix. `observedAt` is client-reported; timing decisions use the server's receipt time. */
-export interface BrowserFixInput {
-  deviceId: string;
+/** @description The part of a fix every reporter sends: the point, its accuracy and when it was observed. */
+export interface FixCore {
   point: GeoPoint;
   accuracyM: number | null;
+  /** Client-reported; timing decisions use the server's receipt time. */
   observedAt: Date;
+}
+
+/** @description A parsed browser fix. `observedAt` is client-reported; timing decisions use the server's receipt time. */
+export interface BrowserFixInput extends FixCore {
+  deviceId: string;
 }
 
 /** @description What the page is told about an accepted fix: never its coordinates. */
@@ -68,7 +74,18 @@ export interface LocationIngestOptions {
  */
 export function parseBrowserFix(body: unknown, nowMs: number = Date.now()): BrowserFixInput {
   const input = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
-  const deviceId = requireLocationId(input.deviceId);
+  return { deviceId: requireLocationId(input.deviceId), ...parseFixCore(input, nowMs) };
+}
+
+/**
+ * @description Read the point, accuracy and observed time of a fix from a parsed body. Only `lat`,
+ * `lon`, `accuracyM` and `observedAt` are read; the browser and device parsers both use this.
+ * @param input - The parsed JSON body as an object.
+ * @param nowMs - The server clock.
+ * @returns The fix core.
+ * @throws {LocationRequestError} 400 for anything malformed; the message never echoes a value.
+ */
+export function parseFixCore(input: Record<string, unknown>, nowMs: number = Date.now()): FixCore {
   const point: GeoPoint = { lat: input.lat as number, lon: input.lon as number };
   try {
     assertGeoPoint(point, 'fix');
@@ -92,16 +109,16 @@ export function parseBrowserFix(body: unknown, nowMs: number = Date.now()): Brow
     }
     observedAt = parsed;
   }
-  return { deviceId, point, accuracyM, observedAt };
+  return { point, accuracyM, observedAt };
 }
 
 /**
- * @description The smallest place the person can see that contains the full-precision point.
- * @param client - A client stamped as the person (row-level security limits the places read).
+ * @description The smallest place the session can see that contains the full-precision point.
+ * @param client - A client stamped as the subject (row-level security limits the places read: a person's own and their groups', a device's owner's).
  * @param point - The fix, full precision, in memory only.
  * @returns The place reference, or null.
  */
-async function containingPlace(client: PoolClient, point: GeoPoint): Promise<LocationPlaceRef | null> {
+export async function containingPlace(client: PoolClient, point: GeoPoint): Promise<LocationPlaceRef | null> {
   const rows = await client.query('SELECT place_id, name, label, center_lat, center_lon, radius_m FROM location_places');
   let best: { ref: LocationPlaceRef; radius: number } | null = null;
   for (const r of rows.rows) {

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the PAT-store boot bootstrap: it must take ONE advisory-locked client instead of eight separate pool acquires, and its failure handler must report an impact it has PROBED rather than one it assumed. The old handler hardcoded "PAT auth unavailable until it exists" on every failure; the table is created by migration 100 before the server starts, so that line described a functional loss that had not happened and sent a reader after a bug that did not exist. These cases drive the real ensureCliTokenSchema / createCliTokenRoutes wiring, the real runRuntimeSchemaBootstrap and applyLockedSchema, and the real request-identity sentinel. The pg driver is the ONE scoped double, because the quantity under test is how many clients this code asks the pool for and which statements it issues after a failure - not anything PostgreSQL decides. It is therefore not evidence about RLS, the policy boundary, or that a PAT authenticates.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L6: the bootstrap carries eleven DDL statements, the eight plus the location credential's three (the location_device_id ALTER, its partial index and the one-binding CHECK in a DO block), still on the one advisory-locked client; the pinned count follows and the CHECK is asserted present.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -145,7 +146,10 @@ describe('oshal_cli_tokens schema bootstrap', () => {
     // Every statement still runs, and the per-boot RLS/policy re-assert is NOT retired - that is
     // the trap the entry calls out about replacing the DDL with a verify-first early return.
     const ddl = texts.filter((t) => /^\s*(CREATE|ALTER|DO)\b/i.test(t));
-    expect(ddl).toHaveLength(8);
+    // Eight, plus the location credential's three (ADR-169 L6): the location_device_id ALTER, its
+    // partial index and the one-binding CHECK - all still inside the one transaction above.
+    expect(ddl).toHaveLength(11);
+    expect(ddl.some((t) => /oshal_cli_tokens_one_binding/.test(t))).toBe(true);
     expect(ddl.some((t) => /ENABLE ROW LEVEL SECURITY/.test(t))).toBe(true);
     expect(ddl.some((t) => /FORCE ROW LEVEL SECURITY/.test(t))).toBe(true);
     expect(ddl.some((t) => /CREATE POLICY oshal_cli_tokens_owner_or_operator/.test(t))).toBe(true);
