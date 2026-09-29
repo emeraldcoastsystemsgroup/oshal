@@ -7,6 +7,7 @@
   2 | maintainer@emeraldcoastsystemsgroup.com   | True n8n IA: full-bleed canvas, slim left icon rail with palette/files flyouts, the inspector is a right overlay that appears on node select (no permanent boxes), zoom controls bottom-left, floating chat assistant.
   3 | maintainer@emeraldcoastsystemsgroup.com   | Runs panel: rail button + left flyout listing past graph runs (GET /api/workflow-studio/runs) with a click-through per-step run inspector (status, timing, agent, redacted input/output). Own module workflow-studio-runs.js.
   4 | maintainer@emeraldcoastsystemsgroup.com | Follow the shared portal theme live without replacing page content.
+  5 | maintainer@emeraldcoastsystemsgroup.com | Audience view (ADR-164 D6): framed with ?audience=company (Studio, Orbit, Commons) or ?audience=family (Jarvis), the page paints a read-only card from the two GETs the studio already makes (GET /api/workflow-studio/definitions, the Runs panel's GET /api/workflow-studio/runs?limit=50): saved workflows, runs recorded, running or paused, escalated or failed, the newest workflows and runs, and every refusal said in place of a figure. The studio's four module start calls run only when no audience view is active; the default screen is unchanged.
 -->
 <!DOCTYPE html>
 <html lang="en" data-theme="midnight">
@@ -14,6 +15,119 @@
   <!-- Shared portal palette: resolve before paint and follow the parent or saved choice live. -->
   <link rel="stylesheet" href="/shared/ui/css/surface-themes.css">
   <script src="/shared/ui/js/surface-theme.js"></script>
+  <!--
+    Audience view (ADR-164 D6). Framed by a whole-portal shell with ?audience=company (Studio, Orbit, Commons) or
+    ?audience=family (Jarvis), this page paints an at-a-glance card from two read-only GETs the studio itself makes
+    (the saved definitions it loads on start and the Runs panel's run list) and the studio below does not start.
+    Without an audience, with one this page does not provide, or on a core without the kit, the studio runs as before.
+  -->
+  <link rel="stylesheet" href="/shared/ui/css/app-view.css">
+  <script src="/shared/ui/js/app-view.js"></script>
+  <!-- The studio locks the body (overflow: hidden) for its full-bleed canvas; the card has to scroll inside a frame. -->
+  <style>html[data-audience] body { overflow: auto; }</style>
+  <script>
+  (function () {
+    var A = window.AppView; if (!A) return;
+    var API = '/api/workflow-studio';
+    // The Runs panel's own list read (its "All my runs" scope): GET /runs?limit=50 answers the newest 50 at most.
+    var RUNS_LIMIT = 50, ROWS = 6;
+    var ACTIVE = ['running', 'suspended'], ATTENTION = ['escalated', 'error'], DONE = ['completed', 'terminal'];
+    function is(set, status) { return set.indexOf(status) >= 0; }
+    var LEDE = 'Workflow designs saved on this swarm and the graph runs the signed-in account can see. This view only reads: it never saves, publishes or starts a run.';
+    function read(path) {
+      return fetch(API + path, { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' } }).then(function (r) {
+        return r.text().then(function (text) {
+          var body; try { body = JSON.parse(text); } catch (_) { body = undefined; }
+          return { status: r.status, ok: r.ok, body: body };
+        });
+      }, function () { return { status: 0, ok: false, network: true }; });
+    }
+    // An answer counts only as a 2xx JSON object carrying its list, and not success:false (as the Runs panel reads it).
+    function settle(res, key) {
+      var b = res.body;
+      return res.ok && b && typeof b === 'object' && b.success !== false && Array.isArray(b[key]) ? { ok: true, items: b[key] } : { ok: false, res: res };
+    }
+    function refusal(what, res) {
+      var said = res.body && typeof res.body.error === 'string' && res.body.error.trim() ? ' The server said: ' + res.body.error.trim().slice(0, 160) : '';
+      if (res.network) return what + ' could not be read: the server could not be reached.';
+      if (res.status === 401) return what + ' could not be read: this session is not signed in (HTTP 401).';
+      if (res.status === 403) return what + ' could not be read: this account was refused (HTTP 403).' + said;
+      if (res.status === 404) return what + ' could not be read: this server does not offer it (HTTP 404).';
+      if (res.status >= 500) return what + ' could not be read: the server failed (HTTP ' + res.status + ').' + said;
+      if (!res.ok) return what + ' could not be read (HTTP ' + res.status + ').' + said;
+      return what + ' could not be read: the answer was not the JSON the studio expects.' + said;
+    }
+    function openFull() { window.location.assign(window.location.pathname); }
+    function plural(n, one, many) { return A.num(n) + ' ' + (n === 1 ? one : many); }
+    function tally(runs) {
+      var c = { total: runs.length, active: 0, attention: 0, capped: runs.length >= RUNS_LIMIT };
+      runs.forEach(function (r) { var s = r && r.status; if (is(ACTIVE, s)) c.active++; if (is(ATTENTION, s)) c.attention++; });
+      return c;
+    }
+    function newest(defs) {
+      return defs.filter(Boolean).sort(function (a, b) { return String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')); });
+    }
+    function took(run) {
+      var ms = new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime();
+      if (!run.finishedAt || !isFinite(ms) || ms < 0) return '\u2014';
+      if (ms < 1000) return ms + ' ms';
+      return ms < 60000 ? (ms / 1000).toFixed(1) + ' s' : Math.floor(ms / 60000) + ' min ' + Math.round((ms % 60000) / 1000) + ' s';
+    }
+    function statusCell(status) {
+      var s = String(status || 'unknown');
+      return { text: s, tone: is(ATTENTION, s) ? 'bad' : s === 'suspended' ? 'warn' : is(DONE, s) ? 'ok' : null };
+    }
+    function stats(defs, runs) {
+      var out = [];
+      if (defs.ok) {
+        var latest = newest(defs.items)[0];
+        out.push({ id: 'workflows', label: 'Saved workflows', value: A.num(defs.items.length), hint: latest ? 'Last edited ' + A.when(latest.updatedAt) : 'None saved yet' });
+      }
+      if (runs.ok) {
+        var c = tally(runs.items), among = c.capped ? 'Among the newest ' + RUNS_LIMIT + ' runs' : null;
+        out.push({ id: 'runs', label: 'Runs recorded', value: c.capped ? RUNS_LIMIT + '+' : A.num(c.total), hint: c.capped ? 'The newest ' + RUNS_LIMIT + ' are read here' : null });
+        out.push({ id: 'active', label: 'Running or paused', value: A.num(c.active), tone: c.active ? 'info' : null, hint: among });
+        out.push({ id: 'attention', label: 'Escalated or failed', value: A.num(c.attention), tone: c.attention ? 'warn' : null, hint: among });
+      }
+      return out;
+    }
+    function title(defs, runs) {
+      if (!defs.ok && !runs.ok) return 'Workflow Studio could not be read';
+      var c = runs.ok ? tally(runs.items) : null, among = c && c.capped ? ' in the newest ' + RUNS_LIMIT : '';
+      if (c && c.attention) return plural(c.attention, 'run', 'runs') + ' escalated or failed' + among;
+      if (c && c.active) return plural(c.active, 'run', 'runs') + ' running or paused' + among;
+      if (defs.ok) return defs.items.length ? plural(defs.items.length, 'saved workflow', 'saved workflows') : 'No saved workflows yet';
+      if (!c.total) return 'No workflow runs recorded yet';
+      return (c.capped ? 'At least ' + RUNS_LIMIT + ' runs' : plural(c.total, 'run', 'runs')) + ' recorded';
+    }
+    function version(d) { var v = Number(d.version); return d.version !== null && d.version !== undefined && isFinite(v) ? 'v' + v : '\u2014'; }
+    function workflowsSection(defs) {
+      var list = defs.ok ? newest(defs.items) : [];
+      return { kind: 'table', id: 'workflows', title: 'Saved workflows', wide: true,
+        note: list.length > ROWS ? 'The ' + ROWS + ' most recently edited of ' + A.num(list.length) + '.' : null,
+        empty: defs.ok ? 'No workflows saved yet. A workflow is drawn and saved in the studio, never from this view.' : refusal('The saved workflows', defs.res),
+        columns: ['Workflow', { label: 'Version', align: 'right' }, { label: 'Nodes', align: 'right' }, { label: 'Edges', align: 'right' }, 'Last edited'],
+        rows: list.slice(0, ROWS).map(function (d) { return [String(d.name || 'Untitled workflow'), version(d), A.num(d.nodeCount), A.num(d.edgeCount), A.when(d.updatedAt)]; }) };
+    }
+    function runsSection(runs) {
+      var list = runs.ok ? runs.items.filter(Boolean) : [], c = runs.ok ? tally(runs.items) : null;
+      return { kind: 'table', id: 'runs', title: 'Recent runs', wide: true,
+        note: list.length > ROWS ? 'The newest ' + ROWS + ' of ' + (c.capped ? 'at least ' + RUNS_LIMIT : A.num(list.length)) + ' runs.' : null,
+        empty: runs.ok ? 'No runs recorded yet. A run starts when a published workflow receives a ticket, never from this view.' : refusal('The run history', runs.res),
+        columns: ['Workflow', 'Status', { label: 'Steps', align: 'right' }, 'Started', { label: 'Took', align: 'right' }],
+        rows: list.slice(0, ROWS).map(function (r) { return [String(r.workflowName || r.ticketType || 'Workflow run'), statusCell(r.status), A.num(r.stepCount), A.when(r.startedAt), took(r)]; }) };
+    }
+    function company() {
+      return Promise.all([read('/definitions'), read('/runs?limit=' + RUNS_LIMIT)]).then(function (answers) {
+        var defs = settle(answers[0], 'definitions'), runs = settle(answers[1], 'runs');
+        return { kicker: 'Engineering \u00b7 Workflow Studio', title: title(defs, runs), lede: LEDE,
+          actions: [{ label: 'Open Workflow Studio', primary: true, onClick: openFull }],
+          stats: stats(defs, runs), sections: [workflowsSection(defs), runsSection(runs)] };
+      });
+    }
+    A.boot({ app: 'workflow-studio', escapeLabel: 'Open Workflow Studio in the cockpit', audiences: { company: company, family: company } });
+  })();
+  </script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Workflow Studio</title>

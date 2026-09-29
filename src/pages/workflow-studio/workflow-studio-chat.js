@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the talk-to-build chat panel for Workflow Studio (ADR-039). Type or speak a description; it calls POST /api/workflow-studio/assist (the reason-only builder bot), then drives the canvas (window.workflowStudioApp.selectDefinition) so the graph redraws as you talk. Voice = Web Speech API + /api/voice (the static-page standard).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Fire the surface dock from talk-to-build: the builder's reply now runs through the shared surface-bridge producer (relayReply) before display, so any oshal:surface fence the V3 persona emits posts its validated bot→surface ops to THIS studio's own dock and the fence is stripped from the bubble (no raw-fence leak). Producer runs in postTarget:'self' mode with an explicit app='workflow-studio' — the talk-to-build panel is co-resident with the surface-bridge-client in the SAME app-surface iframe, and the cockpit shell relay refuses a to_surface from a non-chat-rail frame, so the panel drives its own dock by posting to its own window. The workflow-graph canvas path is unchanged.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | chat.init runs only when no ADR-164 D6 audience view is active: under ?audience=company|family the page is a read-only card and the talk-to-build panel is neither wired nor greeted; otherwise it starts exactly as before.
  */
 
 import { createUiLogger, serializeUiError } from '../shared/ui-debug.js';
@@ -217,4 +218,4 @@ class WorkflowStudioChat {
 }
 
 const chat = new WorkflowStudioChat();
-chat.init();
+if (!window.AppView || !AppView.active()) { chat.init(); }

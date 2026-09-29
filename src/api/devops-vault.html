@@ -6,6 +6,109 @@
 <title>DevOps + Vault — OSHAL</title>
 <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
 <script src="/shared/ui/js/surface-theme.js"></script>
+<!-- ADR-164 D6 audience view kit: loaded right after the theme bootstrap so a shell's ?audience= request is decided before the page paints. -->
+<link rel="stylesheet" href="/shared/ui/css/app-view.css" />
+<script src="/shared/ui/js/app-view.js"></script>
+<script>
+/* Audience view (ADR-164 D6). Framed by a whole-portal shell with ?audience=company (Studio, Orbit, Commons) or
+   ?audience=family (Jarvis), this page paints an at-a-glance card of the Vault console instead of the full page.
+   It reads only GETs the full page makes on load: /access (is the caller a super-admin?) and, only when it is,
+   /status (the Vault health light). The live trace stream is not opened. A refused read, or a caller the
+   super-admin gate turns away, is said in the card with no figure in its place. Without an audience, with one this
+   page does not provide, or on a core without the kit, the full page below runs exactly as before. */
+(function () {
+  var A = window.AppView; if (!A) return;
+  var NAME = 'DevOps + Vault';
+  var LEDE = 'The vault-bot and this console broker short-lived, scoped credentials from HashiCorp Vault: KV secrets, scopes, credentials that revoke themselves and short-TTL database logins. Super-admin only; the Vault token stays on the server.';
+  var HEALTH = {
+    working: { value: 'Working', tone: 'ok', say: 'Vault is reachable and the console credential is accepted.' },
+    unreachable: { value: 'Unreachable', tone: 'warn', say: 'The Vault server cannot be reached (network, DNS or down).' },
+    denied: { value: 'Denied', tone: 'bad', say: 'Vault is reachable but rejects the console credential.' },
+    sealed: { value: 'Sealed', tone: 'bad', say: 'Vault is reachable but sealed, so nothing can be read until it is unsealed.' }
+  };
+  var BY_LIGHT = { green: 'working', yellow: 'unreachable', red: 'denied' };
+  var TOOLS = [
+    ['📦', 'KV secrets', 'List, read, write and delete key/value secrets by path.'],
+    ['🎯', 'Scope (ACL policy)', 'Name a policy and the paths and capabilities it grants.'],
+    ['♻️', 'Credential broker', 'Issue a short-TTL scoped token or dynamic secret, look up its lease and revoke it.'],
+    ['🐘', 'Database dynamic secrets', 'Mount the postgresql engine and a read-only role for self-expiring database logins.'],
+    ['🖥', 'Live process trace', 'Each console action as it runs, scoped to the operator who ran it.']
+  ];
+
+  function isMap(v) { return !!v && typeof v === 'object' && !Array.isArray(v); }
+  /** @description The super-admin gate's own reason (the route marks it safe to return to the caller), trimmed, or ''. */
+  function gateReason(body) { return isMap(body) && typeof body.reason === 'string' ? body.reason.trim().slice(0, 240) : ''; }
+
+  /** @description The sentence for a refused read: what failed and why, never a figure. */
+  function refusal(status, body) {
+    var reason = gateReason(body);
+    if (status === 401) return 'You are not signed in (HTTP 401). Sign in, then open DevOps + Vault again.';
+    if (status === 403) return 'DevOps + Vault refused this account (HTTP 403): it is open to super-admins only.' + (reason ? ' ' + reason : '');
+    if (status === 404) return 'DevOps + Vault did not answer on this core (HTTP 404).';
+    if (status === 503 && isMap(body) && body.error === 'vault_not_configured') return 'Vault is not configured on this core (HTTP 503): no Vault token is set, so the console has nothing to show.';
+    if (status >= 500) return 'DevOps + Vault failed to answer (HTTP ' + status + ').';
+    return 'DevOps + Vault refused the read (HTTP ' + status + ').';
+  }
+
+  /** @description One of the page's own GETs; resolves { ok, body } or { ok: false, why } and never rejects. */
+  function read(path, valid) {
+    return fetch('/api/devops' + path, { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' } }).then(function (r) {
+      if (!r.ok) return r.json().then(function (b) { return b; }, function () { return null; }).then(function (b) { return { ok: false, why: refusal(r.status, b) }; });
+      return r.json().then(function (body) {
+        return valid(body) ? { ok: true, body: body } : { ok: false, why: 'DevOps + Vault answered in a shape this view cannot read.' };
+      }, function () { return { ok: false, why: 'DevOps + Vault answered with something that is not JSON.' }; });
+    }, function () { return { ok: false, why: 'DevOps + Vault could not be reached (network failure).' }; });
+  }
+  /** @description The health light a /status answer names (by reason, then by colour, as the full page reads it), or null. */
+  function health(s) { return HEALTH[s.reason] || HEALTH[BY_LIGHT[s.light]] || null; }
+  function validAccess(b) { return isMap(b) && typeof b.superAdmin === 'boolean'; }
+  function validStatus(b) { return isMap(b) && !!health(b); }
+
+  /** @description The glance figures from GET /status: the light, then only the facts the answer carries. */
+  function stats(s, h) {
+    var out = [{ id: 'connection', label: 'Vault connection', value: h.value, tone: h.tone, hint: h.say }];
+    if (typeof s.version === 'string' && s.version) out.push({ id: 'version', label: 'Vault version', value: 'v' + s.version });
+    if (typeof s.sealed === 'boolean') out.push({ id: 'seal', label: 'Seal', value: s.sealed ? 'Sealed' : 'Unsealed', tone: s.sealed ? 'bad' : 'ok' });
+    if (typeof s.initialized === 'boolean') out.push({ id: 'initialized', label: 'Initialized', value: s.initialized ? 'Yes' : 'No', tone: s.initialized ? null : 'warn' });
+    if (typeof s.standby === 'boolean') out.push({ id: 'mode', label: 'Node mode', value: s.standby ? 'Standby' : 'Active' });
+    return out;
+  }
+
+  /** @description The server the console talks to, and the error Vault reported when it could not be used. */
+  function server(s) {
+    var items = [];
+    if (typeof s.addr === 'string' && s.addr) items.push({ title: 'Address', text: s.addr });
+    if (typeof s.error === 'string' && s.error) items.push({ title: 'Vault reported an error', text: s.error, tone: 'bad' });
+    return { id: 'server', kind: 'list', title: 'Vault server', items: items, empty: 'The status answer named no server address.' };
+  }
+
+  /** @description What the full console holds; each tile opens it in this frame. */
+  function tools(open) {
+    return { id: 'console', kind: 'tiles', title: 'In the full console', note: 'Every change is written to the governance audit trail and shown in the live trace.',
+      items: TOOLS.map(function (t) { return { icon: t[0], title: t[1], text: t[2], onClick: open }; }) };
+  }
+
+  /** @description The card for both shells: /access first, /status only for a super-admin; a refusal is said with no figure. */
+  function card(ctx) {
+    var open = function () { window.location.assign(window.location.pathname); };
+    var primary = { label: 'Open DevOps + Vault', primary: true, onClick: open };
+    var head = { kicker: 'Infrastructure Vault', title: NAME };
+    var refused = function (why) {
+      return Object.assign({}, head, { lede: why, actions: [primary, { label: 'Try again', onClick: function () { ctx.refresh(); } }], stats: [], sections: [] });
+    };
+    return read('/access', validAccess).then(function (acc) {
+      if (!acc.ok) return refused(acc.why);
+      if (!acc.body.superAdmin) return refused('Super-admin access required. ' + (gateReason(acc.body) || 'This console operates the platform’s infrastructure Vault.'));
+      return read('/status', validStatus).then(function (st) {
+        if (!st.ok) return refused(st.why);
+        return Object.assign({}, head, { lede: LEDE, actions: [primary], stats: stats(st.body, health(st.body)), sections: [server(st.body), tools(open)] });
+      });
+    });
+  }
+
+  A.boot({ app: 'devops', escapeLabel: 'Open DevOps + Vault in the cockpit', audiences: { company: card, family: card } });
+})();
+</script>
 <style>
   :root {
     --bg:var(--bg-primary); --panel:var(--bg-card); --panel2:var(--bg-tertiary);
@@ -329,7 +432,11 @@
     show($('dbOut'), j, ok);
   }
 
-  init();
+  // The full page starts only when no audience view is active (ADR-164 D6): without the kit, without ?audience=,
+  // or with an audience this page does not provide, it runs exactly as before.
+  if (!window.AppView || !AppView.active()) {
+    init();
+  }
 </script>
 </body>
 </html>
