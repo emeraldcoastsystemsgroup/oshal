@@ -1,5 +1,18 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ | AUTHOR | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Keep tree-walk PostgreSQL fixtures in a later one-worker project without removing them from the default unit command or changing budgets/retries.
+ */
 import { defineConfig } from 'vitest/config';
 import * as path from 'path';
+
+const TREE_WALK_POSTGRES = [
+  'tests/unit/alert-incident-cutover.spec.ts',
+  'tests/unit/alert-incident-reopen.spec.ts',
+  'tests/unit/topology-traversal.spec.ts',
+];
 
 // THE unit-test config — a bare `npx vitest run` (and `npm run test:unit`) runs BOTH trees:
 //   - src/**/*.test.ts        — pure-logic tests colocated with source (no DB / network)
@@ -10,7 +23,6 @@ import * as path from 'path';
 export default defineConfig({
   resolve: { alias: { '@': path.resolve(__dirname, 'src') } },
   test: {
-    include: ['src/**/*.test.ts', 'tests/unit/**/*.spec.ts'],
     exclude: [
       'node_modules/**',
       'dist/**',
@@ -20,17 +32,32 @@ export default defineConfig({
     ],
     environment: 'node',
     globals: true,
-    // This suite has no business running on vitest's 5000 ms / 10000 ms defaults. It spawns real
-    // bash and powershell.exe, drives real chromium pages, starts throwaway Postgres and Redis
-    // CONTAINERS, and walks the whole source tree in several inventory guards — and the sanctioned
-    // gate runs all 1044 files in parallel, so every one of those pays for the contention of the
-    // other 1043. The 2026-09-19 nightly lost 31 cases across 22 files to the budget alone: not one
-    // of them was a product defect, and a case measured at 2974 ms on an idle box still died at
-    // 5000 ms in the gate. A red gate nobody can act on is the thing this repo's own rule says not
-    // to leave standing, so the budget is declared here rather than hand-patched onto each case
-    // that happens to trip it. Files needing longer still say so themselves; a genuine hang still
-    // fails, 30 s later.
+    // Preserve the declared budgets for real shell/browser/container and inventory guards.
+    // Files needing longer still declare their own budget. Serialization is not a timeout increase.
     testTimeout: 30_000,
     hookTimeout: 30_000,
+    retry: 0,
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'unit',
+          include: ['src/**/*.test.ts', 'tests/unit/**/*.spec.ts'],
+          exclude: TREE_WALK_POSTGRES,
+          sequence: { groupOrder: 1 },
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'tree-walk-postgres',
+          include: TREE_WALK_POSTGRES,
+          pool: 'forks', isolate: true, maxWorkers: 1, fileParallelism: false,
+          // A separate positive group prevents overlap with the ordinary corpus, including
+          // commands that already request one worker globally. Zero has special scheduler rules.
+          sequence: { groupOrder: 2 },
+        },
+      },
+    ],
   },
 });
