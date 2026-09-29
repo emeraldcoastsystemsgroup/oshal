@@ -7,20 +7,25 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - live acceptance for "ADR-139 - LoRA has no image-ingest route at all" (Done-when: one image sent from the gallery lands in a named dataset and is visible in the LoRA surface). As the operator automation identity it creates a synthetic `testlab-import-<hex>` character, mints a Send-to handle carrying one generated PNG through core's artifact-exchange upload route, imports it through the installed package's POST /api/lora/dataset/import, waits for the receipt the studio shows as "ready on worker", reads the character's curated folder on the GPU worker through the same remote-client shell.exec rail LoRA dispatches on (read-only probe), then removes the box files, the import ticket and the character (its receipt, staging and grants cascade). Core rather than a package test-lab.yaml case: it orchestrates core artifact exchange, the core remote-client rail and the store package on a real worker, and the package catalog leaves live external-write cases pending.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The box probe emits plain values. The 2026-09-28 run on LoRA 1.7.1 wrote the pair to the GPU box in 3 s and the probe found it, yet the verdict was "the worker probe returned nothing readable": Windows PowerShell 5.1's `Get-Content -Raw` returns the caption as a string decorated with provider NoteProperties (PSPath, PSParentPath, PSChildName, PSDrive, PSProvider), and `ConvertTo-Json -Depth 4` serialized that as a 25 KB nested object (caption = {value, PSPath, PSDrive: {...}}) instead of a string. The caption is now read with [IO.File]::ReadAllText (UTF-8, the encoding the package writes with) and png/txt/bytes are cast to plain bool/long, so the line is exactly {"expanded":{png,bytes,txt,caption},"literal":{...}}. The verdict also names an unreadable or wrong-shaped probe (which field, the task exit, the first 300 redacted chars of the worker stdout) instead of "nothing readable", the removal path quotes its stdout the same way, and the redaction covers JSON-escaped and drive-less user-profile paths. The remove command already emitted plain Test-Path booleans; it is unchanged.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The redaction is case-insensitive again. Entry 2 folded the Windows-form pattern (which carried the `i` flag on main) into one regex with the JSON-escaped, drive-less and POSIX forms and dropped that flag, so a lowercased `c:\users\x` or an upper-cased `C:\USERS\x` passed through unredacted. Windows paths are case-insensitive and PowerShell keeps the casing it is given (on 5.1, Convert-Path/FullName/PSPath keep a lowercased input lowercased), so a non-canonical LORA_BOX_ROOT would have put the operator's username into the verdict text that lands in PR bodies and COLLABORATE. `/gi` restores the guard; the spec now pins both spellings.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Gallery mode (`--gallery`), beside the unchanged inline mode. Entry #18's third clause names the portrait GALLERY and the rendered SURFACE, and the inline mode proved neither: its handle came from the upload mint (inline bytes, sourcePath null) and the import was a bearer POST, not the studio page. Gallery mode runs on the host (the browser lives there): it creates one synthetic portrait through POST /api/portrait-studio/portraits, waits for the engine to mark it done, mints the locator handle exactly as the gallery's Send to… does (scripts/lib/lora-gallery-source.js), opens /api/lora/ui?artifact=<ref> in a headless Chromium as the caller, clicks the fixture character and "Import selected image", and reads #datasetRows until the studio itself shows the file "ready on worker" - a run whose receipt route says ready while the surface does not is red, and so is a page error. The DB-bound cleanup (character, residue, ticket) goes through the live-acceptance container helper as named statements, so both modes now run the same closed set (scripts/lib/live-acceptance-sql.js `lora.*`) instead of SQL text. Offline workers are named in the UNAVAILABLE verdict, the portrait is deleted after it revalidates by its title tag, and the inline mode's staged run now carries the two lib modules it requires.
  */
 
 'use strict';
 
 // Usage (from a core checkout on the box, after the package is staged):
-//   node scripts/operations/lora-import-live-proof.js
+//   node scripts/operations/lora-import-live-proof.js             inline mode: a generated PNG through the upload mint, in the api container
+//   node scripts/operations/lora-import-live-proof.js --gallery   gallery mode: a real portrait, the gallery's locator mint and the studio page in headless Chromium, on the host
 // Knobs: OSHAL_VERIFY_OPERATOR_PAT (else read by name from OSHAL_VERIFY_ENV_FILE or ./.env),
-// OSHAL_VERIFY_API_CONTAINER, OSHAL_LORA_READY_BUDGET_MS, OSHAL_LORA_BOX_BUDGET_MS, OSHAL_LORA_POLL_MS.
-// Exit 0 pass, 1 fail, 2 not runnable (no PAT / package not installed / no worker). One real GPU-worker write.
+// OSHAL_VERIFY_API_CONTAINER, OSHAL_VERIFY_BASE_URL (gallery mode; default http://127.0.0.1:35457),
+// OSHAL_LORA_READY_BUDGET_MS, OSHAL_LORA_BOX_BUDGET_MS, OSHAL_LORA_POLL_MS, OSHAL_LORA_PORTRAIT_BUDGET_MS (gallery mode).
+// Exit 0 pass, 1 fail, 2 not runnable (no PAT / package not installed / no worker / no image engine). One real GPU-worker write;
+// gallery mode also spends one real portrait generation.
 
 const crypto = require('node:crypto');
 const path = require('node:path');
-const zlib = require('node:zlib');
 const runner = require('./live-proof-runner');
+const gallery = require('../lib/lora-gallery-source');
+const { statementText } = require('../lib/live-acceptance-sql');
 
 const CASE_ID = 'lora-gallery-dataset-import';
 const SUBJECT_RE = /^testlab-import-[0-9a-f]{8}$/;
@@ -28,34 +33,13 @@ const STORAGE_KEY_RE = /^lora-[0-9a-f]{32}$/;
 const FILENAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,120}\.(?:png|jpe?g|webp)$/;
 /** Mirrors the package's own default (lora-train-dispatch.ts BOX_ROOT); the api's env wins, as there. */
 const DEFAULT_BOX_ROOT = '$env:USERPROFILE/lora-characters';
-const DEFAULT_BUDGETS = Object.freeze({ readyBudgetMs: 180_000, boxBudgetMs: 90_000, pollMs: 3_000 });
+const DEFAULT_BASE_URL = 'http://127.0.0.1:35457';
+const DEFAULT_BUDGETS = Object.freeze({ readyBudgetMs: 180_000, boxBudgetMs: 90_000, pollMs: 3_000, portraitBudgetMs: 300_000 });
+const BUDGET_ENV = Object.freeze({ readyBudgetMs: 'OSHAL_LORA_READY_BUDGET_MS', boxBudgetMs: 'OSHAL_LORA_BOX_BUDGET_MS',
+  pollMs: 'OSHAL_LORA_POLL_MS', portraitBudgetMs: 'OSHAL_LORA_PORTRAIT_BUDGET_MS' });
+const EXIT_CODES = Object.freeze({ pass: 0, fail: 1, unavailable: 2, degraded: 3 });
 /** The one agent id this proof's own read-only shell tasks name as their sender. */
 const PROOF_AGENT_ID = 'test-lab-lora-import-proof';
-
-const CHARACTER_SQL = 'SELECT id FROM oshal_lora_characters WHERE owner_sub = $1 AND subject = $2';
-const DELETE_CHARACTER_SQL = 'DELETE FROM oshal_lora_characters WHERE owner_sub = $1 AND subject = $2';
-/** Receipt and staged bytes cascade from the character (package migrations 103/104/105). */
-const RESIDUE_SQL = `SELECT
-    (SELECT count(*) FROM oshal_lora_characters WHERE owner_sub = $1 AND subject = $2)::int AS characters,
-    (SELECT count(*) FROM oshal_lora_dataset_images WHERE character_id = $3::uuid)::int AS receipts`;
-
-/** @description CRC-32 table for PNG chunks. */
-const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
-  let c = n;
-  for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-  return c >>> 0;
-});
-
-/**
- * @description CRC-32 of a buffer (PNG chunk checksum).
- * @param {Buffer} bytes - Chunk type + data.
- * @returns {number} The unsigned checksum.
- */
-function crc32(bytes) {
-  let c = 0xffffffff;
-  for (const byte of bytes) c = CRC_TABLE[(c ^ byte) & 0xff] ^ (c >>> 8);
-  return (c ^ 0xffffffff) >>> 0;
-}
 
 /**
  * @description Build one small, unique, valid RGB PNG (random pixels) so every run's bytes differ.
@@ -64,27 +48,17 @@ function crc32(bytes) {
  * @returns {Buffer} The PNG file bytes.
  */
 function generatePng(size = 16, bytes = crypto.randomBytes) {
-  const chunk = (type, data) => {
-    const head = Buffer.alloc(4); head.writeUInt32BE(data.length);
-    const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
-    const tail = Buffer.alloc(4); tail.writeUInt32BE(crc32(body));
-    return Buffer.concat([head, body, tail]);
-  };
-  const header = Buffer.alloc(13);
-  header.writeUInt32BE(size, 0); header.writeUInt32BE(size, 4);
-  header[8] = 8; header[9] = 2; header[10] = 0; header[11] = 0; header[12] = 0;
-  const rows = [];
-  for (let y = 0; y < size; y += 1) rows.push(Buffer.concat([Buffer.from([0]), bytes(size * 3)]));
-  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    chunk('IHDR', header), chunk('IDAT', zlib.deflateSync(Buffer.concat(rows))), chunk('IEND', Buffer.alloc(0))]);
+  return gallery.encodePng(size, size, () => bytes(size * 3));
 }
 
 /**
- * @description Mint one run's synthetic character and image.
+ * @description Mint one run's synthetic character and image: a generated PNG for the inline mode,
+ * a synthetic photo for the gallery mode (the dataset image is then the portrait the engine paints).
  * @param {(n: number) => Buffer} [bytes] - Random byte source.
- * @returns {{tag: string, subject: string, character: object, caption: string, name: string, png: Buffer}} The fixture.
+ * @param {'inline'|'gallery'} [source] - Which image source the run uses.
+ * @returns {{tag: string, subject: string, character: object, caption: string, name: string, png: Buffer|null, photo: Buffer|null}} The fixture.
  */
-function createImportFixture(bytes = crypto.randomBytes) {
+function createImportFixture(bytes = crypto.randomBytes, source = 'inline') {
   const tag = bytes(4).toString('hex');
   const subject = `testlab-import-${tag}`;
   return {
@@ -93,7 +67,8 @@ function createImportFixture(bytes = crypto.randomBytes) {
       heroImage: `testlab-import-${tag}-hero.png`, identPrompt: `Test Lab synthetic import fixture ${tag}, plain color noise.` },
     caption: `${subject}, synthetic Test Lab import fixture`,
     name: `${subject}.png`,
-    png: generatePng(16, bytes),
+    png: source === 'gallery' ? null : generatePng(16, bytes),
+    photo: source === 'gallery' ? gallery.generatePortraitPhoto(gallery.DEFAULT_PHOTO_SIZE, bytes) : null,
   };
 }
 
@@ -284,14 +259,23 @@ async function awaitReceipt(ports, subject, filename, budgets) {
 }
 
 /**
- * @description Create the character, carry the PNG through a Send-to handle and import it.
+ * @description Create the run's character.
+ * @param {object} ports - api.
+ * @param {ReturnType<typeof createImportFixture>} fixture - The run's fixture.
+ * @returns {Promise<void>} Resolves when created; throws with the route's answer otherwise.
+ */
+async function createCharacter(ports, fixture) {
+  const created = await ports.api('POST', '/api/lora/characters', fixture.character);
+  if (created.status !== 201) throw new Error(`POST /api/lora/characters returned HTTP ${created.status} ${created.json.error || ''}`.trim());
+}
+
+/**
+ * @description Inline mode: carry the generated PNG through the upload mint and import it by POST.
  * @param {object} ports - api, upload.
  * @param {ReturnType<typeof createImportFixture>} fixture - The run's fixture.
  * @returns {Promise<{ok: boolean, detail?: string, handleExpiresAt?: string, imported?: object}>} What happened.
  */
-async function importFixture(ports, fixture) {
-  const created = await ports.api('POST', '/api/lora/characters', fixture.character);
-  if (created.status !== 201) return { ok: false, detail: `POST /api/lora/characters returned HTTP ${created.status} ${created.json.error || ''}`.trim() };
+async function importInline(ports, fixture) {
   const handle = await ports.upload(fixture.name, 'image/png', fixture.png);
   if (handle.status !== 201 || typeof handle.json.ref !== 'string') return { ok: false, detail: `POST /api/artifacts/handles/upload returned HTTP ${handle.status}` };
   const imported = await ports.api('POST', '/api/lora/dataset/import', { ref: handle.json.ref, subject: fixture.subject, caption: fixture.caption });
@@ -303,39 +287,94 @@ async function importFixture(ports, fixture) {
 }
 
 /**
- * @description Decide the verdict from the receipt and the worker probe.
+ * @description Gallery mode: a real portrait, the gallery's own locator mint, and the import done
+ * in the LoRA studio page by the surface port (headless Chromium as the caller).
+ * @param {object} io - api, multipart, surface, sleep, now.
+ * @param {ReturnType<typeof createImportFixture>} fixture - The run's fixture.
+ * @param {{portraitId: string|null}} made - Records the portrait as soon as it exists, so cleanup deletes it.
+ * @param {object} evidence - Receives the portrait and surface evidence.
+ * @param {object} budgets - portraitBudgetMs, readyBudgetMs, pollMs.
+ * @returns {Promise<{ok: boolean, detail?: string, handleExpiresAt?: string|null, imported?: object, surface?: object}>} What happened.
+ */
+async function importThroughGallery(io, fixture, made, evidence, budgets) {
+  const portrait = await gallery.createPortrait(io, fixture);
+  made.portraitId = portrait.id;
+  if (!portrait.ok) return { ok: false, detail: portrait.detail };
+  const done = await gallery.awaitPortraitDone(io, portrait.id, budgets);
+  evidence.portrait = { id: portrait.id, style: portrait.style, status: done.status, model: done.model, costUsd: done.costUsd, seconds: Math.round(done.elapsedMs / 1000) };
+  if (done.status !== 'done') return { ok: false, detail: `The portrait did not reach "done" (status ${done.status} after ${evidence.portrait.seconds}s${done.error ? `: ${done.error}` : ''}).` };
+  const handle = await gallery.mintGalleryHandle(io, portrait.id);
+  if (!handle.ok) return { ok: false, detail: handle.detail };
+  const surface = await io.surface.importImage({ ref: handle.ref, displayName: fixture.character.displayName, caption: fixture.caption }, budgets, io);
+  const imported = surface.response.json;
+  surface.filename = typeof imported.filename === 'string' ? imported.filename : null;
+  evidence.surface = { shown: surface.shown ? surface.shown.status : null, text: surface.shown ? surface.shown.text : null,
+    seconds: surface.shown ? Math.round(surface.shown.elapsedMs / 1000) : null, pageErrors: surface.pageErrors };
+  if (surface.response.status !== 202) {
+    return { ok: false, handleExpiresAt: handle.expiresAt, imported,
+      detail: `The studio's import answered HTTP ${surface.response.status} ${imported.status || imported.error || ''}`.trim() };
+  }
+  return { ok: true, handleExpiresAt: handle.expiresAt, imported, surface };
+}
+
+/**
+ * @description What is wrong with what the LoRA surface showed, or null when it showed the file
+ * "ready on worker" without a page error. Gallery mode only; the inline mode has no surface.
+ * @param {{filename: string|null, shown: object|null, pageErrors: string[]}|null} surface - The surface port's observation.
+ * @returns {string|null} The problem.
+ */
+function surfaceProblem(surface) {
+  if (!surface) return null;
+  const shown = surface.shown || { status: 'missing', text: '', elapsedMs: 0 };
+  const seconds = Math.round(shown.elapsedMs / 1000);
+  if (shown.status !== 'ready') {
+    return `The LoRA surface did not show "ready on worker" for ${surface.filename || 'the imported file'}: #datasetRows showed `
+      + `${shown.text ? `"${shown.text}"` : 'no row for it'} after ${seconds}s`;
+  }
+  if (surface.pageErrors.length) return `The LoRA surface showed "ready on worker" but raised ${surface.pageErrors.length} page error(s): ${surface.pageErrors.join(' | ')}`;
+  return null;
+}
+
+/**
+ * @description Decide the verdict from the receipt, the surface (gallery mode) and the worker probe.
  * @param {object} receipt - awaitReceipt's outcome.
  * @param {object|null} probe - The parsed box probe.
- * @param {ReturnType<typeof createImportFixture>} fixture - The run's fixture.
+ * @param {{png?: Buffer|null, bytes?: number, caption: string}} expected - The exact bytes and caption the pair must hold.
  * @param {object} importTask - The LoRA import task's worker result (diagnostic).
  * @param {object|null} [probeRun] - The probe task's own outcome (stdout, stderr, exitCode, error), quoted when the probe is unreadable.
+ * @param {object|null} [surface] - The surface port's observation (gallery mode), or null.
  * @returns {{state: 'pass'|'fail', detail: string}} The verdict before cleanup.
  */
-function decideVerdict(receipt, probe, fixture, importTask, probeRun = null) {
+function decideVerdict(receipt, probe, expected, importTask, probeRun = null, surface = null) {
   const seconds = Math.round(receipt.elapsedMs / 1000);
   if (receipt.status !== 'ready') {
     const worker = importTask ? ` Worker import task: exit ${importTask.exitCode}${importTask.stderr ? `, stderr "${importTask.stderr.slice(-300)}"` : ''}.` : '';
-    return { state: 'fail', detail: `The receipt did not reach "ready on worker" (status ${receipt.status} after ${seconds}s).${worker}` };
+    const shown = surface && surface.shown ? ` The LoRA surface showed ${surface.shown.text ? `"${surface.shown.text}"` : 'no row for it'}.` : '';
+    return { state: 'fail', detail: `The receipt did not reach "ready on worker" (status ${receipt.status} after ${seconds}s).${worker}${shown}` };
   }
+  const surfaceIssue = surfaceProblem(surface);
+  if (surfaceIssue) return { state: 'fail', detail: `${surfaceIssue} (the receipt route says ready after ${seconds}s).` };
   const problem = probeShapeProblem(probe);
   if (problem) return { state: 'fail', detail: unreadableProbeDetail(seconds, problem, probeRun) };
   const at = probe.expanded;
   const literal = probe.literal;
   const where = `curated folder training reads: png=${at.png} (${at.bytes} bytes), txt=${at.txt}; `
     + `single-quoted literal path: png=${literal.png}, txt=${literal.txt}`;
-  const captionOk = at.caption.trim() === fixture.caption;
-  if (at.png && at.txt && at.bytes === fixture.png.length && captionOk) {
-    return { state: 'pass', detail: `The imported image reached "ready on worker" in ${seconds}s and the .png/.txt pair is in the character's curated folder with the exact bytes and caption (${where}).` };
+  const captionOk = at.caption.trim() === expected.caption;
+  const expectedBytes = expected.png ? expected.png.length : Number(expected.bytes);
+  if (at.png && at.txt && at.bytes === expectedBytes && captionOk) {
+    const shown = surface ? ' the studio page showed it "ready on worker" and' : '';
+    return { state: 'pass', detail: `The imported image reached "ready on worker" in ${seconds}s,${shown} the .png/.txt pair is in the character's curated folder with the exact bytes and caption (${where}).` };
   }
   return { state: 'fail', detail: `The receipt says "ready on worker" (${seconds}s) but the pair is not in the curated folder training reads (${where}; caption match=${captionOk}).` };
 }
 
 /**
  * @description Remove everything the run created and prove it: the box directory, the import ticket,
- * and the character with its cascaded receipt/staging/grants.
+ * the portrait (gallery mode), and the character with its cascaded receipt/staging/grants.
  * @param {object} ports - The run's ports.
  * @param {ReturnType<typeof createImportFixture>} fixture - The run's fixture.
- * @param {{worker: object|null, storageKey: string|null, ticketId: string|null}} made - What exists.
+ * @param {{worker: object|null, storageKey: string|null, ticketId: string|null, portraitId: string|null}} made - What exists.
  * @param {object} budgets - Budgets.
  * @returns {Promise<string[]>} Cleanup errors; empty means everything is gone.
  */
@@ -344,7 +383,7 @@ async function cleanUpImport(ports, fixture, made, budgets) {
   if (!SUBJECT_RE.test(fixture.subject)) return ['refusing to clean up a non-fixture subject'];
   let characterId = null;
   try {
-    const found = await ports.withOwner(() => ports.query(CHARACTER_SQL, [ports.ownerSub, fixture.subject]));
+    const found = await ports.withOwner(() => ports.sql('lora.character-id', [ports.ownerSub, fixture.subject]));
     characterId = found.rows[0] ? String(found.rows[0].id) : null;
   } catch (error) {
     errors.push(`character lookup failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -353,9 +392,10 @@ async function cleanUpImport(ports, fixture, made, budgets) {
   const storageKey = made.storageKey || (characterId ? `lora-${characterId.replace(/-/g, '')}` : null);
   if (made.worker && storageKey) errors.push(...await removeBoxDirectory(ports, made.worker, storageKey, budgets));
   if (made.ticketId) errors.push(...await removeImportTicket(ports, fixture, made.ticketId));
+  if (made.portraitId) errors.push(...await gallery.removePortrait(ports, made.portraitId, fixture.subject, budgets));
   try {
-    await ports.withOwner(() => ports.query(DELETE_CHARACTER_SQL, [ports.ownerSub, fixture.subject]));
-    const residue = (await ports.withOwner(() => ports.query(RESIDUE_SQL,
+    await ports.withOwner(() => ports.sql('lora.character-delete', [ports.ownerSub, fixture.subject]));
+    const residue = (await ports.withOwner(() => ports.sql('lora.residue',
       [ports.ownerSub, fixture.subject, characterId || '00000000-0000-0000-0000-000000000000']))).rows[0] || {};
     if (Number(residue.characters) || Number(residue.receipts)) errors.push(`database residue: characters=${residue.characters}, receipts=${residue.receipts}`);
   } catch (error) {
@@ -409,76 +449,112 @@ async function removeBoxDirectory(ports, worker, storageKey, budgets) {
 }
 
 /**
+ * @description Create the character, import the image through the run's source, and observe the
+ * receipt and the worker: everything the verdict is decided from.
+ * @param {object} io - The run's ports with clock.
+ * @param {ReturnType<typeof createImportFixture>} fixture - The run's fixture.
+ * @param {object} made - What exists (filled as things are created).
+ * @param {object} evidence - The run's evidence (filled as things are observed).
+ * @param {object} budgets - Budgets.
+ * @returns {Promise<{state: 'pass'|'fail', detail: string}>} The verdict before cleanup.
+ */
+async function observeImport(io, fixture, made, evidence, budgets) {
+  await createCharacter(io, fixture);
+  const imported = io.source === 'gallery' ? await importThroughGallery(io, fixture, made, evidence, budgets) : await importInline(io, fixture);
+  Object.assign(evidence, { handleExpiresAt: imported.handleExpiresAt || null });
+  if (imported.imported) made.ticketId = imported.imported.ticketId || null;
+  if (!imported.ok) throw new Error(imported.detail);
+  const job = imported.imported;
+  made.worker = { clientId: job.clientId, agentId: io.workerAgentIds?.[job.clientId] || job.clientId };
+  const receipt = await awaitReceipt(io, fixture.subject, job.filename, budgets);
+  made.storageKey = STORAGE_KEY_RE.test(receipt.storageKey || '') ? receipt.storageKey : null;
+  const importTask = receipt.status === 'ready' ? null : await awaitWorkerResult(io, job.clientId, job.taskId, { ...budgets, boxBudgetMs: budgets.pollMs * 2 });
+  const probeRun = receipt.status === 'ready' && made.storageKey
+    ? await runOnWorker(io, made.worker, buildBoxProbeCommand(io.boxRoot, made.storageKey, job.filename), budgets) : null;
+  const probe = probeRun ? parseProbe(probeRun.stdout) : null;
+  Object.assign(evidence, { filename: job.filename, ticketId: job.ticketId, importTaskId: job.taskId, receipt: receipt.status, readySeconds: Math.round(receipt.elapsedMs / 1000),
+    bytes: fixture.png ? fixture.png.length : Number(job.byteSize) || receipt.byteSize, worker: job.clientId,
+    probeTaskId: probeRun ? probeRun.taskId : null, curated: probe ? probe.expanded : null, literalPath: probe ? probe.literal : null });
+  const expected = { png: fixture.png, bytes: evidence.bytes, caption: fixture.caption };
+  return decideVerdict(receipt, probe, expected, importTask, probeRun, imported.surface || null);
+}
+
+/**
  * @description Run the whole case once; cleanup always runs once anything was written.
- * @param {object} ports - api, upload, tickets, query, withOwner, ownerSub, boxRoot, sleep?, now?.
+ * @param {object} ports - api, upload (inline) / multipart + surface (gallery), tickets, sql, withOwner, ownerSub, boxRoot, source?, sleep?, now?.
  * @param {object} [options] - Budget overrides and an optional fixture.
  * @returns {Promise<{caseId: string, state: string, detail: string, evidence: object}>} The result.
  */
 async function runLoraImportAcceptance(ports, options = {}) {
-  const io = { sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)), now: () => Date.now(), ...ports };
+  const io = { sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)), now: () => Date.now(), source: 'inline', ...ports };
   const budgets = { ...DEFAULT_BUDGETS };
   for (const key of Object.keys(DEFAULT_BUDGETS)) if (Number(options[key]) > 0) budgets[key] = Number(options[key]);
-  const fixture = options.fixture || createImportFixture();
-  const made = { worker: null, storageKey: null, ticketId: null };
-  const evidence = { subject: fixture.subject, loraVersion: io.loraVersion || null, bytes: fixture.png.length };
+  const fixture = options.fixture || createImportFixture(crypto.randomBytes, io.source);
+  const made = { worker: null, storageKey: null, ticketId: null, portraitId: null };
+  const evidence = { source: io.source, subject: fixture.subject, loraVersion: io.loraVersion || null,
+    ...(io.source === 'gallery' ? { portraitStudioVersion: io.portraitVersion || null } : {}) };
   let verdict = { state: 'fail', detail: 'The case did not finish.' };
   let wrote = false;
   try {
     const before = await io.api('GET', `/api/lora/dataset?subject=${encodeURIComponent(fixture.subject)}`);
     if (before.status !== 404) throw new Error(`The generated character ${fixture.subject} already answers HTTP ${before.status}.`);
     wrote = true;
-    const imported = await importFixture(io, fixture);
-    Object.assign(evidence, { handleExpiresAt: imported.handleExpiresAt || null });
-    if (imported.imported) made.ticketId = imported.imported.ticketId || null;
-    if (!imported.ok) throw new Error(imported.detail);
-    const job = imported.imported;
-    made.worker = { clientId: job.clientId, agentId: io.workerAgentIds?.[job.clientId] || job.clientId };
-    const receipt = await awaitReceipt(io, fixture.subject, job.filename, budgets);
-    made.storageKey = STORAGE_KEY_RE.test(receipt.storageKey || '') ? receipt.storageKey : null;
-    const importTask = receipt.status === 'ready' ? null : await awaitWorkerResult(io, job.clientId, job.taskId, { ...budgets, boxBudgetMs: budgets.pollMs * 2 });
-    const probeRun = receipt.status === 'ready' && made.storageKey
-      ? await runOnWorker(io, made.worker, buildBoxProbeCommand(io.boxRoot, made.storageKey, job.filename), budgets) : null;
-    const probe = probeRun ? parseProbe(probeRun.stdout) : null;
-    Object.assign(evidence, { filename: job.filename, ticketId: job.ticketId, importTaskId: job.taskId, receipt: receipt.status, readySeconds: Math.round(receipt.elapsedMs / 1000), worker: job.clientId,
-      probeTaskId: probeRun ? probeRun.taskId : null, curated: probe ? probe.expanded : null, literalPath: probe ? probe.literal : null });
-    verdict = decideVerdict(receipt, probe, fixture, importTask, probeRun);
+    verdict = await observeImport(io, fixture, made, evidence, budgets);
   } catch (error) {
     verdict = { state: 'fail', detail: error instanceof Error ? error.message : String(error) };
   }
   const cleanupErrors = wrote ? await cleanUpImport(io, fixture, made, budgets) : [];
-  const detail = cleanupErrors.length ? `${verdict.detail} CLEANUP INCOMPLETE: ${cleanupErrors.join('; ')}.`
-    : `${verdict.detail}${wrote ? ' The box directory, the import ticket and the character (receipt, staging, grants) were removed.' : ''}`;
+  const removedWhat = `The box directory, the import ticket${made.portraitId ? ', the portrait' : ''} and the character (receipt, staging, grants) were removed.`;
+  const detail = cleanupErrors.length ? `${verdict.detail} CLEANUP INCOMPLETE: ${cleanupErrors.join('; ')}.` : `${verdict.detail}${wrote ? ` ${removedWhat}` : ''}`;
   return { caseId: CASE_ID, state: cleanupErrors.length ? 'fail' : verdict.state, detail, evidence: { ...evidence, cleanupErrors } };
 }
 
 /**
- * @description Host mode: stage the proof into the api container and run it there.
- * @returns {never} Exits with the proof's status.
+ * @description The budget overrides the environment carries, by name.
+ * @param {NodeJS.ProcessEnv} env - The environment.
+ * @returns {object} Budget options for runLoraImportAcceptance.
  */
-function runOnHost() {
-  const repo = path.resolve(__dirname, '..', '..');
-  const pat = runner.readOperatorPat(process.env, process.env.OSHAL_VERIFY_ENV_FILE || path.join(repo, '.env'));
-  if (!pat) {
-    process.stdout.write(`${CASE_ID} UNAVAILABLE: ${runner.PAT_ENV} is neither exported nor in the .env; nothing was written.\n`);
-    process.exit(2);
-  }
-  const env = { LOG_LEVEL: 'silent', OSHAL_SCHEMA_BOOTSTRAP: 'validate-only' };
-  for (const name of ['OSHAL_LORA_READY_BUDGET_MS', 'OSHAL_LORA_BOX_BUDGET_MS', 'OSHAL_LORA_POLL_MS']) if (process.env[name]) env[name] = process.env[name];
-  runner.reportAndExit(runner.stageAndRun({
-    container: process.env.OSHAL_VERIFY_API_CONTAINER || runner.DEFAULT_API_CONTAINER,
-    files: [
-      { src: __filename, rel: 'operations/lora-import-live-proof.js' },
-      { src: path.join(__dirname, 'live-proof-runner.js'), rel: 'operations/live-proof-runner.js' },
-    ],
-    entry: 'operations/lora-import-live-proof.js', env, pat, timeoutMs: 15 * 60_000,
-  }));
+function budgetOptions(env) {
+  return Object.fromEntries(Object.entries(BUDGET_ENV).map(([key, name]) => [key, env[name]]));
+}
+
+/**
+ * @description The workers LoRA can dispatch to, or why there are none - an offline worker is named.
+ * @param {Function} api - Bearer JSON port.
+ * @returns {Promise<{online: object[], detail: string|null}>} The online workers, or the UNAVAILABLE detail.
+ */
+async function onlineWorkers(api) {
+  const clients = await api('GET', '/api/remote-clients');
+  const list = (Array.isArray(clients.json.clients) ? clients.json.clients : []).filter((c) => c && typeof c.clientId === 'string');
+  const online = list.filter((c) => c.status === 'online');
+  if (online.length) return { online, detail: null };
+  const named = list.map((c) => `${c.clientId} (${c.status || 'unknown'})`).join(', ');
+  return { online, detail: list.length ? `No GPU worker is online: ${named}; nothing was written.` : 'No remote worker is registered on this box; nothing was written.' };
+}
+
+/**
+ * @description Resolve the caller, the installed LoRA package and the online workers, or why the
+ * case cannot run here (nothing written).
+ * @param {Function} api - Bearer JSON port.
+ * @returns {Promise<{detail: string, evidence?: object}|{ownerSub: string, loraVersion: string, workerAgentIds: object}>} The run's identity, or the UNAVAILABLE detail.
+ */
+async function resolveRun(api) {
+  const who = await api('GET', '/api/cli-tokens/whoami');
+  const ownerSub = typeof who.json.sub === 'string' ? who.json.sub : '';
+  if (who.status !== 200 || !ownerSub) return { detail: `The operator PAT did not resolve to a caller (HTTP ${who.status}); nothing was written.` };
+  const apps = await api('GET', '/api/swarm/apps?status=active');
+  const lora = (Array.isArray(apps.json.apps) ? apps.json.apps : []).find((app) => app && app.name === 'lora');
+  if (!lora) return { detail: 'The lora package is not installed and active on this box; nothing was written.' };
+  const workers = await onlineWorkers(api);
+  if (workers.detail) return { detail: workers.detail, evidence: { loraVersion: lora.version } };
+  return { ownerSub, loraVersion: lora.version, workerAgentIds: Object.fromEntries(workers.online.map((c) => [c.clientId, c.agentId || c.clientId])) };
 }
 
 /**
  * @description Loopback JSON and multipart calls as the PAT's owner.
- * @param {string} base - Loopback base URL.
+ * @param {string} base - Base URL.
  * @param {string} token - The operator PAT.
- * @returns {{api: Function, upload: Function}} The two HTTP ports.
+ * @returns {{api: Function, multipart: Function, upload: Function}} The HTTP ports.
  */
 function bearerPorts(base, token) {
   const send = async (method, route, init) => {
@@ -487,38 +563,58 @@ function bearerPorts(base, token) {
     const json = await response.json().catch(() => ({}));
     return { status: response.status, json: json && typeof json === 'object' ? json : {} };
   };
+  const multipart = (route, fields, file) => {
+    const form = new FormData();
+    for (const [name, value] of Object.entries(fields || {})) form.append(name, String(value));
+    form.append(file.field || 'file', new Blob([file.bytes], { type: file.type }), file.name);
+    return send('POST', route, { body: form });
+  };
   return {
     api: (method, route, body) => send(method, route, body === undefined ? {}
       : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
-    upload: (name, type, bytes) => {
-      const form = new FormData();
-      form.append('type', type);
-      form.append('name', name);
-      form.append('file', new Blob([bytes], { type }), name);
-      return send('POST', '/api/artifacts/handles/upload', { body: form });
-    },
+    multipart,
+    upload: (name, type, bytes) => multipart('/api/artifacts/handles/upload', { type, name }, { field: 'file', name, type, bytes }),
   };
 }
 
 /**
- * @description Container mode: resolve the caller, the installed package and the online workers,
- * run the case once and print the RESULT line.
+ * @description Host, inline mode: stage the proof into the api container and run it there.
+ * @returns {never} Exits with the proof's status.
+ */
+function runInlineOnHost() {
+  const repo = path.resolve(__dirname, '..', '..');
+  const pat = runner.readOperatorPat(process.env, process.env.OSHAL_VERIFY_ENV_FILE || path.join(repo, '.env'));
+  if (!pat) {
+    process.stdout.write(`${CASE_ID} UNAVAILABLE: ${runner.PAT_ENV} is neither exported nor in the .env; nothing was written.\n`);
+    process.exit(2);
+  }
+  const env = { LOG_LEVEL: 'silent', OSHAL_SCHEMA_BOOTSTRAP: 'validate-only' };
+  for (const name of Object.values(BUDGET_ENV)) if (process.env[name]) env[name] = process.env[name];
+  const lib = path.join(__dirname, '..', 'lib');
+  runner.reportAndExit(runner.stageAndRun({
+    container: process.env.OSHAL_VERIFY_API_CONTAINER || runner.DEFAULT_API_CONTAINER,
+    files: [
+      { src: __filename, rel: 'operations/lora-import-live-proof.js' },
+      { src: path.join(__dirname, 'live-proof-runner.js'), rel: 'operations/live-proof-runner.js' },
+      { src: path.join(lib, 'lora-gallery-source.js'), rel: 'lib/lora-gallery-source.js' },
+      { src: path.join(lib, 'live-acceptance-sql.js'), rel: 'lib/live-acceptance-sql.js' },
+    ],
+    entry: 'operations/lora-import-live-proof.js', env, pat, timeoutMs: 15 * 60_000,
+  }));
+}
+
+/**
+ * @description Container, inline mode: resolve the caller, the installed package and the online
+ * workers, run the case once and print the RESULT line.
  * @returns {Promise<never>} Exits with the case's status.
  */
 async function runInContainer() {
   const unavailable = (detail, evidence = {}) => runner.emitResult({ caseId: CASE_ID, state: 'unavailable', detail, evidence });
   const token = String(process.env[runner.PAT_ENV] || '').trim();
   if (!token) return unavailable(`${runner.PAT_ENV} was not forwarded into the container; nothing was written.`);
-  const { api, upload } = bearerPorts(`http://127.0.0.1:${process.env.PORT || '5000'}`, token);
-  const who = await api('GET', '/api/cli-tokens/whoami');
-  const ownerSub = typeof who.json.sub === 'string' ? who.json.sub : '';
-  if (who.status !== 200 || !ownerSub) return unavailable(`The operator PAT did not resolve to a caller (HTTP ${who.status}); nothing was written.`);
-  const apps = await api('GET', '/api/swarm/apps?status=active');
-  const lora = (Array.isArray(apps.json.apps) ? apps.json.apps : []).find((app) => app && app.name === 'lora');
-  if (!lora) return unavailable('The lora package is not installed and active on this box; nothing was written.');
-  const clients = await api('GET', '/api/remote-clients');
-  const online = (Array.isArray(clients.json.clients) ? clients.json.clients : []).filter((c) => c && c.status === 'online');
-  if (!online.length) return unavailable('No remote worker is online; nothing was written.', { loraVersion: lora.version });
+  const ports = bearerPorts(`http://127.0.0.1:${process.env.PORT || '5000'}`, token);
+  const run = await resolveRun(ports.api);
+  if (run.detail) return unavailable(run.detail, run.evidence || {});
   const dist = process.env.OSHAL_ACCEPTANCE_DIST_DIR || path.join(process.cwd(), 'dist');
   /* eslint-disable @typescript-eslint/no-require-imports */
   const { createOptionalPostgresPool } = require(path.join(dist, 'shared/services/database/optional-postgres-pool.js'));
@@ -529,25 +625,76 @@ async function runInContainer() {
   const pool = createOptionalPostgresPool('lora-import-live-proof');
   if (!pool) return unavailable('This container has no PostgreSQL configuration; nothing was written.');
   const result = await runLoraImportAcceptance({
-    api, upload, ownerSub, loraVersion: lora.version, tickets: new TicketService(new PostgresTicketStore(pool)),
-    workerAgentIds: Object.fromEntries(online.map((c) => [c.clientId, c.agentId || c.clientId])),
+    ...ports, ...run, source: 'inline', tickets: new TicketService(new PostgresTicketStore(pool)),
     boxRoot: process.env.LORA_BOX_ROOT || DEFAULT_BOX_ROOT,
-    query: (sql, params) => pool.query(sql, params),
-    withOwner: (fn) => runWithRequestIdentity({ sub: ownerSub, isOperator: false }, fn),
-  }, { readyBudgetMs: process.env.OSHAL_LORA_READY_BUDGET_MS, boxBudgetMs: process.env.OSHAL_LORA_BOX_BUDGET_MS, pollMs: process.env.OSHAL_LORA_POLL_MS });
+    sql: (name, params) => pool.query(statementText(name), params),
+    withOwner: (fn) => runWithRequestIdentity({ sub: run.ownerSub, isOperator: false }, fn),
+  }, budgetOptions(process.env));
   return runner.emitResult(result);
+}
+
+/**
+ * @description Print one result the way the container runs are printed, and exit with its code.
+ * @param {{caseId: string, state: string, detail: string, evidence?: object}} result - The verdict.
+ * @returns {never} Exits the process.
+ */
+function reportHostResult(result) {
+  const status = EXIT_CODES[result.state] === undefined ? 1 : EXIT_CODES[result.state];
+  runner.reportAndExit({ status, stdout: `${runner.RESULT_PREFIX}${JSON.stringify(result)}\n`, stderr: '' });
+}
+
+/**
+ * @description Host, gallery mode: bearer HTTP against the box, the DB-bound cleanup through the
+ * live-acceptance container helper (named statements and the ticket service, as the owner), the box
+ * root from the api container's environment, and the studio page in headless Chromium as the caller.
+ * @returns {Promise<never>} Exits with the case's status.
+ */
+async function runGalleryOnHost() {
+  const repo = path.resolve(__dirname, '..', '..');
+  const pat = runner.readOperatorPat(process.env, process.env.OSHAL_VERIFY_ENV_FILE || path.join(repo, '.env'));
+  const unavailable = (detail, evidence = {}) => reportHostResult({ caseId: CASE_ID, state: 'unavailable', detail, evidence });
+  if (!pat) return unavailable(`${runner.PAT_ENV} is neither exported nor in the .env; nothing was written.`);
+  const base = String(process.env.OSHAL_VERIFY_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, '');
+  const container = process.env.OSHAL_VERIFY_API_CONTAINER || runner.DEFAULT_API_CONTAINER;
+  const ports = bearerPorts(base, pat);
+  const run = await resolveRun(ports.api);
+  if (run.detail) return unavailable(run.detail, run.evidence || {});
+  const portrait = await gallery.portraitPreflight(ports.api);
+  if (!portrait.ok) return unavailable(`${portrait.detail}; nothing was written.`, { loraVersion: run.loraVersion });
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const acceptance = require('./live-acceptance');
+  const helper = acceptance.containerHelper(container);
+  const owner = acceptance.containerPorts(helper, run.ownerSub);
+  let result;
+  try {
+    result = await runLoraImportAcceptance({
+      ...ports, ...run, source: 'gallery', portraitVersion: portrait.version, sql: owner.sql,
+      tickets: { getTicket: owner.tickets.get, deleteTicket: owner.tickets.delete }, withOwner: (fn) => fn(),
+      boxRoot: gallery.readContainerEnv(container, 'LORA_BOX_ROOT') || DEFAULT_BOX_ROOT,
+      surface: gallery.createSurfacePort({ origin: base, token: pat }),
+    }, budgetOptions(process.env));
+  } catch (error) {
+    result = { caseId: CASE_ID, state: 'fail', detail: `The proof crashed: ${error instanceof Error ? error.message : String(error)}`, evidence: {} };
+  } finally {
+    helper.dispose();
+  }
+  return reportHostResult(result);
 }
 
 if (require.main === module) {
   if (process.argv.includes('--in-container')) {
     runInContainer().catch((error) => runner.emitResult({ caseId: CASE_ID, state: 'fail',
       detail: `The proof crashed: ${error instanceof Error ? error.message : String(error)}`, evidence: {} }));
+  } else if (process.argv.includes('--gallery')) {
+    runGalleryOnHost().catch((error) => reportHostResult({ caseId: CASE_ID, state: 'fail',
+      detail: `The proof crashed: ${error instanceof Error ? error.message : String(error)}`, evidence: {} }));
   } else {
-    runOnHost();
+    runInlineOnHost();
   }
 }
 
 module.exports = {
-  CASE_ID, SUBJECT_RE, DEFAULT_BOX_ROOT, PROBE_EXCERPT_CHARS, generatePng, createImportFixture, psLiteral, buildBoxProbeCommand,
-  buildBoxRemoveCommand, redactWorkerText, parseProbe, probeShapeProblem, probeExcerpt, decideVerdict, runLoraImportAcceptance,
+  CASE_ID, SUBJECT_RE, DEFAULT_BOX_ROOT, DEFAULT_BUDGETS, PROBE_EXCERPT_CHARS, generatePng, createImportFixture, psLiteral, buildBoxProbeCommand,
+  buildBoxRemoveCommand, redactWorkerText, parseProbe, probeShapeProblem, probeExcerpt, surfaceProblem, decideVerdict, onlineWorkers, resolveRun,
+  bearerPorts, runLoraImportAcceptance,
 };
