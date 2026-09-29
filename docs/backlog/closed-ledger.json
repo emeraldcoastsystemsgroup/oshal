@@ -838,5 +838,29 @@
     "date": "2026-09-25",
     "pr": "828",
     "evidence": "Store PR #247 and core PR #828: bounded PNG/JPEG thumbnails are owner-hosted, tied to the current scorecard cell and a fixed 30-day model lifetime, and cascade with model deletion; missing/expired cells never use external URLs. Seven actual disposable PostgreSQL/HTTP/Chromium tests prove decoded cell pixels, second-owner and anonymous refusal, expiry, deletion, late callbacks and scorecard changes. Package suite: 32 passing; combined framework-coupled Vitest: 51; shipping validator/Pillow upload proof: 4. Fixture identity, GPU dispatch and runtime bootstrap seams are explicit; no real GPU training is claimed. LoRA 1.2.0 from merged store 4576bd020de35fc97bec85f6975a2c5d62fae29d installed and hot-loaded; served studio and installed route/schema bytes match Git, database forced RLS and model cascade verified. Three current Test Lab cases registered; installed verification reports pending (browser-session smoke and separately executed suites), not a live suite pass. GPU end-to-end and autonomous overnight scheduling remain separate open items."
+  },
+  {
+    "date": "2026-09-29",
+    "title": "Jarvis cannot see the user's other conversations, so it defers instead of answering",
+    "pr": "834, 860, 861, 865, 866, 867",
+    "evidence": "All five Done-when clauses are met. conversation_query and conversation_fetch list and fetch the caller's own chat threads and Jarvis work items (core #834, 288f7e46); the list carries selection metadata only; the two-owner real-PostgreSQL guard tests/unit/bot-node-read-only-tools-owner-scope-postgres.spec.ts covers both database roles, with the paired owner-can cases, refused by the database; the persona recalls before it defers (ai-lab/bot-personas/oshal-assistant.yaml, pinned by tests/unit/jarvis-persona-recall.spec.ts). Live receipt: jarvis-cross-thread-recall PASS on 2026-09-27 21:51 UTC on build 424dfcf0, which contains #834, #860, #861, #865 and #866 and is #867: \"Jarvis delivered the other thread's codeword into thread B in 24s; recall tools: conversation_query x1, conversation_fetch x1 over 3 captured frame(s), all stamped for this caller\", strayInThreadA 0, cleanupErrors [], exit 0; recorded in docs/architecture/jarvis-own-task-recall.md. The case has not been re-run on a later build; the recall tools, the adapters, the persona and the acceptance case are unchanged between 424dfcf0 and main 342089fe. To repeat it on the current build: node scripts/operations/jarvis-recall-live-proof.js from a core checkout."
+  },
+  {
+    "date": "2026-09-29",
+    "title": "Guide bots that operate their apps",
+    "pr": "266 (store)",
+    "evidence": "Live on the box 2026-09-26 (core 07b1100f, Presentations 2.12.5): the deck-builder bot log shows the Guide's direct turn completing at 07:42:10Z on gemini-3.8-flash-low, and the owner-scoped 'Greenhouse Demo Proof.pptx' (cover plus three slides, Midnight, sha256 db09ef26f077...) was saved to oshal local at 07:42:38Z; the receipt is in store presentations/README.md 'Installed Guide acceptance (2026-09-26)' (294bbed) and COLLABORATE 2026-09-26 07:51 UTC. Guards: presentations-guide.test.mjs, presentations-guide-artifact.test.mjs, presentations-guide-browser.test.mjs, presentations-slack-delivery.test.mjs (428 without confirmation) and core tests/unit/remote-brain-stamp.spec.ts. Landed as direct commits with no pull request: store fae5fd4, 146f4af, 0035ef1 (on main through merge 8fc9dfe) and 294bbed; core 2a22986e and 07b1100f."
+  },
+  {
+    "date": "2026-09-29",
+    "title": "Consumer commerce native surfaces",
+    "pr": "272 (store), 273 (store), 274 (store), 880, 923",
+    "evidence": "Store #272/#273/#274 (18a75920, ae75c904, 06727dec) shipped server-priced integer-cent totals, proposal-only chat routes and the shared bridge rail in rides, eats and purchasing, guarded by each package's route and cart-totals tests and surface.core.spec.mjs (real Chromium at 390x844, verifier run 18 of 18). Live receipt on the installed build: the 2026-09-29 13:08-13:11 UTC sweep on revision c6cf0f94 recorded PASS commerce (commerce-surfaces-live) for rides 1.5.2, eats 1.3.2 and purchasing 1.3.2, each fitting 390 px, raising the confirm card and handing off nothing on Cancel, with cleanup outstanding 0."
+  },
+  {
+    "date": "2026-09-29",
+    "title": "One parts model across Circuit Lab, Animatronics and Embodied (2026-09-14)",
+    "pr": "224 (store), 270 (store)",
+    "evidence": "Store #224 (e8a3dca9) and #270 (12eb9cf9) are merged; on store main 88aa85e5 Circuit Lab's SG90 row and both brushless motor rows read their owners' rows (animatronics, embodied) and restate no name, mass or price, guarded by circuit-lab tests/driver-catalog.test.js and tests/shared-parts.test.js and embodied tests/engine-parts-catalog.test.js, with no scripts/ guard changed by either PR. The Done-when calls for no live result and no live receipt was taken (oshal-local-api was stopped at audit time, so the GET of /api/circuit-lab/catalog/drivers could not be read)."
   }
 ]
