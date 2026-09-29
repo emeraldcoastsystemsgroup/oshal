@@ -5,16 +5,19 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | The central assistant built to the demo, in headless Chromium through the real static routes over the synthetic fixture (routes mirror the real shapes): the welcome's connected capabilities from the Google connection, Travel's provider mode and the caller's preferences (Travel asked nothing when the plan does not admit it); the idle briefing readback from live counts; the Calendar view over the caller's busy windows (free weekends highlighted, busy days dotted, refusals named, unknown never free, retry, month navigation, the opening month under a pinned clock); the Travel view (only when admitted) from free weekend to Travel's search, offer cards, nonstop / after-3pm / sort / budget filters and the honest empty state, the source line and price read, sample-offer labelling, save to this device, the fare dialog and an explicit fare watch, and the shelf listing both; text refinements that stay on the page; preferences writing the departure airport through Travel and keeping the budget on the device; the trip suggestion opening its answer on Calendar; keyboard tabs across the dynamic tab list; speech stopping when the page is hidden and the transcript opening when no voice engine exists; and a phone-width layout without horizontal scroll.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Frame parity: the study bar, rail actions, topline brand, core caption, headline, live counts in the eyebrow, privacy footer, and the swarm and sources dialogs over the live snapshot (no Travel row for a caller Travel does not admit).
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Phase-8 corrections: every case opts into the lane routes (enableNexusBuild); the readback's states, meter, progress, pause-while-away, stop, natural completion, an engine that never started and the silent-audio watchdog; the best-match line with the busy weekend left out and its filter/sort sync; the comparison across every free weekend with card filtering and per-offer dates; typed dates that overlap plans or were not read; the page's own ledger rows; the in-context titles and the composer note; the destination city; the six demo widths across the welcome and every tab; and the fixture's fall-through before opt-in.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | The preferences case also renames the assistant (brand, rail mark and page title follow) and refuses an empty name in the dialog.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
-import { installTravelHost, startExperienceBrowserFixture } from '../fixtures/experience-browser';
+import { enableNexusBuild, installTravelHost, silentWav, startExperienceBrowserFixture, syntheticOffers } from '../fixtures/experience-browser';
 
 vi.mock('@/shared/logger', () => ({ createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }) }));
 vi.setConfig({ testTimeout: 90000, hookTimeout: 60000 });
 
 interface BuildLane {
+  active: boolean;
+  voice: { audioData: string };
   availability: { status: number; state: string; error: string; busy: Array<{ start: string; end: string }>; calls: Array<{ timeMin: string; timeMax: string }> };
   google: { status: number; connected: boolean; expired: boolean };
   travel: { configStatus: number; config: Record<string, unknown>; profile: Record<string, unknown>; profileWrites: Array<Record<string, unknown>>; profileWriteStatus: number;
@@ -71,6 +74,7 @@ beforeAll(async () => { browser = await chromium.launch({ headless: true }); });
 afterAll(async () => { await browser?.close(); });
 beforeEach(async () => {
   fixture = await startExperienceBrowserFixture();
+  enableNexusBuild(fixture.state);
   lane().availability.busy = plan.busy;
   context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
   await context.route('**/*', route => new URL(route.request().url()).origin === fixture.origin ? route.continue() : route.abort());
@@ -335,12 +339,215 @@ describe('refinements, preferences, suggestion, keyboard and voice', () => {
     await page.waitForFunction(() => document.querySelector('.readback-status')?.textContent?.includes('TRANSCRIPT BELOW'), null, { timeout: 8000 });
     expect(await page.locator('.readback details').evaluate(d => (d as HTMLDetailsElement).open)).toBe(true);
   });
+});
 
-  it('lays the Travel view out at phone width without horizontal scroll', async () => {
-    installTravelHost(fixture.state);
-    await page.setViewportSize({ width: 390, height: 900 });
-    await open(); await answered('Flights please'); await searchFirstWeekend();
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+/** @description The label the page gives a Friday-to-Sunday weekend ("November 6–8", or "Oct 30 – Nov 1" across two months). */
+function weekendLabel(friday: Date) {
+  const sunday = new Date(friday.getFullYear(), friday.getMonth(), friday.getDate() + 2);
+  const month = (d: Date) => d.toLocaleDateString('en-US', { month: 'long' });
+  return friday.getMonth() === sunday.getMonth() ? `${month(friday)} ${friday.getDate()}–${sunday.getDate()}` : `${month(friday).slice(0, 3)} ${friday.getDate()} – ${month(sunday).slice(0, 3)} ${sunday.getDate()}`;
+}
+const dayLabel = (k: string) => new Date(`${k}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+const readbackStatus = () => page.locator('.readback-status').innerText();
+const readbackVar = (name: string) => page.locator('.readback').evaluate((e, n) => (e as HTMLElement).style.getPropertyValue(n), name);
+const ledgerRow = (name: string) => page.locator('.ledger-step').filter({ has: page.locator('strong', { hasText: new RegExp(`^${name}$`) }) });
+
+describe('Phase-8 corrections: the readback follows the demo\'s rules', () => {
+  it('marks the readback speaking, keeps the meter at zero with motion off, pauses while away, stops on Stop, and completes on a natural end with progress', async () => {
+    await open();
+    await page.locator('.readback-button').click();
+    await page.waitForFunction(() => document.querySelector('.readback-status')?.textContent?.includes('BROWSER VOICE'));
+    expect(await page.locator('.readback').getAttribute('data-state')).toBe('speaking'); expect(await readbackStatus()).toContain('VISUAL MOTION IS OFF');
+    await page.waitForTimeout(300);
+    expect(await readbackVar('--voice-level')).toBe('0.000');
+    await page.evaluate(() => { Object.defineProperty(document, 'hidden', { value: true, configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
+    await page.waitForFunction(() => document.querySelector('.readback-status')?.textContent === 'PAUSED WHILE AWAY · PRESS PLAY TO RESTART');
+    expect(await page.locator('.readback').getAttribute('data-state')).toBe('idle');
+    expect(await page.locator('.readback').getAttribute('data-outcome')).toBe('away');
+    await page.evaluate(() => { Object.defineProperty(document, 'hidden', { value: false, configurable: true }); });
+    await page.locator('.readback-button').click();
+    await page.waitForFunction(() => document.querySelector('.readback')?.getAttribute('data-state') === 'speaking');
+    await page.locator('.readback-button').click();
+    expect(await readbackStatus()).toBe('STOPPED · READY WHEN YOU ARE');
+    expect(await page.locator('.readback-button').innerText()).toBe('▶ Play briefing');
+    // An engine that reports boundaries and ends: progress moves, then the status says the readback completed and the meter rests.
+    await page.evaluate(() => {
+      Object.defineProperty(window, 'speechSynthesis', { value: { speak(u: { onboundary: (e: { charIndex: number }) => void; onend: () => void }) { setTimeout(() => u.onboundary({ charIndex: 5 }), 150); setTimeout(() => u.onend(), 600); }, cancel() {}, getVoices() { return []; } }, configurable: true });
+    });
+    await page.locator('.readback-button').click();
+    await page.waitForFunction(() => parseFloat((document.querySelector('.readback') as HTMLElement).style.getPropertyValue('--readback-progress')) > 0);
+    await page.waitForFunction(() => document.querySelector('.readback-status')?.textContent === 'READBACK COMPLETE · READY WHEN YOU ARE');
+    expect(await readbackVar('--readback-progress')).toBe('0.000');
+    expect(await page.locator('.readback').getAttribute('data-outcome')).toBe('complete');
     expect(errors).toEqual([]);
+  });
+
+  it('moves the meter with the voice when motion is on, and reports an engine that never started', async () => {
+    await open();
+    await page.click('[data-action="motion"]');
+    await page.locator('.readback-button').click();
+    await page.waitForFunction(() => parseFloat((document.querySelector('.readback') as HTMLElement).style.getPropertyValue('--voice-level')) > 0);
+    expect(await readbackStatus()).not.toContain('VISUAL MOTION IS OFF');
+    await page.locator('.readback-button').click();
+    await page.evaluate(() => { Object.defineProperty(window, 'speechSynthesis', { value: { speak() { throw new Error('synthetic: engine refused'); }, cancel() {}, getVoices() { return []; } }, configurable: true }); });
+    await page.locator('.readback-button').click();
+    await page.waitForFunction(() => document.querySelector('.readback-status')?.textContent === 'AUDIO DID NOT START · PRESS PLAY TO RETRY');
+    expect(await page.locator('.readback').getAttribute('data-state')).toBe('idle');
+    expect(errors).toEqual([]);
+  });
+
+  it('reports swarm audio that stays silent as not started (the start watchdog)', async () => {
+    lane().voice.audioData = silentWav(14);
+    await open();
+    await page.locator('.readback-button').click();
+    await page.waitForFunction(() => document.querySelector('.readback-status')?.textContent === 'AUDIO DID NOT START · PRESS PLAY TO RETRY', null, { timeout: 15000 });
+    expect(fixture.state.calls.filter(c => c === 'POST /api/voice/synthesize').length).toBe(1);
+    expect(errors).toEqual([]);
+  });
+});
+
+describe('Phase-8 corrections: recommendation, comparison, fit, ledger, titles and widths', () => {
+  it('recommends from the offers as they stand, names the busy weekend left out, and follows the filters and sort', async () => {
+    installTravelHost(fixture.state);
+    await open(); await answered('Flights please'); await searchFirstWeekend();
+    const rec = page.locator('[data-part="recommendation"]');
+    expect(await rec.getAttribute('data-fit')).toBe('free');
+    expect(await rec.innerText()).toContain(`${weekendLabel(plan.fridays[0])} looks like a good place to start`);
+    expect(await rec.innerText()).toContain('the lowest matching fare is $218 round trip with 1 stop');
+    expect(await rec.innerText()).toContain(`Left out ${weekendLabel(plan.busyFriday)} because your calendar has plans`);
+    await page.check('#nonstop');
+    expect(await rec.innerText()).toContain('$318 round trip, nonstop'); expect(await rec.innerText()).toContain('Kept nonstop offers');
+    await page.uncheck('#nonstop'); await page.selectOption('#sort', 'duration');
+    expect(await rec.innerText()).toContain('the shortest matching journey is $318 round trip, nonstop');
+    await page.getByRole('tab', { name: 'Overview' }).click();
+    expect(await page.locator('[data-part="plan-recommendation"]').innerText()).toContain('looks like a good place to start');
+    expect(await page.locator('.workspace-title strong').innerText()).toBe('Flights please');
+    expect(errors).toEqual([]);
+  });
+
+  it('compares every free weekend at once, lets the cards filter the merged offers, and keeps each offer on its own dates', async () => {
+    installTravelHost(fixture.state);
+    await open(); await answered('Flights please');
+    await page.getByRole('tab', { name: 'Calendar' }).click(); await toNextMonth();
+    await page.getByRole('tab', { name: 'Travel' }).click(); await page.waitForSelector('.weekend-card');
+    const button = page.locator('[data-action="compare-weekends"]');
+    expect(await button.innerText()).toBe(plan.free.length === 2 ? 'Compare both free weekends' : `Compare all ${plan.free.length} free weekends`);
+    await page.fill('#trip-destination', 'las');
+    await button.click();
+    await page.waitForSelector('.flight');
+    expect(lane().travel.searches.map(s => s.departDate)).toEqual(plan.free);
+    expect(await page.locator('.flight').count()).toBe(5);
+    const first = page.locator('.flight').first();
+    expect(await first.locator('.weekend-tag').innerText()).toBe(weekendLabel(plan.fridays[0]));
+    expect(await first.innerText()).toContain('$218');
+    expect(await page.locator('.trip-hero p').innerText()).toContain(`${plan.free.length} free weekends in ${new Date(plan.y, plan.m, 1).toLocaleDateString('en-US', { month: 'long' })}`);
+    expect(await page.locator('[data-part="offers-source"]').innerText()).toContain(`One search per free weekend (${plan.free.length})`);
+    expect(await page.locator('[data-part="recommendation"]').innerText()).toContain(`${weekendLabel(plan.fridays[0])} looks like a good place to start`);
+    const second = plan.free[1], secondLabel = weekendLabel(new Date(`${second}T00:00:00`));
+    await page.locator(`.weekend-card[data-week="${second}"]`).click();
+    expect(await cardIds()).toEqual(['syn-c', 'syn-a', 'syn-d', 'syn-b'].map(id => `${second}/${id}`));
+    expect(await page.locator('.weekend-tag').allInnerTexts()).toEqual([secondLabel, secondLabel, secondLabel, secondLabel]);
+    await page.locator(`[data-action="fare"][data-fare="${second}/syn-b"]`).click();
+    expect(await page.locator('[data-part="fare-detail"]').innerText()).toContain(`Outbound ${dayLabel(second)}`);
+    await page.click('[data-action="close"]');
+    await page.click('[data-action="save-best"]');
+    await page.waitForFunction(() => document.getElementById('notice')?.textContent?.includes('Saved on this device'));
+    expect(JSON.parse(await page.evaluate(() => localStorage.getItem('oshal-experience:nexus:shortlist') || '[]'))[0]).toMatchObject({ id: `${second}/syn-c`, departDate: second, price: 218 });
+    await page.click('[data-action="all-weeks"]');
+    expect(await page.locator('.flight').count()).toBe(5);
+    expect(lane().travel.searches.length).toBe(plan.free.length);
+    expect(errors).toEqual([]);
+  });
+
+  it('says when typed dates overlap plans or were not read, and never recommends them as a free weekend', async () => {
+    installTravelHost(fixture.state);
+    await open(); await answered('Flights please');
+    await page.getByRole('tab', { name: 'Calendar' }).click(); await toNextMonth();
+    await page.getByRole('tab', { name: 'Travel' }).click(); await page.waitForSelector('.weekend-card');
+    await page.fill('#trip-destination', 'las'); await page.fill('#trip-depart', key(plan.busyFriday)); await page.fill('#trip-return', plan.busySaturday);
+    await page.click('#trip-form button[type="submit"]'); await page.waitForSelector('.flight');
+    expect(await page.locator('[data-part="fit"]').getAttribute('data-fit')).toBe('busy');
+    const rec = page.locator('[data-part="recommendation"]');
+    expect(await rec.getAttribute('data-fit')).toBe('busy');
+    expect(await rec.innerText()).toContain('overlaps plans in your calendar'); expect(await rec.innerText()).not.toContain('good place to start');
+    const far = new Date(plan.y, plan.m + 2, 15), farBack = new Date(plan.y, plan.m + 2, 17);
+    await page.fill('#trip-depart', key(far)); await page.fill('#trip-return', key(farBack));
+    await page.click('#trip-form button[type="submit"]');
+    await page.waitForSelector('[data-part="fit"][data-fit="unknown"]');
+    expect(await page.locator('[data-part="fit"]').innerText()).toContain('unknown, not free');
+    expect(await rec.innerText()).toContain('unknown, not free');
+    expect(errors).toEqual([]);
+  });
+
+  it('adds the page\'s own Calendar, Travel and preferences rows to the ledger, titles the in-context views, and offers the refinements in the composer note', async () => {
+    installTravelHost(fixture.state);
+    await open(); await answered('Flights please');
+    expect(await ledgerRow('Calendar').count()).toBe(0);
+    expect(await page.locator('.composer-note').innerText()).not.toContain('after 3pm');
+    await searchFirstWeekend();
+    expect(await ledgerRow('Calendar').innerText()).toMatch(/read at .*free weekend/);
+    expect(await ledgerRow('Travel').innerText()).toContain('4 offers from 1 search · DUFFEL TEST ENVIRONMENT · NOT BOOKABLE');
+    expect(await ledgerRow('Your preferences').innerText()).toContain('From PNS · 1 adult · economy · no budget');
+    expect(await page.locator('.ledger-step[data-mark="done"]').count()).toBeGreaterThanOrEqual(3);
+    expect(await page.locator('.workspace-title strong').innerText()).toBe('Travel / in-context app preview');
+    expect(await page.locator('[data-part="travel-context"]').innerText()).toContain('Nothing is booked here');
+    expect(await page.locator('.composer-note').innerText()).toContain('“after 3pm” or “nonstop”');
+    await page.getByRole('tab', { name: 'Calendar' }).click();
+    expect(await page.locator('.workspace-title strong').innerText()).toBe('Calendar / in-context app preview');
+    lane().travel.flightsStatus = 400;
+    await page.getByRole('tab', { name: 'Travel' }).click();
+    await page.click('#trip-form button[type="submit"]');
+    await page.waitForSelector('.empty-result[data-state="refused"]');
+    expect(await ledgerRow('Travel').innerText()).toContain('Travel refused the search (HTTP 400)');
+    expect(await ledgerRow('Travel').getAttribute('data-mark')).toBe('failed');
+    expect(errors).toEqual([]);
+  });
+
+  it('names the destination city in the hero when Travel\'s offers carry one', async () => {
+    installTravelHost(fixture.state);
+    const friday = plan.fridays[0], q = { origin: 'PNS', destination: 'LAS', departDate: plan.free[0], returnDate: key(new Date(friday.getFullYear(), friday.getMonth(), friday.getDate() + 2)) };
+    lane().travel.offers = syntheticOffers(q).map(o => ({ ...o, slices: o.slices.map((s, i) => ({ ...s, originCity: i ? 'Las Vegas' : 'Pensacola', destinationCity: i ? 'Pensacola' : 'Las Vegas' })) }));
+    await open(); await answered('Flights please'); await searchFirstWeekend();
+    expect(await page.locator('.trip-hero h2').innerText()).toBe('Las Vegas.');
+    expect(await page.locator('.trip-facts').innerText()).toContain('PNS → LAS');
+  });
+
+  it('lays the welcome and every answered view out at the demo\'s six widths without horizontal scroll', async () => {
+    installTravelHost(fixture.state);
+    await open();
+    const widths = [1440, 1024, 768, 600, 390, 320];
+    const overflow = () => page.evaluate(() => {
+      const limit = window.innerWidth + 1;
+      if (document.documentElement.scrollWidth <= limit) return '';
+      return Array.from(document.querySelectorAll('body *')).filter(e => e.getBoundingClientRect().right > limit).slice(0, 4)
+        .map(e => `${e.tagName.toLowerCase()}.${String(e.className).split(' ')[0]}:${Math.round(e.getBoundingClientRect().right)}`).join(' ');
+    });
+    const bad: string[] = [];
+    for (const width of widths) { await page.setViewportSize({ width, height: 900 }); const o = await overflow(); if (o) bad.push(`welcome@${width}: ${o}`); }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await answered('Flights please'); await searchFirstWeekend();
+    for (const width of widths) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const tab of ['Overview', 'Calendar', 'Travel', 'Applications', 'Shelf', 'Sources']) {
+        await page.getByRole('tab', { name: tab }).click();
+        const o = await overflow(); if (o) bad.push(`${tab}@${width}: ${o}`);
+      }
+    }
+    expect(bad).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+});
+
+describe('Phase-8 corrections: the fixture keeps its contract', () => {
+  it('lets the lane routes fall through until a case opts in', async () => {
+    const fresh = await startExperienceBrowserFixture();
+    try {
+      expect((await fetch(`${fresh.origin}/api/travel/config`)).status).toBe(404);
+      expect((await fetch(`${fresh.origin}/api/experience/availability?timeMin=2030-03-01T00:00:00Z&timeMax=2030-04-04T00:00:00Z`)).status).toBe(404);
+      expect((await fetch(`${fresh.origin}/api/voice/synthesize`, { method: 'POST' })).status).toBe(404);
+      enableNexusBuild(fresh.state);
+      expect((await fetch(`${fresh.origin}/api/travel/config`)).status).toBe(200);
+      expect((await fetch(`${fresh.origin}/api/voice/synthesize`, { method: 'POST' })).status).toBe(404);
+    } finally { await fresh.close(); }
   });
 });
