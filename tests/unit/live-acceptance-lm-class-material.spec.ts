@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the Little Monsters class-material live-acceptance case's own logic over a doubled HTTP transport: a tagged class, a PDF carried in a Send-to handle and an import answered 201 approved and listed in the class = pass, then the material and the class are deleted through the package routes and proven gone, with the memory-only handle recorded as kept; a "requested" import = fail with the class still removed; a class that survives its delete = red cleanup; a box without Little Monsters writes nothing. The generated PDF is parsed by the same pdf-parse the package's text extraction uses (a real parser, not a double). The real companion is `node scripts/operations/live-acceptance.js lm-class-material` on the box.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The files-browser leg and the optional non-teacher leg. Doubled half: without Chromium the case is degraded, naming the host command and OSHAL_VERIFY_SECOND_PAT; a bound second caller's requested import is judged (listed in share requests, out of shared materials, deleted through that caller), an unenrolled second caller is a named gap, an approved second import fails. Real half, in headless Chromium through the runner's own browser port and HTTP ports against a loopback server: the SHIPPED files page (src/api/files.html) over the shipped files routes on a temporary store, the shipped artifact-exchange router and send-to.js, a stand-in for the cockpit shell that forwards artifact/artifactAction into an iframe as cockpit-view-controller does, a stand-in for the Little Monsters picker page, and a stand-in import route that redeems through the shipped redeemArtifactViaRelay with its request. Pass end to end with the token on every same-origin request and the storage file removed from disk; a page whose dispatch carries bytes (a data: blob tag) instead of the files browser's locator fails and still cleans up; a picker that posts a class other than the one chosen fails. `node scripts/operations/live-acceptance.js lm-class-material` on the box is the live companion. The PDF check covers all three generated PDFs and hands pdf-parse a plain Uint8Array: its bundled pdf.js refused the same bytes as a small Node Buffer, so the check passed or failed by run.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The second caller's double now holds the state the package holds. It used to answer "enrolled" for a class the double itself had just minted, which no installation can produce (the package enrolls only the creator), so the green case proved a path that is unreachable live. Now the class is listed for the second caller, and that caller's import is accepted, only after the double received POST /classes/:id/enroll from that caller; before it the import answers 403 as the package's class-access check does; the teacher's class delete drops the enrollment as the package does. Cases: the leg enrolls, is offered the class, files (requested, in the share requests, out of the shared materials), deletes its material, leaves and reads the class bank back; a refused enroll (403, 404, 401) is the named gap with nothing written as that caller; a 5xx enroll and an enroll that answers 201 without reaching the package both fail and never reach "requested"; a second token that is the operator's own is a named gap with no request as that caller; a leave that is refused is a red cleanup. A third block drives the same leg over real HTTP through the runner's own ports (`httpPorts` and `secondCallerPort`, real fetch) against a loopback server that resolves each bearer token to its own caller: the shipped artifact-exchange router and redeemArtifactViaRelay are real, so the second caller's handle is minted as that caller and both relay reads arrive as that caller; the class, enrollment and material routes are stand-ins holding the package's rules (only the creator is in a new class, a non-member's import is 403, the class's creator is its teacher). It starts no Chromium. A token nobody owns is a refused enroll (401) by name, and the operator's own token is named before any write. The doubled half covers branch logic only; the real companions are the store's lm-artifact-import-behavior suite (the compiled receiver: an enrolled student is requested, one outside the class is refused) and `node scripts/operations/live-acceptance.js lm-class-material` with OSHAL_VERIFY_SECOND_PAT on the box.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import express from 'express';
@@ -33,10 +34,54 @@ const MATERIAL_ID = '3a7e71a1-0000-4000-8000-000000000002';
 const SECOND_MATERIAL_ID = '3a7e71a1-0000-4000-8000-000000000003';
 const HOST_GAP = "files leg: the files-browser dispatch needs the host runner's raw/browser port (a headless Chromium); run node scripts/operations/live-acceptance.js lm-class-material";
 
-function world(options: { shareStatus?: string; classDeleteStatus?: number; over?: Record<string, FakeHandler>; second?: { enrolled: boolean; shareStatus?: string } } = {}) {
+/** How the second caller's double behaves; every field defaults to what the package does for an admitted student. */
+interface SecondCaller {
+  /** The status the enroll route answers instead of enrolling (a refusal or a server error). */
+  enrollStatus?: number;
+  /** What the import reports for an enrolled caller. */
+  shareStatus?: string;
+  /** The status the leave route answers instead of leaving. */
+  leaveStatus?: number;
+  /** The leave route answers 200 and the caller stays in the class. */
+  leaveKeepsSeat?: boolean;
+  /** The subject the runner resolved for the token; the operator's own when the same token was supplied twice. */
+  ownerSub?: string;
+}
+
+const OPERATOR_SUB = 'fixture|class-teacher';
+const STUDENT_SUB = 'fixture|class-student';
+
+/** The second caller's routes over the shared class state: nothing is open to that caller until it enrolled. */
+function secondCallerRoutes(second: SecondCaller, state: { classes: Set<string>; requested: Set<string>; enrolled: Set<string> }): Record<string, FakeHandler> {
+  const { classes, requested, enrolled } = state;
+  return {
+    'POST /api/education/classes/:id/enroll': ({ params }) => {
+      if (second.enrollStatus) return { status: second.enrollStatus, json: { error: second.enrollStatus === 404 ? 'class not found' : 'authorization_denied' } };
+      if (!classes.has(params.id)) return { status: 404, json: { error: 'class not found' } };
+      enrolled.add(params.id);
+      return { status: 201, json: { success: true, classId: params.id, enrolled: true } };
+    },
+    'POST /api/education/classes/:id/leave': ({ params }) => {
+      if (second.leaveStatus) return { status: second.leaveStatus, json: { error: 'class ownership changed; reload and retry' } };
+      if (!second.leaveKeepsSeat) enrolled.delete(params.id);
+      return { status: 200, json: { success: true, classId: params.id, enrolled: false } };
+    },
+    'GET /api/education/classes': () => ({ status: 200, json: { classes: [...classes].filter((id) => enrolled.has(id)).map((class_id) => ({ class_id })) } }),
+    'GET /api/education/catalog': () => ({ status: 200, json: { classes: [...classes].map((class_id) => ({ class_id, enrolled: enrolled.has(class_id) })) } }),
+    'POST /api/education/import-artifact': ({ body }) => {
+      if (!enrolled.has((body as { classId: string }).classId)) return { status: 403, json: { error: 'You do not have access to this class' } };
+      requested.add(SECOND_MATERIAL_ID);
+      return { status: 201, json: { material: { material_id: SECOND_MATERIAL_ID }, shareStatus: second.shareStatus ?? 'requested' } };
+    },
+    'DELETE /api/education/materials/:id': ({ params }) => { requested.delete(params.id); return { status: 200, json: { success: true } }; },
+  };
+}
+
+function world(options: { shareStatus?: string; classDeleteStatus?: number; over?: Record<string, FakeHandler>; second?: SecondCaller } = {}) {
   const classes = new Set<string>();
   const materials = new Set<string>();
   const requested = new Set<string>();
+  const enrolled = new Set<string>();
   const uploads: Array<{ fields: Record<string, string>; file: { name: string; type: string; bytes: Buffer } }> = [];
   const api = fakeApi({
     'GET /api/little-monsters/home-summary': () => ({ status: 200, json: { role: 'admin' } }),
@@ -47,7 +92,7 @@ function world(options: { shareStatus?: string; classDeleteStatus?: number; over
     'DELETE /api/education/materials/:id': ({ params }) => { materials.delete(params.id); return { status: 200, json: { success: true } }; },
     'DELETE /api/education/classes/:id': ({ params }) => {
       if ((options.classDeleteStatus ?? 200) !== 200) return { status: options.classDeleteStatus! };
-      classes.delete(params.id); return { status: 200, json: { success: true } };
+      classes.delete(params.id); enrolled.delete(params.id); return { status: 200, json: { success: true } };
     },
     'GET /api/education/classes/:id/info': ({ params }) => ({ status: classes.has(params.id) ? 200 : 404 }),
     'GET /api/education/classes': () => ({ status: 200, json: { classes: [...classes].map((class_id) => ({ class_id })) } }),
@@ -58,16 +103,14 @@ function world(options: { shareStatus?: string; classDeleteStatus?: number; over
     return route === '/api/artifacts/handles/upload'
       ? { status: 201, json: { ref: 'art_0123456789abcdef', expiresAt: '2026-09-28T13:00:00Z' } } : { status: 404, json: {} };
   };
-  const secondApi = options.second ? fakeApi({
-    'GET /api/education/classes': () => ({ status: 200, json: { classes: options.second!.enrolled ? [{ class_id: CLASS_ID }] : [] } }),
-    'POST /api/education/import-artifact': () => { requested.add(SECOND_MATERIAL_ID); return { status: 201, json: { material: { material_id: SECOND_MATERIAL_ID }, shareStatus: options.second!.shareStatus ?? 'requested' } }; },
-    'DELETE /api/education/materials/:id': ({ params }) => { requested.delete(params.id); return { status: 200, json: { success: true } }; },
-  }) : null;
-  const second = secondApi ? { api: secondApi.api, upload } : undefined;
-  return { api, upload, uploads, classes, materials, requested, second, secondApi };
+  const secondApi = options.second ? fakeApi(secondCallerRoutes(options.second, { classes, requested, enrolled })) : null;
+  const second = secondApi ? { api: secondApi.api, upload, ownerSub: options.second!.ownerSub ?? STUDENT_SUB } : undefined;
+  return { api, upload, uploads, classes, materials, requested, enrolled, second, secondApi };
 }
 
-const run = (w: ReturnType<typeof world>) => lm.run({ api: w.api.api, upload: w.upload, ...(w.second ? { second: w.second } : {}) }, { tag: TAG });
+const run = (w: ReturnType<typeof world>, second: unknown = w.second) => lm.run({ api: w.api.api, upload: w.upload, ownerSub: OPERATOR_SUB, ...(second ? { second } : {}) }, { tag: TAG });
+const secondCalls = (w: ReturnType<typeof world>) => w.secondApi!.calls.map((c) => `${c.method} ${c.path}`);
+const ENROLL = `POST /api/education/classes/${CLASS_ID}/enroll`;
 
 describe('Little Monsters class-material live acceptance - doubled transport', () => {
   it('is degraded without Chromium: the handle leg passes, the files leg and the second caller are named gaps, and cleanup runs', async () => {
@@ -87,20 +130,81 @@ describe('Little Monsters class-material live acceptance - doubled transport', (
     expect(result.evidence.secondCaller).toBe('unavailable');
   });
 
-  it('judges a bound second caller: requested, in the share requests, out of the shared materials, deleted through that caller', async () => {
-    const w = world({ second: { enrolled: true } });
+  it('enrolls a bound second caller itself, then judges the import: requested, in the share requests, out of the shared materials', async () => {
+    const w = world({ second: {} });
     const result = await run(w);
     expect(result.state).toBe('degraded');
-    expect(result.detail).toContain(`non-teacher leg: import-artifact answered 201 requested and material ${SECOND_MATERIAL_ID} waits in the teacher's share requests`);
-    expect(w.secondApi!.calls.map((c) => `${c.method} ${c.path}`)).toEqual(['GET /api/education/classes', 'POST /api/education/import-artifact', `DELETE /api/education/materials/${SECOND_MATERIAL_ID}`]);
-    expect(w.api.calls.some((c) => c.path === `/api/education/materials/${SECOND_MATERIAL_ID}`)).toBe(false);
-    expect(w.requested.size).toBe(0);
-    expect(result.cleanup.removed).toContain(`lm-material ${SECOND_MATERIAL_ID}`);
-    const unenrolled = await run(world({ second: { enrolled: false } }));
-    expect(unenrolled.detail).toContain(`non-teacher leg unavailable: the second caller (OSHAL_VERIFY_SECOND_PAT) is not enrolled in the tagged class ${CLASS_ID}`);
-    const approved = await run(world({ second: { enrolled: true, shareStatus: 'approved' } }));
+    expect(result.detail).toContain(`non-teacher leg: the second caller enrolled through the class bank, import-artifact answered 201 requested and material ${SECOND_MATERIAL_ID} waits in the teacher's share requests`);
+    expect(secondCalls(w)).toEqual([ENROLL, 'GET /api/education/classes', 'POST /api/education/import-artifact',
+      `DELETE /api/education/materials/${SECOND_MATERIAL_ID}`, `POST /api/education/classes/${CLASS_ID}/leave`, 'GET /api/education/catalog']);
+    expect(w.secondApi!.calls.find((c) => c.path === '/api/education/import-artifact')!.body).toEqual({ ref: 'art_0123456789abcdef', classId: CLASS_ID });
+    expect(w.api.calls.some((c) => c.path === `/api/education/materials/${SECOND_MATERIAL_ID}` || c.path.endsWith('/enroll') || c.path.endsWith('/leave'))).toBe(false);
+    expect(w.requested.size + w.enrolled.size + w.classes.size).toBe(0);
+    expect(result.cleanup.removed).toEqual(expect.arrayContaining([`lm-material ${SECOND_MATERIAL_ID}`, `lm-enrollment ${CLASS_ID}`, `lm-class ${CLASS_ID}`]));
+    expect(result.cleanup.outstanding).toEqual([]);
+    expect(result.evidence.secondCaller).toBe('pass');
+    const approved = await run(world({ second: { shareStatus: 'approved' } }));
     expect(approved.state).toBe('fail');
     expect(approved.detail).toContain("the second caller's import came back approved, not requested");
+    expect(approved.cleanup.outstanding).toEqual([]);
+  });
+
+  it('reports a refused enroll as the named gap and writes nothing as the second caller', async () => {
+    for (const [enrollStatus, said] of [[403, 'authorization_denied'], [404, 'class not found'], [401, 'authorization_denied']] as Array<[number, string]>) {
+      const w = world({ second: { enrollStatus } });
+      const result = await run(w);
+      expect(result.state, String(enrollStatus)).toBe('degraded');
+      expect(result.detail).toContain(`non-teacher leg unavailable: the second caller (OSHAL_VERIFY_SECOND_PAT) was refused enrollment in the tagged class: ${ENROLL} answered HTTP ${enrollStatus} "${said}"`);
+      expect(secondCalls(w)).toEqual([ENROLL]);
+      expect(w.requested.size).toBe(0);
+      expect(result.cleanup.removed.some((r: string) => r.startsWith('lm-enrollment'))).toBe(false);
+      expect(result.cleanup.outstanding).toEqual([]);
+      expect(result.evidence.secondCaller).toBe('unavailable');
+    }
+  });
+
+  it('never reaches "requested" without an enrollment the package holds', async () => {
+    const broken = world({ second: { enrollStatus: 503 } });
+    const failed = await run(broken);
+    expect(failed.state).toBe('fail');
+    expect(failed.detail).toContain(`non-teacher leg: the second caller's enrollment did not complete: ${ENROLL} answered HTTP 503`);
+    expect(secondCalls(broken)).toEqual([ENROLL]);
+    // An enroll that answers 201 and never reaches the package: the class is not offered and nothing is filed.
+    const w = world({ second: {} });
+    const api = (method: string, route: string, body?: unknown) => (route.endsWith('/enroll')
+      ? Promise.resolve({ status: 201, json: { success: true, enrolled: true } }) : w.secondApi!.api(method, route, body));
+    const result = await run(w, { ...w.second!, api });
+    expect(result.state).toBe('fail');
+    expect(result.detail).toContain(`non-teacher leg: the second caller enrolled (201) and the tagged class ${CLASS_ID} is not among that caller's classes`);
+    expect(result.detail).not.toContain('201 requested');
+    expect(secondCalls(w)).not.toContain('POST /api/education/import-artifact');
+    expect(w.requested.size).toBe(0);
+    // The double itself refuses that caller's import until it enrolled, as the package's class-access check does.
+    const direct = await w.secondApi!.api('POST', '/api/education/import-artifact', { ref: 'art_0123456789abcdef', classId: CLASS_ID });
+    expect(direct).toMatchObject({ status: 403, json: { error: 'You do not have access to this class' } });
+  });
+
+  it('refuses a second token that is the operator\'s own before any request as that caller', async () => {
+    const w = world({ second: { ownerSub: OPERATOR_SUB } });
+    const result = await run(w);
+    expect(result.state).toBe('degraded');
+    expect(result.detail).toContain("non-teacher leg unavailable: the second caller (OSHAL_VERIFY_SECOND_PAT) is the operator's own identity");
+    expect(secondCalls(w)).toEqual([]);
+    expect(result.detail).not.toContain(OPERATOR_SUB);
+  });
+
+  it('turns a second caller who could not leave the class into a red cleanup', async () => {
+    const w = world({ second: { leaveStatus: 409 } });
+    const result = await run(w);
+    expect(result.state).toBe('fail');
+    expect(result.detail).toContain(`CLEANUP INCOMPLETE: POST /api/education/classes/${CLASS_ID}/leave answered HTTP 409`);
+    expect(result.cleanup.outstanding).toEqual([`lm-enrollment ${CLASS_ID}`]);
+    expect(result.cleanup.removed).toEqual(expect.arrayContaining([`lm-material ${SECOND_MATERIAL_ID}`, `lm-class ${CLASS_ID}`]));
+    // A leave that answers 200 while the class bank still says enrolled is not a removal.
+    const kept = await run(world({ second: { leaveKeepsSeat: true } }));
+    expect(kept.state).toBe('fail');
+    expect(kept.detail).toContain(`CLEANUP INCOMPLETE: the second caller is still enrolled in class ${CLASS_ID} after leaving`);
+    expect(kept.cleanup.outstanding).toEqual([`lm-enrollment ${CLASS_ID}`]);
   });
 
   it('fails an import that is only requested and still removes the class', async () => {
@@ -285,4 +389,135 @@ describe('Little Monsters class-material live acceptance - real Chromium through
     expect(result.detail).toContain(`posted ${OTHER_CLASS}`);
     expect(result.cleanup.outstanding).toEqual([]); expect(materials.size).toBe(0);
   }, 120_000);
+});
+
+const SECOND_PAT = `oshal_pat_${'d'.repeat(48)}`;
+const UNKNOWN_PAT = `oshal_pat_${'e'.repeat(48)}`;
+
+/** The state the stand-in package holds: who created each class, who is in it, and every material. */
+interface SchoolState {
+  classes: Map<string, string>;
+  enrolled: Set<string>;
+  materials: Map<string, { classId: string; owner: string; status: 'approved' | 'requested' }>;
+}
+
+const callerOf = (req: express.Request): string => (req as unknown as { oidc: { user: { sub: string } } }).oidc.user.sub;
+const seat = (sub: string, classId: string): string => `${sub} ${classId}`;
+
+/** Stand-in class routes with the package's rules: the creator is enrolled, anyone else joins through the class bank. */
+function classRoutes(app: express.Express, school: SchoolState): void {
+  const { classes, enrolled } = school;
+  app.post('/api/education/classes', (req, res) => {
+    const id = randomUUID(); classes.set(id, callerOf(req)); enrolled.add(seat(callerOf(req), id));
+    res.status(201).json({ classId: id });
+  });
+  app.get('/api/education/classes', (req, res) => res.json({ classes: [...classes.keys()].filter((id) => enrolled.has(seat(callerOf(req), id))).map((class_id) => ({ class_id })) }));
+  app.get('/api/education/catalog', (req, res) => res.json({ classes: [...classes.keys()].map((class_id) => ({ class_id, enrolled: enrolled.has(seat(callerOf(req), class_id)) })) }));
+  app.get('/api/education/classes/:id/info', (req, res) => res.status(classes.has(req.params.id) ? 200 : 404).json({}));
+  app.post('/api/education/classes/:id/enroll', (req, res) => {
+    if (!classes.has(req.params.id)) { res.status(404).json({ error: 'class not found' }); return; }
+    enrolled.add(seat(callerOf(req), req.params.id));
+    res.status(201).json({ success: true, classId: req.params.id, enrolled: true });
+  });
+  app.post('/api/education/classes/:id/leave', (req, res) => {
+    if (classes.get(req.params.id) === callerOf(req)) { res.status(400).json({ error: 'you own this class' }); return; }
+    enrolled.delete(seat(callerOf(req), req.params.id));
+    res.json({ success: true, classId: req.params.id, enrolled: false });
+  });
+  app.delete('/api/education/classes/:id', (req, res) => {
+    if (classes.get(req.params.id) !== callerOf(req)) { res.status(403).json({ error: 'You do not teach this class' }); return; }
+    classes.delete(req.params.id);
+    for (const key of [...enrolled]) if (key.endsWith(` ${req.params.id}`)) enrolled.delete(key);
+    res.json({ success: true });
+  });
+}
+
+/** Stand-in material routes: the import redeems through the shipped relay as the caller; a non-teacher's share is a request. */
+function materialRoutes(app: express.Express, school: SchoolState): void {
+  const { classes, enrolled, materials } = school;
+  const inClass = (classId: string, status: string) => [...materials].filter(([, m]) => m.classId === classId && m.status === status).map(([material_id]) => ({ material_id }));
+  app.get('/api/education/classes/:id/shared-materials', (req, res) => res.json({ materials: inClass(req.params.id, 'approved') }));
+  app.get('/api/education/classes/:id/share-requests', (req, res) => {
+    if (classes.get(req.params.id) !== callerOf(req)) { res.status(403).json({ error: 'You do not teach this class' }); return; }
+    res.json({ requests: inClass(req.params.id, 'requested') });
+  });
+  app.delete('/api/education/materials/:id', (req, res) => {
+    const material = materials.get(req.params.id);
+    if (!material || (material.owner !== callerOf(req) && classes.get(material.classId) !== callerOf(req))) { res.status(403).json({ error: 'Only the uploader or class teacher can delete this material' }); return; }
+    materials.delete(req.params.id); res.json({ success: true });
+  });
+  app.post('/api/education/import-artifact', async (req, res) => {
+    const sub = callerOf(req); const classId = String(req.body.classId || '');
+    if (!enrolled.has(seat(sub, classId))) { res.status(403).json({ error: 'You do not have access to this class' }); return; }
+    const redeemed = await redeemArtifactViaRelay({ port: req.socket.localPort, callerSub: sub, ref: String(req.body.ref || ''), maxBytes: 10_000_000, request: req });
+    if (!redeemed.ok) { res.status(redeemed.status).json({ error: redeemed.error }); return; }
+    const id = randomUUID(); const status = classes.get(classId) === sub ? 'approved' : 'requested';
+    materials.set(id, { classId, owner: sub, status });
+    res.status(201).json({ success: true, material: { material_id: id }, grounded: false, shareStatus: status });
+  });
+}
+
+describe('Little Monsters class-material live acceptance - the second caller over real HTTP through the runner ports', () => {
+  let server: Server, origin = '';
+  const subjects: Record<string, string> = { [`Bearer ${PAT}`]: 'alice', [`Bearer ${SECOND_PAT}`]: 'bob' };
+  const school: SchoolState = { classes: new Map(), enrolled: new Set(), materials: new Map() };
+  const seen: Array<{ call: string; sub: string }> = [];
+
+  beforeAll(async () => {
+    const app = express();
+    app.use((req, res, next) => {
+      const sub = subjects[String(req.headers.authorization)];
+      if (!sub) { res.status(401).json({ error: 'unauthorized' }); return; }
+      seen.push({ call: `${req.method} ${new URL(req.url, 'http://x').pathname}`, sub });
+      Object.assign(req, { oidc: { user: { sub }, isAuthenticated: () => true } }); next();
+    });
+    app.use(express.json());
+    app.use('/api/artifacts', createArtifactExchangeRoutes({} as AppContext, async () => new Map([['little-monsters', 'Little Monsters']])));
+    app.get('/api/cli-tokens/whoami', (req, res) => res.json({ sub: callerOf(req) }));
+    app.get('/api/little-monsters/home-summary', (_req, res) => res.json({ role: 'teacher' }));
+    classRoutes(app, school); materialRoutes(app, school);
+    server = app.listen(0, '127.0.0.1'); await new Promise<void>((done) => server.once('listening', done));
+    origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  }, 30_000);
+  afterAll(async () => { server.closeAllConnections(); await new Promise<void>((done) => server.close(() => done())); });
+  // No browser port: the files leg is a named gap here, so no Chromium starts and the case is degraded at best.
+  const ports = async (secondToken: string) => ({ ...runner.httpPorts(origin, PAT), ownerSub: 'alice', second: await runner.secondCallerPort(origin, secondToken) });
+  const callsBy = (sub: string) => seen.filter((s) => s.sub === sub).map((s) => s.call);
+
+  it('enrolls the second caller, redeems that caller\'s own handle as that caller and files a request the teacher sees', async () => {
+    seen.length = 0;
+    const result = await lm.run(await ports(SECOND_PAT), { tag: 'testlab-live-lm-class-material-0e5f6071' });
+    expect(result.state, result.detail).toBe('degraded');
+    expect(result.evidence.secondCaller).toBe('pass');
+    expect(result.detail).toContain('non-teacher leg: the second caller enrolled through the class bank, import-artifact answered 201 requested and material ');
+    const classId = result.evidence.classId as string;
+    const bob = callsBy('bob');
+    expect(bob.slice(0, 5)).toEqual(['GET /api/cli-tokens/whoami', `POST /api/education/classes/${classId}/enroll`, 'GET /api/education/classes',
+      'POST /api/artifacts/handles/upload', 'POST /api/education/import-artifact']);
+    // The relay's two reads of the handle (its record, then its bytes) arrive as the second caller.
+    const relay = bob.filter((c) => c.startsWith('GET /api/artifacts/handles/art_'));
+    expect(relay).toHaveLength(2);
+    expect(relay[1].endsWith('/content')).toBe(true);
+    expect(bob.slice(-2)).toEqual([`POST /api/education/classes/${classId}/leave`, 'GET /api/education/catalog']);
+    expect(callsBy('alice').some((c) => c.endsWith('/enroll') || c.endsWith('/leave'))).toBe(false);
+    expect(result.cleanup.removed).toEqual(expect.arrayContaining([`lm-enrollment ${classId}`, `lm-class ${classId}`]));
+    expect(result.cleanup.removed.filter((r: string) => r.startsWith('lm-material'))).toHaveLength(2);
+    expect(result.cleanup.outstanding).toEqual([]); expect(result.cleanup.errors).toEqual([]);
+    expect(school.classes.size + school.enrolled.size + school.materials.size).toBe(0);
+  }, 60_000);
+
+  it('names a second token nobody owns as a refused enroll, and the operator\'s own token before any write as that caller', async () => {
+    seen.length = 0;
+    const unknown = await lm.run(await ports(UNKNOWN_PAT), { tag: 'testlab-live-lm-class-material-0f607182' });
+    expect(unknown.evidence.secondCaller).toBe('unavailable');
+    expect(unknown.detail).toContain(`non-teacher leg unavailable: the second caller (OSHAL_VERIFY_SECOND_PAT) was refused enrollment in the tagged class: POST /api/education/classes/${unknown.evidence.classId}/enroll answered HTTP 401 "unauthorized"`);
+    expect(unknown.cleanup.outstanding).toEqual([]);
+    seen.length = 0;
+    const own = await lm.run(await ports(PAT), { tag: 'testlab-live-lm-class-material-10718293' });
+    expect(own.evidence.secondCaller).toBe('unavailable');
+    expect(own.detail).toContain("non-teacher leg unavailable: the second caller (OSHAL_VERIFY_SECOND_PAT) is the operator's own identity");
+    expect(seen.some((s) => s.call.endsWith('/enroll') || s.call.endsWith('/leave'))).toBe(false);
+    expect(own.cleanup.outstanding).toEqual([]);
+    expect(school.classes.size + school.enrolled.size + school.materials.size).toBe(0);
+  }, 60_000);
 });

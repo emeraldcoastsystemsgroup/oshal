@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the pieces every automated live-acceptance case shares (scripts/lib/live-acceptance-*.js, driven by scripts/operations/live-acceptance.js and the Test Lab cards in test-lab-live-acceptance-scenarios.ts): uniquely tagged fixture names, a cleanup ledger that turns anything created-and-not-removed (or any cleanup error) into a red result, the one result shape with its cleanup receipt, a bounded poll, same-origin action headers and the fixture-workspace removal the Jarvis cases need. Plain CommonJS with node built-ins only, so the image carries it (Dockerfile.oshal COPY scripts/lib/*.js) and the host runner can stage it into a container.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | A closed set of named file probes (FILE_PROBES, fileProbeState), the file counterpart of the closed statement set: a case names a probe and an id, never a path, and the probe resolves the one path the product uses in the process that serves it. The first probe, `vids.export`, is the attached MP4 of a vids finished job, so the vids-publish case can prove its cleanup removed the media and not only the rows. A case probes the file present before it trusts an absent answer.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SECOND_PAT_ENV, the one name of the environment value that carries a second caller's token. The host runner reads it by name and binds it as the `second` port, and a case that acts as someone other than the operator names it in its verdict; both take the name from here so they cannot drift.
  */
 
 'use strict';
@@ -24,6 +25,13 @@ const TAG_RE = /^testlab-live-[a-z][a-z0-9-]{1,40}-[0-9a-f]{8}(?:-\d{1,2})?$/;
 const STATES = Object.freeze(['pass', 'fail', 'degraded', 'unavailable']);
 /** An ISO calendar day. */
 const ISO_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+/**
+ * The environment value that carries a SECOND caller's token, for a case that must act as someone
+ * other than the operator (a Little Monsters student filing into a teacher's class). The host runner
+ * reads it by name, as it reads the operator token, and binds that caller as the `second` port. A
+ * runner without it binds no such port, and the case reports that leg unavailable by this name.
+ */
+const SECOND_PAT_ENV = 'OSHAL_VERIFY_SECOND_PAT';
 /** The Token Chase capture directory a bot writes into an ask workspace, and its end-of-run record. */
 const CAPTURE_DIR = '.tokenchase';
 const FINAL_FILE = 'final.json';
@@ -365,6 +373,7 @@ module.exports = {
   TAG_RE,
   STATES,
   ISO_DAY_RE,
+  SECOND_PAT_ENV,
   mintTag,
   isFixtureTag,
   errorText,
