@@ -95,8 +95,9 @@ never receive the controller private signing key.
 
 `npm run test:remote-authorization` is the fixed local runner registered in AI Test Lab as
 `protected-remote-application-execution`. It exercises real policy, signed HTTP, worker and SQLite
-boundaries, canonical result stores/SSE, and disposable PostgreSQL. Local Docker is needed for the
-PostgreSQL cases. No production accounts, application records or live inference are used.
+boundaries, canonical result stores/SSE, disposable PostgreSQL, and the delegation replay ledger
+against a disposable Redis. Local Docker is needed for the PostgreSQL and Redis cases. No production
+accounts, application records or live inference are used.
 
 The Lab registration exposes the suites and prerequisites. Its browser step reports that the local
 runner is required; it does not execute arbitrary host commands or claim that registration is a

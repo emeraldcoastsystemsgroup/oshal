@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added a shared Redis SET-NX replay ledger for single-use HTTP delegation tokens with an injectable fail-closed store contract.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | A caller that arrives while the first connect is in flight now waits for it. ensureConnected() waited only while the client status was wait, and the client leaves wait the moment connect() is called, so the second of two concurrent first delegations skipped the wait, issued SET before the client was ready and was refused by the client (offline queue off). The store failed closed on a valid request and the bot answered 503. The in-flight connect is now checked before the status. Nothing else changes: no queue, no retry, the same single SET NX EX, and a failed connect still rejects every caller with the unavailable error.
  */
 
 import { createHash } from 'node:crypto';
@@ -131,9 +132,19 @@ export class RedisDelegationReplayStore implements DelegationReplayStore {
     }
   }
 
+  /**
+   * Waits for the lazy client's first connection. A caller that arrives while another caller's
+   * connect is still in flight joins that connect: by then the status has left `wait`, and with the
+   * offline queue off a SET issued before the status is `ready` is refused. A failed connect
+   * rejects every caller that joined it, and consume() maps each to the unavailable error.
+   */
   private async ensureConnected(): Promise<void> {
+    if (this.connectPromise) {
+      await this.connectPromise;
+      return;
+    }
     if (!this.client.connect || this.client.status !== 'wait') return;
-    this.connectPromise ??= this.client.connect().finally(() => { this.connectPromise = null; });
+    this.connectPromise = this.client.connect().finally(() => { this.connectPromise = null; });
     await this.connectPromise;
   }
 }

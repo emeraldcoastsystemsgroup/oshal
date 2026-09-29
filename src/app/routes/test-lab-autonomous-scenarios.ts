@@ -20,6 +20,7 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Register the partial-scan secret-scan proof beside the other two. It is the only one of the three that makes the real gitleaks image actually skip a path and exit 0, which is the failure shape the gate was written for, so the scenario now lists a run that exercises the refusal as well as the detection.
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | Register the two ADR-052 addendum parity guards on the isolated nightly scenario: the per-position exit-plan table spec (immutable terms at the database, supersede/close/amend paths, (user_sub, book_id) scoping, owner RLS against a NOSUPERUSER NOBYPASSRLS role) and the parity fire spec (real dispatchTradingSchedule fires: the market-gap hold of every entry leg with its counterfactual rows and kept rotation slot, and plans stamped, honored, expired and closed with their doors). Both start and destroy their own PostgreSQL and read no address, so this runner is the gate that executes them.
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | Register the ADR-052 addendum P6 yield-sleeve fire spec on the isolated nightly scenario: real dispatchTradingSchedule fires that sell the armed sleeve before the entries it funds (scan and rotation), keep it out of every exit leg, park idle cash on a quiet fire, idle it while its own order works, and read the Test Lab sleeve ledger back from the same database. It starts and destroys its own PostgreSQL and reads no address, so this runner is the gate that executes it.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com   | Register the two replay ledger guards on the protected remote application execution scenario: the store's own spec, which was on disk and in no scenario, and its real-Redis companion for the first connect under concurrent callers. The companion starts and removes its own Redis and reads no address, so the scenario's fixed runner is the gate that executes it, and the description names Redis among the fixtures.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -144,7 +145,7 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
   steps: [{ id: 'sources', app: 'jarvis', label: 'Caller-visible sources', run: briefingSources }],
 }, {
   id: 'protected-remote-application-execution', title: 'Protected remote application execution', group: 'tool',
-  description: 'Current per-user application rights across signed controller dispatch, hosted worker reasoning, immutable queued initiators, history, caches and SSE. Isolated HTTP/SQLite/PostgreSQL fixtures cover allowed, forged, replayed, revoked and stale requests. Queued dispatch is covered in the same supported direct/hosted shape, including the refusal that names a missing owner connection.',
+  description: 'Current per-user application rights across signed controller dispatch, hosted worker reasoning, immutable queued initiators, history, caches and SSE. Isolated HTTP/SQLite/PostgreSQL/Redis fixtures cover allowed, forged, replayed, revoked and stale requests. Queued dispatch is covered in the same supported direct/hosted shape, including the refusal that names a missing owner connection.',
   regressionTests: [
     { level: 'integration', path: 'tests/unit/application-remote-execution.spec.ts' },
     { level: 'integration', path: 'tests/unit/application-remote-execution-postgres.spec.ts' },
@@ -160,6 +161,8 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/authorization-runtime.spec.ts' },
     { level: 'integration', path: 'tests/unit/bot-node-client-delegation.spec.ts' },
     { level: 'integration', path: 'tests/unit/bot-node-delegation.spec.ts' },
+    { level: 'unit', path: 'tests/unit/delegation-replay-store.spec.ts' },
+    { level: 'integration', path: 'tests/unit/delegation-replay-store-redis.spec.ts' },
     { level: 'unit', path: 'tests/unit/bot-node-delegation-wiring.spec.ts' },
     { level: 'integration', path: 'tests/unit/bot-node-workspace-owner-binding.spec.ts' },
     { level: 'integration', path: 'tests/unit/bot-node-swarm-execute-auth.spec.ts' },
