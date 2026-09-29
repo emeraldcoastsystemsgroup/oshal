@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L3 (D3 "Browser ingest"): a browser fix from the signed-in person. The parser reads exactly deviceId, lat, lon, accuracyM and observedAt from the body and nothing else, so an owner, subject, issuer, source, precision or place a caller puts in the body never reaches a statement; the owner is the session principal the router passes in. The fix is accepted only for the person's own opted-in browser device, at most once per minimum interval per device. It is placed against the places the person can see (their own and their groups') at full precision in memory, then minimised to the device's precision class before anything is written (D3 "Precision minimisation"): the observation (history, kept until the owner purges it, Q4), the person's location_current row and the device's last_seen_at, in one transaction under the person's own identity.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L4: the current row keeps place_since (migration 176), the time its place last changed, so currentPlace and the Settings tab can say "since". A fix in the same place (or in no place, again) keeps it; a fix in a different place moves it to this fix's receipt time.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L5: the fix is evaluated in the same transaction, on its full-precision point in memory and under the person's own identity, against the rules live for them and their share presence (location-rule-evaluation.ts); the receipt time is now the server clock the evaluation uses, written explicitly, so every timing decision (enter spacing, exit dwell, cooldown, freshness) reads one clock. Fires are claimed in the ledger before commit and handed to the caller's dispatcher only after commit (durable before acknowledged); the page learns only how many fired.
  *
  * @module app/location-presence
  */
@@ -17,6 +18,7 @@ import {
 import { withLocationOwnerSession, type LocationDb, type LocationPrincipal } from '@/features/location';
 import type { LocationPlaceRef } from './location-overview';
 import { LocationRequestError, requireLocationId } from './location-request';
+import { evaluatePersonFix } from './location-rule-evaluation';
 
 const log = createChildLogger({ module: 'location-presence' });
 
@@ -43,6 +45,8 @@ export interface LocationIngestResult {
   place: LocationPlaceRef | null;
   precisionClass: string;
   receivedAt: string;
+  /** How many rule fires this fix claimed. */
+  fired: number;
 }
 
 /** @description Ingest tunables. */
@@ -51,6 +55,8 @@ export interface LocationIngestOptions {
   nowMs?: number;
   /** Minimum time between two accepted fixes from one device. */
   minIntervalMs?: number;
+  /** Called after commit with the fire ids the fix claimed, to dispatch them (never before commit). */
+  onFired?: (fireIds: string[], principal: LocationPrincipal) => void;
 }
 
 /**
@@ -142,14 +148,15 @@ async function reportingDevice(client: PoolClient, who: LocationPrincipal, devic
  * @param fix - The fix.
  * @param cls - The device's precision class.
  * @param place - The containing place, if any.
+ * @param nowMs - The server clock: the receipt time written and evaluated.
  * @returns The server receipt time.
  */
-async function writeFix(client: PoolClient, who: LocationPrincipal, fix: BrowserFixInput, cls: LocationPrecisionClass, place: LocationPlaceRef | null): Promise<Date> {
+async function writeFix(client: PoolClient, who: LocationPrincipal, fix: BrowserFixInput, cls: LocationPrecisionClass, place: LocationPlaceRef | null, nowMs: number): Promise<Date> {
   const stored = minimiseGeoPoint(fix.point, cls);
   const values = [who.sub, who.principalIssuer, fix.deviceId, cls, stored?.lat ?? null, stored?.lon ?? null, fix.accuracyM, fix.observedAt];
   const inserted = await client.query(`INSERT INTO location_observations
-      (owner_sub, principal_issuer, subject_ref, device_id, source, precision_class, lat, lon, accuracy_m, observed_at)
-    VALUES ($1, $2, $1, $3, 'browser', $4, $5, $6, $7, $8) RETURNING received_at`, values);
+      (owner_sub, principal_issuer, subject_ref, device_id, source, precision_class, lat, lon, accuracy_m, observed_at, received_at)
+    VALUES ($1, $2, $1, $3, 'browser', $4, $5, $6, $7, $8, $9) RETURNING received_at`, [...values, new Date(nowMs)]);
   const receivedAt = inserted.rows[0].received_at as Date;
   const current = [...values, place?.placeId ?? null, receivedAt];
   const updated = await client.query(`UPDATE location_current
@@ -167,13 +174,14 @@ async function writeFix(client: PoolClient, who: LocationPrincipal, fix: Browser
 }
 
 /**
- * @description Ingest one browser fix for the signed-in person (ADR-169 D3). The principal comes
- * from the session; nothing in the fix names an owner.
+ * @description Ingest one browser fix for the signed-in person (ADR-169 D3) and evaluate it (D4).
+ * The principal comes from the session; nothing in the fix names an owner. Fires are claimed in the
+ * same transaction and passed to `options.onFired` only after it commits.
  * @param db - The pool.
  * @param principal - The signed-in person.
  * @param fix - A parsed fix ({@link parseBrowserFix}).
- * @param options - Clock and minimum interval.
- * @returns The place the fix fell in (by reference) and the receipt time.
+ * @param options - Clock, minimum interval and the after-commit fire dispatcher.
+ * @returns The place the fix fell in (by reference), the receipt time and how many fires it claimed.
  * @throws {LocationRequestError} 404, 409 or 429 as {@link reportingDevice} decides.
  */
 export async function ingestBrowserFix(
@@ -181,13 +189,21 @@ export async function ingestBrowserFix(
 ): Promise<LocationIngestResult> {
   const started = Date.now();
   const nowMs = options.nowMs ?? started;
-  const result = await withLocationOwnerSession(db, principal, async (client, who) => {
+  const { result, firedIds } = await withLocationOwnerSession(db, principal, async (client, who) => {
     const cls = await reportingDevice(client, who, fix.deviceId, nowMs, options.minIntervalMs ?? 0);
     const place = await containingPlace(client, fix.point);
-    const receivedAt = await writeFix(client, who, fix, cls, place);
-    return { deviceId: fix.deviceId, place, precisionClass: cls, receivedAt: receivedAt.toISOString() };
+    const receivedAt = await writeFix(client, who, fix, cls, place, nowMs);
+    const evaluation = await evaluatePersonFix(client, who, {
+      point: fix.point, accuracyM: fix.accuracyM, receivedAtMs: receivedAt.getTime(), observedAtMs: fix.observedAt.getTime(),
+      deviceId: fix.deviceId, source: 'browser', authMode: 'browser-session', mock: false,
+    }, nowMs);
+    return {
+      result: { deviceId: fix.deviceId, place, precisionClass: cls, receivedAt: receivedAt.toISOString(), fired: evaluation.firedIds.length },
+      firedIds: evaluation.firedIds,
+    };
   });
   log.info({ op: 'presence', outcome: result.place ? 'at-place' : 'no-place', deviceId: result.deviceId,
-    durationMs: Date.now() - started }, 'location browser fix accepted');
+    fireCount: firedIds.length, durationMs: Date.now() - started }, 'location browser fix accepted');
+  if (firedIds.length && options.onFired) options.onFired(firedIds, principal);
   return result;
 }

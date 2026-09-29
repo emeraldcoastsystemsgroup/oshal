@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L3 (D3 "Routes and step-up"): the step-up proof. A packaged surface runs same-origin as the signed-in person, so a location route that raises exposure (opt-in, precision raise, accepting a share, creating a guardian share, approving a location enrolment, arming a device-action rule) must see a proof that script on the page cannot supply. A proof is a single-use challenge bound to one principal (subject AND verified issuer), one operation and a digest of that operation's exact parameters. It becomes usable only when a fresh authentication completes after the challenge was created: an OIDC re-authentication whose auth_time and iat are no older than the challenge, a local-auth TOTP code, or, under MOCK_OIDC only, a top-level navigation. Consuming it re-checks principal, operation and parameters, so a proof the person gave for one change can never authorise another. The store is in memory with bounded size and lifetimes, and registers a location state eraser so an account erasure drops the person's open challenges.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review fix: a per-person failed-code budget for the local-auth rail. The per-challenge attempt limit alone let same-origin script open challenge after challenge (creating one only dropped the oldest) and guess codes without end, because nothing else throttles this path on a LAN or localhost box. Every code check is now also charged to a budget keyed on the person (subject AND issuer), held apart from the challenges so creating, trimming or cancelling challenges never resets it; a verified code is refunded, so only failures count. Once a person spends OSHAL_LOCATION_STEP_UP_TOTP_FAILURES (default 10) inside OSHAL_LOCATION_STEP_UP_TOTP_WINDOW_SEC (default 900), every challenge of theirs is refused before a code is checked until the oldest failure leaves the window. The location state eraser clears the budget with the challenges.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L5: 'accept-restricted-invite' joins the operations that need a proof. Accepting a restricted invitation is what lets a group admin share the account's place transitions with others (Q5), so same-origin script on the page must not be able to accept one for the person.
  *
  * @module app/location-step-up
  */
@@ -18,6 +19,7 @@ const log = createChildLogger({ module: 'location-step-up' });
 /** @description Every operation that needs the step-up proof (ADR-169 D3). */
 export const LOCATION_STEP_UP_OPERATIONS = Object.freeze([
   'opt-in', 'raise-precision', 'accept-share', 'create-guardian-share', 'approve-enrolment', 'arm-rule',
+  'accept-restricted-invite',
 ] as const);
 
 /** @description One operation that needs the step-up proof. */

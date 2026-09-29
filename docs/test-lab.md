@@ -282,6 +282,7 @@ and removed; a cleanup miss turns the case red.
 | `lm-class-material` | `live-acceptance-lm-class-material` | A tagged class, a generated PDF carried in a Send-to handle, and `POST /api/education/import-artifact` answer 201 approved with the material in the class's shared materials; the material and the class are deleted through the package's routes. |
 | `trading-parity` | `live-acceptance-trading-parity` | The `trading-parity-features` card passes all three steps (market gap, exit plans and yield sleeve, each armed on the paper book; a degraded step is reported as not runnable with the setting it names), `GET /api/trading/position-plans` answers the paper book's plans and plan arm, and both promotion paths (plan amend, a parity mix edit) answer 428 to a change sent without confirm. Read-only: nothing it sends carries confirm. |
 | `jarvis-cache` | `live-acceptance-jarvis-cache` | Three fresh tagged Jarvis conversations: the Jarvis bot's `OpenAI-compatible call` line shows the invariant cache created, then hit with cached tokens. `--record-doc` writes the table into `docs/architecture/jarvis-own-task-recall.md`. When no OpenAI-compatible call is logged the case names the brain that answered instead. Host runner only (`docker logs`). Spends three model turns. |
+| `vids-publish` | `live-acceptance-vids-publish` | Through the real package loader mounts (`/api/vids` under `service-or-oidc`, `/api/vids-public` under `public`): one tagged finished Vids job for the caller (the closed statement set; no route can make a job `done` without a Vids worker) with a real one-frame MP4 carrying the run tag attached through `POST /api/vids/jobs/<id>/artifact`. An unauthenticated `GET /api/vids/jobs` and an unauthenticated confirmed publish of that job must each answer the mount gate's own 401 (`authenticated: false`, `unauthorized`; a 401 from the package's in-router guard means the mount lost its gate and fails), and nothing may become public. The owner's confirmed publish with the reviewed digest yields a link whose anonymous read returns exactly the uploaded bytes as `video/mp4`; a malformed token answers 404; after the owner revokes, the same read answers 404. Cleanup revokes if needed, removes the export through the package's `DELETE` route, proves its MP4 gone from disk with the named `vids.export` file probe (which must first have seen it present), deletes exactly the tagged job and reads the residue back as zero; an MP4 left on disk is red. Unavailable, never pass, without vids 1.5.0 or later. |
 
 The same case modules (`scripts/lib/live-acceptance-*.js`, listed in `live-acceptance-cases.js`) run
 from the Lab as explicit-only cards (never from "Run live scenarios"), bound to the signed-in caller;
@@ -493,6 +494,51 @@ No real person's location is read or written. The linked suites:
   shape stays equal to `CAMERA_ID_RE` and `DRONE_ID_RE`.
 - `tests/unit/test-lab-location-places-registration.spec.ts`: this card on the fixture server, green and
   red.
+
+Run them with `npm run test:location` (Docker is required for the PostgreSQL suites). That is local
+evidence. After a deploy, run the card from the Test Lab.
+
+### Location reminders and group sharing (ADR-169 L5)
+
+**Location — reminders and group sharing (ADR-169 L5)** (`location-reminders`, Tools) runs two steps
+on the build that is running:
+
+- `reminder-routes` runs as the signed-in person. The rules, fires, shared-presence and group-sharing
+  reads must carry no coordinate. Accepting a restricted invitation and creating a guardian share are each
+  refused without a fresh sign-in, a reminder at a place that is not theirs is refused, and the person's
+  rules must not change.
+- `reminders-lifecycle` runs the services the routes and Jarvis call for three uniquely tagged synthetic
+  people on the real database, on a scripted server clock. "I'm at the grocery store, remind me next time
+  to buy milk" must propose a place at the person's fix and save it on "yes"; the reminder must not fire
+  while they stay and must fire exactly once when they return. The fire is delivered under the actor over
+  the production Jarvis shelf rail (ids only) and the tier-aware senders: a deployment-tier channel must
+  get only "You have a location reminder — open oshal", an own-tier channel the reminder. An
+  operator-stamped session must find no place, subject or reminder text in the shelf row and no location
+  rule or fire row at all. An admin's group notice must fire for the member who shared the place and never
+  evaluate the member who did not, and a member must see the sharer's arrival by reference. Everything
+  created is deleted (shelf rows, the group and its memberships, each person's location rows through the
+  erase) and a zero-row check runs; incomplete cleanup fails the step.
+
+No real person's location is read or written. The linked suites:
+
+- `tests/unit/location-evaluator.spec.ts`: the scripted fix sequences through the pure presence stepper:
+  edge jitter enters once, exit hysteresis, cooldown, once versus every visit, stale and back-dated fixes,
+  all on server receipt time.
+- `tests/unit/location-reminders-postgres.spec.ts`: the same through the real browser ingest on a private
+  PostgreSQL owned by the enforcing role; a 100 m place for a person stored at `block`; two-rail delivery
+  with tier-aware text; the daily cap and the recovery sweep; an operator-stamped session reading
+  `jarvis_tasks` and `tickets` finds ids only; the Jarvis grocery-store sequence; the owner's purge.
+- `tests/unit/location-group-shares-postgres.spec.ts`: a member who has not shared is never evaluated; a
+  place outside the approved set is never evaluated; the cap, a foreign place and a foreign device are
+  refused; revocation keeps the member's rows and empties the projection; restricted invitations and the
+  acceptance function; guardian shares and their projection; an erased admin named nowhere.
+- `tests/unit/location-jarvis-intent.spec.ts`: the parser, the place guess, proposal replies and the
+  browser-session rule of the intent.
+- `tests/unit/location-route-policy.spec.ts`, `tests/unit/location-rls-no-operator-guard.spec.ts` and
+  `tests/unit/location-log-guard.spec.ts`: the declared step-up rule of every route, no operator bypass in
+  migration 177, and no location data in a log line.
+- `tests/unit/test-lab-location-reminders-registration.spec.ts`: this card on the fixture server, green
+  and red.
 
 Run them with `npm run test:location` (Docker is required for the PostgreSQL suites). That is local
 evidence. After a deploy, run the card from the Test Lab.

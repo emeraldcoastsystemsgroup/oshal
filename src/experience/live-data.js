@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Fix round 1: localHref checks the path it returns as well as the URL it resolved. Dot segments normalise '/..//host', '/.//host' and '/%2e%2e//host' to a pathname that starts with '//', which the guard returned as a protocol-relative link that opens another origin; now a returned path must not start with '//' and must itself resolve to the page origin. The admitted navigation href from GET /api/ui/workspaces goes through the same guard and falls back to the cockpit link when refused, so every catalog Open link stays on this origin.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Acceptance fixes: calendarDay reads a date-only field ('YYYY-MM-DD' or exactly UTC midnight, how a Postgres DATE reaches JSON) as that local calendar day, so a Little Monsters due date no longer prints a day early west of Greenwich (due_date was the only field read through `new Date(iso)`); event and last-active dates were already read as local days and now share the helper, as do the agenda's class events. probeSummary carries the first probe's refusal code as `error`, and littleMonstersRefusal names an application-authorization refusal (403 app_access_* / authorization_*) apart from the package's no-school-profile sentence, so a shell stops telling an unadmitted caller to open Little Monsters.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Every canonical ticket state now folds to a label a shell can place: approved (Approved, waiting for the queue), approval_required (Approval required) and customer_action (Needs you) wait on a person, dead_letter reads Blocked, and every in_process_* phase is Working (they printed as "In process build" and fell off the Commons board, and an approval gate was never counted as needing you). STATUS_GROUPS names the attention / moving / done label sets the shells share for briefings and board columns.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com | speak(): a readback stopped while POST /api/voice/synthesize is still answering never starts (the answer is dropped before any Audio element or browser utterance is created), and progress is reported through an onProgress hook where it is known (the audio element's time over its duration; the utterance's boundary index over the text length).
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Adapters for the full-swarm build over existing routes: one ticket's workflow read model (GET /api/v1/tickets/:id/workflow) and its owner-checked cancel, the caller's schedules with pause/resume (GET /api/v1/agent/schedules, POST /:id/pause|resume), Workflow Studio definitions, household/team membership (GET /api/tenants, /:id/members) and the caller's own location overview (GET /api/location/state). The catalog keeps the listing's package status for the package-facts panel.
  */
 (function attach(root, factory) {
@@ -591,7 +592,7 @@
 
     /** @description Speak text through the swarm's voice route, falling back to the browser engine. Level callbacks are amplitude when an analyser is available, lifecycle pulses otherwise. */
     function speak(text, hooks) {
-      var h = hooks || {}, onLevel = h.onLevel || function () {}, onStart = h.onStart || function () {}, onEnd = h.onEnd || function () {};
+      var h = hooks || {}, onLevel = h.onLevel || function () {}, onStart = h.onStart || function () {}, onEnd = h.onEnd || function () {}, onProgress = h.onProgress || function () {};
       var state = { stopped: false, audio: null, frame: 0, timer: 0, context: null };
       function end() {
         if (state.stopped) return;
@@ -609,7 +610,7 @@
         var u = new SpeechSynthesisUtterance(text); u.rate = 1.02;
         var level = 0.3;
         state.timer = setInterval(function () { level = Math.max(0.15, level * 0.82); onLevel(level); }, 120);
-        u.onboundary = function () { level = Math.min(1, level + 0.45); };
+        u.onboundary = function (e) { level = Math.min(1, level + 0.45); if (e && typeof e.charIndex === 'number' && text.length) onProgress(Math.min(1, Math.max(0, e.charIndex / text.length))); };
         u.onend = end; u.onerror = end;
         try { speechSynthesis.cancel(); speechSynthesis.speak(u); } catch (_) { end(); }
       }
@@ -632,11 +633,14 @@
         return true;
       }
       sendJson('/api/voice/synthesize', 'POST', { text: text }).then(function (r) {
+        // Stopped while the swarm was still answering: nothing may start from a cancelled readback.
+        if (state.stopped) return undefined;
         var d = r.ok && r.body && r.body.data ? r.body.data : null;
         if (!d || !d.audioData) throw new Error('no audio');
         var fmt = String(d.format || 'wav'), mime = fmt.indexOf('/') >= 0 ? fmt : 'audio/' + fmt;
         var audio = new Audio('data:' + mime + ';base64,' + d.audioData); state.audio = audio;
         audio.onended = end; audio.onerror = end;
+        audio.ontimeupdate = function () { if (!state.stopped && audio.duration > 0) onProgress(Math.min(1, audio.currentTime / audio.duration)); };
         var amplitude = false;
         try { amplitude = attachAnalyser(audio); } catch (_) { amplitude = false; }
         if (!amplitude) { state.timer = setInterval(function () { onLevel(0.35 + Math.random() * 0.4); }, 140); }

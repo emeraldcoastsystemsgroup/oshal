@@ -5,8 +5,10 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the shared live-acceptance machinery: fixture tags; the cleanup ledger (anything created and not removed, or any cleanup error, turns the result red); fixture-workspace removal that refuses non-fixture ids and frames stamped for another owner (real files on disk); the closed statement set (every statement owner-scoped by $1, unknown names refused); the in-container helper (validated requests, every database operation inside the owner's request identity); and the host runner (the operator token only ever in the Authorization header of the runner's own requests, never on a docker command line; the helper's request forwarded by name; exit codes; list and no-token paths).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The host runner's `anonymous` port sends the same JSON request with no Authorization header at all (the dev-workspace case proves its query route refuses such a caller), while `api` keeps sending the token.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The closed file-probe set on real files: `vids.export` resolves only a lower-case UUID under the configured workspace root, answers present/absent from disk, refuses any other probe name, a traversal or an upper-case id (in the helper's request validation too), and the helper's `file-state` op runs with no pool and no identity scope. The runner reports each reply's raw byte length and sha256 beside the decoded text, and its `files` port asks the helper for a named probe, never a path.
  */
 import { afterEach, describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -20,6 +22,7 @@ const runner = requireCjs('../../scripts/operations/live-acceptance.js');
 const { CASES } = requireCjs('../../scripts/lib/live-acceptance-cases.js');
 
 const OWNER = 'fixture|runner-owner';
+const EXPORT_ID = '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d';
 const TOKEN = 'oshal_pat_fixture_runner_0000';
 const scratch: string[] = [];
 afterEach(() => { for (const dir of scratch.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -113,6 +116,34 @@ describe('the closed statement set and the in-container helper', () => {
     expect(scopes).toEqual([1, 2, 3].map(() => ({ sub: OWNER, isOperator: false })));
     expect(await helper.execute({ op: 'workspace-state', sub: OWNER, id: 'testlab-live-x-0a1b2c3d' }, deps)).toEqual({ state: 'absent' });
   });
+
+  it('answers a named file probe from disk, never for another name, a path or an unvalidated id', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'live-acceptance-files-'));
+    scratch.push(root);
+    const env = { CLINE_WORKSPACE_ROOT: root };
+    const file = path.join(root, 'vids-artifacts', `${EXPORT_ID}.mp4`);
+    expect(common.fileProbePath('vids.export', EXPORT_ID, env)).toBe(file);
+    expect(common.fileProbeState('vids.export', EXPORT_ID, env)).toBe('absent');
+    mkdirSync(path.dirname(file));
+    writeFileSync(file, 'mp4');
+    expect(common.fileProbeState('vids.export', EXPORT_ID, env)).toBe('present');
+    for (const bad of ['../etc/passwd', `${EXPORT_ID}/../x`, EXPORT_ID.toUpperCase(), '']) expect(() => common.fileProbeState('vids.export', bad, env)).toThrow('invalid id');
+    expect(() => common.fileProbeState('/etc/passwd', EXPORT_ID, env)).toThrow('unknown live-acceptance file probe');
+    expect(() => helper.parseRequest(JSON.stringify({ op: 'file-state', sub: 'x', name: 'vids.export', id: '../x' }))).toThrow('invalid id');
+    expect(() => helper.parseRequest(JSON.stringify({ op: 'file-state', sub: 'x', name: 'shell', id: EXPORT_ID }))).toThrow('unknown live-acceptance file probe');
+    expect(helper.POOL_FREE_OPS).toContain('file-state');
+    const saved = process.env.CLINE_WORKSPACE_ROOT;
+    process.env.CLINE_WORKSPACE_ROOT = root;
+    try {
+      const deps = { runWithRequestIdentity: () => { throw new Error('a file probe needs no identity scope'); }, pool: null, tickets: null, workspaceRoot: root };
+      const request = helper.parseRequest(JSON.stringify({ op: 'file-state', sub: OWNER, name: 'vids.export', id: EXPORT_ID }));
+      expect(await helper.execute(request, deps)).toEqual({ state: 'present' });
+      rmSync(file);
+      expect(await helper.execute(request, deps)).toEqual({ state: 'absent' });
+    } finally {
+      if (saved === undefined) delete process.env.CLINE_WORKSPACE_ROOT; else process.env.CLINE_WORKSPACE_ROOT = saved;
+    }
+  });
 });
 
 describe('the host runner', () => {
@@ -140,6 +171,22 @@ describe('the host runner', () => {
     expect(seen[0].init.headers).toEqual({});
     expect(JSON.stringify(seen[0].init)).not.toContain(TOKEN);
     expect(seen[1].init.headers).toEqual({ authorization: `Bearer ${TOKEN}` });
+  });
+
+  it('reports the raw body byte length and sha256 beside the decoded text', async () => {
+    const body = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x20, 0xff, 0xfe]), Buffer.from('ftypisom\u00e9', 'utf8')]);
+    const fetchImpl = async () => new Response(body, { status: 200, headers: { 'content-type': 'video/mp4' } });
+    const res = await runner.httpPorts('http://127.0.0.1:35457', TOKEN, fetchImpl).anonymous('GET', '/api/vids-public/x/video.mp4');
+    expect(res).toMatchObject({ status: 200, contentType: 'video/mp4', byteLength: body.length, json: {} });
+    expect(res.sha256).toBe(createHash('sha256').update(body).digest('hex'));
+    expect(res.text).toBe(await new Response(body).text());
+  });
+
+  it('asks the helper for a named file probe, never a path', async () => {
+    const requests: unknown[] = [];
+    const fakeHelper = { call: async (request: unknown) => { requests.push(request); return { ok: true, state: 'absent' }; }, dispose: () => undefined };
+    expect(await runner.containerPorts(fakeHelper, OWNER).files.state('vids.export', EXPORT_ID)).toBe('absent');
+    expect(requests).toEqual([{ op: 'file-state', sub: OWNER, name: 'vids.export', id: EXPORT_ID }]);
   });
 
   it('forwards the helper request by name and never puts it or the token on a docker command line', async () => {

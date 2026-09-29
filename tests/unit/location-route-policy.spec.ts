@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L3: the /api/location route policy, enumerated from the REAL routers. Every route the location router or its step-up ceremony registers must be declared in LOCATION_ROUTE_POLICY (and every declaration must still exist), so a later slice cannot add an arm, enrolment or guardian-share route without saying which proof it spends. Every route declared 'always' is then driven over HTTP without a proof, with a handle that does not exist and with a pending (unproven) handle: each answers 403 step_up_required before the database is touched (the pool here throws on use). The session gate is driven with the exact req.oidc shapes the PAT, TV-token, guest and mock rails set: each is refused, as is a session without a verified issuer, and the service secret is refused with 401 even alongside a valid session. The start and complete endpoints refuse anything but a top-level navigation.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L5: the two new always-gated routes (accepting a restricted invitation, creating a guardian share) are covered by the no-proof refusal cases, each driven at a concrete path; creating a guardian share is no longer an operation without a route, so only arming a rule and approving an enrolment stay unavailable. The fixture router starts no dispatch sweep (none is asked for).
  */
 
 import express, { type RequestHandler, type Router } from 'express';
@@ -93,9 +94,17 @@ describe('location route policy: every route is declared', () => {
 });
 
 describe('location route policy: an always-gated route refuses without a proof', () => {
+  const INVITE = '33333333-3333-4333-8333-333333333333';
   const bodies: Record<string, unknown> = {
     'POST /devices/browser/opt-in': { precisionClass: 'block' },
     'POST /shares': { tenantId: '11111111-1111-4111-8111-111111111111', placeIds: ['22222222-2222-4222-8222-222222222222'] },
+    'POST /invites/:inviteId/accept': {},
+    'POST /guardian-shares': { tenantId: '11111111-1111-4111-8111-111111111111', minorSub: 'person-minor',
+      grantees: [{ sub: 'person-b', issuer: ISSUER }], placeIds: ['22222222-2222-4222-8222-222222222222'] },
+  };
+  /** A concrete path for a declared route, and the parameters its proof is bound to. */
+  const concrete: Record<string, { path: string; params: unknown }> = {
+    'POST /invites/:inviteId/accept': { path: `/invites/${INVITE}/accept`, params: { inviteId: INVITE } },
   };
 
   it('covers every route declared always', () => {
@@ -105,9 +114,11 @@ describe('location route policy: an always-gated route refuses without a proof',
 
   for (const [route, body] of Object.entries(bodies)) {
     it(`${route}: no proof, an unknown handle and a pending handle each get 403 before the database`, async () => {
-      const [method, path] = route.split(' ');
+      const [method, declared] = route.split(' ');
+      const path = concrete[route]?.path ?? declared;
       const policy = LOCATION_ROUTE_POLICY[route];
-      const pending = store.create({ sub: 'person-a', principalIssuer: ISSUER }, policy.stepUp!, LOCATION_STEP_UP_NORMALIZERS[policy.stepUp!]!(body), 'oidc-max-age');
+      const params = concrete[route]?.params ?? body;
+      const pending = store.create({ sub: 'person-a', principalIssuer: ISSUER }, policy.stepUp!, LOCATION_STEP_UP_NORMALIZERS[policy.stepUp!]!(params), 'oidc-max-age');
       const before = poolTouches;
       const variants: Array<Record<string, string>> = [{}, { 'x-oshal-location-step-up': 'no-such-handle' }, { 'x-oshal-location-step-up': pending.challengeId }];
       for (const headers of variants) {
@@ -155,7 +166,7 @@ describe('location route policy: who may call at all', () => {
   });
 
   it('an operation no route here performs cannot be challenged', async () => {
-    for (const operation of ['arm-rule', 'create-guardian-share', 'approve-enrolment', 'nonsense']) {
+    for (const operation of ['arm-rule', 'approve-enrolment', 'nonsense']) {
       const res = await call('POST', '/step-up', 'oidc', {}, { operation, params: {} });
       expect(res.status, operation).toBe(400);
       expect(res.json.error, operation).toBe('operation_not_available');

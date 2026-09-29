@@ -6,9 +6,10 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove the experience adapter's joins and Jarvis ask flow headlessly: catalog authority order, suite grouping, work merging, summary caps, identity derivation, session roll on a refused thread, poll-to-terminal states and honest source reporting when a read fails.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | `related` is a group's installed required members from the plan, no longer the plan's integrationSources (a plain app relates to nothing through them)
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Integration review: localHref keeps a same-origin path and refuses every link the browser would resolve off the page origin (tab-split, backslash, protocol-relative, absolute, non-string); the poll-limit ask result carries code 'poll_limit'.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | speak(): a readback stopped before the swarm's synthesize answer arrives never creates an Audio element or a browser utterance; the browser engine reports progress from its boundary index, and swarm audio from its time over its duration.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Fix round 1: dot-segment links that normalise to a '//' pathname ('/..//outside.example/x', '/.//…', '/%2e%2e//…', '/api/..//…') are refused, a same-origin dot segment is kept normalised and every kept path re-resolves to the page origin; an admitted workspace href that would leave the origin (dot-segment, absolute, non-string) falls back to the cockpit link.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
@@ -222,5 +223,55 @@ describe('experience adapter: client over an injected fetch', () => {
     const broken = LIVE.createClient({ fetch: fakeFetch({}).fetch, storage: { getItem: () => { throw new Error('denied'); }, setItem: () => { throw new Error('denied'); } } });
     expect(broken.prefs.get('k', 'fallback')).toBe('fallback'); expect(broken.prefs.set('k', 1)).toBe(false);
     expect(broken.sessionId()).toMatch(/^jarvis-/);
+  });
+});
+
+describe('experience adapter: speak', () => {
+  const stubGlobals = (utterances: any[], audios: any[], speak: (u: any) => void = () => {}) => {
+    const g = globalThis as Record<string, any>;
+    const previous = { SpeechSynthesisUtterance: g.SpeechSynthesisUtterance, speechSynthesis: g.speechSynthesis, Audio: g.Audio };
+    g.SpeechSynthesisUtterance = function SyntheticUtterance(this: any, text: string) { this.text = text; utterances.push(this); };
+    g.speechSynthesis = { speak, cancel: () => {} };
+    g.Audio = function SyntheticAudio(this: any, src: string) { this.src = src; this.duration = 4; this.currentTime = 0; this.play = async () => {}; this.pause = () => {}; audios.push(this); };
+    return () => { Object.assign(g, previous); };
+  };
+  const tick = () => new Promise(done => setTimeout(done, 20));
+
+  it('never starts a readback that was stopped while the swarm was still answering', async () => {
+    const utterances: any[] = [], audios: any[] = [], hooks = { onStart: vi.fn(), onEnd: vi.fn(), onLevel: vi.fn(), onProgress: vi.fn() };
+    let answer!: (r: Response) => void;
+    const fetch = () => new Promise<Response>(resolve => { answer = resolve; });
+    const restore = stubGlobals(utterances, audios);
+    try {
+      const controller = LIVE.createClient({ fetch: fetch as unknown as typeof globalThis.fetch, storage: memoryStorage() }).speak('hello there', hooks);
+      controller.stop();
+      answer({ ok: true, status: 200, json: async () => ({ success: true, data: { audioData: 'AAAA', format: 'wav' } }) } as Response);
+      await tick(); await tick();
+      expect(audios).toEqual([]); expect(utterances).toEqual([]);
+      expect(hooks.onStart).not.toHaveBeenCalled(); expect(hooks.onEnd).toHaveBeenCalledTimes(1);
+    } finally { restore(); }
+  });
+
+  it('reports progress from the browser engine\'s boundaries and from swarm audio\'s time over its duration', async () => {
+    const utterances: any[] = [], audios: any[] = [];
+    const progress: number[] = [], hooks = { onStart: vi.fn(), onEnd: vi.fn(), onProgress: (f: number) => progress.push(f) };
+    const restore = stubGlobals(utterances, audios, u => { u.onboundary({ charIndex: 5 }); u.onboundary({ charIndex: 20 }); u.onend(); });
+    try {
+      const refused = fakeFetch({ 'POST /api/voice/synthesize': { status: 404, body: { error: 'none' } } });
+      LIVE.createClient({ fetch: refused.fetch, storage: memoryStorage() }).speak('0123456789', hooks);
+      await tick(); await tick();
+      expect(hooks.onStart).toHaveBeenCalledWith('lifecycle'); expect(progress).toEqual([0.5, 1]); expect(hooks.onEnd).toHaveBeenCalledTimes(1);
+      const spoken = fakeFetch({ 'POST /api/voice/synthesize': { status: 200, body: { success: true, data: { audioData: 'AAAA', format: 'wav' } } } });
+      const audioHooks = { onStart: vi.fn(), onEnd: vi.fn(), onProgress: vi.fn() };
+      const controller = LIVE.createClient({ fetch: spoken.fetch, storage: memoryStorage() }).speak('hello', audioHooks);
+      await tick(); await tick();
+      expect(audios).toHaveLength(1); expect(audios[0].src).toBe('data:audio/wav;base64,AAAA');
+      expect(audioHooks.onStart).toHaveBeenCalledWith('lifecycle');
+      audios[0].currentTime = 1; audios[0].ontimeupdate();
+      expect(audioHooks.onProgress).toHaveBeenLastCalledWith(0.25);
+      controller.stop();
+      audios[0].currentTime = 2; audios[0].ontimeupdate();
+      expect(audioHooks.onProgress).toHaveBeenCalledTimes(1); expect(audioHooks.onEnd).toHaveBeenCalledTimes(1);
+    } finally { restore(); }
   });
 });

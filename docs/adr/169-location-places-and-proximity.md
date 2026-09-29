@@ -1,7 +1,7 @@
 # ADR-169: Location, places and proximity
 
 Date: 2026-09-28
-Status: **Proposed; the operator answered Q1-Q7 on 2026-09-28 (see "Operator decisions"). Slices L1 (shared geo maths, namespaced location redaction keys, static log guard), L2 (storage and row-level security with no operator bypass, the membership fence, the location erase in both erasure routes), L3 (browser ingest, the step-up proof, the Settings Location tab) and L4 (places, the four package-facing reads, device enrolment at places) are built; L5-L9 are not.**
+Status: **Proposed; the operator answered Q1-Q7 on 2026-09-28 (see "Operator decisions"). Slices L1 (shared geo maths, namespaced location redaction keys, static log guard), L2 (storage and row-level security with no operator bypass, the membership fence, the location erase in both erasure routes), L3 (browser ingest, the step-up proof, the Settings Location tab) L4 (places, the four package-facing reads, device enrolment at places) and L5 (rules, rule state and the fire ledger, the evaluator, two-rail delivery, member and guardian shares with restricted invitations, the grantee projection, the Jarvis "next time I'm at X" intent) are built; L6-L9 are not.**
 The Context records what exists at core `main` `e1fd5b0f` and store `main` `6fdc1a1`. The Decision carries
 the operator's answers; each Rollout slice is still accepted on its own.
 
@@ -999,6 +999,61 @@ on; what remains is order by dependency.
     subject or reminder text, and a `deployment`-tier message carries only the generic text;
   - after member B is erased, the group's rule tables hold no row naming B;
   - a Test Lab scenario passes.
+
+  **Built:**
+  - **Migration 177.** `location_rules`, `location_rule_state`, `location_rule_fires` (UNIQUE rule,
+    subject, transition; an evidence record that may not carry a coordinate), `location_share_presence` and
+    `location_restricted_invites`, each ENABLE + FORCE with hand-written policies and no operator branch.
+    State, fire and presence rows are owned by the subject and have no foreign key to their rule or share,
+    so a deleted rule or a revoked share never deletes a subject's history (Q4). A subject writes its
+    evaluation state only while `location_rule_evaluable()` admits the rule: a person's own unfinished
+    rule, or a group rule whose arm digest is current, whose arming admin is still an admin and whose place
+    is in an accepted, unexpired member share of the subject with the approved geometry. The acceptance
+    function `location_accept_restricted_invite()` is the only writer of a restriction (the invited
+    account, by subject and issuer; an admin of the group is refused; the membership fence admits exactly
+    that member row in that transaction and refuses admin to a restricted member). Grantees read only
+    `location_shared_presence()`, re-checked on every read. `location_mark_fire_dispatched()` is the one
+    way a fire is marked, by its actor or, for an erased actor, the recovery sweep under its broker GUC.
+    `location_erase_session_rule_references()` is the group-rule half of the erase.
+  - **The evaluator** (`src/app/location-evaluator.ts`, pure; `src/app/location-rule-evaluation.ts`, in
+    the ingest transaction as the subject). Every timing decision reads the server receipt time; a
+    client-reported time can only disqualify a fix (back-dated) and never make one fresh. Enter is two
+    qualifying inside fixes at least 30 s apart; exit is confidently outside for 3 minutes with the
+    max(50 m, 25 %) margin; any fix that is not confidently outside cancels a pending exit; the first
+    determination from unknown is a baseline that never fires; cooldown and once/every-visit are applied
+    against receipt times. Fires are claimed in the ledger before commit and dispatched after it.
+  - **Two-rail delivery** (`src/app/location-fire-dispatch.ts`): each fire is dispatched under its actor
+    with `isOperator: false` over the Jarvis shelf (ids only; the text is resolved on the Settings page
+    under the person's identity) and the NotificationRouter with tier-aware senders: a `deployment`-tier
+    channel carries only "You have a location reminder — open oshal". A per-person daily cap
+    (`OSHAL_LOCATION_REMINDER_DAILY_CAP`, default 20) and a crash-recovery sweep
+    (`OSHAL_LOCATION_DISPATCH_SWEEP_SEC`, default 60, 0 off) under the broker GUC, never SYSTEM.
+  - **Rules and sharing routes** on the one `/api/location` router (`location-rule-routes.ts`): rules,
+    fires, the projection, group sharing, restricted invitations, guardian shares, lifting a restriction.
+    Accepting a restricted invitation and creating a guardian share spend a step-up proof.
+  - **The Jarvis intent** (`src/app/location-jarvis-intent.ts`), deterministic on the /ask path before the
+    time-reminder intent: "remind me to X next time I'm at Y" resolves Y to saved places; "I'm at Y,
+    remind me next time", "here" and "this store" use the current fix and, outside any saved place,
+    propose a new place (name, label, radius; "yes", "call it ...", "make it 200 m", "cancel"), seeded inside
+    so it fires on the next visit. Only a browser session with a verified issuer may use it.
+  - **Settings, Location** gains reminders, recent fires, sharing with groups by place set, what groups
+    share with you, invitations and guardian shares.
+
+  Choices made here: a device subject is refused until the device ingest exists (L6); a rule's action is
+  `remind` or `notify` (`workflow` and `device-action` widen the CHECK in their slices); the
+  restricted-invitation acceptance spends a proof (it is what lets an admin share the account's
+  transitions); the owner's purge also deletes the evaluation history (rule state, share presence, fires).
+
+  Evidence:
+  - `tests/unit/location-evaluator.spec.ts` (the scripted sequences, pure);
+  - `tests/unit/location-reminders-postgres.spec.ts` (the real ingest with a scripted clock, the block
+    precision case, two-rail delivery with tier-aware text, the cap and the sweep, the operator-stamped
+    read of `jarvis_tasks` and `tickets`, the Jarvis grocery-store sequence, the purge);
+  - `tests/unit/location-group-shares-postgres.spec.ts` (Q1 shares and place sets, revocation, Q5
+    invitations, restrictions and guardian shares, the erase);
+  - `tests/unit/location-jarvis-intent.spec.ts`, `tests/unit/location-route-policy.spec.ts`,
+    `tests/unit/location-rls-no-operator-guard.spec.ts`, `tests/unit/location-log-guard.spec.ts`;
+  - the Test Lab card `location-reminders`.
 - **L6: Group ownership, location credential and drone ingest.** Swarm devices owned by a group, such as the
   household group, with no new tenant kind; the location enrolment route, the `location_device_id` binding on
   `oshal_cli_tokens` and its scope check, and the `/api/join/enroll` refusal (D3); the core device ingest

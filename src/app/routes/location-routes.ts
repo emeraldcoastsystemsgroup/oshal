@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L3: the one /api/location router (later slices add their routes here rather than minting a second mount). Browser ingest (POST /presence) and the person's consent over their own location (the Settings, Location tab's reads and changes), behind the service-rail refusal and the browser-session principal of location-session.ts. Every route that raises exposure spends a step-up proof for exactly the parameters it acts on (opt-in always; a precision change only when it raises; accepting a member share always); LOCATION_ROUTE_POLICY declares each route's rule and tests/unit/location-route-policy.spec.ts fails when a route is added without a declaration. Statements run under the person's own owner session (never is_operator); refusals are LocationRequestError codes, never a coordinate or a subject.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L4: mount the places and device-enrolment routes (location-place-routes.ts) on this router and merge their declarations into LOCATION_ROUTE_POLICY, so the route-policy spec still sees every route; none spends a proof. The error mapper also answers the location kernel's own refusals: LocationInputError 400 and LocationNotFoundError 404.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L5: mount the reminder and group-sharing routes (location-rule-routes.ts) and merge their declarations; add the step-up normalisers for creating a guardian share and accepting a restricted invitation; hand every browser fix's claimed fires to an after-commit dispatcher (the production two-rail delivery by default); start the dispatch-recovery sweep when the caller asks for one (the server passes locationDispatchSweepMsFromEnv(): OSHAL_LOCATION_DISPATCH_SWEEP_SEC, default 60 s, 0 off).
  *
  * @module app/routes/location-routes
  */
@@ -16,10 +17,13 @@ import { createChildLogger, locationSafeError } from '@/shared/logger';
 import { changeDefaultPrecision, changeDevicePrecision, optInBrowserDevice, optOutDevice } from '../location-consent';
 import { acceptMemberShare, parseShareRequest, revokeMemberShare } from '../location-member-shares';
 import { readLocationOverview } from '../location-overview';
+import { createLocationDispatcher, defaultLocationDeliveryRails, startLocationDispatchSweep, type LocationDeliveryRails } from '../location-fire-dispatch';
+import { parseGuardianShareRequest } from '../location-group-shares';
 import { ingestBrowserFix, parseBrowserFix } from '../location-presence';
 import { LocationRequestError, requireLocationId, requirePrecisionClass } from '../location-request';
 import { locationStepUpStore, type LocationStepUpOperation, type LocationStepUpStore } from '../location-step-up';
 import { LOCATION_PLACE_ROUTE_POLICY, mountLocationPlaceRoutes } from './location-place-routes';
+import { LOCATION_RULE_ROUTE_POLICY, mountLocationRuleRoutes, normalizeInviteAcceptance } from './location-rule-routes';
 import { locationContext, refuseLocationServiceRail, requireLocationBrowserSession } from './location-session';
 import {
   LOCATION_STEP_UP_BASE, createLocationStepUpRoutes, spendLocationStepUp, stepUpRequired, type LocationStepUpParamsNormalizer,
@@ -58,6 +62,7 @@ export const LOCATION_ROUTE_POLICY: Readonly<Record<string, LocationRoutePolicy>
   'GET /step-up/:id/complete': { stepUp: null, why: 'Accepts a fresh sign-in; top-level navigation only.' },
   'POST /step-up/:id/totp': { stepUp: null, why: 'Accepts a second-factor code for a local-auth session.' },
   ...LOCATION_PLACE_ROUTE_POLICY,
+  ...LOCATION_RULE_ROUTE_POLICY,
 });
 
 /** @description Canonical parameters for each operation a route here performs; the challenge and the route digest the same form. */
@@ -73,6 +78,8 @@ export const LOCATION_STEP_UP_NORMALIZERS: Readonly<Partial<Record<LocationStepU
     return { scope, precisionClass: requirePrecisionClass(input.precisionClass) };
   },
   'accept-share': (raw: unknown) => parseShareRequest(raw),
+  'create-guardian-share': (raw: unknown) => parseGuardianShareRequest(raw),
+  'accept-restricted-invite': (raw: unknown) => normalizeInviteAcceptance(raw),
 });
 
 /** @description Options for the location router. */
@@ -83,6 +90,10 @@ export interface LocationRoutesOptions {
   stepUpStore?: LocationStepUpStore;
   /** Minimum time between two accepted fixes from one browser. */
   ingestMinIntervalMs?: number;
+  /** The delivery rails for location fires (the production shelf + notification rails by default). */
+  deliveryRails?: LocationDeliveryRails;
+  /** The dispatch-recovery sweep interval; absent or 0 starts none (the server passes {@link locationDispatchSweepMsFromEnv}). */
+  dispatchSweepMs?: number;
 }
 
 /**
@@ -92,6 +103,15 @@ export interface LocationRoutesOptions {
 export function locationIngestMinIntervalFromEnv(): number {
   const raw = Number(process.env.OSHAL_LOCATION_INGEST_MIN_INTERVAL_SEC);
   return Math.round((Number.isFinite(raw) && raw >= 0 ? Math.min(raw, 3600) : 5) * 1000);
+}
+
+/**
+ * @description The deployment's dispatch-recovery sweep interval: OSHAL_LOCATION_DISPATCH_SWEEP_SEC, default 60; 0 turns it off.
+ * @returns Milliseconds (0 = off).
+ */
+export function locationDispatchSweepMsFromEnv(): number {
+  const raw = Number(process.env.OSHAL_LOCATION_DISPATCH_SWEEP_SEC);
+  return Math.round((Number.isFinite(raw) && raw >= 0 ? Math.min(raw, 86_400) : 60) * 1000);
 }
 
 /**
@@ -200,12 +220,14 @@ function mountConsentRoutes(router: Router, pool: Pool, store: LocationStepUpSto
  * @param pool - The pool.
  * @param store - The step-up store.
  * @param minIntervalMs - The minimum ingest interval.
+ * @param rails - The delivery rails the after-commit dispatcher uses.
  * @returns Nothing.
  */
-function mountDataRoutes(router: Router, pool: Pool, store: LocationStepUpStore, minIntervalMs: number): void {
+function mountDataRoutes(router: Router, pool: Pool, store: LocationStepUpStore, minIntervalMs: number, rails: LocationDeliveryRails): void {
+  const onFired = createLocationDispatcher(pool, rails);
   router.post('/presence', guarded(async (req, res) => {
     const fix = parseBrowserFix(req.body);
-    res.status(201).json(await ingestBrowserFix(pool, locationContext(res).principal, fix, { minIntervalMs }));
+    res.status(201).json(await ingestBrowserFix(pool, locationContext(res).principal, fix, { minIntervalMs, onFired }));
   }));
   router.post('/history/purge', guarded(async (_req, res) => {
     res.json(await purgeOwnLocationHistory(pool, locationContext(res).principal));
@@ -223,7 +245,7 @@ function mountDataRoutes(router: Router, pool: Pool, store: LocationStepUpStore,
 /**
  * @description The /api/location router (ADR-169 L3). Mount it behind requiresAuth; it refuses the
  * service-secret rail itself and admits only an interactive browser session with a verified issuer.
- * @param options - Pool, step-up store and ingest interval.
+ * @param options - Pool, step-up store, ingest interval, delivery rails and the recovery sweep interval.
  * @returns The router.
  */
 export function createLocationRoutes(options: LocationRoutesOptions): Router {
@@ -236,8 +258,11 @@ export function createLocationRoutes(options: LocationRoutesOptions): Router {
     store, pool: options.pool, normalizers: LOCATION_STEP_UP_NORMALIZERS, donePath: LOCATION_SETTINGS_PAGE,
   }));
   mountConsentRoutes(router, options.pool, store);
-  mountDataRoutes(router, options.pool, store, options.ingestMinIntervalMs ?? locationIngestMinIntervalFromEnv());
+  const rails = options.deliveryRails ?? defaultLocationDeliveryRails(options.pool);
+  mountDataRoutes(router, options.pool, store, options.ingestMinIntervalMs ?? locationIngestMinIntervalFromEnv(), rails);
   mountLocationPlaceRoutes(router, options.pool, guarded);
+  mountLocationRuleRoutes(router, options.pool, guarded, (req, res, operation, params) => requireStepUp(req, res, store, operation, params));
+  if (options.dispatchSweepMs) startLocationDispatchSweep(options.pool, rails, options.dispatchSweepMs);
   log.info({ op: 'mount', outcome: 'ok', count: Object.keys(LOCATION_ROUTE_POLICY).length }, 'location routes ready');
   return router;
 }

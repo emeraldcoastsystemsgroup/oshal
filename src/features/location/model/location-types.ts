@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L2: the location store's table inventory and the shapes its storage functions exchange. The table lists are the single source the erase, purge and export functions and the /api/me registry exclusion read, so a table added to migration 175 without being added here is caught by the live spec that compares this list with the database.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L4: the shapes of the package-facing reads (placeAt, currentPlace, distanceBand, operationAddress) and their two refusals. A place is returned by reference (id, name, label); only operationAddress carries an address or a centre, and it is for server code that passes them into a fixed provider operation or the owner's own page, never a prompt. LocationInputError and LocationNotFoundError carry fixed text, never a coordinate, a place name or a subject.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L5: migration 177's five tables join the inventory (rules, rule state, the fire ledger, share presence, restricted invitations), so the erase, the purge, the export, the /api/me discovery exclusion and the live table-list check all see them. Rules, rule state, fires and share presence can be a person's own rows; restricted invitations are tenant rows naming the invited account. The owner's purge also counts the evaluation history it removed (rule state, share presence and fires, which are history under Q4).
  *
  * @module location/model/location-types
  */
@@ -25,9 +26,14 @@ export interface LocationPrincipal {
 export const LOCATION_TABLES: readonly string[] = Object.freeze([
   'location_current',
   'location_observations',
+  'location_rule_state',
+  'location_share_presence',
+  'location_rule_fires',
   'location_shares',
   'location_guardian_shares',
   'location_member_restrictions',
+  'location_restricted_invites',
+  'location_rules',
   'location_devices',
   'location_places',
   'location_settings',
@@ -41,7 +47,11 @@ export const LOCATION_TABLES: readonly string[] = Object.freeze([
 export const LOCATION_PERSON_TABLES: readonly string[] = Object.freeze([
   'location_current',
   'location_observations',
+  'location_rule_state',
+  'location_share_presence',
+  'location_rule_fires',
   'location_shares',
+  'location_rules',
   'location_devices',
   'location_places',
   'location_settings',
@@ -53,6 +63,8 @@ export interface LocationPurgeResult {
   observationCount: number;
   /** Current-state rows deleted. */
   currentCount: number;
+  /** Evaluation history deleted by the owner's own purge: rule state, share presence and fire rows (L5). */
+  evaluationCount?: number;
 }
 
 /** @description What the location erase did for one person, counted per table. */
