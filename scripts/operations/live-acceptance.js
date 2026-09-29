@@ -7,6 +7,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the shared host runner for the automated live-acceptance sweep: `node scripts/operations/live-acceptance.js <case|all|list> [--record-doc]`. As the operator automation identity (OSHAL_VERIFY_OPERATOR_PAT, read by name from the environment or the box's .env, never printed or put on a command line) it binds each case in scripts/lib/live-acceptance-cases.js to the running box: bearer HTTP against OSHAL_VERIFY_BASE_URL, a named-statement/ticket/workspace helper staged once into the api container and called with its request forwarded by name, the Jarvis bot's call log through `docker logs`, and a 390 x 844 headless Chromium whose same-origin requests carry the token and whose every other request is aborted. It prints PASS/FAIL/DEGRADED/UNAVAILABLE per case with the cleanup receipt, then one summary line, and exits 0 only when every selected case passed. `--record-doc` writes the Jarvis cache measurement into docs/architecture/jarvis-own-task-recall.md of this checkout.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | An `anonymous` port beside `api`: the same JSON request with NO credential (no Authorization header), so a case can prove a route refuses an unauthenticated caller (the dev-workspace query route must answer 401/403). The token never reaches that request.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Every HTTP reply also carries `byteLength` and `sha256` of its raw body (the text is decoded from the same bytes, as fetch's text() would), so a case can prove a binary route served exact bytes: the vids-publish case compares the anonymous public read with the MP4 it uploaded. And a `files` port over the helper's new `file-state` op: whether a NAMED probe's file (never a path) exists in the api container.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | `--expect-store-bound`: the flag every selected case receives as the `expectStoreBound` option (caseOptions). The token-chase-replay case then also requires a store-bound captured run and storeVersion {bound: true, reproduced: true}; the deploy lane sets it after TOKEN_CHASE_OWNER_STORE_SNAPSHOT=on on one bot. Every other case ignores the option.
  */
 
 'use strict';
@@ -16,6 +17,7 @@
 //   node scripts/operations/live-acceptance.js congress
 //   node scripts/operations/live-acceptance.js all
 //   node scripts/operations/live-acceptance.js jarvis-cache --record-doc
+//   node scripts/operations/live-acceptance.js token-chase-replay --expect-store-bound
 // Knobs: OSHAL_VERIFY_BASE_URL (default http://127.0.0.1:35457), OSHAL_VERIFY_API_CONTAINER (default
 // oshal-local-api), OSHAL_VERIFY_JARVIS_CONTAINER (default oshal-local-jarvis-bot), OSHAL_VERIFY_ENV_FILE.
 // Exit: 0 all pass, 1 any fail, 2 not runnable (no token, unknown case), 3 no fail but not all pass.
@@ -39,11 +41,20 @@ const CALL_TIMEOUT_MS = 30_000;
 /**
  * @description Parse the command line.
  * @param {string[]} argv - process.argv.slice(2).
- * @returns {{selector: string|null, recordDoc: boolean}} The request.
+ * @returns {{selector: string|null, recordDoc: boolean, expectStoreBound: boolean}} The request.
  */
 function parseArgs(argv) {
   const positional = argv.filter((arg) => !arg.startsWith('--'));
-  return { selector: positional[0] || null, recordDoc: argv.includes('--record-doc') };
+  return { selector: positional[0] || null, recordDoc: argv.includes('--record-doc'), expectStoreBound: argv.includes('--expect-store-bound') };
+}
+
+/**
+ * @description The options every selected case receives from the command line.
+ * @param {ReturnType<typeof parseArgs>} args - The parsed request.
+ * @returns {{expectStoreBound: boolean}} The case options (cases ignore what they do not read).
+ */
+function caseOptions(args) {
+  return { expectStoreBound: args.expectStoreBound === true };
 }
 
 /**
@@ -269,7 +280,7 @@ async function main(argv, write = (line) => process.stdout.write(`${line}\n`)) {
   const results = [];
   try {
     for (const entry of selected) {
-      const result = await entry.module.run(bound.ports).catch((error) => ({ caseId: entry.module.CASE_ID, state: 'fail',
+      const result = await entry.module.run(bound.ports, caseOptions(args)).catch((error) => ({ caseId: entry.module.CASE_ID, state: 'fail',
         detail: `The case crashed: ${common.errorText(error)}`, evidence: {}, cleanup: null }));
       results.push(result);
       printResult(write, entry.module.KEY, result);
@@ -290,4 +301,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseArgs, httpPorts, containerHelper, containerPorts, browserPort, printResult, exitCodeFor, main };
+module.exports = { parseArgs, caseOptions, httpPorts, containerHelper, containerPorts, browserPort, printResult, exitCodeFor, main };
