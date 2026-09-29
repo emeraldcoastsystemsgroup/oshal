@@ -39,7 +39,7 @@ carries the evidence that survived an adversarial re-derivation and the correcti
 
 | Date | Entry | PR |
 |---|---|---|
-| 2026-09-29 | The isolated-browser fixture fails a passing suite when the browser takes over 5 s to exit (2026-09-15) |  |
+| 2026-09-29 | The isolated-browser fixture fails a passing suite when the browser takes over 5 s to exit (2026-09-15) | #955 |
 | 2026-09-29 | Installer and chat-channel strings still use the retired standalone product name | #944 |
 | 2026-09-29 | Kernel route-auth spec red on main: expects more kernel route declarations than exist (2026-09-29) | #938 |
 | 2026-09-29 | One parts model across Circuit Lab, Animatronics and Embodied (2026-09-14) | #224 (store), 270 (store) |

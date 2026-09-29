@@ -878,7 +878,7 @@
   {
     "date": "2026-09-29",
     "title": "The isolated-browser fixture fails a passing suite when the browser takes over 5 s to exit (2026-09-15)",
-    "pr": "",
+    "pr": "955",
     "evidence": "The existing f96999df fixture uses one configurable 45-second exit budget, scoped termination and observed exit evidence. Current-main acceptance additionally repaired an inventory false positive: a valid explicit cleanup-hook timeout no longer requires a redundant global setting; short explicit overrides still fail. Original current-main run21pass/1fail retained; corrected spec SHA256eccb4f9335b22ad66be73dea2018d087ca7243aef5c0f4abef579c53e809dd19 passed five consecutive actual isolated-browser, jarvis-no-brain-browser and budgets-unit-split-browser runs28/28 each, zero skips, while independent build lanes continued. Runtime23:17:48-23:19:42UTC, 2026-09-29; owned 180-second outer deadlines, fresh2800MiB admission/reserve600MiB, runner128/worker384, observed free minima3464/3524/3714/3651/3651MiB. The fake-clock never-exit case and real BrowserServer withheld-exit-confirmation deadline remain loud refusals, not a claim of physically unkillable Chromium. Independent source and evidence review found the exact done-when satisfied. docs/testing/isolated-browser-acceptance.md retains commands, source/log hashes and fixture boundaries; tests/README.md and the boundary audit link it. No production fixture rewrite, deliberate saturation benchmark, installed Jarvis/provider/database acceptance or whole-suite proof is claimed."
   }
 ]
