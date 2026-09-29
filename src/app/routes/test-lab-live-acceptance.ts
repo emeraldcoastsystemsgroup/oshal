@@ -4,6 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the signed-in Test Lab adapter for the automated live-acceptance sweep. The cases live once in scripts/lib/live-acceptance-*.js (the host runner scripts/operations/live-acceptance.js drives the same code with the operator token); this file only binds their ports to the running server as the initiating caller: loopback JSON and multipart calls carrying the caller's session cookie, the closed named-statement set on the request-identity pool, the ticket service, and the shared workspace root for fixture-tagged ask workspaces. The headless Chromium and `docker logs` ports exist only on the host, so the commerce and Jarvis-cache cards answer a named gap here before any call.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | An `anonymous` port: the same loopback JSON request with no session cookie, so a case can prove a route refuses an unauthenticated caller (the dev-workspace query route must answer 401/403).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Every case now runs with an empty runner environment (`env: {}`). The case modules read runner inputs such as OSHAL_VERIFY_DEV_NOTES_PROBE from process.env on the host, but inside the api that is the api's environment, and no compose file forwards any OSHAL_VERIFY_* variable to the api. The dev-workspace card used to fall back to it and told operators to set a variable the api never receives. Now it reports the handover ask as host-runner-only, naming the command.
  */
 import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 import { createChildLogger } from '@/shared/logger';
@@ -59,6 +61,15 @@ const statements = require('../../../scripts/lib/live-acceptance-sql.js') as { s
 /** Every registered live-acceptance case, in run order. */
 export const LIVE_ACCEPTANCE_CASES: readonly LiveAcceptanceCaseEntry[] = registry.CASES;
 
+/**
+ * The options every Lab card passes its case. The case modules read runner inputs (the dev-workspace
+ * probe words, OSHAL_VERIFY_DEV_*_PROBE) from the `env` option, then from process.env. On the host,
+ * process.env is the host runner's own environment. Here it would be the api's, which compose never
+ * gives an OSHAL_VERIFY_* variable. An empty `env` makes a case that needs such an input report it as a
+ * host-runner step instead of reading a variable that cannot be set here.
+ */
+const LAB_CASE_OPTIONS: Readonly<Record<string, unknown>> = Object.freeze({ env: Object.freeze({}) });
+
 /** How a case state shows on a Lab card: a deployment that cannot exercise the claim is a gap. */
 const LAB_STATE: Record<LiveAcceptanceResult['state'], State> = { pass: 'pass', fail: 'fail', degraded: 'degraded', unavailable: 'gap' };
 
@@ -68,16 +79,16 @@ interface CallResult { status: number; json: Record<string, unknown>; text: stri
 /**
  * @description One loopback request to the running server as the initiating signed-in caller.
  * @param base - The server's own loopback base URL (server-derived, never from the request body).
- * @param cookie - The caller's session cookie, forwarded verbatim.
+ * @param cookie - The caller's session cookie, forwarded verbatim; null sends no cookie (the anonymous port).
  * @param method - HTTP method.
  * @param route - API path beginning with a slash.
  * @param init - Body and extra headers.
  * @returns The status, parsed JSON (empty object when not JSON), text, content type and redirect target.
  */
-async function send(base: string, cookie: string, method: string, route: string, init: { body?: string | FormData; headers?: Record<string, string> }): Promise<CallResult> {
+async function send(base: string, cookie: string | null, method: string, route: string, init: { body?: string | FormData; headers?: Record<string, string> }): Promise<CallResult> {
   const response = await fetch(`${base}${route}`, {
     method, redirect: 'manual', signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
-    headers: { ...(init.headers || {}), cookie }, ...(init.body === undefined ? {} : { body: init.body }),
+    headers: { ...(init.headers || {}), ...(cookie === null ? {} : { cookie }) }, ...(init.body === undefined ? {} : { body: init.body }),
   });
   const text = await response.text().catch(() => '');
   let json: Record<string, unknown> = {};
@@ -90,18 +101,20 @@ async function send(base: string, cookie: string, method: string, route: string,
  * @description Bind the case ports available inside the server to the initiating caller.
  * @param cookie - The initiating session cookie.
  * @param runtime - Server-derived run context (owner, stores, loopback base).
- * @returns The ports; `browser` and `logs` are absent on purpose (host-only).
+ * @returns The ports; `anonymous` sends no cookie; `browser` and `logs` are absent on purpose (host-only).
  */
 export function labPorts(cookie: string, runtime: ScenarioRunContext): Record<string, unknown> {
   const { ctx } = runtime;
   const base = runtime.apiBaseUrl;
   const root = resolveSharedWorkspaceRoot();
+  const jsonInit = (body?: unknown, options: { headers?: Record<string, string> } = {}) => ({
+    headers: { ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...(options.headers || {}) },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   return {
     ownerSub: runtime.ownerSub,
     origin: base,
-    api: (method: string, route: string, body?: unknown, options: { headers?: Record<string, string> } = {}) => send(base, cookie, method, route, {
-      headers: { ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...(options.headers || {}) },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }) }),
+    api: (method: string, route: string, body?: unknown, options?: { headers?: Record<string, string> }) => send(base, cookie, method, route, jsonInit(body, options)),
+    anonymous: (method: string, route: string, body?: unknown, options?: { headers?: Record<string, string> }) => send(base, null, method, route, jsonInit(body, options)),
     upload: (route: string, fields: Record<string, string>, file: { name: string; type: string; bytes: Buffer }) => {
       const form = new FormData();
       for (const [name, value] of Object.entries(fields || {})) form.append(name, String(value));
@@ -136,7 +149,7 @@ export async function runLiveAcceptanceCase(key: string, cookie: string, runtime
     return { app: LIVE_ACCEPTANCE_APP, label, state: 'degraded', detail: 'A signed-in session is required; nothing was written.' };
   }
   const started = Date.now();
-  const result = await entry.module.run(labPorts(cookie, runtime));
+  const result = await entry.module.run(labPorts(cookie, runtime), LAB_CASE_OPTIONS);
   logger.info({ caseId: result.caseId, state: result.state, durationMs: Date.now() - started }, 'live acceptance case finished');
   return {
     app: LIVE_ACCEPTANCE_APP, label, state: LAB_STATE[result.state] ?? 'fail',

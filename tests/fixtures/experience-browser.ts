@@ -13,9 +13,10 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Integration review: fullSwarmGapRoutes seats Little Monsters' summary probe at its real path (`/api/little-monsters/home-summary`, status `lm-home-summary`, 403 with the package's setup sentence) so the Jarvis agenda's probe gate is exercised, and can answer the user directory with a refusal code (`fullSwarm.directoryError`); nexusGapRoutes no longer serves POST /api/jarvis/tasks/:id/delivered (the shell never sends it; the request log proves it); the synthetic ticket status transition writes `metadata.lastStatusTransition` the way the ticket service mirrors every transition, keeping the row-level reason/nextAction.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Phase-4 assemblies: the synthetic app-view page provides a classroom builder (a new-tab tile and list item, a tile handled on the page) and `?provides=` limits the builders it registers, so "requested but not provided" stays provable; the host page frames `?audience=` of its choice; assemblyHostRoutes answers the ribbon profile of an installed application from `state.assembly.ribbons`, and installAssemblyHosts gives the ten hosts the presets gained ribbon items shaped like their manifests' surfaces (several for Intelligent Communication, Social and Marketing Engine), installing the nine the default catalog lacks; the default catalog itself is unchanged.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Composed front pages: installFrontPageHosts installs the card applications the assemblies did not (Calendar, Federal CRM with four of its surfaces, Calling Assistant) through the same installHosts helper installAssemblyHosts now uses; each is a synthetic app with the default probe (`/fixture/probe/<name>`, status `probe:<name>`), so a card's tiles, items, refusal and D10 silence are provable per application.
- * 11 | maintainer@emeraldcoastsystemsgroup.com | Full-swarm build routes (portalBuildRoutes, lane "portal", registered first among the lane routes): one ticket's workflow read model shaped like GET /api/v1/tickets/:ticketId/workflow with per-ticket overrides and statuses, and a cancel pre-handler that moves the synthetic ticket to cancelled whenever the existing cancel route will answer 200.
- * 12 | maintainer@emeraldcoastsystemsgroup.com | portalBuildRoutes gains the schedule and workflow-definition reads (scheduleRoutes): an owner-scoped schedule list, pause/resume with the controller's 404 / managed-manifest 403 / operator 403 refusals, and Workflow Studio definition summaries, each with a controllable status.
- * 13 | maintainer@emeraldcoastsystemsgroup.com | portalBuildRoutes gains the membership and own-location reads (peopleRoutes): GET /api/tenants with a controllable status, members-only GET /api/tenants/:id/members, and the caller's GET /api/location/state overview (no coordinates) with a controllable status.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | Home build lane (homebaseBuildRoutes, state in `homeBuild`, read with homeBuildState): ADR-169 location state and device opt-out, the caller's groups and members and household creation, a learner's own dashboard, Little Monsters notices with mark-read, Jarvis briefing sources (PUT needs the route's own header) and the caller's schedules with pause/resume, and the global search, each shaped like its real route with a controllable status. Registered with the other lane routes ahead of the default routes.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com | Full-swarm build routes (portalBuildRoutes, lane "portal", registered first among the lane routes): one ticket's workflow read model shaped like GET /api/v1/tickets/:ticketId/workflow with per-ticket overrides and statuses, and a cancel pre-handler that moves the synthetic ticket to cancelled whenever the existing cancel route will answer 200.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com | portalBuildRoutes gains the schedule and workflow-definition reads (scheduleRoutes): an owner-scoped schedule list, pause/resume with the controller's 404 / managed-manifest 403 / operator 403 refusals, and Workflow Studio definition summaries, each with a controllable status.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com | portalBuildRoutes gains the membership and own-location reads (peopleRoutes): GET /api/tenants with a controllable status, members-only GET /api/tenants/:id/members, and the caller's GET /api/location/state overview (no coordinates) with a controllable status.
  */
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -205,6 +206,7 @@ export async function startExperienceBrowserFixture(options: { denyAuth?: boolea
   portalBuildRoutes(app, state);
   fullSwarmGapRoutes(app, state); nexusGapRoutes(app, state); homebaseGapRoutes(app, state);
   assemblyHostRoutes(app, state);
+  homebaseBuildRoutes(app, state);
   swarmRoutes(app, state); packageRoutes(app, state);
   app.use('/shared/ui/js', express.static(resolve(ROOT, 'src/shared/ui/js')));
   registerCockpitStaticRoutes({ app, requiresAuth, cockpitDir: resolve(ROOT, 'src/pages/cockpit'), uiEnhancedDir: resolve(ROOT, 'any-bot/ui-enhanced'),
@@ -567,3 +569,135 @@ function peopleRoutes(router: express.Router, state: ExperienceState, portal: Po
   });
   router.get('/api/location/state', (_req, res) => { res.status(portal.location.status).json(portal.location.status === 200 ? portal.location.body : { error: 'location_session_required' }); });
 }
+/** The ADR-169 location overview as GET /api/location/state answers it for its owner (places by reference, never coordinates). */
+type HomeLocationState = {
+  settings: { defaultPrecisionClass: string };
+  devices: Array<{ deviceId: string; kind: string; reportingEnabled: boolean; precisionClass: string; lastSeenAt: string | null; createdAt: string }>;
+  current: null | { deviceId: string | null; source: string; precisionClass: string; accuracyM: number | null; receivedAt: string; ageSeconds: number; place: null | { placeId: string; name: string; label: string } };
+  history: { observationCount: number };
+  visibility: { memberShares: Array<Record<string, unknown>>; guardianShares: Array<Record<string, unknown>>; restrictions: Array<Record<string, unknown>> };
+};
+/** The synthetic state the home-build routes read and change (`state.homeBuild`). */
+export type HomeBuildState = {
+  location: HomeLocationState;
+  tenants: Array<{ tenant_id: string; kind: string; name: string; role: string }>;
+  members: Record<string, Array<{ user_sub: string; role: string }>>;
+  dashboard: { xp: number; level: number; streak_days: number; quizAverage: number; quizCount: number; flashcardsReviewed: number };
+  notices: Array<{ notification_id: string; title: string; body: string; channel: string; read: boolean; sent_at: string }>;
+  briefings: Array<{ id: string; title: string; description: string; preference: { enabled: boolean; frequency: string; channel: string } }>;
+  schedules: Array<{ id: string; taskType: string; cron: string; taskData: Record<string, unknown>; status: string; nextRunAt: string | null; once?: boolean }>;
+  hits: Array<{ id: string; title: string; snippet: string; kind: string; url: string | null; score: number; source: string; ts: string | null }>;
+  writes: string[];
+};
+
+/**
+ * @description Lane "home build" synthetic contracts, each shaped like the real route's answer and driven through
+ * `state.homeBuild` plus a per-route status (`home:location`, `home:opt-out`, `home:tenants`, `home:members`,
+ * `home:create-tenant`, `home:dashboard`, `home:notices`, `home:notice-read`, `home:briefings`, `home:briefing-put`,
+ * `home:schedules`, `home:schedule-toggle`, `home:search`): ADR-169 GET /api/location/state and
+ * POST /api/location/devices/:deviceId/opt-out (device_not_found for a device that is not the caller's); the caller's groups
+ * (GET /api/tenants, GET /api/tenants/:id/members for members only, POST /api/tenants making the caller admin); a learner's
+ * own GET /api/education/student/:id/dashboard (403 for anyone else's); Little Monsters notices (GET, PATCH read); Jarvis
+ * briefing sources (GET, and PUT refused without the route's `x-oshal-briefing-request: 1` header); the caller's schedules
+ * (GET, POST pause/resume); and GET /api/search. Every write is logged in `homeBuild.writes`. Registered with the other lane
+ * routes ahead of the default routes (see startExperienceBrowserFixture); none of its paths overlaps a default route.
+ * @param app The fixture application.
+ * @param state The per-case synthetic state; `state.homeBuild` is created here with an empty household, location off,
+ * no notices and one briefing source.
+ * @returns Nothing; the routes are registered on `app`.
+ */
+function homebaseBuildRoutes(app: express.Application, state: ExperienceState) {
+  const home: HomeBuildState = {
+    location: { settings: { defaultPrecisionClass: 'block' }, devices: [], current: null, history: { observationCount: 0 }, visibility: { memberShares: [], guardianShares: [], restrictions: [] } },
+    tenants: [], members: {},
+    dashboard: { xp: 160, level: 2, streak_days: 3, quizAverage: 84, quizCount: 2, flashcardsReviewed: 12 },
+    notices: [],
+    briefings: [{ id: 'synthetic-morning', title: 'Synthetic morning brief', description: 'A synthetic briefing source.', preference: { enabled: false, frequency: 'daily', channel: 'bubble' } }],
+    schedules: [], hits: [], writes: [],
+  };
+  Object.assign(state, { homeBuild: home });
+  const router = express.Router();
+  const refused = (res: express.Response, key: string, body: Record<string, unknown> = { error: 'Synthetic refusal' }) => { const status = statusOr(state, key); if (status === 200) return false; res.status(status).json(body); return true; };
+  router.get('/api/location/state', (_req, res) => { if (!refused(res, 'home:location', { error: 'browser_session_required', message: 'Location settings are changed from a signed-in browser, not with a token.' })) res.json(home.location); });
+  router.post('/api/location/devices/:deviceId/opt-out', (req, res) => {
+    home.writes.push(`opt-out ${req.params.deviceId}`);
+    const device = home.location.devices.find(d => d.deviceId === req.params.deviceId);
+    if (refused(res, 'home:opt-out')) return;
+    if (!device) { res.status(404).json({ error: 'device_not_found', message: 'No such device of yours.' }); return; }
+    device.reportingEnabled = false;
+    const cleared = home.location.current && home.location.current.deviceId === device.deviceId ? 1 : 0; if (cleared) home.location.current = null;
+    res.json({ device, currentCleared: cleared });
+  });
+  homeGroupRoutes(router, state, home, refused);
+  homeLearnerRoutes(router, state, home, refused);
+  homeRoutineRoutes(router, home, refused);
+  router.get('/api/search', (req, res) => { if (!refused(res, 'home:search', { error: 'search failed' })) res.json({ query: String(req.query.q || ''), limit: 10, hits: home.hits.filter(h => h.title.toLowerCase().includes(String(req.query.q || '').toLowerCase())), sourceCounts: {}, unknownSources: [], durationMs: 1 }); });
+  app.use(router);
+}
+type HomeRefusal = (res: express.Response, key: string, body?: Record<string, unknown>) => boolean;
+/** @description The caller's groups: list with kind and role, members for members only, and household creation that makes the caller admin. */
+function homeGroupRoutes(router: express.Router, state: ExperienceState, home: HomeBuildState, refused: HomeRefusal) {
+  router.get('/api/tenants', (_req, res) => { if (!refused(res, 'home:tenants', { error: 'list tenants failed' })) res.json({ tenants: home.tenants }); });
+  router.get('/api/tenants/:id/members', (req, res) => {
+    if (refused(res, 'home:members', { error: 'not a member' })) return;
+    if (!home.tenants.some(t => t.tenant_id === req.params.id)) { res.status(403).json({ error: 'not a member' }); return; }
+    res.json({ members: home.members[req.params.id] || [] });
+  });
+  router.post('/api/tenants', express.json(), (req, res) => {
+    const name = String(req.body?.name || '').trim(); home.writes.push(`create-tenant ${name}`);
+    if (refused(res, 'home:create-tenant', { error: 'create tenant failed' })) return;
+    if (!name) { res.status(400).json({ error: 'name is required' }); return; }
+    const tenant = { tenant_id: `t-${home.tenants.length + 1}`, kind: String(req.body?.kind || 'space'), name, role: 'admin' };
+    home.tenants.push(tenant); home.members[tenant.tenant_id] = [{ user_sub: state.user.sub, role: 'admin' }];
+    res.json({ tenant });
+  });
+}
+/** @description A learner's own Little Monsters dashboard (403 for another learner) and their notices with mark-read. */
+function homeLearnerRoutes(router: express.Router, state: ExperienceState, home: HomeBuildState, refused: HomeRefusal) {
+  router.get('/api/education/student/:studentId/dashboard', (req, res) => {
+    if (refused(res, 'home:dashboard', { error: 'You cannot view this student' })) return;
+    const me = state.education.me;
+    if (req.params.studentId !== me.studentId) { res.status(403).json({ error: 'You cannot view this student' }); return; }
+    const d = home.dashboard;
+    res.json({ student: { student_id: me.studentId, name: me.name, email: me.email, xp: d.xp, level: d.level, streak_days: d.streak_days, last_active_date: null }, classes: [], upcoming: [], stats: { quizAverage: d.quizAverage, quizCount: d.quizCount, flashcardsReviewed: d.flashcardsReviewed } });
+  });
+  router.get('/api/education/notifications', (req, res) => {
+    if (refused(res, 'home:notices', { error: 'Failed to list notifications' })) return;
+    const rows = home.notices.filter(n => req.query.all === 'true' || !n.read);
+    res.json({ notifications: rows, unreadCount: rows.filter(n => !n.read).length });
+  });
+  router.patch('/api/education/notifications/:id/read', (req, res) => {
+    home.writes.push(`notice-read ${req.params.id}`);
+    if (refused(res, 'home:notice-read', { error: 'Failed to mark notification read' })) return;
+    const row = home.notices.find(n => n.notification_id === req.params.id);
+    if (!row) { res.status(404).json({ error: 'Notification not found' }); return; }
+    row.read = true; res.json({ success: true });
+  });
+}
+/** @description Jarvis briefing sources (PUT refused without the route's own header) and the caller's schedules with pause and resume. */
+function homeRoutineRoutes(router: express.Router, home: HomeBuildState, refused: HomeRefusal) {
+  router.get('/api/jarvis/briefings', (_req, res) => { if (!refused(res, 'home:briefings', { error: 'briefings_unavailable' })) res.json({ sources: home.briefings.map(b => ({ ...b, channels: ['voice', 'bubble', 'screen'], delivery: 'Jarvis must be open. Voice also requires browser audio permission.' })) }); });
+  router.put('/api/jarvis/briefings/:sourceId', express.json(), (req, res) => {
+    home.writes.push(`briefing ${req.params.sourceId} ${JSON.stringify(req.body)}`);
+    if (req.get('x-oshal-briefing-request') !== '1') { res.status(403).json({ error: 'same_origin_required' }); return; }
+    if (refused(res, 'home:briefing-put', { error: 'briefing_access_denied' })) return;
+    const source = home.briefings.find(b => b.id === req.params.sourceId), body = req.body || {};
+    if (!source) { res.status(403).json({ error: 'briefing_access_denied' }); return; }
+    if (typeof body.enabled !== 'boolean' || !['as-available', 'hourly', 'daily', 'weekly'].includes(body.frequency) || !['voice', 'bubble', 'screen'].includes(body.channel) || Object.keys(body).length !== 3) { res.status(400).json({ error: 'invalid_briefing_request' }); return; }
+    source.preference = { enabled: body.enabled, frequency: body.frequency, channel: body.channel };
+    res.json(source.preference);
+  });
+  router.get('/api/v1/agent/schedules', (_req, res) => { if (!refused(res, 'home:schedules', { success: false, error: 'Synthetic schedules unavailable' })) res.json({ success: true, schedules: home.schedules }); });
+  router.post('/api/v1/agent/schedules/:id/:verb', (req, res, next) => {
+    if (!['pause', 'resume'].includes(req.params.verb)) { next(); return; }
+    home.writes.push(`schedule ${req.params.verb} ${req.params.id}`);
+    if (refused(res, 'home:schedule-toggle', { success: false, error: 'Synthetic schedule refusal' })) return;
+    const row = home.schedules.find(s => s.id === req.params.id);
+    if (!row) { res.status(404).json({ success: false, error: 'Schedule not found' }); return; }
+    row.status = req.params.verb === 'pause' ? 'paused' : 'active';
+    res.json({ success: true, schedule: row });
+  });
+}
+
+/** @description The home-build synthetic state of a running fixture (created by homebaseBuildRoutes). */
+export function homeBuildState(state: ExperienceState): HomeBuildState { return (state as ExperienceState & { homeBuild: HomeBuildState }).homeBuild; }

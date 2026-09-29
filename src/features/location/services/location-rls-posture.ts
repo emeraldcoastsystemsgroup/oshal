@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L2: read the location store's row-level-security posture from a live database's catalog, so the running build can be checked where it takes effect (the Test Lab card) with the same rule the static guard applies to the migrations: every location table present, ENABLE and FORCE on, at least one policy, no policy and no function a policy reaches mentioning oshal.is_operator (operator decision Q2), the membership fence, the creator fence and the tenant-admin helper installed, and whether the connecting role is one row-level security applies to at all. Catalog reads only; nothing is written.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L4: the device identity fence (migration 176, location_device_identity_fence) joins the functions always checked for the operator bypass token, so both the static guard and this catalog read cover it though no policy calls it.
  *
  * @module location/services/location-rls-posture
  */
@@ -21,7 +22,7 @@ export const LOCATION_OPERATOR_BYPASS_TOKEN = 'is_operator';
  * creator fences and the tenant-admin helper, which ADR-169 D3 says decide regardless of is_operator.
  */
 export const LOCATION_FENCE_FUNCTIONS: readonly string[] = [
-  'oshal_is_tenant_admin', 'oshal_tenant_membership_fence', 'oshal_tenant_creator_fence',
+  'oshal_is_tenant_admin', 'oshal_tenant_membership_fence', 'oshal_tenant_creator_fence', 'location_device_identity_fence',
 ];
 
 const CALLED_NAME = /\b([a-z_][a-z0-9_]*)\s*\(/gi;

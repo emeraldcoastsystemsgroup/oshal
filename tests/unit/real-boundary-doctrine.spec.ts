@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | The program is run out of process with a recording npx (a copy of the runner, its parser and the list in a scratch tree shaped like the repo), and the argv it hands playwright is pinned to the parsed list with no flags - the only drive that reaches the module default list path and the entry line (fifth review: X10, X6', X8 passed the in-process drive). The in-process drive stays as the fast path and no longer supplies listPath, so main's own default is exercised. The "only the exit is undriven" wording is withdrawn.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Pin the planted-fixture secret-scan proof as the scanner boundary run that actually happened. Entry 2 pinned the DOUBLE and the audit row that says a real run is still owed; the detection half of that debt is now paid by a guard that runs the real gitleaks image, so this case keeps it real - no stand-in on PATH, the production gate text rather than a paraphrase, a planted token that is never contiguous in the source (which is why it needs no .gitleaks.toml allowlist entry), and an audit row linked to evidence carrying the red verdict verbatim.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Pin the PARTIAL-SCAN proof and retire the last locally reachable `Owed` in the audit. Entry 9 paid the detection half of the scanner debt; the half the gate was actually written for - gitleaks exiting 0 on a tree it could not fully read - was still only a recording. This case keeps the new companion real (no stand-in on PATH, the production scanner function and both gate_secrets lines rather than a paraphrase, both verdict strings, and the floating-tag wording read out of the shipped helper instead of copied into the guard), and the scanner-double case above now requires its row to name that companion rather than to read as owed.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | Two more checks on the list the gate runs. Every listed path must exist: tests/cockpit-current-state-probe.spec.ts sat in the list with no such file, and Playwright ignores a filter that matches nothing, so the line ran nothing and failed nothing. And no listed spec may pass by skipping under the CI e2e env: every test.skip/test.fixme/describe.skip in a green spec is found with the TypeScript parser and, when env-driven, evaluated under the env ci.yml and ci-local.sh actually set (read from those files, not copied). A describe- or file-level skip that fires is refused (tests/dynamic-agent-live-e2e.spec.ts skipped everything unless RUN_DYNAMIC_AGENT_E2E=true and has left the list for an unsupported-in-ci disposition); a single test that skips by design must be recorded in tests/e2e-dispositions.json skippedTests. Planted sources prove each rule goes red.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -22,6 +23,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseGreenSuite, readGreenSuite } from '../../scripts/e2e-green-list.mjs';
 import { main as runGreenGate } from '../../scripts/e2e-green.mjs';
+import { readE2eDispositions } from '../helpers/e2e-dispositions';
+import { greenSkipViolations, hostedCiE2eEnv, localCiE2eEnv } from '../helpers/e2e-skip-audit';
 
 const read = (file: string): string => readFileSync(file, 'utf8');
 
@@ -120,6 +123,30 @@ describe('real-boundary regression doctrine', () => {
     expect(parseGreenSuite(text)).toEqual(['tests/a.spec.ts', 'tests/b.spec.ts', 'tests/c.spec.ts']);
     expect(parseGreenSuite('')).toEqual([]);
     expect(parseGreenSuite('# only a comment\n\n')).toEqual([]);
+  });
+
+  it('names only spec files that exist, so no listed line runs nothing', () => {
+    // Playwright treats each path as a filter and silently ignores one that matches no file.
+    const missing = greenSuiteFiles().filter((file) => !existsSync(path.resolve(file)));
+    expect(missing, 'green-list paths with no file behind them').toEqual([]);
+    expect(parseGreenSuite('tests/agent-profile-bulk-config.spec.ts\ntests/no-such-spec.spec.ts').filter((file: string) => !existsSync(path.resolve(file))))
+      .toEqual(['tests/no-such-spec.spec.ts']);
+  });
+
+  it('lets no listed spec pass by skipping under the CI e2e env', () => {
+    const envs = { 'ci.yml': hostedCiE2eEnv('.github/workflows/ci.yml'), 'ci-local.sh': localCiE2eEnv('scripts/ci-local.sh') };
+    // A parser that read nothing would make every skip look inert; pin what both gates set.
+    for (const env of Object.values(envs)) {
+      expect(env).toMatchObject({ MOCK_OIDC: 'true', MOCK_OIDC_ALLOW_HEADER: 'true', FORCE_LLM_PROVIDER: 'noop', PLAYWRIGHT_PORT: '3456' });
+    }
+    const specs = greenSuiteFiles().map((file) => ({ file, source: read(file) }));
+    const registered = readE2eDispositions().skippedTests;
+    expect(greenSkipViolations(specs, envs, registered)).toEqual([]);
+    // Not vacuous: withhold the records and the audit must name exactly the recorded tests.
+    const unrecorded = greenSkipViolations(specs, envs, []);
+    expect(registered.length, 'at least one by-design skip is recorded').toBeGreaterThan(0);
+    expect(unrecorded).toHaveLength(registered.length);
+    for (const row of registered) expect(unrecorded.some((line) => line.startsWith(`${row.file}:`) && line.endsWith('is not recorded in skippedTests'))).toBe(true);
   });
 
   it('keeps the coding rule and the explicit audit linked', () => {
@@ -308,5 +335,42 @@ describe('real-boundary regression doctrine', () => {
     expect(guard).toContain('dist/app/routes/cli-token-routes.js');
     expect(regression).toContain('rmSync(join(build, PACKAGE_PIN_ARTIFACTS[0]))');
     expect(regression).toContain('rmSync(join(build, PACKAGE_PIN_ARTIFACTS[1]))');
+  });
+});
+
+describe('real-boundary regression doctrine - the no-pass-by-skip rule goes red', () => {
+  const CI = { ci: { MOCK_OIDC_ALLOW_HEADER: 'true', FORCE_LLM_PROVIDER: 'noop' } };
+  const spec = (source: string) => [{ file: 'tests/planted.spec.ts', source }];
+
+  it('refuses a describe-level env skip that fires under CI (the dynamic-agent shape)', () => {
+    const source = [
+      "const RUN_LIVE_E2E = process.env.RUN_DYNAMIC_AGENT_E2E === 'true';",
+      "test.describe('live', () => {",
+      "  test.skip(!RUN_LIVE_E2E, 'needs a stack');",
+      "  test('does things', async () => {});",
+      '});',
+    ].join('\n');
+    expect(greenSkipViolations(spec(source), CI, [])).toEqual(['tests/planted.spec.ts:3 skips more than one test under the ci CI env (reads RUN_DYNAMIC_AGENT_E2E)']);
+  });
+
+  it('refuses a test-level skip that fires unless it is recorded, and refuses a stale record', () => {
+    const source = "test('plan provider', async () => {\n  test.skip(process.env.FORCE_LLM_PROVIDER === 'noop', 'noop overrides');\n});";
+    expect(greenSkipViolations(spec(source), CI, [])).toEqual(['tests/planted.spec.ts:2 skips a test under the ci CI env (reads FORCE_LLM_PROVIDER) and is not recorded in skippedTests']);
+    expect(greenSkipViolations(spec(source), CI, [{ file: 'tests/planted.spec.ts', skipMessage: 'noop overrides' }])).toEqual([]);
+    expect(greenSkipViolations(spec("test('x', async () => {});"), CI, [{ file: 'tests/planted.spec.ts', skipMessage: 'noop overrides' }]))
+      .toEqual(['tests/planted.spec.ts: skippedTests row "noop overrides" matches no test-scoped skip that fires under CI']);
+  });
+
+  it('refuses unconditional skips and accepts skips that do not fire under CI or depend on a runtime probe', () => {
+    expect(greenSkipViolations(spec("test.describe.skip('off', () => {});"), CI, [])).toEqual(['tests/planted.spec.ts:1 skips unconditionally']);
+    expect(greenSkipViolations(spec("test.fixme('later', async () => {});"), CI, [])).toEqual(['tests/planted.spec.ts:1 skips unconditionally']);
+    const inert = [
+      "const HEADER = ['true', '1', 'yes'].includes((process.env.MOCK_OIDC_ALLOW_HEADER ?? '').toLowerCase().trim());",
+      "test('two users', async () => { test.skip(!HEADER, 'set the header gate'); });",
+      "test.describe('git', () => { test.skip(!hasGit(), 'git is required'); });",
+      "let ready = false;",
+      "test.beforeEach(() => { test.skip(!ready, 'no stack'); });",
+    ].join('\n');
+    expect(greenSkipViolations(spec(inert), CI, [])).toEqual([]);
   });
 });

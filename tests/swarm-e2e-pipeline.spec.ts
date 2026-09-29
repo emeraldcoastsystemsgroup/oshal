@@ -4,11 +4,13 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | EG-4: Automated swarm E2E Playwright tests — validates ticket creation, approval, routing, execution, and dashboard accuracy
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The webServer origin comes from the shared baseOrigin() helper (tests/helpers/test-origins.ts), which resolves PLAYWRIGHT_PORT and the MOCK_OIDC default exactly as playwright.config.ts does, instead of a spec-built origin whose fallback diverged from the config (localhost, fallback 3456); PLAYWRIGHT_BASE_URL still wins when set.
  */
 
 import { test, expect } from '@playwright/test';
+import { baseOrigin } from './helpers';
 
-const BASE = process.env.PLAYWRIGHT_BASE_URL || `http://localhost:${process.env.PLAYWRIGHT_PORT || '3456'}`;
+const BASE = process.env.PLAYWRIGHT_BASE_URL || baseOrigin();
 
 test.describe('Swarm E2E Pipeline', () => {
   test('ticket creation returns a valid ticket with backlog status', async ({ request }) => {

@@ -5,6 +5,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the shared host runner for the automated live-acceptance sweep: `node scripts/operations/live-acceptance.js <case|all|list> [--record-doc]`. As the operator automation identity (OSHAL_VERIFY_OPERATOR_PAT, read by name from the environment or the box's .env, never printed or put on a command line) it binds each case in scripts/lib/live-acceptance-cases.js to the running box: bearer HTTP against OSHAL_VERIFY_BASE_URL, a named-statement/ticket/workspace helper staged once into the api container and called with its request forwarded by name, the Jarvis bot's call log through `docker logs`, and a 390 x 844 headless Chromium whose same-origin requests carry the token and whose every other request is aborted. It prints PASS/FAIL/DEGRADED/UNAVAILABLE per case with the cleanup receipt, then one summary line, and exits 0 only when every selected case passed. `--record-doc` writes the Jarvis cache measurement into docs/architecture/jarvis-own-task-recall.md of this checkout.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | An `anonymous` port beside `api`: the same JSON request with NO credential (no Authorization header), so a case can prove a route refuses an unauthenticated caller (the dev-workspace query route must answer 401/403). The token never reaches that request.
  */
 
 'use strict';
@@ -45,26 +46,30 @@ function parseArgs(argv) {
 }
 
 /**
- * @description Bearer JSON and multipart HTTP ports against the box, as the token's owner.
+ * @description Bearer JSON and multipart HTTP ports against the box, as the token's owner, plus an
+ * `anonymous` JSON port that sends no credential at all.
  * @param {string} base - The box's base URL.
  * @param {string} token - The operator PAT (kept in this closure; never printed).
  * @param {typeof fetch} [fetchImpl] - Fetch (a seam for the header-handling tests).
- * @returns {{api: Function, upload: Function}} The ports.
+ * @returns {{api: Function, anonymous: Function, upload: Function}} The ports.
  */
 function httpPorts(base, token, fetchImpl = fetch) {
-  const send = async (method, route, init) => {
+  const send = async (method, route, init, withToken = true) => {
+    const headers = { ...(init.headers || {}), ...(withToken ? { authorization: `Bearer ${token}` } : {}) };
     const response = await fetchImpl(`${base}${route}`, { method, redirect: 'manual', signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
-      ...init, headers: { ...(init.headers || {}), authorization: `Bearer ${token}` } });
+      ...init, headers });
     const text = await response.text().catch(() => '');
     let json = {};
     try { json = text ? JSON.parse(text) : {}; } catch { json = {}; }
     return { status: response.status, json: json && typeof json === 'object' ? json : {}, text: text.slice(0, 65_536),
       contentType: String(response.headers.get('content-type') || ''), location: response.headers.get('location') || null };
   };
+  const jsonInit = (body, options = {}) => ({
+    headers: { ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...(options.headers || {}) },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   return {
-    api: (method, route, body, options = {}) => send(method, route, {
-      headers: { ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...(options.headers || {}) },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }) }),
+    api: (method, route, body, options) => send(method, route, jsonInit(body, options)),
+    anonymous: (method, route, body, options) => send(method, route, jsonInit(body, options), false),
     upload: (route, fields, file) => {
       const form = new FormData();
       for (const [name, value] of Object.entries(fields || {})) form.append(name, String(value));

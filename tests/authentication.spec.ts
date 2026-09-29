@@ -5,59 +5,13 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation of authentication tests
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | BASE_URL follows PLAYWRIGHT_PORT via the shared baseOrigin() helper instead of a hardcoded localhost:3456 (byte-identical under the default env)
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Retired the 'Auth-Enabled Server — Protected Routes' block. It spawned `node src/api/server.js` on a fixed localhost:3457, but that server no longer exists and ADR-003's API-key mechanism is superseded (ADR-003 status, corrected 2026-09-14): no product code imports src/api/auth-middleware.js and the real server authenticates through OIDC requiresAuth. The block could only fail on a spawn of a missing file; the disposition is recorded in tests/e2e-dispositions.json. The block's spawn/wait helpers and its self-built origin went with it.
  */
 
 import { test, expect } from '@playwright/test';
-import { execSync } from 'child_process';
-import * as path from 'path';
 import { baseOrigin } from './helpers';
 
 const BASE_URL = baseOrigin();
-const TEST_API_KEY = 'test-api-key-12345';
-
-// ============================================================
-// Helpers
-// ============================================================
-
-/**
- * Start a test server with AUTH_API_KEY set, returns the child process.
- * We use a separate port to avoid conflicts with the default server.
- */
-const AUTH_PORT = 3457;
-const AUTH_BASE_URL = `http://localhost:${AUTH_PORT}`;
-
-function startAuthServer(): ReturnType<typeof import('child_process').spawn> {
-  const { spawn } = require('child_process');
-  const serverPath = path.resolve(__dirname, '../src/api/server.js');
-  const outputDir = path.resolve(__dirname, '../output/auth-test');
-  
-  const child = spawn('node', [serverPath], {
-    env: {
-      ...process.env,
-      AUTH_API_KEY: TEST_API_KEY,
-      PORT: String(AUTH_PORT),
-      CONFIG_OUTPUT_DIR: outputDir,
-      CONFIG_WRITE_MODE: 'split',
-    },
-    stdio: 'pipe',
-  });
-
-  return child;
-}
-
-async function waitForServer(url: string, timeoutMs = 5000): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    try {
-      const resp = await fetch(`${url}/api/status`);
-      if (resp.ok || resp.status === 401) return;
-    } catch {
-      // Server not ready yet
-    }
-    await new Promise(r => setTimeout(r, 100));
-  }
-  throw new Error(`Server at ${url} did not start within ${timeoutMs}ms`);
-}
 
 // ============================================================
 // 1. Unit Tests: Auth Middleware (no server needed)
@@ -182,121 +136,14 @@ test.describe('Default Server — Auth Disabled', () => {
 });
 
 // ============================================================
-// 3. Auth-Enabled Server: Rejection & Acceptance
+// 3. Auth-Enabled Server — RETIRED
 // ============================================================
-
-test.describe('Auth-Enabled Server — Protected Routes', () => {
-  let serverProcess: ReturnType<typeof import('child_process').spawn>;
-
-  test.beforeAll(async () => {
-    // Clean up output dir
-    const fs = require('fs');
-    const outputDir = path.resolve(__dirname, '../output/auth-test');
-    if (fs.existsSync(outputDir)) {
-      fs.rmSync(outputDir, { recursive: true });
-    }
-    fs.mkdirSync(outputDir, { recursive: true });
-
-    serverProcess = startAuthServer();
-    await waitForServer(AUTH_BASE_URL);
-  });
-
-  test.afterAll(async () => {
-    if (serverProcess) {
-      serverProcess.kill('SIGTERM');
-      // Wait for process to exit
-      await new Promise<void>(resolve => {
-        serverProcess.on('exit', () => resolve());
-        setTimeout(() => resolve(), 2000);
-      });
-    }
-  });
-
-  // --- Rejection tests ---
-
-  test('GET /api/status returns 401 without auth header', async ({ request }) => {
-    const response = await request.get(`${AUTH_BASE_URL}/api/status`);
-    expect(response.status()).toBe(401);
-    const body = await response.json();
-    expect(body.success).toBe(false);
-    expect(body.error).toContain('Missing or invalid');
-  });
-
-  test('POST /api/config returns 401 without auth header', async ({ request }) => {
-    const response = await request.post(`${AUTH_BASE_URL}/api/config`, {
-      data: { test: 'value' },
-    });
-    expect(response.status()).toBe(401);
-  });
-
-  test('GET /api/config returns 401 with wrong key', async ({ request }) => {
-    const response = await request.get(`${AUTH_BASE_URL}/api/config`, {
-      headers: { Authorization: 'Bearer wrong-key' },
-    });
-    expect(response.status()).toBe(401);
-    const body = await response.json();
-    expect(body.error).toContain('Invalid API key');
-  });
-
-  test('DELETE /api/config returns 401 without auth', async ({ request }) => {
-    const response = await request.delete(`${AUTH_BASE_URL}/api/config`);
-    expect(response.status()).toBe(401);
-  });
-
-  // --- Acceptance tests ---
-
-  test('GET /api/status succeeds with correct auth header', async ({ request }) => {
-    const response = await request.get(`${AUTH_BASE_URL}/api/status`, {
-      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
-    });
-    expect(response.status()).toBe(200);
-    const body = await response.json();
-    expect(body.success).toBe(true);
-  });
-
-  test('POST /api/config succeeds with correct auth header', async ({ request }) => {
-    const response = await request.post(`${AUTH_BASE_URL}/api/config`, {
-      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
-      data: { provider: 'anthropic', model: 'claude-sonnet-4-6' },
-    });
-    expect(response.status()).toBe(200);
-    const body = await response.json();
-    expect(body.success).toBe(true);
-  });
-
-  test('GET /api/config succeeds with correct auth header', async ({ request }) => {
-    const response = await request.get(`${AUTH_BASE_URL}/api/config`, {
-      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
-    });
-    expect(response.status()).toBe(200);
-    const body = await response.json();
-    expect(body.success).toBe(true);
-    expect(body.config).toBeDefined();
-  });
-
-  test('DELETE /api/config succeeds with correct auth header', async ({ request }) => {
-    const response = await request.delete(`${AUTH_BASE_URL}/api/config`, {
-      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
-    });
-    expect(response.status()).toBe(200);
-    const body = await response.json();
-    expect(body.success).toBe(true);
-  });
-
-  test('static files served without auth even when auth enabled', async ({ request }) => {
-    const response = await request.get(`${AUTH_BASE_URL}/ui.html`);
-    expect(response.status()).toBe(200);
-    const text = await response.text();
-    expect(text).toContain('Cline API Configuration');
-  });
-
-  test('OPTIONS requests pass without auth (CORS preflight)', async ({ request }) => {
-    const response = await request.fetch(`${AUTH_BASE_URL}/api/config`, {
-      method: 'OPTIONS',
-    });
-    expect(response.status()).toBe(200);
-  });
-});
+// This block spawned `node src/api/server.js` with AUTH_API_KEY on localhost:3457 and asserted
+// the ADR-003 bearer-key contract. That server no longer exists and ADR-003 is superseded: the real
+// server (src/app/server.ts) authenticates through OIDC requiresAuth, and no product code
+// imports src/api/auth-middleware.js. Route authentication is guarded where it now lives
+// (tests/security-review-fixes.spec.ts, tests/unit/server-route-auth-inventory.spec.ts). The
+// disposition is recorded in tests/e2e-dispositions.json.
 
 // ============================================================
 // 4. UI — Auth Key Input
