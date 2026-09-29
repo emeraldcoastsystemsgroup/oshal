@@ -364,8 +364,9 @@
       if (t.availKey) out.push(!a ? row('Calendar', `Reading ${month} from your primary Google calendar.`, 'now')
         : a.state === 'ready' ? row('Calendar', `${month} read at ${LIVE.clockTime(LIVE.parseDate(a.checkedAt))}: ${plural(D.freeWeekends(t.year, t.month, a, new Date()).length, 'free weekend')}.`, 'done')
         : row('Calendar', `Not read (${a.state}); its days stay unknown, not free.`, 'failed'));
+      // The latest observation wins: a refused search is reported even while the earlier offers stay on screen.
       if (travelAdmitted() && (t.searching || t.result || t.searchError)) out.push(t.searching ? row('Travel', 'Asking Travel for offers.', 'now')
-        : t.result ? row('Travel', `${plural(t.views.length, 'offer')} from ${plural(t.searches, 'search')} · ${sourceLabel()}.`, 'done') : row('Travel', t.searchError, 'failed'));
+        : t.searchError ? row('Travel', t.searchError, 'failed') : row('Travel', `${plural(t.views.length, 'offer')} from ${plural(t.searches, 'search')} · ${sourceLabel()}.`, 'done'));
       if (out.length) out.push(row('Your preferences', preferencesLine(), 'done'));
       return out;
     }
