@@ -4,6 +4,7 @@
  * SEQ | AUTHOR                                    | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Add an inactive exact-personal-row broker using request identity, qualified crypto, refresh CAS and post-await revalidation. No legacy/provider implementation or readiness activation.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Declare the terminating refusal function explicitly so TypeScript narrows validated row fields and optional refresh inputs without casts or weaker guards.
  */
 import { createChildLogger } from '@/shared/logger';
 import { getRequestIdentity, isSystemIdentity } from '@/shared/services/database/request-identity';
@@ -84,7 +85,7 @@ interface Snapshot {
   readonly createdAt: string;
 }
 
-const refuse = (code: QualifiedCredentialRefusal): never => { throw new QualifiedCredentialUnavailableError(code); };
+function refuse(code: QualifiedCredentialRefusal): never { throw new QualifiedCredentialUnavailableError(code); }
 
 /** Reject ambiguity; do not turn a padded/canonicalized identity into a different principal. */
 function exactText(value: unknown, max: number): value is string {
