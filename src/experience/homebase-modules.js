@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Homebase modules built from the design study over live data, rendered in the homebase's own classes: the opt-in check-in panel (the caller's own place from ADR-169 location state, household members with no check-in shown because no group presence read exists, the "share from this browser" switch and who can see the caller), the room strip (the home assistant and the household), the Family admin card with its People & roles and Devices dialogs (household members and roles from the caller's group, location devices with stop reporting), a learner's level progress and Little Monsters notices.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Routines (Jarvis briefing sources and the caller's schedules, added by asking Jarvis), search in this home (what the page read plus the caller-scoped global search), files (Jarvis task files and saved drafts), tasks (open work and open classwork), the day-grouped agenda with a read-only event dialog, the assistant bubble and inline composer, the room tabs and the "Make it yours" choices (how the assistant offers help, what greets you, what stays close at hand).
  */
 (function (root, factory) {
   var api = factory();
@@ -27,6 +28,7 @@
     const { esc, btn, link, pill, head, avatar, LIVE } = ctx;
     const ago = d => LIVE.relativeTime(d);
     const plural = (n, one, many) => `${n} ${n === 1 ? one : (many || `${one}s`)}`;
+    const dayLabel = d => { const t = new Date(); t.setHours(0, 0, 0, 0); const diff = Math.round((d - t) / 86400000); return diff === 0 ? 'Today' : diff === 1 ? 'Tomorrow' : d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' }); };
     const members = () => (ctx.data.group && ctx.data.group.ok && ctx.data.group.members) || [];
     const memberName = m => m.self ? ctx.displayName() : (m.name || 'Household member');
 
@@ -100,6 +102,75 @@
       return [`People & roles · ${g.group.name}`, `<div class="side-section">${rows || '<p class="subtle">No members could be listed.</p>'}</div><p>Names appear where this swarm’s directory shares them with you. Admins add and remove members. Managing members does not open anyone’s private calendar, files or conversations.</p>`];
     }
 
+    /* ── routines ────────────────────────────────────────────────── */
+    function briefingRow(s) {
+      return `<label class="list-item routine-row"><input type="checkbox" data-briefing="${esc(s.id)}" ${s.enabled ? 'checked' : ''}><span><span class="item-title">${esc(s.title)}</span><small>${esc([s.description, s.frequency.replace(/-/g, ' '), `by ${s.channel}`].filter(Boolean).join(' · '))}</small></span></label>`;
+    }
+    function scheduleRow(s) {
+      const at = s.nextRunAt ? new Date(s.nextRunAt) : null;
+      // relativeTime reads the past only; a next run is a future moment, so it is named by its day and time.
+      const next = !s.paused && at && !isNaN(at) ? ` · next ${esc(at.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}` : '';
+      return `<div class="list-item routine-row" data-schedule="${esc(s.id)}"><span><span class="item-title">${esc(s.title)}</span><small>${esc(s.when)}${s.paused ? ' · paused' : next}${s.once ? ' · once' : ''}</small></span>${btn(s.paused ? 'Resume' : 'Pause', 'schedule-toggle', 'button', `data-schedule="${esc(s.id)}" data-paused="${s.paused}"`)}</div>`;
+    }
+    const refusedLine = (r, what) => `<p class="subtle">${esc(what)} could not be read (HTTP ${r.status || 'network'}${r.code ? `: ${esc(r.code)}` : ''}).</p>`;
+    /** @description Routines: the briefing sources the caller may hear (on or off) and their own schedules (pause, resume), with a sentence to Jarvis to add one. */
+    function routinesPage() {
+      const r = ctx.data.routines;
+      if (!r) return '<section class="panel" data-module="routines"><h2>Routines</h2><p class="subtle">Reading your routines…</p></section>';
+      const b = r.briefings, s = r.schedules;
+      const briefings = !b.ok ? refusedLine(b, 'Your briefings') : b.sources.length ? `<div class="list-items">${b.sources.map(briefingRow).join('')}</div>` : '<p class="subtle">No briefing source is available to you.</p>';
+      const schedules = !s.ok ? refusedLine(s, 'Your schedules') : s.rows.length ? `<div class="list-items">${s.rows.map(scheduleRow).join('')}</div>` : '<p class="subtle">You have no schedules yet.</p>';
+      return `<section class="panel" data-module="routines"><div class="panel-kicker">FOR THIS HOME</div>${head('A calmer start, on a schedule.')}<h3>Briefings</h3>${briefings}<h3>Scheduled</h3>${schedules}<form id="routine-form" class="add-form"><label class="screenreader" for="routine-input">Ask Jarvis for a routine</label><input id="routine-input" maxlength="300" required placeholder="Every Saturday at 8:30, prepare a weekend brief"${ctx.thread().busy ? ' disabled' : ''}><button class="button" type="submit" aria-label="Ask Jarvis">→</button></form><p class="subtle" id="routine-feedback" role="status">Jarvis turns a sentence with a time into one of your schedules.</p></section>`;
+    }
+
+    /* ── search, files, tasks ────────────────────────────────────── */
+    const KIND_LABEL = { events: 'Calendar', items: 'Shopping list', classwork: 'Classwork', tools: 'Opens here', apps: 'Application', work: 'Work' };
+    function localRow(m) {
+      const attrs = m.kind === 'events' ? `data-action="event-detail" data-event="${esc(m.id)}"` : m.kind === 'items' ? 'data-action="page" data-page="shopping"' : m.kind === 'classwork' ? 'data-action="learning"'
+        : m.kind === 'tools' ? `data-action="tool" data-tool="${esc(m.id)}"` : m.kind === 'apps' ? `data-action="app" data-app="${esc(m.id)}"` : `data-action="project" data-work="${esc(m.id)}"`;
+      return `<button type="button" class="search-row" ${attrs}><span class="item-title">${esc(m.title)}</span><small>${esc(KIND_LABEL[m.kind] || m.kind)}${m.detail ? ` · ${esc(m.detail.slice(0, 90))}` : ''}</small></button>`;
+    }
+    function globalRow(h) {
+      const href = h.url ? LIVE.localHref(h.url) : '';
+      const inner = `<span class="item-title">${esc(h.title)}</span><small>${esc(h.kind || h.source)}${h.snippet ? ` · ${esc(h.snippet.slice(0, 120))}` : ''}${href ? '' : ' · no page to open'}</small>`;
+      return href ? `<a class="search-row" href="${esc(href)}">${inner}</a>` : `<div class="search-row">${inner}</div>`;
+    }
+    /** @description Search results: matches in what this home read, then the caller-scoped swarm search (its refusal named). */
+    function searchPage() {
+      const s = ctx.state.search || { query: '', local: [], global: null };
+      const g = s.global, count = s.local.length + (g && g.ok ? g.hits.length : 0);
+      const swarm = !g ? '<p class="subtle">Searching the rest of your swarm…</p>' : !g.ok ? refusedLine(g, 'The swarm search') : g.hits.length ? g.hits.map(globalRow).join('') : '<p class="subtle">Nothing else in your swarm matches.</p>';
+      return `<section class="panel" data-module="search"><div class="panel-kicker">SEARCH IN ${esc(ctx.preset.name.toUpperCase())}</div>${head(esc(plural(count, 'match', 'matches')))}<p class="subtle">For “${esc(s.query)}” · only your own data</p><h3>In this home</h3>${s.local.length ? s.local.map(localRow).join('') : '<div class="empty">No matches in this home.</div>'}<h3>Across your swarm</h3>${swarm}</section>`;
+    }
+    /** @description Files: every file your finished Jarvis tasks produced, newest first, and your saved drafts (filled by the drafts read). */
+    function filesPage() {
+      const rows = ctx.snapshot().work.filter(w => w.kind === 'task' && w.files && w.files.length).flatMap(w => w.files.map(f => ({ f, w })));
+      const list = rows.map(({ f, w }) => `<div class="list-item"><span><span class="item-title">${ctx.S.fileLink(f) || esc(f.name || 'file')}</span><small>${esc(w.title)} · ${esc(w.at ? ago(w.at) : 'unknown time')}</small></span></div>`).join('');
+      return `<section class="panel" data-module="files"><div class="panel-kicker">JUST FOR YOU</div>${head('Everything for the plan.')}<h3>Files from your assistant</h3><div class="list-items">${list || '<p class="subtle">No finished Jarvis task has produced a file yet.</p>'}</div><div id="drafts-slot">${ctx.data.draftsHtml || '<p class="subtle">Reading your drafts…</p>'}</div></section>`;
+    }
+    /** @description Tasks: your open tickets and assistant tasks, and open classwork when Little Monsters answers for you. */
+    function tasksPage() {
+      const open = ctx.openWork(), classwork = ctx.assignments();
+      const work = open.slice(0, 12).map(w => `<div class="list-item"><span><span class="item-title">${esc(w.title)}</span><small>${esc(w.appName)} · ${esc(w.status.label)} · ${esc(ago(w.at))}</small></span>${btn('Open ↗', 'project', 'button', `data-work="${esc(w.id)}"`)}</div>`).join('');
+      const school = classwork.map(a => `<div class="list-item"><span><span class="item-title">${esc(a.title)}</span><small>${esc(a.class_name || 'Class')}${a.due_date ? ` · due ${esc(ctx.dueOn(a.due_date))}` : ''}</small></span></div>`).join('');
+      return `<section class="panel" data-module="tasks"><div class="panel-kicker">${esc(ctx.preset.name.toUpperCase())}</div>${head('A few things to take care of.', pill(`${open.length + classwork.length} open`))}<h3>Work</h3><div class="list-items">${work || '<p class="subtle">No open tickets or assistant tasks.</p>'}</div>${ctx.data.edu && ctx.data.edu.ok ? `<h3>Classwork</h3><div class="list-items">${school || '<p class="subtle">No open classwork.</p>'}</div>` : ''}</section>`;
+    }
+
+    /* ── calendar ────────────────────────────────────────────────── */
+    /** @description The whole upcoming calendar grouped by day (the Calendar page), each event opening its details. */
+    function dayAgenda() {
+      const groups = window.HOMEBASE_DATA.dayGroups(ctx.events().slice(0, 40));
+      if (!groups.length) return '';
+      return `<section class="panel" data-module="agenda"><div class="panel-kicker">COMING UP</div>${head('Day by day.')}${groups.map(g => `<div class="day-group"><h3>${esc(dayLabel(g.day))}</h3>${g.events.map(e => `<button type="button" class="agenda-row" data-action="event-detail" data-event="${esc(e.event_id)}"><time>${esc(e.event_time ? LIVE.clockTime(e.when) : 'All day')}</time><span>${esc(e.title)}<small>${esc(e.class_name || 'Personal')}</small></span></button>`).join('')}</div>`).join('')}</section>`;
+    }
+    /** @description One event's details as Little Monsters recorded them; it offers no change because the package has no event update route. */
+    function eventDialog(id) {
+      const e = ctx.events().find(x => String(x.event_id) === String(id)); if (!e) return ['', ''];
+      const facts = [['When', `${dayLabel(e.when)}${e.event_time ? ` · ${LIVE.clockTime(e.when)}` : ' · all day'}`], ['Class', e.class_name ? `${e.class_name}${e.subject ? ` · ${e.subject}` : ''}` : 'Personal'], ['Kind', e.event_type && e.event_type !== 'custom' ? e.event_type : 'Event']];
+      const myDay = ctx.toolById('tool-lm-myday'), lm = ctx.app('little-monsters');
+      return [e.title, `<dl class="ticket-facts">${facts.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join('')}</dl><p class="subtle">From Little Monsters. Its calendar offers no way to move an event from here.</p><div class="dialog-actions">${myDay ? btn('Open My Day here', 'tool', 'button primary', 'data-tool="tool-lm-myday"') : ''}${lm ? link('Open Little Monsters ↗', lm.href, myDay ? 'button' : 'button primary') : ''}</div>`];
+    }
+
     /* ── learner progress and notices ────────────────────────────── */
     /** @description A learner's own progress from Little Monsters: level, XP toward the next level, streak, quizzes and flashcards. It is the learner's activity, never classwork completion. */
     function progressBlock() {
@@ -117,7 +188,53 @@
       return n.items.filter(x => !x.read).slice(0, 3).map(x => `<div class="update notice" data-notice="${esc(x.id)}"><strong>${esc(x.title)}</strong><p>${esc(x.body.slice(0, 200))}</p><small>${esc(x.sentAt ? ago(new Date(x.sentAt)) : 'Little Monsters')} · Little Monsters ${btn('Mark read', 'notice-read', 'text-button', `data-notice="${esc(x.id)}"`)}</small></div>`).join('');
     }
 
-    return { locations, locationOnDialog, devicesDialog, room, familyAdmin, peopleRolesDialog, progressBlock, notices };
+    /* ── the assistant, tabs and choices ─────────────────────────── */
+    /** @description The assistant bubble: the newest answer in this home's Jarvis thread, else (unless the device chose "waiting for me to ask") a catch-up of assistant tasks that finished in the last day, dismissed on this device. */
+    function bubble() {
+      const replies = ctx.thread().turns.filter(t => t.role === 'jarvis'), latest = replies.slice(-1)[0], last = replies.filter(t => !t.pending).slice(-1)[0];
+      if (latest && latest.pending) return `<div class="assistant-bubble" data-bubble="pending"><div class="bubble-by"><strong>${esc(ctx.preset.assistantLabel)}</strong><span class="subtle">Working</span></div><p class="subtle">${esc(latest.text)}</p></div>`;
+      if (last) return `<div class="assistant-bubble" data-bubble="reply"><div class="bubble-by"><strong>${esc(ctx.preset.assistantLabel)}</strong><span class="subtle">${last.error ? 'Could not answer' : 'Latest reply'}</span></div>${last.error ? `<p class="subtle">${esc(last.text)}</p>` : ctx.S.answerHtml(String(last.text).slice(0, 600))}<div class="dialog-actions">${btn('Open the conversation', 'ask', 'button')}</div></div>`;
+      const since = Date.now() - 86400000, done = ctx.snapshot().work.filter(w => w.kind === 'task' && !w.status.open && w.at && w.at.getTime() > since);
+      const sig = done.map(w => w.id).join(',');
+      if (!done.length || ctx.bubbleSeen() === sig || ctx.config().bot === 'ask') return '';
+      const failed = done.filter(w => w.status.label === 'Failed').length;
+      return `<div class="assistant-bubble" data-bubble="catch-up"><div class="bubble-by"><strong>${esc(ctx.preset.assistantLabel)}</strong><span class="subtle">Catch-up</span></div><p>While you were away: ${esc(plural(done.length - failed, 'task'))} finished${failed ? ` and ${esc(plural(failed, 'task'))} failed` : ''}.</p><div class="dialog-actions">${btn('Show files', 'page', 'button', 'data-page="files"')}${btn('Not now', 'bubble-dismiss', 'button', `data-seen="${esc(sig)}"`)}</div></div>`;
+    }
+    /** @description The inline composer: a question typed here goes to the same Jarvis thread the Ask dialog uses. */
+    function composer() {
+      const busy = ctx.thread().busy;
+      return `<form id="composer-form" class="composer"><label class="screenreader" for="composer-input">Ask ${esc(ctx.preset.assistantLabel.toLowerCase())}</label><input id="composer-input" maxlength="600" autocomplete="off" placeholder="Ask about this home…"${busy ? ' disabled' : ''}><button class="button primary" type="submit" aria-label="Send"${busy ? ' disabled' : ''}>↑</button></form>`;
+    }
+    /** @description The room tabs a preset declares (Room, Tasks, Files …) with "Make it yours" beside them. */
+    function roomTabs() {
+      const tabs = ctx.preset.tabs || [];
+      if (!tabs.length) return '';
+      return `<nav class="room-tabs" aria-label="Room sections">${tabs.map(([id, label]) => btn(esc(label), 'page', 'room-tab', `data-page="${id}" ${ctx.state.page === id ? 'aria-current="page"' : ''}`)).join('')}${ctx.canConfigure() ? btn('Make it yours', 'configure', 'text-button room-customize') : ''}</nav>`;
+    }
+    /** @description The configure dialog's layout choices, saved on this device: how the assistant offers help, what greets you first, and which modules stay on the front page. */
+    function configExtras() {
+      const c = ctx.config(), hide = c.hide || [];
+      const lead = [['room', 'The room · the preset’s order'], ['day', 'My day · the calendar first'], ['work', 'The work · open items first']];
+      const keep = [['room', 'People in this home'], ['calendar', 'Calendar'], ['shopping', 'Shopping list']];
+      const bot = `<label class="field">Your assistant helps by<select id="bot-choice"><option value="suggest" ${c.bot !== 'ask' ? 'selected' : ''}>Offering a catch-up of finished work</option><option value="ask" ${c.bot === 'ask' ? 'selected' : ''}>Waiting for me to ask</option></select></label>`;
+      return `${bot}<fieldset class="config-fieldset"><legend>What greets you?</legend>${lead.map(([v, l]) => `<label class="config-check"><input type="radio" name="lead-choice" value="${v}" ${(c.lead || 'room') === v ? 'checked' : ''}>${l}</label>`).join('')}</fieldset><fieldset class="config-fieldset"><legend>Keep close at hand</legend>${keep.map(([v, l]) => `<label class="config-check"><input type="checkbox" data-keep="${v}" ${hide.includes(v) ? '' : 'checked'}>${l}</label>`).join('')}</fieldset>`;
+    }
+    /**
+     * @description A front-page column after the device's layout choices: modules unticked under "Keep close at hand"
+     * drop out, and in the main column "My day" moves the calendar to the front and "The work" moves open work there.
+     * @param {Array<string|object>} entries The preset's declared column.
+     * @param {boolean} main Whether it is the main column (only the main column takes the lead choice).
+     * @returns {Array<string|object>} The column to render.
+     */
+    function arrange(entries, main) {
+      const c = ctx.config(), hide = c.hide || [];
+      let list = (entries || []).filter(e => typeof e !== 'string' || !hide.includes(e));
+      const lead = !main ? '' : c.lead === 'day' ? 'calendar' : c.lead === 'work' ? 'projects' : '';
+      if (lead && !hide.includes(lead)) list = [lead].concat(list.filter(e => e !== lead));
+      return list;
+    }
+
+    return { locations, locationOnDialog, devicesDialog, room, familyAdmin, peopleRolesDialog, routinesPage, searchPage, filesPage, tasksPage, dayAgenda, eventDialog, progressBlock, notices, bubble, composer, roomTabs, configExtras, arrange };
   }
 
   return { create: create, LOCATION_SETTINGS: LOCATION_SETTINGS };
