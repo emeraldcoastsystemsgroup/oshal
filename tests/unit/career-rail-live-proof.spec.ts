@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the Career worker-rail live acceptance's own logic. Pure cases over an in-memory run registry in the package's real response shapes: a run that ends on its own with an admitted rail call passes on the kernel's attribution; a longer run is cancelled after its first admitted call and still passes; the kernel's enforce-mode refusal (the engine's stderr `career worker unavailable: authorization_identity_required`) fails LOUDLY naming it, as does a run that ends on a rail failure; a run with no rail call is not-runnable; admitted calls with no cost row are red; a caller the package does not admit is not-runnable; a run still running after cancellation is incomplete cleanup. The task id the proof reads is derived through the kernel's real canonicalBotWorkspaceId. Real boundary for the attribution read: the exact ROLLUP_SQL and LEDGER_SQL run against a disposable PostgreSQL carrying the shipped chat/cost migrations (005, 055, 078, 090) and count only this owner's rows for the Career bot written since the run started. The case is registered on the Access Administration Test Lab card beside the enforce-posture boundary spec.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The proof no longer predicts a task id (the first live run reported "no cost" over two real ledger rows keyed `protected-<sha256>::<Career bot>`, the per-execution digest a protected application's bot history carries), so the cases follow it: fixture rows are keyed through the REAL protectedBotWorkspaceId with one execution id per call, and the verdict rests on the Career bot's ledger rows for the owner since the start, no more than the admitted rail calls. Real boundary widened to the read the container mode performs: the whole acceptance runs over a disposable PostgreSQL carrying the chat/cost migrations plus owner-or-operator RLS (112 on oshal_cost_events, the conversation schema's chat_tasks policy via buildOwnerRlsPolicyStatements), read through a NOSUPERUSER NOBYPASSRLS role behind the production GUC wrapper under the owner's request identity. A run shaped like the live one (8 admitted, 2 settled under protected keys) passes; the same fixture with no ledger row since the start fails naming "no cost"; another owner's rows never count (RLS for the identity read, and the SQL's own owner filter read as the superuser); the canonical `career-engine-<owner>` rollup shape is still accepted as evidence; more ledger rows than admitted calls fail. The in-memory verdict cases no longer expect a pre-run baseline read.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The two extra modes. `--complete`: a run that ends succeeded on its own after every call passes on the attribution with no cancellation issued; a run still running at the budget is cancelled by the cleanup and red; a run someone else cancelled is red (the default mode still accepts it); no rail call is not-runnable. `--worker-loss` (container half, over the same in-memory run registry plus a registry double the phase hook drives the way docker would): the run fails 503 career-worker-unavailable once the stop phase took the bot away and a strictly newer heartbeat after the start phase passes; a bot that never comes back is red, and so is a stale-online record whose heartbeat never moves (the record a dead bot leaves behind) or a registration that vanished; a run that ends succeeded, fails for another reason, or whose route answers 502 after the stop is red; a run that hangs after the stop is red and cancelled; a run that ends before the stop, a bot that is offline before, and a refused start stop nothing. Host half: the reactor stops on the stop phase, starts on the start phase, each once, and restarts in finish() when the proof died between them; hostVerdict turns a failed stop/start, a never-issued start or a container not running afterwards red. The mode flags exclude each other and the host spec carries the mode's flag after --in-container. stageAndStream keeps stageAndRun's argv and PAT-by-name contract, hands lines to the reactor as they arrive and always unstages.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | `--complete` now also runs the approve -> draft half (career-rail-draft.js, its own spec career-rail-draft.spec.ts): the staged set is four files for every mode, the complete mode's host ceiling adds the draft budget and its attribution wait, and a score half that passes on a package without the Test Lab application seam (below career-hunter 1.27.0) makes the mode unavailable, naming the seam, with no draft route touched.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -263,30 +264,33 @@ describe('the mode flags and the host spec', () => {
     expect(proof.parseArgs(['--complete', '--worker-loss']).error).toBe('choose one of --complete and --worker-loss');
   });
 
-  it('stages the same three files for every mode and carries the mode flag after --in-container, the PAT never in argv', () => {
+  it('stages the same four files for every mode and carries the mode flag after --in-container, the PAT never in argv', () => {
     for (const [mode, args] of [['cancel', []], ['complete', ['--complete']], ['worker-loss', ['--worker-loss']]] as const) {
       const spec = proof.hostSpec(mode, 'oshal_pat_secret_value');
       expect(spec.args).toEqual(args);
-      expect(spec.files.map((file: { rel: string }) => file.rel)).toEqual(['operations/career-rail-live-proof.js', 'operations/career-rail-worker-loss.js', 'operations/live-proof-runner.js']);
+      expect(spec.files.map((file: { rel: string }) => file.rel)).toEqual(['operations/career-rail-live-proof.js', 'operations/career-rail-worker-loss.js',
+        'operations/career-rail-draft.js', 'operations/live-proof-runner.js']);
       expect(spec.entry).toBe('operations/career-rail-live-proof.js');
       expect(spec.pat).toBe('oshal_pat_secret_value');
       expect(JSON.stringify(spec.env)).not.toContain('oshal_pat_secret_value');
     }
     expect(proof.hostTimeoutMs('cancel')).toBe(600_000 + 180_000 + 300_000);
-    expect(proof.hostTimeoutMs('complete')).toBe(proof.COMPLETE_RUN_BUDGET_MS + 180_000 + 300_000);
+    expect(proof.hostTimeoutMs('complete')).toBe(proof.COMPLETE_RUN_BUDGET_MS + 180_000 + (900_000 + 180_000) + 300_000);
     expect(proof.hostTimeoutMs('worker-loss')).toBe(600_000 * 2 + 180_000 + 300_000);
   });
 });
 
 describe('--complete: the score run finishes on its own', () => {
-  it('passes on the attribution of every admitted call with no cancellation issued', async () => {
+  it('passes the score half on the attribution of every admitted call with no cancellation issued; without the seam the mode is unavailable', async () => {
     const f = fake({ calls: 3 });
     const result = await proof.runCareerRailAcceptance(f.ports, { mode: 'complete' });
-    expect(result.state, result.detail).toBe('pass');
+    expect(result.state, result.detail).toBe('unavailable');
     expect(result.caseId).toBe('career-worker-rail-complete');
     expect(result.detail).toContain('ended succeeded after 3 rail calls, uncancelled');
     expect(result.detail).toContain(`the Career bot ${AGENT} recorded 3 ledger row(s) for this owner`);
-    expect(result.evidence).toMatchObject({ mode: 'complete', runState: 'succeeded', railCalls: 3, cancelledByProof: false, routeStatus: 200, ledger: { calls: 3 }, cleanupErrors: [] });
+    expect(result.detail).toContain('Approve -> draft: career-hunter 1.25.1 has no Test Lab application seam (1.27.0+)');
+    expect(result.evidence).toMatchObject({ mode: 'complete', runState: 'succeeded', railCalls: 3, cancelledByProof: false, routeStatus: 200, ledger: { calls: 3 },
+      draft: { state: 'unavailable', planted: false }, cleanupErrors: [] });
     expect(f.state.cancels).toBe(0);
     expect(f.state.run!.railCalls).toBe(3);
   });

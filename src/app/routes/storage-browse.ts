@@ -21,6 +21,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add the 'career' root — the caller's OWN career-hunter store (generated résumé/cover packets under applications/, uploaded artifacts under uploads/, and the migrated lessons library under career-library/) so job-hunt artifacts are browsable/downloadable in Files ("artifacts in the user's folder system"). Read-only, sub-scoped, traversal-guarded; the store is on the api-output volume keyed by RAW sub (not the sha256 userfiles key).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Resolve Career stores through the installed app's exact-subject mapper and reject traversal or symlink escapes in both local file providers.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 2: uploadBytes gains the oshal-local branch (safeLocalPath-guarded write into the caller's always-present local store) — the "Save to OSHAL Storage" built-in's backend, and connector-free upload for the files surface.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | deleteEntry gains the oshal-local branch: a safeLocalPath-guarded unlink of one FILE in the caller's own local store (a folder or a missing path is refused), so what the files surface can upload it can also remove — the live-acceptance class-material case removes the PDF it put there and reads the folder back.
  *
  * @module storage-browse
  * 2026-09-10 | maintainer@emeraldcoastsystemsgroup.com | ADR-139 shared artifact picker: source discovery, owner-scoped storage and app visibility.
@@ -448,7 +449,25 @@ export async function uploadBytes(
   throw new Error(`upload not supported for provider: ${provider}`);
 }
 
+/**
+ * @description Delete one file from a writable store the caller owns. The local store takes only a
+ * file inside the caller's own directory (never a folder), so what the files surface uploads it can
+ * also remove; the connector stores delete through the caller's own token.
+ * @param ctx - App context (the connector token lookups ride its pool).
+ * @param sub - The caller's sub; it selects the store, so no other caller's file is reachable.
+ * @param provider - oshal-local, dropbox or google-drive.
+ * @param p - The file's path inside that store.
+ * @returns Resolves once the file is gone; rejects for a missing file, a folder or a refused path.
+ */
 export async function deleteEntry(ctx: AppContext, sub: string, provider: StorageProvider, p: string): Promise<void> {
+  if (provider === 'oshal-local') {
+    // One file in the caller's own local store, never a folder: the same traversal/link guard the
+    // read and write paths use, and a missing file is an error rather than a silent no-op.
+    const full = safeLocalPath(sub, p);
+    if (!fs.existsSync(full) || !fs.lstatSync(full).isFile()) throw new Error('file not found');
+    fs.unlinkSync(full);
+    return;
+  }
   if (provider === 'dropbox') {
     const tok = await getValidAccessToken(ctx.pool, sub, 'dropbox');
     if (!tok) throw new Error('Dropbox not connected.');

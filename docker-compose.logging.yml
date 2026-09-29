@@ -1,0 +1,145 @@
+# =============================================================================
+# OSHAL unified logging overlay — Grafana Alloy + VictoriaLogs (ADR-171)
+# =============================================================================
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-171: one searchable store for the logs of the api and every bot. Alloy follows each container's stdout through a read-only Docker API proxy and pushes it to VictoriaLogs. Config only: nothing starts this file yet; the bring-up and installer wiring is a BACKLOG entry. Guard: tests/unit/logging-overlay.spec.ts.
+#
+# Every oshal runtime already writes pino JSON to stdout (src/shared/logger/logger.ts).
+# Today each container keeps its own copy (`docker logs`, plus output/logs/<SERVICE_NAME>.log
+# on that container's own volume), and the cockpit Logs tab reads only the api's file.
+# This overlay collects all of them in one place:
+#
+#   container stdout --(Docker API, via logging-docker-proxy)--> Alloy
+#                    --(Loki push protocol)--> VictoriaLogs (JSON parsed into fields)
+#
+# STATUS: NOT WIRED, NEVER RUN. No script starts this file: not oshal-up.sh, not
+# monitoring-up.sh, not oshal-deploy.sh, not the installer. That wiring and the first
+# measured run are the BACKLOG entry "Unified logging overlay: wire it into bring-up and
+# the installer, and measure it (ADR-171)". tests/unit/logging-overlay.spec.ts pins the
+# not-wired posture so the change that wires it has to say so.
+#
+# Manual start, after the main stack is up (the overlay joins its network):
+#   docker compose -f docker-compose.logging.yml up -d
+#   docker compose -f docker-compose.logging.yml down
+#
+# UI: http://127.0.0.1:${VICTORIALOGS_PORT:-9428}/select/vmui/
+#   Published on loopback only. VictoriaLogs has no authentication of its own, and these
+#   logs carry ticket titles and message previews.
+#
+# Tunables (all optional, read from the environment or .env):
+#   VICTORIALOGS_PORT        host port for the UI and query API        (9428)
+#   VICTORIALOGS_RETENTION   drop log days older than this              (7d)
+#   VICTORIALOGS_MAX_DISK    drop the oldest days above this size       (2GiB)
+#   VICTORIALOGS_CACHE_BYTES cache ceiling inside VictoriaLogs          (192MiB)
+#   VICTORIALOGS_MEM_LIMIT   container memory cap                       (512m)
+#   ALLOY_MEM_LIMIT          container memory cap                       (256m)
+#   LOGGING_PROXY_MEM_LIMIT  container memory cap                       (64m)
+# The memory caps are starting budgets from published guidance, not measurements on
+# this deployment. ADR-171 records the sources; the first run records the real numbers.
+# =============================================================================
+
+name: oshal-logging
+
+services:
+  # ── The log store ──────────────────────────────────────────────────────────
+  # Chosen over Loki for memory (ADR-171 D2). It accepts the Loki push protocol, so the
+  # collector config is the same one a Loki backend would take.
+  victorialogs:
+    image: victoriametrics/victoria-logs:v1.52.0
+    container_name: oshal-local-victorialogs
+    restart: unless-stopped
+    command:
+      - '-storageDataPath=/vlogs'
+      # Bounded by age AND by size: whichever limit is reached first drops the oldest day.
+      - '-retentionPeriod=${VICTORIALOGS_RETENTION:-7d}'
+      - '-retention.maxDiskSpaceUsageBytes=${VICTORIALOGS_MAX_DISK:-2GiB}'
+      # Cache ceiling held well under mem_limit so ingestion and queries keep headroom.
+      - '-memory.allowedBytes=${VICTORIALOGS_CACHE_BYTES:-192MiB}'
+    mem_limit: ${VICTORIALOGS_MEM_LIMIT:-512m}
+    ports:
+      - "127.0.0.1:${VICTORIALOGS_PORT:-9428}:9428"
+    volumes:
+      - logging_victorialogs_data:/vlogs
+    networks:
+      - oshal
+
+  # ── The collector ──────────────────────────────────────────────────────────
+  # Grafana Alloy (Promtail reached end of life on 2026-03-02). Pipeline in
+  # ops/logging/config.alloy. It reaches Docker only through logging-docker-proxy below;
+  # the socket never enters this container.
+  alloy:
+    image: grafana/alloy:v1.20.1
+    container_name: oshal-local-alloy
+    restart: unless-stopped
+    command:
+      - 'run'
+      # Read positions live here, so a restart resumes instead of re-shipping.
+      - '--storage.path=/var/lib/alloy/data'
+      - '/etc/alloy/config.alloy'
+    mem_limit: ${ALLOY_MEM_LIMIT:-256m}
+    volumes:
+      - ./ops/logging/config.alloy:/etc/alloy/config.alloy:ro
+      - logging_alloy_data:/var/lib/alloy/data
+    depends_on:
+      - victorialogs
+      - logging-docker-proxy
+    # No `ports:` — Alloy's debug UI stays inside the network.
+    networks:
+      - oshal
+
+  # ── Docker API proxy — how Alloy reads container logs WITHOUT holding the socket ──
+  # Same reasoning as the monitoring overlay's docker-proxy (docker-compose.monitoring.yml):
+  # a `:ro` bind restricts the FILE, not the API, so whoever holds the socket can create a
+  # privileged container and own the host. This proxy allows reads only.
+  #
+  # It is this overlay's own proxy rather than the monitoring one so the two overlays start
+  # and stop independently; logging must not require monitoring to be up.
+  logging-docker-proxy:
+    image: tecnativa/docker-socket-proxy:0.1.1
+    container_name: oshal-local-logging-docker-proxy
+    restart: unless-stopped
+    mem_limit: ${LOGGING_PROXY_MEM_LIMIT:-64m}
+    environment:
+      # Default-deny: the image refuses every path not explicitly enabled here.
+      # CONTAINERS covers GET /containers/json (discovery), /containers/{id}/json (Alloy checks
+      # for a TTY) and /containers/{id}/logs (the stream itself). All reads; POST stays 0.
+      CONTAINERS: 1
+      # Discovery resolves each container's network name, which the network filter uses.
+      NETWORKS: 1
+      POST: 0
+      IMAGES: 0
+      VOLUMES: 0
+      EXEC: 0
+      SERVICES: 0
+      TASKS: 0
+      SECRETS: 0
+      CONFIGS: 0
+      SWARM: 0
+      NODES: 0
+      SYSTEM: 0
+      INFO: 0
+      AUTH: 0
+      BUILD: 0
+      COMMIT: 0
+      DISTRIBUTION: 0
+      PLUGINS: 0
+      SESSION: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    # No `ports:` — reachable only on the internal oshal network.
+    networks:
+      - oshal
+
+volumes:
+  logging_victorialogs_data:
+  logging_alloy_data:
+
+# Join the network created by docker-compose.oshal-local.yml (project name
+# "oshal-local" + network "oshal" => "oshal-local_oshal").
+networks:
+  oshal:
+    external: true
+    name: oshal-local_oshal

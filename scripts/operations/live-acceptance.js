@@ -8,6 +8,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | An `anonymous` port beside `api`: the same JSON request with NO credential (no Authorization header), so a case can prove a route refuses an unauthenticated caller (the dev-workspace query route must answer 401/403). The token never reaches that request.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Every HTTP reply also carries `byteLength` and `sha256` of its raw body (the text is decoded from the same bytes, as fetch's text() would), so a case can prove a binary route served exact bytes: the vids-publish case compares the anonymous public read with the MP4 it uploaded. And a `files` port over the helper's new `file-state` op: whether a NAMED probe's file (never a path) exists in the api container.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | `--expect-store-bound`: the flag every selected case receives as the `expectStoreBound` option (caseOptions). The token-chase-replay case then also requires a store-bound captured run and storeVersion {bound: true, reproduced: true}; the deploy lane sets it after TOKEN_CHASE_OWNER_STORE_SNAPSHOT=on on one bot. Every other case ignores the option.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | A `raw` HTTP port beside `api` and `upload`: exact bytes under one content type, the way the files browser uploads (`POST /api/files/upload` reads the raw body), so the class-material case can put its PDF into the caller's own oshal storage through the route the surface uses. The browser session takes an optional viewport (`session(fn, { viewport })`): the default stays the 390 x 844 phone, and the cockpit shell, which the class-material dispatch navigates through, is opened at a desktop width.
  */
 
 'use strict';
@@ -63,7 +64,7 @@ function caseOptions(args) {
  * @param {string} base - The box's base URL.
  * @param {string} token - The operator PAT (kept in this closure; never printed).
  * @param {typeof fetch} [fetchImpl] - Fetch (a seam for the header-handling tests).
- * @returns {{api: Function, anonymous: Function, upload: Function}} The ports.
+ * @returns {{api: Function, anonymous: Function, upload: Function, raw: Function}} The ports.
  */
 function httpPorts(base, token, fetchImpl = fetch) {
   const send = async (method, route, init, withToken = true) => {
@@ -90,6 +91,7 @@ function httpPorts(base, token, fetchImpl = fetch) {
       form.append('file', new Blob([file.bytes], { type: file.type }), file.name);
       return send('POST', route, { body: form });
     },
+    raw: (method, route, bytes, contentType) => send(method, route, { headers: { 'content-type': String(contentType || 'application/octet-stream') }, body: new Uint8Array(bytes) }),
   };
 }
 
@@ -174,22 +176,27 @@ async function readLogs(container, since) {
   return `${run.stdout}\n${run.stderr}`.split(/\r?\n/).filter(Boolean);
 }
 
+/** The default browser session: a 390 x 844 phone. A case may ask for another viewport (desktop shell). */
+const PHONE_VIEWPORT = Object.freeze({ width: 390, height: 844 });
+
 /**
- * @description A 390 x 844 headless Chromium session: same-origin requests carry the token (added at
- * the network layer, so no page script can read it); every other request is aborted; window.open is
- * recorded and never opens anything.
+ * @description A headless Chromium session, a 390 x 844 phone unless the case asks for a viewport:
+ * same-origin requests carry the token (added at the network layer, so no page script can read it);
+ * every other request is aborted; window.open is recorded and never opens anything.
  * @param {string} origin - The box origin.
  * @param {string} token - The operator PAT.
- * @returns {{session: (fn: Function) => Promise<void>}} The browser port.
+ * @returns {{session: (fn: Function, options?: {viewport?: {width: number, height: number}}) => Promise<void>}} The browser port.
  */
 function browserPort(origin, token) {
   return {
-    session: async (fn) => {
+    session: async (fn, options = {}) => {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { chromium } = require(path.join(REPO, 'node_modules', 'playwright'));
       const browser = await chromium.launch({ headless: true });
       try {
-        const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+        const phone = !options.viewport;
+        const viewport = phone ? { ...PHONE_VIEWPORT } : { width: Number(options.viewport.width), height: Number(options.viewport.height) };
+        const context = await browser.newContext({ viewport, isMobile: phone, hasTouch: phone });
         await context.route('**/*', (route) => {
           if (new URL(route.request().url()).origin !== origin) return route.abort();
           return route.continue({ headers: { ...route.request().headers(), authorization: `Bearer ${token}` } });
