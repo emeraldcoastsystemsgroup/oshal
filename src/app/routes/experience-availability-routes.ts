@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The default token lookup asks for the caller's personal Google connection ({ tenantId: 'personal' }): the tenancy resolver orders shared household connections first, and a household's shared Google account is not the caller's own calendar.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | GET /api/experience/availability: the signed-in person's busy windows on their primary Google calendar for one bounded window (at most 42 days), read with their own Google connection through the Calendar free/busy query. It answers busy windows only (no titles, attendees or locations), so the central assistant's Calendar view can mark free and busy days without receiving event content. No connection, a refused grant and a provider failure are distinct refusals, never an empty "free" answer. requiresAuth at the mount; the token is resolved from the caller's session sub only.
  */
 
@@ -116,7 +117,8 @@ function refuseProvider(res: Response, err: unknown): void {
  */
 export function createExperienceAvailabilityRoutes(deps: AvailabilityDeps): Router {
   const router = Router();
-  const tokenFor = deps.tokenFor ?? ((sub: string) => getValidAccessToken(deps.pool, sub, 'google'));
+  // Personal only: resolveConnectionRow puts shared household connections first, and this is the caller's own availability.
+  const tokenFor = deps.tokenFor ?? ((sub: string) => getValidAccessToken(deps.pool, sub, 'google', { tenantId: 'personal' }));
   const busyFor = deps.busyFor ?? ((token: string, window: AvailabilityWindow) => new GoogleCalendarService(async () => token).freeBusy({ calendarId: 'primary', ...window }));
   const now = deps.now ?? (() => new Date());
 

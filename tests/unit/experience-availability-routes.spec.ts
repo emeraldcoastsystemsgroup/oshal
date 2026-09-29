@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | The default token lookup (no injected tokenFor) asks the connector store for the caller's personal Google connection ({ tenantId: 'personal' }), never a household's shared one.
  * 1 | maintainer@emeraldcoastsystemsgroup.com | GET /api/experience/availability over real HTTP: signed out is refused, the window is validated (unparseable, reversed, wider than 42 days, outside the horizon), the token is looked up for the session's sub only (a sub in the query is ignored), no connection / an unrenewable grant / a refused read / a provider failure are distinct refusals and never an empty "free" answer, and a ready answer carries clamped, ordered busy windows and nothing else. The mount in server-auxiliary-routes.ts carries requiresAuth. GoogleCalendarService.freeBusy is proven against a stubbed Calendar endpoint: the exact POST it sends, busy windows only back, and a per-calendar error raised instead of read as free.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -12,6 +13,8 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 vi.mock('@/shared/logger', () => ({ createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }) }));
+vi.mock('@/app/routes/connectors-routes', () => ({ getValidAccessToken: vi.fn(async () => null) }));
+import { getValidAccessToken } from '@/app/routes/connectors-routes';
 
 import { createExperienceAvailabilityRoutes, normalizeBusy, parseAvailabilityWindow, AVAILABILITY_MAX_DAYS } from '@/app/routes/experience-availability-routes';
 import { GoogleCalendarError, GoogleCalendarService } from '@/features/google-calendar';
@@ -94,6 +97,12 @@ describe('GET /api/experience/availability', () => {
     expect(failed).toMatchObject({ status: 502, body: { state: 'failed' } });
     expect(failed.body.busy).toBeUndefined();
     expect(JSON.stringify(failed.body)).not.toContain('backend');
+  });
+
+  it('asks the connector store for the caller\'s personal Google connection when no token lookup is injected', async () => {
+    const s = await started({});
+    expect((await s.get(q(WINDOW))).body).toMatchObject({ state: 'not-connected' });
+    expect(vi.mocked(getValidAccessToken).mock.calls.at(-1)).toEqual([{}, 'synthetic-person', 'google', { tenantId: 'personal' }]);
   });
 
   it('is mounted behind requiresAuth', () => {
