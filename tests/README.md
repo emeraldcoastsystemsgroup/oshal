@@ -203,6 +203,28 @@ runs the three actual database suites. That execution, a real scheduler-overlap 
 backlog's three consecutive complete unit runs remain required; discovery proof alone closes none
 of those runtime claims.
 
+### Host-owned PostgreSQL test transport
+
+[DisposablePostgres](./helpers/disposable-postgres.ts) keeps its existing Docker-owned default.
+A separately coordinated Linux runner may opt into the
+[owned transport](./helpers/owned-postgres-transport.ts) through the fixed read-only
+`/contract/access.json` mount. This is not a deployment DSN option: inherited database configuration,
+foreign/expired contracts, wrong server markers, populated databases and repeat claims are refused.
+The fixture still creates real non-superuser/non-bypass roles and applies the actual migrations;
+only the host that created the server removes it. An invalid opt-in never falls back to Docker.
+
+The database-free guard exercises the actual transport and fixture control flow with explicitly
+named filesystem, PostgreSQL-client and Docker collaborators:
+
+```sh
+node --max-old-space-size=128 node_modules/vitest/vitest.mjs run tests/unit/owned-postgres-transport.spec.ts --pool=forks --maxWorkers=1 --no-file-parallelism --execArgv=--max-old-space-size=384
+```
+
+It is discovered by the normal unit gate. Its results do not establish real database/RLS proof.
+Real fixture receipts must separately identify the exact product/spec source, any test-helper
+overlay, dependency and PostgreSQL images, enforcing role, actual assertions and owned cleanup.
+Neither a transport guard nor a prepared host contract is a provider or installed-device result.
+
 ## Line coverage is measured, and the figure carries its scope
 
 `npm run test:coverage` is the only place a coverage percentage for this repo comes from. It runs
