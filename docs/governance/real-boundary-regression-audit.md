@@ -16,7 +16,13 @@ explicit doubles. Held checkout/work/commit cases prove the HTTP identity/consen
 logic, not PostgreSQL rollback or RLS. `connector-qualified-smartthings.spec.ts` executes the
 provider adapter against a loopback HTTP responder; no real account is contacted.
 `qualified-connectors-ui.spec.ts` executes the shipped JavaScript with DOM, fetch,
-confirmation and navigation doubles; native browser acceptance remains open.
+confirmation and navigation doubles. Its real companion `qualified-connectors-browser.spec.ts`
+serves shipped Utilities HTML/JavaScript into Chromium: actual iframe/CSP top-navigation,
+browser Origin, exact revision writes, field clearing and confirmation dialogs. Auth, APIs,
+parent shell and separate-loopback authorization responder are named fixtures. All six browser
+cases passed on 2026-09-29; changing only navigation back to the child frame caused both
+top-navigation cases to time out, while four other cases passed. The exact restored source
+passed six browser plus 34 doubled-JavaScript cases. This is not deployed OIDC/provider proof.
 
 `connector-qualified-credentials-postgres.spec.ts`,
 `connector-qualified-grants-postgres.spec.ts` and

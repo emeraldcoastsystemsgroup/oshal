@@ -31,6 +31,7 @@ const QUALIFIED_PERSONAL_CONNECTOR: Scenario = {
     { level: 'unit', path: 'tests/unit/connector-qualified-grants.spec.ts' },
     { level: 'unit', path: 'tests/unit/connector-qualified-token-crypto.spec.ts' },
     { level: 'unit', path: 'tests/unit/qualified-connectors-ui.spec.ts' },
+    { level: 'integration', path: 'tests/unit/qualified-connectors-browser.spec.ts' },
     { level: 'integration', path: 'tests/unit/connector-qualified-credentials-postgres.spec.ts' },
     { level: 'integration', path: 'tests/unit/connector-qualified-grants-postgres.spec.ts' },
     { level: 'integration', path: 'tests/unit/connector-qualified-broker-postgres.spec.ts' },

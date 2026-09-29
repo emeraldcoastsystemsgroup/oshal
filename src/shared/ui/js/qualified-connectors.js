@@ -4,6 +4,7 @@
  * SEQ | AUTHOR                                    | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Separate personal SmartThings qualified-grant metadata/consent UI; same-origin requests, fresh secret clearing, exact revision writes and no action activation or legacy fallback.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Use the established top-level OAuth navigation rail from embedded Utilities; retain native top targets without a child-frame fallback.
  */
 (function () {
   'use strict';
@@ -161,12 +162,12 @@
   function oauth(row) {
     var link = node('a', row ? 'Reconnect via OAuth' : 'Connect via OAuth', 'back');
     var path = BASE + '/smartthings/start' + (row ? '?reconnect=' + encodeURIComponent(row.connectionId) : '');
-    link.dataset.qualifiedOauth = path; link.href = path;
+    link.dataset.qualifiedOauth = path; link.href = path; link.target = '_top';
     link.addEventListener('click', function (event) {
       event.preventDefault(); if (pending || !available) return;
       clearSecrets(); setPending(true);
       message.textContent = 'Opening registered-client OAuth. If the server returns 503, authorization is unavailable; return here. No legacy fallback.';
-      try { window.location.assign(path); }
+      try { window.top.location.href = path; }
       catch (_) { message.textContent = 'OAuth navigation could not start. No request was retried.'; setPending(false); }
     });
     return link;

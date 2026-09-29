@@ -4,6 +4,7 @@
  * SEQ | AUTHOR                                    | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Execute the actual qualified browser script using named in-memory DOM/fetch/navigation doubles; assert exact revision requests, secret clearing and safe refusal. Not browser/server/provider acceptance.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Distinguish embedded and top-level navigation; refuse fallback into the child frame when top navigation fails.
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -24,7 +25,7 @@ type EventDouble = { preventDefault: () => void; persisted?: boolean };
 class DomElementDouble {
   tagName: string; children: DomElementDouble[] = []; dataset: Record<string, string> = {};
   attributes: Record<string, string> = {}; listeners = new Map<string, Array<(event: EventDouble) => unknown>>();
-  id = ''; value = ''; type = ''; className = ''; href = ''; htmlFor = ''; autocomplete = ''; spellcheck = true;
+  id = ''; value = ''; type = ''; className = ''; href = ''; target = ''; htmlFor = ''; autocomplete = ''; spellcheck = true;
   disabled = false; hidden = false; maxLength = 0; tabIndex = 0; private text = '';
   constructor(tag: string) { this.tagName = tag.toUpperCase(); }
   get textContent(): string { return this.text + this.children.map(child => child.textContent).join(''); }
@@ -68,21 +69,23 @@ function deferred<T>() {
   return { resolve, promise };
 }
 /** Network/navigation/confirmation doubles: no actual fetch, browser, credentials, storage or provider contact. */
-function panel(first: unknown = response(200)) {
+function panel(first: unknown = response(200), embedded = true) {
   const root = new DomElementDouble('div'); root.id = 'qualifiedConnectorsPanel';
   const queue: unknown[] = [first], windowEvents = new Map<string, (event: EventDouble) => unknown>();
   const fetch = vi.fn(async (_path: string, _options: Record<string, any>) => {
     if (!queue.length) throw new Error('unexpected fixture request');
     const next = queue.shift(); if (next instanceof Error) throw next; return await next;
   });
-  const confirm = vi.fn((_message: string) => true), assign = vi.fn(), log = vi.fn();
+  const confirm = vi.fn((_message: string) => true), assign = vi.fn(), topNavigate = vi.fn(), log = vi.fn();
   const document = { getElementById: (name: string) => name === root.id ? root : null,
     createElement: (tag: string) => new DomElementDouble(tag) };
-  const context = { document, TextEncoder, console: { log, error: log, warn: log },
-    window: { fetch, confirm, location: { assign }, addEventListener: (name: string, listener: (event: EventDouble) => unknown) => windowEvents.set(name, listener),
-      localStorage: new Proxy({}, { get: () => { throw new Error('storage is forbidden'); } }) } };
+  const window = { fetch, confirm, location: { assign, set href(value: string) { assign(value); } },
+    addEventListener: (name: string, listener: (event: EventDouble) => unknown) => windowEvents.set(name, listener),
+    localStorage: new Proxy({}, { get: () => { throw new Error('storage is forbidden'); } }) };
+  Object.defineProperty(window, 'top', { value: embedded ? { location: { set href(value: string) { topNavigate(value); } } } : window });
+  const context = { document, TextEncoder, console: { log, error: log, warn: log }, window };
   runInNewContext(script, context);
-  return { root, queue, fetch, confirm, assign, log, context, windowEvents };
+  return { root, queue, fetch, confirm, assign, topNavigate, log, context, windowEvents };
 }
 async function settled() { for (let tick = 0; tick < 20; tick++) await Promise.resolve(); }
 function button(root: DomElementDouble, text: string) {
@@ -234,18 +237,42 @@ describe('actual qualified browser script / named DOM, fetch and navigation doub
     expect(fixture.fetch.mock.calls[2][0]).toBe(BASE + '?limit=50');
   });
 
-  it.each([false, true])('navigates once through same-origin registered OAuth (reconnect=%s), without a fetch preflight', async reconnect => {
+  it.each([false, true])('navigates the TOP window once through registered OAuth (reconnect=%s), without a fetch preflight', async reconnect => {
     const fixture = panel(response(200, { connections: [row()] })); await settled();
     const host = reconnect ? card(fixture.root) : fixture.root;
     const link = host.querySelectorAll('a[data-qualified-oauth]')[0]; input(host).value = TOKEN;
     await link.fire('click'); await link.fire('click');
-    expect(fixture.assign).toHaveBeenCalledTimes(1);
-    expect(fixture.assign).toHaveBeenCalledWith(BASE + '/smartthings/start' + (reconnect ? '?reconnect=' + id() : ''));
+    expect(fixture.topNavigate).toHaveBeenCalledTimes(1);
+    expect(fixture.topNavigate).toHaveBeenCalledWith(BASE + '/smartthings/start' + (reconnect ? '?reconnect=' + id() : ''));
+    expect(fixture.assign).not.toHaveBeenCalled(); expect(link.target).toBe('_top');
     expect(fixture.fetch).toHaveBeenCalledTimes(1); expect(input(host).value).toBe('');
     expect(fixture.root.textContent).toContain('If the server returns 503');
     fixture.queue.push(response(200));
     await fixture.windowEvents.get('pageshow')!({ preventDefault: vi.fn(), persisted: true });
-    expect(button(fixture.root, 'Connect fresh PAT').disabled).toBe(false); expect(fixture.assign).toHaveBeenCalledTimes(1);
+    expect(button(fixture.root, 'Connect fresh PAT').disabled).toBe(false); expect(fixture.topNavigate).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the same top-level rail when Utilities itself is the top window', async () => {
+    const fixture = panel(response(200), false); await settled();
+    const link = fixture.root.querySelectorAll('a[data-qualified-oauth]')[0];
+    await link.fire('click'); await link.fire('click');
+    expect(fixture.assign).toHaveBeenCalledExactlyOnceWith(BASE + '/smartthings/start');
+    expect(fixture.topNavigate).not.toHaveBeenCalled(); expect(link.target).toBe('_top');
+    expect(fixture.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears secrets before top navigation and refuses any child-frame fallback if it fails', async () => {
+    const fixture = panel(); await settled(); input(fixture.root).value = TOKEN;
+    fixture.topNavigate.mockImplementationOnce(() => {
+      expect(input(fixture.root).value).toBe('');
+      throw new Error('untrusted-navigation-' + TOKEN);
+    });
+    await fixture.root.querySelectorAll('a[data-qualified-oauth]')[0].fire('click');
+    expect(fixture.topNavigate).toHaveBeenCalledTimes(1); expect(fixture.assign).not.toHaveBeenCalled();
+    expect(fixture.fetch).toHaveBeenCalledTimes(1); expect(input(fixture.root).value).toBe('');
+    expect(fixture.root.textContent).toContain('OAuth navigation could not start. No request was retried.');
+    expect(fixture.root.textContent).not.toContain(TOKEN); expect(fixture.log).not.toHaveBeenCalled();
+    expect(button(fixture.root, 'Connect fresh PAT').disabled).toBe(false);
   });
 
   it.each([{ connectionId: 'bad-id' }, { revision: 7 }, { revision: '01' }, { revision: '9223372036854775808' },

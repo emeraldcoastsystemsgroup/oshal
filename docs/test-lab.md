@@ -858,7 +858,9 @@ invalidation suppresses metadata without claiming to undo the commit. The dedica
 PostgreSQL companions prove the
 storage boundary only when executed with a real owned enforcing-role fixture. The card does
 not create a grant, arm a location rule or enable device actions. Utilities' separate qualified
-panel has actual-JavaScript tests with named DOM/fetch doubles, not installed browser evidence.
+panel has actual-JavaScript tests with named DOM/fetch doubles and a real Chromium companion
+serving the shipped page over loopback. The latter proves frame-policy/top-navigation and
+native form/dialog behavior with explicit API/auth/provider responders, not installed consent.
 The endpoint contract and
 focused test command are in [the connector architecture](architecture/connectors-and-graph-architecture.md#36-fresh-issuer-qualified-personal-grants).
 

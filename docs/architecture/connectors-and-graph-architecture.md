@@ -420,9 +420,11 @@ logged or stored in browser storage. A stale write refreshes metadata without re
 Unknown expiry is displayed honestly. Unavailable qualified storage disables cached controls,
 with no legacy fallback. OAuth requires the existing registered client; its navigation can
 return a server 503, in which case return to Utilities and refresh after configuration is fixed.
+OAuth links target the top-level browser even when Utilities is embedded in Settings; they
+never redirect the authorization provider inside the Settings iframe.
 
 Physical Home/L8 readiness is unchanged. Home broker wiring, an installed owner-bound consent,
-real browser acceptance and actual device-action acceptance remain separate work; the panel
+deployed browser acceptance and actual device-action acceptance remain separate work; the panel
 and server endpoints alone do not close that feature.
 
 Focused verification:
@@ -436,6 +438,13 @@ authentication, provider-response and transactional SQL doubles. The provider co
 uses a loopback protocol responder. Neither proves PostgreSQL RLS or live SmartThings access.
 The UI suite executes the shipped JavaScript with named DOM/fetch/confirmation/navigation
 doubles; it is not an installed browser receipt.
+`qualified-connectors-browser.spec.ts` additionally runs the shipped Utilities HTML/JavaScript
+in Chromium under the real `frame-src 'self'` directive. Its six local cases cover top-level
+navigation, a blocked cross-origin iframe control, immediate PAT clearing, exact revisions,
+stale-write refusal and actual confirmation dialogs. Auth, APIs and the separate-loopback
+authorization responder are fixtures; this is not deployed OIDC/provider/database evidence.
+Restoring the old child-frame navigation failed both navigation cases; restoration passed
+all six browser and 34 JavaScript cases on 2026-09-29.
 The separate qualified-credentials and qualified-grants PostgreSQL suites require an owned
 disposable database and enforcing role. The Test Lab card probes anonymous refusal only.
 
