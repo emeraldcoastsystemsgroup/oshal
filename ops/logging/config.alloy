@@ -1,0 +1,78 @@
+// CHANGE LOG
+// -----------------------------------------------------------------------------
+// SEQ                 | AUTHOR                      | DESCRIPTION
+// -----------------------------------------------------------------------------
+// 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-171: Alloy pipeline for the unified logging overlay. Discovers every container on the oshal network through the read-only Docker API proxy, labels each line with its container, compose service/project and oshal tier, and pushes it to VictoriaLogs over the Loki protocol. Never run yet (see docker-compose.logging.yml).
+
+// discovery.docker    which containers exist (through logging-docker-proxy, never the socket)
+// discovery.relabel   the labels every line carries
+// loki.source.docker  follow each container's stdout and stderr
+// loki.write          push to VictoriaLogs
+
+discovery.docker "oshal" {
+  host             = "tcp://oshal-local-logging-docker-proxy:2375"
+  refresh_interval = "30s"
+
+  // Only containers attached to the swarm network: the core stack and its overlays.
+  filter {
+    name   = "network"
+    values = ["oshal-local_oshal"]
+  }
+}
+
+// Used only for its rules, which loki.source.docker applies to each discovered target.
+discovery.relabel "oshal" {
+  targets = []
+
+  // Docker reports the name as "/oshal-local-api"; strip the slash. This is the identity
+  // to search by: every bot shares SERVICE_NAME, so the JSON `service` field does not say
+  // which container wrote a line.
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/?(.+)"
+    target_label  = "container"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "compose_service"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "compose_project"
+  }
+
+  // core | worker, the same label the Prometheus jobs discover by.
+  rule {
+    source_labels = ["__meta_docker_container_label_oshal_tier"]
+    target_label  = "tier"
+  }
+
+  // The log stack's own containers stay in `docker logs` only. The proxy writes a line for
+  // every API request, so shipping it would fill the store with this pipeline's own polling.
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    regex         = "oshal-logging"
+    action        = "drop"
+  }
+}
+
+loki.source.docker "oshal" {
+  host             = "tcp://oshal-local-logging-docker-proxy:2375"
+  targets          = discovery.docker.oshal.targets
+  labels           = {"swarm" = "oshal-local"}
+  relabel_rules    = discovery.relabel.oshal.rules
+  refresh_interval = "30s"
+  forward_to       = [loki.write.victorialogs.receiver]
+}
+
+// VictoriaLogs parses a JSON line into fields (module, ticketId, agentId, ...) by default.
+//   _stream_fields=container    one stream per container; the other labels become plain fields
+//   _msg_field=msg,_msg         pino's `msg` is the message; a non-JSON line keeps the raw line
+//   decolorize_fields=_msg      strip ANSI colour from plain-text console loggers
+loki.write "victorialogs" {
+  endpoint {
+    url = "http://oshal-local-victorialogs:9428/insert/loki/api/v1/push?_stream_fields=container&_msg_field=msg,_msg&decolorize_fields=_msg"
+  }
+}
