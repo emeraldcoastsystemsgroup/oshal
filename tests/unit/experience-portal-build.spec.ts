@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Portal sections: the central assistant feature, the three homebases and the four numbered layouts with their live facts and no screenshot, in the demo's order; the classroom card's listed-only and not-in-catalog states without any Little Monsters request.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | The demo's six-width layout check over the four layouts (home, directory, application panel with its package facts, work panel with its workflow) and the portal at four widths; the provenance panel's on-demand reads before and after they are made; the other games in a game's panel.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Markup the caller types renders as text in the Jarvis thread (the demo's "input remains text" check).
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | The demo's remaining interactions end to end: the directory's empty state, Studio's use-as-context, Commons drafts per room, keyboard tabs (arrows, Home, End), an application leading to its room, Room details and the private space opening (they opened nothing before), Orbit's hub ask and its way back, a fresh conversation and the phone-width menu.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -660,6 +661,84 @@ describe('the conversation keeps what the caller types as text', () => {
     expect(await page.locator('.conversation-list .user-message').last().innerText()).toBe('<img src=x onerror="window.__owned=1">');
     expect(await page.evaluate(() => (window as unknown as { __owned?: number }).__owned)).toBeUndefined();
     expect(fixture.state.asks[0].message).toBe('<img src=x onerror="window.__owned=1">');
+    expect(errors).toEqual([]);
+  });
+});
+
+describe('demo interactions end to end: directory, rooms, drafts, tabs, room details, private space, Orbit ask and back, new conversation, phone menu', () => {
+  it('the directory says when nothing matches, and Studio makes an application the conversation context', async () => {
+    await open('/studio', '.full-studio');
+    await page.keyboard.press('Control+k'); await page.fill('#app-search', 'no-such-application-123');
+    expect(await page.locator('#catalog-results').innerText()).toContain('No matching applications');
+    expect(await page.locator('#catalog-result-count').innerText()).toBe('0 of 19 applications');
+    await page.fill('#app-search', 'forge');
+    await page.locator('.catalog-card[data-catalog-app="forge"] .catalog-main').click();
+    await page.locator('#full-dialog [data-action="use-context"]').click();
+    expect(await page.locator('.context-token').innerText()).toBe('Synthetic forge');
+    expect(await page.locator('.crumb .title').innerText()).toBe('Synthetic forge');
+    expect(errors).toEqual([]);
+  });
+
+  it('Commons keeps drafts per room, moves between tabs by keyboard, and an application leads to its room', async () => {
+    await open('/commons', '.full-commons');
+    await page.fill('#message-input', 'Draft for finance only');
+    await page.locator('.commons-sidebar [data-action="room"][data-suite="ai-engineering"]').click();
+    expect(await page.locator('#message-input').inputValue()).toBe('');
+    await page.locator('.commons-sidebar [data-action="room"][data-suite="ai-finance"]').click();
+    expect(await page.locator('#message-input').inputValue()).toBe('Draft for finance only');
+    await page.getByRole('tab', { name: 'Conversation' }).focus();
+    await page.keyboard.press('ArrowRight');
+    expect(await page.locator('#full-tab-apps').getAttribute('aria-selected')).toBe('true');
+    await page.keyboard.press('End');
+    expect(await page.locator('#full-tab-board').getAttribute('aria-selected')).toBe('true');
+    await page.keyboard.press('Home');
+    expect(await page.locator('#full-tab-conversation').getAttribute('aria-selected')).toBe('true');
+    await page.keyboard.press('Control+k'); await page.fill('#app-search', 'forge');
+    await page.locator('.catalog-card[data-catalog-app="forge"] .catalog-main').click();
+    await page.locator('#full-dialog [data-action="use-context"]').click();
+    expect(await page.locator('.room-header h1').innerText()).toContain('Engineering room');
+    expect(await page.locator('.context-token').innerText()).toBe('Engineering room');
+    expect(await page.locator('#toast').innerText()).toBe('Opened the room for Synthetic forge.');
+    expect(errors).toEqual([]);
+  });
+
+  it('Commons room details and the private space open and describe what is shared; Orbit asks Jarvis from its hub and returns to the whole swarm', async () => {
+    await open('/commons', '.full-commons');
+    await page.locator('.room-header [data-action="room-details"]').click();
+    expect(await page.locator('#full-dialog-title').innerText()).toBe('Finance room');
+    expect(await page.locator('#full-dialog').innerText()).toMatch(/3 applications in this room[\s\S]*no other person’s accounts or conversations are read/);
+    await page.keyboard.press('Escape');
+    await page.locator('.commons-rail [data-action="private"]').click();
+    expect(await page.locator('#full-dialog-title').innerText()).toBe('Your private space');
+    expect(await page.locator('#full-dialog').innerText()).toContain('stay in their own applications and your own Jarvis thread');
+    await page.keyboard.press('Escape');
+    await open('/orbit', '.full-orbit');
+    await page.locator('.orbit-hub[data-action="ask"]').click();
+    await page.fill('#ask-input', 'What needs me in Orbit?');
+    await page.locator('#ask-form button[type="submit"]').click();
+    await page.waitForSelector('#ask-response .message-content p strong');
+    expect(fixture.state.asks[0].message).toBe('What needs me in Orbit?');
+    await page.keyboard.press('Escape');
+    await page.locator('.suite-node[data-suite="ai-finance"]').click();
+    expect(await page.locator('.suite-node').count()).toBe(0);
+    await page.locator('[data-action="orbit-back"]').click();
+    expect(await page.locator('.suite-node').count()).toBe(6);
+    expect(errors).toEqual([]);
+  });
+
+  it('Studio starts a fresh conversation, and its phone-width menu opens and says so', async () => {
+    await open('/studio', '#message-input');
+    const before = await page.evaluate(() => localStorage.getItem('jarvisSessionId'));
+    await page.locator('.studio-sidebar [data-action="new"]').click();
+    expect(await page.locator('#toast').innerText()).toBe('Started a fresh conversation.');
+    expect(await page.evaluate(() => localStorage.getItem('jarvisSessionId'))).not.toBe(before);
+    await page.setViewportSize({ width: 390, height: 900 });
+    await page.reload(); await page.waitForSelector('.full-studio');
+    const toggle = page.locator('.mobile-nav-toggle');
+    expect(await toggle.getAttribute('aria-expanded')).toBe('false');
+    await toggle.click();
+    expect(await page.locator('.full-studio.nav-open').count()).toBe(1);
+    expect(await page.locator('.mobile-nav-toggle').getAttribute('aria-expanded')).toBe('true');
     expect(errors).toEqual([]);
   });
 });

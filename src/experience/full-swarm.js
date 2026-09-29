@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Visual cards in place of the demo's mini visuals: Studio's selected workspace (unless the application runs in place), Orbit's inspector and the Commons Game room picture the application with its latest work; Finance draws the caller's monthly spend.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | A related application in Studio's selected workspace becomes the context, and in Orbit's inspector it opens its own suite and inspector (the demo's cross-suite follow). Orbit seats six suites at the demo's positions, clear of the legend the computed circle covered. The Commons Applications tab uses the shared catalog card with its pin; a pin changed there re-renders at once and keeps focus.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Commons names the caller's team or household as its workspace (else '<name>'s swarm'), seats up to three fellow members beside the caller and Jarvis in the room header, and lists the members by role, the caller with their own place, above the swarm roster. Membership, not presence: nobody else's availability or place is shown.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com | Commons' Room details button, its 'What is shared here?' link and the Private rail button open their panels: the panel content was defined but no handler opened it, so all three did nothing.
  */
 (() => {
   'use strict';
@@ -262,6 +263,8 @@
       if (a === 'menu') { state.navOpen = !state.navOpen; render(); return; }
       if (a === 'prompt') { shell.close(); return send(target.dataset.prompt); }
       if (a === 'ask') { shell.open('ask'); return; }
+      // Commons' Room details and Private rail open their panels (the content existed; the buttons opened nothing).
+      if (a === 'room-details' || a === 'private') { shell.open(a); return; }
       if (a === 'new') { if (layout === 'commons') { LIVE.prefs.set(`room-thread:${state.room}`, LIVE.prefs.get(`room-thread:${state.room}`, 0) + 1); roomThreads.delete(state.room); } else { thread = shell.createThread(LIVE.rollSession(), 'Jarvis'); thread.loaded = true; } state.drafts[contextKey()] = ''; save(); render(); const input = document.getElementById('message-input'); if (input) input.focus(); shell.toast('Started a fresh conversation.'); return; }
       if (a === 'home') { window.scrollTo({ top: 0, behavior: 'auto' }); }
     });
