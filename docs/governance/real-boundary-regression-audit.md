@@ -661,3 +661,40 @@ spend consent). It needs a region API advertising the enforced `costConsentVersi
 view/read/create/change/delete/generate grants and a configured provider; its fixture uploads are
 reported as retained for later cleanup rather than falsely reported deleted. No such command was
 run for this review, and no service start, deployment or accounting read was attempted.
+
+## Kernel manifest route-auth inventory (2026-09-29)
+
+`tests/unit/manifest-route-auth.spec.ts` reproduced the main `ecd409be` failure: the top-level
+kernel/build-variant YAML scan found only Security's route, while the historical anti-empty floor
+required more than three. The repository separation allowlist in `scripts/check-repo-separation.js`
+and actual YAML files agree on the kernel manifest set. Both Engineering variants explicitly use
+`routes: []`: assigning their framework-owned routes to the app previously caused inactive-app
+503s. No production declaration is missing for this count failure.
+
+The guard now requires the exact declaration identity: `swarm-apps/security.yaml`, module
+`src/app/routes/security-routes.ts`, factory `createSecurityRoutes`, mount `/api/security`, auth
+`operator`. This matches the actual `requiresAuth, requiresOperator` mount in `src/app/server.ts`.
+Removing or substituting this declaration fails even when a numeric floor would pass. Additional
+declarations also require an explicit inventory review. Existing explicit-auth and mounted-mode
+checks remain unchanged; no manifest or production source change ships with this repair.
+
+Boundary: real filesystem reads and YAML parsing of the shipped manifests, plus a source-text
+comparison with the server mount. Resolver/validation cases call the real route-auth registry and
+`readManifest` against temporary YAML files. The negative controls temporarily altered the actual
+Security manifest in the isolated lane, then restored its exact original Git blob
+`90a957d388813bebd4a7708be38b96cb45c672d8`. No HTTP server, installed package, database, Docker,
+provider, browser or live authorization boundary was exercised. This is not a full-suite pass.
+
+Focused receipts (one fork worker, worker heap 384 MiB / runner 128 MiB, immediate host memory
+preflight at least 1800 MiB):
+
+- Original spec: 16 passed / 1 failed (`expected 1 to be greater than 3`), exit 1, 7.83 s.
+- Repaired inventory: 17/17 passed, exit 0, 5.75 s.
+- Remove the required route: 16 passed / 1 expected failure, exit 1, 5.04 s.
+- Substitute its mount path while keeping one declaration: 16 passed / 1 expected failure,
+  exit 1, 7.30 s.
+- Exact manifest restoration: 17/17 passed, exit 0, 5.51 s; no failures/skips or mutation remains.
+
+The focused command is documented in [tests/README.md](../../tests/README.md#kernel-manifest-route-auth-inventory).
+Full typechecking/pre-push and final backlog closure are separate coordinated gates, not claimed
+by these unit receipts.

@@ -12,6 +12,26 @@ Pillow are required, and all output stays in the fixture's temporary directory. 
 registers actual package HTTP, forced-RLS disposable PostgreSQL and Chromium pixel/expiry/deletion
 acceptance; run its documented `lora/tests/gallery.config.mjs` command from the store checkout.
 
+## Kernel manifest route-auth inventory
+
+Run the focused source/manifest guard with one bounded worker:
+
+```sh
+node --max-old-space-size=128 node_modules/vitest/vitest.mjs run tests/unit/manifest-route-auth.spec.ts --pool=forks --execArgv=--max-old-space-size=384 --no-file-parallelism --maxWorkers=1 --testTimeout=90000
+```
+
+The spec scans top-level YAML files in `swarm-apps/` and `swarm-apps-build/`, not connector
+definitions or installed store packages. It pins the required Security declaration by file,
+module, factory, mount path and `operator` auth instead of a historical count floor. Both
+Engineering variants intentionally leave framework-owned routes undeclared; adding them to
+satisfy a count would incorrectly assign app ownership. A changed inventory requires review of
+the named contract, not a relaxed threshold. The existing explicit-auth and server-mount comparison
+guards remain in place, and the loader cases use real temporary YAML files through `readManifest`.
+
+This is filesystem/YAML and source-contract verification, not live HTTP authentication or installed
+package acceptance. The [boundary audit](../docs/governance/real-boundary-regression-audit.md#kernel-manifest-route-auth-inventory-2026-09-29)
+records the reproduced failure, deletion/substitution mutations and restored focused results.
+
 ## General requirements
 
 New functionality needs behavior tests in the same change. Bug fixes need a regression test that
