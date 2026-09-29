@@ -13,7 +13,8 @@ boundary), [ADR-046](046-token-chase-checkpoint-replay-optimization.md) (Token C
 replay, judged savings), [ADR-090](090-skills-as-first-class-packages.md) (kernel skills reached through
 `uses:`), [ADR-097](097-app-suites-primary-categorization.md) (suites), [ADR-103](103-ai-office-one-themed-engine.md)
 (AI Office: one outline, code renders three artifacts), [ADR-122](122-model-is-untrusted-principal.md),
-[ADR-137](137-deploy-modes.md) (deploy modes, the edition seam).
+[ADR-127](127-demo-mode-cli-brain-and-user-provider-preference.md) (why the CLI harnesses are refused
+unattended, and the demo-mode operator carve), [ADR-137](137-deploy-modes.md) (deploy modes, the edition seam).
 
 Paths are core-relative unless prefixed `store/`, which means the store repository.
 
@@ -55,13 +56,25 @@ Paths are core-relative unless prefixed `store/`, which means the store reposito
   declaration.
 - **The edition seams exist.** Deploy modes (ADR-137) and the `noop` provider (`FORCE_LLM_PROVIDER=noop`,
   the zero-keys demo) already split the product by what inference is available.
-- **A self-hosted model has no fleet-default path with tools.** The `ollama` and `lmstudio` provider ids
-  route through the Cline harness (`any-bot/server/services/llm/registry/provider-definitions.js:193,515`),
-  which is fail-closed for unattended execution. The only live non-CLI route to a self-hosted endpoint is
-  the per-request BYO connection, built as an OpenAI-compatible provider with a base URL
-  (`any-bot/server/controllers/TaskController.js:1229`), and it runs tool-less by the operator's
-  2026-09-22 decision (`TaskController.js:348-354`). `OpenAIProvider` already honours a configurable base
-  URL (`any-bot/server/services/llm/OpenAIProvider.js:59-67`).
+- **The Cline route to open models is wired, and it is refused unattended because of the tool loop, not
+  the model.** The `ollama` and `lmstudio` provider ids carry a `clineProvider`
+  (`any-bot/server/services/llm/registry/provider-definitions.js:193,515`); the registry writes that id
+  into Cline's `actModeApiProvider` and `planModeApiProvider` (`registry/global-state-builder.js:54-55`);
+  the bot node constructs a `ClineProvider` at startup (`app-modules/startup-core-services.js:85`) and the
+  compose `local-llm` profile ships an Ollama container behind `OLLAMA_HOST`. Every Cline spawn point
+  then calls `assertCliToolBoundary(options, 'cline-cli')` (`services/codebase/ClineCLIWrapper.js:318-741`),
+  which throws `UNENFORCEABLE_CLI_TOOL_BOUNDARY` unless `DEMO_MODE` is on and the launching user is in
+  `OSHAL_OPERATOR_SUBS` (`services/llm/assert-cli-tool-boundary.js`, the ADR-127 carve). The check keys on
+  the harness name, so an open model behind Cline is refused exactly as a hosted one is. ADR-127 records
+  the reason: a CLI harness owns its own tool loop, can read its credential home, and cannot revalidate
+  oshal's handler generation or operation scopes mid-loop. So today an open model through Cline runs for
+  the deployment operator in demo mode and for nobody unattended.
+- **The non-CLI route keeps oshal's own tool loop, and exists only as a caller's BYO connection.** An
+  OpenAI-compatible provider with a base URL (`any-bot/server/controllers/TaskController.js:1229`) is built
+  per request from `byoLlmConnection`, and it runs tool-less by the operator's 2026-09-22 decision
+  (`TaskController.js:348-354`), because a caller's endpoint must not drive the bot's tools.
+  `OpenAIProvider` already honours a configurable base URL (`any-bot/server/services/llm/OpenAIProvider.js:59-67`)
+  and runs `runDeclaredToolExchange` server-side, which is the boundary Cline cannot enforce.
 - **What the dev box's traces show.** `workspace/task-*/agent-context.md` files are 21-byte stubs and
   `workspace/provider-ticket-1/shopping-concierge-context.md` is 3.5 KB. Live `chat_tasks` rows were not
   read (stack down). The measurement below is therefore static, and P0 exists to replace it.
@@ -221,10 +234,16 @@ server-side as deterministic intents whose normalised results reach the model. C
 model-visible; MCP is not a model tool environment. The remote-client bridge (`src/features/remote-client/`)
 is the existing seam.
 
-**D8. The one core change, gated on approval.** P3 needs a fleet-default OpenAI-compatible provider with
-a configurable base URL that reaches the tool loop, so a self-hosted model can be a bot's default rather
-than a tool-less per-request BYO connection. This is core (Rule 0d) and is not started until the operator
-answers Q5.
+**D8. The one core change, gated on approval.** P3 needs an operator-configured OpenAI-compatible
+provider, with a base URL, that a bot can carry as its default and that runs oshal's own tool loop. The
+question D8 answers is whose tool loop runs, not which model: Cline runs its own loop and cannot enforce
+the closed provider-intent boundary (ADR-127), so an open model through Cline stays a demo-mode operator
+tool; the same open model behind Ollama's, LM Studio's or vLLM's HTTP API driven by `OpenAIProvider`
+keeps the tools server-side. The 2026-09-22 tool-less decision concerned a caller's endpoint driving the
+bot's tools; D8 is the operator's endpoint as the bot's brain, the same trust posture `openai-codex`
+holds today. The alternative is the audited brokered sandbox CLAUDE.md names as the condition for
+re-enabling a local CLI, which is the larger job. This is core (Rule 0d) and is not started until the
+operator answers Q5.
 
 ## Cost and benefit per option
 
@@ -249,7 +268,9 @@ additive, and decide C after P1 has recorded what a 20B-class local model actual
   (proposal), or fully generated with no declaration?
 - **Q4. Degrade default.** `disable` with a message (proposal), `template` where one exists, or `hosted`
   when an account is present?
-- **Q5. Approve D8** (the fleet-default OpenAI-compatible provider with tools) before P3 starts.
+- **Q5. Approve D8** (an operator-configured OpenAI-compatible provider as a bot's default, running
+  oshal's tool loop) before P3 starts, or choose the alternative: audit a brokered sandbox so the Cline
+  route to open models can run unattended.
 - **Q6. Persona doctrine.** ADR-036 says the persona embeds the full quality gate. D6 narrows that to
   identity and judgement and moves the gate into code. Confirm this is wanted before the P2 persona
   rewrite of `oshal-assistant` and `rca-specialist`.
