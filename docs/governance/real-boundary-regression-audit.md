@@ -8,6 +8,24 @@ provider claim still needs a separate live acceptance run.
 
 ## Dispositions
 
+### Fresh personal qualified connector grants (2026-09-29)
+
+`connector-qualified-http.spec.ts` executes real Express routes, OAuth ceremony, crypto,
+session and grant-store code; authentication, provider responses and transactional SQL are
+explicit doubles. Held checkout/work/commit cases prove the HTTP identity/consent fencing
+logic, not PostgreSQL rollback or RLS. `connector-qualified-smartthings.spec.ts` executes the
+provider adapter against a loopback HTTP responder; no real account is contacted.
+`qualified-connectors-ui.spec.ts` executes the shipped JavaScript with DOM, fetch,
+confirmation and navigation doubles; native browser acceptance remains open.
+
+`connector-qualified-credentials-postgres.spec.ts` and
+`connector-qualified-grants-postgres.spec.ts` are the required owned PostgreSQL/enforcing-role
+companions. At this source integration they are **unrun**, not covered by the unit result.
+Migration 181 promotion, installed owner-bound consent and physical-device readiness remain
+open until their distinct real-boundary evidence exists. No legacy credentials are adopted.
+
+### Boundary inventory
+
 | Boundary audited | Mock/stub disposition | Required real companion | Status |
 |---|---|---|---|
 | Ticket-store writes under RLS | Unit router/gateway doubles stay for transition and error-branch coverage; they cannot prove PostgreSQL accepts or owns a row. | `tests/alert-intake-rls-live.spec.ts` and `tests/connector-webhook-rls-live.spec.ts` drive the real routers, `PostgresTicketStore`, GUC wrapper, NOBYPASSRLS role, policies, and rows. Both are mandatory in `tests/e2e-green-suite.txt`. | Real companion present. |

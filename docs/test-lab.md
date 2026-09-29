@@ -857,7 +857,9 @@ HTTP identity changes and consent expiry: pre-commit invalidation rolls back; po
 invalidation suppresses metadata without claiming to undo the commit. The dedicated
 PostgreSQL companions prove the
 storage boundary only when executed with a real owned enforcing-role fixture. The card does
-not create a grant, arm a location rule or enable device actions. The endpoint contract and
+not create a grant, arm a location rule or enable device actions. Utilities' separate qualified
+panel has actual-JavaScript tests with named DOM/fetch doubles, not installed browser evidence.
+The endpoint contract and
 focused test command are in [the connector architecture](architecture/connectors-and-graph-architecture.md#36-fresh-issuer-qualified-personal-grants).
 
 **Multi-store discovery** (`multi-store-discovery`) reads registry status and qualified package

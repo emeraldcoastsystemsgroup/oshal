@@ -413,19 +413,29 @@ results fail closed. This does not prove permission for any later device action.
 
 The HTTP request lifetime is bounded and checked after provider awaits. Provider I/O occurs
 outside database transactions; short credential operations use the shared qualified session
-with abort disposal. Physical Home/L8 readiness is unchanged. Console enrollment controls,
-Home broker wiring, an installed owner-bound consent and actual device-action acceptance
-remain separate work; these server endpoints alone do not close that feature.
+with abort disposal. Utilities has a separate **Personal SmartThings qualified grants** panel
+for fresh PAT/OAuth consent, bounded metadata pages, revision-bound reconnect and confirmed
+local revocation. Password fields clear on submission, failures and navigation; tokens are not
+logged or stored in browser storage. A stale write refreshes metadata without retrying it.
+Unknown expiry is displayed honestly. Unavailable qualified storage disables cached controls,
+with no legacy fallback. OAuth requires the existing registered client; its navigation can
+return a server 503, in which case return to Utilities and refresh after configuration is fixed.
+
+Physical Home/L8 readiness is unchanged. Home broker wiring, an installed owner-bound consent,
+real browser acceptance and actual device-action acceptance remain separate work; the panel
+and server endpoints alone do not close that feature.
 
 Focused verification:
 
 ```sh
-npx vitest run tests/unit/connector-qualified-http.spec.ts tests/unit/connector-qualified-smartthings.spec.ts tests/unit/connector-qualified-session.spec.ts tests/unit/connector-qualified-grants.spec.ts tests/unit/connector-qualified-token-crypto.spec.ts
+npx vitest run tests/unit/connector-qualified-http.spec.ts tests/unit/connector-qualified-smartthings.spec.ts tests/unit/connector-qualified-session.spec.ts tests/unit/connector-qualified-grants.spec.ts tests/unit/connector-qualified-token-crypto.spec.ts tests/unit/qualified-connectors-ui.spec.ts
 ```
 
 The HTTP suite uses real Express, consent, crypto and session/store modules with named
 authentication, provider-response and transactional SQL doubles. The provider companion
 uses a loopback protocol responder. Neither proves PostgreSQL RLS or live SmartThings access.
+The UI suite executes the shipped JavaScript with named DOM/fetch/confirmation/navigation
+doubles; it is not an installed browser receipt.
 The separate qualified-credentials and qualified-grants PostgreSQL suites require an owned
 disposable database and enforcing role. The Test Lab card probes anonymous refusal only.
 
