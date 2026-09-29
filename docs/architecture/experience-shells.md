@@ -12,16 +12,16 @@ Eight selectable experiences over one unchanged backend:
 
 | Experience | Route | Shape |
 | --- | --- | --- |
-| Studio | `/studio` | Workbench: suites and pinned apps beside one Jarvis conversation, selected app's summary or embedded surface alongside (hosted with the `company` view requested), its declared assistants and relationships |
-| Jarvis | `/jarvis` | Warm assistant home: briefing from the real queue, recent work, an agenda from the overview calendar feed plus the caller's Little Monsters calendar, suites; hosts apps with the `family` view requested |
-| Orbit | `/orbit` | Suites as connected worlds around Jarvis; drill into a suite, inspect an app with its declared assistants and relationships; hosts apps with the `company` view requested |
-| Commons | `/commons` | Suite rooms (plus a Game room) with applications, declared assistants, a work board, one Jarvis thread per room and the swarm roster; hosts apps with the `company` view requested |
+| Studio | `/studio` | Workbench: suites and pinned apps beside one Jarvis conversation, selected app's picture, summary or embedded surface alongside (hosted with the `company` view requested), its declared assistants and relationships (a related application becomes the context) |
+| Jarvis | `/jarvis` | Warm assistant home: briefing from the real queue, recent work, an agenda from the overview calendar feed plus the caller's Little Monsters calendar, suites, and the Routines panel from its rail; hosts apps with the `family` view requested |
+| Orbit | `/orbit` | Suites as connected worlds around Jarvis (six hubs at fixed positions, the day focus's suites ringed); drill into a suite, inspect an app with its picture, declared assistants and relationships (a related application opens its own suite); hosts apps with the `company` view requested |
+| Commons | `/commons` | Suite rooms (plus a Game room) with applications (pinnable), declared assistants, a work board, one Jarvis thread per room, the caller's household or team by role (its name as the workspace) and the swarm roster; hosts apps with the `company` view requested |
 | Home · family homebase | `/homebase?preset=family` | Front page: the shared calendar, then money (a parent) or school (a learner), Smart Home facts, the tools; the shopping list, a Recent documents card (AI Office's own summary) and the noticeboard beside; people; hosts Smart Home, Shopping, Money, Little Monsters, Movies & TV, Music and Travel (as Watch, Listen and Go) and AI Office in place with the `family` view requested |
 | Little Monsters · classroom | `/homebase?preset=classroom` | Classwork, class calendar, teacher roster with each learner's activity (level, streak, quiz average, cards reviewed) or learner checklist by real role; teachers post classwork from the shell; the learner checklist opens My Day in place; the Little Monsters tools the caller is admitted to open in place, beside AI Office (Make and share) and Circuit Lab (Build and test) with the `classroom` view requested |
 | Business · company swarm | `/homebase?preset=company` | Front page: Today (Intelligent Communication's saved digest), Office calendar (the Calendar package's snapshot), Recent documents (AI Office) and Capture pipeline (Federal CRM) as summary cards, then open tickets as projects (six rows, tickets awaiting approval first and the rest newest first; a ticket awaiting a human approval can be approved from its dialog) and the tools; Payroll and Calls cards, lists, the personal card (the dense account table, or, where Finance is not installed, a personal workspace whose "My drafts" lists the caller's saved Content Studio drafts and newest finished Jarvis task) and the team feed beside; team calendar and people pages; hosts Presentations, Office (Intelligent Communication's My Day, Calendar, World Intelligence), Finance, Communications (Switchboard, Social's Composer, Calling Assistant), Growth (Marketing Engine, Venture Plan), Federal CRM (its pipeline surfaces), Payroll, Payments, Identity and Engineering in place with the `company` view requested |
 | Central assistant | `/nexus` | Intent composer with push-to-talk dictation, a "Request progress" ledger of observed phases, a typed answer workspace (answer, owner-checked visual, handoffs, background work, approval card, fallback provider), lifecycle states (running, ready, partial, failed, setup needed, stopped waiting, still running (poll limit)), speaking core |
 
-`/portal` (also `/experience`) is the chooser. The cockpit header's **Experiences** menu links the
+`/portal` (also `/experience`) is the chooser: the suite inventory, the central assistant as a feature, the three homebases ("One swarm. Three ways to belong.") and the four layouts numbered 01-04, each card with a drawn preview in its palette and one live fact, then recent work and the searchable directory. The cockpit header's **Experiences** menu links the
 same eight entries, every shell carries an experience picker in its top bar, and `/little-monsters`
 redirects to the classroom preset. Plain `/cockpit/` is unchanged: the experiences are opt-in.
 
@@ -51,6 +51,13 @@ own session:
 | Work items | `GET /api/tickets` (the caller's tickets) and `GET /api/jarvis/tasks` (the Jarvis shelf), attributed to apps by declared ticket type or title prefix |
 | Assistants online, open count, swarm calendar feed | `GET /api/jarvis/overview` (`calendar.events` read as `{title, when}`, the shape the cockpit Jarvis page reads; empty on every current deployment) |
 | Declared assistants and relationships (app panel, Studio's selected workspace, Orbit's inspector) | `GET /api/swarm/apps/:name`, viewer-scoped (404 = not visible), read lazily the first time a panel shows the app; a group also reads each installed member. Assistants are `manifest.bots[].name`, the explicit `manifest.chatBot` is marked Concierge, and online state appears only where the agentId joins the overview roster (otherwise "declared in the package"). Relationships: group members are "Member (required)"; app dependencies follow the two-form rule of `scripts/oshal-app-dependencies.js` (tiered `required`/`optional`, a legacy flat block is all required, a mixed block shows a neutral note and no tiers), labelled Required / Optional and "not in your catalog" when absent from the caller's catalog (the catalog lists the active apps this viewer can see, so absence is not proof an app is not installed). Connector tiers stay under Providers |
+| Day focus (Studio, Jarvis, Orbit, Commons) | Device-local `oshal-experience:scene:<layout>` ('A workday' / 'An evening at home'; `live-views.js` `sceneOrder`). It orders work, briefings and streams with the focus's suites first (workday: finance, engineering, productivity, knowledge; evening: home, creative & games) and hides nothing; headings and the Jarvis briefing speak to the part of the day; the evening Jarvis prompt names the installed game-like applications; Orbit rings the focus's suites; Commons moves to the Game room (or Home & life) and back. Never sent to a server |
+| Status fold | `LIVE.statusOf` names every canonical ticket state: `approved` (Approved), `approval_required` (Approval required), `customer_action` (Needs you), `dead_letter` (Blocked), every `in_process_*` phase (Working). `LIVE.STATUS_GROUPS` (attention / moving / done) places each label in the briefing and the Commons board columns |
+| Work panels (four layouts) | A ticket, or the ticket behind a swarm task, reads `GET /api/v1/tickets/:id/workflow` (the registered definition's stages with each one's recorded run step state, progress only from a recorded run, approval-gate receipts, status history, child tickets; the definition is today's registration, not a run snapshot) and `GET /api/tickets/:id`. **Approve** (`PUT /api/tickets/:id/status` approved) only for `approval_required` whose current transition does not name `none_children_dispatch_independently` (the homebase rule); **Cancel** (`PUT /api/tickets/:id/cancel`) behind a confirmation while the ticket is open. A refusal is shown as returned; a success reloads the work. Working rows carry an indeterminate bar: the queue records no percentage |
+| Routines panel (Jarvis rail, "Its routines" in any app panel) | `GET /api/v1/agent/schedules` (owner-scoped): what each asks, its cadence in words, next and last run, run count. Only the caller's own prompt schedules carry an "On for me" switch (`POST /api/v1/agent/schedules/:id/pause` / `resume`); an `app:` / `app-route:` schedule says its application manages it and a `workflow:` schedule an operator; a refusal puts the switch back. `GET /api/workflow-studio/definitions` lists the workflows by name, version and size with a link to Workflow Studio, where they are edited, published and restored |
+| Visual cards (Studio's workspace, Orbit's inspector, app and work panels, the Game room) | The label is the suite and the newest work's state, the heading that work's title (or the application's name), the footer its source; engineering, game, home and document pictures are labelled illustrations. Only Finance draws data: monthly spend bars from `GET /api/finance/summary` (read once per page, only for a Finance the caller's plan admits), with its no-data, empty and failed states |
+| Package facts (application panel) | The caller's catalog (id, version, kind, suite, listing status as registry metadata, plan admission, ticket type and queue, first surface, skin, declared tools and providers) plus the viewer-scoped `GET /api/swarm/apps/:name` record (scope, kernel skills used, registered agents, status), or why the record is not shown |
+| Household or team, and the caller's own place | `GET /api/tenants` and the chosen tenant's `GET /api/tenants/:id/members` (an organisation first, else a household; subject and role only, so a member is named only where the Commons roster has the same subject) and `GET /api/location/state` (ADR-169 L3, the caller's own overview: "At <place> · 5 min ago", sharing on or off, or that this session cannot read it; no coordinates). Commons names the team or household as its workspace and seats up to three fellow members in the room header; every layout's People panel lists the members. Nobody else's place or availability is shown |
 | Games (directory chip, Commons Game room) | One shared predicate in `shell.js` (`isGameApp`): a Creative & games suite member whose name reads like a game. No manifest field marks a game, so the chip reads "Looks like a game" and its title says "Creative apps that look like games" |
 | Swarm roster (Commons room and People panel) | `GET /api/user-directory` (swarm admins): account name, source and sign-in status, never presence or room membership. A refusal (403) shows only the caller's own identity, and the route's code picks the sentence: `roster_scope_denied` says this session is not permitted to read the roster; `roster_administrator_required` (or any other 403) says only a swarm admin can list everyone |
 | Jarvis agenda | the overview calendar feed plus, when Little Monsters is in the caller's catalog, the Little Monsters calendar (classes and personal events). The calendar route resolves the caller as a learner and can create or link a learner row, so it is never the first contact: the package's read-only summary probe (`GET /api/little-monsters/home-summary`, the path its manifest declares) is read first, and only a 200 there leads to `GET /api/education/calendar?month=` for this month and next. An entry the listing shows but the caller's plan does not admit is not available to them: neither the probe nor the calendar is read and the agenda says "Little Monsters is not available to you". A probe refusal is named from its `error` (`LIVE.littleMonstersRefusal`): an application-authorization code (403 `app_access_*` from the app-access gate, `authorization_*` from the catalog runtime) reads "not available to you", the package's own 403 "Open Little Monsters to complete school setup" (the caller has no school profile yet; the package sends no machine code, so that sentence is the contract) reads "Open Little Monsters once to set up your school profile; its calendar then shows here.", and any other status says Little Monsters could not be checked; none of them sends an `/api/education/*` request. Each source and its empty, refused or not-in-your-catalog state is named on screen |
@@ -75,11 +82,18 @@ provenance panel and the module renders its unavailable state. No module substit
 
 ## What is deliberately absent
 
-- No check-in, location or presence module: no application on the platform publishes such data.
-- No household directory: people appear only where a package publishes membership (a classroom
-  roster) or the user directory answers for the caller (company preset, Commons).
-- No presence, room membership or shared room conversation in Commons: the roster is the swarm's
-  account list and each room thread is the caller's own Jarvis conversation.
+- No check-in module and no one else's location or presence: the homebases show no place at all, and the full-swarm layouts show only the caller's own place from their ADR-169 overview. The ADR-169 grantee projection (a member share's place transitions for its group) is not on main, so no layout reads another person's place.
+- No household directory in the homebases: people appear only where a package publishes membership (a classroom
+  roster) or the user directory answers for the caller (company preset, Commons). The full-swarm layouts list the caller's
+  own household or team from `GET /api/tenants` by role; the route publishes no names.
+- No presence, room membership, person-to-person conversation or shared room messages in Commons: the members shown are
+  the caller's household or team, the roster is the swarm's account list, and each room thread is the caller's own Jarvis
+  conversation. No messaging service between people exists in core or the store.
+- No workflow publishing or restoring outside Workflow Studio: its definitions are a swarm-wide design store with no
+  per-caller owner, so the Routines panel lists them and links to Workflow Studio; the only change it makes is pausing or
+  resuming the caller's own schedules.
+- No players at a game table: game packages keep their own members (D&D's campaign `member_subs`) but publish no read of
+  them to a shell; a game's panel lists the other games on the swarm instead.
 - No calendar beyond what Little Monsters contributes; the swarm overview's calendar feed is empty
   by design until an application contributes events (the Jarvis agenda says so when it is empty).
 - No role switcher and no "Preview as" picker (ADR-164 D9). Teacher and learner views follow `/api/education/me`.
@@ -89,7 +103,7 @@ provenance panel and the module renders its unavailable state. No module substit
 
 ## Device-local preferences
 
-Pins per layout, skin per layout, the in-place Summary view / Full application choice per layout
+Pins per layout, skin per layout, the day focus per layout (`scene:<layout>`), the in-place Summary view / Full application choice per layout
 (`embed-view:<layout>`), homebase density and module toggles, the central assistant's
 display name and auto-speak are stored in `localStorage` under `oshal-experience:*`. They are
 visible as device-only choices in the UI and never reach a server setting or a permission. "Configure home" is not shown to a guest session (`/api/auth/user` `guestMode`).
@@ -137,6 +151,21 @@ stylesheets under `/experience/…`, so the strict CSP applies unchanged.
   sentences, UTC-midnight due and event dates in America/Chicago, the learner card without a completion count, an
   `approval_required` ticket leading the six project rows, and a timed event's day; a tool opened from the bottom of
   a long sidebar opens with its frame in the viewport and focused, with and without reduced motion.
+- `tests/unit/experience-portal-data.spec.ts`: the full-swarm build's pure readers (every canonical ticket state in exactly
+  one status group; the day focus order; cron cadence words; routines with their switch rule; workflow definitions;
+  membership with the chosen tenant; the caller's place; a ticket's workflow stages and progress; Finance spend bars),
+  each with its refusal state.
+- `tests/unit/experience-portal-build.spec.ts`: the same harness for the full-swarm build: canonical states on the board
+  and in the briefing; work panels (recorded workflow, full workflow view, Approve with its refusal, Cancel behind a
+  confirmation with its refusal, the indeterminate bar, invisible and unreadable workflows); the Routines panel (own
+  switch, managed rows, somebody else's absent, pause/resume and the refusal that puts the switch back, an app's routines
+  first, the ask-Jarvis empty state, refused reads); the day focus in all four layouts with device-only memory; visual
+  cards (Finance's spend read once, no-data, outside the plan never read); package facts; Orbit's cross-suite follow and
+  Studio's related context; pin focus; Orbit's hubs clear of the legend; household or team membership and the caller's
+  place with each source read once and their refusals; the portal's sections with live facts; the demo's six-width layout
+  check; the provenance of on-demand reads; entered markup staying text; and the demo's remaining interactions (the
+  directory's empty state, drafts kept per room, keyboard tabs, Room details and the private space, Orbit's hub ask and
+  its way back, a fresh conversation, the phone-width menu).
 - AI Test Lab card `experience-shells` (`test-lab-experience-scenarios.ts`): a read-only step over
   the entry pages and the feeds they join, classified as gap when the running image predates
   `src/experience`.
@@ -144,7 +173,7 @@ stylesheets under `/experience/…`, so the strict CSP applies unchanged.
 Run locally:
 
 ```sh
-npx vitest run tests/unit/experience-live-data.spec.ts tests/unit/test-lab-experience-scenarios.spec.ts tests/unit/experience-layouts-browser.spec.ts tests/unit/experience-full-swarm-gaps.spec.ts tests/unit/experience-dependency-tiers.spec.ts tests/unit/experience-nexus-gaps.spec.ts tests/unit/experience-homebase-gaps.spec.ts tests/unit/app-view-kit-browser.spec.ts
+npx vitest run tests/unit/experience-live-data.spec.ts tests/unit/test-lab-experience-scenarios.spec.ts tests/unit/experience-layouts-browser.spec.ts tests/unit/experience-full-swarm-gaps.spec.ts tests/unit/experience-dependency-tiers.spec.ts tests/unit/experience-nexus-gaps.spec.ts tests/unit/experience-homebase-gaps.spec.ts tests/unit/app-view-kit-browser.spec.ts tests/unit/experience-portal-data.spec.ts tests/unit/experience-portal-build.spec.ts
 ```
 
 ## Audience views: what a hosted page renders for a shell (ADR-164 D6)
