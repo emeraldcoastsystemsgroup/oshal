@@ -1,6 +1,7 @@
 /**
  * CHANGE LOG
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Validate exact opt-in anonymous reads without widening a public mount or manufacturing a principal.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Reject ambiguous same-mount anonymous owners without bypassing intervening private guards.
  */
 
 /** A mount-relative, explicitly named read operation; GET does not imply HEAD. */
@@ -55,6 +56,9 @@ export function readAnonymousPackageMounts(manifest: ManifestShape): AnonymousPa
     }
     if (!Array.isArray(route.anonymousRoutes) || !route.anonymousRoutes.length || route.anonymousRoutes.length > 32) {
       throw new Error('anonymousRoutes must be a non-empty array with at most 32 named reads');
+    }
+    if (mounts.some(existing => existing.mountPath === route.mountPath)) {
+      throw new Error('anonymousRoutes supports only one declaring module/factory per mount; combine reads in that handler or use distinct mounts');
     }
     const declarations = route.anonymousRoutes.map(readRoute);
     if (new Set(declarations.map(row => row.method + ' ' + row.path)).size !== declarations.length) {

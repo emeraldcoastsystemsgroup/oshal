@@ -16,6 +16,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Publish all declared package tools across route factories as one activation and fence unload synchronously.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | Resolve app tiers for exact verified subject/issuer pairs and refuse missing issuer before dispatch.
  * 13 | maintainer@emeraldcoastsystemsgroup.com | Admit only explicitly declared anonymous reads without inherited principal authority or sibling bypass.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com | Fence retired anonymous-declaring entries captured before an asynchronous predecessor yields to reload or unmount.
  */
 
 import type { Express, Request, Response, NextFunction, RequestHandler } from 'express';
@@ -404,6 +405,10 @@ export class ManifestRouteMounterImpl implements ManifestRouteMounter {
       // a valid secret passes WITHOUT populating req.oidc, so a carved app reading getCaller(req)
       // would see a null sub and mis-scope its user_sub-keyed store — the ADR-036 failure mode.
       // Core's serviceSecretOr routers each resolve this themselves; packages get it for free.
+      // A delayed predecessor may retain old entries across reload with an identical policy snapshot.
+      if (entry.declaration.anonymousRoutes && !this.byApp.get(entry.appName)?.includes(entry)) {
+        res.status(503).end(); return;
+      }
       if (entry.mode === 'public' && this.applicationAuthorization?.allowsAnonymousRoute?.(entry.appName, entry.declaration, req)) {
         const resume = AsyncResource.bind(next);
         runWithRequestIdentity({ sub: null, principalIssuer: null, isOperator: false },

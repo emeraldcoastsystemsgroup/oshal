@@ -42,6 +42,16 @@ describe('anonymous package manifest contract', () => {
     const loaded = load({ anonymousRoutes: [...route().anonymousRoutes, { method: 'HEAD', path: '/:token/video.mp4' }] });
     expect(readAnonymousPackageMounts(loaded)[0].anonymousRoutes).toHaveLength(2);
   });
+  it.each([false, true])('refuses disjoint anonymous owners on the same mount regardless of order (reverse=%s)', reverse => {
+    const routes = [route(), { ...route(), module: 'other.js', factory: 'createOther',
+      anonymousRoutes: [{ method: 'GET', path: '/:token/thumbnail.png' }] }];
+    if (reverse) routes.reverse();
+    expect(() => load({}, { routes })).toThrow(/anonymousRoutes.*one.*mount/i);
+  });
+  it('allows independent anonymous owners on different mounts', () => {
+    const loaded = load({}, { routes: [route(), { ...route(), mountPath: '/api/other-fixture', module: 'other.js' }] });
+    expect(readAnonymousPackageMounts(loaded)).toHaveLength(2);
+  });
   it.each([
     undefined, null, false, '*', [], {}, [{ method: 'GET' }], [{ path: '/video.mp4' }],
     [{ method: 'POST', path: '/video.mp4' }], [{ method: 'get', path: '/video.mp4' }],

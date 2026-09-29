@@ -28,6 +28,11 @@ the [manifest loader](../../src/features/swarm-apps/services/swarm-app-loader.ts
   `path`. Methods are uppercase `GET` or `HEAD`; GET does not imply HEAD or OPTIONS.
 - The mount must explicitly say `auth: public` and be a canonical literal path under
   `/api/<name>`. Legacy `requiresAuth: false` alone is not an opt-in.
+- Only one route-module/factory declaration per mount may contain `anonymousRoutes`, even
+  when two modules' public paths would be disjoint. Combine those reads in one handler or
+  use distinct mounts. Other same-mount modules keep their own guards: an earlier protected
+  handler is not skipped to reach the anonymous reader. Put the public reader first if it
+  must be reachable without passing an earlier protected handler.
 - Paths are **relative to that mount**, rooted with `/`, and match the complete pathname.
   Literal segments start with a letter, digit, underscore or hyphen and may then contain
   letters, digits, underscore, hyphen, dot or tilde. A whole segment may be `:name`, where the
@@ -44,6 +49,9 @@ The mounter asks the active runtime for the exact package/module/factory/mount d
 Unfinished activation, retirement, different modules and undeclared paths do not get an
 exception. Reload captures a detached new declaration snapshot. Fallthrough restores the
 request URL and the next module must independently pass its own guard.
+An anonymous-declaring entry captured before a delayed predecessor falls through must still
+be the exact active mounted entry. Reload or unmount retires it even if the replacement has
+identical declarations; stale dispatch returns 503 rather than running the old handler.
 
 No user, service, administrator, or authorization decision is fabricated. An anonymous handler
 runs with null-sub/non-operator database scope and without an inherited application actor.

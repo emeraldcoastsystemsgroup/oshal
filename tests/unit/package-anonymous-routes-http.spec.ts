@@ -54,11 +54,13 @@ exports.createRoutes = ctx => (req, res, next) => {
 };
 exports.createSibling = ctx => (req, res) => { ctx.fixtureObserve(req, res); res.json({ sibling: true }); };
 exports.createSeeder = ctx => (req, res, next) => { ctx.fixtureSeed(req, res); next(); };
+exports.createDelayer = ctx => async (req, res, next) => { await ctx.fixturePause(); next(); };
 `;
 let root: string, server: Server, base: string, runtime: ApplicationAuthorizationRuntime, mounter: ManifestRouteMounterImpl;
 let revoked: boolean, actorCalls: number, handlers: Array<{ sub: unknown; identity: unknown; actor: unknown }>;
 let requestViews: ReturnType<typeof requestView>[], resumedViews: ReturnType<typeof requestView>[];
 let errorViews: Array<{ message: string; view: ReturnType<typeof requestView> }>;
+let delayedReached: Promise<void>, releaseDelayed: () => void;
 function requestView(req: Request & { oshalCallerSub?: string }, res: Response) {
   return { url: req.url, originalUrl: req.originalUrl,
     caller: getCaller(req), authenticated: hasAuthenticatedUserIdentity(req), carried: req.oshalCallerSub,
@@ -102,6 +104,8 @@ beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'oshal-anonymous-http-'));
   writeFileSync(join(root, 'video.mp4'), BYTES);
   revoked = false; actorCalls = 0; handlers = []; requestViews = []; resumedViews = []; errorViews = [];
+  let markDelayed!: () => void, pauseOnce = true;
+  delayedReached = new Promise<void>(resolve => { markDelayed = resolve; });
   const service = new ApplicationAuthorizationService(new MemoryAuthorizationStore());
   runtime = new ApplicationAuthorizationRuntime(service, async (req: Request) => {
     actorCalls++;
@@ -122,6 +126,12 @@ beforeEach(async () => {
       requestViews.push(requestView(req, res));
     },
     fixtureSeed: seedRequestIdentity,
+    fixturePause: () => {
+      if (!pauseOnce) return Promise.resolve();
+      pauseOnce = false;
+      const pause = new Promise<void>(resolve => { releaseDelayed = resolve; });
+      markDelayed(); return pause;
+    },
   } as unknown as AppContext;
   const requiresAuth: RequestHandler = (_req, res) => { res.status(401).json({ error: 'sign_in_required' }); };
   mounter = new ManifestRouteMounterImpl(app, requiresAuth, ctx, undefined, runtime);
@@ -260,6 +270,24 @@ describe('exact anonymous route through enforce', () => {
     await install(manifest({ routes: [route(), { ...route(), factory: 'createSibling', anonymousRoutes: undefined }] }));
     expect((await fetchPath('/api/public-fixture/fallthrough/video.mp4')).status).toBe(401);
     expect(handlers).toHaveLength(1);
+  });
+  it.each(['reload', 'unmount'])('fences an old captured anonymous entry after delayed fallthrough across %s', async action => {
+    const input = manifest({ routes: [{ ...route(), factory: 'createDelayer', anonymousRoutes: undefined }, route()] });
+    await install(input);
+    const installer = { sub: 'installer-fixture', issuer: 'https://fixture.test', isActive: true, isSwarmAdmin: true };
+    const preview = await runtime.service.previewChange(installer, { action: 'grant', app: 'public-fixture',
+      targetSub: 'session-fixture', targetIssuer: 'https://fixture.test', role: '@app-admin',
+      reason: 'Permit a bounded earlier handler while its anonymous successor is retired', expectedRevision: 0 });
+    await runtime.service.applyChange(installer, { previewId: preview.previewId, idempotencyKey: crypto.randomUUID() });
+    const pending = fetchPath(published(), { headers: { 'x-fixture-identity': 'signed-in' }, signal: AbortSignal.timeout(3000) });
+    await delayedReached;
+    if (action === 'reload') await install(input); // Exact same declaration, different active handler objects.
+    else mounter.unmount(input.name);
+    releaseDelayed();
+    expect((await pending).status).toBe(503); expect(handlers).toHaveLength(0);
+    const fresh = await fetchPath(published(), { headers: { 'x-fixture-identity': 'signed-in' } });
+    expect(fresh.status).toBe(action === 'reload' ? 200 : 404);
+    expect(handlers).toHaveLength(action === 'reload' ? 1 : 0);
   });
   it('does not carry an exception onto a different factory that was never declared anonymous', async () => {
     const { dir } = await install();
