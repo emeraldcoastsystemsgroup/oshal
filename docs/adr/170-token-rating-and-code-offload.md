@@ -1,7 +1,7 @@
 # ADR-170: Token rating, capability tiers, and moving work from the model into code
 
 Date: 2026-09-29
-Status: **Proposed; the D2 declaration and the D10 ledger are built in core** (the `rating:` block validated by the loader, all ten kernel manifests rated, `docs/apps/ai-usage-ledger.md` generated and gated in CI and `ci-local.sh`). **The store half, the P0 token generator, the P1 model-rating harness and everything else are not built. Open questions Q1-Q6 are for the operator.**
+Status: **Proposed; the D2 declaration and the D10 ledger are built in both repositories.** Core: the `rating:` block validated by the loader, all ten kernel manifests rated, `docs/apps/ai-usage-ledger.md` generated and gated in CI and `ci-local.sh`. Store: 58 of 67 packages rated, `AI-USAGE-LEDGER.md` plus a generated section in each rated package README, gated in store CI and the pre-push hook with `--allow-unrated` until the nine packages that were under other lanes' claims are rated. **The P0 token generator, the P1 model-rating harness and everything else are not built. Open questions Q1-Q6 are for the operator.**
 The Context records what exists at core `main` `a5826495` and store `main` `cc38f11`, measured with the
 stack down (operator instruction). Every number below is either a static measurement of the tree, with the
 command recorded at the end, or a labelled estimate that slice P0 replaces with generated figures. No

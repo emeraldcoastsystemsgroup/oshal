@@ -7,6 +7,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - live acceptance for "Career scoring/tailoring bot-node migration" (career-hunter 1.24.0 replaced the app's only model path with the worker rail: every engine model call is a loopback POST /api/career-hunter/engine/complete that runs on the dedicated Career bot cb000000-0000-0000-0000-000000000001 through the kernel's accounted bot rail). As the operator automation identity it starts the smallest real engine run that reaches the rail (the owner-scoped manual `score` run; `match` is deterministic and `pull` scores 150 in-lane jobs), watches the owner's run list, cancels the run as soon as its first rail call is admitted so the spend is bounded, and then requires the kernel's own attribution: the chat_tasks rollup row for this owner and the Career bot plus at least one oshal_cost_events ledger row written since the run started, both read under the owner's own RLS identity. A rail call the kernel refused before package code (authorization_identity_required, 401, 403 - the shape tests/unit/career-rail-enforce-posture.spec.ts proves an enforce box answers) fails LOUDLY naming the refusal, as does a run that ends on any rail failure. The proof creates no synthetic rows: the scores it produces are the owner's own scoring work, exactly what the nightly pass writes, and stay; what it does create - the engine run and its rail token - it leaves terminal and revoked, and anything still running afterwards is reported as incomplete cleanup. Same host/container split as lora-import-live-proof.js.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Attribute by what the proof can know. The first live run (2026-09-28, career-hunter 1.25.1 under enforce, run 517a4078: 8 rail calls admitted) reported "no cost" although the kernel had written two oshal_cost_events rows for the Career bot under the owner: career-hunter declares a catalog, so it is a protected application, and the bot node keys a protected execution's history `protected-<sha256>::<agent>` (src/app/bot-node-execution-handler.ts:264-265 over src/app/bot-node-protected-workspace.ts:28-40, a digest over issuer, subject, application, agent, tenant, workspace and the execution id), never the `career-engine-<owner>::<agent>` id this proof derived. The digest is the isolation boundary and changes per execution, so the proof no longer predicts a task id: the verdict requires oshal_cost_events rows with agent_id = the Career bot, owner_sub = the resolved owner and ts at or after the run's start (read under the owner's RLS identity as before), no more of them than the rail calls the run itself admitted (GET /runs railCalls). The chat_tasks rollup is optional evidence: the owner's rows whose task id ends `::<Career bot>` touched since the start, whatever the workspace shape. The refusal naming and the cleanup contract are unchanged; the pre-run baseline read (only the exact rollup needed it) is gone.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Two more modes; the default is unchanged. `--complete` lets the score run FINISH: no cancellation, the run must reach `succeeded` on its own within the (longer, 30 min default) budget with at least one admitted rail call, a run someone else cancelled is red, and the same ledger attribution applies to every admitted call. `--worker-loss` (requires `--announced-window`: it takes the Career bot away from every user of the box for the length of one run failure) is the visible-termination clause: the container half (career-rail-worker-loss.js) starts a run, waits for its first admitted rail call and prints phase lines; this host half reacts by stopping `oshal-local-career-bot` through docker by name, the container half requires GET /runs to show the run failed with reason career-worker-unavailable and the run route to answer 503, the host restarts the container on the next phase line (or when the proof ends, whatever it did), and the container half waits for a heartbeat strictly newer than the record the dead bot left behind - a bot that does not come back is red. The approve-to-draft half of a complete run is NOT here: career-hunter 1.26.0 has no route that plants or removes a posting or an application row (POST /enqueue-drafts creates durable tickets and rows over the owner's real postings, career-application-routes.ts enqueueForUser/createApplication, and nothing deletes them), so a draft the proof owned and removed cannot be driven yet; it waits on that package seam.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | `--complete` gains its approve -> draft half (career-rail-draft.js) over career-hunter 1.27.0's Test Lab application seam: once the score run has passed, the proof borrows one untouched posting from the owner's own board, plants ONE application marked with this run's tag, approves it through the real route (the engine's `draft --job` on the Career worker rail), and requires the draft run `succeeded` in GET /runs, the application `drafted`, and the Career bot's ledger rows under the owner since the approve (no more than the calls the draft admitted). It then removes the packet and the marked application and reads the posting back as it was; an incomplete cleanup is red. The mode passes only when both halves pass: a package below 1.27.0, auto-submit on, or no untouched posting makes it unavailable, naming why, with nothing planted. The default and `--worker-loss` modes are unchanged; the draft module is staged beside the other two.
  */
 
 'use strict';
@@ -20,12 +21,14 @@
 // Knobs: OSHAL_VERIFY_OPERATOR_PAT (else read by name from OSHAL_VERIFY_ENV_FILE or ./.env),
 //        OSHAL_VERIFY_API_CONTAINER, OSHAL_VERIFY_CAREER_BOT_CONTAINER (worker-loss),
 //        OSHAL_CAREER_RAIL_RUN_BUDGET_MS, OSHAL_CAREER_RAIL_LEDGER_BUDGET_MS, OSHAL_CAREER_RAIL_POLL_MS,
-//        OSHAL_CAREER_RAIL_HEARTBEAT_BUDGET_MS (worker-loss).
+//        OSHAL_CAREER_RAIL_HEARTBEAT_BUDGET_MS (worker-loss), OSHAL_CAREER_RAIL_DRAFT_BUDGET_MS (complete).
 // Exit 0 pass, 1 fail, 2 not runnable (no PAT / package below 1.24.0 / caller not admitted / no
-// posting to score / worker-loss without --announced-window or with the bot container not running).
+// posting to score / worker-loss without --announced-window or with the bot container not running /
+// complete on a package below 1.27.0, with auto-submit on, or with no untouched posting to draft for).
 // Spends the owner's own scoring calls on the Career bot: bounded by cancellation by default, one
-// whole score run under --complete, up to one run failure under --worker-loss.
+// whole score run plus one draft under --complete, up to one run failure under --worker-loss.
 
+const { randomBytes } = require('node:crypto');
 const path = require('node:path');
 const runner = require('./live-proof-runner');
 
@@ -286,31 +289,69 @@ function decideVerdict(observed, attribution, budgets, mode = 'cancel') {
  * @param {object} ports - api, sleep.
  * @param {object|null} run - The observed run.
  * @param {object} budgets - pollMs.
+ * @param {(sinceMs: number) => Promise<object|null>} [find] - Re-reads the run (default: the score run lookup).
  * @returns {Promise<string[]>} Cleanup errors; empty means nothing of the proof's is still live.
  */
-async function cleanUpRun(ports, run, budgets) {
+async function cleanUpRun(ports, run, budgets, find = (sinceMs) => findRun(ports, sinceMs)) {
   if (!run || run.state !== 'running') return [];
   const status = await cancelRun(ports, run.runId);
   if (status !== 202 && status !== 409) return [`run ${run.runId} could not be cancelled (HTTP ${status})`];
   for (let attempt = 0; attempt < 10; attempt += 1) {
     await ports.sleep(budgets.pollMs);
-    const current = await findRun(ports, Number(run.startedAt) - 1);
+    const current = await find(Number(run.startedAt) - 1);
     if (!current || current.state !== 'running') return [];
   }
   return [`run ${run.runId} is still running after cancellation`];
 }
 
 /**
+ * @description The approve -> draft half, required lazily (it requires this module back).
+ * @returns {object} career-rail-draft's exports.
+ */
+function drafts() {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  return require('./career-rail-draft');
+}
+
+/**
+ * @description `--complete` only: once the score run passed, run the approve -> draft half. The mode
+ * passes only when both halves pass; a half that could not run makes it unavailable, naming why.
+ * @param {object} io - The proof's ports.
+ * @param {object} budgets - The mode's budgets, draftBudgetMs included.
+ * @param {{state: string, detail: string}} verdict - The score half's verdict.
+ * @param {object} evidence - The case evidence; gains `draft`.
+ * @returns {Promise<{verdict: {state: string, detail: string}, cleanupErrors: string[]}>} The combined verdict and the draft's cleanup errors.
+ */
+async function withDraftHalf(io, budgets, verdict, evidence) {
+  if (verdict.state !== 'pass') return { verdict, cleanupErrors: [] };
+  const draft = await drafts().runDraftHalf(io, budgets);
+  evidence.draft = { state: draft.state, ...draft.evidence };
+  return { verdict: { state: draft.state, detail: `${verdict.detail} Approve -> draft: ${draft.detail}` }, cleanupErrors: draft.cleanupErrors };
+}
+
+/**
+ * @description The budgets for one mode: the defaults, `--complete`'s longer run and its draft budget, then overrides.
+ * @param {'cancel'|'complete'} mode - The mode.
+ * @param {object} options - Budget overrides.
+ * @returns {object} runBudgetMs, ledgerBudgetMs, pollMs and (complete) draftBudgetMs.
+ */
+function modeBudgets(mode, options) {
+  const budgets = { ...DEFAULT_BUDGETS, ...(mode === 'complete' ? { runBudgetMs: COMPLETE_RUN_BUDGET_MS, draftBudgetMs: drafts().DEFAULT_DRAFT_BUDGET_MS } : {}) };
+  for (const key of Object.keys(budgets)) if (Number(options[key]) > 0) budgets[key] = Number(options[key]);
+  return budgets;
+}
+
+/**
  * @description Run the whole case once; cleanup always runs once a run was observed.
- * @param {object} ports - api, query, withOwner, ownerSub, careerVersion, sleep?, now?.
+ * @param {object} ports - api, query, withOwner, ownerSub, careerVersion, sleep?, now?, randomHex?.
  * @param {object} [options] - Budget overrides, and `mode` (`cancel`, the default, or `complete`).
  * @returns {Promise<{caseId: string, state: string, detail: string, evidence: object}>} The result.
  */
 async function runCareerRailAcceptance(ports, options = {}) {
-  const io = { sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)), now: () => Date.now(), ...ports };
+  const io = { sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)), now: () => Date.now(),
+    randomHex: () => randomBytes(6).toString('hex'), ...ports };
   const mode = options.mode === 'complete' ? 'complete' : 'cancel';
-  const budgets = { ...DEFAULT_BUDGETS, ...(mode === 'complete' ? { runBudgetMs: COMPLETE_RUN_BUDGET_MS } : {}) };
-  for (const key of Object.keys(DEFAULT_BUDGETS)) if (Number(options[key]) > 0) budgets[key] = Number(options[key]);
+  const budgets = modeBudgets(mode, options);
   const since = new Date(io.now());
   const evidence = { mode, verb: VERB, careerVersion: io.careerVersion || null, agentId: CAREER_AGENT_ID, startedAt: since.toISOString() };
   let observed = { run: null, response: null, cancelledByProof: false, timedOut: false };
@@ -328,7 +369,9 @@ async function runCareerRailAcceptance(ports, options = {}) {
   } catch (error) {
     verdict = { state: 'fail', detail: error instanceof Error ? error.message : String(error) };
   }
-  const cleanupErrors = await cleanUpRun(io, observed.run, budgets);
+  let draftCleanup = [];
+  if (mode === 'complete') ({ verdict, cleanupErrors: draftCleanup } = await withDraftHalf(io, budgets, verdict, evidence));
+  const cleanupErrors = [...await cleanUpRun(io, observed.run, budgets), ...draftCleanup];
   const detail = cleanupErrors.length ? `${verdict.detail} CLEANUP INCOMPLETE: ${cleanupErrors.join('; ')}.`
     : `${verdict.detail}${observed.run ? ' The run is terminal and its rail token revoked; the scores it wrote are the owner\'s own and stay.' : ''}`;
   return { caseId: CASE_IDS[mode], state: cleanupErrors.length ? 'fail' : verdict.state, detail, evidence: { ...evidence, cleanupErrors } };
@@ -339,11 +382,12 @@ async function runCareerRailAcceptance(ports, options = {}) {
 const STAGED_FILES = Object.freeze([
   { src: __filename, rel: 'operations/career-rail-live-proof.js' },
   { src: path.join(__dirname, 'career-rail-worker-loss.js'), rel: 'operations/career-rail-worker-loss.js' },
+  { src: path.join(__dirname, 'career-rail-draft.js'), rel: 'operations/career-rail-draft.js' },
   { src: path.join(__dirname, 'live-proof-runner.js'), rel: 'operations/live-proof-runner.js' },
 ]);
 /** The budget knobs forwarded into the container by name. */
 const BUDGET_ENV = Object.freeze(['OSHAL_CAREER_RAIL_RUN_BUDGET_MS', 'OSHAL_CAREER_RAIL_LEDGER_BUDGET_MS', 'OSHAL_CAREER_RAIL_POLL_MS',
-  'OSHAL_CAREER_RAIL_HEARTBEAT_BUDGET_MS']);
+  'OSHAL_CAREER_RAIL_HEARTBEAT_BUDGET_MS', 'OSHAL_CAREER_RAIL_DRAFT_BUDGET_MS']);
 
 /**
  * @description The worker-loss half, required lazily (it requires this module back for the shared run helpers).
@@ -367,14 +411,17 @@ function budgetFromEnv(name, fallback) {
 
 /**
  * @description How long the host waits for the container half: the mode's run budget (twice for
- * worker-loss, which waits for admission and then for the failure), the follow-up budget and margin.
+ * worker-loss, which waits for admission and then for the failure), the follow-up budget and margin;
+ * `--complete` adds the draft and its own attribution wait.
  * @param {'cancel'|'complete'|'worker-loss'} mode - The mode.
  * @returns {number} The docker exec ceiling in milliseconds.
  */
 function hostTimeoutMs(mode) {
   const run = budgetFromEnv('OSHAL_CAREER_RAIL_RUN_BUDGET_MS', mode === 'complete' ? COMPLETE_RUN_BUDGET_MS : DEFAULT_BUDGETS.runBudgetMs);
   if (mode === 'worker-loss') return run * 2 + budgetFromEnv('OSHAL_CAREER_RAIL_HEARTBEAT_BUDGET_MS', workerLoss().DEFAULT_BUDGETS.heartbeatBudgetMs) + 300_000;
-  return run + budgetFromEnv('OSHAL_CAREER_RAIL_LEDGER_BUDGET_MS', DEFAULT_BUDGETS.ledgerBudgetMs) + 300_000;
+  const ledger = budgetFromEnv('OSHAL_CAREER_RAIL_LEDGER_BUDGET_MS', DEFAULT_BUDGETS.ledgerBudgetMs);
+  const draft = mode === 'complete' ? budgetFromEnv('OSHAL_CAREER_RAIL_DRAFT_BUDGET_MS', drafts().DEFAULT_DRAFT_BUDGET_MS) + ledger : 0;
+  return run + ledger + draft + 300_000;
 }
 
 /**
@@ -523,7 +570,8 @@ async function runInContainer(args) {
     api, ownerSub: context.ownerSub, careerVersion: context.career.version,
     query: (sql, params) => pool.query(sql, params),
     withOwner: (fn) => runWithRequestIdentity({ sub: context.ownerSub, isOperator: false }, fn),
-  }, { mode: args.mode, runBudgetMs: process.env.OSHAL_CAREER_RAIL_RUN_BUDGET_MS, ledgerBudgetMs: process.env.OSHAL_CAREER_RAIL_LEDGER_BUDGET_MS, pollMs: process.env.OSHAL_CAREER_RAIL_POLL_MS });
+  }, { mode: args.mode, runBudgetMs: process.env.OSHAL_CAREER_RAIL_RUN_BUDGET_MS, ledgerBudgetMs: process.env.OSHAL_CAREER_RAIL_LEDGER_BUDGET_MS,
+    pollMs: process.env.OSHAL_CAREER_RAIL_POLL_MS, draftBudgetMs: process.env.OSHAL_CAREER_RAIL_DRAFT_BUDGET_MS });
   return runner.emitResult(result);
 }
 
@@ -542,6 +590,6 @@ if (require.main === module) {
 
 module.exports = {
   CASE_ID, CASE_IDS, CAREER_AGENT_ID, COMPLETE_RUN_BUDGET_MS, PACKAGE, VERB, RAIL_REFUSALS, RAIL_TASK_SUFFIX, ROLLUP_SQL, LEDGER_SQL,
-  hasRail, parseArgs, detectRailRefusal, findRun, cancelRun, cleanUpRun, startVerdict, readAttribution, decideVerdict,
-  runCareerRailAcceptance, hostSpec, hostTimeoutMs,
+  hasRail, parseArgs, detectRailRefusal, findRun, cancelRun, cleanUpRun, startVerdict, readAttribution, awaitAttribution, attributionVerdict,
+  decideVerdict, runCareerRailAcceptance, hostSpec, hostTimeoutMs,
 };

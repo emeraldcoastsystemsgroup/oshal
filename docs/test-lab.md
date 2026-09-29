@@ -255,7 +255,8 @@ external-write cases pending. Suites: `npx vitest run tests/unit/lora-import-liv
 against a temp home; other hosts print one PLATFORM SKIP line) and
 `npx vitest run tests/unit/lora-import-gallery-proof.spec.ts` (gallery mode; its surface port runs in
 real headless Chromium against a loopback stand-in of the studio page - a surface that renders the
-receipt ready passes, one that keeps rendering "queued for worker" fails by name). An unreadable probe
+receipt ready passes, one that keeps rendering "queued for worker" fails by name, and an off-origin
+request from the page never reaches a second loopback listener). An unreadable probe
 is named in the verdict: which field is wrong, the probe task's exit, and the first 300 redacted
 characters of the worker's stdout.
 
