@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | The design study's pages and choices built into /homebase, in headless Chromium over the real static routes and the synthetic swarm: Routines (Jarvis briefing sources switched through the route with its own header and reverted on a refusal, the caller's schedules in words with pause and resume, a routine asked of Jarvis and the schedules read again, refusals named), search in this home (what the page read plus the caller-scoped swarm search, deep links only where the route gives one, refusal named, a result opening its record), the Room / Tasks / Files tabs, the day-by-day agenda with a read-only event dialog beside the unchanged Add dialog, the assistant bubble and inline composer on the same Jarvis thread with the catch-up dismissed on this device, the "Make it yours" choices (what greets you, what stays close at hand; device-local, no server write) and six viewport widths per preset with no horizontal overflow.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Guards for paths the design study lists that were built earlier without a browser case: + Add posting a personal Little Monsters event (title kept as typed, day and time); the display choices (compact density, the activity panel and the week strip hidden) saved on this device, surviving a reload and restored; the My access and About access dialogs, a sidebar application's dialog with its summary, and All applications. A notice shown before the repaint that follows it (the added event) is still shown after it.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -59,11 +60,11 @@ describe('Routines', () => {
     expect(text).toContain('Every Saturday at 8:30 AM · next ' + nextRun);
     expect(text).toMatch(/Check the synthetic markets[\s\S]*Weekdays at 8:00 AM · paused · once/);
     fixture.state.status['home:briefing-put'] = 403;
-    await page.locator('[data-briefing="synthetic-morning"]').check();
+    await page.locator('[data-briefing="synthetic-morning"]').click();
     await toastHas('Could not change Synthetic morning brief (HTTP 403: briefing_access_denied)');
     expect(await page.locator('[data-briefing="synthetic-morning"]').isChecked()).toBe(false);
     delete fixture.state.status['home:briefing-put'];
-    await page.locator('[data-briefing="synthetic-morning"]').check();
+    await page.locator('[data-briefing="synthetic-morning"]').click();
     await toastHas('Synthetic morning brief is on.');
     expect(home.briefings[0].preference).toEqual({ enabled: true, frequency: 'daily', channel: 'bubble' });
     expect(await page.locator('[data-briefing="synthetic-morning"]').isChecked()).toBe(true);
@@ -163,6 +164,71 @@ describe('search, tabs and the calendar', () => {
     expect(await page.locator('#homebase-dialog').count()).toBe(0);
     await page.locator('[data-module="calendar"] [data-action="event"]').click();
     expect(await page.locator('#dialog-title').innerText()).toBe('Add a shared moment');
+  });
+});
+
+describe('the existing calendar and display paths the design study lists', () => {
+  it('+ Add posts a personal event to Little Monsters with its title, day and time, and says so', async () => {
+    await open('family', '[data-module="calendar"]');
+    await page.locator('[data-module="calendar"] [data-action="event"]').click();
+    expect(await dialogText()).toContain('This adds a personal event to your Little Monsters calendar');
+    await page.fill('#event-title', 'Synthetic <i>pizza</i> night'); await page.fill('#event-time', '18:30');
+    const date = await page.inputValue('#event-date');
+    await page.locator('#homebase-dialog').getByRole('button', { name: 'Add event' }).click();
+    // The notice is shown, then the calendar is re-read and the page repainted: the notice must still be there after it.
+    await expect.poll(() => fixture.state.calls.filter(c => c === 'GET /api/education/calendar').length).toBeGreaterThanOrEqual(4);
+    await page.waitForLoadState('networkidle');
+    expect(await page.locator('#toast').innerText()).toBe('Event added to your calendar.');
+    expect(fixture.state.education.created).toEqual([{ title: 'Synthetic <i>pizza</i> night', eventDate: date, eventTime: '18:30', eventType: 'custom' }]);
+    expect(await page.locator('#homebase-dialog').count()).toBe(0);
+  });
+
+  it('compact density, a hidden activity panel and a hidden week strip are saved on this device, survive a reload and restore', async () => {
+    await open('family', '[data-module="updates"]');
+    expect(await page.locator('.week-strip').count()).toBe(1);
+    await page.getByRole('button', { name: 'Configure home' }).click();
+    await page.selectOption('#density-choice', 'compact');
+    await page.locator('#show-updates').uncheck(); await page.locator('#show-week').uncheck();
+    await page.getByRole('button', { name: 'Save on this device' }).click();
+    await toastHas('Display choices saved on this device. No permissions changed.');
+    const check = async () => {
+      expect(await page.locator('.experience').getAttribute('data-density')).toBe('compact');
+      expect(await page.locator('[data-module="updates"]').count()).toBe(0);
+      expect(await page.locator('.week-strip').count()).toBe(0);
+    };
+    await check();
+    await page.reload(); await page.waitForSelector('.home-shell'); await page.waitForLoadState('networkidle');
+    await check();
+    expect(await page.locator('.page-footer').innerText()).toContain('(v2)');
+    await page.getByRole('button', { name: 'Configure home' }).click();
+    await page.getByRole('button', { name: 'Restore previous' }).click();
+    await toastHas('Previous display choices restored.');
+    expect(await page.locator('.experience').getAttribute('data-density')).toBe('comfortable');
+    expect(await page.locator('[data-module="updates"]').count()).toBe(1);
+    expect(await page.locator('.week-strip').count()).toBe(1);
+  });
+});
+
+describe('the access and application dialogs', () => {
+  it('“My access” and “About access” state the boundary for the signed-in person; a sidebar application opens its own dialog with its summary', async () => {
+    await open('company', '.home-shell');
+    await page.getByRole('button', { name: 'My access' }).click();
+    const policy = await dialogText();
+    expect(policy).toContain('The same home, different access');
+    expect(policy).toContain('Signed in as Synthetic Teacher · teacher in Little Monsters.');
+    expect(policy).toContain('Skins, density and pins are saved on this device and never change permissions.');
+    await page.keyboard.press('Escape');
+    await page.getByRole('button', { name: 'About access' }).click();
+    expect(await dialogText()).toContain('Applications appear only when this swarm’s authorization admits you to them.');
+    await page.keyboard.press('Escape');
+    await page.locator('.home-sidebar [data-action="app"]').first().click();
+    await page.waitForFunction(() => document.getElementById('app-summary-slot')?.textContent?.includes('Update from'));
+    const appDialog = await dialogText();
+    expect(appDialog).toMatch(/Isolated experience test source[\s\S]*available to you/);
+    expect(await page.locator('#homebase-dialog a.button.primary').getAttribute('href')).toMatch(/^\/cockpit\/\?app=/);
+    await page.keyboard.press('Escape');
+    await page.locator('.home-sidebar').getByRole('button', { name: 'All applications' }).click();
+    await page.waitForURL(/\/portal#catalog-directory$/);
   });
 });
 
