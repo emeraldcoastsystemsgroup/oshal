@@ -221,20 +221,42 @@ recall through the real host loop with agy holding no native tools, and the invo
 ### LoRA gallery import (live acceptance)
 
 `node scripts/operations/lora-import-live-proof.js` (`lora-gallery-dataset-import`) proves the
-Send-to → Add to LoRA dataset path on a box with the LoRA package and a GPU worker online. As the
-operator PAT it creates a synthetic `testlab-import-<hex>` character, mints a Send-to handle carrying
-one generated PNG (`POST /api/artifacts/handles/upload`), imports it (`POST /api/lora/dataset/import`),
-waits for the receipt the studio shows as "ready on worker", then reads the character's `curated/`
-folder on the worker through the remote-client `shell.exec` rail with a read-only probe (the path
-training reads, plus the single-quoted literal path as a diagnostic). Cleanup removes the box
-directory, the import ticket (through the ticket service after re-reading it) and the character,
-whose receipt, staged bytes and grants cascade. It is a core script rather than a package
-`tests/test-lab.yaml` case because it orchestrates core artifact exchange, the core remote-client rail
-and the store package on a real worker, and the package catalog leaves live external-write cases
-pending. Suite: `npx vitest run tests/unit/lora-import-live-proof.spec.ts` (on win32 the box probe
-and removal commands also run through real `powershell.exe` against a temp home; other hosts print
-one PLATFORM SKIP line). An unreadable probe is named in the verdict: which field is wrong, the
-probe task's exit, and the first 300 redacted characters of the worker's stdout.
+Send-to → Add to LoRA dataset path on a box with the LoRA package and a GPU worker online, in two
+modes. Both create a synthetic `testlab-import-<hex>` character as the operator PAT, wait for the
+receipt the studio shows as "ready on worker", then read the character's `curated/` folder on the
+worker through the remote-client `shell.exec` rail with a read-only probe (the path training reads,
+plus the single-quoted literal path as a diagnostic).
+
+- **Inline mode** (no flag; runs inside the api container): mints a Send-to handle carrying one
+  generated PNG (`POST /api/artifacts/handles/upload`) and imports it by `POST /api/lora/dataset/import`.
+- **Gallery mode** (`--gallery`; runs on the host, where the browser is): the real gallery and the
+  rendered surface. It creates one synthetic portrait through `POST /api/portrait-studio/portraits`
+  (a flat synthetic photo, the catalog's first professional style), titles it with the fixture tag,
+  waits for the engine to mark it `done`, mints the locator handle exactly as the gallery's Send to…
+  does (`POST /api/artifacts/handles` with `source: /api/portrait-studio/portraits/<id>/image`), opens
+  `/api/lora/ui?artifact=<ref>` in a headless Chromium as the caller (the token rides only on
+  same-origin requests; every other request is aborted in the browser), clicks the fixture character
+  and "Import selected image", and reads `#datasetRows` until the studio itself shows the file "ready
+  on worker". A run whose receipt route says ready while the surface does not is red, and so is a page
+  error. It spends one real portrait generation (the engine's model and cost land in the evidence),
+  and it is UNAVAILABLE by name when the PAT, the LoRA or Portrait Studio package, the image engine,
+  or a GPU worker is missing (an offline worker is named). Knobs: `OSHAL_VERIFY_BASE_URL`,
+  `OSHAL_LORA_PORTRAIT_BUDGET_MS`.
+
+Cleanup in both modes removes the box directory, the import ticket (through the ticket service after
+re-reading it), the portrait (gallery mode, after it revalidates by its title tag) and the character,
+whose receipt, staged bytes and grants cascade; the database steps run as the owner through the
+live-acceptance container helper's named statements (`lora.*`). It is a core script rather than a
+package `tests/test-lab.yaml` case because it orchestrates core artifact exchange, the core
+remote-client rail and the store package on a real worker, and the package catalog leaves live
+external-write cases pending. Suites: `npx vitest run tests/unit/lora-import-live-proof.spec.ts`
+(inline mode; on win32 the box probe and removal commands also run through real `powershell.exe`
+against a temp home; other hosts print one PLATFORM SKIP line) and
+`npx vitest run tests/unit/lora-import-gallery-proof.spec.ts` (gallery mode; its surface port runs in
+real headless Chromium against a loopback stand-in of the studio page - a surface that renders the
+receipt ready passes, one that keeps rendering "queued for worker" fails by name). An unreadable probe
+is named in the verdict: which field is wrong, the probe task's exit, and the first 300 redacted
+characters of the worker's stdout.
 
 ### Automated live acceptance sweep
 

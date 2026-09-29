@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the LoRA gallery-import live acceptance's own logic: the generated image is a valid unique PNG, box commands refuse any non-fixture path and only prune literal-variable parents, worker output is redacted, and a run passes only when the receipt reaches "ready on worker" AND the pair is in the curated folder training reads with the exact bytes and caption. Not-ready, literal-path-only and surviving-row runs are red; cleanup always removes the box directory, the import ticket and the character.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Real-boundary probe cases. The in-memory worker above answered the probe with the JSON the script HOPED for, so it never caught what real Windows PowerShell 5.1 prints: `Get-Content -Raw` hands `ConvertTo-Json` a provider-decorated string and the caption serializes as a 25 KB nested object, which sank the 2026-09-28 live run as "nothing readable" although the pair was on the GPU box. The new cases run the exact `buildBoxProbeCommand` and `buildBoxRemoveCommand` output through powershell.exe with USERPROFILE pointed at a temp home (the DEFAULT `$env:USERPROFILE/lora-characters` root, so expansion is exercised) and pin one JSON line of plain values (png/txt booleans, bytes = the PNG's size, caption = the exact string, UTF-8 without a BOM) that the verdict passes on; removal likewise prints plain booleans and never climbs above the character directory. Pure cases pin that a decorated, truncated or empty probe is named (which field, the task exit, the first 300 redacted chars of stdout) and that a removal whose stdout is unreadable quotes it. Off win32 the shell cases print one PLATFORM SKIP line, never a silent green.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The redaction case pins letter case. Entry 2's script change dropped the `i` flag main's Windows-form regex carried and no case covered it: a lowercased `c:\users\someone\x` and the JSON-escaped upper-cased `C:\\USERS\\someone\\x` must both redact to `user`, because Windows paths are case-insensitive and PowerShell keeps the casing it is given, so a non-canonical LORA_BOX_ROOT would otherwise put the operator's username into verdict text.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The fake's database port is the named-statement `sql` port (lora.character-id / lora.character-delete / lora.residue, the closed set in scripts/lib/live-acceptance-sql.js) instead of SQL text, matching the script's gallery mode, which reaches the database only through the container helper. The inline cases here are otherwise unchanged; the gallery mode has its own suite (lora-import-gallery-proof.spec.ts). The offline-worker naming and the shared preflight are pinned here too.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
@@ -114,10 +115,11 @@ function fake(options: FakeOptions = {}) {
       state.pngBytes = bytes.length;
       return { status: 201, json: { ref: 'art_fixture', expiresAt: '2026-09-27T18:00:00.000Z' } };
     }),
-    query: vi.fn(async (sql: string, params: string[]) => {
-      if (sql.startsWith('SELECT id')) return { rows: state.characters.has(params[1]) ? [{ id: CHARACTER_ID }] : [] };
-      if (sql.startsWith('DELETE')) { if (!options.keepCharacter) state.characters.delete(params[1]); return { rows: [] }; }
-      return { rows: [{ characters: state.characters.has(params[1]) ? 1 : 0, receipts: 0 }] };
+    sql: vi.fn(async (name: string, params: string[]) => {
+      if (name === 'lora.character-id') return { rows: state.characters.has(params[1]) ? [{ id: CHARACTER_ID }] : [] };
+      if (name === 'lora.character-delete') { if (!options.keepCharacter) state.characters.delete(params[1]); return { rows: [] }; }
+      if (name === 'lora.residue') return { rows: [{ characters: state.characters.has(params[1]) ? 1 : 0, receipts: 0 }] };
+      throw new Error(`unexpected statement ${name}`);
     }),
     withOwner: <T>(fn: () => Promise<T>) => fn(),
     sleep: async () => undefined,
@@ -334,5 +336,33 @@ describe('runLoraImportAcceptance', () => {
     const result = await proof.runLoraImportAcceptance(f.ports);
     expect(result.state).toBe('fail');
     expect(result.detail).toContain('CLEANUP INCOMPLETE: database residue: characters=1');
+  });
+});
+
+describe('preflight', () => {
+  const clients = (list: object[]) => vi.fn(async () => ({ status: 200, json: { clients: list } }));
+
+  it('names every registered worker that is not online, and says when none is registered', async () => {
+    const offline = await proof.onlineWorkers(clients([{ clientId: 'gpu-box', status: 'offline' }, { clientId: 'edge-2', status: 'degraded' }]));
+    expect(offline).toEqual({ online: [], detail: 'No GPU worker is online: gpu-box (offline), edge-2 (degraded); nothing was written.' });
+    expect((await proof.onlineWorkers(clients([]))).detail).toBe('No remote worker is registered on this box; nothing was written.');
+    const mixed = await proof.onlineWorkers(clients([{ clientId: 'gpu-box', status: 'online', agentId: 'agent-1' }, { clientId: 'edge-2', status: 'offline' }]));
+    expect(mixed.detail).toBeNull();
+    expect(mixed.online.map((c: { clientId: string }) => c.clientId)).toEqual(['gpu-box']);
+  });
+
+  it('resolves the caller, the lora package and the worker agent ids, or names what is missing without writing', async () => {
+    const routes = (over: Record<string, { status: number; json: object }>) => vi.fn(async (_method: string, route: string) => over[route] ?? {
+      '/api/cli-tokens/whoami': { status: 200, json: { sub: OWNER } },
+      '/api/swarm/apps?status=active': { status: 200, json: { apps: [{ name: 'lora', version: '1.7.1' }] } },
+      '/api/remote-clients': { status: 200, json: { clients: [{ clientId: 'gpu-box', status: 'online', agentId: 'agent-1' }] } },
+    }[route]);
+    expect(await proof.resolveRun(routes({}))).toEqual({ ownerSub: OWNER, loraVersion: '1.7.1', workerAgentIds: { 'gpu-box': 'agent-1' } });
+    expect((await proof.resolveRun(routes({ '/api/cli-tokens/whoami': { status: 401, json: {} } }))).detail)
+      .toBe('The operator PAT did not resolve to a caller (HTTP 401); nothing was written.');
+    expect((await proof.resolveRun(routes({ '/api/swarm/apps?status=active': { status: 200, json: { apps: [] } } }))).detail)
+      .toBe('The lora package is not installed and active on this box; nothing was written.');
+    const noWorker = await proof.resolveRun(routes({ '/api/remote-clients': { status: 200, json: { clients: [{ clientId: 'gpu-box', status: 'offline' }] } } }));
+    expect(noWorker).toEqual({ detail: 'No GPU worker is online: gpu-box (offline); nothing was written.', evidence: { loraVersion: '1.7.1' } });
   });
 });
