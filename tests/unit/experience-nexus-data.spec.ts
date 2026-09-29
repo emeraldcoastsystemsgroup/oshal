@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Phase-8 corrections: every weekend's state for a month, the state of a typed range, the comparison merge under composite ids with refusals by weekend, the weekend filter, and the city names a slice carries.
  * 1 | maintainer@emeraldcoastsystemsgroup.com | The central assistant's data kit (src/experience/nexus-data.js) in node: the month grid keeps past and unread days out of "free" and finds only complete free Friday-to-Sunday weekends (a busy Saturday removes its weekend, a refusal yields none); Travel offers become card views (malformed ones dropped, local airport times read as written) and the nonstop / after-3pm / USD budget filters and both sorts behave; short refinements are recognised and longer questions are left for Jarvis; the Google status, the device shortlist and the spoken briefing read only what they are given; the client sends each read and write to its route with the exact query or body.
  */
 import { describe, expect, it } from 'vitest';
@@ -138,5 +139,48 @@ describe('client over the existing routes', () => {
     await api.travel.watch(q, { price: 238 });
     expect(calls.slice(7)).toEqual([{ path: '/api/travel/profile', method: 'POST', body: { homeAirport: 'ATL' } },
       { path: '/api/travel/watches', method: 'POST', body: { kind: 'flight', origin: 'PNS', destination: 'LAS', departDate: '2030-03-15', returnDate: '2030-03-17', pax: 1, cabin: 'economy', lastPrice: 238 } }]);
+  });
+});
+
+describe('Phase-8 corrections: weekend states, typed ranges, comparisons and cities', () => {
+  const busySaturday = ready([{ start: at(Y, M, 9, 10), end: at(Y, M, 9, 12) }]);
+
+  it('states every weekend of the month: free, busy on any busy day, past once begun, unknown without a read', () => {
+    expect(D.weekendStates(Y, M, busySaturday, EARLIER).map((w: any) => [w.key, w.label, w.state])).toEqual([
+      ['2030-03-01', 'March 1–3', 'free'], ['2030-03-08', 'March 8–10', 'busy'], ['2030-03-15', 'March 15–17', 'free'], ['2030-03-22', 'March 22–24', 'free'], ['2030-03-29', 'March 29–31', 'free']]);
+    expect(D.weekendStates(Y, M, null, EARLIER).map((w: any) => w.state)).toEqual(['unknown', 'unknown', 'unknown', 'unknown', 'unknown']);
+    expect(D.weekendStates(Y, M, busySaturday, new Date(Y, M, 9, 9)).map((w: any) => w.state)).toEqual(['past', 'busy', 'free', 'free', 'free']);
+    expect(D.weekendStates(Y, M, busySaturday, new Date(Y, M, 10, 9)).map((w: any) => w.state)).toEqual(['past', 'past', 'free', 'free', 'free']);
+    expect(D.freeWeekends(Y, M, busySaturday, EARLIER).map((w: any) => w.key)).toEqual(['2030-03-01', '2030-03-15', '2030-03-22', '2030-03-29']);
+  });
+
+  it('classifies a typed range: busy on any overlap, unknown when unread, past or malformed, free otherwise', () => {
+    expect(D.rangeState(busySaturday, '2030-03-08', '2030-03-10', EARLIER)).toBe('busy');
+    expect(D.rangeState(busySaturday, '2030-03-09', '', EARLIER)).toBe('busy');
+    expect(D.rangeState(busySaturday, '2030-03-15', '2030-03-17', EARLIER)).toBe('free');
+    expect(D.rangeState(busySaturday, '2030-04-10', '2030-04-12', EARLIER)).toBe('unknown');
+    expect(D.rangeState(null, '2030-03-15', '', EARLIER)).toBe('unknown');
+    expect(D.rangeState(busySaturday, '2030-03-15', '2030-03-14', EARLIER)).toBe('unknown');
+    expect(D.rangeState(busySaturday, '2030-02-10', '2030-02-11', EARLIER)).toBe('unknown');
+    expect(D.rangeState(busySaturday, 'soon', 'later', EARLIER)).toBe('unknown');
+  });
+
+  it('merges one answer per weekend under composite ids, keeps refusals by weekend, filters by weekend, and carries the city names', () => {
+    const offer = (id: string, price: number) => ({ id, price, currency: 'USD', airline: 'A', slices: [{ origin: 'PNS', destination: 'LAS', originCity: 'Pensacola', destinationCity: 'Las Vegas', departAt: '2030-03-01T14:10:00', arriveAt: '2030-03-01T18:00:00', duration: '5h 50m', stops: 1, carriers: ['A'] }] });
+    const weekends = [{ key: '2030-03-01', label: 'March 1–3', departDate: '2030-03-01', returnDate: '2030-03-03' }, { key: '2030-03-15', label: 'March 15–17', departDate: '2030-03-15', returnDate: '2030-03-17' }, { key: '2030-03-22', label: 'March 22–24', departDate: '2030-03-22', returnDate: '2030-03-24' }];
+    const m = D.mergeComparison(weekends, [
+      { ok: true, status: 200, body: { source: 'duffel', items: [offer('x', 300)], price: { verdict: 'typical' } } },
+      { ok: false, status: 502, body: { error: 'down' } },
+      { ok: true, status: 200, body: { source: 'demo', items: [offer('x', 200), { id: 'bad' }] } }]);
+    expect(m.result).toMatchObject({ source: 'duffel', price: { verdict: 'typical' } });
+    expect(m.refused).toEqual([{ label: 'March 15–17', status: 502 }]);
+    expect(m.views.map((v: any) => [v.id, v.offerId, v.weekend, v.weekendLabel, v.departDate, v.returnDate])).toEqual([
+      ['2030-03-01/x', 'x', '2030-03-01', 'March 1–3', '2030-03-01', '2030-03-03'], ['2030-03-22/x', 'x', '2030-03-22', 'March 22–24', '2030-03-22', '2030-03-24']]);
+    expect(m.views[0].outbound).toMatchObject({ originCity: 'Pensacola', destinationCity: 'Las Vegas' });
+    expect(D.filterOffers(m.views, { weekend: '2030-03-22' }).map((v: any) => v.price)).toEqual([200]);
+    expect(D.filterOffers(m.views, {}).map((v: any) => v.price)).toEqual([200, 300]);
+    expect(D.mergeComparison(weekends.slice(0, 1), [{ ok: false, status: 0, body: null }])).toEqual({ result: null, views: [], refused: [{ label: 'March 1–3', status: 0 }] });
+    expect(D.offerView(offer('y', 1)).outbound.destinationCity).toBe('Las Vegas');
+    expect(D.offerView({ id: 'z', price: 1, slices: [{ origin: 'PNS', destination: 'LAS', departAt: '2030-03-01T14:10:00' }] }).outbound.destinationCity).toBe('');
   });
 });

@@ -30,6 +30,7 @@
  *   bounded provider transport. Library calls receive a Duffel token explicitly and cannot consult
  *   ambient env/files/DB; only the guarded standalone CLI keeps those compatibility fallbacks.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Read Duffel credentials through the shared v2/k2/legacy connector-token codec.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | normalizeOffer keeps the city names Duffel carries on each slice (originCity/destinationCity from city_name, null when absent) so a surface can name the place, not only the airport code; the normaliser is exported for its unit test.
  */
 'use strict';
 const fs = require('fs');
@@ -229,6 +230,8 @@ function normalizeOffer(o) {
     return {
       origin: (s.origin && s.origin.iata_code) || first.origin?.iata_code || '',
       destination: (s.destination && s.destination.iata_code) || last.destination?.iata_code || '',
+      originCity: (s.origin && s.origin.city_name) || first.origin?.city_name || null,
+      destinationCity: (s.destination && s.destination.city_name) || last.destination?.city_name || null,
       departAt: first.departing_at || null,
       arriveAt: last.arriving_at || null,
       duration: hm(isoMinutes(s.duration)),
@@ -429,7 +432,7 @@ async function main() {
   }
 }
 
-module.exports = { executeDuffelOperation, parseTokenArgument };
+module.exports = { executeDuffelOperation, parseTokenArgument, normalizeOffer };
 
 if (require.main === module) {
   main().catch((e) => { out({ source: 'demo', items: [], error: e && e.message ? e.message : 'duffel CLI error' }); });

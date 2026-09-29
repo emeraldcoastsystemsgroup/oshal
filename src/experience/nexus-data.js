@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Comparison across free weekends (mergeComparison tags each offer with its weekend under a composite id; filterOffers takes a weekend), the state of a typed date range against the calendar read (rangeState: busy, unknown or free), every weekend's state for the month (weekendStates, which freeWeekends now reads), and the city names Travel's offers carry (sliceView originCity/destinationCity).
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Central-assistant data kit for the Calendar and Travel views: pure readers (the month grid and its free Friday-to-Sunday weekends over the caller's busy windows, with past and unread days kept "unknown", never free; Travel offer cards from the package's normalised Duffel offers; the local nonstop / after-3pm / budget filters and sort; short text refinements; the device-local shortlist; the Google connection status; the spoken briefing built from the live snapshot) and one client over the existing routes (GET /api/experience/availability, GET /api/connect/list, and Travel's /config, /profile, /flights and /watches). No figure is invented here: every value comes from a route's answer or the caller's own device.
  */
 (function attach(root, factory) {
@@ -75,15 +76,47 @@
    * @returns {Array<{key:string,label:string,departDate:string,returnDate:string}>} Free weekends, in date order.
    */
   function freeWeekends(year, month, availability, now) {
+    return weekendStates(year, month, availability, now).filter(function (w) { return w.state === 'free'; });
+  }
+
+  /**
+   * @description Every Friday-to-Sunday weekend that starts in the month with its state: 'free' when all three days are read
+   * and free, 'busy' when any day is busy, 'past' when it has begun, else 'unknown' (unread days are never free).
+   * @param {number} year Full year.
+   * @param {number} month Zero-based month.
+   * @param {object|null} availability The route's answer.
+   * @param {Date} now Current time.
+   * @returns {Array<{key:string,label:string,departDate:string,returnDate:string,state:string}>} Weekends in date order.
+   */
+  function weekendStates(year, month, availability, now) {
     var today = startOfDay(now), out = [];
     for (var d = new Date(year, month, 1); d.getMonth() === month; d = nextDay(d)) {
       if (d.getDay() !== 5) continue;
-      var sat = nextDay(d), sun = nextDay(sat);
-      if ([d, sat, sun].every(function (x) { return dayState(x, availability, today) === 'free'; })) {
-        out.push({ key: dayKey(d), label: weekendLabel(d, sun), departDate: dayKey(d), returnDate: dayKey(sun) });
-      }
+      var sat = nextDay(d), sun = nextDay(sat), states = [d, sat, sun].map(function (x) { return dayState(x, availability, today); });
+      var state = states.indexOf('busy') >= 0 ? 'busy' : states.indexOf('past') >= 0 ? 'past' : states.indexOf('unknown') >= 0 ? 'unknown' : 'free';
+      out.push({ key: dayKey(d), label: weekendLabel(d, sun), departDate: dayKey(d), returnDate: dayKey(sun), state: state });
     }
     return out;
+  }
+
+  /**
+   * @description The state of a typed date range against the calendar read: 'busy' when any day overlaps a busy window,
+   * 'unknown' when any day is unread or past (never free), else 'free'.
+   * @param {object|null} availability The route's answer.
+   * @param {string} departDate Local YYYY-MM-DD.
+   * @param {string} [returnDate] Local YYYY-MM-DD; the departure day alone when empty.
+   * @param {Date} [now] Current time.
+   * @returns {'busy'|'unknown'|'free'} The range state.
+   */
+  function rangeState(availability, departDate, returnDate, now) {
+    var start = new Date(String(departDate) + 'T00:00:00'), end = new Date(String(returnDate || departDate) + 'T00:00:00'), today = startOfDay(now || new Date());
+    if (isNaN(start.getTime()) || isNaN(end.getTime()) || end.getTime() < start.getTime()) return 'unknown';
+    var busy = 0, unknown = 0;
+    for (var d = start; d.getTime() <= end.getTime() && busy === 0; d = nextDay(d)) {
+      var s = dayState(d, availability, today);
+      if (s === 'busy') busy++; else if (s !== 'free') unknown++;
+    }
+    return busy ? 'busy' : unknown ? 'unknown' : 'free';
   }
 
   /**
@@ -130,7 +163,8 @@
   function sliceView(s) {
     if (!s || typeof s !== 'object') return null;
     var dep = String(s.departAt || '');
-    return { origin: String(s.origin || ''), destination: String(s.destination || ''), date: dep.slice(0, 10), time: clockOf(dep), arrive: clockOf(s.arriveAt),
+    return { origin: String(s.origin || ''), destination: String(s.destination || ''), originCity: s.originCity ? String(s.originCity) : '', destinationCity: s.destinationCity ? String(s.destinationCity) : '',
+      date: dep.slice(0, 10), time: clockOf(dep), arrive: clockOf(s.arriveAt),
       hour: /T(\d{2})/.test(dep) ? Number(/T(\d{2})/.exec(dep)[1]) : -1, duration: String(s.duration || ''), minutes: durationMinutes(s.duration),
       stops: Math.max(0, Number(s.stops) || 0), carriers: Array.isArray(s.carriers) ? s.carriers.map(String) : [] };
   }
@@ -153,14 +187,35 @@
   /**
    * @description Apply the local filters and sort to offer views. The budget applies to USD offers only (it is kept in USD).
    * @param {Array<object>} views Offer views.
-   * @param {{nonstop?:boolean,late?:boolean,budget?:number|null,sort?:string}} f Filters.
+   * @param {{nonstop?:boolean,late?:boolean,budget?:number|null,sort?:string,weekend?:string}} f Filters; a weekend key keeps that weekend's offers of a comparison.
    * @returns {Array<object>} Matching views, cheapest (or shortest) first.
    */
   function filterOffers(views, f) {
     var opts = f || {}, budget = Number(opts.budget) > 0 ? Number(opts.budget) : 0;
     return (views || []).filter(function (v) {
-      return (!opts.nonstop || v.nonstop) && (!opts.late || v.hour >= 15) && (!budget || v.currency !== 'USD' || v.price <= budget);
+      return (!opts.nonstop || v.nonstop) && (!opts.late || v.hour >= 15) && (!budget || v.currency !== 'USD' || v.price <= budget) && (!opts.weekend || v.weekend === opts.weekend);
     }).sort(function (a, b) { return opts.sort === 'duration' ? a.minutes - b.minutes || a.price - b.price : a.price - b.price || a.minutes - b.minutes; });
+  }
+
+  /**
+   * @description Merge one Travel answer per free weekend into a single comparison: each offer view is tagged with its
+   * weekend (key, label, dates) under a composite id so the same provider id on two weekends stays distinct; refused
+   * searches are listed by weekend. The source and price read come from the first weekend that answered.
+   * @param {Array<{key:string,label:string,departDate:string,returnDate:string}>} weekends The weekends searched, in order.
+   * @param {Array<{ok:boolean,status:number,body:any}>} answers The route's answers, one per weekend.
+   * @returns {{result:object|null,views:Array<object>,refused:Array<{label:string,status:number}>}} The comparison.
+   */
+  function mergeComparison(weekends, answers) {
+    var views = [], refused = [], result = null;
+    weekends.forEach(function (w, i) {
+      var r = answers[i];
+      if (!r || !r.ok || !r.body) { refused.push({ label: w.label, status: r ? r.status : 0 }); return; }
+      if (!result) result = { source: r.body.source, price: r.body.price, error: r.body.error, deepLink: r.body.deepLink };
+      (Array.isArray(r.body.items) ? r.body.items : []).map(offerView).filter(Boolean).forEach(function (v) {
+        views.push(Object.assign(v, { offerId: v.id, id: w.key + '/' + v.id, weekend: w.key, weekendLabel: w.label, departDate: w.departDate, returnDate: w.returnDate }));
+      });
+    });
+    return { result: result, views: views, refused: refused };
   }
 
   /**
@@ -262,7 +317,7 @@
   }
 
   return {
-    MONTHS: MONTHS, dayKey: dayKey, monthWindow: monthWindow, dayState: dayState, freeWeekends: freeWeekends, monthGrid: monthGrid,
+    MONTHS: MONTHS, dayKey: dayKey, monthWindow: monthWindow, dayState: dayState, freeWeekends: freeWeekends, weekendStates: weekendStates, rangeState: rangeState, monthGrid: monthGrid, mergeComparison: mergeComparison,
     durationMinutes: durationMinutes, clockOf: clockOf, offerView: offerView, filterOffers: filterOffers, refinement: refinement, isIata: isIata,
     shortlistEntry: shortlistEntry, addToShortlist: addToShortlist, googleStatus: googleStatus, briefingText: briefingText, createNexusData: createNexusData
   };

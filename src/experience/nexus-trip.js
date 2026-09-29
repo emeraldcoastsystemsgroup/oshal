@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | To the demo's rules: a best-match line built from the first matching offer (weekend, fare, stops, the busy weekends left out, kept in step with the filters and sort, also in the Overview's plan card); "Compare both/all free weekends" searches every free weekend of the month at once (bounded, in parallel) and the weekend cards filter the merged offers; dates typed by hand are checked against the calendar read (busy or unknown is said and never recommended as a free weekend); the request ledger gets the page's own Calendar, Travel and preferences rows; the Travel tab carries its in-context line; the hero names the destination city when Travel's offers carry it.
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Central-assistant Calendar and Travel workspace over real routes, in the demo's look: a month grid of the caller's own busy windows (GET /api/experience/availability) with free Friday-to-Sunday weekends, past and unread days kept unknown and every refusal named; a Travel view (only for a caller whose plan admits Travel, ADR-164 D10) with the trip hero, fact pills, the calendar's free weekends as date pickers, a search that asks Travel's own GET /api/travel/flights, the nonstop / after-3pm / sort filters and a USD budget over the offers it returned, offer cards, an honest empty state, the source line (Duffel live, Duffel test or Travel's labelled sample offers) with the swarm price read, and actions (open Travel, save the best option, view sources); a fare dialog with the offer's slices, expiry and source, save to this device and an explicit "Watch this route" through Travel's POST /api/travel/watches; the shelf's device shortlist and Travel fare watches; the settings' departure airport (Travel profile) and budget (this device); the welcome's connected capabilities (Google connection from GET /api/connect/list, Travel's provider mode from /api/travel/config, the caller's preferences); short text refinements; and source rows for what each view read. Nothing here books, pays, writes a calendar or starts a watch without the person pressing the button that says so.
  */
 (() => {
@@ -29,13 +30,24 @@
       q: { origin: '', destination: '', departDate: '', returnDate: '', weekend: '' },
       searching: false, searchGen: 0, result: null, views: [], searched: null, searchError: '', checkedAt: '',
       filters: { nonstop: false, late: false, sort: 'price' }, watches: null, watchesAsked: false, watchNote: {},
-      shortlist: LIVE.prefs.get('nexus:shortlist', []), budget: LIVE.prefs.get('nexus:budget', null)
+      shortlist: LIVE.prefs.get('nexus:shortlist', []), budget: LIVE.prefs.get('nexus:budget', null),
+      compare: null, fit: '', searches: 0, searchedLabel: ''
     };
+    /** Most free weekends one comparison searches at once (one Travel search each). */
+    const COMPARE_CAP = 5;
     const travelApp = () => shell.byId('travel');
     const travelAdmitted = () => Boolean(travelApp() && travelApp().inPlan);
     const money = (n, cur) => (cur === 'USD' ? '$' : `${esc(cur)} `) + Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
     const monthIndex = () => t.year * 12 + t.month, minIndex = today.getFullYear() * 12 + today.getMonth();
     const dayLabel = key => { const d = new Date(`${key}T00:00:00`); return isNaN(d.getTime()) ? key : d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }); };
+    const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+    /** @returns {object} The query an offer answers: in a comparison, the offer's own weekend dates; otherwise the search as sent. */
+    const queryFor = v => v && v.weekend && t.searched ? Object.assign({}, t.searched, { departDate: v.departDate, returnDate: v.returnDate }) : t.searched;
+    /** @returns {string} The destination city when Travel's offers carry one (Duffel's city_name), else ''. */
+    const destinationCity = () => { const v = t.views.find(x => x.outbound && x.outbound.destinationCity); return v ? v.outbound.destinationCity : ''; };
+    const hasOffers = () => t.views.length > 0;
+    /** @returns {string} The label of the free weekend a search was started from ("November 6–8"), or '' for typed dates. */
+    const weekendLabelFor = key => { const w = key ? D.freeWeekends(t.year, t.month, t.availability, new Date()).find(x => x.key === key) : null; return w ? w.label : ''; };
 
     /* ── reads ─────────────────────────────────────────────────── */
     /** Read this month's busy windows once per month shown; a refusal is kept with its own sentence. */
@@ -115,7 +127,7 @@
       const s = t.searched, scene = `<div class="destination-scene" aria-hidden="true">${'<span></span>'.repeat(6)}</div>`;
       if (!s) return `<div class="trip-hero"><div><div class="eyebrow">A LITTLE SPACE TO GET AWAY</div><h2>Where to?</h2><p>Pick a free weekend, name the airports,<br>and Travel compares the flights. Nothing is booked.</p></div>${scene}</div>`;
       const price = t.result && t.result.price && t.result.price.verdict && t.result.price.verdict !== 'unknown' ? ` · ${esc(t.result.price.verdict)} price` : '';
-      return `<div class="trip-hero"><div><div class="eyebrow">A LITTLE SPACE TO GET AWAY</div><h2>${esc(s.destination)}.</h2><p>${esc(s.origin)} → ${esc(s.destination)}<br>${esc(dayLabel(s.departDate))}${s.returnDate ? ` – ${esc(dayLabel(s.returnDate))}` : ' · one way'}${price}</p></div>${scene}</div>`;
+      return `<div class="trip-hero"><div><div class="eyebrow">A LITTLE SPACE TO GET AWAY</div><h2>${esc(destinationCity() || s.destination)}.</h2><p>${esc(s.origin)} → ${esc(s.destination)}<br>${t.compare ? `${plural(t.compare.weekends.length, 'free weekend')} in ${esc(t.compare.month)}` : `${esc(dayLabel(s.departDate))}${s.returnDate ? ` – ${esc(dayLabel(s.returnDate))}` : ' · one way'}`}${price}</p></div>${scene}</div>`;
     }
     function tripFacts() {
       const q = t.searched || t.q, cabin = String((t.profile && t.profile.preferred_cabin) || 'economy');
@@ -128,7 +140,18 @@
       const weekends = D.freeWeekends(t.year, t.month, a, new Date());
       if (!weekends.length) return `${head}<p class="workspace-subtitle" data-part="weekends" data-state="none">No complete weekend is free in ${esc(D.MONTHS[t.month])}. Choose another month in Calendar, or dates below.</p>`;
       const cards = weekends.map(w => btn(`<span class="calendar-symbol" aria-hidden="true">${esc(w.departDate.slice(8).replace(/^0/, ''))}</span><span><strong>${esc(w.label)}</strong><small>Friday to Sunday · free in your calendar</small></span><span class="availability" aria-hidden="true"></span>`, 'week', 'weekend-card', `data-week="${w.key}" data-depart="${w.departDate}" data-return="${w.returnDate}" aria-pressed="${t.q.weekend === w.key}"`)).join('');
-      return `${head}<div class="weekends" data-part="weekends" data-state="ready">${cards}</div>${t.q.weekend ? btn('Choose other dates', 'all-weeks', 'quiet', 'style="margin-top:10px"') : ''}`;
+      return `${head}<div class="weekends" data-part="weekends" data-state="ready">${cards}</div>${weekendActions(weekends)}`;
+    }
+    /** @returns {string} Under the weekend cards: compare every free weekend at once, show them all again, or leave the chosen one for typed dates. */
+    function weekendActions(weekends) {
+      const style = 'style="margin-top:10px"';
+      if (t.compare) return t.q.weekend ? btn('Show all free weekends', 'all-weeks', 'quiet', style) : '';
+      const compare = weekends.length > 1 ? btn(`Compare ${weekends.length === 2 ? 'both' : `all ${weekends.length}`} free weekends`, 'compare-weekends', 'quiet', style) : '';
+      return `${compare}${t.q.weekend ? btn('Choose other dates', 'all-weeks', 'quiet', style) : ''}`;
+    }
+    /** @returns {string} The Travel tab's in-context line: what this view is and where each part comes from. */
+    function contextLine() {
+      return '<p class="workspace-subtitle travel-context" data-part="travel-context">Travel, opened inside the conversation. Free weekends come from your calendar read; offers come from Travel’s own flight search under your account. Nothing is booked here.</p>';
     }
     function searchForm() {
       const q = t.q, field = (label, id, value, attrs) => `<label class="field">${label}<input id="${id}" value="${esc(value)}" ${attrs}></label>`;
@@ -138,10 +161,10 @@
       const f = t.filters;
       return `<div class="filter-bar"><div class="filter-options"><label><input id="nonstop" type="checkbox" ${f.nonstop ? 'checked' : ''}>Nonstop only</label><label><input id="late" type="checkbox" ${f.late ? 'checked' : ''}>Leave after 3pm</label></div><label class="sr-only" for="sort">Sort offers</label><select id="sort" class="sort-select"><option value="price" ${f.sort === 'price' ? 'selected' : ''}>Lowest total fare</option><option value="duration" ${f.sort === 'duration' ? 'selected' : ''}>Shortest outbound trip</option></select></div>`;
     }
-    const matches = () => D.filterOffers(t.views, Object.assign({ budget: t.budget }, t.filters));
+    const matches = () => D.filterOffers(t.views, Object.assign({ budget: t.budget, weekend: t.compare ? t.q.weekend : '' }, t.filters));
     function offerCard(v, i) {
       const out = v.outbound, back = v.inbound, sample = t.result && t.result.source !== 'duffel';
-      return `<article class="flight ${i === 0 ? 'selected' : ''}" data-flight="${esc(v.id)}"><span class="carrier" aria-hidden="true">${esc(v.airline.slice(0, 1).toUpperCase())}</span><div><strong>${esc(dayLabel(out.date))} · ${esc(out.time || 'time not given')}</strong><small>${v.stops ? `${v.stops} stop${v.stops === 1 ? '' : 's'}` : 'Nonstop'} · ${esc(out.duration || 'duration not given')} outbound${back ? ` · back ${esc(dayLabel(back.date))} ${esc(back.time)}` : ''}<br>${esc(v.airline)}${sample ? ' · sample offer' : ''}</small></div><div class="fare"><strong>${money(v.price, v.currency)}</strong><small>${back ? 'Round trip' : 'One way'}</small>${btn('Details ↗', 'fare', 'quiet', `data-fare="${esc(v.id)}"`)}</div></article>`;
+      return `<article class="flight ${i === 0 ? 'selected' : ''}" data-flight="${esc(v.id)}"><span class="carrier" aria-hidden="true">${esc(v.airline.slice(0, 1).toUpperCase())}</span><div><strong>${t.compare && v.weekendLabel ? `<span class="weekend-tag">${esc(v.weekendLabel)}</span> · ` : ''}${esc(dayLabel(out.date))} · ${esc(out.time || 'time not given')}</strong><small>${v.stops ? `${v.stops} stop${v.stops === 1 ? '' : 's'}` : 'Nonstop'} · ${esc(out.duration || 'duration not given')} outbound${back ? ` · back ${esc(dayLabel(back.date))} ${esc(back.time)}` : ''}<br>${esc(v.airline)}${sample ? ' · sample offer' : ''}</small></div><div class="fare"><strong>${money(v.price, v.currency)}</strong><small>${back ? 'Round trip' : 'One way'}</small>${btn('Details ↗', 'fare', 'quiet', `data-fare="${esc(v.id)}"`)}</div></article>`;
     }
     function flightList() {
       const offers = matches();
@@ -154,7 +177,7 @@
       const read = p.advice ? ` Swarm price read: ${esc(p.advice)}${p.samples ? ` (${esc(p.samples)} recent quotes)` : ''}` : '';
       const lead = r.source === 'duffel' ? `Checked ${esc(LIVE.clockTime(LIVE.parseDate(t.checkedAt)))}. Totals are as the provider quoted them; bags, seats and fare rules are confirmed in Travel.`
         : 'Travel has no flight provider connected for your account, so it returned its labelled sample itineraries. They are not quotes and nothing establishes that these flights exist.';
-      return `<p class="result-note" data-part="offers-source" data-source="${esc(r.source || 'demo')}"><span class="source-label">${esc(sourceLabel())}</span> ${lead}${read}${r.error ? ` Travel said: ${esc(r.error)}.` : ''}${t.budget ? ' The budget filter applies to USD offers.' : ''}</p>`;
+      return `<p class="result-note" data-part="offers-source" data-source="${esc(r.source || 'demo')}"><span class="source-label">${esc(sourceLabel())}</span> ${lead}${t.compare ? ` One search per free weekend (${t.searches}); the weekend cards filter the offers.` : ''}${read}${r.error ? ` Travel said: ${esc(r.error)}.` : ''}${t.budget ? ' The budget filter applies to USD offers.' : ''}</p>`;
     }
     function tripActions() {
       const app = travelApp(), offers = matches();
@@ -163,13 +186,49 @@
     function results() {
       if (t.searching) return '<div class="loading-lines" aria-hidden="true"><span></span><span></span><span></span></div><p class="workspace-subtitle" role="status">Asking Travel for offers…</p>';
       if (t.searchError) return `<div class="empty-result tone-warn" data-state="refused" role="status">${esc(t.searchError)}</div>`;
-      return t.result ? `${filters()}${flightList()}${resultNote()}${tripActions()}` : '';
+      return t.result ? `${filters()}${fitNote()}${recommendation()}${flightList()}${resultNote()}${tripActions()}` : '';
+    }
+    /** @returns {string} A line above the offers when the searched dates are not a free weekend: they overlap plans, or the calendar was not read for them. */
+    function fitNote() {
+      if (!t.result || t.compare) return '';
+      if (t.fit === 'busy') return '<div class="empty-result tone-warn" data-part="fit" data-fit="busy">These dates overlap plans in your calendar. Travel’s offers are shown, but this is not a free weekend, so none of them is recommended as one.</div>';
+      if (t.fit === 'unknown') return '<div class="empty-result" data-part="fit" data-fit="unknown">Your calendar was not read for these dates, so they are unknown, not free. Open Calendar on their month to check.</div>';
+      return '';
+    }
+    /** @returns {string[]} Labels of the shown month's weekends the calendar read marks busy: the ones a weekend search or comparison left out. */
+    function busyWeekendsLeftOut() {
+      const a = t.availability;
+      if (!a || a.state !== 'ready' || !t.searched || !(t.searched.weekend || t.compare)) return [];
+      return D.weekendStates(t.year, t.month, a, new Date()).filter(w => w.state === 'busy').map(w => w.label);
+    }
+    /**
+     * The best match as the offers stand: the first offer after the filters and sort, with its weekend or dates, fare and
+     * stops, how it sits in the calendar (free, overlapping plans, or unread) and the busy weekends left out.
+     * @returns {string} The sentence (HTML), or '' before a result.
+     */
+    function recommendationText() {
+      const best = matches()[0]; if (!best || !t.searched || !t.result) return '';
+      const s = queryFor(best), when = best.weekendLabel || t.searchedLabel || `${dayLabel(s.departDate)}${s.returnDate ? ` – ${dayLabel(s.returnDate)}` : ''}`;
+      const how = t.filters.sort === 'duration' ? 'the shortest matching journey' : 'the lowest matching fare';
+      const fare = `<strong>${money(best.price, best.currency)} ${best.inbound ? 'round trip' : 'one way'}</strong>${best.stops ? ` with ${plural(best.stops, 'stop')}` : ', nonstop'}`;
+      const fit = t.compare ? 'free' : t.fit;
+      const lead = fit === 'busy' ? `<strong>${esc(when)} overlaps plans in your calendar.</strong> Travel still returned offers for it and ${how} is ${fare}, but it is not a free weekend.`
+        : fit === 'unknown' ? `<strong>${esc(when)}</strong> is outside what your calendar read covered, so it is unknown, not free. ${how.charAt(0).toUpperCase()}${how.slice(1)} is ${fare}.`
+        : `<strong>${esc(when)} looks like a good place to start.</strong> It is free in your calendar, and ${how} is ${fare}.`;
+      const kept = `${t.filters.late ? ' Kept departures after 3pm.' : ''}${t.filters.nonstop ? ' Kept nonstop offers.' : ''}${t.budget ? ` Within your $${esc(t.budget)} USD budget.` : ''}`;
+      const left = busyWeekendsLeftOut();
+      const excluded = left.length ? ` Left out ${left.map(esc).join(' and ')} because your calendar has plans.` : '';
+      return lead + kept + excluded + (t.result.source !== 'duffel' ? ' These are Travel’s labelled sample offers, not quotes.' : '');
+    }
+    function recommendation() {
+      const text = recommendationText(); if (!text) return '';
+      return `<div class="result-card recommendation" data-part="recommendation" data-fit="${esc(t.compare ? 'free' : t.fit)}"><span class="source-label">BEST MATCH AS THE OFFERS STAND</span><p>${text}</p></div>`;
     }
     /** @returns {string} The Travel tab (admitted callers only): hero, facts, free weekends, the search, filters, offers, source line and actions. */
     function travelBody() {
       if (!travelAdmitted()) return '';
       ensureStatus(); ensureAvailability();
-      return `<div data-part="travel">${tripHero()}${tripFacts()}${weekendPicker()}${searchForm()}${results()}</div>`;
+      return `<div data-part="travel">${tripHero()}${contextLine()}${tripFacts()}${weekendPicker()}${searchForm()}${results()}</div>`;
     }
 
     /* ── search ────────────────────────────────────────────────── */
@@ -195,7 +254,29 @@
       if (gen !== t.searchGen) return;
       t.searching = false;
       if (!r.ok || !r.body) { t.searchError = `Travel refused the search${r.status ? ` (HTTP ${r.status})` : ''}${r.body && r.body.error ? `: ${String(r.body.error)}` : ''}. Nothing was searched.`; ctx.repaint(); return; }
-      Object.assign(t, { result: r.body, views: (Array.isArray(r.body.items) ? r.body.items : []).map(D.offerView).filter(Boolean), searched: q, checkedAt: new Date().toISOString(), watchNote: {} });
+      Object.assign(t, { result: r.body, views: (Array.isArray(r.body.items) ? r.body.items : []).map(D.offerView).filter(Boolean), searched: q, checkedAt: new Date().toISOString(), watchNote: {},
+        compare: null, searches: 1, fit: D.rangeState(t.availability, q.departDate, q.returnDate), searchedLabel: weekendLabelFor(q.weekend) });
+      ctx.repaint();
+    }
+    /** Search every free weekend of the shown month at once (at most COMPARE_CAP, in parallel), merge the offers tagged by weekend, and let the cards filter them. */
+    async function compareAll() {
+      readForm();
+      const weekends = D.freeWeekends(t.year, t.month, t.availability, new Date()).slice(0, COMPARE_CAP);
+      if (!weekends.length) return;
+      const base = Object.assign({ pax: 1, cabin: String((t.profile && t.profile.preferred_cabin) || 'economy') }, t.q, { weekend: '' });
+      const bad = validQuery(Object.assign({}, base, { departDate: weekends[0].departDate, returnDate: weekends[0].returnDate }));
+      if (bad) { t.searchError = bad; ctx.repaint(); return; }
+      const gen = ++t.searchGen;
+      Object.assign(t, { searching: true, searchError: '' }); ctx.repaint();
+      const answers = await Promise.all(weekends.map(w => api.travel.flights(Object.assign({}, base, { departDate: w.departDate, returnDate: w.returnDate }))));
+      if (gen !== t.searchGen) return;
+      t.searching = false;
+      const merged = D.mergeComparison(weekends, answers);
+      if (!merged.result) { t.searchError = `Travel refused every weekend search${merged.refused[0] && merged.refused[0].status ? ` (HTTP ${merged.refused[0].status})` : ''}. No offers came back.`; ctx.repaint(); return; }
+      if (merged.refused.length) merged.result.error = `${merged.refused.map(x => x.label).join(', ')} could not be searched (HTTP ${merged.refused[0].status})`;
+      Object.assign(t, { result: merged.result, views: merged.views, searched: Object.assign({}, base, { departDate: weekends[0].departDate, returnDate: weekends[weekends.length - 1].returnDate }),
+        compare: { weekends, month: D.MONTHS[t.month] }, searches: weekends.length, fit: 'free', checkedAt: new Date().toISOString(), watchNote: {}, searchedLabel: '' });
+      t.q.weekend = '';
       ctx.repaint();
     }
 
@@ -204,21 +285,21 @@
     function sliceLine(label, s) { return s ? `${label} ${esc(dayLabel(s.date))} ${esc(s.time)}${s.arrive ? ` → ${esc(s.arrive)}` : ''} · ${esc(s.duration || 'duration not given')} · ${s.stops ? `${s.stops} stop${s.stops === 1 ? '' : 's'}` : 'nonstop'}` : ''; }
     /** @returns {string} The fare dialog body for one offer Travel returned, or '' when it is not in the current result. */
     function fareBody(id) {
-      const v = viewById(id), s = t.searched; if (!v || !s) return '';
+      const v = viewById(id), s = v ? queryFor(v) : null; if (!v || !s) return '';
       const exp = LIVE.parseDate(v.expiresAt), app = travelApp();
       const watch = t.result.source === 'duffel' ? btn('Watch this route', 'watch-offer', 'secondary', `data-fare="${esc(v.id)}"`) : '';
       return `<span class="source-label">${esc(sourceLabel())}</span><div class="dialog-detail" data-part="fare-detail">${esc(s.origin)} → ${esc(s.destination)} · ${esc(v.airline)}<br>${sliceLine('Outbound', v.outbound)}${v.inbound ? `<br>${sliceLine('Return', v.inbound)}` : ''}<br>${money(v.price, v.currency)} ${v.inbound ? 'round trip' : 'one way'} · 1 adult${v.cabin ? ` · ${esc(v.cabin)}` : ''}</div><p>${exp ? `The provider says this offer expires ${esc(exp.toLocaleString())}.` : 'The provider gave no expiry for this offer.'} Price and availability are confirmed in Travel before any booking; bags, seats and cancellation terms are not shown here.</p><p>Nothing is booked from this page. Watching the route asks Travel to re-check its price on a schedule and keep the watch on your Travel list.</p><div class="dialog-buttons">${btn('Save this option', 'save-offer', 'primary', `data-fare="${esc(v.id)}"`)}${watch}${app && app.navigable ? link('Open in Travel ↗', app.href, 'secondary') : ''}</div><p class="result-note" role="status" data-part="watch-note">${esc(t.watchNote[v.id] || '')}</p>`;
     }
     function save(id) {
       const v = id ? viewById(id) : matches()[0]; if (!v || !t.searched) return;
-      t.shortlist = D.addToShortlist(t.shortlist, D.shortlistEntry(v, t.searched, t.result.source, t.checkedAt));
+      t.shortlist = D.addToShortlist(t.shortlist, D.shortlistEntry(v, queryFor(v), t.result.source, t.checkedAt));
       LIVE.prefs.set('nexus:shortlist', t.shortlist);
       notify('Saved on this device. Nothing is reserved; search again to confirm the price.');
     }
     async function watch(id) {
       const v = viewById(id); if (!v || !t.searched || t.result.source !== 'duffel') return;
       t.watchNote[id] = 'Asking Travel to watch this route…'; paintPart('watch-note', esc(t.watchNote[id]));
-      const r = await api.travel.watch(t.searched, v);
+      const r = await api.travel.watch(queryFor(v), v);
       t.watchNote[id] = r.ok ? 'Watching: Travel re-checks this route and keeps the watch on your Travel list.' : `Travel refused the watch (HTTP ${r.status})${r.body && r.body.error ? `: ${String(r.body.error)}` : ''}. Nothing is being watched.`;
       if (r.ok) { t.watchesAsked = false; t.watches = null; }
       paintPart('watch-note', esc(t.watchNote[id]));
@@ -267,6 +348,27 @@
       if (!t.searched) t.q.origin = home;
       return '';
     }
+    /** @returns {string} The preferences this page applies: departure airport, party and cabin, budget. */
+    function preferencesLine() {
+      const home = t.profile && t.profile.home_airport ? String(t.profile.home_airport) : '', cabin = String((t.profile && t.profile.preferred_cabin) || 'economy');
+      return `${home ? `From ${home}` : 'No departure airport set'} · 1 adult · ${cabin} · ${t.budget ? `up to $${t.budget} USD` : 'no budget'} · named ${ctx.name()} on this device.`;
+    }
+    /**
+     * Ledger rows for what this page read itself, once it did: the calendar month (free weekends or the refusal), Travel's
+     * offers (count, searches, source, or the refusal) and the preferences in use. Nothing here claims what Jarvis did.
+     * @param {(name:string, detail:string, mark:string) => string} row The page's ledger row renderer.
+     * @returns {string[]} The rows, in that order.
+     */
+    function ledgerRows(row) {
+      const a = t.availability, out = [], month = `${D.MONTHS[t.month]} ${t.year}`;
+      if (t.availKey) out.push(!a ? row('Calendar', `Reading ${month} from your primary Google calendar.`, 'now')
+        : a.state === 'ready' ? row('Calendar', `${month} read at ${LIVE.clockTime(LIVE.parseDate(a.checkedAt))}: ${plural(D.freeWeekends(t.year, t.month, a, new Date()).length, 'free weekend')}.`, 'done')
+        : row('Calendar', `Not read (${a.state}); its days stay unknown, not free.`, 'failed'));
+      if (travelAdmitted() && (t.searching || t.result || t.searchError)) out.push(t.searching ? row('Travel', 'Asking Travel for offers.', 'now')
+        : t.result ? row('Travel', `${plural(t.views.length, 'offer')} from ${plural(t.searches, 'search')} · ${sourceLabel()}.`, 'done') : row('Travel', t.searchError, 'failed'));
+      if (out.length) out.push(row('Your preferences', preferencesLine(), 'done'));
+      return out;
+    }
     /** @returns {string} Source rows for what the Calendar and Travel views read, and where each preference lives. */
     function sourcesRows() {
       const a = t.availability, ready = a && a.state === 'ready';
@@ -292,8 +394,9 @@
     const TRIP_WORDS = /\b(flights?|fly|flying|trip|travel|vacation|getaway|weekend|escape|holiday|free days?|calendar)\b/i;
     /** @returns {string} A card that offers the Calendar and Travel views when the request or answer is about a trip or free time. */
     function planHint(query, answer) {
-      if (!TRIP_WORDS.test(`${query} ${answer}`)) return '';
-      return `<div class="result-card plan-card" data-part="plan"><span class="source-label">CONTINUE WITH YOUR APPS</span><h3>Plan it alongside the conversation</h3><p>Your calendar shows which weekends are free${travelAdmitted() ? '; Travel compares flights for them' : ''}. Both open here, next to this answer.</p><div class="work-actions">${btn('Check my calendar', 'tab', 'secondary', 'data-tab="calendar"')}${travelAdmitted() ? btn('Compare flights in Travel', 'tab', 'primary', 'data-tab="travel"') : ''}</div></div>`;
+      const rec = recommendationText();
+      if (!TRIP_WORDS.test(`${query} ${answer}`) && !rec) return '';
+      return `<div class="result-card plan-card" data-part="plan"><span class="source-label">CONTINUE WITH YOUR APPS</span><h3>Plan it alongside the conversation</h3>${rec ? `<p data-part="plan-recommendation">${rec}</p>` : ''}<p>Your calendar shows which weekends are free${travelAdmitted() ? '; Travel compares flights for them' : ''}. Both open here, next to this answer.</p><div class="work-actions">${btn('Check my calendar', 'tab', 'secondary', 'data-tab="calendar"')}${travelAdmitted() ? btn('Compare flights in Travel', 'tab', 'primary', 'data-tab="travel"') : ''}</div></div>`;
     }
 
     /* ── events ────────────────────────────────────────────────── */
@@ -304,6 +407,7 @@
       week: el => { readForm(); const same = t.q.weekend === el.dataset.week; Object.assign(t.q, same ? { weekend: '' } : { weekend: el.dataset.week, departDate: el.dataset.depart, returnDate: el.dataset.return }); ctx.repaint(); },
       'all-weeks': () => { readForm(); t.q.weekend = ''; ctx.repaint(); },
       'clear-filters': () => { t.filters = { nonstop: false, late: false, sort: t.filters.sort }; ctx.repaint(); },
+      'compare-weekends': () => { compareAll(); },
       'save-best': () => save(''),
       'save-offer': el => { save(el.dataset.fare); ctx.closeDialog(); },
       'watch-offer': el => { watch(el.dataset.fare); },
@@ -339,7 +443,7 @@
       return false;
     }
 
-    return { calendarBody, travelBody, fareBody, shelfExtra, settingsFields, saveSettings, sourcesRows, capabilities, planHint, onAction, onChange, onInput, onSubmit, refine, travelAdmitted, state: t };
+    return { calendarBody, travelBody, fareBody, shelfExtra, settingsFields, saveSettings, sourcesRows, capabilities, planHint, ledgerRows, hasOffers, onAction, onChange, onInput, onSubmit, refine, travelAdmitted, state: t };
   }
 
   window.OSHAL_NEXUS_TRIP = Object.freeze({ createTrip });
