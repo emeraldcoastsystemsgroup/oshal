@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - live acceptance for "Jarvis in dev mode should see what this workspace sees" (dev-workspace-index). As the caller: read the package's gate (super-admin, dev console, package flag); turn dev mode on through the package's same-origin route and require the index built; open one tagged Jarvis conversation through the real /api/jarvis/ask asking about the ADR (package-tool proposals must name a Jarvis session the caller owns, and only the ask route creates one issuer-bound); drive the Jarvis package-tool flow (preview, execute) in that conversation naming the ADR number and require the cited doc_id of that ADR's file; turn dev mode off and require the same ask refused with no citation; then restore the caller's original dev-mode state and remove the conversation. The deployment flags need an api restart, so when a gate is closed the case reports the configuration step and writes nothing.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Cover the rest of the entry's Done-when in the same tagged conversation. Four dev-mode asks - the ADR number, a docs/BACKLOG.md entry title, a docs/runbooks/*.md runbook (the runbooks index README is not a runbook) and a local-notes/ handover document from the index's --notes-dir set - are each judged by path family: the first returned result of the family must carry a doc_id (an uncited reply is a fail), and its rank is reported because the package's search is lexical. With dev mode off all four asks must be refused with no citation, and an unauthenticated GET of the query route (a new `anonymous` port with no credential) must answer 401 or 403. The backlog and runbook asks have tracked defaults; the handover ask has none and arrives by name (option `notesProbe` or OSHAL_VERIFY_DEV_NOTES_PROBE), so no untracked file name is written here. An index that holds no local-notes documents (read from /status `sources`) is UNAVAILABLE naming the --notes-dir build step, and a missing handover probe is UNAVAILABLE naming its variable; neither is ever a pass.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The probe words are a host-runner input: options first, then the `env` option, then this process's environment. No compose file forwards any OSHAL_VERIFY_* variable to the api, so the Test Lab card now passes an empty `env` and never reads the api's own environment. A missing or oversized probe names the one command that supplies it: OSHAL_VERIFY_DEV_NOTES_PROBE="<its words>" node scripts/operations/live-acceptance.js dev-workspace. Before this, the Lab card's description pointed operators at the api's environment, which never receives the variable.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Require the host-supplied handover index path, not any local-notes family hit. Accept that exact path with a nonempty doc_id at any rank within limit5; missing notesPath/OSHAL_VERIFY_DEV_NOTES_PATH is UNAVAILABLE before a model turn. Preserve other probes and refusal/cleanup gates.
  */
 
 'use strict';
@@ -31,8 +32,11 @@ const MAX_PROBE_LENGTH = 200;
  * Compose forwards none of these to the api, so the Test Lab card (which runs inside the api) has no source for them.
  */
 const PROBE_ENV = Object.freeze({ backlog: 'OSHAL_VERIFY_DEV_BACKLOG_PROBE', runbook: 'OSHAL_VERIFY_DEV_RUNBOOK_PROBE', notes: 'OSHAL_VERIFY_DEV_NOTES_PROBE' });
+/** The exact index path of the handover; never inferred from the first local-notes hit. */
+const NOTES_PATH_ENV = 'OSHAL_VERIFY_DEV_NOTES_PATH';
+const HOST_NOTES_RUN = `${PROBE_ENV.notes}="<its words>" ${NOTES_PATH_ENV}="<its index path>" node scripts/operations/live-acceptance.js ${KEY}`;
 /** The one command that supplies a probe's words: the host runner, with the variable in its environment. */
-const HOST_RUN = (variable) => `${variable}="<its words>" node scripts/operations/live-acceptance.js ${KEY}`;
+const HOST_RUN = (variable) => variable === PROBE_ENV.notes ? HOST_NOTES_RUN : `${variable}="<its words>" node scripts/operations/live-acceptance.js ${KEY}`;
 /**
  * Tracked defaults: an open docs/BACKLOG.md entry title and the words of a runbook's title. There is
  * no default for the handover: it is an untracked local note, so its words are supplied by name.
@@ -73,24 +77,27 @@ function closedGate(res) {
 
 /**
  * @description The four asks of one run, in the order they are asked, and the named gap when the
- * handover ask has no text. Options win over the environment; the environment over the defaults. The
+ * handover ask has no text or exact index path. Options win over the environment; the environment over the defaults. The
  * environment is `options.env` when given (the Test Lab passes an empty one), else this process's: the host runner's.
  * @param {string} adr - The ADR number.
- * @param {object} options - Caller options (`backlogProbe`, `runbookProbe`, `notesProbe`, `env`).
- * @returns {{probes: Array<{key: string, label: string, family: string, re: RegExp, query: string}>, gap: string|null}} The asks.
+ * @param {object} options - Caller options (`backlogProbe`, `runbookProbe`, `notesProbe`, `notesPath`, `env`).
+ * @returns {{probes: Array<{key: string, label: string, family: string, re: RegExp, query: string, expectedPath?: string}>, gap: string|null}} The asks.
  */
 function probesFor(adr, options = {}) {
   const env = options.env || process.env;
   const text = (key) => String(options[`${key}Probe`] ?? env[PROBE_ENV[key]] ?? DEFAULT_PROBES[key] ?? '').trim();
   const probes = [{ key: 'adr', label: `ADR-${adr}`, family: `docs/adr/${adr}-*.md`, re: new RegExp(`^docs/adr/${adr}-[\\w.-]+\\.md$`), query: `ADR-${adr}` }];
   const gaps = [];
+  const notesPath = String(options.notesPath ?? env[NOTES_PATH_ENV] ?? '').trim();
+  if (!notesPath) gaps.push(`the handover ask needs ${NOTES_PATH_ENV} set to its exact indexed local-notes/ path in the host runner's environment `
+    + `(the Test Lab card cannot supply it): run ${HOST_NOTES_RUN}`);
   for (const key of ['backlog', 'runbook', 'notes']) {
     const query = text(key);
     if (!query || query.length > MAX_PROBE_LENGTH) {
       gaps.push(`the ${FAMILIES[key].label} ask needs ${PROBE_ENV[key]} set to 1-${MAX_PROBE_LENGTH} characters of its words in the host runner's environment `
         + `(the api never receives it, so the Test Lab card cannot supply it): run ${HOST_RUN(PROBE_ENV[key])}`);
     }
-    probes.push({ key, ...FAMILIES[key], query });
+    probes.push({ key, ...FAMILIES[key], query, ...(key === 'notes' ? { expectedPath: notesPath } : {}) });
   }
   return { probes, gap: gaps.length ? gaps.join('; ') : null };
 }
@@ -143,21 +150,26 @@ async function askTool(io, sessionId, query) {
 }
 
 /**
- * @description Judge one dev-mode ask: executed, a result of the expected path family came back, and
- * that result carries a doc_id. A family hit without a doc_id is an uncited reply and fails.
+ * @description Require the named handover path with its own doc_id anywhere within the requested limit.
+ * The other asks retain their path-family judgement. An uncited matching result alone fails.
  * @param {Awaited<ReturnType<typeof askTool>>} ask - The ask outcome.
- * @param {{key: string, label: string, family: string, re: RegExp}} probe - What was asked and the family it must return.
+ * @param {{key: string, label: string, family: string, re: RegExp, expectedPath?: string}} probe - The exact handover path or other ask's path family.
  * @returns {{key: string, ok: boolean, detail: string, docId: string|null, path: string|null, rank: number|null}} The judgement.
  */
 function judgeCitedAnswer(ask, probe) {
   const none = { key: probe.key, ok: false, docId: null, path: null, rank: null };
   if (ask.execute !== 200) return { ...none, detail: `the dev-mode ${probe.label} ask was refused (preview ${ask.preview}, execute ${ask.execute}: ${ask.error})` };
-  const rank = ask.results.findIndex((r) => r && probe.re.test(String(r.path)));
+  const results = probe.key === 'notes' ? ask.results.slice(0, ASK_LIMIT) : ask.results;
+  const matches = (r) => r && (probe.key === 'notes'
+    ? Boolean(probe.expectedPath) && r.path === probe.expectedPath : probe.re.test(String(r.path)));
+  const citedRank = probe.key === 'notes' ? results.findIndex((r) => matches(r) && typeof r.doc_id === 'string' && r.doc_id.trim()) : -1;
+  const rank = citedRank >= 0 ? citedRank : results.findIndex(matches);
   if (rank < 0) {
-    const got = ask.results.map((r) => String(r && r.path)).join(', ') || 'nothing';
-    return { ...none, detail: `the dev-mode ${probe.label} ask returned no ${probe.family} result (got ${got})` };
+    const got = results.map((r) => String(r && r.path)).join(', ') || 'nothing';
+    const expected = probe.key === 'notes' ? `exact path ${probe.expectedPath} within limit ${ASK_LIMIT}` : probe.family;
+    return { ...none, detail: `the dev-mode ${probe.label} ask returned no ${expected} result (got ${got})` };
   }
-  const hit = ask.results[rank];
+  const hit = results[rank];
   const path = String(hit.path);
   if (typeof hit.doc_id !== 'string' || !hit.doc_id.trim()) return { ...none, path, rank: rank + 1, detail: `the dev-mode ${probe.label} ask returned ${path} with no doc_id (an uncited reply)` };
   return { key: probe.key, ok: true, detail: `${probe.label} ask returned doc_id ${hit.doc_id} (${path}, rank ${rank + 1})`, docId: hit.doc_id, path, rank: rank + 1 };
@@ -268,7 +280,7 @@ async function restoreDevMode(io, initial, ledger) {
  * @param {object} ports - api, anonymous, origin, sql, workspace, ownerSub.
  * @param {object} [options] - `adr` (a three-digit ADR number), `backlogProbe` / `runbookProbe` / `notesProbe` (the words
  *   each ask sends; otherwise OSHAL_VERIFY_DEV_*_PROBE from `env`, default process.env, which carries them only on the host runner), budget
- *   overrides, `tag` (tests only).
+ *   overrides, `notesPath` (exact handover index path, otherwise OSHAL_VERIFY_DEV_NOTES_PATH; no default), `tag` (tests only).
  * @returns {Promise<object>} The result with its cleanup receipt.
  */
 async function run(ports, options = {}) {

@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | The registry gains the create-region-edit case. The adapter's replies carry the raw body as `bytes`, and its upload names the file part the case gives (`image` for Create). The card, run as the Lab's principal against a PAID provider, answers a gap naming the host command that carries --allow-paid after the two read-only preconditions and nothing else; against a free provider its upload reaches Create's route with exactly one `image` part carrying a real PNG.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Run the Lab ports against a real loopback Express/multer server: exact PNG bytes, the single image part Create accepts, default file compatibility, session-cookie isolation and anonymous reads. No replacement fetch or installed service.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | The Create provider fixture advertises costConsentVersion 1, matching the required server-enforced cost-cap contract.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | Require the handover words and exact index path in the host command, and prove the Lab ignores both api-environment inputs before any model turn.
  */
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -85,18 +86,21 @@ describe('live-acceptance Test Lab cards', () => {
         if (new RegExp(String.raw`^\s*${variable}:\s`, 'm').test(compose)) continue;
         expect(scenario.description, `${key} must not send the operator to the api environment for ${variable}`).not.toMatch(API_ENV_CLAIM);
         expect(scenario.description, `${key} must name the host command that supplies ${variable}`)
-          .toMatch(new RegExp(String.raw`${variable}="[^"]*" node scripts/operations/live-acceptance\.js ${key}\b`));
+          .toMatch(new RegExp(String.raw`${variable}="[^"]*"(?: OSHAL_VERIFY_[A-Z0-9_]+="[^"]*")* node scripts/operations/live-acceptance\.js ${key}\b`));
       }
     }
     expect(named).toContain('dev-workspace:OSHAL_VERIFY_DEV_NOTES_PROBE');
+    expect(named).toContain('dev-workspace:OSHAL_VERIFY_DEV_NOTES_PATH');
   });
 
-  it('answers the dev-workspace handover ask as a host-runner gap even when the api environment carries the words', async () => {
+  it('answers the dev-workspace handover ask as a host-runner gap even when the api environment carries words and path', async () => {
     const seen: string[] = [];
     let on = false;
     const realFetch = globalThis.fetch;
     const saved = process.env.OSHAL_VERIFY_DEV_NOTES_PROBE;
+    const savedPath = process.env.OSHAL_VERIFY_DEV_NOTES_PATH;
     process.env.OSHAL_VERIFY_DEV_NOTES_PROBE = 'fixture handover words';
+    process.env.OSHAL_VERIFY_DEV_NOTES_PATH = 'local-notes/handover.md';
     const reply = (status: number, json: unknown) => new Response(JSON.stringify(json), { status, headers: { 'content-type': 'application/json' } });
     globalThis.fetch = (async (url: string, init: RequestInit) => {
       const route = `${init.method} ${new URL(url).pathname}`;
@@ -112,7 +116,8 @@ describe('live-acceptance Test Lab cards', () => {
     try {
       const step = await runLiveAcceptanceCase('dev-workspace', 'sid=abc', runtime);
       expect(step.state).toBe('gap');
-      expect(step.detail).toContain('run OSHAL_VERIFY_DEV_NOTES_PROBE="<its words>" node scripts/operations/live-acceptance.js dev-workspace');
+      expect(step.detail).toContain('run OSHAL_VERIFY_DEV_NOTES_PROBE="<its words>" OSHAL_VERIFY_DEV_NOTES_PATH="<its index path>" node scripts/operations/live-acceptance.js dev-workspace');
+      expect(step.detail).toContain('the handover ask needs OSHAL_VERIFY_DEV_NOTES_PATH');
       expect(seen.filter((route) => route.includes('/api/jarvis/') || route.includes('/query'))).toEqual([]);
       expect(seen).toContain('POST /api/dev-workspace-index/dev-mode');
       expect(on).toBe(false);
@@ -120,6 +125,7 @@ describe('live-acceptance Test Lab cards', () => {
     } finally {
       globalThis.fetch = realFetch;
       if (saved === undefined) delete process.env.OSHAL_VERIFY_DEV_NOTES_PROBE; else process.env.OSHAL_VERIFY_DEV_NOTES_PROBE = saved;
+      if (savedPath === undefined) delete process.env.OSHAL_VERIFY_DEV_NOTES_PATH; else process.env.OSHAL_VERIFY_DEV_NOTES_PATH = savedPath;
     }
   });
 
