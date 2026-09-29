@@ -7,8 +7,12 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The registry gains the trading-parity case.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The adapter's `anonymous` port reaches the same loopback base with no session cookie, while `api` keeps forwarding the caller's.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Runner inputs are host-only. A card may not name an OSHAL_VERIFY_* variable as an api-environment source unless compose forwards it; today compose forwards none. Such a variable may appear only inside the host command that supplies it. And the dev-workspace card, run with OSHAL_VERIFY_DEV_NOTES_PROBE set in this process (standing in for the api's environment), must still answer the handover ask as a host-runner gap: no anonymous query, no Jarvis call, dev mode put back. Red if the Lab adapter stops passing its empty runner environment, or if the description again sends the operator to the api's environment.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | The registry gains the vids-publish case. The adapter's replies carry the raw body's byte length and sha256, and its `files` port answers a named probe from this process's disk (a real file under a temporary workspace root) and refuses any other probe name.
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { SCENARIOS, scenariosForRun, type ScenarioRunContext } from '@/app/routes/test-lab-scenarios';
 import { LIVE_ACCEPTANCE_SCENARIOS } from '@/app/routes/test-lab-live-acceptance-scenarios';
@@ -20,10 +24,32 @@ const RUNNER_VARIABLE = /\bOSHAL_VERIFY_[A-Z0-9_]*[A-Z0-9]\b/g;
 /** Wording that presents the api's own environment as where a card reads an input. */
 const API_ENV_CLAIM = /environment of the api|of the api, for this card|in the api's environment|api environment/i;
 
+/**
+ * @description The Lab's `files` port against real files under a temporary workspace root.
+ * @param ports - The Lab ports.
+ * @returns Resolves once the probe answered present, absent and refused an unknown name.
+ */
+async function labFileProbe(ports: { files: { state: (n: string, id: string) => Promise<string> } }): Promise<void> {
+  const root = mkdtempSync(path.join(tmpdir(), 'lab-live-acceptance-files-'));
+  const saved = process.env.CLINE_WORKSPACE_ROOT;
+  const id = '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d';
+  process.env.CLINE_WORKSPACE_ROOT = root;
+  try {
+    expect(await ports.files.state('vids.export', id)).toBe('absent');
+    mkdirSync(path.join(root, 'vids-artifacts'));
+    writeFileSync(path.join(root, 'vids-artifacts', `${id}.mp4`), 'mp4');
+    expect(await ports.files.state('vids.export', id)).toBe('present');
+    await expect(ports.files.state('/etc/passwd', id)).rejects.toThrow('unknown live-acceptance file probe');
+  } finally {
+    if (saved === undefined) delete process.env.CLINE_WORKSPACE_ROOT; else process.env.CLINE_WORKSPACE_ROOT = saved;
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 describe('live-acceptance Test Lab cards', () => {
   it('registers one explicit-only card per case, with its host command and suites on disk', () => {
     expect(LIVE_ACCEPTANCE_SCENARIOS).toHaveLength(LIVE_ACCEPTANCE_CASES.length);
-    expect(LIVE_ACCEPTANCE_CASES.map((c) => c.module.KEY)).toEqual(['response-renderer', 'congress', 'dev-workspace', 'floater', 'linkedin', 'commerce', 'lm-class-material', 'jarvis-cache', 'trading-parity']);
+    expect(LIVE_ACCEPTANCE_CASES.map((c) => c.module.KEY)).toEqual(['response-renderer', 'congress', 'dev-workspace', 'floater', 'linkedin', 'commerce', 'lm-class-material', 'jarvis-cache', 'trading-parity', 'vids-publish']);
     for (const scenario of LIVE_ACCEPTANCE_SCENARIOS) {
       const key = scenario.id.replace(/^live-acceptance-/, '');
       expect(SCENARIOS.filter((s) => s.id === scenario.id)).toEqual([scenario]);
@@ -111,12 +137,17 @@ describe('live-acceptance Test Lab cards', () => {
       const step = await runLiveAcceptanceCase('floater', 'sid=abc', runtime);
       expect(step.state).toBe('gap');
       expect(step.detail).toContain('aero-lab with the ADR-160 vehicle record');
+      const vidsStep = await runLiveAcceptanceCase('vids-publish', 'sid=abc', runtime);
+      expect(vidsStep.state).toBe('gap');
+      expect(vidsStep.detail).toContain('vids is not installed (GET /api/vids/jobs answered 404). Nothing was written.');
       expect(seen.every((s) => s.cookie === 'sid=abc' && s.url.startsWith('http://127.0.0.1:5000/'))).toBe(true);
       seen.length = 0;
-      const anonymous = (labPorts('sid=abc', runtime) as { anonymous: (m: string, r: string) => Promise<{ status: number }> }).anonymous;
-      expect((await anonymous('GET', '/api/dev-workspace-index/query?q=ADR-077')).status).toBe(404);
+      const anonymous = (labPorts('sid=abc', runtime) as { anonymous: (m: string, r: string) => Promise<{ status: number; byteLength: number; sha256: string }> }).anonymous;
+      const refused = await anonymous('GET', '/api/dev-workspace-index/query?q=ADR-077');
+      expect(refused).toMatchObject({ status: 404, byteLength: 2, sha256: createHash('sha256').update('{}').digest('hex') });
       expect(seen).toEqual([{ url: 'http://127.0.0.1:5000/api/dev-workspace-index/query?q=ADR-077', cookie: null }]);
       seen.length = 0;
+      await labFileProbe(labPorts('sid=abc', runtime) as { files: { state: (n: string, id: string) => Promise<string> } });
       for (const key of ['commerce', 'jarvis-cache']) {
         const hostOnly = await runLiveAcceptanceCase(key, 'sid=abc', runtime);
         expect(hostOnly.state).toBe('gap');

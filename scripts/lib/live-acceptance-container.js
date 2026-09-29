@@ -5,6 +5,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the in-container half of the host live-acceptance runner. scripts/operations/live-acceptance.js stages this file (with live-acceptance-common.js and live-acceptance-sql.js) into the api container once per run and executes one operation per call, the request forwarded BY NAME in OSHAL_LIVE_ACCEPTANCE_REQUEST. Every operation runs under the owner's own request identity through the image's compiled pool, ticket service and workspace root: a NAMED statement from the closed set (never SQL text), a ticket read or delete, and the ask-workspace state or removal for a fixture-tagged id. It prints one RESULT line.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | A `file-state` op: whether the file a NAMED probe from the closed set (live-acceptance-common.js FILE_PROBES) resolves exists in this container, for an id the probe validates. It needs no pool and never takes a path. The vids-publish case uses it to prove the attached MP4 is on disk after attach and gone after cleanup.
  */
 
 'use strict';
@@ -15,7 +16,9 @@ const { statementText } = require('./live-acceptance-sql.js');
 
 const REQUEST_ENV = 'OSHAL_LIVE_ACCEPTANCE_REQUEST';
 const RESULT_PREFIX = 'RESULT ';
-const OPS = Object.freeze(['sql', 'ticket-get', 'ticket-delete', 'workspace-state', 'workspace-remove']);
+const OPS = Object.freeze(['sql', 'ticket-get', 'ticket-delete', 'workspace-state', 'workspace-remove', 'file-state']);
+/** Operations that read the container's filesystem only, so they open no database pool. */
+const POOL_FREE_OPS = Object.freeze(['workspace-state', 'workspace-remove', 'file-state']);
 
 /**
  * @description Parse and validate one request.
@@ -30,6 +33,8 @@ function parseRequest(raw) {
   if (request.op === 'sql') {
     statementText(request.name);
     if (!Array.isArray(request.params)) throw new Error('params must be an array');
+  } else if (request.op === 'file-state') {
+    common.fileProbePath(request.name, request.id);
   } else if (typeof request.id !== 'string' || !request.id) throw new Error('an id is required');
   return request;
 }
@@ -68,6 +73,7 @@ function ticketView(ticket) {
  * @returns {Promise<object>} The operation's payload.
  */
 async function execute(request, deps) {
+  if (request.op === 'file-state') return { state: common.fileProbeState(request.name, request.id) };
   if (request.op === 'workspace-state') return { state: common.fixtureWorkspaceState(deps.workspaceRoot, request.id) };
   if (request.op === 'workspace-remove') return { error: common.removeFixtureWorkspace(deps.workspaceRoot, request.id, request.sub) };
   return deps.runWithRequestIdentity({ sub: request.sub, isOperator: false }, async () => {
@@ -87,8 +93,8 @@ async function main() {
   try {
     const request = parseRequest(process.env[REQUEST_ENV]);
     const dist = loadDist(process.env.OSHAL_ACCEPTANCE_DIST_DIR || path.join(process.cwd(), 'dist'));
-    pool = request.op.startsWith('workspace') ? null : dist.createOptionalPostgresPool('live-acceptance');
-    if (!pool && !request.op.startsWith('workspace')) throw new Error('this container has no PostgreSQL configuration');
+    pool = POOL_FREE_OPS.includes(request.op) ? null : dist.createOptionalPostgresPool('live-acceptance');
+    if (!pool && !POOL_FREE_OPS.includes(request.op)) throw new Error('this container has no PostgreSQL configuration');
     const payload = await execute(request, {
       pool, runWithRequestIdentity: dist.runWithRequestIdentity, workspaceRoot: dist.resolveSharedWorkspaceRoot(),
       tickets: pool ? new dist.TicketService(new dist.PostgresTicketStore(pool)) : null,
@@ -104,4 +110,4 @@ async function main() {
 
 if (require.main === module) main();
 
-module.exports = { REQUEST_ENV, RESULT_PREFIX, OPS, parseRequest, ticketView, execute };
+module.exports = { REQUEST_ENV, RESULT_PREFIX, OPS, POOL_FREE_OPS, parseRequest, ticketView, execute };
