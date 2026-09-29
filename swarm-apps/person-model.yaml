@@ -18,6 +18,11 @@
 
 name: person-model
 suite: ai-knowledge   # ADR-097: primary catalog shelf — personal recall/knowledge over your own transcripts
+# ADR-170 rating label: container memory in MiB (declared by the rule in docs/apps/ai-usage-ledger.md)
+# and each model-touching feature. Token and model columns are generated, never typed here.
+rating:
+  memoryMb: { low: 32, high: 128, basis: declared }
+  features: []   # no model in the loop (T0)
 displayName: Ambient Recall
 description: >-
   Ask what someone said. Turns your Jarvis ambient transcripts into recall with

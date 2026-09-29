@@ -20,6 +20,16 @@
 
 name: oshal-dev
 suite: ai-engineering   # ADR-097: primary catalog shelf (tools keep their own category:)
+# ADR-170 rating label: container memory in MiB (declared by the rule in docs/apps/ai-usage-ledger.md)
+# and each model-touching feature. Token and model columns are generated, never typed here.
+rating:
+  memoryMb: { low: 64, high: 256, basis: declared }
+  features:
+    - id: platform-change
+      unit: platform-change ticket
+      tier: T4
+      generation: none
+      degrade: disable
 displayName: OSHAL Development
 description: >-
   The platform develops itself: a dedicated, superadmin-gated developer bot

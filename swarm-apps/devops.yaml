@@ -11,6 +11,16 @@
 
 name: devops
 suite: ai-engineering   # ADR-097: primary catalog shelf (tools keep their own category:)
+# ADR-170 rating label: container memory in MiB (declared by the rule in docs/apps/ai-usage-ledger.md)
+# and each model-touching feature. Token and model columns are generated, never typed here.
+rating:
+  memoryMb: { low: 224, high: 896, basis: declared }
+  features:
+    - id: credential-brokering
+      unit: credential request
+      tier: T2
+      generation: none
+      degrade: disable
 displayName: DevOps + Vault
 description: >-
   Premium privileged swarm (Private Preview). A vault-bot pulls short-lived, scoped cloud

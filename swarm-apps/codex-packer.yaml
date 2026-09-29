@@ -22,6 +22,16 @@
 
 name: codex-packer
 suite: ai-engineering   # ADR-097: primary catalog shelf (tools keep their own category:)
+# ADR-170 rating label: container memory in MiB (declared by the rule in docs/apps/ai-usage-ledger.md)
+# and each model-touching feature. Token and model columns are generated, never typed here.
+rating:
+  memoryMb: { low: 32, high: 128, basis: declared }
+  features:
+    - id: packing-interview
+      unit: packing interview
+      tier: T4
+      generation: none
+      degrade: disable
 displayName: Bot Forge
 description: >-
   The bot factory. Describe a task you want automated; the Forge agent interviews

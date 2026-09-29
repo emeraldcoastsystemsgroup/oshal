@@ -17,6 +17,7 @@
 # 10 | maintainer@emeraldcoastsystemsgroup.com  | Run the two-user and privacy live proofs in hosted CI by enabling the mock-header identity gate; CI-mode specs fail instead of skip when this explicit test-only switch is absent.
 # 11 | maintainer@emeraldcoastsystemsgroup.com  | Classify the runner-local Compose smoke as ephemeral image/build validation: it is always torn down, changes no durable target, and is not a deployment job.
 # 12 | maintainer@emeraldcoastsystemsgroup.com  | Make the mock e2e posture explicit: the noop lane declares the model-less test deployment and the stable mock subject is the operator for operator-gated browser proofs; production never inherits either setting.
+# 13 | maintainer@emeraldcoastsystemsgroup.com   | AI usage ledger step (ADR-170 D10): `node scripts/ai-usage-ledger.js --core . --check docs/apps/ai-usage-ledger.md` fails on a stale ledger or an unrated kernel manifest.
 # =============================================================================
 
 name: CI
@@ -120,6 +121,11 @@ jobs:
       # trunk is app-free BY CONSTRUCTION — catching a re-mixed app at publish time is too late.
       - name: Repo separation (ADR-115)
         run: node scripts/check-repo-separation.js
+
+      # ADR-170 D10: the rating label is generated from the manifests. A stale ledger or an
+      # unrated kernel manifest fails here, so no application ships without its label.
+      - name: AI usage ledger (ADR-170)
+        run: node scripts/ai-usage-ledger.js --core . --check docs/apps/ai-usage-ledger.md
 
   # ── Test Suite ─────────────────────────────────────────────────────────────
   # Runs the fast vitest unit suite (no DB) AND the Playwright e2e. The e2e boots
