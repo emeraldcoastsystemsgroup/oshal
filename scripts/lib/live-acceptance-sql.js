@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the closed set of SQL statements the automated live-acceptance cases may run, by name. A case never sends SQL text: it names one of these, and both bindings (the host runner's in-container helper and the Test Lab adapter) run it under the owner's own request identity, so row policies scope it exactly as they scope the owner's requests. Every statement takes the owner subject as $1 and its fixture key after it. Used only where a product exposes no delete route (the ADR-160 Floater record, a queue-created LinkedIn draft) and for residue/usage reads.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Three vids statements for the vids-publish case: insert one tagged finished job for the owner (the package makes a job 'done' only when a registered Vids worker settles it, so no route can produce one), delete exactly that job (owner, id, tag and status), and the residue read (job, export row, publication and the export's artifact id for the file probe).
  */
 
 'use strict';
@@ -33,6 +34,22 @@ const STATEMENTS = Object.freeze({
   // The per-task rollups the run's conversations touched ($2 ISO start, $3 LIKE prefix of the run tag).
   'jarvis.rollups': `SELECT task_id, total_input_tokens, total_output_tokens, usage_by_model FROM chat_tasks
     WHERE owner_sub = $1 AND updated_at >= $2::timestamptz AND task_id LIKE $3 ORDER BY task_id LIMIT 50`,
+  // vids (store) publication: a job is created only by dispatching it to a registered Vids worker and
+  // becomes 'done' only when that worker settles it, and the package has no job delete route. The
+  // case inserts one finished job for the owner whose idea is its fixture tag ($2), never a second one
+  // for the same tag; nothing dispatches it. Delete is bound to owner, id, tag and status, and the
+  // export row cascades (its file is removed first through the package's own DELETE route).
+  'vids.done-job-insert': `INSERT INTO vids_jobs (user_sub, status, idea, outcome)
+    SELECT $1::text, 'done', $2::text, jsonb_build_object('liveAcceptance', true)
+    WHERE NOT EXISTS (SELECT 1 FROM vids_jobs WHERE user_sub = $1 AND idea = $2)
+    RETURNING job_id::text AS job_id`,
+  'vids.job-delete': `DELETE FROM vids_jobs
+    WHERE user_sub = $1 AND job_id = $2::uuid AND idea = $3 AND status = 'done'`,
+  'vids.residue': `SELECT
+    (SELECT count(*) FROM vids_jobs WHERE user_sub = $1 AND job_id = $2::uuid)::int AS jobs,
+    (SELECT count(*) FROM vids_artifacts WHERE owner_sub = $1 AND job_id = $2::uuid)::int AS exports,
+    (SELECT count(*) FROM vids_artifacts WHERE owner_sub = $1 AND job_id = $2::uuid AND public_token IS NOT NULL)::int AS published,
+    (SELECT artifact_id::text FROM vids_artifacts WHERE owner_sub = $1 AND job_id = $2::uuid) AS artifact_id`,
 });
 
 /**

@@ -6,7 +6,9 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the signed-in Test Lab adapter for the automated live-acceptance sweep. The cases live once in scripts/lib/live-acceptance-*.js (the host runner scripts/operations/live-acceptance.js drives the same code with the operator token); this file only binds their ports to the running server as the initiating caller: loopback JSON and multipart calls carrying the caller's session cookie, the closed named-statement set on the request-identity pool, the ticket service, and the shared workspace root for fixture-tagged ask workspaces. The headless Chromium and `docker logs` ports exist only on the host, so the commerce and Jarvis-cache cards answer a named gap here before any call.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | An `anonymous` port: the same loopback JSON request with no session cookie, so a case can prove a route refuses an unauthenticated caller (the dev-workspace query route must answer 401/403).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Every case now runs with an empty runner environment (`env: {}`). The case modules read runner inputs such as OSHAL_VERIFY_DEV_NOTES_PROBE from process.env on the host, but inside the api that is the api's environment, and no compose file forwards any OSHAL_VERIFY_* variable to the api. The dev-workspace card used to fall back to it and told operators to set a variable the api never receives. Now it reports the handover ask as host-runner-only, naming the command.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Every loopback reply also carries `byteLength` and `sha256` of its raw body (text decoded from the same bytes), so a case can prove a binary route served exact bytes, and a `files` port answers whether a NAMED probe's file (live-acceptance-common.js FILE_PROBES, never a path) exists in this server's process. Both serve the vids-publish case: the anonymous public read must equal the uploaded MP4, and cleanup must leave no MP4 on disk.
  */
+import { createHash } from 'node:crypto';
 import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 import { createChildLogger } from '@/shared/logger';
 import type { ScenarioRunContext, State, StepResult } from './test-lab-scenarios';
@@ -47,6 +49,7 @@ export interface LiveAcceptanceCaseEntry {
 interface CommonModule {
   fixtureWorkspaceState(root: string, id: string): string;
   removeFixtureWorkspace(root: string, id: string, ownerSub: string): string | null;
+  fileProbeState(name: string, id: string): 'present' | 'absent';
   receiptLine(receipt: LiveAcceptanceResult['cleanup']): string;
 }
 
@@ -73,8 +76,8 @@ const LAB_CASE_OPTIONS: Readonly<Record<string, unknown>> = Object.freeze({ env:
 /** How a case state shows on a Lab card: a deployment that cannot exercise the claim is a gap. */
 const LAB_STATE: Record<LiveAcceptanceResult['state'], State> = { pass: 'pass', fail: 'fail', degraded: 'degraded', unavailable: 'gap' };
 
-/** One loopback reply in the shape the case modules read. */
-interface CallResult { status: number; json: Record<string, unknown>; text: string; contentType: string; location: string | null }
+/** One loopback reply in the shape the case modules read; the digest and length are of the raw body. */
+interface CallResult { status: number; json: Record<string, unknown>; text: string; contentType: string; location: string | null; byteLength: number; sha256: string }
 
 /**
  * @description One loopback request to the running server as the initiating signed-in caller.
@@ -83,25 +86,27 @@ interface CallResult { status: number; json: Record<string, unknown>; text: stri
  * @param method - HTTP method.
  * @param route - API path beginning with a slash.
  * @param init - Body and extra headers.
- * @returns The status, parsed JSON (empty object when not JSON), text, content type and redirect target.
+ * @returns The status, parsed JSON (empty object when not JSON), text, content type, redirect target, and the raw body's byte length and sha256.
  */
 async function send(base: string, cookie: string | null, method: string, route: string, init: { body?: string | FormData; headers?: Record<string, string> }): Promise<CallResult> {
   const response = await fetch(`${base}${route}`, {
     method, redirect: 'manual', signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
     headers: { ...(init.headers || {}), ...(cookie === null ? {} : { cookie }) }, ...(init.body === undefined ? {} : { body: init.body }),
   });
-  const text = await response.text().catch(() => '');
+  const raw = Buffer.from(await response.arrayBuffer().catch(() => new ArrayBuffer(0)));
+  const text = new TextDecoder().decode(raw);
   let json: Record<string, unknown> = {};
   try { json = text ? JSON.parse(text) as Record<string, unknown> : {}; } catch { json = {}; }
   return { status: response.status, json: json && typeof json === 'object' ? json : {}, text: text.slice(0, 65_536),
-    contentType: String(response.headers.get('content-type') || ''), location: response.headers.get('location') };
+    contentType: String(response.headers.get('content-type') || ''), location: response.headers.get('location'),
+    byteLength: raw.length, sha256: createHash('sha256').update(raw).digest('hex') };
 }
 
 /**
  * @description Bind the case ports available inside the server to the initiating caller.
  * @param cookie - The initiating session cookie.
  * @param runtime - Server-derived run context (owner, stores, loopback base).
- * @returns The ports; `anonymous` sends no cookie; `browser` and `logs` are absent on purpose (host-only).
+ * @returns The ports; `anonymous` sends no cookie; `files` answers named probes only; `browser` and `logs` are absent on purpose (host-only).
  */
 export function labPorts(cookie: string, runtime: ScenarioRunContext): Record<string, unknown> {
   const { ctx } = runtime;
@@ -130,6 +135,10 @@ export function labPorts(cookie: string, runtime: ScenarioRunContext): Record<st
     workspace: {
       state: async (id: string) => common.fixtureWorkspaceState(root, id),
       remove: async (id: string) => common.removeFixtureWorkspace(root, id, runtime.ownerSub),
+    },
+    // Named probes only: the case sends a probe name and an id the probe validates, never a path.
+    files: {
+      state: async (name: string, id: string) => common.fileProbeState(name, id),
     },
   };
 }

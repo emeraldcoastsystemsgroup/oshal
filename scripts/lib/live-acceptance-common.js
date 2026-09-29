@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the pieces every automated live-acceptance case shares (scripts/lib/live-acceptance-*.js, driven by scripts/operations/live-acceptance.js and the Test Lab cards in test-lab-live-acceptance-scenarios.ts): uniquely tagged fixture names, a cleanup ledger that turns anything created-and-not-removed (or any cleanup error) into a red result, the one result shape with its cleanup receipt, a bounded poll, same-origin action headers and the fixture-workspace removal the Jarvis cases need. Plain CommonJS with node built-ins only, so the image carries it (Dockerfile.oshal COPY scripts/lib/*.js) and the host runner can stage it into a container.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | A closed set of named file probes (FILE_PROBES, fileProbeState), the file counterpart of the closed statement set: a case names a probe and an id, never a path, and the probe resolves the one path the product uses in the process that serves it. The first probe, `vids.export`, is the attached MP4 of a vids finished job, so the vids-publish case can prove its cleanup removed the media and not only the rows. A case probes the file present before it trusts an absent answer.
  */
 
 'use strict';
@@ -304,6 +305,61 @@ function removeFixtureWorkspace(root, id, ownerSub) {
   return fs.existsSync(dir) ? `workspace ${id} still exists after removal` : null;
 }
 
+/** A lower-case UUID, the only id shape a file probe accepts. */
+const LOWER_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * The closed set of files a case may ask about, by name. Like the closed statement set, a case never
+ * sends a path: it names a probe and an id, the probe validates the id and resolves the one path the
+ * product itself would use, in the process (api container or api server) that serves the product.
+ * A case must probe a file PRESENT before it trusts an ABSENT answer, so a probe whose path drifted
+ * from the product's makes the case fail instead of passing blind.
+ */
+const FILE_PROBES = Object.freeze({
+  // vids (store) finished exports: vids/src-routes/vids-artifact-files.ts artifactPath() stores an
+  // attached MP4 at <CLINE_WORKSPACE_ROOT or /app/workspace-shared>/vids-artifacts/<artifact id>.mp4.
+  'vids.export': Object.freeze({
+    idPattern: LOWER_UUID_RE,
+    resolve: (env, id) => path.join(env.CLINE_WORKSPACE_ROOT || '/app/workspace-shared', 'vids-artifacts', `${id}.mp4`),
+  }),
+});
+
+/**
+ * @description The path a named file probe checks, after validating the id.
+ * @param {unknown} name - The probe a case asked for.
+ * @param {unknown} id - The id the probe resolves.
+ * @param {NodeJS.ProcessEnv} [env] - The serving process's environment.
+ * @returns {string} The one path the product uses for that id.
+ * @throws {Error} For a name outside the closed set or an id the probe does not accept.
+ */
+function fileProbePath(name, id, env = process.env) {
+  if (typeof name !== 'string' || !Object.prototype.hasOwnProperty.call(FILE_PROBES, name)) {
+    throw new Error(`unknown live-acceptance file probe: ${String(name).slice(0, 60)}`);
+  }
+  const probe = FILE_PROBES[name];
+  if (typeof id !== 'string' || !probe.idPattern.test(id)) throw new Error(`invalid id for file probe ${name}`);
+  return probe.resolve(env, id);
+}
+
+/**
+ * @description Whether the file a named probe resolves exists (a link counts; it is never followed).
+ * @param {unknown} name - The probe.
+ * @param {unknown} id - The id.
+ * @param {NodeJS.ProcessEnv} [env] - The serving process's environment.
+ * @returns {'present'|'absent'} What is on disk.
+ * @throws {Error} For an invalid probe or id, or any error other than a missing file.
+ */
+function fileProbeState(name, id, env = process.env) {
+  const target = fileProbePath(name, id, env);
+  try {
+    fs.lstatSync(target);
+    return 'present';
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return 'absent';
+    throw error;
+  }
+}
+
 module.exports = {
   TAG_PREFIX,
   TAG_RE,
@@ -324,4 +380,7 @@ module.exports = {
   fixtureWorkspaceDir,
   fixtureWorkspaceState,
   removeFixtureWorkspace,
+  FILE_PROBES,
+  fileProbePath,
+  fileProbeState,
 };
