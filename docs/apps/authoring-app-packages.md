@@ -48,6 +48,12 @@ enforces this.
 
 ## The definition file (`oshal-app.yaml`)
 
+For public artifact delivery under authorization enforce, use the optional
+[`routes[].anonymousRoutes` contract](package-anonymous-routes.md) and declare
+`uses: [package-anonymous-routes]` in addition to existing skills. Only exact GET/HEAD
+paths on an explicitly public mount can opt in; catalogs/callbacks and every undeclared route
+retain their existing protections. `auth: public` alone is not that exception.
+
 | Field | Required | What it is |
 |---|---|---|
 | `name` | ✅ | slug (lowercase, digits, dashes) — the app id |

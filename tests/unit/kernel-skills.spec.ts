@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Pin the explicit archive-import approval capability and build anchor.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | ADR-146 D2: pin fantasy-leagues in the exact contracted list, pin its single package-facing specifier (the barrel sports-edge imports), and prove the manifest validator accepts it under uses:. A package naming it on a core without it is refused at load, which is the compatibility floor sports-edge now relies on.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | ADR-169 L2: pin location in the exact contracted list, pin its single package-facing specifier (the slice barrel), and prove the manifest validator accepts it under uses:, so a package that names it is refused on a core that predates it.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | Pin exact anonymous package reads in the capability inventory and build-anchor guards.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -109,6 +110,7 @@ describe('kernel-skill contract (ADR-085 Tier-0b / ADR-090 D8)', () => {
         'media-generation',
         'memory',
         'notifications',
+        'package-anonymous-routes',
         'payments',
         'rag',
         'scheduling',

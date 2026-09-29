@@ -602,3 +602,20 @@ Completion means proving all of these with dated, pinned results:
 The initial implementation does not promise arbitrary external ERP adapters, every AD deployment
 mode, complete package migration or cryptographic audit export. Those have separate acceptance work;
 this specification fixes the contract they must use.
+
+## Amendment — exact anonymous package reads (operator 2026-09-29)
+
+Decision: published artifact links can be read without signing in only where the package opts
+in a specific read route. Broad anonymous access to every `auth: public` mount was rejected.
+The implemented `routes[].anonymousRoutes` contract names exact uppercase GET/HEAD and
+mount-relative literal/named-segment paths on an explicitly public mount, with the
+`package-anonymous-routes` compatibility floor. Malformed, wildcard, root, parameter-only,
+duplicate and overbroad declarations refuse loading.
+
+The exception belongs to the active exact module/factory/mount, not to the request or whole
+application. It creates no identity/grant and cannot transfer through fallthrough. Activation
+and retirement fence it. Catalog-bearing packages and signed callback declarations cannot use
+it: catalog permissions and callback owner verification are unchanged. Vids opts in only its
+published immutable MP4 bytes; World and Trading charts remain protected until a separate opt-in.
+See [the complete schema, limitations and proof recipe](../apps/package-anonymous-routes.md).
+Local fixture proof does not imply deployed live publication.

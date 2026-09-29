@@ -22,6 +22,7 @@
  * 17 | maintainer@emeraldcoastsystemsgroup.com | Register the sole-operator self-approval proofs: the PostgreSQL census and approval/audit spec and the Access Administration browser flow.
  * 18 | maintainer@emeraldcoastsystemsgroup.com | Register the career-hunter worker-rail posture proofs: the enforce-mode boundary spec (a manifest route declared auth: service answers the package's own engine child - valid secret, X-Oshal-User-Sub-B64 of a subject holding the app grant, run token - with 401 authorization_identity_required before package code; the legacy rollout admits it) and the guard for scripts/operations/career-rail-live-proof.js, the on-box acceptance that starts one real owner-scoped score run, requires the Career bot's chat_tasks/oshal_cost_events attribution for the owner, and fails naming the kernel refusal. Both belong to this card because the refusal is application authorization's, not the package's.
  * 19 | maintainer@emeraldcoastsystemsgroup.com | Register the approve -> draft half of the Career rail live acceptance (tests/unit/career-rail-draft.spec.ts, the `--complete` mode's second half over career-hunter 1.27.0's Test Lab application seam) beside the live-proof spec it extends.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com | Register exact anonymous package reads with loader and real HTTP enforcement proofs.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -77,6 +78,16 @@ async function accessReview(cookie: string): Promise<StepResult> {
 }
 
 export const AUTHORIZATION_SCENARIOS: Scenario[] = [{
+  id: 'package-anonymous-routes', title: 'Exact anonymous package reads', group: 'tool',
+  description: 'Read current caller-visible policy metadata only. The linked isolated loader/HTTP suites prove exact anonymous GET/HEAD admission, principal absence, retirement and protected neighboring routes under enforce; this live read does not publish an artifact.',
+  regressionTests: [
+    { level: 'unit', path: 'tests/unit/package-anonymous-routes.spec.ts' },
+    { level: 'integration', path: 'tests/unit/package-anonymous-routes-http.spec.ts' },
+    { level: 'integration', path: 'tests/unit/authorization-runtime.spec.ts' },
+    { level: 'integration', path: 'tests/unit/manifest-route-mounter.spec.ts' },
+  ],
+  steps: [{ id: 'catalog', app: 'authorization', label: 'Caller-visible policy metadata (no publish)', run: authorizationCatalog }],
+}, {
   id: 'authorization-management', title: 'Application access administration', group: 'tool',
   description: 'Read the current caller-visible authorization catalog. Isolated HTTP and browser suites prove identity, scope, CSRF, preview/apply and revocation behavior, and the reviewed catalog migration a package upgrade runs over existing assignments.',
   regressionTests: [
