@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Route existing diagnostics through structured Pino metadata and err without changing execution behavior.
  */
 
 'use strict';
@@ -45,7 +46,7 @@
  *   metrics:project:{projectId}:tickets      — SET of ticket IDs in this project
  */
 
-const logger = require('../../utils/logger');
+const logger = require('../../utils/logger').child({ module: 'AgentMetricsService' });
 
 const METRICS_PREFIX = 'metrics:agent:';
 const AGENTS_INDEX_KEY = 'metrics:agents:index';
@@ -85,11 +86,11 @@ class AgentMetricsService {
     // Cleanup expired metrics every 15 minutes
     this._cleanupInterval = setInterval(() => {
       this._cleanupExpiredMetrics().catch(err => {
-        (logger.error || console.error)('AgentMetricsService cleanup error:', err.message);
+        logger.error('AgentMetricsService cleanup error:', { err });
       });
     }, 15 * 60 * 1000);
 
-    (logger.info || console.log)('📊 AgentMetricsService started (24h rolling window)');
+    logger.info('📊 AgentMetricsService started (24h rolling window)');
   }
 
   /**
@@ -101,7 +102,7 @@ class AgentMetricsService {
       this._cleanupInterval = null;
     }
     this.isRunning = false;
-    (logger.info || console.log)('📊 AgentMetricsService stopped');
+    logger.info('📊 AgentMetricsService stopped');
   }
 
   // ═══════════════════════════════════════════════════════
@@ -121,7 +122,7 @@ class AgentMetricsService {
       await this.redis.zadd(key, now, member);
       await this.redis.sadd(AGENTS_INDEX_KEY, agentId);
     } catch (err) {
-      (logger.warn || console.warn)(`Metrics: Failed to record response time for ${agentId}:`, err.message);
+      logger.warn(`Metrics: Failed to record response time for ${agentId}:`, { err, agentId, ticketId, phase });
     }
   }
 
@@ -138,7 +139,7 @@ class AgentMetricsService {
       await this.redis.zadd(key, now, member);
       await this.redis.sadd(AGENTS_INDEX_KEY, agentId);
     } catch (err) {
-      (logger.warn || console.warn)(`Metrics: Failed to record gate result for ${agentId}:`, err.message);
+      logger.warn(`Metrics: Failed to record gate result for ${agentId}:`, { err, agentId, ticketId, phase });
     }
   }
 
@@ -155,7 +156,7 @@ class AgentMetricsService {
       await this.redis.zadd(key, now, member);
       await this.redis.sadd(AGENTS_INDEX_KEY, agentId);
     } catch (err) {
-      (logger.warn || console.warn)(`Metrics: Failed to record bid result for ${agentId}:`, err.message);
+      logger.warn(`Metrics: Failed to record bid result for ${agentId}:`, { err, agentId, ticketId });
     }
   }
 
@@ -172,7 +173,7 @@ class AgentMetricsService {
       await this.redis.zadd(key, now, member);
       await this.redis.sadd(AGENTS_INDEX_KEY, agentId);
     } catch (err) {
-      (logger.warn || console.warn)(`Metrics: Failed to record escalation for ${agentId}:`, err.message);
+      logger.warn(`Metrics: Failed to record escalation for ${agentId}:`, { err, agentId, ticketId });
     }
   }
 
@@ -191,7 +192,7 @@ class AgentMetricsService {
       // Update last_seen timestamp
       await this.redis.set(`${METRICS_PREFIX}${agentId}:last_seen`, new Date().toISOString());
     } catch (err) {
-      (logger.warn || console.warn)(`Metrics: Failed to record completion for ${agentId}:`, err.message);
+      logger.warn(`Metrics: Failed to record completion for ${agentId}:`, { err, agentId, ticketId, phase });
     }
   }
 
@@ -228,7 +229,7 @@ class AgentMetricsService {
       await this.redis.set(`${METRICS_PREFIX}${agentId}:last_seen`, new Date().toISOString());
       logger.debug(`[AgentMetricsService.recordCost] ${agentId} ticket=${ticketId} cost=$${(costData.cost_usd || 0).toFixed(6)} tokens=${(costData.input_tokens || 0) + (costData.output_tokens || 0)}`);
     } catch (err) {
-      (logger.warn || console.warn)(`Metrics: Failed to record cost for ${agentId}:`, err.message);
+      logger.warn(`Metrics: Failed to record cost for ${agentId}:`, { err, agentId, ticketId });
     }
   }
 
@@ -313,7 +314,7 @@ class AgentMetricsService {
       });
       return results;
     } catch (err) {
-      (logger.error || console.error)('AgentMetricsService: Failed to get all metrics:', err.message);
+      logger.error('AgentMetricsService: Failed to get all metrics:', { err });
       return [];
     }
   }
@@ -461,7 +462,7 @@ class AgentMetricsService {
         totalEvents,
       };
     } catch (err) {
-      (logger.warn || console.warn)(`Metrics: Failed to get metrics for ${agentId}:`, err.message);
+      logger.warn(`Metrics: Failed to get metrics for ${agentId}:`, { err, agentId });
       return null;
     }
   }
@@ -799,7 +800,7 @@ class AgentMetricsService {
     }
 
     if (totalRemoved > 0) {
-      (logger.info || console.log)(`📊 Metrics cleanup: removed ${totalRemoved} expired entries`);
+      logger.info(`📊 Metrics cleanup: removed ${totalRemoved} expired entries`);
     }
   }
 
@@ -818,7 +819,7 @@ class AgentMetricsService {
       await this.redis.del(prefix + 'last_seen');
     }
     await this.redis.del(AGENTS_INDEX_KEY);
-    (logger.info || console.log)('📊 All agent metrics reset');
+    logger.info('📊 All agent metrics reset');
   }
 }
 

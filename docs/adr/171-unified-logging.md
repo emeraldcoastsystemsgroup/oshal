@@ -1,10 +1,11 @@
 # ADR-171: Unified logging — one log format, one searchable store
 
 Date: 2026-09-29
-Status: **Accepted (operator, 2026-09-29) — configuration only, never run.** `docker-compose.logging.yml`
+Status: **Accepted (operator, 2026-09-29) — overlay configuration only, never run; D1 source implementation under verification.** `docker-compose.logging.yml`
 and `ops/logging/config.alloy` are in the tree; no bring-up, deploy or installer script starts them.
-Wiring them into bring-up and the installer, the first measured run, the cockpit read path, and moving
-the JavaScript layer onto the standard format are two BACKLOG entries (see Rollout).
+Wiring them into bring-up and the installer, the first measured run, the cockpit read path, and
+proving the JavaScript layer's standard format inside the built bot container remain tracked in two
+BACKLOG entries (see Rollout).
 
 Related: [ADR-107](107-run-trace-read-model-observability.md) (the run trace, a read model over
 database rows), [ADR-119](119-autonomous-health-ticket-processing.md) (the monitoring overlay:
@@ -78,10 +79,18 @@ process, TypeScript and JavaScript:
 - `err` for errors, through pino's error serializer so the stack is kept;
 - secrets masked by `LOG_REDACT_OPTIONS`, one list for both runtimes.
 
-Stdout is the transport. The per-container file stays as a local fallback. Which container wrote a
-line is added by the collector (D3), not by the process. The JavaScript layer moves onto this format
-as a thin wrapper over the same pino configuration, and gets its own guard against `console.*` and
-winston; that is BACKLOG entry "One log format across the TypeScript and JavaScript runtimes
+**D1 source implementation:** both adapters now load `src/shared/logger/pino-config.json` directly.
+The JavaScript adapter uses real Pino on stdout, retaining legacy message/metadata calls and
+`LoggingStandard` helpers; errors use `err`, and helpers bind their service as `module`.
+The existing console call sites have been migrated without changing provider/credential behavior.
+`scripts/check-javascript-logging.cjs` blocks console references and Winston imports in the
+complete server tree, and `ci-local.sh` invokes it plus the real-module/negative-control suites.
+The [runbook](../runbooks/javascript-structured-logging.md) separates source/relocated-filesystem
+evidence from still-pending compiled-image stdout acceptance. Neither starts the logging overlay.
+
+Stdout is the transport. The TypeScript per-container file stays as a local fallback. Which container wrote a
+line is added by the collector (D3), not by the process. The JavaScript layer's built-container
+acceptance is still required by BACKLOG entry "One log format across the TypeScript and JavaScript runtimes
 (ADR-171 D1)".
 
 **D2 — The store is VictoriaLogs, single container.** It is chosen over Loki on memory. Loki's
@@ -132,9 +141,9 @@ and says which source it is showing.
   from the cockpit.
 - When running, the overlay is capped at 832 MB of container memory in total. It is zero when not
   started.
-- Until D1's migration, lines from the JavaScript layer arrive as unparsed text, found by free-text
-  search only.
-- Nothing in this ADR has run. The first run has to show: the Alloy config loads; log streams stay
+- Older images still write the JavaScript layer's unparsed text; D1 source tests do not establish
+  which artifact is installed.
+- No overlay in this ADR has run. The first run has to show: the Alloy config loads; log streams stay
   attached through the proxy over hours; the line rate per container, so a noisy container can be
   dropped deliberately; and VictoriaLogs' peak memory during a search.
 
@@ -144,4 +153,4 @@ and says which source it is showing.
 |---|---|---|
 | R0 | Overlay compose file, Alloy pipeline, this ADR, a static guard (`tests/unit/logging-overlay.spec.ts`) | In the tree, never run |
 | R1 | Wire the overlay into bring-up and the installer as an option; first measured run; the cockpit read path (D7) | BACKLOG "Unified logging overlay: wire it into bring-up and the installer, and measure it (ADR-171)" |
-| R2 | The JavaScript layer on the D1 format, with a guard | BACKLOG "One log format across the TypeScript and JavaScript runtimes (ADR-171 D1)" |
+| R2 | The JavaScript layer on the D1 format, with a guard | Source implemented; bounded tests in the runbook. Full compile and built-container stdout proof pending; BACKLOG item remains open. |

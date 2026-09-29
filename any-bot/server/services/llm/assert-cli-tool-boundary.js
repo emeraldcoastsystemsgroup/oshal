@@ -8,8 +8,11 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Remove the unaudited caller-supplied brokeredSandbox bypass and include Gemini CLI aliases in unattended preflight; no broker attestation exists today.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127: the SPAWN boundary gets the same demo carve the TS preflight has, and for the same reason — a deployment running as a demo may launch the CLI for its own operator. Authority is read from the PROCESS environment plus the per-request OSHAL_USER_SUB the handler already threads into extraEnv; a caller-supplied option is never accepted as attestation (that bypass was removed in entry 3 and stays removed). Everything else — every other caller, every identity-less launch, every non-demo deployment — keeps the denial.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The Antigravity CLI reached the harness inventory, the factory record and the TS unattended-denial set, and never reached THIS set - so the spawn boundary, which is the one that actually starts a child process, would not have recognised it by any of its three spellings. Not reachable today (the harness has no bot-node runtime, so nothing resolves to it), which is why it reads as an omission rather than an incident; it is listed now because a boundary that depends on someone remembering the second list is not a boundary. Guarded behaviourally in tests/unit/any-bot-cli-security-boundary.spec.ts.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Route existing diagnostics through structured Pino metadata and err without changing execution behavior.
  */
 'use strict';
+
+const logger = require('../../utils/logger').child({ module: 'assert-cli-tool-boundary' });
 
 const UNBROKERED_AUTONOMOUS_PROVIDERS = new Set([
   'cline', 'cline-cli', 'claude', 'claude-code', 'codex', 'codex-cli', 'openai-codex',
@@ -75,8 +78,7 @@ function assertCliToolBoundary(options, providerName) {
   // the process environment plus the handler-threaded request subject, never from an option the
   // caller could set. Audited on every pass, because this is a posture exception.
   if (demoOperatorLaunch(options)) {
-    // eslint-disable-next-line no-console
-    console.warn(`[ADR-127] DEMO_MODE: launching ${providerName} for the deployment operator — CLI tool boundary deliberately carved`);
+    logger.warn(`[ADR-127] DEMO_MODE: launching ${providerName} for the deployment operator — CLI tool boundary deliberately carved`);
     return;
   }
   // Otherwise: no audited brokered sandbox exists. Do not accept a request/model/provider option as

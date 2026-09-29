@@ -39,6 +39,7 @@
 # 31 | maintainer@emeraldcoastsystemsgroup.com   | New `typecheck-tests` gate: typechecks the test tree against tsconfig.tests.json via scripts/ci/check-tests-typecheck.mjs, enforcing that all new or edited tests are typecheck-clean and pre-existing errors remain quarantined with explicit reasons in tests/typecheck-quarantine.json.
 # 32 | maintainer@emeraldcoastsystemsgroup.com   | Timeout-bounded export step. The `git archive | tar` export that follows the purge in prepare_head_src and gate_secrets had no timeout of its own, so a hang there held ci-local.lock indefinitely without writing an outcome line. Both now export through export_tree (scripts/ci/ci-export.sh), which runs under a watchdog and logs an export: OK|FAIL line, failing the gate and letting the run reach its outcome line on timeout.
 # 34 | maintainer@emeraldcoastsystemsgroup.com   | gate_ai_usage_ledger (ADR-170 D10) beside repo-separation, against $GATE_SRC: a stale docs/apps/ai-usage-ledger.md or an unrated kernel manifest fails the run.
+# 35 | maintainer@emeraldcoastsystemsgroup.com   | Gate the JavaScript runtime against console/Winston regressions and run the real structured-logging proofs against selected source.
 # =============================================================================
 #
 # Usage:  bash scripts/ci-local.sh [--scheduled] [--head] [--skip-e2e] [--skip-image] [--install]
@@ -404,6 +405,12 @@ gate_repo_separation() {
   (cd "$GATE_SRC" && timeout 120 node scripts/check-repo-separation.js);
 }
 
+# ADR-171 D1: complete server scan plus real logger/negative-control regression suites.
+gate_javascript_logging() {
+  (cd "$GATE_SRC" && timeout 120 node --max-old-space-size=384 scripts/check-javascript-logging.cjs &&
+    timeout 120 node --max-old-space-size=384 --test --experimental-test-isolation=none --test-concurrency=1 tests/logging/*.test.cjs);
+}
+
 # LEDGER GUARD (ADR-170 D10): every kernel manifest carries a `rating:` block (container memory
 # low/high, per-feature tier) and docs/apps/ai-usage-ledger.md is its generated view. A stale
 # ledger or an unrated manifest fails; the numbers on the label are generated, never typed.
@@ -705,6 +712,7 @@ if [ "$NODE_GATES_OK" = "1" ]; then
   run_gate workflow-triggers gate_workflow_triggers
   run_gate security-policy gate_security_policy
   run_gate repo-separation gate_repo_separation
+  run_gate javascript-logging gate_javascript_logging
   run_gate ai-usage-ledger gate_ai_usage_ledger
   run_gate spec-database-default gate_spec_database_default
   run_gate worktree-strays gate_worktree_strays

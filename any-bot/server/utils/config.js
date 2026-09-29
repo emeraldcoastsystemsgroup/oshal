@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Route existing diagnostics through structured Pino metadata and err without changing execution behavior.
  */
 
 /**
@@ -11,6 +12,7 @@
  * Centralized configuration for the application
  */
 
+const logger = require('./logger').child({ module: 'config' });
 const path = require('path');
 const fs = require('fs');
 
@@ -258,14 +260,14 @@ class Config {
 
     try {
       if (!fs.existsSync(personaFile)) {
-        console.warn(`⚠️ BOT_PERSONA_FILE not found: ${personaFile}`);
+        logger.warn(`⚠️ BOT_PERSONA_FILE not found: ${personaFile}`);
         return null;
       }
       const yaml = require('js-yaml');
       const content = fs.readFileSync(personaFile, 'utf8');
       const parsed = yaml.load(content);
       if (parsed && parsed.perspective) {
-        console.log(`✅ Bot persona loaded: ${parsed.name || 'unknown'} (${parsed.role || 'no role'})`);
+        logger.info(`✅ Bot persona loaded: ${parsed.name || 'unknown'} (${parsed.role || 'no role'})`);
         return {
           name: parsed.name || process.env.AGENT_ID || 'agent',
           role: parsed.role || '',
@@ -276,7 +278,7 @@ class Config {
       }
       return null;
     } catch (err) {
-      console.warn(`⚠️ Failed to load persona: ${err.message}`);
+      logger.warn('Failed to load persona', { err });
       return null;
     }
   }
@@ -434,7 +436,7 @@ const config = new Config();
 try {
   config.validate();
 } catch (err) {
-  console.error('Configuration validation failed:', err.message);
+  logger.error('Configuration validation failed:', { err: err });
   process.exit(1);
 }
 

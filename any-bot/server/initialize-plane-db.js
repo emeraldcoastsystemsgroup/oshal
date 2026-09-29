@@ -5,6 +5,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Route existing diagnostics through structured Pino metadata and err without changing execution behavior.
  */
 
 /**
@@ -12,6 +13,7 @@
  * Creates workspace, project, admin user, states, and test ticket
  */
 
+const logger = require('./utils/logger').child({ module: 'initialize-plane-db' });
 const { Client } = require('pg');
 const crypto = require('crypto');
 
@@ -55,7 +57,7 @@ async function initializePlane() {
   
   try {
     await client.connect();
-    console.log('✓ Connected to Plane database');
+    logger.info('✓ Connected to Plane database');
 
     // Create admin user with all required fields
     let userId = generateUUID(); // let instead of const so we can reassign after fetching
@@ -93,7 +95,7 @@ async function initializePlane() {
     // Fetch the actual user ID (in case it already existed)
     const userResult = await client.query('SELECT id FROM users WHERE email = $1', [userEmail]);
     userId = userResult.rows[0].id;
-    console.log(`✓ Created/found admin user: ${userEmail} (${userId})`);
+    logger.info(`✓ Created/found admin user: ${userEmail} (${userId})`);
 
     // Create workspace
     let workspaceId = generateUUID();
@@ -109,7 +111,7 @@ async function initializePlane() {
     // Fetch actual workspace ID (in case it already existed)
     const workspaceResult = await client.query('SELECT id FROM workspaces WHERE slug = $1', [workspaceSlug]);
     workspaceId = workspaceResult.rows[0].id;
-    console.log(`✓ Created/found workspace: ${workspaceName} (${workspaceId})`);
+    logger.info(`✓ Created/found workspace: ${workspaceName} (${workspaceId})`);
 
     // Add user to workspace
     await client.query(`
@@ -124,7 +126,7 @@ async function initializePlane() {
       )
       ON CONFLICT DO NOTHING
     `, [generateUUID(), workspaceId, userId]);
-    console.log(`✓ Added admin to workspace`);
+    logger.info(`✓ Added admin to workspace`);
 
     // Create project with all required fields
     let projectId = generateUUID();
@@ -154,7 +156,7 @@ async function initializePlane() {
     // Fetch actual project ID (in case it already existed)
     const projectResult = await client.query('SELECT id FROM projects WHERE identifier = $1 AND workspace_id = $2', [projectIdentifier, workspaceId]);
     projectId = projectResult.rows[0].id;
-    console.log(`✓ Created/found project: ${projectName} (${projectId})`);
+    logger.info(`✓ Created/found project: ${projectName} (${projectId})`);
 
     // Add user to project
     await client.query(`
@@ -169,7 +171,7 @@ async function initializePlane() {
       )
       ON CONFLICT DO NOTHING
     `, [generateUUID(), projectId, workspaceId, userId]);
-    console.log(`✓ Added admin to project`);
+    logger.info(`✓ Added admin to project`);
 
     // Create states with all required fields
     const states = [
@@ -200,7 +202,7 @@ async function initializePlane() {
       // Fetch actual state ID (in case it already existed)
       const stateResult = await client.query('SELECT id FROM states WHERE name = $1 AND project_id = $2', [state.name, projectId]);
       stateIds[state.name] = stateResult.rows[0].id;
-      console.log(`✓ Created/found state: ${state.name} (${stateIds[state.name]})`);
+      logger.info(`✓ Created/found state: ${state.name} (${stateIds[state.name]})`);
     }
 
     // Create test ticket with all required fields
@@ -231,8 +233,8 @@ async function initializePlane() {
       RETURNING id, name
     `, [ticketId, ticketName, JSON.stringify(ticketDescriptionJson), ticketDescriptionHtml, projectId, workspaceId, stateIds['Todo'], userId]);
 
-    console.log(`✓ Created ticket: ${ticketId}`);
-    console.log(`  Name: ${ticketName}`);
+    logger.info(`✓ Created ticket: ${ticketId}`, { ticketId });
+    logger.info(`  Name: ${ticketName}`);
 
     // Assign to admin user
     await client.query(`
@@ -240,21 +242,20 @@ async function initializePlane() {
       VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
     `, [generateUUID(), ticketId, projectId, workspaceId, userId]);
 
-    console.log(`✓ Assigned to: ${userEmail}`);
+    logger.info(`✓ Assigned to: ${userEmail}`);
 
-    console.log('\n✅ Plane initialized successfully!');
-    console.log(`Workspace: ${workspaceName} (${workspaceSlug})`);
-    console.log(`Project: ${projectName}`);
-    console.log(`User: ${userEmail}`);
-    console.log(`Ticket ID: ${ticketId}`);
-    console.log(`\nPlaneMonitorService should detect this ticket within 60 seconds.`);
+    logger.info('\n✅ Plane initialized successfully!');
+    logger.info(`Workspace: ${workspaceName} (${workspaceSlug})`);
+    logger.info(`Project: ${projectName}`);
+    logger.info(`User: ${userEmail}`);
+    logger.info(`Ticket ID: ${ticketId}`, { ticketId });
+    logger.info(`\nPlaneMonitorService should detect this ticket within 60 seconds.`);
 
     await client.end();
     return { workspaceId, projectId, userId, ticketId };
 
   } catch (error) {
-    console.error('❌ Error:', error.message);
-    console.error('Stack:', error.stack);
+    logger.error('❌ Error:', { err: error });
     if (client) {
       await client.end().catch(() => {});
     }
@@ -264,6 +265,6 @@ async function initializePlane() {
 
 // Run
 initializePlane().catch(err => {
-  console.error('Fatal error:', err.message);
+  logger.error('Fatal error:', { err: err });
   process.exit(1);
 });
