@@ -293,12 +293,18 @@ Changing any of these follows the existing strategy-log rule: a row with harness
     `confirm: true` it answers 428 before any read.
   - The positions table shows each open plan as a pill beside the position's governance badge.
 
-  Not done yet:
-  - The Strategy Lab knob list (`GET /api/trading/lab/knobs`) documents none of the three knobs.
-  - Amending is API-only. The surface has no amend button.
+  Trading 1.33.0 adds the surface for them:
+  - The Strategy Lab knob list (`GET /api/trading/lab/knobs`) documents the three knobs. Each entry
+    says the knob is OFF by default, that `0` is an explicit off, and that a blank inherits the
+    account's mode-aware env arm. The Lab editor has a field for each.
+  - The account page has an **Exit plans** card that amends plans. Its first request carries no
+    confirmation, so the route answers 428 and the card shows that refusal. It sends
+    `confirm: true` only after the operator confirms.
   - `positionGovernance()` in
-    [trading-position-governance.ts](../../src/app/trading-position-governance.ts) does not mark an
-    armed sleeve fund as exempt.
+    [trading-position-governance.ts](../../src/app/trading-position-governance.ts) takes the book's
+    armed sleeve from `armedYieldSleeve()`. While the sleeve is armed, its fund reads `yield-sleeve`
+    and exempt from every exit. Unarmed, the answer is unchanged. The ledger badge and the Exits
+    card both read it.
 
 ### P6. Idle-cash yield sleeve (2026-09-28)
 
