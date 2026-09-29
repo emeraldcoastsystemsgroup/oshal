@@ -32,6 +32,12 @@ Paths are core-relative unless prefixed `store/`, which means the store reposito
   functionality.
 - An audit for coding and MCP opportunities that take work off the model.
 - A roadmap, and a judgement on whether any of this makes sense.
+- (2026-09-29) The rating is **per application**, and it covers what the application itself does, not
+  only its tickets and chat: "create an image", "create a PDF", and the batch grinders (world
+  intelligence, jobs). The example: Portrait Studio's average image creation costs some number of
+  tokens and needs a model of some tier or better, and there is also a reduced edition of Portrait
+  Studio on a local model with a reduced instruction set, worse graphics, but good enough that the
+  LoRA character puts your head on an image. Not as good as a frontier model; on the roadmap.
 
 ### What already exists
 
@@ -181,6 +187,70 @@ business transaction. The tier column is the judgement this ADR proposes for eac
 | Home intent to device action | store `home` | T2 | T1 | 1.9k | about 2k | closed command allowlist already exists (ADR-169 pattern) |
 | Alert triage | core `alert-triage` | T1/T3 | T1, escalate to T3 on novel | n/a | 2k per alert if the model is in the loop | auto-apply already decides in code |
 
+### Application and batch mechanisms (measured 2026-09-29)
+
+The table above ranks ticket- and chat-shaped work. This section answers the operator's second
+question: what the applications themselves do, especially generation and the batch processes, and by
+which mechanism: deterministic code, an external or local generation service, a provider intent, or a
+model call. Method: every `schedules:` block in the store manifests and the schedule kinds the core
+runtime dispatches (`src/app/schedule-runtime.ts` dispatches 14 kinds: assess, futures-research, home,
+lab, manifest-service-route, optimize, research, review, schwab-futures-capture, swing, trading-event,
+trading, workflow-ticket, world); the dispatcher or handler of each grepped for model-call sites and
+ticket creation; generation backends by exact API and product strings. An earlier pass in this thread
+matched the English word "stability" in six packages and reported hosted image APIs that do not exist;
+only exact strings count and the commands are recorded at the end.
+
+**Batch and scheduled processes.** Model per run is what the dispatcher or handler itself does; a
+schedule that files a ticket a bot then works is marked as such.
+
+| Process | Cadence | Mechanism | Model per run | Tier |
+|---|---|---|---|---|
+| World ticker pulse | every 5 min, 08-23 Mon-Fri (192 pulses a day) | feed pull, content-hash dedupe, classifier on new items only, lexicon fallback | Haiku (`WORLD_SENTIMENT_MODEL`), 10 items per call, budget 60 calls an hour and 400 a day, then lexicon | T1 with a T0 fallback |
+| World refresh | every 6 h | same engine, depth fan-out over topics, macro and the stock universe | same budget | T1 |
+| Trading autopilot tick | every 5 min by default | sleeve maths and orders in code; files a `trading-decision` ticket already `complete` (a record) | 0 | T0 |
+| Trading assess, research, review, swing | schedule-driven | code; record ticket | 0 | T0 |
+| Trading optimize | 05:30 daily | code; record ticket | 0 | T0 |
+| Futures research | 02:00 daily | code; record ticket | 0 | T0 |
+| Trading event plans | every minute, 07-19 Mon-Fri | code | 0 | T0 |
+| Schwab futures capture | hourly | code | 0 | T0 |
+| Trading lab | 21:45 Mon-Fri | simulation | 0 | T0 |
+| Kalshi scan | configured interval | code scan; model only on user-triggered analysis | 0 | T0 |
+| Calendar meeting briefs | every 15 min | code assembles a cited brief from recorded material | 0 | T0 |
+| Daily trade recap | every 15 min | code reconciles up to 50 journal entries into briefings | 0 | T0 |
+| Venture-plan rebaseline tick | hourly | code | 0 | T0 |
+| Marketing daily ingest | 06:20 daily | code reads Search Console, PostHog, GitHub traffic | 0 | T0 |
+| Marketing weekly review | Mon 12:00 | code rollup; one ticket per owner; a bot runs only after a human approves it | 0 per run, T3 per approved ticket | T0, then T3 |
+| LoRA overnight | 02:00 daily | kohya training and ComfyUI generation and validation on the operator's GPU box | 0 LLM | T0, local image model |
+| Social daily digest | 13:00 daily, per user with Facebook connected | the communications bot with a prompt over the day's signals | 1 per user | T3 |
+| Home solar schedules | sunrise and sunset, per user | home bot intent, then a device action | 1 per firing | T1 to T2 |
+| Workflow-ticket schedules | per registered schedule (runtime data) | files a `workflow:<ticketType>` ticket a bot works | 1 ticket per fire | T3 to T4 |
+
+Three readings. The world classifier is the one batch process with a real model in the loop every
+run, and it is already the shape this ADR wants: a T1 job with a budget object and a free T0 fallback,
+so moving it to a local small model or an embedding classifier removes hosted spend without a
+behaviour change. The trading family, the largest set of schedules, is code end to end; its 57
+route-level model-call sites are user-triggered research and assessment, not the tick. The
+unbounded ones are per-user or per-registration: the social digest scales with connected users,
+workflow-ticket schedules with whatever the operator registers.
+
+**Generation and media backends.** What "create an image" or "create a PDF" runs on today.
+
+| Capability | Where | Backend | LLM in the loop |
+|---|---|---|---|
+| Image generation | store `lora`; core `video-generation` | ComfyUI on the operator's GPU box over the LAN; kohya for training | none; the `lora-director` persona explains scorecards on request (T2) |
+| Video generation | core `video-generation` | DeckToVideo (code, free), ComfyUI (free), Veo (paid escalation behind approval) | one file drafts a prompt |
+| Portrait compositing | store `portrait-studio` | `sharp` layers over 225 presets; no external host, no model call anywhere in the package | none |
+| Office documents | presentations, venture-plan, little-monsters, career-hunter | pptxgenjs, docx, exceljs renderers | T2 outline only |
+| PDF | nowhere | no PDF library in any store route or in core `src` | not built |
+| Speech | core `voice-providers` (pluggable harness); browser speech in surfaces | TTS provider, not model tokens | none |
+| 3D reconstruction | core `spatial-mapping` | `RECON_URL` edge service | none |
+| Media processing | circuit-lab, create, payroll, pumpkin, scan-to-print, video | ffmpeg, sharp, canvas | none |
+| MCP | core `mcp.call-tool` provider intent (browser task, explicit remote ticket, mesh task, series dispatch); store `lora`, `vids`; `remote-client` stdio client | deterministic intent inside the ADR-038 boundary | none; D7 is partly built |
+
+No hosted image API is wired anywhere in the tree. Image generation is local ComfyUI, and the only
+paid generation escalation is Veo for video. Portrait Studio today is entirely code, which makes it
+the reduced edition already; the full edition is what does not exist yet.
+
 ## Decision (proposed)
 
 **D1. The tiers are the vocabulary.** Every model-touching feature declares one of T1 to T4. T0 needs no
@@ -257,6 +327,30 @@ bot's tools; D8 is the operator's endpoint as the bot's brain, the same trust po
 holds today. The alternative is the audited brokered sandbox CLAUDE.md names as the condition for
 re-enabling a local CLI, which is the larger job. This is core (Rule 0d) and is not started until the
 operator answers Q5.
+
+### Per-application rating, worked examples (D9)
+
+**D9. An application's rating is per feature and has two axes, and every rated feature may declare a
+reduced edition.** The two axes are the LLM tier (D1) and the generation backend class: `none`,
+`local` (ComfyUI, kohya, the TTS harness, the edge reconstruction service) or `hosted` (Veo today; any
+hosted image API is not wired). D2's `ai.features[]` gains `generation:` and a fourth `degrade` value,
+`reduced`: the same feature on a local model with a declared smaller instruction set, fewer presets,
+fewer operations, fixed styles, rather than the feature disappearing. Token numbers stay generated
+(P0), so "average image creation takes N tokens" is a measured field on the rating, never a typed one.
+
+| Application | Feature | Full edition | Reduced edition (local model, no account) | Today |
+|---|---|---|---|---|
+| Portrait Studio | portrait from a photo | T2 model plans scene, preset and placement from the request; a hosted or local image model renders with the user's LoRA character; T3 art direction on request | preset chosen by menu or a T1 local model; `sharp` compositing; the LoRA character's face through local ComfyUI; fewer presets and styles | T0: 225 presets and `sharp`, no model at all |
+| LoRA Studio | train and validate a character | T2 director explains scorecards; ComfyUI and kohya local; paid escalation gated | identical; training already runs on the GPU box | built as the reduced edition |
+| AI Office | deck, document, workbook | T2 outline and Guide edits on a hosted model | T2 outline on a 20B-class local model; the starter catalog is the T0 fallback | outline on the hosted comms bot |
+| Little Monsters | tutoring turn | T3 hosted per turn | T2 local explanations; mastery tracking, sequencing and closed-form grading in code; a smaller activity set | T3 hosted |
+| World intelligence | headline classification | Haiku at T1 inside the 400-a-day budget | a 1B to 4B local classifier or an embedding model; lexicon fallback unchanged | Haiku, budgeted |
+| Social | daily digest | T3 hosted per user | T2 local summary over signals ranked in code | T3 hosted |
+| Video | generate | Veo, paid, approval-gated | ComfyUI local, DeckToVideo | both exist |
+
+The pattern the table shows: where generation is already local and the model's job is planning or
+explaining, the reduced edition is a small change; where the model does the whole job per turn
+(tutoring, digests), the reduced edition is the offload work of D6 first and a smaller model second.
 
 ## Cost and benefit per option
 
@@ -366,4 +460,20 @@ done | sort -k3 -rn
 f=any-bot/server/services/llm/registry/provider-definitions.js
 grep -c "^  [a-z0-9-]*: {" $f; grep -c "clineProvider:" $f
 grep -c "^    id: '" src/features/llm-provider/services/provider-definitions.ts
+
+# batch processes (store): schedule blocks per package; then each schedule's handler for model-call sites
+cd ../oshal-applications
+for d in */; do d=${d%/}; [ -f "$d/oshal-app.yaml" ] || continue
+  grep -E "^\s*cron:" "$d/oshal-app.yaml" | sed "s|^|$d |"; done
+# core schedule kinds and each dispatcher's model-call and ticket sites
+grep -oE "is[A-Z][A-Za-z]+Schedule\(" src/app/schedule-runtime.ts | sort -u
+for f in src/app/*-dispatch.ts; do printf "%s model:%s ticket:%s\n" "$f" \
+  "$(grep -c 'executeBotOrInline\|BotNodeClient\|inline-bot' $f)" "$(grep -c 'createTicket' $f)"; done
+# world classifier defaults
+grep -nE "CLASSIFIER_MODEL\s*=|CLASSIFY_CHUNK\s*=|BUDGET_PER_HOUR|BUDGET_PER_DAY" src/features/world-data/news-fetcher.ts
+# generation backends, exact strings only (the word "stability" alone is a false positive)
+grep -rliE "stability\.ai|api\.stability|stable-diffusion|sdxl|replicate\.(com|run)|comfyui|COMFY|images/generations|gpt-image" \
+  --include=*.ts ../oshal-applications/*/src-routes src
+grep -rliE "pdfkit|pdf-lib|puppeteer|jspdf" --include=*.ts --include=*.js ../oshal-applications/*/routes ../oshal-applications/*/src-routes src
+grep -cE "^\s+id: '" ../oshal-applications/portrait-studio/src-routes/portrait-presets.ts
 ```
