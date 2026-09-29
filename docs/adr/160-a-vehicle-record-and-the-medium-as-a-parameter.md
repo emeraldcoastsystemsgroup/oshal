@@ -1,13 +1,57 @@
 # ADR-160: A vehicle is a record with a computed stage, and the medium it runs in is a parameter
 
 Date: 2026-09-15
-Status: **Proposed — S1 landed, S2–S5 open.** S1 ("the boat falls") shipped in the store repo at
-commit `0bb5d69` (embodied 0.16.0, PR #208): the medium record with its three implementations and one committed
-property row per medium (`embodied/src-routes/engine/medium/`), the MJCF `<option>` fed from the chosen medium,
-the explorer hull as one solid that falls at g in air and is refused by name in seawater, and the refusal cases in
-`embodied/tests/engine-medium.test.js`; the fall was also reproduced on the real MuJoCo plant
-(`engine/tests/test_hull_fall.py`, 3/3). S2, S3, S4 and S5 are not built. The slices are listed in
-"Implementation" and tracked in [BACKLOG](../BACKLOG.md).
+Status: **Proposed — S1–S5 BUILT in the store repo; S3's on-box proof pending install.** No core code, as the
+ADR planned. What landed, slice by slice, with the store commit and PR that carried it:
+
+- **S1 — the boat falls:** `0bb5d69` (PR #208, embodied 0.16.0). The medium record with its three implementations
+  and one committed property row per medium (`embodied/src-routes/engine/medium/`), the MJCF `<option>` fed from the
+  chosen medium, the explorer hull as one solid that falls at g in air and is refused by name in seawater, and the
+  refusal cases in `embodied/tests/engine-medium.test.js`; the fall was also reproduced on the real MuJoCo plant
+  (`engine/tests/test_hull_fall.py`, 3/3).
+- **S4 — the Floater record, with S5a (the medium property values pinned) and D5 run fingerprints:** `c3001501`
+  (PR #295, aero-lab 1.3.0, embodied 0.16.3). `aero-lab/migrations/001-aero-lab.sql` with FORCEd owner RLS; the
+  Floater seeded from `reference-design/design_snapshot.json`, the committed export run stored as evaluation 1 with
+  every file hashed; the BOM-vs-as-built budget check red at +274.3 g and blocking `parts-complete`; six limit rows
+  from the reference README; `force-model-envelopes.json` declaring `aeropolar`, `aerosurface` and `solar` air-only,
+  an undeclared model failing closed; the stage computed on read. Embodied's run results answer as
+  `oshal.run-result/1` with the package version and an engine-tree build hash, and the tile refuses to draw a run
+  without them. `scripts/check-medium-properties.mjs` reads embodied's row as JSON and the foreign constants in
+  ocean-lab and aero-lab as text, importing nothing across packages. Live-proven on the box 2026-09-28 by the core
+  `live-acceptance.js floater` case (evaluation 1 budget RED +274.3 g, stage `sized` carrying the fabricable sentence).
+- **S2 — the Explorer record, with S5b (the cross-lab contract guard):** `d776ad27` (PR #324, ocean-lab 1.2.0). No
+  repository held the explorer's wave model, so `engine/wave/` was written from the report's governing math over a
+  Medium argument — heave, the thrust term, the vertical balance, Theodorsen's deficiency, the ITTC-57 closure and
+  the kinematic ceiling — refusing air by `medium_property_unavailable: freeSurface` and vacuum by
+  `model_not_valid_in_medium`. `migrations/001-ocean-lab.sql` (vehicle, limit and run tables, FORCEd owner RLS); the
+  explorer seed with per-field provenance; the eight "What is not true" sentences as limit rows, verbatim; the stage
+  computed on read and dropping to `concept` on a vector change; run ingest where the embodied hull drop is posted
+  as data with its medium id and fingerprints; the Explorer tile with the stage badge, the fabricable sentence, the
+  five-row table, the limits and the runs. `scripts/check-adr160-contract.mjs` compares the record column set, the
+  run core, the stage contract, the medium rows, the envelope files and one refusal case per lab as data and text.
+  The study regression (`tests/engine-explorer-regression.test.js`) holds the published table to half a unit in the
+  last printed digit; because the study did not publish its periods or occurrence mix, agreement holds by
+  construction at `wave-propulsion` 1.0.0 and the regression guards drift from that version. Live-proven on the box
+  2026-09-28 09:40 UTC by `ocean-lab/tests/explorer-live-acceptance.mjs` as the operator: seeded at concept, sized
+  in seawater, dropped on a stop-angle change, re-sized with a moved table, refused air by name, recorded the
+  embodied hull drop, and cleaned up.
+- **S3 — parts and geometry, with the S5 portable-object guard:** `64b2e40a` (PR #360, ocean-lab 1.3.0). The parts
+  model derived from the vector on every read; the 11 watertight parts as CAD Studio programs
+  (`engine/vehicle/explorer-part-programs.ts`, dimensions taken from the report's drawings with provenance in
+  `explorer-drawings.json`); mass properties integrated from each program's own geometry; the D8 portable object on
+  every part (`portable-object.ts`, its frame equal to CAD Studio's own `worldFrame` text); **Open in CAD Studio**
+  per part; the generated `design.md`; and the displacement budget gating `parts-complete` — OPEN while any mass or
+  placement is unknown, never reading an unknown as zero. The six distinct part programs were built in CAD Studio's
+  real OCCT engine image (`tests/explorer-parts-occt.spec.mjs`: every feature accepted, volumes equal to 0.000 %,
+  STLs watertight). Locally proven only: the on-box case `ocean-lab/tests/explorer-parts-live-acceptance.mjs` waits
+  for ocean-lab 1.3.0 and CAD Studio to be installed.
+
+As-built, the explorer's stage stays `sized`: the committed bought rows carry no mass, price or placement because
+the report publishes none, so the budget reads OPEN and `parts-complete` is refused by name until someone makes the
+sourcing decision; `fabricable` is blocked on recording each part's OCCT export against the current vector and
+generating the build sheet (D6 items 3–4), which no slice has done; `built` is unreachable by design for both
+vehicles, since nothing was wetted or flown. The slices are listed in "Implementation" and tracked in
+[BACKLOG](../BACKLOG.md).
 
 Related: [ADR-085](085-remote-app-packages-and-registries.md) (store packages own their domain),
 [ADR-036](036-bot-owned-application-architecture.md) (the owner of a domain owns its state),
@@ -494,8 +538,10 @@ produced a plausible float would have disproved its own contract.
 
 ## Implementation
 
-S1 is built (store `0bb5d69`, embodied 0.16.0); S2–S5 are not. Store-repo work in `ocean-lab`, `aero-lab`
-and `embodied`; no core code.
+All five slices are built in the store repo — S1 at `0bb5d69` (embodied 0.16.0), S4 and S5a at `c3001501`
+(PR #295), S2 and S5b at `d776ad27` (PR #324), S3 and the S5 portable-object guard at `64b2e40a` (PR #360); the
+status line above records what each carried and what the record still cannot reach. Store-repo work in
+`ocean-lab`, `aero-lab` and `embodied`; no core code.
 
 | Slice | What lands | What the operator opens, and does | Cost |
 |---|---|---|---|

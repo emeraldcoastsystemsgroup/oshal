@@ -167,8 +167,9 @@ Run the linked suites locally with `npm run test:token-chase`. The real-boundary
 capture lane in a child process (private-git commits, per-turn pins, `final.json`), the real bot-node
 route behind the real service-secret gate over a loopback server, the real file-tool handlers against an
 isolated worktree, a real AES-256-GCM ciphertext store, and, end to end, the real `AgenticController`
-loop over a scripted provider (`scripted-fixture`, explicitly identified). That is local evidence: a
-provider-backed capture on the deployed stack is a separate operator acceptance step.
+loop over a scripted provider (`scripted-fixture`, explicitly identified). That is local evidence; the
+replay on the deployed stack is the automated `token-chase-replay` case of the live acceptance sweep
+below (`node scripts/operations/live-acceptance.js token-chase-replay`).
 
 ### Market-data stream (ADR-143)
 
@@ -221,20 +222,42 @@ recall through the real host loop with agy holding no native tools, and the invo
 ### LoRA gallery import (live acceptance)
 
 `node scripts/operations/lora-import-live-proof.js` (`lora-gallery-dataset-import`) proves the
-Send-to → Add to LoRA dataset path on a box with the LoRA package and a GPU worker online. As the
-operator PAT it creates a synthetic `testlab-import-<hex>` character, mints a Send-to handle carrying
-one generated PNG (`POST /api/artifacts/handles/upload`), imports it (`POST /api/lora/dataset/import`),
-waits for the receipt the studio shows as "ready on worker", then reads the character's `curated/`
-folder on the worker through the remote-client `shell.exec` rail with a read-only probe (the path
-training reads, plus the single-quoted literal path as a diagnostic). Cleanup removes the box
-directory, the import ticket (through the ticket service after re-reading it) and the character,
-whose receipt, staged bytes and grants cascade. It is a core script rather than a package
-`tests/test-lab.yaml` case because it orchestrates core artifact exchange, the core remote-client rail
-and the store package on a real worker, and the package catalog leaves live external-write cases
-pending. Suite: `npx vitest run tests/unit/lora-import-live-proof.spec.ts` (on win32 the box probe
-and removal commands also run through real `powershell.exe` against a temp home; other hosts print
-one PLATFORM SKIP line). An unreadable probe is named in the verdict: which field is wrong, the
-probe task's exit, and the first 300 redacted characters of the worker's stdout.
+Send-to → Add to LoRA dataset path on a box with the LoRA package and a GPU worker online, in two
+modes. Both create a synthetic `testlab-import-<hex>` character as the operator PAT, wait for the
+receipt the studio shows as "ready on worker", then read the character's `curated/` folder on the
+worker through the remote-client `shell.exec` rail with a read-only probe (the path training reads,
+plus the single-quoted literal path as a diagnostic).
+
+- **Inline mode** (no flag; runs inside the api container): mints a Send-to handle carrying one
+  generated PNG (`POST /api/artifacts/handles/upload`) and imports it by `POST /api/lora/dataset/import`.
+- **Gallery mode** (`--gallery`; runs on the host, where the browser is): the real gallery and the
+  rendered surface. It creates one synthetic portrait through `POST /api/portrait-studio/portraits`
+  (a flat synthetic photo, the catalog's first professional style), titles it with the fixture tag,
+  waits for the engine to mark it `done`, mints the locator handle exactly as the gallery's Send to…
+  does (`POST /api/artifacts/handles` with `source: /api/portrait-studio/portraits/<id>/image`), opens
+  `/api/lora/ui?artifact=<ref>` in a headless Chromium as the caller (the token rides only on
+  same-origin requests; every other request is aborted in the browser), clicks the fixture character
+  and "Import selected image", and reads `#datasetRows` until the studio itself shows the file "ready
+  on worker". A run whose receipt route says ready while the surface does not is red, and so is a page
+  error. It spends one real portrait generation (the engine's model and cost land in the evidence),
+  and it is UNAVAILABLE by name when the PAT, the LoRA or Portrait Studio package, the image engine,
+  or a GPU worker is missing (an offline worker is named). Knobs: `OSHAL_VERIFY_BASE_URL`,
+  `OSHAL_LORA_PORTRAIT_BUDGET_MS`.
+
+Cleanup in both modes removes the box directory, the import ticket (through the ticket service after
+re-reading it), the portrait (gallery mode, after it revalidates by its title tag) and the character,
+whose receipt, staged bytes and grants cascade; the database steps run as the owner through the
+live-acceptance container helper's named statements (`lora.*`). It is a core script rather than a
+package `tests/test-lab.yaml` case because it orchestrates core artifact exchange, the core
+remote-client rail and the store package on a real worker, and the package catalog leaves live
+external-write cases pending. Suites: `npx vitest run tests/unit/lora-import-live-proof.spec.ts`
+(inline mode; on win32 the box probe and removal commands also run through real `powershell.exe`
+against a temp home; other hosts print one PLATFORM SKIP line) and
+`npx vitest run tests/unit/lora-import-gallery-proof.spec.ts` (gallery mode; its surface port runs in
+real headless Chromium against a loopback stand-in of the studio page - a surface that renders the
+receipt ready passes, one that keeps rendering "queued for worker" fails by name). An unreadable probe
+is named in the verdict: which field is wrong, the probe task's exit, and the first 300 redacted
+characters of the worker's stdout.
 
 ### Automated live acceptance sweep
 
@@ -261,6 +284,7 @@ and removed; a cleanup miss turns the case red.
 | `trading-parity` | `live-acceptance-trading-parity` | The `trading-parity-features` card passes all three steps (market gap, exit plans and yield sleeve, each armed on the paper book; a degraded step is reported as not runnable with the setting it names), `GET /api/trading/position-plans` answers the paper book's plans and plan arm, and both promotion paths (plan amend, a parity mix edit) answer 428 to a change sent without confirm. Read-only: nothing it sends carries confirm. |
 | `jarvis-cache` | `live-acceptance-jarvis-cache` | Three fresh tagged Jarvis conversations: the Jarvis bot's `OpenAI-compatible call` line shows the invariant cache created, then hit with cached tokens. `--record-doc` writes the table into `docs/architecture/jarvis-own-task-recall.md`. When no OpenAI-compatible call is logged the case names the brain that answered instead. Host runner only (`docker logs`). Spends three model turns. |
 | `vids-publish` | `live-acceptance-vids-publish` | Through the real package loader mounts (`/api/vids` under `service-or-oidc`, `/api/vids-public` under `public`): one tagged finished Vids job for the caller (the closed statement set; no route can make a job `done` without a Vids worker) with a real one-frame MP4 carrying the run tag attached through `POST /api/vids/jobs/<id>/artifact`. An unauthenticated `GET /api/vids/jobs` and an unauthenticated confirmed publish of that job must each answer the mount gate's own 401 (`authenticated: false`, `unauthorized`; a 401 from the package's in-router guard means the mount lost its gate and fails), and nothing may become public. The owner's confirmed publish with the reviewed digest yields a link whose anonymous read returns exactly the uploaded bytes as `video/mp4`; a malformed token answers 404; after the owner revokes, the same read answers 404. Cleanup revokes if needed, removes the export through the package's `DELETE` route, proves its MP4 gone from disk with the named `vids.export` file probe (which must first have seen it present), deletes exactly the tagged job and reads the residue back as zero; an MP4 left on disk is red. Unavailable, never pass, without vids 1.5.0 or later. |
+| `token-chase-replay` | `live-acceptance-token-chase-replay` | Through `POST /api/token-chase/runs/<id>/tail-replay`, which the controller delegates to the bot node that produced the run: the newest captured run of the caller whose frames consumed only workspace file-tool results (every pin `workspace-read`/`workspace-write` and pinned, at least one write, a completed final checkpoint), replayed from its first frame, answers `reproduced` with `artifacts.reproduced` true, no differing path, `replayTreeSha` equal to `final.checkpoint.treeSha` read independently through `GET /api/token-chase/runs/<id>/final`, and 0 paid calls. When no such run is captured the case starts one tagged file-tools turn on `general-bot` (`OSHAL_VERIFY_TOKEN_CHASE_AGENT="<bot name>" node scripts/operations/live-acceptance.js token-chase-replay` names another) through `POST /api/tasks/<tag>/messages`, waits for its capture to close, replays it and removes it (chat task and messages, ticket if any, ask workspace, residue read as zero). A separate captured run whose tail consumed a live-read or side-effect result, replayed from its first frame, stops at the frame that called the tool with status `live-tool` after every earlier frame `reproduced`, and replayed from the consuming frame answers `non-replayable`. `--expect-store-bound` (host runner) also requires a store-bound run and `storeVersion {bound: true, reproduced: true}`; the deploy lane runs it after `TOKEN_CHASE_OWNER_STORE_SNAPSHOT=on` on one bot. A leg with no suitable run is unavailable, never pass, naming what produces one (`TOKEN_CHASE_CAPTURE` on a bot node, a bot that answers with its file tools, a conversation that reads live data, the store snapshot flag); a producing bot with no reachable node is unavailable naming the bot. Spends at most one model turn (only when it starts a run). |
 
 The same case modules (`scripts/lib/live-acceptance-*.js`, listed in `live-acceptance-cases.js`) run
 from the Lab as explicit-only cards (never from "Run live scenarios"), bound to the signed-in caller;

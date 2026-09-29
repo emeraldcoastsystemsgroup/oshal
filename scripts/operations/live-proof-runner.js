@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the host half every live acceptance proof shares: read the operator automation PAT from the environment or the box's .env BY NAME (never printed), stage the proof and its case module into the running api container under a private /tmp directory, run it there with the PAT forwarded by name (`docker exec -e NAME`, so the value is never on a command line), relay its single RESULT line, and remove the staged files. The same shape scripts/lib/deploy-verify.sh uses for the deploy probe.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add stageAndStream beside stageAndRun: the same staging, argv and PAT-by-name contract, but the proof's stdout is read line by line WHILE it runs so the host can act on a phase line a long-running proof prints (the Career rail worker-loss proof asks the host to stop and restart the Career bot container mid-run) before the proof's verdict arrives. stageAndRun keeps its exact argv (`... node <entry> --in-container`); both now share one staging and one removal, and an entry may carry extra flags after --in-container. The docker runner is exported for the same host scripts.
  */
 
 'use strict';
@@ -11,7 +12,8 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
+const readline = require('node:readline');
+const { spawn, spawnSync } = require('node:child_process');
 
 /** The operator automation identity the box's .env carries (docs/runbooks/deploy-parity.md). */
 const PAT_ENV = 'OSHAL_VERIFY_OPERATOR_PAT';
@@ -54,6 +56,38 @@ function docker(args, env, timeoutMs) {
 }
 
 /**
+ * @description Copy the proof's files into a private staging directory of the api container.
+ * @param {object} spec - The run spec (container, files).
+ * @param {typeof docker} exec - The docker runner.
+ * @param {NodeJS.ProcessEnv} childEnv - Environment of the docker calls (carries the PAT by name).
+ * @returns {{dir: string, failure?: {status: number, stdout: string, stderr: string}}} The directory, and the staging failure when one step did not succeed.
+ */
+function stageFiles(spec, exec, childEnv) {
+  const dir = `/tmp/oshal-acceptance-${crypto.randomBytes(4).toString('hex')}`;
+  const dirs = [...new Set(spec.files.map((file) => path.posix.dirname(`${dir}/${file.rel}`)))];
+  const made = exec(['exec', spec.container, 'mkdir', '-p', ...dirs], childEnv, 30_000);
+  if (made.status !== 0) return { dir, failure: { status: 2, stdout: '', stderr: `could not create ${dir} in ${spec.container}: ${made.stderr.trim()}` } };
+  for (const file of spec.files) {
+    const copied = exec(['cp', file.src, `${spec.container}:${dir}/${file.rel}`], childEnv, 60_000);
+    if (copied.status !== 0) return { dir, failure: { status: 2, stdout: '', stderr: `docker cp ${file.rel} failed: ${copied.stderr.trim()}` } };
+  }
+  return { dir };
+}
+
+/**
+ * @description The docker argv that runs a staged entry: the PAT by NAME, the non-secret env
+ * pairs, then `node <entry> --in-container` and the spec's extra flags.
+ * @param {object} spec - The run spec (container, entry, env, args?).
+ * @param {string} dir - The staging directory.
+ * @returns {string[]} docker arguments.
+ */
+function runArgs(spec, dir) {
+  const envArgs = Object.entries(spec.env).flatMap(([name, value]) => ['-e', `${name}=${value}`]);
+  return ['exec', '-w', '/app', '-e', PAT_ENV, ...envArgs, spec.container, 'node', `${dir}/${spec.entry}`, '--in-container',
+    ...(Array.isArray(spec.args) ? spec.args : [])];
+}
+
+/**
  * @description Stage files into the api container, run the entry script there with `--in-container`,
  * and always remove the staging directory afterwards.
  * @param {object} spec - What to run.
@@ -63,26 +97,73 @@ function docker(args, env, timeoutMs) {
  * @param {Record<string, string>} spec.env - Non-secret NAME=value pairs for the proof.
  * @param {string} spec.pat - The operator PAT, forwarded by name only.
  * @param {number} spec.timeoutMs - Ceiling for the proof itself.
+ * @param {string[]} [spec.args] - Extra flags for the entry, after `--in-container`.
  * @param {typeof docker} [exec] - The docker runner (a seam for the argv/secret-handling tests).
  * @returns {{status: number, stdout: string, stderr: string}} The proof's outcome (status 2 on a staging failure).
  */
 function stageAndRun(spec, exec = docker) {
-  const dir = `/tmp/oshal-acceptance-${crypto.randomBytes(4).toString('hex')}`;
   const childEnv = { ...process.env, [PAT_ENV]: spec.pat };
+  const staged = stageFiles(spec, exec, childEnv);
   try {
-    const dirs = [...new Set(spec.files.map((file) => path.posix.dirname(`${dir}/${file.rel}`)))];
-    const made = exec(['exec', spec.container, 'mkdir', '-p', ...dirs], childEnv, 30_000);
-    if (made.status !== 0) return { status: 2, stdout: '', stderr: `could not create ${dir} in ${spec.container}: ${made.stderr.trim()}` };
-    for (const file of spec.files) {
-      const copied = exec(['cp', file.src, `${spec.container}:${dir}/${file.rel}`], childEnv, 60_000);
-      if (copied.status !== 0) return { status: 2, stdout: '', stderr: `docker cp ${file.rel} failed: ${copied.stderr.trim()}` };
-    }
-    const envArgs = Object.entries(spec.env).flatMap(([name, value]) => ['-e', `${name}=${value}`]);
-    const run = exec(['exec', '-w', '/app', '-e', PAT_ENV, ...envArgs, spec.container, 'node', `${dir}/${spec.entry}`, '--in-container'],
-      childEnv, spec.timeoutMs);
+    if (staged.failure) return staged.failure;
+    const run = exec(runArgs(spec, staged.dir), childEnv, spec.timeoutMs);
     return { status: run.status === null ? 1 : run.status, stdout: run.stdout, stderr: run.stderr };
   } finally {
-    exec(['exec', spec.container, 'rm', '-rf', dir], childEnv, 30_000);
+    exec(['exec', spec.container, 'rm', '-rf', staged.dir], childEnv, 30_000);
+  }
+}
+
+/**
+ * @description Run one docker CLI call asynchronously, handing every stdout line to `onLine` as it
+ * arrives (a line handler may return a promise; lines are handled in order and the outcome waits
+ * for the last handler). Same argv/env contract as `docker`.
+ * @param {string[]} args - docker arguments.
+ * @param {NodeJS.ProcessEnv} env - Child environment.
+ * @param {number} timeoutMs - Hard ceiling for this call; the child is killed past it.
+ * @param {(line: string) => unknown} onLine - Called once per stdout line.
+ * @returns {Promise<{status: number|null, stdout: string, stderr: string}>} The call's outcome (status null when killed).
+ */
+function dockerStream(args, env, timeoutMs, onLine) {
+  return new Promise((resolve) => {
+    const child = spawn('docker', args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    let handled = Promise.resolve();
+    const timer = setTimeout(() => { timedOut = true; child.kill(); }, timeoutMs);
+    readline.createInterface({ input: child.stdout }).on('line', (line) => {
+      stdout += `${line}\n`;
+      handled = handled.then(() => onLine(line)).catch((error) => { stderr += `line handler failed: ${error instanceof Error ? error.message : String(error)}\n`; });
+    });
+    child.stderr.on('data', (chunk) => { stderr += String(chunk); });
+    child.on('error', (error) => { stderr += `${error.message}\n`; });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      void handled.then(() => resolve({ status: timedOut ? null : code, stdout, stderr }));
+    });
+  });
+}
+
+/**
+ * @description stageAndRun's streaming sibling: the same staging, argv and PAT-by-name contract, but
+ * the proof's stdout lines reach `hooks.onLine` while it runs, so the host can act on a phase line
+ * (stop a container, say) before the proof's verdict. Always removes the staging directory.
+ * @param {object} spec - What to run (see stageAndRun; `args` are the entry's extra flags).
+ * @param {object} [hooks] - onLine (per stdout line), exec (docker runner seam), spawnChild (streaming runner seam).
+ * @returns {Promise<{status: number, stdout: string, stderr: string}>} The proof's outcome (status 2 on a staging failure).
+ */
+async function stageAndStream(spec, hooks = {}) {
+  const exec = hooks.exec || docker;
+  const spawnChild = hooks.spawnChild || dockerStream;
+  const onLine = hooks.onLine || (() => undefined);
+  const childEnv = { ...process.env, [PAT_ENV]: spec.pat };
+  const staged = stageFiles(spec, exec, childEnv);
+  try {
+    if (staged.failure) return staged.failure;
+    const run = await spawnChild(runArgs(spec, staged.dir), childEnv, spec.timeoutMs, onLine);
+    return { status: run.status === null ? 1 : run.status, stdout: run.stdout, stderr: run.stderr };
+  } finally {
+    exec(['exec', spec.container, 'rm', '-rf', staged.dir], childEnv, 30_000);
   }
 }
 
@@ -130,4 +211,6 @@ function emitResult(result) {
   process.exit(code === undefined ? 1 : code);
 }
 
-module.exports = { PAT_ENV, DEFAULT_API_CONTAINER, RESULT_PREFIX, readOperatorPat, stageAndRun, parseResult, reportAndExit, emitResult };
+module.exports = {
+  PAT_ENV, DEFAULT_API_CONTAINER, RESULT_PREFIX, readOperatorPat, docker, stageAndRun, stageAndStream, parseResult, reportAndExit, emitResult,
+};
