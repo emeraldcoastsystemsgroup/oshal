@@ -69,6 +69,11 @@ budget - 45 s by default, raised for a slower host with `OSHAL_FIXTURE_BROWSER_E
 a browser that misses it still fails the suite by name. `tests/unit/isolated-browser.spec.ts` guards
 both halves, including against a real headless Chromium.
 
+An explicit cleanup-hook timeout is sufficient without a redundant global setting;
+when both exist, the explicit timeout wins and must not shorten the fixture budget.
+[The browser-fixture acceptance record](../docs/testing/isolated-browser-acceptance.md)
+retains five consecutive Chromium/Jarvis/Budgets runs and the real-boundary limits.
+
 Keep local regression results separate from deployed acceptance. A model fixture proves routing
 and enforcement, while a live-model scenario measures semantic selection. Report both honestly.
 

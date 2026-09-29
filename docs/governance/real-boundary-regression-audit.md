@@ -729,3 +729,21 @@ ADR-170/A2 acceptance work. No such evidence is inferred from an accepted manife
 Both spec files are already selected by `vitest.config.ts`'s
 `tests/unit/**/*.spec.ts` include through `npm run test:unit`, used by the normal
 local CI unit gate and hosted CI unit job; no new runtime Lab card is added.
+
+## Isolated browser cleanup acceptance refresh (2026-09-29)
+
+The [current acceptance record](../testing/isolated-browser-acceptance.md) retains
+five consecutive runs of isolated-browser, jarvis-no-brain-browser and
+budgets-unit-split-browser: 28/28 each, zero skips, while independent build lanes
+continued. The original current-main run was 21/22: an inventory false positive
+required a global setting despite a valid explicit cleanup-hook budget. The guard
+now follows effective per-hook precedence, with four direct regression cases;
+the production fixture and Budgets suite are unchanged.
+
+Real boundaries are Chromium process ownership/exit, shipped browser pages and
+loopback HTTP. Chosen lifecycle timings use fake clocks; Jarvis identity,
+persistence and unavailable-provider resolution, and Budgets API responses, remain
+named fixtures. Missing exit confirmation still raises the named deadline against
+a real BrowserServer. No physical unkillable-browser, installed-provider, database,
+whole-suite or deliberate host-saturation proof is claimed. The record pins source
+and raw-log hashes, resource limits and repeatable commands.
