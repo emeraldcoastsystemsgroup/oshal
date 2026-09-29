@@ -106,6 +106,8 @@
  * 54 | maintainer@emeraldcoastsystemsgroup.com   | Registered the ADR-169 L3 location consent card (LOCATION_CONSENT_SCENARIOS, test-lab-location-consent-scenarios.ts): the service secret refused on /api/location over the loopback, the signed-in person unable to opt in or accept a share without a fresh sign-in (with no proof and with an unproven challenge the Lab withdraws), and the consent and ingest services run for a uniquely tagged synthetic person on the real database with an erase and a zero-row check, with the step-up, route-policy, consent, TOTP, Chromium and real-OIDC suites attached as regressionTests.
  * 55 | maintainer@emeraldcoastsystemsgroup.com   | Registered the ADR-169 L4 location places card (LOCATION_PLACES_SCENARIOS, test-lab-location-places-scenarios.ts): as the signed-in person the places and devices lists carry no coordinate or address and three refusals hold without a write, then three uniquely tagged synthetic people build a group, places and a node, a camera and a TV at places on the real database, prove who can and cannot change them and read them through the kernel, and everything is deleted with a zero-row check; the kernel-read, enrolment, Chromium, route-policy, static-guard and registration suites are attached as regressionTests.
  * 56 | maintainer@emeraldcoastsystemsgroup.com   | Registered the ADR-169 L5 location reminders card (LOCATION_REMINDERS_SCENARIOS, test-lab-location-reminders-scenarios.ts): as the signed-in person the reminder and sharing reads carry no coordinate, accepting a restricted invitation and creating a guardian share are refused without a fresh sign-in and a foreign place is refused, then three uniquely tagged synthetic people on the real database run the Jarvis grocery-store reminder (proposed at the fix, saved on "yes", fires once on the next visit), its two-rail delivery with tier-aware text, an operator-stamped read that finds no place, subject or reminder text, and a group notice that fires for the sharing member only; everything is deleted with a zero-row check. The evaluator, intent, reminders, group-shares, route-policy, static-guard, log-guard and registration suites are attached as regressionTests.
+ * 57 | maintainer@emeraldcoastsystemsgroup.com   | Registered the ADR-169 L6 location device card (LOCATION_DEVICE_SCENARIOS, test-lab-location-device-scenarios.ts): as the signed-in person the device ingest refuses a browser session and issuing a credential needs a fresh sign-in, then three uniquely tagged synthetic people on the real database enrol a drone to a group, issue its credential, drive the real ingest over the loopback under that credential (placed in the group place as the device subject), see it refused on another device's path and the node-token mint refused for its id, and read it by reference as a member while a stranger gets nothing; everything is deleted with a zero-row check. The ingest, token-scope, route-policy, static-guard, machine-write and registration suites are attached as regressionTests.
+ * 58 | maintainer@emeraldcoastsystemsgroup.com   | Attached completion-result-text to 'jarvis-routing' regressionTests. The 2026-09-29 sweep found a Jarvis answer that is a bare number or true/false never delivered (live case jarvis-cache, 3 of 3): the completion text was stored as the converted Number and the bot-node handler threw reading it. The delivery path is guarded in antigravity-host-tool-loop, already attached here; this adds the unit guard for the rule itself.
  * @module test-lab-scenarios
  */
 
@@ -141,6 +143,7 @@ import { LOCATION_STORAGE_SCENARIOS } from './test-lab-location-storage-scenario
 import { LOCATION_CONSENT_SCENARIOS } from './test-lab-location-consent-scenarios';
 import { LOCATION_PLACES_SCENARIOS } from './test-lab-location-places-scenarios';
 import { LOCATION_REMINDERS_SCENARIOS } from './test-lab-location-reminders-scenarios';
+import { LOCATION_DEVICE_SCENARIOS } from './test-lab-location-device-scenarios';
 import { renderCatalogVisual, VISUAL_CATALOG } from './test-lab-visual-catalog';
 import type { AppContext } from '@/app/composition/app-context';
 
@@ -335,6 +338,7 @@ export const SCENARIOS: Scenario[] = [
   ...LOCATION_CONSENT_SCENARIOS,
   ...LOCATION_PLACES_SCENARIOS,
   ...LOCATION_REMINDERS_SCENARIOS,
+  ...LOCATION_DEVICE_SCENARIOS,
   // ── Rich visuals — every kind rendered deterministically through the real renderer ──────────
   ...VISUAL_CATALOG.map((entry): Scenario => ({
     id: `visual-${entry.kind}`,
@@ -522,6 +526,8 @@ export const SCENARIOS: Scenario[] = [
       // A Jarvis turn on the Antigravity brain: agy runs tool-less inside the host loop.
       { level: 'integration', path: 'tests/unit/antigravity-host-tool-loop.spec.ts' },
       { level: 'unit', path: 'tests/unit/antigravity-bot-runtime.spec.ts' },
+      // A bare number or true/false answer is stored and delivered as the text the model wrote.
+      { level: 'unit', path: 'tests/unit/completion-result-text.spec.ts' },
     ],
     steps: [
       { id: 'j-jobs', app: 'jarvis', label: '"What are my top job opportunities right now?"', run: (c) => jarvisStep(c, 'top jobs', 'What are my top job opportunities right now?') },

@@ -12,6 +12,132 @@
   <!-- Follow the cockpit theme live (embedded parent wins, else the saved theme). Contract:
        tests/unit/surface-theme-inheritance.spec.ts and tests/unit/person-model-surface.spec.ts. -->
   <script src="/shared/ui/js/surface-theme.js"></script>
+  <!-- ADR-164 D6 audience view kit: loaded right after the theme bootstrap so a shell's ?audience= request is decided before the page paints. -->
+  <link rel="stylesheet" href="/shared/ui/css/app-view.css" />
+  <script src="/shared/ui/js/app-view.js"></script>
+  <script>
+  /* Audience view (ADR-164 D6). Framed by a whole-portal shell with ?audience=company (Studio, Orbit, Commons) or
+     ?audience=family (Jarvis), this page paints an at-a-glance card of what the signed-in caller's ambient transcripts
+     hold instead of the full page. It reads only GETs the full page itself makes (/people, /asks, /projection and the
+     default two-week /trends); a refused read is said in the card with no figure in its place. Without an audience,
+     with one this page does not provide, or on a core without the kit, the full page below runs exactly as before. */
+  (function () {
+    var A = window.AppView; if (!A) return;
+    var BASE = '/api/jarvis/ambient/person';
+    var LEDE = 'Every voice heard, the exact lines on record, the asks still open and the topics read from those words. Counts are exact; asks and topics are inferences shown beside what was said. No audio is ever stored.';
+
+    /** @description The sentence for a refused read: what failed and why, never a figure. */
+    function refusal(status) {
+      if (status === 401) return 'You are not signed in (HTTP 401). Sign in, then open Ambient Recall again.';
+      if (status === 403) return 'Ambient Recall refused this account (HTTP 403).';
+      if (status === 404) return 'Ambient Recall did not answer on this core (HTTP 404).';
+      if (status >= 500) return 'Ambient Recall failed to answer (HTTP ' + status + ').';
+      return 'Ambient Recall refused the read (HTTP ' + status + ').';
+    }
+
+    /** @description One of the page's own GETs; resolves { ok, body } or { ok: false, why } and never rejects. */
+    function read(path, valid) {
+      return fetch(BASE + path, { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' } }).then(function (r) {
+        if (!r.ok) return { ok: false, why: refusal(r.status) };
+        return r.json().then(function (body) {
+          return valid(body) ? { ok: true, body: body } : { ok: false, why: 'Ambient Recall answered in a shape this view cannot read.' };
+        }, function () { return { ok: false, why: 'Ambient Recall answered with something that is not JSON.' }; });
+      }, function () { return { ok: false, why: 'Ambient Recall could not be reached (network failure).' }; });
+    }
+    function isMap(v) { return !!v && typeof v === 'object' && !Array.isArray(v); }
+    function validPeople(b) { return isMap(b) && Array.isArray(b.people); }
+    function validAsks(b) { return isMap(b) && Array.isArray(b.asks); }
+    function validProjection(b) { return isMap(b) && typeof b.semanticAvailable === 'boolean' && (b.ledger === null || b.ledger === undefined || isMap(b.ledger)); }
+    function validTrends(b) { return isMap(b) && Array.isArray(b.rows); }
+    /** @description A count from an answer field: anything that is not a finite number counts as zero. */
+    function n(v) { var x = Number(v); return isFinite(x) ? x : 0; }
+    function plural(count, word) { return A.num(count) + ' ' + word + (count === 1 ? '' : 's'); }
+
+    /** @description Open asks and commitments from GET /asks, or a dash with no figure when that read was refused. */
+    function asksStat(a) {
+      if (!a.ok) return { id: 'asks', label: 'Open asks', value: null, hint: 'Could not be read' };
+      var list = a.body.asks.filter(isMap), commitments = list.filter(function (x) { return x.kind === 'commitment'; }).length;
+      return { id: 'asks', label: 'Open asks', value: A.num(list.length), tone: list.length ? 'info' : null,
+        hint: plural(list.length - commitments, 'ask') + ' · ' + plural(commitments, 'commitment') };
+    }
+
+    /** @description Whether the semantic leg runs and how far its projection lags the transcripts, from GET /projection. */
+    function semanticStat(j) {
+      if (!j.ok) return { id: 'semantic', label: 'Semantic recall', value: null, hint: j.why };
+      var on = j.body.semanticAvailable === true, l = isMap(j.body.ledger) ? j.body.ledger : null;
+      return { id: 'semantic', label: 'Semantic recall', value: on ? 'On' : 'Off',
+        hint: l ? 'Projected ' + A.num(n(l.projectedRows)) + ' of ' + A.num(n(l.canonRows)) + ' lines (' + (l.status || 'status unknown') + ')' : on ? 'No projection recorded yet' : 'Exact search only' };
+    }
+
+    /** @description The glance figures: voices and exact line counts from GET /people, then asks and the semantic leg. */
+    function stats(people, a, j) {
+      var lines = people.reduce(function (s, p) { return s + n(p.utterances); }, 0), first = null, last = null;
+      people.forEach(function (p) {
+        if (p.firstHeardAt && (!first || new Date(p.firstHeardAt) < new Date(first))) first = p.firstHeardAt;
+        if (p.lastHeardAt && (!last || new Date(p.lastHeardAt) > new Date(last.lastHeardAt))) last = p;
+      });
+      return [
+        { id: 'voices', label: 'Voices heard', value: A.num(people.length), hint: first ? 'Since ' + A.date(first) : 'None heard yet' },
+        { id: 'lines', label: 'Lines on record', value: A.num(lines), hint: 'Exact transcript count' },
+        { id: 'last-heard', label: 'Last heard', value: last ? A.when(last.lastHeardAt) : 'Never', hint: last ? String(last.label || '') : 'No lines on record yet' },
+        asksStat(a), semanticStat(j)
+      ];
+    }
+
+    /** @description Every heard voice, most recently heard first as GET /people returns them. */
+    function voices(people) {
+      return { id: 'voices', kind: 'list', title: 'Voices heard', note: 'Most recently heard first; line counts are exact.',
+        items: people.slice(0, 6).map(function (p) {
+          return { title: String(p.label || 'Unnamed voice'), text: plural(n(p.utterances), 'line'), badge: p.isSelf ? 'you' : null,
+            meta: p.lastHeardAt ? 'Last heard ' + A.when(p.lastHeardAt) : 'Not heard yet' };
+        }),
+        empty: 'No voices heard yet. Turn on ambient listening in the Jarvis panel and name voices under Manage Voices.' };
+    }
+
+    /** @description The newest open asks from GET /asks, each beside the words it was read from, or the refusal in their place. */
+    function openAsks(a) {
+      var head = { id: 'asks', kind: 'list', title: 'Open asks and commitments' };
+      if (!a.ok) return Object.assign(head, { items: [], empty: 'Open asks could not be read. ' + a.why });
+      return Object.assign(head, { note: 'Inferences read from what was said, newest first, each beside the words it came from.',
+        items: a.body.asks.filter(isMap).slice(0, 5).map(function (x) {
+          return { title: String(x.text || ''), text: 'Heard as: “' + String(x.sourceQuote || '') + '”', badge: x.kind === 'commitment' ? 'Commitment' : 'Ask',
+            meta: [String(x.personLabel || ''), A.when(x.createdAt)].filter(Boolean).join(' · ') };
+        }),
+        empty: 'Nothing open. Asks appear after the analyst has read new transcript; modeling is off for each person until it is allowed under People → Consent.' });
+    }
+
+    /** @description Topics over the default two-week GET /trends window, summed across weeks per topic, or the refusal in their place. */
+    function topics(t) {
+      var head = { id: 'topics', kind: 'table', title: 'Recent topics', columns: ['Topic', 'Who', { label: 'Mentions', align: 'right' }] };
+      if (!t.ok) return Object.assign(head, { rows: [], empty: 'Topics could not be read. ' + t.why });
+      var weeks = n(t.body.weeks), by = {};
+      if (weeks) head.title = weeks === 1 ? 'Topics this week' : 'Topics, last ' + A.num(weeks) + ' weeks';
+      t.body.rows.filter(isMap).forEach(function (r) {
+        var k = String(r.topic || ''); if (!k) return;
+        var e = by[k] || (by[k] = { topic: k, mentions: 0, who: [] });
+        e.mentions += n(r.mentions);
+        if (r.personLabel && e.who.indexOf(String(r.personLabel)) < 0) e.who.push(String(r.personLabel));
+      });
+      var rows = Object.keys(by).map(function (k) { return by[k]; }).sort(function (x, y) { return y.mentions - x.mentions || (x.topic < y.topic ? -1 : 1); });
+      return Object.assign(head, { note: 'Inferred from the transcripts; mention counts from the weekly rollup.',
+        rows: rows.slice(0, 8).map(function (e) { return [e.topic, e.who.join(', '), A.num(e.mentions)]; }),
+        empty: 'No modeled topics in that window. Topics accrue once modeling is allowed for a person and the analyst has read their lines.' });
+    }
+
+    /** @description The card for both shells: figures from the reads, or the refusal said with no figure. */
+    function card(ctx) {
+      var open = { label: 'Open Ambient Recall', primary: true, onClick: function () { window.location.assign(window.location.pathname); } };
+      return Promise.all([read('/people', validPeople), read('/asks', validAsks), read('/projection', validProjection), read('/trends?weeks=2', validTrends)]).then(function (r) {
+        var p = r[0], head = { kicker: 'Ambient transcripts', title: 'Ambient Recall' };
+        if (!p.ok) return Object.assign(head, { lede: p.why, actions: [open, { label: 'Try again', onClick: function () { ctx.refresh(); } }], stats: [], sections: [] });
+        var people = p.body.people.filter(isMap);
+        return Object.assign(head, { lede: LEDE, actions: [open], stats: stats(people, r[1], r[2]), sections: [voices(people), openAsks(r[1]), topics(r[3])] });
+      });
+    }
+
+    A.boot({ app: 'person-model', escapeLabel: 'Open Ambient Recall in the cockpit', audiences: { company: card, family: card } });
+  })();
+  </script>
   <style>
     /* Consume the framework theme read-only; own only this surface's layout. The hex fallbacks
        only apply where the token stylesheet failed to load (e.g. served outside the api origin). */
@@ -429,14 +555,18 @@
       if (/asked me/i.test(ex)) { showTab('asks'); $('asks-person').value = 'Ella'; loadAsks(); return; }
       $('q').value = ex; recall();
     }));
-    (function boot() {
-      const params = new URLSearchParams(location.search);
-      const profile = params.get('profile');
-      const tab = params.get('tab') || (profile ? 'people' : 'recall');
-      showTab(tab, { profile: Boolean(profile) });
-      if (profile) loadProfile(profile);
-      loadStatus();
-    })();
+    // The full page starts only when no audience view is active (ADR-164 D6): without the kit, without ?audience=,
+    // or with an audience this page does not provide, it runs exactly as before.
+    if (!window.AppView || !AppView.active()) {
+      (function boot() {
+        const params = new URLSearchParams(location.search);
+        const profile = params.get('profile');
+        const tab = params.get('tab') || (profile ? 'people' : 'recall');
+        showTab(tab, { profile: Boolean(profile) });
+        if (profile) loadProfile(profile);
+        loadStatus();
+      })();
+    }
   </script>
 </body>
 </html>

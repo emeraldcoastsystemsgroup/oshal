@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L3: a localhost server shaped like the real one for the location consent specs. The REAL MOCK_OIDC middleware set from createOidcMiddleware (with the header override on, so each browser context or request picks its synthetic person), the same request-identity stamp server.ts installs, the real /api/location mount exactly as server.ts writes it (service-rail refusal, requiresAuth, createLocationRoutes), the real cockpit tool pages and shared UI assets, and a same-origin page standing in for a packaged surface, over a private PostgreSQL whose tables are owned by the NOSUPERUSER NOBYPASSRLS runtime role (FORCE row-level security is what holds). Synthetic identities and coordinates only; nothing reaches a deployment database.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L4: seedNodeBinding writes a node's durable ADR-114 owner binding (remote_task_journal_client_owners) as the superuser, the way the remote-client registry records it on registration, so the enrolment specs can prove that only a node's owner may enrol it.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L5: a spec may name extra shipped migrations applied before the location ones (the reminders card needs the Jarvis shelf table, which the production shelf rail writes), so the fixture hosts what the deployment has; the default set is unchanged.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L6: the `bearer` option. MOCK_OIDC signs every request in, which would shadow a device's credential exactly as it does on a mock-mode server; with the option on, a request carrying `Authorization: Bearer oshal_pat_` skips the mock sign-in and reaches the REAL createCliTokenAuthMiddleware over the runtime pool, in the order server.ts mounts it (before the identity stamp), so a location credential, a node token and an account PAT each behave as on a real-OIDC deployment while browser calls keep their header-selected mock person. The option also mounts the real /api/join router, so the enrolment refusal for a location device id is driven over HTTP. Off by default; every earlier spec is unchanged.
  */
 
 import express from 'express';
@@ -15,6 +16,8 @@ import path from 'node:path';
 import type { Pool } from 'pg';
 import { vi } from 'vitest';
 import { LocationStepUpStore } from '@/app/location-step-up';
+import { CLI_TOKEN_PREFIX, createCliTokenAuthMiddleware } from '@/app/routes/cli-token-routes';
+import { createJoinRoutes } from '@/app/routes/join-routes';
 import { createLocationRoutes } from '@/app/routes/location-routes';
 import { refuseLocationServiceRail } from '@/app/routes/location-session';
 import { getCaller, hasValidServiceSecret, isOperator } from '@/shared/middleware/authz';
@@ -45,13 +48,28 @@ export interface LocationBrowserServer {
   close: () => Promise<void>;
 }
 
+/** Fixture options. */
+export interface LocationBrowserServerOptions {
+  /** Let a `Bearer oshal_pat_` request bypass the mock sign-in and reach the real CLI-token middleware; mounts /api/join too. */
+  bearer?: boolean;
+}
+
+/** Whether a request presents a personal-access-token bearer (the shape the CLI-token middleware intercepts). */
+function presentsPatBearer(req: express.Request): boolean {
+  const auth = String(req.headers.authorization ?? '');
+  return auth.toLowerCase().startsWith('bearer ') && auth.slice(7).trim().startsWith(CLI_TOKEN_PREFIX);
+}
+
 /**
  * @description Start the private database and the localhost server.
  * @param purpose - Names the database container.
  * @param extraMigrations - Shipped migrations applied before the location ones (e.g. the Jarvis shelf table).
+ * @param options - See {@link LocationBrowserServerOptions}.
  * @returns The running server.
  */
-export async function startLocationBrowserServer(purpose: string, extraMigrations: readonly string[] = []): Promise<LocationBrowserServer> {
+export async function startLocationBrowserServer(
+  purpose: string, extraMigrations: readonly string[] = [], options: LocationBrowserServerOptions = {},
+): Promise<LocationBrowserServer> {
   vi.stubEnv('MOCK_OIDC', 'true');
   vi.stubEnv('MOCK_OIDC_ALLOW_HEADER', 'true');
   vi.stubEnv('SWARM_SERVICE_SECRET', FIXTURE_SERVICE_SECRET);
@@ -62,7 +80,12 @@ export async function startLocationBrowserServer(purpose: string, extraMigration
   const store = new LocationStepUpStore();
   const { authMiddleware, requiresAuth } = createOidcMiddleware();
   const app = express();
-  app.use(authMiddleware);
+  if (options.bearer) {
+    app.use((req, res, next) => (presentsPatBearer(req) ? next() : authMiddleware(req, res, next)));
+    app.use(createCliTokenAuthMiddleware(runtime));
+  } else {
+    app.use(authMiddleware);
+  }
   app.use((req, _res, next) => {
     runWithRequestIdentity({ sub: getCaller(req).sub, principalIssuer: getAuthenticatedPrincipalIssuer(req),
       isOperator: isOperator(req) || hasValidServiceSecret(req) }, () => next());
@@ -75,6 +98,7 @@ export async function startLocationBrowserServer(purpose: string, extraMigration
     res.type('html').send('<!doctype html><title>Fixture package</title><p id="surface">A packaged surface.</p>');
   });
   app.use('/api/location', refuseLocationServiceRail, requiresAuth, createLocationRoutes({ pool: runtime, stepUpStore: store, ingestMinIntervalMs: 0 }));
+  if (options.bearer) app.use('/api/join', requiresAuth, express.json(), createJoinRoutes(path.resolve('src/api'), runtime));
   const server: Server = app.listen(0, '127.0.0.1');
   await new Promise((done) => server.once('listening', done));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;

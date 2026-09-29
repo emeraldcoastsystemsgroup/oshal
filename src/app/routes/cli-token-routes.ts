@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Preserve exact owner subjects during node-token rotation. The required non-empty validation remains, but subject case/whitespace is no longer trimmed before owner-scoped revocation and successor minting.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | The boot bootstrap takes ONE advisory-locked client (SCHEMA_LOCK_KEYS.cliTokens) instead of issuing its eight idempotent statements as eight separate pool acquires against a pool of 8 while 83 manifests load — that contention is what made it fail on a cold boot; the statements, including the per-boot owner-RLS/policy re-assert, are unchanged. And its catch now RE-PROBES before it names an impact: table present -> warn that PAT auth is unaffected, absent -> the unavailable wording, probe failed -> say the effect is unverified. The old handler asserted "PAT auth unavailable until it exists" on every failure without checking; migration 100 creates the table before the process starts and the auth middleware queries it directly, so that line described a functional loss that had not happened and cost a day of investigation. Guard: tests/unit/cli-token-schema-bootstrap.spec.ts.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | The failure report probes the COLUMNS PAT auth reads, not just the table. findLiveCliToken selects node_client_id and principal_issuer, which the failed bootstrap own ALTERs add - so a database that never ran migration 102 has the table, has broken PAT auth, and was being told unaffected. Four branches now: present-and-complete warns, present-with-missing-columns reports at ERROR and names them, absent and unprobeable unchanged.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L6: the LOCATION CREDENTIAL, a second nullable binding location_device_id (migration 178 plus the lazy-DDL ALTER, with a CHECK that a row never carries both bindings). The auth middleware applies its scope BEFORE the account-PAT path and before the node scope: a token bound to a location device is admitted only on POST /api/location/devices/<its device id>/presence (decideLocationTokenScope, features/location) and refused everywhere else, including /api/remote-clients/register and the enrollment handshake, so a credential lifted off a drone or a phone drives that one device's presence and nothing else. The binding is stamped on the request (readLocationTokenBinding) for the ingest route to verify against location_devices.credential_id; insertCliToken accepts locationDeviceId and takes any query-capable handle so the mint can share the enrolment transaction. Account PATs and node tokens are unchanged by the new column. Guard: tests/unit/location-token-scope.spec.ts and tests/unit/location-device-ingest-postgres.spec.ts.
  */
 import { Router, type RequestHandler, type Request, type Response } from 'express';
 import crypto from 'crypto';
@@ -29,6 +30,7 @@ import {
   normalizePrincipalIssuer,
 } from '@/shared/middleware/principal-issuer';
 import { decideNodeTokenScope } from '@/features/remote-client';
+import { decideLocationTokenScope } from '@/features/location';
 
 const logger = createChildLogger({ module: 'cli-tokens' });
 
@@ -106,7 +108,8 @@ export async function ensureCliTokenSchema(pool: Pool): Promise<void> {
         revoked_at   TIMESTAMPTZ,
         expires_at   TIMESTAMPTZ,
         node_client_id TEXT,
-        principal_issuer TEXT
+        principal_issuer TEXT,
+        location_device_id TEXT
       )`,
       // Additive migration for databases created before expiry existed — a NULL expires_at
       // is a non-expiring PAT, so existing rows are unaffected.
@@ -119,11 +122,23 @@ export async function ensureCliTokenSchema(pool: Pool): Promise<void> {
       `ALTER TABLE oshal_cli_tokens ADD COLUMN IF NOT EXISTS principal_issuer TEXT`,
       `CREATE INDEX IF NOT EXISTS idx_oshal_cli_tokens_node_client
          ON oshal_cli_tokens (node_client_id) WHERE node_client_id IS NOT NULL`,
+      // Location credential binding (ADR-169 L6; recorded form scripts/migrations/178-location-device-credentials.sql).
+      // NULL = not a location credential, which every pre-existing row is. A row never carries both bindings.
+      `ALTER TABLE oshal_cli_tokens ADD COLUMN IF NOT EXISTS location_device_id TEXT`,
+      `CREATE INDEX IF NOT EXISTS idx_oshal_cli_tokens_location_device
+         ON oshal_cli_tokens (location_device_id) WHERE location_device_id IS NOT NULL`,
+      `DO $$ BEGIN
+         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'oshal_cli_tokens_one_binding'
+                          AND conrelid = 'oshal_cli_tokens'::regclass) THEN
+           ALTER TABLE oshal_cli_tokens ADD CONSTRAINT oshal_cli_tokens_one_binding
+             CHECK (node_client_id IS NULL OR location_device_id IS NULL);
+         END IF;
+       END $$`,
       ...buildOwnerRlsPolicyStatements('oshal_cli_tokens', 'user_sub'),
     ],
     requirements: [{
       table: 'oshal_cli_tokens',
-      columns: ['id', 'user_sub', 'token_hash', 'revoked_at', 'expires_at', 'node_client_id', 'principal_issuer'],
+      columns: ['id', 'user_sub', 'token_hash', 'revoked_at', 'expires_at', 'node_client_id', 'principal_issuer', 'location_device_id'],
     }],
   });
 }
@@ -132,7 +147,7 @@ export async function ensureCliTokenSchema(pool: Pool): Promise<void> {
  * The columns `findLiveCliToken` reads. A failure report may only call PAT auth unaffected if the
  * table carries these: the table existing says nothing about the ALTERs that add them.
  */
-const PAT_AUTH_COLUMNS = ['id', 'user_sub', 'email', 'node_client_id', 'principal_issuer'];
+const PAT_AUTH_COLUMNS = ['id', 'user_sub', 'email', 'node_client_id', 'location_device_id', 'principal_issuer'];
 
 /**
  * @description Reports a failed PAT-store bootstrap with an impact it has CHECKED. The handler
@@ -217,6 +232,7 @@ interface CliTokenAuthRow {
   user_sub: string;
   email: string | null;
   node_client_id: string | null;
+  location_device_id: string | null;
   principal_issuer: string | null;
 }
 
@@ -224,13 +240,39 @@ interface CliTokenAuthRow {
 async function findLiveCliToken(pool: Pool, token: string): Promise<CliTokenAuthRow | undefined> {
   const { rows } = await runWithSystemIdentity(() =>
     pool.query(
-      `SELECT id, user_sub, email, node_client_id, principal_issuer FROM oshal_cli_tokens
+      `SELECT id, user_sub, email, node_client_id, location_device_id, principal_issuer FROM oshal_cli_tokens
         WHERE token_hash = $1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > NOW())
         LIMIT 1`,
       [hashCliToken(token)],
     ),
   );
   return rows[0] as CliTokenAuthRow | undefined;
+}
+
+/**
+ * Enforce a location credential's one admitted request (ADR-169 L6) and stamp the verified
+ * binding. Runs BEFORE the node scope and the account-PAT path: a row carrying both bindings is
+ * refused outright (the CHECK forbids it; a row that has one anyway is not trusted either way).
+ */
+function admitLocationTokenScope(req: Request, row: CliTokenAuthRow): boolean {
+  if (!row.location_device_id) return true;
+  if (row.node_client_id) {
+    logger.warn({ path: req.path, tokenId: row.id }, 'refused CLI token carrying both a node and a location binding');
+    return false;
+  }
+  const scope = decideLocationTokenScope({ boundDeviceId: row.location_device_id, method: req.method, path: req.path });
+  if (!scope.allowed) {
+    logger.warn(
+      { path: req.path, method: req.method, boundDeviceId: row.location_device_id, tokenId: row.id, reason: scope.reason },
+      'refused location credential off its own device presence path',
+    );
+    return false;
+  }
+  (req as { oshalLocationToken?: LocationTokenBinding }).oshalLocationToken = {
+    deviceId: row.location_device_id,
+    tokenId: row.id,
+  };
+  return true;
 }
 
 /** Enforce a device-bound token's narrow plane and stamp the verified binding. */
@@ -307,6 +349,9 @@ export function createCliTokenAuthMiddleware(pool: Pool): RequestHandler {
       // A token bound to a clientId authenticates only on that device's worker plane and the
       // enrollment handshake; anywhere else it leaves the request unauthenticated, so it hits
       // the normal 401 exactly like an unknown token. Unbound PATs skip this entirely.
+      // A LOCATION credential (ADR-169 L6) is narrower still: one device's presence path, nothing
+      // else, decided before the node scope and the account path ever see the row.
+      if (!admitLocationTokenScope(req, row)) return next();
       if (!admitNodeTokenScope(req, row)) return next();
       stampCliTokenPrincipal(req, row);
       // Usage telemetry is best-effort — never in the request's critical path. Runs under the
@@ -340,6 +385,12 @@ export interface CliTokenMintInput {
    * account credential. Omit for an ordinary PAT.
    */
   nodeClientId?: string | null;
+  /**
+   * Binds the token to ONE location device (ADR-169 L6). Such a credential authenticates only on
+   * that device's presence path, never on the worker plane and never as an account credential.
+   * Exclusive with nodeClientId; a mint naming both is refused.
+   */
+  locationDeviceId?: string | null;
 }
 
 /** Result of a mint — the plaintext token is present exactly once and is never persisted. */
@@ -352,18 +403,24 @@ export interface MintedCliToken {
   expiresAt: string | null;
   /** The device this token is confined to, or null for an ordinary account PAT. */
   nodeClientId: string | null;
+  /** The location device this credential is confined to, or null. */
+  locationDeviceId: string | null;
 }
+
+/** The part of a pool (or a transaction's client) a mint needs: one query. */
+export type CliTokenQueryable = Pick<Pool, 'query'>;
 
 /**
  * @description Single mint path for the oshal_cli_tokens store — the one place that knows the
  * column set (now that optional expiry exists). Generates a prefixed high-entropy token, stores
  * only its sha256 with an optional expires_at, and returns the plaintext ONCE. Reused by both the
  * PAT mint route and the Spaces phone-pairing endpoint so neither duplicates the INSERT.
- * @param pool - Postgres pool backing the token store.
- * @param input - owner sub, optional email/label, optional ttlMs for a short-lived token.
+ * @param pool - Postgres pool backing the token store, or a transaction's client (the location enrolment mints inside its own transaction).
+ * @param input - owner sub, optional email/label, optional ttlMs for a short-lived token, at most one binding.
  * @returns the minted token metadata plus the one-time plaintext.
+ * @throws When both a node and a location binding are named: a token has one scope.
  */
-export async function insertCliToken(pool: Pool, input: CliTokenMintInput): Promise<MintedCliToken> {
+export async function insertCliToken(pool: CliTokenQueryable, input: CliTokenMintInput): Promise<MintedCliToken> {
   const id = crypto.randomUUID();
   const token = generateCliToken();
   const label = cleanLabel(input.label);
@@ -371,18 +428,23 @@ export async function insertCliToken(pool: Pool, input: CliTokenMintInput): Prom
   const nodeClientId = typeof input.nodeClientId === 'string' && input.nodeClientId.trim().length > 0
     ? input.nodeClientId.trim().slice(0, 200)
     : null;
+  const locationDeviceId = typeof input.locationDeviceId === 'string' && input.locationDeviceId.trim().length > 0
+    ? input.locationDeviceId.trim().slice(0, 200)
+    : null;
+  if (nodeClientId && locationDeviceId) throw new Error('a CLI token is bound to a node or to a location device, never both');
   const principalIssuer = normalizePrincipalIssuer(input.principalIssuer);
   await pool.query(
     `INSERT INTO oshal_cli_tokens
-       (id, user_sub, email, label, token_hash, expires_at, node_client_id, principal_issuer)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-    [id, input.sub, input.email ?? null, label, hashCliToken(token), expiresAt, nodeClientId, principalIssuer],
+       (id, user_sub, email, label, token_hash, expires_at, node_client_id, principal_issuer, location_device_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+    [id, input.sub, input.email ?? null, label, hashCliToken(token), expiresAt, nodeClientId, principalIssuer, locationDeviceId],
   );
   return {
     id, token, label,
     createdAt: new Date().toISOString(),
     expiresAt: expiresAt ? expiresAt.toISOString() : null,
     nodeClientId,
+    locationDeviceId,
   };
 }
 
@@ -394,8 +456,31 @@ export interface NodeTokenBinding {
   tokenId: string;
 }
 
+/** The location device binding a request's credential carries, stamped by the auth middleware (ADR-169 L6). */
+export interface LocationTokenBinding {
+  /** The location device id this credential is confined to. */
+  deviceId: string;
+  /** Token row id, which the ingest route checks against location_devices.credential_id; never the token itself. */
+  tokenId: string;
+}
+
 /** Request shape the node-binding stamp lives on. */
 type NodeBoundRequest = Request & { oshalNodeToken?: NodeTokenBinding };
+
+/** Request shape the location-binding stamp lives on. */
+type LocationBoundRequest = Request & { oshalLocationToken?: LocationTokenBinding };
+
+/**
+ * @description Reads the location credential binding the CLI-token middleware stamped on this
+ * request, or null when the caller is a session, service, node-token or account-PAT caller. The
+ * device ingest route requires it and then verifies the token id against the device's recorded
+ * credential, so a matching device id in the path is never enough on its own.
+ * @param req - The inbound request.
+ * @returns The binding, or null when the caller did not present a location credential.
+ */
+export function readLocationTokenBinding(req: Request): LocationTokenBinding | null {
+  return (req as LocationBoundRequest).oshalLocationToken ?? null;
+}
 
 /**
  * @description Reads the per-node binding the CLI-token middleware stamped on this request,

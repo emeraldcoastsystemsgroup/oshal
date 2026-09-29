@@ -9,6 +9,7 @@
   4 | maintainer@emeraldcoastsystemsgroup.com   | Added shared Presentron runtime configuration to Config Admin so service-backed workspaces can hand operators to one canonical screen
   5 | maintainer@emeraldcoastsystemsgroup.com   | CM-6: Added RAG Engine and Google Search MCP service runtime configuration sections
   6 | maintainer@emeraldcoastsystemsgroup.com | Adopt the shared live theme bootstrap and semantic surface colors.
+  7 | maintainer@emeraldcoastsystemsgroup.com | Audience view (ADR-164 D6): framed with ?audience=company (Studio, Orbit, Commons) or ?audience=family (Jarvis), the page paints a read-only card from four GETs the full page already makes on load (GET /api/agents/provider-switch, GET /api/agents, GET /api/config, GET /api/config/rag): the fleet default provider and its fallback order, the bots and the rung each one's provider comes from, refused switches, the shared settings (addresses and keys only as set or not set) and the RAG runtime, with every refusal said in place of a figure. The full page's start in config-admin.js runs only when no audience view is active; the default screen is unchanged.
 -->
 <!DOCTYPE html>
 <html lang="en" data-theme="midnight">
@@ -17,6 +18,194 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Config Admin</title>
   <script src="/shared/ui/js/surface-theme.js"></script>
+  <!-- ADR-164 D6 audience view kit: loaded right after the theme bootstrap so a shell's ?audience= request is decided before the page paints. -->
+  <link rel="stylesheet" href="/shared/ui/css/app-view.css" />
+  <script src="/shared/ui/js/app-view.js"></script>
+  <script>
+  /* Audience view (ADR-164 D6). Framed by a whole-portal shell with ?audience=company (Studio, Orbit, Commons) or
+     ?audience=family (Jarvis), this page paints an at-a-glance card of the swarm's configuration instead of the full
+     page. It reads only four of the GETs the full page makes on load (the fleet provider switch, the bot list, the
+     shared settings and the RAG runtime); a refused read is said in the card with no figure in its place. Without an
+     audience, with one this page does not provide, or on a core without the kit, the full page below runs exactly as
+     before. */
+  (function () {
+    var A = window.AppView; if (!A) return;
+    var ROWS = 8;
+    var WHAT = ['The fleet provider switch', 'The bot list', 'The shared settings', 'The RAG runtime settings'];
+    var SOURCE = { 'bot-row': 'Its own switch row', 'fleet-default': 'The fleet default', 'switch-refused': 'A switch this build cannot run',
+      'registry-harness': 'The registry harness', 'agent-profile': 'Its agent record', 'registry-api-type': 'The registry API type',
+      'deployment-default': 'The deployment default', 'registry-unreadable': 'Unknown: the registry could not be read', unreported: 'Not reported' };
+    var RANK = { 'switch-refused': 0, 'bot-row': 1 };
+    var LEDE = 'The LLM provider the fleet runs on, the bots that hold a provider of their own, and the shared swarm settings. This view only reads: it never saves a setting, switches a provider or clears the fleet default.';
+
+    function isMap(v) { return !!v && typeof v === 'object' && !Array.isArray(v); }
+    function str(v) { return typeof v === 'string' ? v.trim() : ''; }
+    function has(v) { return v !== null && v !== undefined && v !== '' && isFinite(Number(v)); }
+    function plural(n, one, many) { return A.num(n) + ' ' + (n === 1 ? one : many); }
+
+    /** @description Why a read failed, as a clause: the HTTP status (and the operator gate when the route names it), never the server's own error text. */
+    function reason(status, body) {
+      if (status === 401) return 'this session is not signed in (HTTP 401)';
+      if (status === 403) return isMap(body) && body.error === 'Operator privilege required' ? 'it is open to operators only (HTTP 403)' : 'this account was refused (HTTP 403)';
+      if (status === 404) return 'this core does not offer it (HTTP 404)';
+      if (status >= 500) return 'the server failed to answer (HTTP ' + status + ')';
+      return 'the server refused the read (HTTP ' + status + ')';
+    }
+    function sentence(what, why) { return what + ' could not be read: ' + why + '.'; }
+
+    /** @description One of the full page's own GETs; resolves { ok, body } or { ok: false, why } and never rejects. */
+    function read(path, valid) {
+      var unreachable = function () { return { ok: false, why: 'the server could not be reached (network failure)' }; };
+      return fetch(path, { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' } }).then(function (r) {
+        return r.text().then(function (text) {
+          var body, parsed = true;
+          try { body = JSON.parse(text); } catch (_) { parsed = false; }
+          if (!r.ok) return { ok: false, why: reason(r.status, parsed ? body : null) };
+          if (!parsed) return { ok: false, why: 'the answer was not JSON' };
+          return valid(body) ? { ok: true, body: body } : { ok: false, why: 'the answer was not in a shape this view can read' };
+        }, unreachable);
+      }, unreachable);
+    }
+    function validSwitch(b) { return isMap(b) && b.success !== false && (b.fleetDefault === null || isMap(b.fleetDefault)) && Array.isArray(b.perBot); }
+    function validAgents(b) { return isMap(b) && Array.isArray(b.agents); }
+    function validConfig(b) { return isMap(b) && b.success !== false && isMap(b.config); }
+
+    /** @description Bots per provider source: the rung GET /api/agents reports as the origin of each bot's effective provider. */
+    function tally(agents) {
+      var c = { total: 0, by: {} };
+      agents.filter(isMap).forEach(function (a) { var s = str(a.providerSource) || 'unreported'; c.total++; c.by[s] = (c.by[s] || 0) + 1; });
+      return c;
+    }
+    function count(c, key) { return c.by[key] || 0; }
+    function sourceLabel(key) { return SOURCE[key] || key; }
+    function botName(a) { return str(a.name) || str(a.agentId) || str(a.agent_id) || 'Unnamed bot'; }
+    function rank(a) { var r = RANK[str(a.providerSource)]; return r === undefined ? 2 : r; }
+    function isSet(v) { return str(v) ? 'Set' : 'Not set'; }
+    function chain(row) {
+      if (!row || !Array.isArray(row.fallbackOrder)) return 'Not set';
+      return row.fallbackOrder.length ? row.fallbackOrder.map(String).join(' → ') : 'None: a failover-eligible failure surfaces';
+    }
+
+    /** @description The glance figures: the fleet default (switch read), the bots and their rungs (bot list), the RAG engine (RAG read). A refused read adds none. */
+    function stats(sw, bots, rag) {
+      var out = [];
+      if (sw.ok) {
+        var row = sw.body.fleetDefault;
+        out.push(row ? { id: 'fleet-default', label: 'Fleet default provider', value: str(row.providerId) || '—', hint: (str(row.modelId) || 'Harness default model') + (row.updatedAt ? ' · changed ' + A.when(row.updatedAt) : '') }
+          : { id: 'fleet-default', label: 'Fleet default provider', value: 'None', hint: 'Bots run on the registry literal' });
+      }
+      if (bots.ok) {
+        var c = tally(bots.body.agents), refused = count(c, 'switch-refused');
+        out.push({ id: 'bots', label: 'Bots', value: A.num(c.total), hint: A.num(count(c, 'fleet-default')) + ' on the fleet default' });
+        out.push({ id: 'own', label: 'On their own switch row', value: A.num(count(c, 'bot-row')) });
+        out.push({ id: 'refused', label: 'Switch refused', value: A.num(refused), tone: refused ? 'bad' : 'ok', hint: refused ? 'A provider this build cannot run' : null });
+      }
+      if (rag.ok) {
+        var endpoint = str(rag.body.config.endpoint), collection = str(rag.body.config.defaultCollection);
+        out.push({ id: 'rag', label: 'RAG engine', value: endpoint ? 'Configured' : 'Not configured', tone: endpoint ? 'ok' : 'warn', hint: collection ? 'Collection ' + collection : null });
+      }
+      return out;
+    }
+
+    /** @description A table section over one read, or that read's refusal said in its place. */
+    function table(head, answer, what, build) {
+      var s = { id: head.id, kind: 'table', title: head.title, columns: head.columns, wide: !!head.wide };
+      if (!answer.ok) return Object.assign(s, { rows: [], empty: sentence(what, answer.why) });
+      return Object.assign(s, build(answer.body));
+    }
+    function snapshotCell(s) {
+      if (!s) return { text: 'Not installed', tone: 'warn' };
+      if (!s.loaded) return { text: 'Not loaded yet', tone: 'warn' };
+      var text = 'Loaded ' + A.when(s.loadedAt) + (has(s.rowCount) ? ' · ' + plural(Number(s.rowCount), 'row', 'rows') : '');
+      return s.lastError ? { text: text + ' · the last refresh failed', tone: 'warn' } : text;
+    }
+    function fleetSection(sw) {
+      return table({ id: 'fleet', title: 'Fleet provider switch', columns: ['Setting', 'Value'] }, sw, WHAT[0], function (b) {
+        var row = b.fleetDefault;
+        return { rows: [
+          ['Fleet default', row ? str(row.providerId) || '—' : 'None: bots without their own row run on the registry literal'],
+          ['Model', row ? str(row.modelId) || 'Harness default' : '—'],
+          ['Fallback order', chain(row)],
+          ['Last changed', row && row.updatedAt ? A.when(row.updatedAt) + (str(row.updatedBy) ? ' by ' + str(row.updatedBy) : '') : '—'],
+          ['Per-bot switch rows stored', A.num(b.perBot.length)],
+          ['Switch snapshot', snapshotCell(isMap(b.snapshot) ? b.snapshot : null)]
+        ] };
+      });
+    }
+    function botsSection(bots) {
+      return table({ id: 'bots', title: 'Bots and the provider each runs on', columns: ['Bot', 'Provider', 'Model', 'Decided by', 'Status'], wide: true }, bots, WHAT[1], function (b) {
+        var list = b.agents.filter(isMap).slice().sort(function (x, y) { return rank(x) - rank(y) || botName(x).localeCompare(botName(y)); });
+        return { empty: 'No bots are listed.', note: list.length > ROWS ? 'The first ' + ROWS + ' of ' + A.num(list.length) + ': refused switches first, then bots on their own switch row.' : null,
+          rows: list.slice(0, ROWS).map(function (a) {
+            var src = str(a.providerSource) || 'unreported';
+            return [botName(a), { text: str(a.effectiveProvider) || 'Not reported', tone: src === 'switch-refused' ? 'bad' : null }, str(a.effectiveModel) || 'Default', sourceLabel(src), str(a.status) || '—'];
+          }) };
+      });
+    }
+    function sourcesSection(bots) {
+      return table({ id: 'sources', title: 'Where each bot’s provider comes from', columns: ['Decided by', { label: 'Bots', align: 'right' }] }, bots, WHAT[1], function (b) {
+        var c = tally(b.agents), keys = Object.keys(c.by).sort(function (x, y) { return c.by[y] - c.by[x] || sourceLabel(x).localeCompare(sourceLabel(y)); });
+        return { empty: 'No bots are listed.', rows: keys.map(function (k) { return [{ text: sourceLabel(k), tone: k === 'switch-refused' ? 'bad' : null }, A.num(c.by[k])]; }) };
+      });
+    }
+    function sharedSection(cfg) {
+      return table({ id: 'shared', title: 'Shared settings', columns: ['Setting', 'Value'] }, cfg, WHAT[2], function (b) {
+        var c = b.config;
+        return { note: 'Addresses and keys show only whether they are set; the full page holds their values.', rows: [
+          ['Plan provider', str(c.planModeApiProvider) || 'Not set'], ['Act provider', str(c.actModeApiProvider) || 'Not set'],
+          ['Plane URL', isSet(c.planeUrl)], ['Redis URL', isSet(c.redisUrl)], ['Git repository URL', isSet(c.gitRepoUrl)],
+          ['Code-server workspace root', isSet(c.codeServerWorkspaceRoot)], ['Shared API key', isSet(c.apiKey)]
+        ] };
+      });
+    }
+    function chunking(k) {
+      var strategy = str(k.strategy), tiers = Array.isArray(k.tierSizes) ? k.tierSizes.filter(has).map(Number) : [];
+      if (!strategy) return 'Not set';
+      var name = strategy.charAt(0).toUpperCase() + strategy.slice(1);
+      if (strategy === 'tiered' && tiers.length) return name + ' · sizes ' + tiers.map(function (n) { return A.num(n); }).join(' / ');
+      if (!has(k.chunkSize)) return name;
+      return name + ' · size ' + A.num(Number(k.chunkSize)) + (has(k.chunkOverlap) ? ', overlap ' + A.num(Number(k.chunkOverlap)) : '');
+    }
+    function ragSection(rag) {
+      return table({ id: 'rag', title: 'RAG runtime', columns: ['Setting', 'Value'] }, rag, WHAT[3], function (b) {
+        var c = b.config, embedding = [str(c.embeddingProviderId), str(c.embeddingModelId)].filter(Boolean).join(' / ');
+        return { rows: [
+          ['Vector store endpoint', str(c.endpoint) ? 'Set' : { text: 'Not set', tone: 'warn' }],
+          ['Default collection', str(c.defaultCollection) || 'Not set'],
+          ['Embedding', embedding || 'Not set'],
+          ['Chunking', chunking(isMap(c.chunking) ? c.chunking : {})]
+        ] };
+      });
+    }
+
+    /** @description The headline: a refused switch first, then the fleet default, then the bot count. */
+    function headline(sw, bots) {
+      var c = bots.ok ? tally(bots.body.agents) : null, refused = c ? count(c, 'switch-refused') : 0;
+      if (refused) return plural(refused, 'bot holds', 'bots hold') + ' a provider switch this build cannot run';
+      if (sw.ok) return sw.body.fleetDefault ? 'Fleet default: ' + (str(sw.body.fleetDefault.providerId) || 'unnamed provider') : 'No fleet default: bots run on the registry literal';
+      if (c) return plural(c.total, 'bot', 'bots') + ' on this swarm';
+      return 'Swarm configuration';
+    }
+    /** @description Every refusal when nothing answered: once when all four reads failed the same way, else one sentence per read. */
+    function unread(r) {
+      var first = r[0].why;
+      if (r.every(function (x) { return x.why === first; })) return 'Nothing could be read: ' + first + '.';
+      return r.map(function (x, i) { return sentence(WHAT[i], x.why); }).join(' ');
+    }
+
+    /** @description The card for both shells: figures from the four reads, each refused read said in its own section, or every refusal said when nothing answered. */
+    function company(ctx) {
+      var open = { label: 'Open Configuration', primary: true, onClick: function () { window.location.assign(window.location.pathname); } };
+      return Promise.all([read('/api/agents/provider-switch', validSwitch), read('/api/agents', validAgents), read('/api/config', validConfig), read('/api/config/rag', validConfig)]).then(function (r) {
+        var sw = r[0], bots = r[1], cfg = r[2], rag = r[3], head = { kicker: 'Engineering · Configuration' };
+        if (!sw.ok && !bots.ok && !cfg.ok && !rag.ok) return Object.assign(head, { title: 'Configuration could not be read', lede: unread(r), actions: [open, { label: 'Try again', onClick: function () { ctx.refresh(); } }], stats: [], sections: [] });
+        return Object.assign(head, { title: headline(sw, bots), lede: LEDE, actions: [open], stats: stats(sw, bots, rag), sections: [fleetSection(sw), botsSection(bots), sourcesSection(bots), sharedSection(cfg), ragSection(rag)] });
+      });
+    }
+
+    A.boot({ app: 'oshal-engineering', escapeLabel: 'Open OSHAL Engineering in the cockpit', audiences: { company: company, family: company } });
+  })();
+  </script>
   <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
   <link rel="stylesheet" href="/config-admin/config-admin.css">
   <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />

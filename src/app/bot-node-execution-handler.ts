@@ -30,6 +30,7 @@
  * 25 | maintainer@emeraldcoastsystemsgroup.com | Retain completed work from configured failover (BACKLOG #1660): accept completed work from any provider in carriedConfig.fallbackOrder; attribute cost and metrics to the actual executing provider.
  * 26 | maintainer@emeraldcoastsystemsgroup.com | Bill and relay the real usage split when TaskController reports one. The cost record and the HTTP usage block wrote `inputTokens = totalTokens, outputTokens = 0, cacheReadTokens = 0` unconditionally, so chat_tasks could never show the invariant-preamble cache's saving (fewer input tokens, a cached-token count). resolveExecutionUsage maps apiMetrics.inputTokens/outputTokens/cacheReads through when present and keeps the legacy total-as-input mapping when the runtime reports only a total, so an agentic result is billed exactly as before.
  * 27 | maintainer@emeraldcoastsystemsgroup.com | Mark a direct (interactive) dispatch hostToolsOnly. Such a turn is conversation plus the tools the agentic loop brokers itself (Jarvis's conversation_query/conversation_fetch); it never needs the CLI's own file or command tools. On the Antigravity brain those native tools were what a recall ask spent 10 min 45 s on before a headless read_file denial killed it. Protected work keeps its own path (toolLess + the controller MCP bridge) and is never marked.
+ * 28 | maintainer@emeraldcoastsystemsgroup.com | Read a message text by its type instead of assuming a string. The any-bot layer is untyped JavaScript, and its parser hands back a Number or Boolean for a bare numeric or true/false value; the response extraction called m.text.trim() on it and threw "m.text.trim is not a function", so a Jarvis answer of 5 was reported as a failed execution with no answer (live case jarvis-cache, 2026-09-29, 3 of 3). The source is fixed in AgenticController; this is the guard on the reading side: a finite number or a boolean is delivered as its text, any other non-string value is passed over, and the declared message type says text is unknown so the compiler requires the check.
  */
 
 /**
@@ -181,7 +182,8 @@ export interface BotNodeExecutionDeps {
       success?: boolean;
       error?: string;
       message?: { text?: string };
-      messages?: Array<{ say: string; text?: string }>;
+      /** text is whatever the untyped any-bot layer saved; read it through readableMessageText. */
+      messages?: AnyBotMessage[];
       apiMetrics?: ExecutionApiMetrics;
       /** Actual provider/model reported by the provider response for the final turn. */
       provider?: string | null;
@@ -537,13 +539,9 @@ export function createBotNodeExecutionHandler(
         // Any non-empty completion/text message is a real answer (noise has other `say` values like
         // api_req_started/reasoning). Don't length-filter, or short replies ("Yes.", "PELICAN") get
         // dropped to the "Execution completed." fallback.
-        const completions = result.messages.filter(m => m.say === 'completion_result' && m.text && m.text.trim().length > 0);
-        if (completions.length > 0) {
-          content = completions[completions.length - 1].text!;
-        } else {
-          const textMsgs = result.messages.filter(m => m.say === 'text' && m.text && m.text.trim().length > 0);
-          content = textMsgs.length > 0 ? textMsgs[textMsgs.length - 1].text! : 'Execution completed.';
-        }
+        content = latestReadableText(result.messages, 'completion_result')
+          ?? latestReadableText(result.messages, 'text')
+          ?? 'Execution completed.';
       }
       if (!content.trim()) throw new Error('Any-bot execution returned no readable output');
 
@@ -635,6 +633,45 @@ export function createBotNodeExecutionHandler(
   };
   return envelope => deps.runApplicationExecution
     ? deps.runApplicationExecution(envelope, () => execute(envelope)) : execute(envelope);
+}
+
+/**
+ * @description One message as the any-bot TaskController returns it. That layer is untyped
+ * JavaScript, so text is declared unknown: a reader has to check the type before using it.
+ */
+export interface AnyBotMessage {
+  say: string;
+  text?: unknown;
+}
+
+/**
+ * @description Reads the text of one any-bot message as a string. A finite number or a boolean
+ * is an answer the model gave as a bare value, so it is delivered as its text; anything else
+ * that is not a string carries no readable answer.
+ * @param message - the message to read.
+ * @returns the text, or an empty string when the message has no readable text.
+ */
+function readableMessageText(message: AnyBotMessage): string {
+  const { text } = message;
+  if (typeof text === 'string') return text;
+  if (typeof text === 'boolean') return String(text);
+  if (typeof text === 'number' && Number.isFinite(text)) return String(text);
+  return '';
+}
+
+/**
+ * @description Finds the latest message of one kind that carries readable, non-blank text.
+ * @param messages - every message of the task, oldest first.
+ * @param say - the message kind to look for (completion_result or text).
+ * @returns the text of the latest readable message of that kind, or undefined when there is none.
+ */
+function latestReadableText(messages: AnyBotMessage[], say: string): string | undefined {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index].say !== say) continue;
+    const text = readableMessageText(messages[index]);
+    if (text.trim().length > 0) return text;
+  }
+  return undefined;
 }
 
 function assertExistingTaskOwner(

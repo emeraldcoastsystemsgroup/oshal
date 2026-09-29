@@ -18,6 +18,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Inventory voice-call-sim-routes.ts (synthetic phone-call simulator). Discovery caught it when the router landed: serviceSecretOr(requiresAuth) plus hasValidServiceSecret in its same-origin check. It writes no table at all: VoiceCallSimService keeps runs in an in-process Map and saves each run as a JSON file under the voice-sim root, so it takes the no-owner-scoped-write shape. requireTrustedServiceUserIdentity still binds a service caller to one user, which is what keeps one owner's run files away from another.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Exempt src/app/routes/location-session.ts (ADR-169 L3): discovery matches it because it names the service secret, but it names it only to REFUSE it - every /api/location request presenting x-service-secret or an asserted subject header gets 401 before any handler runs, and the location handlers write only under the signed-in person's own owner session with is_operator off. No machine caller is admitted, so there is no machine write to inventory; the refusal is proven in tests/unit/location-browser-consent-postgres.spec.ts.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Exempt src/app/routes/test-lab-location-consent-scenarios.ts (ADR-169 L3 Test Lab card). Discovery matches it because its service-rail step sends x-service-secret on the loopback - but only as a negative probe that must be answered 401 by refuseLocationServiceRail, so no request it sends on the machine rail is admitted and nothing is written under it. Its only database writes are the lifecycle step's in-process calls for a uniquely tagged synthetic person, each inside withLocationOwnerSession (owner sub = that person, is_operator off), erased and counted back to zero at the end. The round-1 PR omitted this entry and the discovery test went red on the branch.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com   | Inventory src/app/routes/location-device-routes.ts (ADR-169 L6, the core device ingest). Discovery finds it through the readLocationTokenBinding marker: its caller is a device under a per-credential bearer (a location credential, oshal_cli_tokens.location_device_id), admitted by the token-auth middleware on exactly its own presence path. The route verifies the token id against location_devices.credential_id and the token's user against the device's owner or group admins, then writes location_observations and location_current under the synthetic device subject 'device:<deviceId>' with isOperator false (runWithRequestIdentity plus the transaction-local GUC stamp), never under the minting admin. The driver in the spec authenticates a real bearer through the real middleware, answers the device read as the owner, and observes the device subject on the connection at the observation INSERT with the row's subject equal to it.
  */
 
 /**
@@ -357,6 +358,23 @@ export const MACHINE_WRITE_INVENTORY: readonly MachineWriteEntry[] = [
       'requireServiceSecret fails closed when the deployment secret is absent or mismatched, persona '
       + 'paths are confined to approved roots, credential values never enter logs, and the complete '
       + 'behavioral guard is tests/unit/node-pool-routes-security.spec.ts.',
+  },
+  {
+    id: 'location-device-ingest',
+    entryPoint: 'POST /api/location/devices/:deviceId/presence (Bearer oshal_pat_… bound to a location device)',
+    file: 'src/app/routes/location-device-routes.ts',
+    auth: 'per-credential-bearer',
+    ownerScopedTables: ['location_observations', 'location_current'],
+    identity: { kind: 'synthetic-machine-sub', sub: 'device:<deviceId>' },
+    behaviorallyProven: true,
+    note:
+      'ADR-169 L6. The token-auth middleware admits a location credential only on its own device\'s '
+      + 'presence path and stamps the binding (readLocationTokenBinding); the route requires that stamp, '
+      + 'and ingestDeviceFix checks the token id against location_devices.credential_id and the token\'s '
+      + 'user against the owner (or oshal_is_tenant_admin for a group device) before it switches to '
+      + 'runWithRequestIdentity({ sub: "device:<id>", isOperator: false }) and writes the observation and '
+      + 'current rows under migration 178\'s device policies. The service secret is 401 at the mount and a '
+      + 'browser session, node token or account PAT carries no binding, so none of them reaches the write.',
   },
   {
     id: 'cli-token-auth',

@@ -16,6 +16,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Operator decision 2026-09-22 ("column-level SELECT via the governed allowlist; RLS scopes rows"; SECURITY DEFINER helpers declined): the bot-node read-only question tools read through oshal_bot, and the contract carried none of what they read - measured on the live box as has_table_privilege('oshal_bot', chat_tasks|chat_messages|rag_chunks, 'SELECT') = f and no EXECUTE on oshal_owns_task. chat_tasks SELECT gains title and updated_at (ChatSearchSource selects both; the other columns it names were already granted for the cost rollup); chat_messages enters the contract with SELECT(task_id, text, created_at), exactly the message columns that adapter selects and joins on; rag_chunks enters with SELECT(chunk_id, collection, document, embedding, fts, metadata), exactly what the pgvector engine's two search legs and listCollections name - owner_sub, tenant_id and created_at stay out because no read names them and row-level security compares owner_sub without a column grant. oshal_owns_task(text) becomes the fourth helper oshal_bot may execute: the chat_messages policy calls it, so without EXECUTE the policy itself is a permission error. rag_chunks is the first OPTIONAL contract table - migration 070 creates it only where the vector extension exists and skips with a NOTICE otherwise - so its absence is tolerated exactly when that extension is unavailable, and on no other condition. Every other absence still fails loud.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Add the metadata-only conversation list and exact-id message fetch columns to the governed bot read contract without introducing table-wide privileges.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | jarvis_tasks enters the bot contract with column-level SELECT, under the same operator decision (2026-09-22: column SELECT via the governed allowlist, RLS scopes rows): the bot-node recall tools now list and fetch the caller's Jarvis work items. Exactly the columns the two statements in jarvis-task-source.ts name - id, title, status, kind, session_id, created_at, finished_at in the list, title/result in its match, ticket_id/session_id in its protected-lineage predicate, result/error in the fetch, user_sub in the adapter's owner predicate. visual, files, delivered, briefing_source_id, principal_issuer and summarize_started_at are named by no bot read and stay out. The table is required, not optional: migration 100-jarvis-tasks-base-schema.sql now creates it before this final phase runs.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Approve the 24 SECURITY DEFINER functions migrations 174-178 create (the tenant-admin membership fence and the ADR-169 location store). The migrations shipped without registering them, so the final phase counted 30 helpers against an approved 6 and the api exited at boot on any database that had applied them. Each was checked against the per-helper rules on a migrated server: owned by the bootstrap role, exactly search_path=public, pg_temp, executable by oshal_app, not by PUBLIC and not by oshal_bot. None joins BOT_HELPERS. tests/unit/provisioner-migrated-helpers-postgres.spec.ts runs the final phase over the whole migration tree so the next unregistered function fails there.
  */
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -32,6 +33,32 @@ export const EXPECTED_HELPERS = new Set([
   'oshal_application_execution_claims(text,text,text,boolean)',
   'oshal_application_execution_claims(text,text,boolean)',
   'oshal_swarm_memory_readable(text[],text)',
+  // Migration 174: the tenant-admin membership fence.
+  'oshal_is_tenant_admin(text)',
+  'oshal_tenant_creator_fence()',
+  'oshal_tenant_membership_fence()',
+  // Migrations 175-178 (ADR-169): location storage, places and devices, rules and shares, device credentials.
+  'location_accept_restricted_invite(uuid)',
+  'location_device_identity_fence()',
+  'location_device_in_scope(uuid,text,text,uuid)',
+  'location_device_named(text)',
+  'location_device_subject_owns(uuid,text,text,uuid)',
+  'location_device_subject_place_readable(uuid)',
+  'location_device_touch(uuid,timestamp with time zone)',
+  'location_erase_session_rule_references()',
+  'location_fire_admissible(uuid,text,text,text)',
+  'location_guardian_share_admissible(uuid,text,jsonb,uuid[],text)',
+  'location_invite_admissible(uuid,text)',
+  'location_mark_fire_dispatched(uuid,text)',
+  'location_member_share_admissible(uuid,uuid[],text)',
+  'location_place_assignable(uuid,text,text,uuid)',
+  'location_revoke_device_credential(uuid)',
+  'location_rule_admissible(text,text,uuid,text,text,text,text,uuid)',
+  'location_rule_arm_digest(uuid,text,text,uuid,text,text,integer,double precision,text)',
+  'location_rule_evaluable(uuid,text)',
+  'location_session_shares_place(uuid,uuid)',
+  'location_shared_presence()',
+  'location_share_presence_writable(text,uuid,uuid)',
 ]);
 /**
  * The derived helpers oshal_bot may execute. Every other function stays private to the bot.

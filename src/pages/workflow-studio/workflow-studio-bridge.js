@@ -21,6 +21,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — adopt the surface-bridge client on the Workflow Studio surface (data-bridge dock: options/notices hosts + a content region) so the chat-rail bot can render selectable options here and a selection flows back to the bot. First kernel adopter of the contract.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | bridge.attach runs only when no ADR-164 D6 audience view is active: the audience card has no dock, so under ?audience=company|family the client never listens; otherwise it attaches exactly as before.
  */
 
 import { createSurfaceBridgeClient } from '/shared/ui/js/surface-bridge-client.js';
@@ -28,7 +29,7 @@ import { createSurfaceBridgeClient } from '/shared/ui/js/surface-bridge-client.j
 // One client per surface, bound to this app's manifest name. attach() starts rendering delivered
 // bot→surface ops into the data-bridge-* hosts and auto-emits field_change / select back to the bot.
 const bridge = createSurfaceBridgeClient({ app: 'workflow-studio' });
-bridge.attach();
+if (!window.AppView || !AppView.active()) { bridge.attach(); }
 
 // Expose for debugging/manual verification from the surface console (never posts on its own).
 window.__workflowStudioBridge = bridge;

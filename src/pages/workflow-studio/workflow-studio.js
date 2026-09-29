@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added workflow-studio browser logic for WYSIWYG graph editing, persistence, validation, and compile preview
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Decomposed for the 1000-code-line cap: data/API ops, canvas interaction, and rendering moved to workflow-studio-data.js / workflow-studio-canvas.js / workflow-studio-render.js prototype mixins; shared helpers + constants to workflow-studio-utils.js. This entry module keeps the class core (state, element refs, event wiring, state accessors) and the window.workflowStudioApp bootstrap — zero behavior change
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The studio's start (app.init: event wiring plus the load that can create a first draft with POST /definitions) runs only when no ADR-164 D6 audience view is active, so a shell framing the page with ?audience=company|family gets the read-only card and never a write; without an audience, with one the page does not provide, or without the kit, it starts exactly as before.
  */
 
 import { createUiLogger } from '../shared/ui-debug.js';
@@ -367,4 +368,4 @@ const app = new WorkflowStudioApp();
 // Expose the app so the talk-to-build chat panel (workflow-studio-chat.js) can redraw the canvas
 // after the builder bot saves a definition. See ADR-039.
 window.workflowStudioApp = app;
-void app.init();
+if (!window.AppView || !AppView.active()) { void app.init(); }

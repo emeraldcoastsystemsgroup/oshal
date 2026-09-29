@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L3: the /api/location route policy, enumerated from the REAL routers. Every route the location router or its step-up ceremony registers must be declared in LOCATION_ROUTE_POLICY (and every declaration must still exist), so a later slice cannot add an arm, enrolment or guardian-share route without saying which proof it spends. Every route declared 'always' is then driven over HTTP without a proof, with a handle that does not exist and with a pending (unproven) handle: each answers 403 step_up_required before the database is touched (the pool here throws on use). The session gate is driven with the exact req.oidc shapes the PAT, TV-token, guest and mock rails set: each is refused, as is a session without a verified issuer, and the service secret is refused with 401 even alongside a valid session. The start and complete endpoints refuse anything but a top-level navigation.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L5: the two new always-gated routes (accepting a restricted invitation, creating a guardian share) are covered by the no-proof refusal cases, each driven at a concrete path; creating a guardian share is no longer an operation without a route, so only arming a rule and approving an enrolment stay unavailable. The fixture router starts no dispatch sweep (none is asked for).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L6: issuing a device credential is the new always-gated route (driven at a concrete device path, its proof bound to the device id and the class), so approving an enrolment is now an operation a route performs and only arming a rule stays unavailable. The device ingest, mounted before the browser gate, refuses every rail that is not a location credential with 401 device_credential_required (a browser session, a PAT, a TV token, a guest, no session at all) before the database is touched, and the service secret is still 401 there.
  */
 
 import express, { type RequestHandler, type Router } from 'express';
@@ -95,16 +96,19 @@ describe('location route policy: every route is declared', () => {
 
 describe('location route policy: an always-gated route refuses without a proof', () => {
   const INVITE = '33333333-3333-4333-8333-333333333333';
+  const DEVICE = '44444444-4444-4444-8444-444444444444';
   const bodies: Record<string, unknown> = {
     'POST /devices/browser/opt-in': { precisionClass: 'block' },
     'POST /shares': { tenantId: '11111111-1111-4111-8111-111111111111', placeIds: ['22222222-2222-4222-8222-222222222222'] },
     'POST /invites/:inviteId/accept': {},
     'POST /guardian-shares': { tenantId: '11111111-1111-4111-8111-111111111111', minorSub: 'person-minor',
       grantees: [{ sub: 'person-b', issuer: ISSUER }], placeIds: ['22222222-2222-4222-8222-222222222222'] },
+    'POST /devices/:deviceId/credential': { precisionClass: 'exact' },
   };
   /** A concrete path for a declared route, and the parameters its proof is bound to. */
   const concrete: Record<string, { path: string; params: unknown }> = {
     'POST /invites/:inviteId/accept': { path: `/invites/${INVITE}/accept`, params: { inviteId: INVITE } },
+    'POST /devices/:deviceId/credential': { path: `/devices/${DEVICE}/credential`, params: { deviceId: DEVICE, precisionClass: 'exact' } },
   };
 
   it('covers every route declared always', () => {
@@ -165,8 +169,22 @@ describe('location route policy: who may call at all', () => {
     expect(store.view(pending.challengeId, { sub: 'person-a', principalIssuer: ISSUER })?.state).toBe('pending');
   });
 
+  it('the device ingest admits nothing but a location credential, before the database', async () => {
+    const path = '/devices/44444444-4444-4444-8444-444444444444/presence';
+    const before = poolTouches;
+    for (const rail of [null, 'oidc', 'pat', 'tv', 'guest', 'oidc-no-issuer']) {
+      const res = await call('POST', path, rail, {}, { lat: 1, lon: 1 });
+      expect(res.status, String(rail)).toBe(401);
+      expect(res.json.error, String(rail)).toBe('device_credential_required');
+    }
+    const secret = await call('POST', path, 'oidc', { 'x-service-secret': SECRET }, { lat: 1, lon: 1 });
+    expect(secret.status).toBe(401);
+    expect(secret.json.error).toBe('service_secret_refused');
+    expect(poolTouches).toBe(before);
+  });
+
   it('an operation no route here performs cannot be challenged', async () => {
-    for (const operation of ['arm-rule', 'approve-enrolment', 'nonsense']) {
+    for (const operation of ['arm-rule', 'nonsense']) {
       const res = await call('POST', '/step-up', 'oidc', {}, { operation, params: {} });
       expect(res.status, operation).toBe(400);
       expect(res.json.error, operation).toBe('operation_not_available');

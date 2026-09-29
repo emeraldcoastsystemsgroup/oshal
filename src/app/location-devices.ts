@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L4 (D1): enrolling an existing node, camera, drone, TV or smart-home hub device as a location_devices row, and setting or clearing its assigned place and room, from the Settings, Location tab. The row records who owns the device's LOCATION DATA and grants no control or execution right; canUseDevice and remote_task_journal_client_owners are untouched (ADR-114 is not amended). A node is enrolled only by its ADR-114 owner (the durable binding, checked here under the person's own row-level security and again by migration 176's identity fence), as the person's own or, when they are an admin of the group, as the group's. Cameras and drones have no owner record: only a group admin enrols one, and only to that group. A TV is named by the room its screen registers and a hub device by its id; both references carry the person's own namespace key, so nobody can claim another person's TV or hub device. The assigned place must be one the device's owner may use (their own or a group's place for a person's device, the same group's place for a group device). Only the owner, or a group admin for a group device, changes a device's place or room; everyone else is refused. Reporting stays off: a stationary device has an assigned place, not a track (D7), and a drone's credential arrives with L6.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The LOCATION_FLEET_ID_SHAPE doc names the spec that holds it equal to CAMERA_ID_RE and DRONE_ID_RE (tests/unit/location-fleet-id-shape.spec.ts, added in the same change).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L6: a placed device's view carries its reporting state (enabled, whether a credential is recorded, its precision class, last seen) so the Settings page can issue or retire a drone's credential; the list names the kinds that report under a credential (LOCATION_CREDENTIAL_KINDS: drones now, phones with L9); removing a device's record revokes its credential first through migration 178's definer function, so a removed drone's token dies with the record.
  *
  * @module app/location-devices
  */
@@ -23,6 +24,9 @@ export const LOCATION_PLACED_DEVICE_KINDS: readonly string[] = Object.freeze(['n
 
 /** @description Kinds with no owner record: group-only (migration 176 CHECK). */
 export const LOCATION_GROUP_ONLY_KINDS: readonly string[] = Object.freeze(['camera', 'drone']);
+
+/** @description Kinds that report fixes under a location credential (ADR-169 L6; the Android phone joins with L9). */
+export const LOCATION_CREDENTIAL_KINDS: readonly string[] = Object.freeze(['drone']);
 
 /**
  * @description The camera and drone fleet id shape. Equal to CAMERA_ID_RE and DRONE_ID_RE; it is
@@ -47,6 +51,8 @@ export interface LocationPlacedDeviceView {
   placeAssignedAt: string | null;
   group: { groupId: string; name: string | null } | null;
   editable: boolean;
+  /** The device's reporting state (ADR-169 L6); present for every placed device, meaningful for credentialed kinds. */
+  reporting: { enabled: boolean; hasCredential: boolean; precisionClass: string; lastSeenAt: string | null };
 }
 
 /** @description A validated enrolment. */
@@ -172,6 +178,7 @@ export function parseEnrolInput(body: unknown, who: LocationPrincipal): Location
 }
 
 const VIEW_SQL = `SELECT d.device_id, d.device_kind, d.device_ref, d.room, d.place_id, d.place_assigned_at, d.tenant_id,
+    d.reporting_enabled, d.credential_id IS NOT NULL AS has_credential, d.precision_class, d.last_seen_at,
     p.name AS place_name, p.label AS place_label, t.name AS group_name,
     location_row_writable(d.owner_sub, d.principal_issuer, d.tenant_id) AS editable
   FROM location_devices d
@@ -193,6 +200,10 @@ function toPlacedView(r: Row): LocationPlacedDeviceView {
     placeAssignedAt: iso(r.place_assigned_at),
     group: r.tenant_id ? { groupId: String(r.tenant_id), name: r.group_name === null ? null : String(r.group_name) } : null,
     editable: r.editable === true,
+    reporting: {
+      enabled: r.reporting_enabled === true, hasCredential: r.has_credential === true,
+      precisionClass: String(r.precision_class), lastSeenAt: iso(r.last_seen_at),
+    },
   };
 }
 
@@ -217,6 +228,7 @@ async function readPlacedView(client: PoolClient, deviceId: string): Promise<Loc
  */
 export async function listPlacedDevices(db: LocationDb, principal: LocationPrincipal): Promise<{
   devices: LocationPlacedDeviceView[]; nodes: Array<{ clientId: string; enrolled: boolean }>; groups: LocationGroupView[];
+  credentialKinds: readonly string[];
 }> {
   return withLocationOwnerSession(db, principal, async (client, who) => {
     const devices = (await client.query(`${VIEW_SQL} ORDER BY d.tenant_id NULLS FIRST, d.device_kind, d.device_ref`,
@@ -228,6 +240,7 @@ export async function listPlacedDevices(db: LocationDb, principal: LocationPrinc
       devices,
       nodes: owned.map((r) => ({ clientId: String(r.client_id), enrolled: r.enrolled === true })),
       groups: await readLocationGroups(client, who),
+      credentialKinds: LOCATION_CREDENTIAL_KINDS,
     };
   });
 }
@@ -346,6 +359,8 @@ export async function unenrolPlacedDevice(db: LocationDb, principal: LocationPri
   const deviceId = requireLocationId(deviceIdValue);
   const result = await withLocationOwnerSession(db, principal, async (client) => {
     await writableDevice(client, deviceId);
+    // A credentialed device's token dies with its record (ADR-169 L6); a no-op for the rest.
+    await client.query('SELECT location_revoke_device_credential($1)', [deviceId]);
     const removed = await client.query('DELETE FROM location_devices WHERE device_id = $1', [deviceId]).catch(rethrowLocationWriteError);
     return { deviceId, deleted: (removed.rowCount ?? 0) === 1 };
   });
