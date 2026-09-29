@@ -729,3 +729,42 @@ ADR-170/A2 acceptance work. No such evidence is inferred from an accepted manife
 Both spec files are already selected by `vitest.config.ts`'s
 `tests/unit/**/*.spec.ts` include through `npm run test:unit`, used by the normal
 local CI unit gate and hosted CI unit job; no new runtime Lab card is added.
+
+## Feature token evidence P0 (2026-09-29)
+
+`tests/unit/feature-token-evidence.spec.ts` invokes the actual producer-evidence
+validator, immutable snapshot, pure scoped reducer and `CostTrackingService`.
+Only the logger and a named recording SQL transport are doubled. The transport
+checks issued statements, parameters and asynchronous mutation races; its
+savepoint-error simulation is not proof of database rollback or RLS.
+
+The guarded boundary is explicit evidence admission and operation aggregation:
+no feature-from-agent/task mapping, request-count inference,
+partial membership, duplicate counting, estimated-token promotion,
+cross-owner blending, out-of-window measurements or model-compatibility inference.
+Accounting regression specs retain the original rollup, ledger-only and durable
+receipt contracts. This is an additive payload on one cost row, not another stream
+to add to Token Chase totals.
+
+`tests/unit/feature-token-evidence-postgres.spec.ts` is companion **source only**,
+not a passing runtime receipt. It prepares real migration replay, non-bypass
+table-owner FORCE RLS, immutable evidence, settlement rollback/replay and actual
+missing-column recovery against an owned disposable PostgreSQL fixture. No
+production database, provider, hardware, installed secret, browser, or migration
+activation has been used for this slice. Both specs are selected by the existing
+unit-test include; full CI remains separate.
+
+See [the contract, commands and residual acceptance](../backlog/feature-token-evidence.md).
+Sample fixture percentiles are not seven-day production evidence, cost/cadence
+projections or tested-model compatibility. No public read endpoint or new
+aggregation authority is added.
+
+Final focused receipt: 103/103, zero skips, across five files (69 new evidence
+cases and 34 existing accounting regressions); 9.79 seconds, fresh 2827 MiB,
+minimum 1828 MiB, runner128/one384/reserve600/deadline180. Four independent
+actual-source mutations each produced one expected failure: missing count
+inferred as one, incomplete membership admitted, savepoint recovery omitted, and
+`recordCostOnce` snapshot omitted. All were restored. A separately reproduced
+large-count mean rounding bug also has a passing regression after exact integer
+accumulation. Syntax-only transpilation passed for all five touched TS files;
+neither this nor SQL-transport tests are a full project compile or database proof.
