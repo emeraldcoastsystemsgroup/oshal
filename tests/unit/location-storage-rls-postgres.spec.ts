@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L2 done-when, proven against the enforcing role: a private PostgreSQL with the shipped migrations 060/100/174/175, every table owned by the NOSUPERUSER NOBYPASSRLS runtime role oshal_app (as the provisioner leaves a real deployment, so FORCE is what holds), and identities stamped by the real GUC pool wrapper and request-identity seam. Owner vs stranger, same subject under another issuer, member reads but cannot write group rows, an operator-stamped session and a group admin read no one else's rows, the membership fence (self-add, operator self-add, self-promotion, the empty-and-rewrite-creator hijack) with all three core membership writers still succeeding, SYSTEM denied, the owner's purge counted before and after, a group admin's device purge and a member refused, member shares refused for a restricted member and below the precision floor, guardian shares written only by the minor's group admin within the group's members and places and 20-place cap, restrictions with no insert path, and the live catalog free of any oshal.is_operator in a location policy or the helpers it calls.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L5: the owner's purge also reports evaluationCount (the rule state, share presence and fire rows it deleted); this person has none, so it reads 0.
  */
 
 /** Disposable local PostgreSQL only. Never consumes DATABASE_URL or deployment credentials. */
@@ -287,7 +288,7 @@ describe('ADR-169 L2 purge (Q4: kept until the owner purges it)', () => {
       strangerObs: await truth(`location_observations ${mine}`, [STRANGER.sub]), groupObs: await truth('location_observations WHERE tenant_id IS NOT NULL') };
     expect(before).toMatchObject({ obs: 3, cur: 1, strangerObs: 3 });
     const result = await asSession(ROOT, () => purgeOwnLocationHistory(app, { sub: OWNER.sub, principalIssuer: FIXTURE_ISSUER }));
-    expect(result).toEqual({ observationCount: 3, currentCount: 1 });
+    expect(result).toEqual({ observationCount: 3, currentCount: 1, evaluationCount: 0 });
     expect(await truth(`location_observations ${mine}`, [OWNER.sub])).toBe(0);
     expect(await truth(`location_current ${mine}`, [OWNER.sub])).toBe(0);
     expect(await truth(`location_observations ${mine}`, [STRANGER.sub])).toBe(before.strangerObs);

@@ -207,6 +207,7 @@
  * 191 | maintainer@emeraldcoastsystemsgroup.com   | Mount owner-scoped Jarvis calling setup at /api/jarvis/calling (requiresAuth) before the broader Jarvis gate. It stores one explicitly selected Twilio connection, transfer phone, limits and consent per user and always reports calling as not effective; no call path is added.
  * 192 | maintainer@emeraldcoastsystemsgroup.com   | Mount authenticated, synthetic-only phone-call simulation at /api/voice-sim (serviceSecretOr(requiresAuth) inside the router, with a trusted-service user binding) beside Jarvis without enabling live dialing.
  * 193 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L3: mounted /api/location (routes/location-routes.ts): browser ingest, the person's location consent and the step-up ceremony. The service-secret rail is refused (401) before requiresAuth, so a machine caller never reaches a location handler whatever session rides along; the router itself admits only an interactive browser session with a verified issuer and runs every statement as that person with is_operator off.
+ * 194 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L5: the /api/location mount passes the location fire dispatch-recovery sweep interval (OSHAL_LOCATION_DISPATCH_SWEEP_SEC, default 60 s, 0 off), so claimed reminder fires a crash left undelivered are dispatched under their actor; the router itself starts no timer unless asked.
  */
 
 require('dotenv').config();
@@ -251,7 +252,7 @@ import { registerReadinessRoutes } from './routes/readiness-routes';
 import { createTvPairingRoutes, createTvTokenAuthMiddleware } from './routes/tv-pairing-routes';
 import { createCliTokenAuthMiddleware, createCliTokenRoutes } from './routes/cli-token-routes';
 import { createArtifactExchangeRoutes } from './routes/artifact-exchange-routes';
-import { createLocationRoutes } from './routes/location-routes';
+import { createLocationRoutes, locationDispatchSweepMsFromEnv } from './routes/location-routes';
 import { refuseLocationServiceRail } from './routes/location-session';
 import { createLocalAuthRoutes, isLocalAuthEnabled } from './routes/local-auth-routes';
 import { createSwarmRolesRoutes, initializeSwarmRoles } from './routes/swarm-roles-routes';
@@ -1468,7 +1469,7 @@ function createApp(): express.Application {
   mountGovernanceRoutes(app, ctx, requiresAuth);
   // ADR-169 L3: location consent, browser ingest and the step-up ceremony. The service rail is
   // refused first (401), then the person's own browser session is required.
-  app.use('/api/location', refuseLocationServiceRail, requiresAuth, createLocationRoutes({ pool: ctx.pool }));
+  app.use('/api/location', refuseLocationServiceRail, requiresAuth, createLocationRoutes({ pool: ctx.pool, dispatchSweepMs: locationDispatchSweepMsFromEnv() }));
   // NOT wrapped in requiresAuth on purpose: this route has its own fail-closed
   // authorizeRemoteClient gate (valid OIDC session OR REMOTE_CLIENT_SHARED_SECRET
   // bearer). Wrapping it in requiresAuth would reject the bearer path that remote
