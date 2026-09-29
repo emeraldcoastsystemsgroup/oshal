@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Visual cards: the selected workspace's document picture from the latest work, Finance's monthly spend bars read once, the no-data state, a Finance outside the plan never read, Orbit's engineering illustration, the Game room table and the work panel's picture.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Package facts (registry and record, the listed-only and not-visible states), Orbit's cross-suite follow and Studio's related context, pin focus in the directory and the Commons room grid with the sidebar following, and Orbit's six hubs clear of the legend.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Membership and the caller's place: Commons' team name, members by role with the caller's place and each source read once; the no-team state; Studio's People panel without a directory read; the tenants and location refusals.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Portal sections: the central assistant feature, the three homebases and the four numbered layouts with their live facts and no screenshot, in the demo's order; the classroom card's listed-only and not-in-catalog states without any Little Monsters request.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -528,6 +529,41 @@ describe('household and team membership, and the caller’s own place', () => {
     await open('/commons', '.full-commons');
     await page.waitForFunction(() => (document.querySelector('.presence-panel [data-roster-slot="room"]')?.textContent || '').includes('HTTP 403'));
     expect(await page.locator('.presence-panel [data-roster-slot="room"]').innerText()).toContain('Location is not available to this session (HTTP 403)');
+    expect(errors).toEqual([]);
+  });
+});
+
+describe('portal sections over the live swarm', () => {
+  it('the central assistant feature, the three homebases and the four numbered layouts each carry a live fact, and no screenshot', async () => {
+    await open('/portal', '.experience-cards');
+    expect(await page.locator('.experience-card').count()).toBe(8);
+    const central = page.locator('.experience-card.central-feature');
+    expect(await central.getAttribute('href')).toBe('/nexus');
+    expect(await central.locator('small').innerText()).toBe('1 of 2 assistants online · 1 open work item');
+    expect(await central.locator('.central-orb').count()).toBe(1);
+    const homes = page.locator('.live-homebases .homebase-card');
+    expect(await homes.evaluateAll(es => es.map(e => e.getAttribute('href')))).toEqual(['/homebase?preset=family', '/homebase?preset=classroom', '/homebase?preset=company']);
+    expect(await homes.locator('.card-meta span:first-child').allTextContents()).toEqual(['3 Home & life applications', 'Little Monsters is available to you', '6 Productivity applications']);
+    const concepts = page.locator('.concept-grid .concept-card');
+    expect(await concepts.locator('.concept-number').allInnerTexts()).toEqual(['01 / CONVERSATION FIRST', '02 / ASSISTANT FIRST', '03 / CONNECTIONS FIRST', '04 / PEOPLE FIRST']);
+    expect(await concepts.locator('.live-fact').allInnerTexts()).toEqual(['1 open work item', '1 item needs you', '6 suites · 19 apps', '7 rooms']);
+    expect(await concepts.evaluateAll(es => es.map(e => e.getAttribute('href')))).toEqual(['/studio', '/jarvis', '/orbit', '/commons']);
+    expect(await page.locator('#portal-root img').count()).toBe(0);
+    const order = await page.evaluate(() => ['.gallery-intro', '.gallery-inventory', '.central-feature', '.live-homebases', '.concept-grid', '#recent-work', '#catalog-directory']
+      .map(sel => document.querySelector(sel)!.getBoundingClientRect().top));
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(errors).toEqual([]);
+  });
+
+  it('a Little Monsters outside the plan or absent from the catalog is named as such on the classroom card', async () => {
+    const lm = fixture.state.apps.find(a => a.summary.name === 'little-monsters')!;
+    (lm as { plan: unknown }).plan = null;
+    await open('/portal', '.experience-cards');
+    expect(await page.locator('.live-homebases .homebase-card').nth(1).locator('.card-meta span:first-child').textContent()).toBe('Little Monsters is listed, not admitted for you');
+    fixture.state.apps = fixture.state.apps.filter(a => a.summary.name !== 'little-monsters');
+    await page.reload(); await page.waitForSelector('.experience-cards');
+    expect(await page.locator('.live-homebases .homebase-card').nth(1).locator('.card-meta span:first-child').textContent()).toBe('Little Monsters is not in your catalog');
+    expect(fixture.state.calls.filter(c => c.includes('/api/education/') || c.includes('little-monsters/home-summary'))).toEqual([]);
     expect(errors).toEqual([]);
   });
 });
