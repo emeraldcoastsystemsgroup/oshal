@@ -843,6 +843,10 @@ registered but pending a suitable approved runner. Registration itself does not 
 The **Installed application test registration** card (`installed-app-tests`) checks catalog identity
 and prerequisites without running application smokes. **Connector sign-in callback boundary**
 (`connector-oauth-boundary`) probes anonymous refusal paths without connecting a provider.
+Its linked callback suite separately exercises the real HTTP ceremony with fixture sessions,
+provider responses and SQL: missing issuer and same-subject/different-issuer relay/completion
+are refused before token exchange. A green anonymous card alone does not prove that consent
+flow, real provider access or legacy credential ownership.
 **Multi-store discovery** (`multi-store-discovery`) reads registry status and qualified package
 identities without installing packages or changing trust. Their linked local suites run using
 `npm run test:platform-readiness`.

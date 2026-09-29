@@ -1,6 +1,7 @@
 /**
  * CHANGE LOG
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Bound connector consent to its initiating browser and identity across callback cookie domains.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Bind initiation, signed-in relay, completion and quota to the verified issuer plus subject; a same-subject identity from another issuer cannot redeem consent.
  *
  * Ceremonies live in the controller process for at most ten minutes. A restart discards them,
  * so an interrupted consent must be started again. Multiple controllers need routing affinity
@@ -67,7 +68,9 @@ export class ConnectorOAuthCeremonies {
   /** @description Capture the authenticated consent and issue independent state and browser secrets. */
   issue(consent: ConnectorConsent): { state: string; cookieName: string; cookieSecret: string } {
     this.prune();
-    if (this.pending.size >= 1000 || [...this.pending.values()].filter(value => value.caller.sub === consent.caller.sub).length >= 8) {
+    if (!consent.caller.sub || !consent.caller.principalIssuer) throw new Error('verified connector issuer required');
+    if (this.pending.size >= 1000 || [...this.pending.values()].filter(value => value.caller.sub === consent.caller.sub
+        && value.caller.principalIssuer === consent.caller.principalIssuer).length >= 8) {
       throw new Error('too many pending connector sign-ins');
     }
     const nonce = randomBytes(32).toString('base64url');
@@ -83,12 +86,13 @@ export class ConnectorOAuthCeremonies {
   }
 
   /** @description Consume a provider state exactly once and stage its code without external I/O. */
-  relay(state: string, provider: string, callerSub: string | undefined, code: string, error: string): { location: string } | null {
+  relay(state: string, provider: string, caller: ConnectorCaller | null, code: string, error: string): { location: string } | null {
     this.prune();
     if (!verifyState(state)) return null;
     const ceremony = this.pending.get(state);
     if (!ceremony || ceremony.phase !== 'authorize' || ceremony.provider !== provider
-        || (callerSub !== undefined && callerSub !== ceremony.caller.sub)) return null;
+        || (caller !== null && (!caller.principalIssuer || caller.sub !== ceremony.caller.sub
+          || caller.principalIssuer !== ceremony.caller.principalIssuer))) return null;
     this.pending.delete(state);
     const ticket = randomBytes(32).toString('base64url');
     this.pending.set(ticket, { ...ceremony, phase: 'complete', code, error });
@@ -100,7 +104,8 @@ export class ConnectorOAuthCeremonies {
     this.prune();
     const ceremony = this.pending.get(ticket);
     if (!ceremony || ceremony.phase !== 'complete' || ceremony.provider !== provider
-        || ceremony.caller.sub !== me.sub || connectorOrigin(req) !== ceremony.origin) return null;
+        || !me.principalIssuer || ceremony.caller.sub !== me.sub
+        || ceremony.caller.principalIssuer !== me.principalIssuer || connectorOrigin(req) !== ceremony.origin) return null;
     const actual = createHash('sha256').update(cookieValue(req, ceremony.cookieName)).digest();
     if (!timingSafeEqual(actual, ceremony.cookieHash)) return null;
     this.pending.delete(ticket);

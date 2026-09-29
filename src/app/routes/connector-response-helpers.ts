@@ -12,12 +12,14 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted authenticated caller resolution and /list response shaping from connectors-routes.ts without changing response fields or provider configuration rules.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | BUG-13: project a per-connection `expired` boolean (isConnectionExpired) into every /list entry. Identity Hub reads this key in four places - the Need attention tile, the Needs attention filter, the red Reconnect pill and the account marker - and the projection never carried it, so all four read undefined and the hub's whole reason to exist could not fire. Boolean only: the expiry value and the token stay out of the response.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Project per-connection expiring boolean (isConnectionExpiring) into every /list entry so Identity Hub, access reviews and briefings can warn before unrenewable grants lapse.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Carry the verified issuer for consent binding; absent provenance remains null instead of deriving an identity from email or deployment settings.
  * -----------------------------------------------------------------------------
  *
  * @module connector-response-helpers
  */
 
 import type { Request } from 'express';
+import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-issuer';
 import { buildAnyLlmListEntry } from './byo-llm-routes';
 import { isPlaidConfigured } from './connector-plaid-link';
 import {
@@ -31,6 +33,7 @@ import { isConnectionExpired, isConnectionExpiring, pickConnection, type Connect
 export interface ConnectorCaller {
   sub: string;
   email: string;
+  principalIssuer: string | null;
 }
 
 /**
@@ -44,7 +47,8 @@ export function caller(req: Request): ConnectorCaller | null {
   const u = oidc.user || {};
   const sub = u.sub || u.oid;
   if (!sub) return null;
-  return { sub: String(sub), email: String(u.email || u.preferred_username || '') };
+  return { sub: String(sub), email: String(u.email || u.preferred_username || ''),
+    principalIssuer: getAuthenticatedPrincipalIssuer(req) };
 }
 
 /**
