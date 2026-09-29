@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Add packageGrantPlan: one application plus the applications it declares it cannot run without, each classified into the ONE /access change it needs. Read-only by construction — it opens no transaction, writes no assignment and bumps no revision — and every application in the set is gated on the CALLER'S own management read, so a prerequisite the caller cannot administer reports its name and nothing else.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | AUTH-07 reviewed catalog migration. validateRegistration classifies a changed catalog against the recorded catalog its assignments were granted under instead of refusing every change: a non-widening revision passes, and registerApp re-stamps the assignments in the same policy transaction that records the new catalog and writes the audit event. A widening or breaking revision still refuses, now with one stored review (previewId) that an application-wide administrator lists and approves through catalogMigrations/applyCatalogMigration; the next activation of exactly that revision applies it. Grants the new catalog does not define are removed, never carried, so they cannot revive.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Record the approval reference a verified apply named: on the audit event of an access change that required approval, and on a catalog-migration approval (which the activation audit event then carries). Before this no approval could be verified at all, so there was nothing to record.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Read effective policy after the asynchronous tier resolver so revocation during that await cannot return stale grants and revision.
  */
 /** ADR-149 authoritative management and execution service. No swarm-admin business bypass. */
 import { randomUUID } from 'node:crypto';
@@ -313,8 +314,10 @@ export class ApplicationAuthorizationService implements ApplicationAuthorization
   }
   async effective(actor: AuthorizationActor, target: AuthorizationTarget): Promise<AuthorizationEffective> {
     actor = await this.currentActor(actor); const app = this.requireApp(target.app); const subject = await this.targetActor(actor, target);
+    const tier = await this.explicitTier(app.app, subject);
+    // Keep the policy snapshot after external awaits; derive its result without yielding again.
     const state = await this.store.read(); const resolution = matchingAssignments(state, app, subject, target.tenantId, this.now());
-    const tier = await this.explicitTier(app.app, subject); const grants = resolveGrantSet(app, resolution.rows, tier);
+    const grants = resolveGrantSet(app, resolution.rows, tier);
     const denied = grants.denied || !subject.isActive || resolution.stale || resolution.unknownDirectory
       || Boolean(target.tenantId && !subject.tenantIds?.includes(target.tenantId));
     const managementRoles = resolveManagementRoles(state, app, subject, target.tenantId, this.now());

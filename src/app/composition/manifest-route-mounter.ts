@@ -17,6 +17,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com | Resolve app tiers for exact verified subject/issuer pairs and refuse missing issuer before dispatch.
  * 13 | maintainer@emeraldcoastsystemsgroup.com | Admit only explicitly declared anonymous reads without inherited principal authority or sibling bypass.
  * 14 | maintainer@emeraldcoastsystemsgroup.com | Fence retired anonymous-declaring entries captured before an asynchronous predecessor yields to reload or unmount.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com | Restore pre-callback authority on signed handler fallthrough without changing anonymous route admission.
  */
 
 import type { Express, Request, Response, NextFunction, RequestHandler } from 'express';
@@ -373,25 +374,36 @@ export class ManifestRouteMounterImpl implements ManifestRouteMounter {
    * Express's own mount-path stripping without touching Express internals, so mounting is
    * fully dynamic and reversible.
    */
-  private run(entry: MountedRoute, req: Request, res: Response, next: NextFunction): void {
+  private runCallback(entry: MountedRoute, req: Request, res: Response, next: NextFunction): void {
     const originalUrl = req.url;
     const remainder = originalUrl.slice(entry.mountPath.length) || '/';
-    if (entry.callbackVerifier) {
-      if (req.method !== 'POST') { res.status(405).json({ error: 'callback_post_required' }); return; }
-      void (async () => {
-        try {
-          const principal = await entry.callbackVerifier!(req);
-          if (!validCallbackPrincipal(principal)) { res.status(401).json({ error: 'callback_signature_invalid' }); return; }
+    const resume = AsyncResource.bind(next);
+    const priorDecision = Object.getOwnPropertyDescriptor(res.locals, 'applicationAuthorization');
+    if (req.method !== 'POST') { res.status(405).json({ error: 'callback_post_required' }); return; }
+    void (async () => {
+      try {
+        const principal = await entry.callbackVerifier!(req);
+        if (!validCallbackPrincipal(principal)) { res.status(401).json({ error: 'callback_signature_invalid' }); return; }
+        if (!this.byApp.get(entry.appName)?.includes(entry)) { res.status(503).end(); return; }
+        await this.applicationAuthorization!.guardCallback!(entry.appName, req, res, principal, () => {
           if (!this.byApp.get(entry.appName)?.includes(entry)) { res.status(503).end(); return; }
-          await this.applicationAuthorization!.guardCallback!(entry.appName, req, res, principal, () => {
-            if (!this.byApp.get(entry.appName)?.includes(entry)) { res.status(503).end(); return; }
-            req.url = remainder.startsWith('/') ? remainder : '/' + remainder;
-            entry.handler(req, res, (err?: unknown) => { req.url = originalUrl; next(err); });
+          req.url = remainder.startsWith('/') ? remainder : '/' + remainder;
+          entry.handler(req, res, (err?: unknown) => {
+            req.url = originalUrl;
+            if (priorDecision) Object.defineProperty(res.locals, 'applicationAuthorization', priorDecision);
+            else delete res.locals.applicationAuthorization;
+            resume(err);
           });
-        } catch { if (!res.headersSent) res.status(503).json({ error: 'callback_unavailable' }); }
-      })();
-      return;
-    }
+        });
+      } catch { if (!res.headersSent) res.status(503).json({ error: 'callback_unavailable' }); }
+    })();
+  }
+
+  /** @description Dispatch callbacks separately so verified authority cannot escape into sibling handlers. */
+  private run(entry: MountedRoute, req: Request, res: Response, next: NextFunction): void {
+    if (entry.callbackVerifier) { this.runCallback(entry, req, res, next); return; }
+    const originalUrl = req.url;
+    const remainder = originalUrl.slice(entry.mountPath.length) || '/';
     const invoke = (): void => {
       if (entry.requiresAi && isAiDisabled()) {
         logger.info(

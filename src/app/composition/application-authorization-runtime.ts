@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Check workspace navigation against the current mounted HTTP policy without dispatching a page.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | AUTH-07: prepare now classifies a changed catalog instead of refusing every change. A non-widening revision passes and start() re-stamps the existing assignments atomically; a widening or breaking one refuses with the review id an administrator approves through /api/authorization/catalog-migrations.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Bind exact anonymous reads to detached active catalog-less route declarations.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | Refuse signed callback dispatch when awaited resource authorization outlives its owner or policy grants.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -240,6 +241,17 @@ export class ApplicationAuthorizationRuntime implements ManifestAuthorizationReg
     }
     await this.guard(appName, req, res, next, actor);
   }
+  /** Recheck callback authority after package adapters yield; a previous allow is not a dispatch capability. */
+  private async callbackDecisionCurrent(actor: AuthorizationActor, operation: AuthorizationOperation,
+    decision: AuthorizationDecision): Promise<boolean> {
+    const owner = await this.callbackActor?.(actor.sub, actor.issuer);
+    if (!owner?.isActive || owner.sub !== actor.sub || owner.issuer !== actor.issuer) return false;
+    const current = await this.service.effective(owner, { app: operation.app, tenantId: operation.tenantId });
+    return !current.denied && current.revision === decision.revision
+      && current.catalogRevision === decision.catalogRevision && current.tier === decision.tier
+      && decision.grants.every(grant => current.permissions.some(candidate => candidate.permission === grant.permission
+        && candidate.scope === grant.scope && candidate.fields === grant.fields));
+  }
   async guard(appName: string, req: Request, res: Response, next: () => void, verifiedActor?: AuthorizationActor): Promise<void> {
     try {
       const state = this.registrations.get(appName);
@@ -273,6 +285,10 @@ export class ApplicationAuthorizationRuntime implements ManifestAuthorizationReg
           if (!sendApplicationNavigationDenied(req, res, state.registration, operation, actor, state.displayName)) res.status(403).json({ error: decision.reason, decisionId: decision.decisionId });
           return;
         }
+        if (verifiedActor && !await this.callbackDecisionCurrent(actor, operation, decision)) {
+          res.status(403).json({ error: 'callback_authorization_changed' }); return;
+        }
+        if (this.registrations.get(appName) !== state || !state.available) throw new Error('Application generation changed');
         res.locals.applicationAuthorization = decision;
         next();
       }));
