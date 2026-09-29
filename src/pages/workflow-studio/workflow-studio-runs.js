@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the Runs panel for Workflow Studio: a rail-toggled left flyout listing past graph runs (GET /api/workflow-studio/runs) and a click-through run inspector showing each step's status, timing, agent, and redacted input/output (GET /api/workflow-studio/runs/:runId). Own module (sibling of workflow-studio-chat.js) so the 1700-line core stays untouched; auto-refreshes while a run is still executing.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The list was fetching every run the caller owns, so opening one workflow showed unrelated history: scope it to the open definition's published ticketType (via the shared workflowTicketTypeSlug) with a This-workflow/All-my-runs toggle, and turn the inspector's inert "Ticket <id>" text into a deep link to that ticket's cost trace so a run is one click from its spend.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | runsPanel.init runs only when no ADR-164 D6 audience view is active: under ?audience=company|family the card reads the run list itself and the panel is never wired; otherwise it starts exactly as before.
  */
 
 import { createUiLogger, serializeUiError } from '../shared/ui-debug.js';
@@ -396,4 +397,4 @@ function escapeHtml(value) {
 }
 
 const runsPanel = new WorkflowStudioRuns();
-runsPanel.init();
+if (!window.AppView || !AppView.active()) { runsPanel.init(); }
