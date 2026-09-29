@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127 remote-brain guards for stampRemoteBrain: a CLI-harness node dispatch carries the caller's resolved brain (cli → the ADR-034 providerId/model stamp; hosted → the byoLlmConnection wire trio with resolver metadata stripped), explicit caller choices and identity-less/hosted-harness dispatches pass through with the ladder never consulted, an empty ladder refuses with NO_HOSTED_BRAIN, and a ladder FAILURE dispatches unstamped (fail-open) — the exact behaviours that keep the operator's mounted-CLI turns and guest hosted turns from regressing onto a node's static default.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Require the resolved CLI provider stamp at the protected remote reasoning boundary.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Regression for the live Intelligent Sales reversion: `bot-default` stamps the canonical Sales Gemini record (including required authority) while the existing explicit OpenAI Codex user choice still wins and never consults that resolver.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | A sparse canonical bot record replaces the whole authoritative slice, clearing stale model/version/fallback fields from a partially stamped incoming request.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -78,6 +79,27 @@ describe('stampRemoteBrain (ADR-127 remote branch)', () => {
       providerConfigRequired: true,
     });
     expect(req.byoLlmConnection).toBeUndefined();
+  });
+
+  it('clears stale optional authority fields omitted by the canonical bot record', async () => {
+    const req = request({
+      model: 'stale-user-model',
+      configVersion: 999,
+      fallbackOrder: ['openai-codex'],
+      providerConfigRequired: false,
+    });
+    const runtimeParamsResolver = vi.fn().mockResolvedValue({ providerId: 'gemini' });
+
+    await stampRemoteBrain(POOL, CLI_AGENT, req, {
+      ...overrides({ kind: 'bot-default' }),
+      runtimeParamsResolver,
+    });
+
+    expect(req.providerId).toBe('gemini');
+    expect(req.providerConfigRequired).toBe(true);
+    expect(req.model).toBeUndefined();
+    expect(req.configVersion).toBeUndefined();
+    expect(req.fallbackOrder).toBeUndefined();
   });
 
   it('preserves an explicit OpenAI Codex user preference above the Sales bot default', async () => {

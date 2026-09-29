@@ -20,6 +20,7 @@
  * 15 | maintainer@emeraldcoastsystemsgroup.com  | Reworked after review refuted seq 14 on two counts, and extended with the operator's hot fallback (2026-09-22). (a) "caller-threaded means explicit" was FALSE: jarvis-orchestrator threads free-tier/platform/operator-key lanes as byoLlmConnection too, so every Jarvis hosted turn — free-tier users included — took 3 attempts before Jarvis's own rotation. isExplicitByoTurn now keys on resolutionSource === 'explicit' ONLY, carried on the request as byoLlmResolutionSource by the caller that resolved it; a threaded connection with no source gets one attempt. (b) Wrapping processMessage replayed the WHOLE turn — three saved user messages, three error broadcasts. The retry now rides options.byoLlmRetry into the orchestrator, which wraps the provider call. (c) runInlineTurnWithRecovery is the ONE inline turn body both entry points share: first attempt → rotation for resolver-owned lanes → the operator-only, readiness-gated hot fallback (byo-hot-fallback.ts) for an exhausted explicit endpoint; the remote branch recovers the same way by re-dispatching once per ready rung with the rung stamped as the authoritative provider. A fallback turn returns the brainFallback marker.
  * 16 | maintainer@emeraldcoastsystemsgroup.com  | Mark a resolved CLI brain as required provider authority so protected direct bot execution can verify the controller's stamp instead of rejecting a present provider as unconfigured.
  * 17 | maintainer@emeraldcoastsystemsgroup.com  | Honor the explicit `bot-default` user choice on remote turns by stamping the SAME canonical runtime record queued dispatch uses (per-bot switch > fleet switch > agent_config > registry), with required authority. Existing explicit provider/BYO choices and the `auto` user ladder are unchanged.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com  | Replace, rather than merge, the authoritative config slice for `bot-default`: a model-only incoming request could otherwise retain stale model/version/fallback fields when the canonical bot record omitted them.
  */
 
 import type { AppContext } from '@/app/composition/app-context';
@@ -292,7 +293,9 @@ export async function stampRemoteBrain(
   }
   if (brain.kind === 'bot-default') {
     const configFields = await resolveDispatchConfigFields(overrides?.runtimeParamsResolver, agentId);
-    Object.assign(request, configFields, { providerConfigRequired: true });
+    for (const field of ['providerId', 'model', 'configVersion', 'fallbackOrder'] as const) delete request[field];
+    Object.assign(request, configFields);
+    request.providerConfigRequired = true;
     logger.info(
       {
         agentId,
