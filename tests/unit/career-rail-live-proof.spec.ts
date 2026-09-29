@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the Career worker-rail live acceptance's own logic. Pure cases over an in-memory run registry in the package's real response shapes: a run that ends on its own with an admitted rail call passes on the kernel's attribution; a longer run is cancelled after its first admitted call and still passes; the kernel's enforce-mode refusal (the engine's stderr `career worker unavailable: authorization_identity_required`) fails LOUDLY naming it, as does a run that ends on a rail failure; a run with no rail call is not-runnable; admitted calls with no cost row are red; a caller the package does not admit is not-runnable; a run still running after cancellation is incomplete cleanup. The task id the proof reads is derived through the kernel's real canonicalBotWorkspaceId. Real boundary for the attribution read: the exact ROLLUP_SQL and LEDGER_SQL run against a disposable PostgreSQL carrying the shipped chat/cost migrations (005, 055, 078, 090) and count only this owner's rows for the Career bot written since the run started. The case is registered on the Access Administration Test Lab card beside the enforce-posture boundary spec.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The proof no longer predicts a task id (the first live run reported "no cost" over two real ledger rows keyed `protected-<sha256>::<Career bot>`, the per-execution digest a protected application's bot history carries), so the cases follow it: fixture rows are keyed through the REAL protectedBotWorkspaceId with one execution id per call, and the verdict rests on the Career bot's ledger rows for the owner since the start, no more than the admitted rail calls. Real boundary widened to the read the container mode performs: the whole acceptance runs over a disposable PostgreSQL carrying the chat/cost migrations plus owner-or-operator RLS (112 on oshal_cost_events, the conversation schema's chat_tasks policy via buildOwnerRlsPolicyStatements), read through a NOSUPERUSER NOBYPASSRLS role behind the production GUC wrapper under the owner's request identity. A run shaped like the live one (8 admitted, 2 settled under protected keys) passes; the same fixture with no ledger row since the start fails naming "no cost"; another owner's rows never count (RLS for the identity read, and the SQL's own owner filter read as the superuser); the canonical `career-engine-<owner>` rollup shape is still accepted as evidence; more ledger rows than admitted calls fail. The in-memory verdict cases no longer expect a pre-run baseline read.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The two extra modes. `--complete`: a run that ends succeeded on its own after every call passes on the attribution with no cancellation issued; a run still running at the budget is cancelled by the cleanup and red; a run someone else cancelled is red (the default mode still accepts it); no rail call is not-runnable. `--worker-loss` (container half, over the same in-memory run registry plus a registry double the phase hook drives the way docker would): the run fails 503 career-worker-unavailable once the stop phase took the bot away and a strictly newer heartbeat after the start phase passes; a bot that never comes back is red, and so is a stale-online record whose heartbeat never moves (the record a dead bot leaves behind) or a registration that vanished; a run that ends succeeded, fails for another reason, or whose route answers 502 after the stop is red; a run that hangs after the stop is red and cancelled; a run that ends before the stop, a bot that is offline before, and a refused start stop nothing. Host half: the reactor stops on the stop phase, starts on the start phase, each once, and restarts in finish() when the proof died between them; hostVerdict turns a failed stop/start, a never-issued start or a container not running afterwards red. The mode flags exclude each other and the host spec carries the mode's flag after --in-container. stageAndStream keeps stageAndRun's argv and PAT-by-name contract, hands lines to the reactor as they arrive and always unstages.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -22,6 +23,8 @@ import { DisposablePostgres } from '../helpers/disposable-postgres';
 
 const requireCjs = createRequire(import.meta.url);
 const proof = requireCjs('../../scripts/operations/career-rail-live-proof.js');
+const workerLoss = requireCjs('../../scripts/operations/career-rail-worker-loss.js');
+const runner = requireCjs('../../scripts/operations/live-proof-runner.js');
 
 /** A plain subject, like the live owner's: its canonical rail workspace is `career-engine-<owner>` verbatim. */
 const OWNER = '100000000000000000001';
@@ -48,8 +51,8 @@ interface FakeOptions {
   calls?: number;
   /** Rail calls admitted per poll of the run list (default 1). */
   perPoll?: number;
-  /** How the run ends once its calls are admitted; 'never' keeps it running until cancelled. */
-  finish?: 'succeeded' | 'failed' | 'never';
+  /** How the run ends once its calls are admitted; 'never' keeps it running until cancelled; 'cancelled' is an owner's cancellation from elsewhere. */
+  finish?: 'succeeded' | 'failed' | 'never' | 'cancelled';
   /** The reason the registry records for a failed run. */
   reason?: string | null;
   /** The engine's stderr tail the run route quotes. */
@@ -87,9 +90,11 @@ async function advanceRun(state: FakeState, options: FakeOptions): Promise<void>
     if (run.railCalls === 1) for (let i = 0; i < (options.unexplainedRows ?? 0); i += 1) state.ledger.push({ ts: state.clock, taskId: protectedTaskId(OWNER, `elsewhere-${i}`) });
   }
   if (run.railCalls >= calls && finish !== 'never') {
-    run.state = finish; run.reason = finish === 'failed' ? (options.reason ?? 'engine-failed') : null; run.finishedAt = state.clock;
+    run.state = finish; run.finishedAt = state.clock;
+    run.reason = finish === 'failed' ? (options.reason ?? 'engine-failed') : finish === 'cancelled' ? 'cancelled-by-owner' : null;
     const tail = { out: '', err: options.stderr ?? '' };
-    state.settle?.(finish === 'failed'
+    if (finish === 'cancelled') state.settle?.({ status: 409, json: { ok: false, error: 'cancelled', runId: run.runId, state: run.state, ...tail } });
+    else state.settle?.(finish === 'failed'
       ? { status: run.reason === 'career-worker-unavailable' ? 503 : 502, json: { ok: false, error: run.reason, runId: run.runId, state: run.state, ...tail } }
       : { status: 200, json: { ok: true, out: 'AI-scored 1 postings (0 skipped).', runId: run.runId } });
   }
@@ -246,6 +251,382 @@ describe('runCareerRailAcceptance', () => {
     expect(result.detail).toContain(`Run ${RUN_ID} was still running after 10s`);
     expect(result.detail).toContain(`CLEANUP INCOMPLETE: run ${RUN_ID} is still running after cancellation`);
     expect(f.state.cancels).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('the mode flags and the host spec', () => {
+  it('reads one mode, the announced window and the container marker, and refuses two modes at once', () => {
+    expect(proof.parseArgs([])).toEqual({ mode: 'cancel', announcedWindow: false, inContainer: false, error: null });
+    expect(proof.parseArgs(['--complete'])).toMatchObject({ mode: 'complete', announcedWindow: false });
+    expect(proof.parseArgs(['--worker-loss'])).toMatchObject({ mode: 'worker-loss', announcedWindow: false, error: null });
+    expect(proof.parseArgs(['--worker-loss', '--announced-window', '--in-container'])).toEqual({ mode: 'worker-loss', announcedWindow: true, inContainer: true, error: null });
+    expect(proof.parseArgs(['--complete', '--worker-loss']).error).toBe('choose one of --complete and --worker-loss');
+  });
+
+  it('stages the same three files for every mode and carries the mode flag after --in-container, the PAT never in argv', () => {
+    for (const [mode, args] of [['cancel', []], ['complete', ['--complete']], ['worker-loss', ['--worker-loss']]] as const) {
+      const spec = proof.hostSpec(mode, 'oshal_pat_secret_value');
+      expect(spec.args).toEqual(args);
+      expect(spec.files.map((file: { rel: string }) => file.rel)).toEqual(['operations/career-rail-live-proof.js', 'operations/career-rail-worker-loss.js', 'operations/live-proof-runner.js']);
+      expect(spec.entry).toBe('operations/career-rail-live-proof.js');
+      expect(spec.pat).toBe('oshal_pat_secret_value');
+      expect(JSON.stringify(spec.env)).not.toContain('oshal_pat_secret_value');
+    }
+    expect(proof.hostTimeoutMs('cancel')).toBe(600_000 + 180_000 + 300_000);
+    expect(proof.hostTimeoutMs('complete')).toBe(proof.COMPLETE_RUN_BUDGET_MS + 180_000 + 300_000);
+    expect(proof.hostTimeoutMs('worker-loss')).toBe(600_000 * 2 + 180_000 + 300_000);
+  });
+});
+
+describe('--complete: the score run finishes on its own', () => {
+  it('passes on the attribution of every admitted call with no cancellation issued', async () => {
+    const f = fake({ calls: 3 });
+    const result = await proof.runCareerRailAcceptance(f.ports, { mode: 'complete' });
+    expect(result.state, result.detail).toBe('pass');
+    expect(result.caseId).toBe('career-worker-rail-complete');
+    expect(result.detail).toContain('ended succeeded after 3 rail calls, uncancelled');
+    expect(result.detail).toContain(`the Career bot ${AGENT} recorded 3 ledger row(s) for this owner`);
+    expect(result.evidence).toMatchObject({ mode: 'complete', runState: 'succeeded', railCalls: 3, cancelledByProof: false, routeStatus: 200, ledger: { calls: 3 }, cleanupErrors: [] });
+    expect(f.state.cancels).toBe(0);
+    expect(f.state.run!.railCalls).toBe(3);
+  });
+
+  it('is red when the run is still running at the budget, and the cleanup cancels it', async () => {
+    const f = fake({ calls: 40, finish: 'never' });
+    const result = await proof.runCareerRailAcceptance(f.ports, { mode: 'complete', runBudgetMs: 10_000, pollMs: 1_000 });
+    expect(result.state).toBe('fail');
+    expect(result.detail).toContain(`Run ${RUN_ID} was still running after 10s`);
+    expect(result.evidence).toMatchObject({ mode: 'complete', cancelledByProof: false, runState: 'running', cleanupErrors: [] });
+    expect(f.state.cancels).toBe(1);
+    expect(f.state.run!.state).toBe('cancelled');
+  });
+
+  it('is red when someone else cancelled the run, which the default mode still accepts', async () => {
+    const complete = await proof.runCareerRailAcceptance(fake({ calls: 2, finish: 'cancelled' }).ports, { mode: 'complete' });
+    expect(complete.state).toBe('fail');
+    expect(complete.detail).toContain(`Run ${RUN_ID} ended cancelled (cancelled-by-owner) after 2 rail calls; a complete run must end succeeded on its own`);
+    expect(complete.evidence).not.toHaveProperty('ledger');
+    const byDefault = await proof.runCareerRailAcceptance(fake({ calls: 2, finish: 'cancelled' }).ports);
+    expect(byDefault.state, byDefault.detail).toBe('pass');
+  });
+
+  it('is not runnable when the run finished without a rail call, and red when it failed', async () => {
+    const idle = await proof.runCareerRailAcceptance(fake({ calls: 0 }).ports, { mode: 'complete' });
+    expect(idle.state).toBe('unavailable');
+    expect(idle.detail).toContain('without a single rail call');
+    const failed = await proof.runCareerRailAcceptance(fake({ calls: 2, finish: 'failed', reason: 'career-worker-timeout' }).ports, { mode: 'complete' });
+    expect(failed.state).toBe('fail');
+    expect(failed.detail).toContain(`Run ${RUN_ID} failed with reason career-worker-timeout after 2 admitted rail calls`);
+  });
+});
+
+interface LossOptions {
+  /** Rail calls the run admits per poll while the bot is up (default 1). */
+  perPoll?: number;
+  /** End the run on its own after this many calls (default: it runs until the bot is gone). */
+  finishAfter?: number;
+  /** Refuse the run route before any run exists. */
+  refuseStart?: { status: number; error: string };
+  /** What the run does once the bot is gone (default: fails with the loss reason). */
+  afterStop?: 'fails' | 'succeeded' | 'hang';
+  /** The reason and status the run fails with once the bot is gone. */
+  lossReason?: string;
+  lossStatus?: number;
+  /** The registration before the run (default: online). */
+  before?: { status: string; heartbeatAt: string } | null;
+  /** Whether the stop removes the registration (default: it stays, stale and online, as a dead bot's does). */
+  stopRemovesRegistration?: boolean;
+  /** Whether a restarted bot publishes a new heartbeat (default true), and after how many reads. */
+  comesBack?: boolean;
+  comebackAfterReads?: number;
+}
+
+interface LossState extends FakeState {
+  botUp: boolean;
+  registration: { status: string; heartbeatAt: string; startedAt: string } | null;
+  phases: Array<{ name: string; data: Record<string, unknown> }>;
+  readsSinceStart: number | null;
+}
+
+/** The registration a bot publishes: startedAt and heartbeatAt are the same instant, every heartbeat. */
+function registrationAt(atMs: number, status = 'online') {
+  const at = new Date(atMs).toISOString();
+  return { status, heartbeatAt: at, startedAt: at };
+}
+
+/** The run's progress per poll while the bot is up or gone. */
+function advanceLossRun(state: LossState, options: LossOptions): void {
+  const run = state.run!;
+  if (state.botUp) {
+    for (let admitted = 0; admitted < (options.perPoll ?? 1); admitted += 1) {
+      if (options.finishAfter !== undefined && run.railCalls >= options.finishAfter) break;
+      run.railCalls += 1;
+    }
+    if (options.finishAfter !== undefined && run.railCalls >= options.finishAfter) {
+      run.state = 'succeeded'; run.finishedAt = state.clock;
+      state.settle?.({ status: 200, json: { ok: true, out: 'AI-scored 1 postings (0 skipped).', runId: run.runId } });
+    }
+    return;
+  }
+  const after = options.afterStop ?? 'fails';
+  if (after === 'hang') return;
+  if (after === 'succeeded') {
+    run.state = 'succeeded'; run.finishedAt = state.clock;
+    state.settle?.({ status: 200, json: { ok: true, out: 'AI-scored 1 postings (0 skipped).', runId: run.runId } });
+    return;
+  }
+  run.state = 'failed'; run.reason = options.lossReason ?? 'career-worker-unavailable'; run.finishedAt = state.clock;
+  state.settle?.({ status: options.lossStatus ?? 503, json: { ok: false, error: run.reason, runId: run.runId, state: 'failed', out: '', err: `career worker unavailable: ${run.reason}` } });
+}
+
+/** The run registry, the run routes, the runtime registry and the phase hook the host would answer, in memory. */
+function fakeLoss(options: LossOptions = {}) {
+  const state: LossState = { clock: EPOCH, run: null, settle: null, ledger: [], cancels: 0, posts: 0, botUp: true, phases: [], readsSinceStart: null,
+    registration: options.before === undefined ? registrationAt(EPOCH - 20_000) : options.before && registrationAt(EPOCH - 20_000, options.before.status) };
+  const now = () => (state.clock += 1_000);
+  const api = vi.fn(async (method: string, route: string): Promise<RouteAnswer> => {
+    if (method === 'POST' && route === '/api/career-hunter/run/score') {
+      state.posts += 1;
+      if (options.refuseStart) return { status: options.refuseStart.status, json: { ok: false, error: options.refuseStart.error, err: options.refuseStart.error } };
+      state.run = { runId: RUN_ID, verb: 'score', state: 'running', reason: null, startedAt: state.clock, finishedAt: null, railCalls: 0 };
+      return new Promise<RouteAnswer>((settle) => { state.settle = settle; });
+    }
+    if (method === 'GET' && route === '/api/career-hunter/runs') {
+      if (state.run?.state === 'running') advanceLossRun(state, options);
+      return { status: 200, json: { runs: state.run ? [{ ...state.run }] : [] } };
+    }
+    if (method === 'POST' && route === `/api/career-hunter/run/${RUN_ID}/cancel`) {
+      state.cancels += 1;
+      const run = state.run!;
+      if (run.state !== 'running') return { status: 409, json: { error: 'run already finished', state: run.state } };
+      run.state = 'cancelled'; run.reason = 'cancelled-by-owner'; run.finishedAt = state.clock;
+      state.settle?.({ status: 409, json: { ok: false, error: 'cancelled', runId: run.runId, state: 'cancelled', out: '', err: '' } });
+      return { status: 202, json: { ok: true, runId: run.runId, cancelled: true } };
+    }
+    throw new Error(`unexpected ${method} ${route}`);
+  });
+  const registry = { read: vi.fn(async () => {
+    if (state.readsSinceStart !== null) {
+      state.readsSinceStart += 1;
+      if (options.comesBack !== false && state.readsSinceStart >= (options.comebackAfterReads ?? 2)) state.registration = registrationAt(state.clock);
+    }
+    return state.registration ? { ...state.registration } : null;
+  }) };
+  const phase = vi.fn((name: string, data: Record<string, unknown>) => {
+    state.phases.push({ name, data });
+    if (name === 'worker-stop') { state.botUp = false; if (options.stopRemovesRegistration) state.registration = null; }
+    if (name === 'worker-start') state.readsSinceStart = 0;
+  });
+  return { state, ports: { api, registry, phase, careerVersion: '1.26.0', sleep: async () => undefined, now } };
+}
+
+describe('--worker-loss: the container half', () => {
+  it('passes when the run fails 503 career-worker-unavailable after the stop and a strictly newer heartbeat follows the start', async () => {
+    const f = fakeLoss();
+    const result = await workerLoss.runWorkerLossAcceptance(f.ports);
+    expect(result.state, result.detail).toBe('pass');
+    expect(result.caseId).toBe('career-worker-rail-worker-loss');
+    expect(f.state.phases.map((phase) => phase.name)).toEqual(['worker-stop', 'worker-start']);
+    expect(f.state.phases[0].data).toEqual({ runId: RUN_ID, railCalls: 1 });
+    expect(f.state.phases[1].data).toEqual({ runId: RUN_ID, state: 'failed', reason: 'career-worker-unavailable' });
+    expect(result.detail).toContain(`Run ${RUN_ID} failed with reason career-worker-unavailable after the Career bot was stopped (1 rail calls admitted before the loss) and the run route answered 503 career-worker-unavailable; the Career bot came back online`);
+    expect(result.evidence).toMatchObject({ runId: RUN_ID, runState: 'failed', runReason: 'career-worker-unavailable', railCalls: 1, routeStatus: 503, cameBack: true, cleanupErrors: [] });
+    expect(Date.parse(result.evidence.heartbeatAfter.heartbeatAt)).toBeGreaterThan(Date.parse(result.evidence.heartbeatAtLoss.heartbeatAt));
+    expect(result.evidence.heartbeatBefore).toEqual(result.evidence.heartbeatAtLoss); // the dead bot's record, unchanged
+    expect(f.state.cancels).toBe(0);
+  });
+
+  it('is red when the bot never comes back: a stale-online record whose heartbeat never moves, or a registration that vanished', async () => {
+    const stale = fakeLoss({ comesBack: false });
+    const result = await workerLoss.runWorkerLossAcceptance(stale.ports, { heartbeatBudgetMs: 10_000 });
+    expect(result.state).toBe('fail');
+    expect(result.detail).toContain('and the run route answered 503 career-worker-unavailable, but the Career bot did NOT come back within 10s of its restart (last registration online at');
+    expect(result.evidence).toMatchObject({ cameBack: false, runReason: 'career-worker-unavailable', cleanupErrors: [] });
+    expect(stale.state.phases.map((phase) => phase.name)).toEqual(['worker-stop', 'worker-start']);
+    const gone = fakeLoss({ comesBack: false, stopRemovesRegistration: true });
+    const vanished = await workerLoss.runWorkerLossAcceptance(gone.ports, { heartbeatBudgetMs: 10_000 });
+    expect(vanished.state).toBe('fail');
+    expect(vanished.detail).toContain('did NOT come back within 10s of its restart (no registration at all)');
+    expect(vanished.evidence.heartbeatAtLoss).toBeNull();
+  });
+
+  it('passes when the stop removed the registration and the restarted bot publishes a fresh one', async () => {
+    const f = fakeLoss({ stopRemovesRegistration: true });
+    const result = await workerLoss.runWorkerLossAcceptance(f.ports);
+    expect(result.state, result.detail).toBe('pass');
+    expect(result.evidence.heartbeatAtLoss).toBeNull();
+    expect(result.evidence.heartbeatAfter.status).toBe('online');
+  });
+
+  it('is red when the loss is not visible: the run ends succeeded, fails for another reason, or its route answers 502', async () => {
+    const succeeded = await workerLoss.runWorkerLossAcceptance(fakeLoss({ afterStop: 'succeeded' }).ports);
+    expect(succeeded.state).toBe('fail');
+    expect(succeeded.detail).toContain(`Run ${RUN_ID} ended succeeded after the Career bot was stopped; the loss was not visible as failed/career-worker-unavailable. the Career bot came back online`);
+    const other = await workerLoss.runWorkerLossAcceptance(fakeLoss({ lossReason: 'engine-failed', lossStatus: 502 }).ports);
+    expect(other.state).toBe('fail');
+    expect(other.detail).toContain(`Run ${RUN_ID} failed with reason engine-failed instead of career-worker-unavailable after the Career bot was stopped`);
+    const mapped = await workerLoss.runWorkerLossAcceptance(fakeLoss({ lossStatus: 502 }).ports);
+    expect(mapped.state).toBe('fail');
+    expect(mapped.detail).toContain('but the run route answered HTTP 502 career-worker-unavailable instead of 503 career-worker-unavailable');
+    expect(mapped.evidence).toMatchObject({ routeStatus: 502, cameBack: true });
+  });
+
+  it('is red and cancels the run when it keeps running after the stop, and still restarts the bot', async () => {
+    const f = fakeLoss({ afterStop: 'hang' });
+    const result = await workerLoss.runWorkerLossAcceptance(f.ports, { runBudgetMs: 20_000, pollMs: 1_000 });
+    expect(result.state).toBe('fail');
+    expect(result.detail).toContain(`Run ${RUN_ID} was still running 20s after the Career bot was stopped (1 rail calls admitted); the loss never became visible and the proof cancelled it`);
+    expect(f.state.phases.map((phase) => phase.name)).toEqual(['worker-stop', 'worker-start']);
+    expect(f.state.cancels).toBe(1);
+    expect(f.state.run!.state).toBe('cancelled');
+    expect(result.evidence).toMatchObject({ runState: 'running', cameBack: true, cleanupErrors: [] }); // the state at verdict time; the cleanup is its own field
+  });
+
+  it('stops nothing when the run ends before the bot could be stopped, when the bot is offline before, or when the start is refused', async () => {
+    const early = fakeLoss({ finishAfter: 1 });
+    const ended = await workerLoss.runWorkerLossAcceptance(early.ports);
+    expect(ended.state).toBe('unavailable');
+    expect(ended.detail).toContain(`Run ${RUN_ID} ended succeeded after 1 rail calls before the Career bot could be stopped`);
+    expect(early.state.phases).toEqual([]);
+    const offline = fakeLoss({ before: { status: 'offline', heartbeatAt: '' } });
+    const down = await workerLoss.runWorkerLossAcceptance(offline.ports);
+    expect(down.state).toBe('unavailable');
+    expect(down.detail).toContain('is not online in the runtime registry (status offline); no run was started and nothing was stopped');
+    expect(offline.state.posts).toBe(0);
+    const none = await workerLoss.runWorkerLossAcceptance(fakeLoss({ before: null }).ports);
+    expect(none.detail).toContain('(no registration)');
+    const refused = fakeLoss({ refuseStart: { status: 403, error: 'authorization_app_admin_required' } });
+    const notAdmitted = await workerLoss.runWorkerLossAcceptance(refused.ports);
+    expect(notAdmitted.state).toBe('unavailable');
+    expect(notAdmitted.detail).toContain('not admitted to career-hunter (POST /run/score answered HTTP 403 authorization_app_admin_required)');
+    expect(refused.state.phases).toEqual([]);
+  });
+
+  it('is red, stopping nothing, when the run fails before the stop, naming a kernel refusal', async () => {
+    const f = fakeLoss({ perPoll: 0, afterStop: 'fails' });
+    // The bot is up but the run fails on its own before a call is admitted: flip it to a refusal shape.
+    f.ports.api.mockImplementationOnce(async () => {
+      f.state.posts += 1;
+      f.state.run = { runId: RUN_ID, verb: 'score', state: 'failed', reason: 'engine-failed', startedAt: f.state.clock, finishedAt: f.state.clock, railCalls: 0 };
+      return { status: 502, json: { ok: false, error: 'engine-failed', runId: RUN_ID, state: 'failed', out: '', err: 'career worker unavailable: authorization_identity_required\n' } };
+    });
+    const result = await workerLoss.runWorkerLossAcceptance(f.ports);
+    expect(result.state).toBe('fail');
+    expect(result.detail).toContain(`Run ${RUN_ID} failed with reason engine-failed before the Career bot was stopped (the kernel refused the rail call: authorization_identity_required); nothing was stopped`);
+    expect(f.state.phases).toEqual([]);
+  });
+
+  it('judges a heartbeat only when it is online and strictly newer than the record the dead bot left', () => {
+    const seen = registrationAt(EPOCH);
+    expect(workerLoss.heartbeatIsNewer(registrationAt(EPOCH + 1), seen)).toBe(true);
+    expect(workerLoss.heartbeatIsNewer(registrationAt(EPOCH), seen)).toBe(false);
+    expect(workerLoss.heartbeatIsNewer(registrationAt(EPOCH + 5_000, 'offline'), seen)).toBe(false);
+    expect(workerLoss.heartbeatIsNewer(registrationAt(EPOCH - 5_000), null)).toBe(true);
+    expect(workerLoss.heartbeatIsNewer(null, seen)).toBe(false);
+    expect(workerLoss.heartbeatIsNewer({ status: 'online', heartbeatAt: 'never' }, null)).toBe(false);
+  });
+});
+
+describe('--worker-loss: the host half', () => {
+  const BOT = 'oshal-local-career-bot';
+  /** A docker double that records every call and answers as asked. */
+  function fakeDocker(answers: Record<string, { status: number; stdout?: string; stderr?: string }> = {}) {
+    const calls: string[][] = [];
+    const exec = (args: string[]) => { calls.push(args); return Object.assign({ status: 0, stdout: '', stderr: '' }, answers[args[0]]); };
+    return { calls, exec };
+  }
+
+  it('parses phase lines and ignores everything else', () => {
+    expect(workerLoss.parsePhase(`PHASE worker-stop {"runId":"${RUN_ID}","railCalls":1}`)).toEqual({ name: 'worker-stop', data: { runId: RUN_ID, railCalls: 1 } });
+    expect(workerLoss.parsePhase('PHASE worker-start')).toEqual({ name: 'worker-start', data: {} });
+    expect(workerLoss.parsePhase('PHASE worker-start not-json')).toEqual({ name: 'worker-start', data: {} });
+    expect(workerLoss.parsePhase('RESULT {"state":"pass"}')).toBeNull();
+    expect(workerLoss.parsePhase('')).toBeNull();
+  });
+
+  it('stops on the stop phase, starts on the start phase, once each, and has nothing left to do at the end', () => {
+    const docker = fakeDocker();
+    const reactor = workerLoss.createWorkerLossReactor({ bot: BOT, exec: docker.exec, env: {} });
+    for (const line of ['noise', 'PHASE worker-start {}', `PHASE worker-stop {"runId":"${RUN_ID}"}`, 'PHASE worker-stop {}', 'PHASE worker-start {}', 'PHASE worker-start {}', 'RESULT {}']) reactor.onLine(line);
+    expect(docker.calls).toEqual([['stop', BOT], ['start', BOT]]);
+    const state = reactor.finish();
+    expect(docker.calls).toHaveLength(2);
+    expect(state).toEqual({ stop: { status: 0, stderr: '' }, start: { status: 0, stderr: '' } });
+  });
+
+  it('restarts the bot at the end when the proof died between the two phases, and never touches it when it stopped nothing', () => {
+    const died = fakeDocker();
+    const reactor = workerLoss.createWorkerLossReactor({ bot: BOT, exec: died.exec, env: {} });
+    reactor.onLine('PHASE worker-stop {}');
+    expect(died.calls).toEqual([['stop', BOT]]);
+    expect(reactor.finish().start).toEqual({ status: 0, stderr: '' });
+    expect(died.calls).toEqual([['stop', BOT], ['start', BOT]]);
+    const idle = fakeDocker();
+    const quiet = workerLoss.createWorkerLossReactor({ bot: BOT, exec: idle.exec, env: {} });
+    quiet.onLine('RESULT {"state":"unavailable"}');
+    expect(quiet.finish()).toEqual({ stop: null, start: null });
+    expect(idle.calls).toEqual([]);
+  });
+
+  it('reads whether the container is running through docker inspect', () => {
+    expect(workerLoss.containerRunning(BOT, fakeDocker({ inspect: { status: 0, stdout: 'true\n' } }).exec, {})).toBe(true);
+    expect(workerLoss.containerRunning(BOT, fakeDocker({ inspect: { status: 0, stdout: 'false\n' } }).exec, {})).toBe(false);
+    expect(workerLoss.containerRunning(BOT, fakeDocker({ inspect: { status: 1, stderr: 'No such object' } }).exec, {})).toBeNull();
+  });
+
+  it('turns a passing container verdict red when the host could not stop, never restarted, could not restart, or the container is not running afterwards', () => {
+    const pass = { caseId: 'career-worker-rail-worker-loss', state: 'pass', detail: 'the run failed and the bot came back.', evidence: { runId: RUN_ID } };
+    const ok = { stop: { status: 0, stderr: '' }, start: { status: 0, stderr: '' } };
+    expect(workerLoss.hostVerdict(pass, ok, true)).toEqual({ ...pass, evidence: { runId: RUN_ID, host: { ...ok, running: true } } });
+    expect(workerLoss.hostVerdict(pass, { stop: { status: 1, stderr: 'permission denied' }, start: ok.start }, true)).toMatchObject({ state: 'fail', detail: `${pass.detail} HOST: docker stop failed (permission denied).` });
+    expect(workerLoss.hostVerdict(pass, { stop: ok.stop, start: null }, false)).toMatchObject({ state: 'fail', detail: `${pass.detail} HOST: docker start was never issued; the Career bot container is not running after the restart.` });
+    expect(workerLoss.hostVerdict(pass, { stop: ok.stop, start: { status: 1, stderr: 'no such container' } }, null)).toMatchObject({ state: 'fail', detail: `${pass.detail} HOST: docker start failed (no such container); the Career bot container is in an unknown state after the restart.` });
+    expect(workerLoss.hostVerdict(null, ok, true)).toMatchObject({ state: 'fail', detail: 'The container half produced no verdict.' });
+    const unavailable = { caseId: 'career-worker-rail-worker-loss', state: 'unavailable', detail: 'offline before.', evidence: {} };
+    expect(workerLoss.hostVerdict(unavailable, { stop: null, start: null }, true)).toMatchObject({ state: 'unavailable', detail: 'offline before.' });
+  });
+});
+
+describe('stageAndStream', () => {
+  it('stages the files, runs the entry with its flags after --in-container, hands lines to the reactor as they arrive, forwards the PAT by name only, and always unstages', async () => {
+    const argvs: string[][] = [];
+    const envs: Record<string, string | undefined>[] = [];
+    const exec = (args: string[], env: Record<string, string | undefined>) => { argvs.push(args); envs.push(env); return { status: 0, stdout: '', stderr: '' }; };
+    const seen: string[] = [];
+    const spawnChild = async (args: string[], env: Record<string, string | undefined>, timeoutMs: number, onLine: (line: string) => void) => {
+      argvs.push(args); envs.push(env);
+      expect(timeoutMs).toBe(1_000);
+      for (const line of ['PHASE worker-stop {"runId":"r"}', 'PHASE worker-start {}', 'RESULT {"caseId":"c","state":"pass","detail":"d","evidence":{}}']) await onLine(line);
+      return { status: 0, stdout: 'PHASE worker-stop {"runId":"r"}\nPHASE worker-start {}\nRESULT {"caseId":"c","state":"pass","detail":"d","evidence":{}}\n', stderr: '' };
+    };
+    const out = await runner.stageAndStream({ container: 'api', files: [{ src: '/tmp/a.js', rel: 'operations/a.js' }, { src: '/tmp/b.js', rel: 'operations/b.js' }],
+      entry: 'operations/a.js', env: { LOG_LEVEL: 'silent' }, pat: 'oshal_pat_secret_value', timeoutMs: 1_000, args: ['--worker-loss'] },
+    { exec, spawnChild, onLine: (line: string) => { seen.push(line); } });
+    expect(out.status).toBe(0);
+    expect(runner.parseResult(out.stdout)).toMatchObject({ state: 'pass' });
+    expect(seen).toHaveLength(3);
+    const run = argvs.find((args) => args.includes('node'))!;
+    expect(run.slice(-2)).toEqual(['--in-container', '--worker-loss']);
+    expect(run[run.indexOf('-e', run.indexOf('/app')) + 1]).toBe('OSHAL_VERIFY_OPERATOR_PAT');
+    expect(argvs.flat().join(' ')).not.toContain('oshal_pat_secret_value');
+    expect(envs.every((env) => env.OSHAL_VERIFY_OPERATOR_PAT === 'oshal_pat_secret_value')).toBe(true);
+    expect(argvs.filter((args) => args[0] === 'cp')).toHaveLength(2);
+    expect(argvs[argvs.length - 1].slice(0, 4)).toEqual(['exec', 'api', 'rm', '-rf']);
+  });
+
+  it('unstages when the streamed child fails or the staging itself fails', async () => {
+    const argvs: string[][] = [];
+    const exec = (args: string[]) => { argvs.push(args); return { status: 0, stdout: '', stderr: '' }; };
+    const spawnChild = async () => { throw new Error('docker exec exploded'); };
+    await expect(runner.stageAndStream({ container: 'api', files: [{ src: '/tmp/a.js', rel: 'operations/a.js' }], entry: 'operations/a.js', env: {}, pat: 'oshal_pat_x', timeoutMs: 1_000 },
+      { exec, spawnChild })).rejects.toThrow('docker exec exploded');
+    expect(argvs[argvs.length - 1].slice(2, 4)).toEqual(['rm', '-rf']);
+    const failing: string[][] = [];
+    const failExec = (args: string[]) => { failing.push(args); return { status: args[0] === 'cp' ? 1 : 0, stdout: '', stderr: 'no such container' }; };
+    const out = await runner.stageAndStream({ container: 'api', files: [{ src: '/tmp/a.js', rel: 'operations/a.js' }], entry: 'operations/a.js', env: {}, pat: 'oshal_pat_x', timeoutMs: 1_000 },
+      { exec: failExec, spawnChild: async () => { throw new Error('must not run'); } });
+    expect(out.status).toBe(2);
+    expect(failing[failing.length - 1].slice(2, 4)).toEqual(['rm', '-rf']);
   });
 });
 
