@@ -862,5 +862,11 @@
     "title": "One parts model across Circuit Lab, Animatronics and Embodied (2026-09-14)",
     "pr": "224 (store), 270 (store)",
     "evidence": "Store #224 (e8a3dca9) and #270 (12eb9cf9) are merged; on store main 88aa85e5 Circuit Lab's SG90 row and both brushless motor rows read their owners' rows (animatronics, embodied) and restate no name, mass or price, guarded by circuit-lab tests/driver-catalog.test.js and tests/shared-parts.test.js and embodied tests/engine-parts-catalog.test.js, with no scripts/ guard changed by either PR. The Done-when calls for no live result and no live receipt was taken (oshal-local-api was stopped at audit time, so the GET of /api/circuit-lab/catalog/drivers could not be read)."
+  },
+  {
+    "date": "2026-09-29",
+    "title": "Kernel route-auth spec red on main: expects more kernel route declarations than exist (2026-09-29)",
+    "pr": "938",
+    "evidence": "PR #938 (21427e0, merged as 34bb2cbc1c7075c4c7ea84e91c8c60a6de4a8c3f) replaces the stale greater-than-three floor with the exact remaining Security manifest/module/factory/path/operator-auth tuple. Actual YAML inventory and server mount agree; Engineering's empty route declarations are intentional framework ownership. Original failure reproduced (16 pass/1 fail); repaired spec 17/17. Deleting the actual Security declaration and substituting a different mount while retaining its count each produced 16 pass/1 expected failure; exact YAML restored to blob90a957d388813bebd4a7708be38b96cb45c672d8. Focused tests re-run on merged main34bb2cbc: 17/17, no skips, exit0. Independent source review, normal publish gate and archived committed-HEAD typecheck passed without bypass. Tests/README.md and docs/governance/real-boundary-regression-audit.md record commands and limits. This item's source-contract done-when is satisfied; no HTTP, database, browser, installed-authorization or full-suite claim."
   }
 ]
