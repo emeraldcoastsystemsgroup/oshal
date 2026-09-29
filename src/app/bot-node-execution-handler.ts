@@ -31,6 +31,7 @@
  * 26 | maintainer@emeraldcoastsystemsgroup.com | Bill and relay the real usage split when TaskController reports one. The cost record and the HTTP usage block wrote `inputTokens = totalTokens, outputTokens = 0, cacheReadTokens = 0` unconditionally, so chat_tasks could never show the invariant-preamble cache's saving (fewer input tokens, a cached-token count). resolveExecutionUsage maps apiMetrics.inputTokens/outputTokens/cacheReads through when present and keeps the legacy total-as-input mapping when the runtime reports only a total, so an agentic result is billed exactly as before.
  * 27 | maintainer@emeraldcoastsystemsgroup.com | Mark a direct (interactive) dispatch hostToolsOnly. Such a turn is conversation plus the tools the agentic loop brokers itself (Jarvis's conversation_query/conversation_fetch); it never needs the CLI's own file or command tools. On the Antigravity brain those native tools were what a recall ask spent 10 min 45 s on before a headless read_file denial killed it. Protected work keeps its own path (toolLess + the controller MCP bridge) and is never marked.
  * 28 | maintainer@emeraldcoastsystemsgroup.com | Read a message text by its type instead of assuming a string. The any-bot layer is untyped JavaScript, and its parser hands back a Number or Boolean for a bare numeric or true/false value; the response extraction called m.text.trim() on it and threw "m.text.trim is not a function", so a Jarvis answer of 5 was reported as a failed execution with no answer (live case jarvis-cache, 2026-09-29, 3 of 3). The source is fixed in AgenticController; this is the guard on the reading side: a finite number or a boolean is delivered as its text, any other non-string value is passed over, and the declared message type says text is unknown so the compiler requires the check.
+ * 29 | maintainer@emeraldcoastsystemsgroup.com | Bind agentic capture to the producing bot identity supplied by runtime composition, never an envelope target or payload/frame field. Without that trusted identity capture remains unbound and tail replay keeps failing closed.
  */
 
 /**
@@ -170,6 +171,8 @@ let activeExecutions = 0;
  * cost attribution, and prompt assembly decisions.
  */
 export interface BotNodeExecutionDeps {
+  /** Actual executing bot from runtime composition; absent stays unbound, never inferred from a request. */
+  runtimeAgentId?: string;
   /** Trusted runtime wrapper; raw payloads cannot install protected execution authority. */
   runApplicationExecution?: (envelope: MeshEnvelope, operation: () => Promise<EnvelopeExecutionResult>) => Promise<EnvelopeExecutionResult>;
   /** Runtime-owned guard over local and requested bot identities, shared by HTTP/mesh/batch. */
@@ -465,6 +468,8 @@ export function createBotNodeExecutionHandler(
       const agenticMode = payload?.agenticMode !== undefined ? Boolean(payload.agenticMode) : true;
       const result = await deps.anyBotTaskController.processMessage(task.id, { text: assembledPrompt }, {
           agenticMode,
+          // Capture must point back to this executor, not a caller-selected target or supplied frame.
+          agentId: deps.runtimeAgentId,
           autoApprove: protectedExecution ? {} : { 'use_mcp_tool': true },
           ...(protectedExecution ? { toolLess: true, assertCurrentAuthorization: () => protectedExecution.check() } : {}),
           // An interactive turn's tools are brokered by the agentic loop itself; a CLI brain gets none
