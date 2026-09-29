@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the ADR-170 rating label: the closed tier/generation/degrade/basis sets, readManifest accepting a valid `rating:` block and refusing each malformed shape (unknown tier, memory low > high, bytes typed as MiB, duplicate id, `reduced` without text, unknown keys), a missing block staying warn-only, every in-repo kernel manifest rated, and the REAL ledger generator over a temp checkout going red on a stale file and on an unrated manifest.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Expected ledger rows follow the generator dropping its Version column.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -147,8 +148,8 @@ describe('the ledger generator (real script, temp checkout)', () => {
       expect(run(['--core', dir, '--out', out]).code).toBe(0);
       const text = readFileSync(out, 'utf8');
       expect(text).toContain('Coverage: 2 manifests, 2 rated, 0 unrated.');
-      expect(text).toContain('| a | 1.0.0 | 64 / 512 (declared) | digest | daily digest | T3 (context ≥ 16384) | none | reduced: T2 summary over code-ranked signals | not yet measured | none recorded |');
-      expect(text).toContain('| b | 2.0.0 | 16 / 64 (declared) | none (T0, no model in the loop) |');
+      expect(text).toContain('| a | 64 / 512 (declared) | digest | daily digest | T3 (context ≥ 16384) | none | reduced: T2 summary over code-ranked signals | not yet measured | none recorded |');
+      expect(text).toContain('| b | 16 / 64 (declared) | none (T0, no model in the loop) |');
       expect(text).not.toMatch(/\d{4}-\d{2}-\d{2}/); // no dates: the check must not churn per commit
       expect(run(['--core', dir, '--check', out]).code).toBe(0);
     } finally {
