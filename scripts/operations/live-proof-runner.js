@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the host half every live acceptance proof shares: read the operator automation PAT from the environment or the box's .env BY NAME (never printed), stage the proof and its case module into the running api container under a private /tmp directory, run it there with the PAT forwarded by name (`docker exec -e NAME`, so the value is never on a command line), relay its single RESULT line, and remove the staged files. The same shape scripts/lib/deploy-verify.sh uses for the deploy probe.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add stageAndStream beside stageAndRun: the same staging, argv and PAT-by-name contract, but the proof's stdout is read line by line WHILE it runs so the host can act on a phase line a long-running proof prints (the Career rail worker-loss proof asks the host to stop and restart the Career bot container mid-run) before the proof's verdict arrives. stageAndRun keeps its exact argv (`... node <entry> --in-container`); both now share one staging and one removal, and an entry may carry extra flags after --in-container. The docker runner is exported for the same host scripts.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | readNamedToken beside readOperatorPat: the same environment-then-.env read for ANY named token, so the live-acceptance runner can read a second caller's token (OSHAL_VERIFY_SECOND_PAT) exactly the way the operator token is read. readOperatorPat is now that read with the operator's name, unchanged in behaviour. The name must be a plain environment variable name, since it is matched against the .env lines.
  */
 
 'use strict';
@@ -22,24 +23,41 @@ const DEFAULT_API_CONTAINER = 'oshal-local-api';
 /** Prefix of the one line an in-container proof prints as its verdict. */
 const RESULT_PREFIX = 'RESULT ';
 
+/** A plain environment variable name: the only shape readNamedToken matches against .env lines. */
+const TOKEN_NAME_RE = /^[A-Z][A-Z0-9_]{0,80}$/;
+
+/**
+ * @description Resolve a named token without printing it: an exported environment value wins,
+ * otherwise the first `<NAME>=` line of the .env file, tolerating the quoting and CRLF a
+ * hand-edited .env carries (the same rules as deploy-verify.sh).
+ * @param {NodeJS.ProcessEnv} env - The process environment.
+ * @param {string} envFile - Path of the .env file to fall back to.
+ * @param {string} name - The variable that carries the token.
+ * @returns {string} The token, or '' when neither source has one.
+ * @throws {Error} For a name that is not a plain environment variable name.
+ */
+function readNamedToken(env, envFile, name) {
+  if (typeof name !== 'string' || !TOKEN_NAME_RE.test(name)) throw new Error(`invalid token variable name: ${String(name).slice(0, 80)}`);
+  const direct = String(env[name] || '').trim();
+  if (direct) return direct;
+  let text = '';
+  try { text = fs.readFileSync(envFile, 'utf8'); } catch { return ''; }
+  const line = text.split(/\n/).find((row) => new RegExp(`^\\s*${name}=`).test(row));
+  if (!line) return '';
+  let value = line.slice(line.indexOf('=') + 1).replace(/\r$/, '').trim();
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
+  return value.trim();
+}
+
 /**
  * @description Resolve the operator PAT without printing it: an exported environment value wins,
- * otherwise the first `OSHAL_VERIFY_OPERATOR_PAT=` line of the .env file, tolerating the quoting
- * and CRLF a hand-edited .env carries (the same rules as deploy-verify.sh).
+ * otherwise the first `OSHAL_VERIFY_OPERATOR_PAT=` line of the .env file.
  * @param {NodeJS.ProcessEnv} env - The process environment.
  * @param {string} envFile - Path of the .env file to fall back to.
  * @returns {string} The token, or '' when neither source has one.
  */
 function readOperatorPat(env, envFile) {
-  const direct = String(env[PAT_ENV] || '').trim();
-  if (direct) return direct;
-  let text = '';
-  try { text = fs.readFileSync(envFile, 'utf8'); } catch { return ''; }
-  const line = text.split(/\n/).find((row) => new RegExp(`^\\s*${PAT_ENV}=`).test(row));
-  if (!line) return '';
-  let value = line.slice(line.indexOf('=') + 1).replace(/\r$/, '').trim();
-  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
-  return value.trim();
+  return readNamedToken(env, envFile, PAT_ENV);
 }
 
 /**
@@ -212,5 +230,5 @@ function emitResult(result) {
 }
 
 module.exports = {
-  PAT_ENV, DEFAULT_API_CONTAINER, RESULT_PREFIX, readOperatorPat, docker, stageAndRun, stageAndStream, parseResult, reportAndExit, emitResult,
+  PAT_ENV, DEFAULT_API_CONTAINER, RESULT_PREFIX, readNamedToken, readOperatorPat, docker, stageAndRun, stageAndStream, parseResult, reportAndExit, emitResult,
 };

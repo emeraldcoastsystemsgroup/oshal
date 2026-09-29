@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The closed file-probe set on real files: `vids.export` resolves only a lower-case UUID under the configured workspace root, answers present/absent from disk, refuses any other probe name, a traversal or an upper-case id (in the helper's request validation too), and the helper's `file-state` op runs with no pool and no identity scope. The runner reports each reply's raw byte length and sha256 beside the decoded text, and its `files` port asks the helper for a named probe, never a path.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The `--expect-store-bound` flag parses into the case options every selected case receives (expectStoreBound), false when absent.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The `raw` port sends exact bytes under the one content type it was given, with the token, the way the files browser uploads.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | The `second` port. OSHAL_VERIFY_SECOND_PAT is read by name from the environment or a real .env file on disk (quoted, CRLF), the same read as the operator token, and a name that is not a plain variable name is refused. bindPorts binds `second` only when that token is present: its requests carry the second token and never the operator's, the operator's ports keep the operator's, it carries the subject its own whoami resolved, and a second token that resolves to nobody still binds (the case reports the refusal). Without the token there is no port and no extra request. The runner's own entry, given a .env with both tokens, resolves both callers before the case runs and prints neither token nor either subject. Fetch is a recording double; the real companion is the host run with both tokens on the box.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
@@ -21,11 +22,30 @@ const common = requireCjs('../../scripts/lib/live-acceptance-common.js');
 const sql = requireCjs('../../scripts/lib/live-acceptance-sql.js');
 const helper = requireCjs('../../scripts/lib/live-acceptance-container.js');
 const runner = requireCjs('../../scripts/operations/live-acceptance.js');
+const proofRunner = requireCjs('../../scripts/operations/live-proof-runner.js');
 const { CASES } = requireCjs('../../scripts/lib/live-acceptance-cases.js');
 
 const OWNER = 'fixture|runner-owner';
+const SECOND_OWNER = 'fixture|runner-second';
 const EXPORT_ID = '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d';
 const TOKEN = 'oshal_pat_fixture_runner_0000';
+const SECOND_TOKEN = 'oshal_pat_fixture_second_0000';
+const BASE = 'http://127.0.0.1:35457';
+
+/** A recording fetch whose whoami answers by the bearer token it was sent; `absent` routes answer 404. */
+function whoamiFetch(subjects: Record<string, string>, absent: string[] = []) {
+  const seen: Array<{ url: string; authorization: string | undefined }> = [];
+  const fetchImpl = async (url: string, init: RequestInit) => {
+    const authorization = (init.headers as Record<string, string>).authorization;
+    seen.push({ url, authorization });
+    const sub = subjects[String(authorization).replace(/^Bearer /, '')];
+    if (absent.some((route) => url.endsWith(route))) return new Response('{"error":"not_found"}', { status: 404, headers: { 'content-type': 'application/json' } });
+    if (!url.endsWith('/api/cli-tokens/whoami')) return new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } });
+    return sub ? new Response(JSON.stringify({ sub }), { status: 200, headers: { 'content-type': 'application/json' } })
+      : new Response('{"error":"unauthorized"}', { status: 401, headers: { 'content-type': 'application/json' } });
+  };
+  return { fetchImpl, seen };
+}
 const scratch: string[] = [];
 afterEach(() => { for (const dir of scratch.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
@@ -219,6 +239,81 @@ describe('the host runner', () => {
     expect(calls.flatMap((c) => c.args).some((a) => a.includes(OWNER) || a.includes('oshal_pat_'))).toBe(false);
     expect(calls.map((c) => c.args[0])).toEqual(['exec', 'cp', 'cp', 'cp', 'exec', 'exec']);
     expect(calls[calls.length - 1].args.slice(-3, -1)).toEqual(['rm', '-rf']);
+  });
+
+  it('reads the second caller token by name, from the environment or the .env, as the operator token is read', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'live-acceptance-env-'));
+    scratch.push(dir);
+    const envFile = path.join(dir, '.env');
+    writeFileSync(envFile, `OTHER=1\r\nOSHAL_VERIFY_OPERATOR_PAT='${TOKEN}'\r\n  OSHAL_VERIFY_SECOND_PAT="${SECOND_TOKEN}"\r\nOSHAL_VERIFY_SECOND_PAT_OLD=no\r\n`);
+    expect(common.SECOND_PAT_ENV).toBe('OSHAL_VERIFY_SECOND_PAT');
+    expect(proofRunner.readNamedToken({}, envFile, common.SECOND_PAT_ENV)).toBe(SECOND_TOKEN);
+    expect(proofRunner.readNamedToken({ OSHAL_VERIFY_SECOND_PAT: ' oshal_pat_fixture_second_env ' }, envFile, common.SECOND_PAT_ENV)).toBe('oshal_pat_fixture_second_env');
+    expect(proofRunner.readOperatorPat({}, envFile)).toBe(TOKEN);
+    expect(proofRunner.readNamedToken({}, path.join(dir, 'missing.env'), common.SECOND_PAT_ENV)).toBe('');
+    writeFileSync(envFile, `OSHAL_VERIFY_OPERATOR_PAT=${TOKEN}\n`);
+    expect(proofRunner.readNamedToken({}, envFile, common.SECOND_PAT_ENV)).toBe('');
+    for (const bad of ['', 'lower_case', 'A.*', 'OSHAL VERIFY', undefined]) expect(() => proofRunner.readNamedToken({}, envFile, bad)).toThrow('invalid token variable name');
+  });
+
+  it('binds a second caller only when its token is present, and that port never sends the operator token', async () => {
+    const { fetchImpl, seen } = whoamiFetch({ [TOKEN]: OWNER, [SECOND_TOKEN]: SECOND_OWNER });
+    const bound = await runner.bindPorts(BASE, TOKEN, SECOND_TOKEN, fetchImpl);
+    expect(bound.error).toBeUndefined();
+    expect(Object.keys(bound.ports.second).sort()).toEqual(['api', 'ownerSub', 'upload']);
+    expect(bound.ports.second.ownerSub).toBe(SECOND_OWNER);
+    expect(bound.ports.ownerSub).toBe(OWNER);
+    seen.length = 0;
+    await bound.ports.second.api('POST', '/api/education/classes/x/enroll');
+    await bound.ports.second.upload('/api/artifacts/handles/upload', { type: 'application/pdf' }, { name: 'a.pdf', type: 'application/pdf', bytes: Buffer.from('%PDF-') });
+    await bound.ports.api('GET', '/api/education/classes');
+    expect(seen.map((s) => s.authorization)).toEqual([`Bearer ${SECOND_TOKEN}`, `Bearer ${SECOND_TOKEN}`, `Bearer ${TOKEN}`]);
+    expect(seen.every((s) => s.url.startsWith(`${BASE}/`))).toBe(true);
+    bound.dispose();
+  });
+
+  it('binds no second port and sends no extra request without the second token', async () => {
+    const { fetchImpl, seen } = whoamiFetch({ [TOKEN]: OWNER });
+    const bound = await runner.bindPorts(BASE, TOKEN, '', fetchImpl);
+    expect('second' in bound.ports).toBe(false);
+    expect(seen).toEqual([{ url: `${BASE}/api/cli-tokens/whoami`, authorization: `Bearer ${TOKEN}` }]);
+    expect(await runner.secondCallerPort(BASE, '', fetchImpl)).toBeNull();
+    // A second token that resolves to nobody still binds: the case reports the refusal it then meets.
+    const unresolved = await runner.bindPorts(BASE, TOKEN, 'oshal_pat_fixture_revoked_0000', fetchImpl);
+    expect(unresolved.ports.second.ownerSub).toBe('');
+    expect(await runner.bindPorts(BASE, 'oshal_pat_fixture_unknown_0000', SECOND_TOKEN, fetchImpl)).toEqual({ error: `the operator token did not resolve to a caller at ${BASE} (HTTP 401)` });
+  });
+
+  it('reads both tokens from the .env by name when it runs a case, binds the second caller and prints neither token', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'live-acceptance-main-'));
+    scratch.push(dir);
+    const envFile = path.join(dir, '.env');
+    const whoami = `${BASE}/api/cli-tokens/whoami`;
+    const runMain = async (envText: string) => {
+      writeFileSync(envFile, envText);
+      const { fetchImpl, seen } = whoamiFetch({ [TOKEN]: OWNER, [SECOND_TOKEN]: SECOND_OWNER }, ['/api/little-monsters/home-summary']);
+      const lines: string[] = [];
+      const saved = { ...process.env };
+      const savedFetch = globalThis.fetch;
+      try {
+        delete process.env.OSHAL_VERIFY_OPERATOR_PAT;
+        delete process.env.OSHAL_VERIFY_SECOND_PAT;
+        Object.assign(process.env, { OSHAL_VERIFY_ENV_FILE: envFile, OSHAL_VERIFY_BASE_URL: BASE });
+        globalThis.fetch = fetchImpl as unknown as typeof fetch;
+        expect(await runner.main(['lm-class-material'], (l: string) => lines.push(l))).toBe(3);
+      } finally {
+        process.env = saved;
+        globalThis.fetch = savedFetch;
+      }
+      return { seen, printed: lines.join('\n') };
+    };
+    const both = await runMain(`OSHAL_VERIFY_OPERATOR_PAT=${TOKEN}\nOSHAL_VERIFY_SECOND_PAT=${SECOND_TOKEN}\n`);
+    expect(both.seen).toEqual([{ url: whoami, authorization: `Bearer ${TOKEN}` }, { url: whoami, authorization: `Bearer ${SECOND_TOKEN}` },
+      { url: `${BASE}/api/little-monsters/home-summary`, authorization: `Bearer ${TOKEN}` }]);
+    expect(both.printed).toContain('UNAVAILABLE lm-class-material (lm-class-material-live): Little Monsters is not installed on this deployment.');
+    for (const secret of [TOKEN, SECOND_TOKEN, OWNER, SECOND_OWNER]) expect(both.printed).not.toContain(secret);
+    const one = await runMain(`OSHAL_VERIFY_OPERATOR_PAT=${TOKEN}\n`);
+    expect(one.seen.map((s) => s.authorization)).toEqual([`Bearer ${TOKEN}`, `Bearer ${TOKEN}`]);
   });
 
   it('parses --expect-store-bound into the options every case receives', () => {

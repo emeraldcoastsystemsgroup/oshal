@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - live acceptance for "ADR-139 - the little-monsters class-materials destination": as the caller (a Little Monsters teacher or admin) create one tagged synthetic class, carry one generated PDF in a Send-to handle (POST /api/artifacts/handles/upload, the path a source with no serve URL uses), hand it to the installed package's POST /api/education/import-artifact with that class, and require 201 with shareStatus approved and the material listed in the class's shared materials. Cleanup deletes the material and the class through the package's own routes (the class delete also removes stored files, grounding collections and the class tool) and proves both gone; the handle is memory-only and expires on its own TTL.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Two legs and an optional third, one tagged class. The handle leg above stays. The files leg (live-acceptance-lm-class-material-files.js) proves the entry's Done-when as written: the PDF goes into the caller's oshal storage through the files browser's upload route, headless Chromium sends it from the files browser through Send to... "File into a class", the shell lands on the Little Monsters picker, the class is chosen THERE, and the destination's own import answers 201 approved and is listed; a carried-bytes handle or a class not chosen in the dispatch fails the leg. On a runner without Chromium (the Lab) that leg is a named gap and the case is degraded, never pass. The optional non-teacher leg runs only when the runner binds a second caller (`ports.second`, an api + upload pair as the owner of OSHAL_VERIFY_SECOND_PAT) who is enrolled in the tagged class: that caller's import must come back requested, stay out of the class's shared materials and appear in the teacher's share requests; a runner that binds no such port, or a second caller outside the class, reports the leg unavailable by name, and it does not decide the verdict. Cleanup deletes every material through its owner's port, the class, and the storage file with a folder read-back.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The non-teacher leg enrolls its own second caller. It used to require that caller to be enrolled in the tagged class already, and the run mints that class seconds earlier: the package enrolls only the creator of a class and lists a class for a non-admin only once enrolled, so for every real student token the leg answered unavailable and told the operator to enroll a student in a class that did not exist before the run. Now the second caller joins through the package's own class-bank route (POST /api/education/classes/:classId/enroll; a class a teacher or admin creates is published, so it is open), must then be offered the class by GET /api/education/classes (what the picker lists), and files the document. Only a refused enroll (4xx) is the named gap; an enroll that answers 201 without taking, or a 5xx, fails the leg. A second token that is the operator's own is a named gap before any write. Cleanup takes the second caller out again through POST /api/education/classes/:classId/leave and reads the class bank back as that caller; the enrollment is on the receipt.
  */
 
 'use strict';
@@ -17,7 +18,7 @@ const KEY = 'lm-class-material';
 const TITLE = 'Little Monsters: a PDF from the files browser (and a Send-to handle) lands in a class as approved material';
 const NEEDS = Object.freeze(['api', 'upload']);
 const EDU = '/api/education';
-const SECOND_PAT_ENV = 'OSHAL_VERIFY_SECOND_PAT';
+const { SECOND_PAT_ENV } = common;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
@@ -128,8 +129,47 @@ async function importMaterial(ports, fixture, classId, ledger) {
 }
 
 /**
- * @description The optional non-teacher leg, as the runner's second caller: the import must come back
- * requested, stay out of the shared materials and show in the teacher's share requests.
+ * @description Whether a class list answer names a class.
+ * @param {{json: object}} res - The answer of GET /api/education/classes.
+ * @param {string} classId - The class.
+ * @returns {boolean} True when the class is listed.
+ */
+function listsClass(res, classId) {
+  const classes = Array.isArray(res.json && res.json.classes) ? res.json.classes : (Array.isArray(res.json) ? res.json : []);
+  return classes.some((c) => c && (c.class_id === classId || c.classId === classId));
+}
+
+/**
+ * @description Enroll the second caller in the tagged class through the package's own class-bank
+ * route. This run minted the class, so nobody but its creator can be in it beforehand: the case
+ * enrolls the caller itself, and only a refused enroll is the named gap.
+ * @param {object} ports - ownerSub (the operator) and second (api, ownerSub).
+ * @param {string} classId - The fixture class.
+ * @param {common.CleanupLedger} ledger - The run's ledger.
+ * @returns {Promise<{state: 'enrolled'|'fail'|'unavailable', detail: string}>} The enrollment.
+ */
+async function enrollSecondCaller(ports, classId, ledger) {
+  const second = ports.second;
+  if (second.ownerSub && second.ownerSub === ports.ownerSub) {
+    return { state: 'unavailable', detail: `the second caller (${SECOND_PAT_ENV}) is the operator's own identity; the leg needs the token of another caller, a Little Monsters student` };
+  }
+  const route = `${EDU}/classes/${classId}/enroll`;
+  const res = await second.api('POST', route);
+  if (res.status !== 201) {
+    const said = `POST ${route} answered HTTP ${res.status}${res.json && res.json.error ? ` "${String(res.json.error).slice(0, 120)}"` : ''}`;
+    if (res.status < 400 || res.status > 499) return { state: 'fail', detail: `the second caller's enrollment did not complete: ${said}` };
+    return { state: 'unavailable', detail: `the second caller (${SECOND_PAT_ENV}) was refused enrollment in the tagged class: ${said}; its owner needs a Little Monsters student grant in the operator's school` };
+  }
+  ledger.created('lm-enrollment', classId, 'the second caller, through the class bank');
+  const mine = await second.api('GET', `${EDU}/classes`);
+  if (!listsClass(mine, classId)) return { state: 'fail', detail: `the second caller enrolled (201) and the tagged class ${classId} is not among that caller's classes (GET ${EDU}/classes HTTP ${mine.status})` };
+  return { state: 'enrolled', detail: '' };
+}
+
+/**
+ * @description The optional non-teacher leg, as the runner's second caller: that caller joins the
+ * tagged class, and the import must come back requested, stay out of the shared materials and show
+ * in the teacher's share requests.
  * @param {object} ports - api (the teacher) and, when bound, second (api + upload).
  * @param {ReturnType<typeof createFixture>} fixture - The run's fixture.
  * @param {string} classId - The fixture class.
@@ -141,11 +181,8 @@ async function secondCallerLeg(ports, fixture, classId, ledger) {
   if (!second || typeof second.api !== 'function' || typeof second.upload !== 'function') {
     return { state: 'unavailable', detail: `this runner binds no second caller (${SECOND_PAT_ENV}, a Little Monsters student's token)`, materialId: null };
   }
-  const mine = await second.api('GET', `${EDU}/classes`);
-  const classes = Array.isArray(mine.json && mine.json.classes) ? mine.json.classes : [];
-  if (!classes.some((c) => c && (c.class_id === classId || c.classId === classId))) {
-    return { state: 'unavailable', detail: `the second caller (${SECOND_PAT_ENV}) is not enrolled in the tagged class ${classId} (GET ${EDU}/classes HTTP ${mine.status}); enroll that student through Little Monsters first`, materialId: null };
-  }
+  const enrollment = await enrollSecondCaller(ports, classId, ledger);
+  if (enrollment.state !== 'enrolled') return { state: enrollment.state, detail: enrollment.detail, materialId: null };
   const imported = await importHandle(second, { name: fixture.secondFileName, pdf: fixture.secondPdf }, classId, ledger);
   const { materialId } = imported;
   if (imported.status !== 201 || !materialId) return { state: 'fail', detail: `the second caller's import-artifact answered HTTP ${imported.status}: ${(imported.json && imported.json.error) || 'no material'}`, materialId };
@@ -154,13 +191,35 @@ async function secondCallerLeg(ports, fixture, classId, ledger) {
   if (shared.listed) return { state: 'fail', detail: `the second caller's requested material ${materialId} is already in the class's shared materials`, materialId };
   const requests = await listedIn(ports, `${EDU}/classes/${classId}/share-requests`, materialId);
   if (!requests.listed) return { state: 'fail', detail: `the second caller's requested material ${materialId} is not in the teacher's share requests (HTTP ${requests.status})`, materialId };
-  return { state: 'pass', detail: `import-artifact answered 201 requested and material ${materialId} waits in the teacher's share requests, out of the shared materials`, materialId };
+  return { state: 'pass', detail: `the second caller enrolled through the class bank, import-artifact answered 201 requested and material ${materialId} waits in the teacher's share requests, out of the shared materials`, materialId };
 }
 
 /**
- * @description Delete every material through its owner, then the class, then the storage file.
+ * @description Take the second caller out of the tagged class through the package's own leave route
+ * and read the class bank back as that caller: its row for the class must not say enrolled.
+ * @param {{api: Function}} second - The second caller's port.
+ * @param {string} classId - The fixture class.
+ * @param {common.CleanupLedger} ledger - The run's ledger.
+ * @returns {Promise<void>} Resolves when recorded.
+ */
+async function leaveClass(second, classId, ledger) {
+  await ledger.attempt(`enrollment in class ${classId} leave`, async () => {
+    const res = await second.api('POST', `${EDU}/classes/${classId}/leave`);
+    if (res.status !== 200) return `POST ${EDU}/classes/${classId}/leave answered HTTP ${res.status}`;
+    const bank = await second.api('GET', `${EDU}/catalog`);
+    if (bank.status !== 200) return `GET ${EDU}/catalog answered HTTP ${bank.status} after the second caller left class ${classId}`;
+    const rows = Array.isArray(bank.json && bank.json.classes) ? bank.json.classes : [];
+    if (rows.some((c) => c && c.class_id === classId && c.enrolled === true)) return `the second caller is still enrolled in class ${classId} after leaving`;
+    ledger.removed('lm-enrollment', classId);
+    return null;
+  });
+}
+
+/**
+ * @description Delete every material through its owner, take the second caller out of the class,
+ * then delete the class and the storage file.
  * @param {object} ports - api (and second when bound).
- * @param {{classId: string, materials: Array<{id: string, owner: object}>, storageFile: string|null}} made - What the run created.
+ * @param {{classId: string, materials: Array<{id: string, owner: object}>, storageFile: string|null, enrolled: boolean}} made - What the run created.
  * @param {common.CleanupLedger} ledger - The run's ledger.
  * @returns {Promise<void>} Resolves when recorded.
  */
@@ -173,14 +232,13 @@ async function cleanUp(ports, made, ledger) {
       return null;
     });
   }
+  if (made.enrolled) await leaveClass(ports.second, made.classId, ledger);
   await ledger.attempt(`class ${made.classId} delete`, async () => {
     const res = await ports.api('DELETE', `${EDU}/classes/${made.classId}`);
     if (res.status !== 200) return `DELETE ${EDU}/classes/${made.classId} answered HTTP ${res.status}`;
     const info = await ports.api('GET', `${EDU}/classes/${made.classId}/info`);
     if (info.status === 200) return `class ${made.classId} still answers after the delete`;
-    const listed = await ports.api('GET', `${EDU}/classes`);
-    const classes = Array.isArray(listed.json && listed.json.classes) ? listed.json.classes : (Array.isArray(listed.json) ? listed.json : []);
-    if (classes.some((c) => c && (c.class_id === made.classId || c.classId === made.classId))) return `class ${made.classId} is still listed after the delete`;
+    if (listsClass(await ports.api('GET', `${EDU}/classes`), made.classId)) return `class ${made.classId} is still listed after the delete`;
     ledger.removed('lm-class', made.classId);
     return null;
   });
@@ -242,9 +300,10 @@ async function run(ports, options = {}) {
   const ran = await runLegs(ports, fixture, classId, ledger);
   const verdict = decide(ran.legs);
   const storageFile = ledger.entries.some((e) => e.kind === 'oshal-local-file' && e.id === fixture.browserFileName) ? fixture.browserFileName : null;
-  await cleanUp(ports, { classId, materials: ran.materials, storageFile }, ledger);
+  const enrolled = ledger.entries.some((e) => e.kind === 'lm-enrollment' && e.id === classId);
+  await cleanUp(ports, { classId, materials: ran.materials, storageFile, enrolled }, ledger);
   return common.finish(CASE_ID, { state: verdict.state, detail: `Class ${fixture.className}: ${verdict.detail}.` }, ledger,
     { classId, materials: ran.materials.map((m) => m.id), bytes: fixture.pdf.length, files: ran.filesEvidence, secondCaller: ran.legs.second.state });
 }
 
-module.exports = { CASE_ID, KEY, TITLE, NEEDS, SECOND_PAT_ENV, buildPdf, createFixture, importMaterial, secondCallerLeg, decide, run };
+module.exports = { CASE_ID, KEY, TITLE, NEEDS, SECOND_PAT_ENV, buildPdf, createFixture, importMaterial, enrollSecondCaller, secondCallerLeg, decide, run };

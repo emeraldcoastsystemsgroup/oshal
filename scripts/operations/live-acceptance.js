@@ -9,6 +9,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Every HTTP reply also carries `byteLength` and `sha256` of its raw body (the text is decoded from the same bytes, as fetch's text() would), so a case can prove a binary route served exact bytes: the vids-publish case compares the anonymous public read with the MP4 it uploaded. And a `files` port over the helper's new `file-state` op: whether a NAMED probe's file (never a path) exists in the api container.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | `--expect-store-bound`: the flag every selected case receives as the `expectStoreBound` option (caseOptions). The token-chase-replay case then also requires a store-bound captured run and storeVersion {bound: true, reproduced: true}; the deploy lane sets it after TOKEN_CHASE_OWNER_STORE_SNAPSHOT=on on one bot. Every other case ignores the option.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | A `raw` HTTP port beside `api` and `upload`: exact bytes under one content type, the way the files browser uploads (`POST /api/files/upload` reads the raw body), so the class-material case can put its PDF into the caller's own oshal storage through the route the surface uses. The browser session takes an optional viewport (`session(fn, { viewport })`): the default stays the 390 x 844 phone, and the cockpit shell, which the class-material dispatch navigates through, is opened at a desktop width.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | A `second` port, bound only when OSHAL_VERIFY_SECOND_PAT is present: that token is read by name from the environment or the box's .env exactly as the operator token is, and the port sends the same JSON and multipart requests as ITS owner, never the operator. The class-material case files a document as that caller to prove a non-teacher's share is a request; no runner bound the port, so that leg could only ever report itself unavailable. The port also carries its owner's subject, so a case can refuse a token that is the operator's own. Without the variable nothing changes: no port, no extra request.
  */
 
 'use strict';
@@ -21,6 +22,8 @@
 //   node scripts/operations/live-acceptance.js token-chase-replay --expect-store-bound
 // Knobs: OSHAL_VERIFY_BASE_URL (default http://127.0.0.1:35457), OSHAL_VERIFY_API_CONTAINER (default
 // oshal-local-api), OSHAL_VERIFY_JARVIS_CONTAINER (default oshal-local-jarvis-bot), OSHAL_VERIFY_ENV_FILE.
+// Optional: OSHAL_VERIFY_SECOND_PAT, another caller's token (environment or .env, read by name like the
+// operator's). When present the cases get a `second` port that acts as that caller.
 // Exit: 0 all pass, 1 any fail, 2 not runnable (no token, unknown case), 3 no fail but not all pass.
 
 const crypto = require('node:crypto');
@@ -250,19 +253,40 @@ async function recordMeasurement(result, ports, write) {
 }
 
 /**
+ * @description The `second` port: the same JSON and multipart requests as ANOTHER caller, the owner of
+ * OSHAL_VERIFY_SECOND_PAT, so a case can act as someone who is not the operator. It carries that
+ * caller's subject only so a case can tell the two callers apart; an unresolved token leaves it
+ * empty and the case's first request as that caller reports the refusal.
+ * @param {string} base - The box's base URL.
+ * @param {string} secondToken - The second caller's token ('' when the runner has none).
+ * @param {typeof fetch} [fetchImpl] - Fetch (a seam for the binding test).
+ * @returns {Promise<{api: Function, upload: Function, ownerSub: string}|null>} The port, or null without a token.
+ */
+async function secondCallerPort(base, secondToken, fetchImpl = fetch) {
+  if (!secondToken) return null;
+  const http = httpPorts(base, secondToken, fetchImpl);
+  const who = await http.api('GET', '/api/cli-tokens/whoami').catch((error) => ({ status: 0, json: {}, error }));
+  return { api: http.api, upload: http.upload, ownerSub: who.status === 200 && typeof who.json.sub === 'string' ? who.json.sub : '' };
+}
+
+/**
  * @description Resolve the caller and bind every port the cases may ask for.
  * @param {string} base - The box's base URL.
  * @param {string} token - The operator PAT.
+ * @param {string} [secondToken] - A second caller's token; binds the `second` port when present.
+ * @param {typeof fetch} [fetchImpl] - Fetch (a seam for the binding test).
  * @returns {Promise<{ports: object, dispose: () => void}|{error: string}>} The ports, or why not.
  */
-async function bindPorts(base, token) {
-  const http = httpPorts(base, token);
+async function bindPorts(base, token, secondToken = '', fetchImpl = fetch) {
+  const http = httpPorts(base, token, fetchImpl);
   const who = await http.api('GET', '/api/cli-tokens/whoami').catch((error) => ({ status: 0, json: {}, error }));
   const ownerSub = typeof who.json.sub === 'string' ? who.json.sub : '';
   if (who.status !== 200 || !ownerSub) return { error: `the operator token did not resolve to a caller at ${base} (HTTP ${who.status})` };
   const helper = containerHelper(process.env.OSHAL_VERIFY_API_CONTAINER || proofRunner.DEFAULT_API_CONTAINER);
   const logs = (container, since) => readLogs(process.env.OSHAL_VERIFY_JARVIS_CONTAINER || container, since);
-  return { ports: { ...http, ...containerPorts(helper, ownerSub), ownerSub, origin: base, logs, browser: browserPort(base, token) }, dispose: helper.dispose };
+  const second = await secondCallerPort(base, secondToken, fetchImpl);
+  return { ports: { ...http, ...containerPorts(helper, ownerSub), ownerSub, origin: base, logs, browser: browserPort(base, token), ...(second ? { second } : {}) },
+    dispose: helper.dispose };
 }
 
 /**
@@ -279,10 +303,11 @@ async function main(argv, write = (line) => process.stdout.write(`${line}\n`)) {
   }
   const selected = selectCases(args.selector);
   if (!selected.length) { write(`unknown case: ${args.selector} (try: list)`); return 2; }
-  const token = proofRunner.readOperatorPat(process.env, process.env.OSHAL_VERIFY_ENV_FILE || path.join(REPO, '.env'));
+  const envFile = process.env.OSHAL_VERIFY_ENV_FILE || path.join(REPO, '.env');
+  const token = proofRunner.readOperatorPat(process.env, envFile);
   if (!token) { write(`UNAVAILABLE: ${proofRunner.PAT_ENV} is neither exported nor in the .env; nothing was written.`); return 2; }
   const base = String(process.env.OSHAL_VERIFY_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, '');
-  const bound = await bindPorts(base, token);
+  const bound = await bindPorts(base, token, proofRunner.readNamedToken(process.env, envFile, common.SECOND_PAT_ENV));
   if (bound.error) { write(`UNAVAILABLE: ${bound.error}; nothing was written.`); return 2; }
   const results = [];
   try {
@@ -308,4 +333,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseArgs, caseOptions, httpPorts, containerHelper, containerPorts, browserPort, printResult, exitCodeFor, main };
+module.exports = { parseArgs, caseOptions, httpPorts, containerHelper, containerPorts, browserPort, secondCallerPort, bindPorts, printResult, exitCodeFor, main };
