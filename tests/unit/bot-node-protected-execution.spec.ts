@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise signed protected worker reasoning, current-rights refusal and exact issuer SQLite workspace isolation.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Assert the normalized authorized-scope Set passed to the provider boundary instead of the pre-normalization array shape.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Pin the call-time framework-tool bridge to the verified execution, owner, bot and isolated workspace rather than request-controlled provider options.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Prove a signed fallbackOrder survives real HTTP provider-authority forwarding and malformed fallback chains are rejected before task/provider use.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -31,7 +32,8 @@ describe('protected worker HTTP execution', () => {
       },
     });
     const request = fixture.issue({ byoLlmConnection: undefined, providerId: active.provider,
-      model: active.model, providerConfigRequired: true, configVersion: 1 });
+      model: active.model, providerConfigRequired: true, configVersion: 1,
+      fallbackOrder: ['gemini', 'claude-code'] });
     const response = await fixture.post(request);
     const responseBody = await response.json();
     expect(responseBody, JSON.stringify(responseBody)).toMatchObject({ success: true, response: 'Fixture protected answer',
@@ -39,6 +41,13 @@ describe('protected worker HTTP execution', () => {
     expect(response.status).toBe(200);
     expect(fixture.state.phases[0]).toBe('start');
     expect(fixture.state.phases.at(-1)).toBe('complete');
+    expect(fixture.state.providerAuthorities).toEqual([{
+      providerId: active.provider,
+      model: active.model,
+      configVersion: 1,
+      providerConfigRequired: true,
+      fallbackOrder: ['gemini', 'claude-code'],
+    }]);
     expect(fixture.state.calls).toHaveLength(1);
     expect(fixture.state.calls[0]).toMatchObject({ identity: { sub: REMOTE_SUB, principalIssuer: REMOTE_ISSUER, isOperator: false },
       actor: { sub: REMOTE_SUB, issuer: REMOTE_ISSUER, isSwarmAdmin: false, tenantIds: ['fixture-tenant'], allowedPermissions: [`${REMOTE_APP}:read`] },
@@ -84,6 +93,19 @@ describe('protected supported mode and authority continuity', () => {
     const request = fixture.issue(override);
     const response = await fixture.post(request);
     expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(fixture.state.phases).toEqual([]);
+    expect(fixture.state.calls).toEqual([]);
+    expect(fixture.store.listTasks()).toEqual([]);
+  });
+
+  it('rejects a malformed signed fallback chain at HTTP ingress', async () => {
+    const request = fixture.issue({ fallbackOrder: ['gemini', '  '] });
+    const response = await fixture.post(request);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      success: false,
+      error: 'invalid_provider_authority',
+    });
     expect(fixture.state.phases).toEqual([]);
     expect(fixture.state.calls).toEqual([]);
     expect(fixture.store.listTasks()).toEqual([]);

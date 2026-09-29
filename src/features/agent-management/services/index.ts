@@ -68,10 +68,12 @@ export { AgentConfigService, type AgentConfig } from './agent-config-service';
 export {
   createAgentConfigRuntimeParamsResolver,
   resolveDispatchConfigFields,
+  resolveRequiredDispatchConfigFields,
   type DispatchRuntimeParams,
   type RuntimeParamsResolver,
   type DispatchConfigFields,
   type ProviderSwitchResolver,
+  type ProviderFallbackOrderResolver,
 } from './dispatch-runtime-params';
 export { ProviderSwitchStore } from './provider-switch-store';
 export {

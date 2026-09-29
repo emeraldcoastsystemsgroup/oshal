@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove a queued protected dispatch reaches the real worker gate in the supported hosted shape, refuses honestly without an owner connection, and never admits an agentic queued body.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove `bot-default` keeps the dispatcher's canonical per-bot provider stamp through protected queue shaping and reconciliation instead of falling back to the owner's hosted/CLI lane.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Cover strict/off-mode bot-default queue shaping and SEC-05 degradation for nonoperators: catalog API ids are treated as their autonomous worker runtime and fall to hosted before a real node dispatch, null versus thrown resolver outcomes remain distinct for the operator, and the demo-operator carve is unchanged.
  */
 import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -22,7 +23,10 @@ import type { StoredTask } from '@/shared/types';
 import type { ITaskStore } from '@/entities/task';
 import type { InternalTicket } from '@/entities/ticket';
 import { executeManifestApplicationBot } from '@/features/swarm-orchestration/services/manifest-worker-application-execution';
-import type { QueuedResolvedBrain } from '@/features/swarm-orchestration/services/manifest-worker-application-execution';
+import type {
+  QueuedBrainResolutionMode,
+  QueuedResolvedBrain,
+} from '@/features/swarm-orchestration/services/manifest-worker-application-execution';
 import { dispatchManifestWorkerTicket } from '@/features/swarm-orchestration/services/dispatch-manifest-worker';
 import { startProtectedWorkerFixture, REMOTE_AGENT, REMOTE_APP, REMOTE_ISSUER, REMOTE_SUB } from '../fixtures/bot-node-protected-execution';
 
@@ -220,6 +224,101 @@ describe('queued protected dispatch in the supported shape', () => {
     expect(fixture.state.calls).toHaveLength(1);
     expect(fixture.state.calls[0].options).toMatchObject({ tools: [], enforceToolBoundary: true });
   });
+
+  it('degrades a guest Gemini bot-default to hosted before a real worker dispatch', async () => {
+    const modes: Array<QueuedBrainResolutionMode | undefined> = [];
+    const resolveBrain = vi.fn(async (_ownerSub: string, mode?: QueuedBrainResolutionMode) => {
+      modes.push(mode);
+      return mode === 'hosted-only'
+        ? { kind: 'hosted' as const, connection: HOSTED }
+        : { kind: 'bot-default' as const };
+    });
+    const runtimeParamsResolver = vi.fn(async () => ({
+      providerId: 'gemini', model: 'gemini-3.8-flash', configVersion: 23,
+      fallbackOrder: ['anthropic'],
+    }));
+
+    const result = await runWithSystemIdentity(() => executeManifestApplicationBot(
+      client, ticket, REMOTE_AGENT, queuedRequest(), taskStore, resolveBrain, runtimeParamsResolver,
+    ));
+
+    expect(result).toMatchObject({ success: true, response: 'Fixture protected answer', provider: 'fixture-hosted' });
+    expect(modes).toEqual(['configured', 'hosted-only']);
+    expect(runtimeParamsResolver).not.toHaveBeenCalled();
+    expect(builtConnections).toEqual([HOSTED]);
+    expect(providerSwitches).toEqual([]);
+    expect(fixture.state.calls).toHaveLength(1);
+  });
+
+  it('degrades a guest bot-default CLI record to hosted and refuses honestly when that ladder is empty', async () => {
+    const captured: Array<Record<string, unknown>> = [];
+    const capturingClient = {
+      execute: async (_agentId: string, request: Record<string, unknown>) => {
+        captured.push(request);
+        return { success: true, response: 'captured' };
+      },
+    } as unknown as BotNodeClient;
+    const modes: Array<QueuedBrainResolutionMode | undefined> = [];
+    const resolveBrain = vi.fn(async (_ownerSub: string, mode?: QueuedBrainResolutionMode) => {
+      modes.push(mode);
+      return mode === 'hosted-only'
+        ? { kind: 'hosted' as const, connection: HOSTED }
+        : { kind: 'bot-default' as const };
+    });
+    const runtimeParamsResolver = vi.fn(async () => ({ providerId: 'gemini', model: 'gemini-3.8-flash' }));
+    await runWithSystemIdentity(() => executeManifestApplicationBot(
+      capturingClient, ticket, REMOTE_AGENT,
+      queuedRequest({ model: 'stale', configVersion: 88, fallbackOrder: ['stale'] }),
+      undefined, resolveBrain, runtimeParamsResolver,
+    ));
+    expect(modes).toEqual(['configured', 'hosted-only']);
+    expect(runtimeParamsResolver).not.toHaveBeenCalled();
+    expect(captured[0]).toMatchObject({
+      direct: true, agenticMode: false, byoLlmConnection: HOSTED,
+    });
+    for (const field of ['providerId', 'model', 'configVersion', 'fallbackOrder', 'providerConfigRequired']) {
+      expect(captured[0][field]).toBeUndefined();
+    }
+
+    const emptyResolver = vi.fn(async (_ownerSub: string, mode?: QueuedBrainResolutionMode) => mode === 'hosted-only'
+      ? { kind: 'none' as const }
+      : { kind: 'bot-default' as const });
+    await expect(runWithSystemIdentity(() => executeManifestApplicationBot(
+      capturingClient, ticket, REMOTE_AGENT, queuedRequest(), undefined, emptyResolver,
+      runtimeParamsResolver,
+    ))).rejects.toThrow(/no usable configured AI brain/i);
+    expect(runtimeParamsResolver).not.toHaveBeenCalled();
+    expect(captured).toHaveLength(1);
+  });
+
+  it('distinguishes an absent bot-default record from an operational resolver outage', async () => {
+    vi.stubEnv('DEMO_MODE', 'true');
+    vi.stubEnv('OSHAL_OPERATOR_SUBS', REMOTE_SUB);
+    const captured: Array<Record<string, unknown>> = [];
+    const capturingClient = {
+      execute: async (_agentId: string, request: Record<string, unknown>) => {
+        captured.push(request);
+        return { success: true, response: 'captured' };
+      },
+    } as unknown as BotNodeClient;
+    const resolveBrain = vi.fn(async (_ownerSub: string, mode?: QueuedBrainResolutionMode) => mode === 'hosted-only'
+      ? { kind: 'hosted' as const, connection: HOSTED }
+      : { kind: 'bot-default' as const });
+    await runWithSystemIdentity(() => executeManifestApplicationBot(
+      capturingClient, ticket, REMOTE_AGENT, queuedRequest(), undefined, resolveBrain,
+      vi.fn().mockResolvedValue(null),
+    ));
+    expect(captured[0]).toMatchObject({ byoLlmConnection: HOSTED });
+
+    const outage = new Error('provider snapshot read unavailable');
+    const outageBrain = vi.fn(async () => ({ kind: 'bot-default' } as const));
+    await expect(runWithSystemIdentity(() => executeManifestApplicationBot(
+      capturingClient, ticket, REMOTE_AGENT, queuedRequest(), undefined, outageBrain,
+      vi.fn().mockRejectedValue(outage),
+    ))).rejects.toBe(outage);
+    expect(outageBrain).toHaveBeenCalledTimes(1);
+    expect(captured).toHaveLength(1);
+  });
 });
 
 describe('queued protected dispatch without a usable configured owner brain', () => {
@@ -293,7 +392,10 @@ describe('the real queue dispatcher on a protected worker', () => {
       createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() } as unknown as InternalTicket;
   }
 
-  function dispatcherDeps(resolveBrain?: (ownerSub: string) => Promise<QueuedResolvedBrain>,
+  function dispatcherDeps(resolveBrain?: (
+    ownerSub: string,
+    mode?: QueuedBrainResolutionMode,
+  ) => Promise<QueuedResolvedBrain>,
     runtimeParamsResolver?: RuntimeParamsResolver) {
     const statuses: Array<{ status: string; metadata: Record<string, unknown> }> = [];
     const messages: Array<Record<string, unknown>> = [];
@@ -331,9 +433,10 @@ describe('the real queue dispatcher on a protected worker', () => {
   it('keeps the canonical bot provider stamp when the owner selects bot-default', async () => {
     vi.stubEnv('DEMO_MODE', 'true');
     vi.stubEnv('OSHAL_OPERATOR_SUBS', REMOTE_SUB);
+    vi.stubEnv('OSHAL_PUSH_ON_DISPATCH', 'off');
     const resolveBrain = vi.fn(async () => ({ kind: 'bot-default' } as const));
     const runtimeParamsResolver = vi.fn(async () => ({
-      providerId: 'antigravity-cli', model: 'gemini-fixture', configVersion: 17,
+      providerId: 'antigravity-cli', model: 'gemini-fixture', configVersion: 17, fallbackOrder: [],
     }));
     const { deps, statuses, messages } = dispatcherDeps(resolveBrain, runtimeParamsResolver);
 
@@ -341,9 +444,16 @@ describe('the real queue dispatcher on a protected worker', () => {
       pipeline: 'manifest-worker', workerBot: 'protected-reasoner' } as never, deps as never);
 
     expect(runtimeParamsResolver).toHaveBeenCalledWith(REMOTE_AGENT);
-    expect(resolveBrain).toHaveBeenCalledWith(REMOTE_SUB);
+    expect(resolveBrain).toHaveBeenCalledWith(REMOTE_SUB, 'configured');
     expect(hostedLookups).toEqual([]);
     expect(providerSwitches).toEqual([]);
+    expect(fixture.state.providerAuthorities).toContainEqual({
+      providerId: 'antigravity-cli',
+      model: 'gemini-fixture',
+      configVersion: 17,
+      providerConfigRequired: true,
+      fallbackOrder: [],
+    });
     expect(fixture.state.calls).toHaveLength(1);
     expect(statuses.at(-1)).toMatchObject({ status: 'complete' });
     expect(messages[0]).toMatchObject({ role: 'assistant', text: 'Fixture protected answer' });

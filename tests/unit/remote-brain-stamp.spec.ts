@@ -7,9 +7,10 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Require the resolved CLI provider stamp at the protected remote reasoning boundary.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Regression for the live Intelligent Sales reversion: `bot-default` stamps the canonical Sales Gemini record (including required authority) while the existing explicit OpenAI Codex user choice still wins and never consults that resolver.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | A sparse canonical bot record replaces the whole authoritative slice, clearing stale model/version/fallback fields from a partially stamped incoming request.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Cover strict bot-default resolution and SEC-05 degradation: dedicated bot defaults require the exact demo/operator carve before canonical resolution, guests fall through to hosted/no-brain, null falls through for the operator, and resolver outages propagate.
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   NoHostedBrainError,
   stampRemoteBrain,
@@ -49,6 +50,8 @@ function overrides(
 }
 
 describe('stampRemoteBrain (ADR-127 remote branch)', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   it('stamps a resolved CLI brain as the authoritative dispatch provider (+ model pin)', async () => {
     const req = request();
     await stampRemoteBrain(POOL, CLI_AGENT, req, overrides({ kind: 'cli', providerId: 'claude-code', model: 'claude-sonnet-4-6' }));
@@ -59,7 +62,10 @@ describe('stampRemoteBrain (ADR-127 remote branch)', () => {
   });
 
   it('stamps the canonical Sales Gemini record only when bot-default is selected', async () => {
+    vi.stubEnv('DEMO_MODE', 'true');
+    vi.stubEnv('OSHAL_OPERATOR_SUBS', 'operator-sub');
     const req = request();
+    const resolveConnection = vi.fn();
     const runtimeParamsResolver = vi.fn().mockResolvedValue({
       providerId: 'gemini',
       model: 'gemini-3.8-flash',
@@ -69,6 +75,7 @@ describe('stampRemoteBrain (ADR-127 remote branch)', () => {
     await stampRemoteBrain(POOL, CLI_AGENT, req, {
       ...overrides({ kind: 'bot-default' }),
       runtimeParamsResolver,
+      resolveConnection,
     });
     expect(runtimeParamsResolver).toHaveBeenCalledWith(CLI_AGENT);
     expect(req).toMatchObject({
@@ -79,9 +86,90 @@ describe('stampRemoteBrain (ADR-127 remote branch)', () => {
       providerConfigRequired: true,
     });
     expect(req.byoLlmConnection).toBeUndefined();
+    expect(resolveConnection).not.toHaveBeenCalled();
+  });
+
+  it('degrades a guest bot-default CLI record to the hosted ladder and clears stale authority', async () => {
+    const req = request({
+      userSub: 'guest-visitor',
+      model: 'stale-model',
+      configVersion: 41,
+      fallbackOrder: ['stale-fallback'],
+      providerConfigRequired: true,
+    });
+    const resolveConnection = vi.fn().mockResolvedValue({
+      baseUrl: 'https://guest-lane.example/v1', apiKey: 'guest-key', model: 'hosted-model',
+    });
+
+    const runtimeParamsResolver = vi.fn().mockResolvedValue({ providerId: 'gemini', model: 'gemini-3.8-flash' });
+    await stampRemoteBrain(POOL, CLI_AGENT, req, {
+      ...overrides({ kind: 'bot-default' }),
+      runtimeParamsResolver,
+      resolveConnection,
+    });
+
+    expect(resolveConnection).toHaveBeenCalledWith(POOL, 'guest-visitor');
+    expect(runtimeParamsResolver).not.toHaveBeenCalled();
+    expect(req.byoLlmConnection).toEqual({
+      baseUrl: 'https://guest-lane.example/v1', apiKey: 'guest-key', model: 'hosted-model',
+    });
+    expect(req.providerId).toBeUndefined();
+    expect(req.model).toBeUndefined();
+    expect(req.configVersion).toBeUndefined();
+    expect(req.fallbackOrder).toBeUndefined();
+    expect(req.providerConfigRequired).toBeUndefined();
+  });
+
+  it('refuses honestly when a guest bot-default CLI record has no hosted fallback', async () => {
+    const runtimeParamsResolver = vi.fn().mockResolvedValue({ providerId: 'gemini', model: 'gemini-3.8-flash' });
+    await expect(stampRemoteBrain(POOL, CLI_AGENT, request({ userSub: 'guest-visitor' }), {
+      ...overrides({ kind: 'bot-default' }),
+      runtimeParamsResolver,
+      resolveConnection: vi.fn().mockResolvedValue(undefined),
+    })).rejects.toBeInstanceOf(NoHostedBrainError);
+    expect(runtimeParamsResolver).not.toHaveBeenCalled();
+  });
+
+  it('keeps a bot-default CLI record for the exact demo deployment operator', async () => {
+    vi.stubEnv('DEMO_MODE', 'true');
+    vi.stubEnv('OSHAL_OPERATOR_SUBS', 'operator-sub');
+    const req = request();
+    const resolveConnection = vi.fn();
+    await stampRemoteBrain(POOL, CLI_AGENT, req, {
+      ...overrides({ kind: 'bot-default' }),
+      runtimeParamsResolver: vi.fn().mockResolvedValue({ providerId: 'openai-codex', model: 'gpt-5.5' }),
+      resolveConnection,
+    });
+    expect(req).toMatchObject({
+      providerId: 'openai-codex', model: 'gpt-5.5', providerConfigRequired: true,
+    });
+    expect(resolveConnection).not.toHaveBeenCalled();
+  });
+
+  it('falls through on an honestly absent bot-default record but propagates resolver outages', async () => {
+    vi.stubEnv('DEMO_MODE', 'true');
+    vi.stubEnv('OSHAL_OPERATOR_SUBS', 'operator-sub');
+    const absent = request();
+    await stampRemoteBrain(POOL, CLI_AGENT, absent, {
+      ...overrides({ kind: 'bot-default' }),
+      runtimeParamsResolver: vi.fn().mockResolvedValue(null),
+      resolveConnection: vi.fn().mockResolvedValue({ baseUrl: 'https://lane/v1', apiKey: 'k', model: 'm' }),
+    });
+    expect(absent.byoLlmConnection).toEqual({ baseUrl: 'https://lane/v1', apiKey: 'k', model: 'm' });
+
+    const outage = new Error('provider switch snapshot unavailable');
+    const resolveConnection = vi.fn();
+    await expect(stampRemoteBrain(POOL, CLI_AGENT, request(), {
+      ...overrides({ kind: 'bot-default' }),
+      runtimeParamsResolver: vi.fn().mockRejectedValue(outage),
+      resolveConnection,
+    })).rejects.toBe(outage);
+    expect(resolveConnection).not.toHaveBeenCalled();
   });
 
   it('clears stale optional authority fields omitted by the canonical bot record', async () => {
+    vi.stubEnv('DEMO_MODE', 'true');
+    vi.stubEnv('OSHAL_OPERATOR_SUBS', 'operator-sub');
     const req = request({
       model: 'stale-user-model',
       configVersion: 999,

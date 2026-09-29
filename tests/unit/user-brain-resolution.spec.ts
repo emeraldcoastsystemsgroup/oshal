@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Codex-first fleet default: the demo-default expectations flip to openai-codex (DEMO_CLI_ORDER reordered by operator directive 2026-08-12); the saved-preference test now saves claude-code so it still proves preference-beats-default with a non-default value.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Partial-mock the database barrel instead of listing its exports. createPersistenceActivation arrived in the barrel and both in-memory stores call it, so this file's mock threw on construction and the suite was red on main with nobody acting on it.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Pin `bot-default` as an explicit first-class selection that stops before the demo/hosted user ladder, while leaving Automatic's Codex demo default byte-identical.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Restrict bot-default to the same demo-operator carve as its eventual autonomous bot-node runtime, and prove a persisted choice degrades through the ordinary hosted ladder when that carve is absent.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -97,6 +98,15 @@ describe('resolveUserBrain — the ladder', () => {
     expect(await resolveUserBrain(pool, OPERATOR)).toEqual({ kind: 'bot-default' });
     expect(resolveUserLlmConnection).not.toHaveBeenCalled();
     expect(getUserLlmConnection).not.toHaveBeenCalled();
+  });
+
+  it('degrades a persisted bot-default choice through hosted resolution when the carve is absent', async () => {
+    savedPreference('bot-default');
+    resolveUserLlmConnection.mockResolvedValue({ ...HOSTED, resolutionSource: 'platform' });
+    expect(await resolveUserBrain(pool, GUEST)).toEqual({
+      kind: 'hosted', connection: { ...HOSTED, resolutionSource: 'platform' },
+    });
+    expect(resolveUserLlmConnection).toHaveBeenCalledWith(pool, GUEST);
   });
 
   it('honours a saved own-endpoint preference over the demo CLI default', async () => {

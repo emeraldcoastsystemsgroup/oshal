@@ -31,6 +31,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | antigravity-cli joins the preference ids and the cli ResolvedBrain. Google retired Gemini Code Assist sign-in for individuals on 2026-09-22 and points them at Antigravity instead, and `agy` is the one Google path measured answering on the models the shared API key 503s on - but it runs as the signed-in user, on a machine that can load it. Both remaining conditions are checked rather than assumed, so on the shipped stack the option is correctly NOT offered (see the backlog entry for what each one needs).
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | isRetryableCliBrainFailure treats an unresolvable dispatch (AuthoritativeDispatchConfigError / AUTHORITATIVE_PROVIDER_UNAVAILABLE) as retryable-to-hosted. It is thrown before the harness does any work, so it is a fact about the LANE and never about the turn - and without this arm the Jarvis CLI-lane retry never fired for it and the raw error reached the user on every turn. Entry 6 makes such a selection unreachable; this makes a future mis-selection DEGRADE instead of dead-ending.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Add the explicit `bot-default` preference: unlike `auto` (which deliberately keeps walking the ADR-127 demo/user ladder), this choice defers the turn to the target bot's canonical admin/runtime record. It resolves as a first-class marker so the remote execution chokepoint can stamp per-bot > fleet > agent_config > registry instead of sending an unstamped request or silently replacing an operator-written bot row with the demo Codex fallback.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com  | Gate `bot-default` with the same demo-operator carve as every dedicated bot-node provider. Catalog API ids such as Gemini are reconciled to the autonomous Cline runtime at the node, so classifying the row's spelling as hosted-safe let a guest save a preference the worker would still refuse. A persisted marker now becomes unusable when the carve is lost and falls through the normal hosted ladder.
  *
  * @module user-brain-resolution
  */
@@ -414,7 +415,9 @@ async function freeTierHosted(pool: any, userSub: string): Promise<ResolvedBrain
 async function resolveNamedPreference(
   pool: any, userSub: string, pref: UserLlmPreference,
 ): Promise<ResolvedBrain | null> {
-  if (pref.preferred === 'bot-default') return { kind: 'bot-default' };
+  if (pref.preferred === 'bot-default') {
+    return cliBrainAvailable(userSub) ? { kind: 'bot-default' } : null;
+  }
   if (pref.preferred === 'claude-code' || pref.preferred === 'openai-codex') {
     if (!cliBrainAvailable(userSub)) return null;
     return { kind: 'cli', providerId: pref.preferred, ...(pref.model ? { model: pref.model } : {}) };

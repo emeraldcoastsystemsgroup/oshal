@@ -4,7 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the rule a settings surface broke: a brain option is offered only when a bot node can actually EXECUTE it. The Gemini option went live the moment a Google login was pushed, PUT admitted it because PUT admits anything whose availability is true, and the resolved selection was then refused BY NAME at reconcileDispatchProviderConfig - so an operator who followed the instructions exactly had every turn afterwards fail. Three claims are pinned here and they are deliberately in one spec because they are one rule seen from three sides: the OPTION is unavailable and says which piece is missing, the PUT refuses it with that same piece, and the RESOLVER never produces it - all three reading the same executability fact off the harness table rather than a constant, so the day a runtime is wired they flip together. The authorization half is asserted unchanged: a non-operator is refused every CLI id whatever the table says.
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | Expose and accept the non-provider `bot-default` choice for every authenticated user; it delegates to the bot/admin record and therefore requires no CLI carve or personal credential.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Expose the non-provider `bot-default` choice so the deployment operator can delegate to the bot/admin record.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Keep bot-default behind the existing demo-operator carve: every dedicated provider ultimately runs in an autonomous worker runtime, including catalog API ids translated to Cline. The UI and PUT now refuse the choice for a guest while runtime resolution safely degrades any persisted row.
  */
 
 import http from 'node:http';
@@ -216,18 +217,32 @@ describe('the settings surface offers only what a turn can run on', () => {
     expect(response.status).toBe(200);
   });
 
-  it('offers and accepts bot-default without a CLI carve or personal provider', async () => {
-    const options = await readOptions(harness, GUEST);
-    expect(options.find((entry) => entry.id === 'bot-default')).toMatchObject({
+  it('offers bot-default only inside the demo-operator carve and PUT enforces the same verdict', async () => {
+    const guestOptions = await readOptions(harness, GUEST);
+    expect(guestOptions.find((entry) => entry.id === 'bot-default')).toMatchObject({
       label: 'Bot administrator setting (dedicated bots)',
-      available: true,
+      available: false,
+      detail: expect.stringMatching(/demo deployment.*operator.*autonomous bot-node runtime/i),
     });
-    const response = await fetch(`${harness.url}/api/settings/llm-default/`, {
+    const refused = await fetch(`${harness.url}/api/settings/llm-default/`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json', 'x-test-sub': GUEST },
       body: JSON.stringify({ preferred: 'bot-default' }),
     });
-    expect(response.status).toBe(200);
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({
+      error: expect.stringMatching(/not available/i),
+      detail: expect.stringMatching(/demo deployment.*operator/i),
+    });
+
+    const operatorOptions = await readOptions(harness, OPERATOR);
+    expect(operatorOptions.find((entry) => entry.id === 'bot-default')).toMatchObject({ available: true });
+    const accepted = await fetch(`${harness.url}/api/settings/llm-default/`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', 'x-test-sub': OPERATOR },
+      body: JSON.stringify({ preferred: 'bot-default' }),
+    });
+    expect(accepted.status).toBe(200);
   });
 
   it('keeps every CLI option closed to a non-operator', async () => {

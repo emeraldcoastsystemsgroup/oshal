@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Isolate real worker HTTP delegation, signed controller permits and SQLite task reasoning without deployment services.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Allow a fixture to expose a direct configured provider plus the bot-node reconciliation seam, so the provider-stamped protected shape can be exercised without contacting a vendor.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Exercise the production provider-authority HTTP parser/forwarder so fallbackOrder transport and malformed-chain refusal are covered end to end, recording the parsed authority so an explicit empty chain can be distinguished from omission.
  */
 import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -23,6 +24,11 @@ import { getApplicationAuthorizationActor } from '@/shared/application-authoriza
 import { createBotNodeDelegationRuntime } from '@/app/bot-node-delegation';
 import { createProtectedBotDispatchContext } from '@/app/bot-node-protected-context';
 import { createProtectedBotExecutionBoundary } from '@/app/bot-node-protected-execution';
+import {
+  InvalidBotNodeProviderAuthorityError,
+  parseBotNodeProviderAuthority,
+  type BotNodeProviderAuthority,
+} from '@/app/bot-node-provider-authority';
 import { createBotControllerPermitCheck } from '@/app/bot-node-controller-permit';
 import { createBotNodeExecutionHandler } from '@/app/bot-node-execution-handler';
 import { buildBotNodeHttpResponse } from '@/app/bot-node-http-response';
@@ -53,6 +59,7 @@ export interface RemoteFixtureState {
   owner: string | null;
   phases: string[];
   calls: Array<{ messages: unknown; options: Record<string, unknown>; identity: unknown; actor: unknown }>;
+  providerAuthorities: BotNodeProviderAuthority[];
   mutatePermit?: (permit: RemoteExecutionPermit) => void;
   mutateSignedPermit?: (permit: RemoteExecutionPermit) => void;
   denyPhase?: string;
@@ -162,7 +169,11 @@ export function remoteEnvelope(body: Record<string, unknown>): MeshEnvelope {
       workspaceTaskId: body.workspaceFolderId } };
 }
 
-function workerRouter(env: NodeJS.ProcessEnv, handler: ReturnType<typeof createBotNodeExecutionHandler>) {
+function workerRouter(
+  env: NodeJS.ProcessEnv,
+  handler: ReturnType<typeof createBotNodeExecutionHandler>,
+  state: RemoteFixtureState,
+) {
   const used = new Set<string>();
   const delegation = createBotNodeDelegationRuntime({ localAgentId: REMOTE_AGENT, env, replayStore: {
     consume: async ({ issuer, jti }) => { const key = `${issuer}:${jti}`; if (used.has(key)) return false; used.add(key); return true; },
@@ -172,10 +183,25 @@ function workerRouter(env: NodeJS.ProcessEnv, handler: ReturnType<typeof createB
     if (req.get('X-Service-Secret') !== SECRET) { res.sendStatus(401); return; } next();
   }, delegation.authorize, createProtectedBotDispatchContext(), async (req, res) => {
     try {
-      const result = await runWithSystemIdentity(() => handler(remoteEnvelope(req.body)));
+      const forwarded = { ...(req.body as Record<string, unknown>) };
+      for (const field of ['providerId', 'model', 'configVersion', 'providerConfigRequired', 'fallbackOrder']) {
+        delete forwarded[field];
+      }
+      const providerAuthority = parseBotNodeProviderAuthority(req.body as Record<string, unknown>);
+      state.providerAuthorities.push(providerAuthority);
+      Object.assign(forwarded, providerAuthority);
+      const result = await runWithSystemIdentity(() => handler(remoteEnvelope(forwarded)));
       res.status(result.success ? 200 : 503).json(buildBotNodeHttpResponse(result, { durationMs: 1,
         taskId: String(req.body.taskId), defaultModel: 'fixture-model', defaultProvider: 'fixture-hosted' }));
-    } catch (error) { res.status(503).json({ success: false, error: error instanceof Error ? error.message : 'fixture_error' }); }
+    } catch (error) {
+      res.status(error instanceof InvalidBotNodeProviderAuthorityError ? 400 : 503)
+        .json({
+          success: false,
+          error: error instanceof InvalidBotNodeProviderAuthorityError
+            ? 'invalid_provider_authority'
+            : error instanceof Error ? error.message : 'fixture_error',
+        });
+    }
   });
   return app;
 }
@@ -197,7 +223,9 @@ export async function startProtectedWorkerFixture(
   } = {},
 ) {
   const directory = mkdtempSync(join(tmpdir(), 'oshal-remote-worker-'));
-  const state: RemoteFixtureState = { allowed: true, owner: REMOTE_APP, phases: [], calls: [] };
+  const state: RemoteFixtureState = {
+    allowed: true, owner: REMOTE_APP, phases: [], calls: [], providerAuthorities: [],
+  };
   const signing = signingFixture(), records = new Map<string, DispatchRecord>();
   const authority = createAuthority?.(signing);
   const controllerHttp = await listen(authority ? realControllerRouter(authority, state) : controllerRouter(records, state, signing));
@@ -213,7 +241,7 @@ export async function startProtectedWorkerFixture(
     resolveBrokeredPromptAuthorization: async () => ({ allowedTools: options.brokeredTools ?? [],
       scopes: (options.brokeredTools ?? []).map(name => `tool:${name}`) }),
     runApplicationExecution: createProtectedBotExecutionBoundary(pool, REMOTE_AGENT, createBotControllerPermitCheck({ env })) });
-  const workerHttp = await listen(workerRouter(env, handler));
+  const workerHttp = await listen(workerRouter(env, handler, state));
   const issue = (overrides: Record<string, unknown> = {}) => {
     const body = { agentId: REMOTE_AGENT, taskId: 'fixture-task', workspaceFolderId: 'fixture-workspace', userSub: REMOTE_SUB,
       principalIssuer: REMOTE_ISSUER, text: 'Summarize authorized context.', direct: true, agenticMode: false,

@@ -4,6 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | buildProviderSwitchCatalog now carries modelsByProvider from the same ProviderRegistry records it already reads for clineApiProviders, so checkModelAgainstCatalog has something to measure a written model against. Nothing is refused by it; the catalog simply stops being unable to answer the question.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Track and gate canonical dispatch resolution on the first persisted provider-switch snapshot settlement, reject dispatch when the initial refresh left no loaded rows, and retain the snapshot's periodic retry so a transient boot outage self-heals without a registry-CLI race.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Expose the independently resolved installed fallback order for dispatch stamping, preserving explicit `[]` while returning null only for source `none`.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Expose the installed catalog (installedProviderSwitchCatalog) so the fleet-default routes validate a written id against the same runnable set the resolver refuses on.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The api-side seam for "a bot's LLM provider is a row in a table": builds the runnable catalog from the REAL HARNESS_FACTORIES keys + provider definitions, holds the one installed ProviderSwitchSnapshot so resolveHarnessForAgent (sync, inside getProvider) and dispatch stamping (async) answer from the same rows, and turns a REFUSED resolution into a provider that refuses every request with the reason — fail closed at the point of use, never a silent fall-through to the registry literal or FORCE_LLM_PROVIDER. With nothing installed every reader answers "registry", which is today's behaviour byte-identically.
  */
@@ -17,6 +19,7 @@ import {
 } from '@/features/llm-provider';
 import {
   ProviderSwitchSnapshot,
+  type RuntimeParamsResolver,
   type ProviderSwitchSource,
 } from '@/features/agent-management';
 import {
@@ -30,6 +33,15 @@ const logger = createChildLogger({ module: 'provider-switch-runtime' });
 
 let installed: ProviderSwitchSnapshot | null = null;
 let installedCatalog: ProviderSwitchCatalog | null = null;
+let initialInstallation: Promise<unknown> | null = null;
+
+/** The persisted switch snapshot has not completed one successful first read. */
+export class ProviderSwitchSnapshotNotReadyError extends Error {
+  constructor(message = 'The persisted provider-switch snapshot has not completed its first successful read') {
+    super(message);
+    this.name = 'ProviderSwitchSnapshotNotReadyError';
+  }
+}
 
 /**
  * @description The runnable catalog: every harness factory key this build registers plus every
@@ -51,8 +63,10 @@ export function buildProviderSwitchCatalog(harnessTypes: readonly string[]): Pro
 
 /**
  * @description Create, load and install the process-wide snapshot over a switch store. Awaits
- * the first read so the api never serves a dispatch before the rows are known; a failed first
- * read is logged and leaves the snapshot empty (registry behaviour) rather than blocking boot.
+ * the first read so the api never serves a canonical dispatch before the rows are known; a failed
+ * first read is rejected after the snapshot records its diagnostic, rather than silently treating
+ * persisted rows as absent and falling through to a divergent registry literal. The unloaded
+ * snapshot still starts its refresh timer, so a transient first-read outage can self-heal.
  * @param source - The switch store (listAll).
  * @param harnessTypes - `Object.keys(HARNESS_FACTORIES)`.
  * @returns The installed snapshot.
@@ -63,16 +77,63 @@ export async function installProviderSwitchSnapshot(
 ): Promise<ProviderSwitchSnapshot> {
   const catalog = buildProviderSwitchCatalog(harnessTypes);
   const snapshot = new ProviderSwitchSnapshot(source, catalog);
-  await snapshot.refresh();
-  snapshot.start();
+  // Install the object before its first read so a transient boot outage retains the snapshot's
+  // periodic self-heal. Readers are separately gated on status.loaded and therefore cannot use
+  // its empty rows as an accidental registry fallback.
   installed = snapshot;
   installedCatalog = catalog;
+  await snapshot.refresh();
   const status = snapshot.status();
+  snapshot.start();
+  if (!status.loaded) {
+    throw new ProviderSwitchSnapshotNotReadyError(
+      status.lastError
+        ? `The persisted provider-switch snapshot failed its first read: ${status.lastError}`
+        : undefined,
+    );
+  }
+  // Also make direct/retry installations self-healing after an earlier failed tracked attempt.
+  // Waiters that already captured the boot promise still await that same successful operation.
+  initialInstallation = Promise.resolve(snapshot);
   logger.info(
     { loaded: status.loaded, rowCount: status.rowCount, fleetDefault: status.fleetDefault?.providerId ?? null },
     'Provider switch snapshot installed — per-bot row > fleet default > registry literal',
   );
   return snapshot;
+}
+
+/**
+ * @description Register the one boot installation promise before background startup yields. A
+ * canonical dispatcher can then await the exact first read instead of observing `installed=null`
+ * as if the database held no switch rows.
+ */
+export function trackProviderSwitchSnapshotInstallation(installation: Promise<unknown>): void {
+  initialInstallation = installation;
+}
+
+/** @description Await the first persisted snapshot read, rejecting when boot has not begun or failed. */
+export async function waitForProviderSwitchSnapshotSettlement(): Promise<void> {
+  // A later timer/API refresh can recover a rejected first boot read. Prefer that current fact
+  // over the historical rejected installation promise so subsequent queue retries can proceed.
+  if (installed?.status().loaded) return;
+  if (!initialInstallation) {
+    throw new ProviderSwitchSnapshotNotReadyError();
+  }
+  await initialInstallation;
+  if (!installed?.status().loaded) throw new ProviderSwitchSnapshotNotReadyError();
+}
+
+/**
+ * @description Wrap a canonical runtime resolver so its synchronous switch-reader cannot run
+ * before the process's persisted snapshot has settled.
+ */
+export function gateRuntimeParamsResolverOnProviderSwitchSnapshot(
+  resolver: RuntimeParamsResolver,
+): RuntimeParamsResolver {
+  return async (agentId: string) => {
+    await waitForProviderSwitchSnapshotSettlement();
+    return resolver(agentId);
+  };
 }
 
 /**
@@ -103,6 +164,7 @@ export function setInstalledProviderSwitchSnapshot(
 ): void {
   installed = snapshot;
   installedCatalog = catalog;
+  initialInstallation = snapshot ? Promise.resolve(snapshot) : null;
 }
 
 /**
@@ -121,6 +183,20 @@ export function resolveInstalledProviderSwitch(
     registry,
     catalog: installedCatalog ?? { harnessTypes: [], clineApiProviders: [] },
   });
+}
+
+/**
+ * @description Resolve the installed ADR-162 fallback chain independently of whichever row won
+ * the primary provider. A null bot-row chain can therefore inherit fleet/environment order, while
+ * an explicit empty array remains a real "no failover" answer on the wire.
+ * @returns The resolved order, including `[]`; null only when no rung configured a chain.
+ */
+export function resolveInstalledProviderFallbackOrder(
+  agentId: string,
+  primaryProviderId: string | null,
+): readonly string[] | null {
+  const chain = installed?.resolveFallbackChain(agentId, primaryProviderId);
+  return !chain || chain.source === 'none' ? null : chain.order;
 }
 
 /**

@@ -21,12 +21,14 @@
  * 16 | maintainer@emeraldcoastsystemsgroup.com  | Mark a resolved CLI brain as required provider authority so protected direct bot execution can verify the controller's stamp instead of rejecting a present provider as unconfigured.
  * 17 | maintainer@emeraldcoastsystemsgroup.com  | Honor the explicit `bot-default` user choice on remote turns by stamping the SAME canonical runtime record queued dispatch uses (per-bot switch > fleet switch > agent_config > registry), with required authority. Existing explicit provider/BYO choices and the `auto` user ladder are unchanged.
  * 18 | maintainer@emeraldcoastsystemsgroup.com  | Replace, rather than merge, the authoritative config slice for `bot-default`: a model-only incoming request could otherwise retain stale model/version/fallback fields when the canonical bot record omitted them.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com  | Resolve explicit `bot-default` strictly and enforce the same SEC-05 autonomous-CLI boundary as the node: a safe hosted canonical record is stamped, an unavailable or guest-ineligible CLI record degrades to the caller's hosted ladder, and resolver outages remain retryable instead of becoming a deterministic no-brain refusal.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com  | Treat every dedicated bot-node default as an autonomous-runtime choice, not the raw provider spelling: catalog API ids such as Gemini reconcile to Cline on the worker. A non-carved caller (including a user whose old saved choice outlives the carve) now falls to hosted before canonical resolution; the demo operator retains the per-bot record.
  */
 
 import type { AppContext } from '@/app/composition/app-context';
 import { canonicalBotWorkspaceId } from '@/app/bot-node-request-scope';
 import {
-  resolveDispatchConfigFields,
+  resolveRequiredDispatchConfigFields,
   type BotNodeClient,
   type BotNodeRequest,
   type BotNodeResponse,
@@ -42,7 +44,7 @@ import { assertExecuteEntitlement } from '@/app/bot-node-execute-entitlement';
 import { reportResolvedLlmFailure, resolveUserLlmConnection, type ResolvedUserLlmConnection } from './free-tier-rotation';
 import { explainInlineFallbackMiss, planInlineHotFallback, recoverExplicitByoWall } from './byo-hot-fallback';
 import type { ByoHostedFallbackRung } from '@/features/llm-provider';
-import { resolveUserBrain, type ResolvedBrain } from './user-brain-resolution';
+import { cliBrainAvailable, resolveUserBrain, type ResolvedBrain } from './user-brain-resolution';
 import type { ByoLlmConnection } from './byo-llm-routes';
 import { getSpecialistContextRegistry, SpecialistContextError } from '@/shared/specialist-context';
 
@@ -292,8 +294,51 @@ export async function stampRemoteBrain(
     return;
   }
   if (brain.kind === 'bot-default') {
-    const configFields = await resolveDispatchConfigFields(overrides?.runtimeParamsResolver, agentId);
-    for (const field of ['providerId', 'model', 'configVersion', 'fallbackOrder'] as const) delete request[field];
+    const callerMayUseBotDefault = cliBrainAvailable(request.userSub);
+    if (!callerMayUseBotDefault) {
+      for (const field of ['providerId', 'model', 'configVersion', 'fallbackOrder', 'providerConfigRequired'] as const) {
+        delete request[field];
+      }
+      const connection = overrides?.resolveConnection
+        ? await overrides.resolveConnection(pool, request.userSub)
+        : await resolveUserLlmConnection(pool, request.userSub);
+      if (!connection) {
+        logger.warn({ agentId }, 'remote-brain stamp: bot-default is unavailable to this caller and the hosted ladder is empty');
+        throw new NoHostedBrainError();
+      }
+      request.byoLlmConnection = hostedBrainWire(connection);
+      logger.info(
+        { agentId, hostedModel: connection.model },
+        'remote-brain stamp: bot-default is unavailable to this caller — using the hosted ladder',
+      );
+      return;
+    }
+    // A named preference is not the legacy push-on-dispatch best-effort path. Preserve an
+    // operational resolver failure so the caller can retry it, and distinguish it from an
+    // honest absent record, which can safely degrade to the user's hosted ladder.
+    const configFields = await resolveRequiredDispatchConfigFields(overrides?.runtimeParamsResolver, agentId);
+    for (const field of ['providerId', 'model', 'configVersion', 'fallbackOrder', 'providerConfigRequired'] as const) {
+      delete request[field];
+    }
+    const canonicalProvider = configFields?.providerId?.trim();
+    if (!canonicalProvider) {
+      const connection = overrides?.resolveConnection
+        ? await overrides.resolveConnection(pool, request.userSub)
+        : await resolveUserLlmConnection(pool, request.userSub);
+      if (!connection) {
+        logger.warn(
+          { agentId, providerId: canonicalProvider ?? null },
+          'remote-brain stamp: bot-default is absent or unavailable to this caller and the hosted ladder is empty',
+        );
+        throw new NoHostedBrainError();
+      }
+      request.byoLlmConnection = hostedBrainWire(connection);
+      logger.info(
+        { agentId, providerId: canonicalProvider ?? null, hostedModel: connection.model },
+        'remote-brain stamp: bot-default is absent or unavailable to this caller — using the hosted ladder',
+      );
+      return;
+    }
     Object.assign(request, configFields);
     request.providerConfigRequired = true;
     logger.info(

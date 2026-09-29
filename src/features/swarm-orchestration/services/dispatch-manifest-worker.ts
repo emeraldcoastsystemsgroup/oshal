@@ -27,6 +27,7 @@
  * 22 | maintainer@emeraldcoastsystemsgroup.com  | Classify single-owner signed-delegation and trusted-provider dispatches with no dedicated endpoint as authorization_remote_dispatch_required so the terminal refusal sink preserves them instead of parking them as generic escalations.
  * 23 | maintainer@emeraldcoastsystemsgroup.com  | Reuse authorization_remote_dispatch_required when an endpoint-less local rail cannot execute protected queued work, keeping every typed refusal inside the reviewed source census.
  * 24 | maintainer@emeraldcoastsystemsgroup.com | Apply injected evidence/result bindings around dedicated reason-only execution; bound work never falls back to localhost.
+ * 25 | maintainer@emeraldcoastsystemsgroup.com | Pass the canonical runtime resolver into protected queue shaping so explicit `bot-default` resolves and signs its record even when the legacy push-on-dispatch compatibility flag is off.
  */
 
 import * as http from 'node:http';
@@ -903,7 +904,7 @@ export async function dispatchManifestWorkerTicket(
             userSub: ticket.ownerSub ?? undefined,
             principalIssuer: readOwnerPrincipalIssuer(ticket.metadata) ?? undefined,
             ...ownerConfigFields,
-          }, deps.taskStore, deps.resolveBrain);
+          }, deps.taskStore, deps.resolveBrain, deps.runtimeParamsResolver);
           return {
             owner,
             result,
@@ -1035,7 +1036,7 @@ export async function dispatchManifestWorkerTicket(
           ...(providerIntent ? { providerIntent } : {}),
           ...configFields,
           ...(binding ? { direct: true, agenticMode: false } : {}),
-        }, deps.taskStore, deps.resolveBrain);
+        }, deps.taskStore, deps.resolveBrain, deps.runtimeParamsResolver);
         botNodeResult = result;
         dispatchResult = {
           success: result.success === true,

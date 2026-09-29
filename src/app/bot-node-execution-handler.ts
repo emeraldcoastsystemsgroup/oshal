@@ -31,6 +31,7 @@
  * 26 | maintainer@emeraldcoastsystemsgroup.com | Bill and relay the real usage split when TaskController reports one. The cost record and the HTTP usage block wrote `inputTokens = totalTokens, outputTokens = 0, cacheReadTokens = 0` unconditionally, so chat_tasks could never show the invariant-preamble cache's saving (fewer input tokens, a cached-token count). resolveExecutionUsage maps apiMetrics.inputTokens/outputTokens/cacheReads through when present and keeps the legacy total-as-input mapping when the runtime reports only a total, so an agentic result is billed exactly as before.
  * 27 | maintainer@emeraldcoastsystemsgroup.com | Mark a direct (interactive) dispatch hostToolsOnly. Such a turn is conversation plus the tools the agentic loop brokers itself (Jarvis's conversation_query/conversation_fetch); it never needs the CLI's own file or command tools. On the Antigravity brain those native tools were what a recall ask spent 10 min 45 s on before a headless read_file denial killed it. Protected work keeps its own path (toolLess + the controller MCP bridge) and is never marked.
  * 28 | maintainer@emeraldcoastsystemsgroup.com | Read a message text by its type instead of assuming a string. The any-bot layer is untyped JavaScript, and its parser hands back a Number or Boolean for a bare numeric or true/false value; the response extraction called m.text.trim() on it and threw "m.text.trim is not a function", so a Jarvis answer of 5 was reported as a failed execution with no answer (live case jarvis-cache, 2026-09-29, 3 of 3). The source is fixed in AgenticController; this is the guard on the reading side: a finite number or a boolean is delivered as its text, any other non-string value is passed over, and the declared message type says text is unknown so the compiler requires the check.
+ * 29 | maintainer@emeraldcoastsystemsgroup.com | Reuse the shared SEC-05 autonomous-provider classifier so controller `bot-default` validation and node preflight cannot disagree about aliases such as `openai-codex`.
  */
 
 /**
@@ -86,29 +87,10 @@ import {
   type DispatchConfigRuntime,
 } from './bot-node-dispatch-config';
 import { demoModeEnabled, isDeploymentOperatorSub } from '@/shared/deployment-mode';
+import { isUnbrokeredAutonomousProvider } from '@/features/llm-provider';
 import { getProtectedBotExecution } from './bot-node-protected-context';
 
 const logger = createChildLogger({ module: 'bot-node-execution-handler' });
-/**
- * The local CLI harnesses this preflight refuses before a task or workspace is accepted.
- *
- * `gemini-cli` and `antigravity-cli` joined the set when Google got the same push-a-login rail
- * Codex and Claude Code have: before that they were absent, so the preflight — the check that runs
- * BEFORE any task or workspace exists — let both through, and the only thing standing between them
- * and a spawn was `assertAuditedAutonomousHarness` deeper in the adapter. That is one guard where
- * the two siblings have two, and giving Google a credential to run under is exactly the change
- * that makes the gap worth closing rather than noting.
- *
- * The hosted Google lane is deliberately NOT in here. `gemini` (the Cline-backed API provider id)
- * and `google-gemini` (the apiType) name an HTTP endpoint with no tool loop and no credential home,
- * so refusing them would break the ordinary hosted path this rail exists to give the operator an
- * alternative to. Only the two CLI harness ids are listed.
- */
-const UNBROKERED_AUTONOMOUS_PROVIDERS = new Set([
-  'cline', 'cline-cli', 'claude', 'claude-code', 'codex', 'codex-cli', 'openai-codex',
-  'gemini-cli', 'antigravity-cli',
-]);
-
 /**
  * @description ADR-127: the ONE carve in which an autonomous CLI harness may execute at a bot node.
  * Requires BOTH a demo deployment AND an operator-owned request. A missing identity is refused on
@@ -143,7 +125,7 @@ export function assertUnattendedProviderPreflight(input: {
   if (input.deterministicIntent === true || input.byoHostedInference === true) return;
   const providerName = typeof input.providerName === 'string'
     ? input.providerName.trim().toLowerCase() : '';
-  if (!UNBROKERED_AUTONOMOUS_PROVIDERS.has(providerName)) return;
+  if (!isUnbrokeredAutonomousProvider(providerName)) return;
   if (demoOperatorCliUnlock(providerName, input.userSub)) return;
   const error = new Error(
     `${providerName} is an unbrokered autonomous CLI; unattended execution requires a hosted provider or audited brokered sandbox`,
