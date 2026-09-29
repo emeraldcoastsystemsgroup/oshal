@@ -6,6 +6,7 @@
   -----------------------------------------------------------------------------
   1   | maintainer@emeraldcoastsystemsgroup.com | ADR-169 L3: Settings, Location. Off by default: a person turns location on per browser at a precision class they choose, sees where they are as a place (never coordinates), stops reporting (the current place clears, the history stays), sees who can see them, and deletes their history. Turning on, raising precision and accepting a share need a fresh sign-in (the step-up): a sign-in window for an identity-provider or mock session, a two-factor code for a local account. The browser reports only while this page is open, at most every 30 seconds.
   2   | maintainer@emeraldcoastsystemsgroup.com | ADR-169 L4: places and devices at places. "Where you are" says since when. Places: the person's own and their groups' places by name, label and radius (never a centre or an address, only whether one is on file); add one from where the browser is now or from typed coordinates, for yourself or for a group you administer; resize or delete the ones you may change. Devices at places: enrol an existing node (from the nodes you own), camera or drone (to a group you administer), TV (by the room its screen shows) or hub device, give it a place and a room, change or clear them, or remove its location record; a device you may only see (a group's, when you are not its admin) shows its place with no controls. "Your devices" lists only the devices that report (browsers and phones).
+  3   | maintainer@emeraldcoastsystemsgroup.com | ADR-169 L5: reminders and group sharing. Reminders: add one at any of your places or your groups' places (on arrival or on leaving, next time only or every visit); a group admin can add a group notice that fires when any member who shares that place arrives; your reminders, your groups' rules and the group rules watching you now are listed. Recent reminders show the full text here (the Jarvis shelf and any deployment-run text or call carry only "You have a location reminder"); a #fire=<id> link highlights one. Share with your groups: pick which of a group's places it may see you arrive at and leave (confirmed with a fresh sign-in). What your groups share with you: arrivals and departures at shared places, never positions. Invitations and guardian shares: accept (with a fresh sign-in) or decline an invitation to join a group as a restricted member; a group admin invites accounts as restricted members, lifts restrictions, and shares a restricted member's arrivals and departures with named members at chosen group places (with a fresh sign-in), or revokes that share.
 -->
 <html lang="en" data-theme="midnight">
 <head>
@@ -150,6 +151,33 @@
     </div>
   </section>
 
+  <h2>Reminders</h2>
+  <section class="card" id="rules" data-testid="rules"></section>
+  <section class="card" data-testid="rule-form">
+    <h3>Add a reminder</h3>
+    <p class="meta">It fires when this browser's position (while this page is open) shows you arriving at, or leaving, the place. A group admin can add a group notice instead: it tells you when any member who shares that place with the group arrives or leaves.</p>
+    <div class="form">
+      <label>For<select id="ruleOwner" data-testid="rule-owner"></select></label>
+      <label>Place<select id="rulePlace" data-testid="rule-place"></select></label>
+      <label>When<select id="ruleOn" data-testid="rule-on"><option value="enter">Arriving</option><option value="exit">Leaving</option></select></label>
+      <label>How often<select id="ruleRepeat" data-testid="rule-repeat"><option value="once">Next time only</option><option value="every-visit">Every visit</option></select></label>
+      <label><span id="ruleTextLabel">Remind me to</span><input id="ruleText" data-testid="rule-text" maxlength="500" /></label>
+    </div>
+    <div class="actions"><button class="primary" id="ruleAdd" data-testid="rule-add" type="button">Add reminder</button></div>
+  </section>
+
+  <h2>Recent reminders</h2>
+  <section class="card" id="fires" data-testid="fires"></section>
+
+  <h2>Share with your groups</h2>
+  <section class="card" id="groupShare" data-testid="group-share"></section>
+
+  <h2>What your groups share with you</h2>
+  <section class="card" id="shared" data-testid="shared"></section>
+
+  <h2>Invitations and guardian shares</h2>
+  <section class="card" id="sharing" data-testid="sharing"></section>
+
   <h2>Your devices</h2>
   <section class="card" id="devices" data-testid="devices"></section>
 
@@ -176,8 +204,8 @@
     </div>
   </section>
 
-  <p class="foot">Your location history is kept until you delete it here. Deleting your account deletes all of it.
-  Turning location on, choosing a finer precision and sharing with a group each ask you to sign in again first.</p>
+  <p class="foot">Your location history, including when your reminders fired, is kept until you delete it here. Deleting your account deletes all of it.
+  Turning location on, choosing a finer precision, sharing with a group, accepting a restricted invitation and sharing for a restricted member each ask you to sign in again first.</p>
 </div>
 <script>
 (function () {
@@ -452,7 +480,7 @@
     lastPost = now;
     const r = await api('POST', '/presence', { deviceId: device.deviceId, lat: pos.coords.latitude, lon: pos.coords.longitude,
       accuracyM: pos.coords.accuracy, observedAt: new Date(pos.timestamp || now).toISOString() });
-    if (r.status === 201) { await load(); return; }
+    if (r.status === 201) { await load(); if (r.json.fired) await loadReminders(); return; }
     if (r.status === 409 || r.status === 404) { await load(); return; }
     if (r.status !== 429) setStatus('A position was not accepted (' + (r.json.error || r.status) + ').', true);
   }
@@ -647,6 +675,219 @@
     await afterChange(await api('DELETE', '/devices/' + encodeURIComponent(deviceId)), 200, 'Device removed.');
   }
 
+
+  // ── ADR-169 L5: reminders and group sharing ──
+  let rules = { mine: [], group: [], watchingMe: [] };
+  let fires = [];
+  let shared = [];
+  let sharing = { received: [], issued: [], restrictions: [], guardianShares: [] };
+
+  function ruleWords(r) {
+    const when = (r.on === 'enter' ? 'arriving at ' : 'leaving ') + r.place.name;
+    const how = r.repeat === 'once' ? 'next time only' : 'every visit';
+    const who = r.subject === 'any-member' ? 'any sharing member ' : '';
+    return (r.group ? 'Group ' + groupName(r.group) + ': ' + who : '') + when + ' · ' + how + (r.action.text ? ' · "' + r.action.text + '"' : '');
+  }
+
+  function ruleRow(r, testid) {
+    const row = el('div', 'row');
+    row.dataset.testid = testid;
+    row.appendChild(el('span', 'grow', ruleWords(r)));
+    if (r.completedAt) row.appendChild(el('span', 'pill', 'done'));
+    if (r.watchingMe) row.appendChild(el('span', 'pill on', 'watching you'));
+    if (r.editable) row.appendChild(button('Delete', 'danger', 'rule-delete', () => deleteRule(r.ruleId)));
+    return row;
+  }
+
+  function renderRules() {
+    const box = $('rules');
+    box.textContent = '';
+    if (!rules.mine.length && !rules.group.length) box.appendChild(el('p', 'empty', 'No reminders yet. Add one below, or ask Jarvis: "remind me to buy milk next time I\'m at the grocery store".'));
+    rules.mine.forEach((r) => box.appendChild(ruleRow(r, 'rule-row')));
+    rules.group.forEach((r) => box.appendChild(ruleRow(r, 'group-rule-row')));
+    if (rules.watchingMe.length) box.appendChild(el('p', 'meta', rules.watchingMe.length + ' group rule(s) watch you now, because you share their places. Stop sharing below to end that.'));
+  }
+
+  function renderRuleForm() {
+    fillSelect($('ruleOwner'), [['', 'Just me']].concat(adminGroupOptions().map((g) => [g[0], g[1] + ' (any sharing member)'])));
+    const group = $('ruleOwner').value || null;
+    fillSelect($('rulePlace'), placeOptions(group).filter((o) => o[0]));
+    $('ruleTextLabel').textContent = group ? 'Note (optional)' : 'Remind me to';
+    $('ruleAdd').textContent = group ? 'Add group notice' : 'Add reminder';
+  }
+
+  function renderFires() {
+    const box = $('fires');
+    box.textContent = '';
+    if (!fires.length) { box.appendChild(el('p', 'empty', 'Nothing has fired yet.')); return; }
+    const wanted = (location.hash.match(/fire=([0-9a-f-]{36})/i) || [])[1];
+    fires.forEach((f) => {
+      const row = el('div', 'row');
+      row.dataset.testid = 'fire-row';
+      row.dataset.fireId = f.fireId;
+      if (wanted && wanted.toLowerCase() === f.fireId) { row.style.outline = '2px solid var(--accent)'; row.dataset.highlight = '1'; }
+      row.appendChild(el('span', 'grow', f.subject + ' — ' + f.body.replace(/\s+/g, ' ')));
+      row.appendChild(el('span', 'meta', new Date(f.firedAt).toLocaleString()));
+      box.appendChild(row);
+    });
+  }
+
+  function restrictedIn(groupId) {
+    return ((state && state.visibility && state.visibility.restrictions) || []).some((r) => r.tenantId === groupId);
+  }
+
+  function renderGroupShare() {
+    const box = $('groupShare');
+    box.textContent = '';
+    box.appendChild(el('p', 'meta', 'A group sees you arrive at and leave only the places you tick here, never where you are between them. Changing a place\'s size or position asks you to share again.'));
+    if (!places.groups.length) { box.appendChild(el('p', 'empty', 'You are not in any group.')); return; }
+    places.groups.forEach((g) => {
+      const groupPlaces = places.places.filter((p) => p.group && p.group.groupId === g.groupId);
+      const row = el('div', 'row');
+      row.dataset.testid = 'group-share-row';
+      row.appendChild(el('span', 'grow', 'Group ' + (g.name || g.groupId)));
+      if (restrictedIn(g.groupId)) { row.appendChild(el('span', 'pill', 'restricted: an admin shares for you')); box.appendChild(row); return; }
+      if (!groupPlaces.length) { row.appendChild(el('span', 'meta', 'no group places yet')); box.appendChild(row); return; }
+      const ticks = groupPlaces.map((p) => {
+        const label = el('label', 'meta');
+        const tick = el('input');
+        tick.type = 'checkbox'; tick.value = p.placeId; tick.dataset.testid = 'group-share-place';
+        label.appendChild(tick);
+        label.appendChild(document.createTextNode(' ' + p.name));
+        row.appendChild(label);
+        return tick;
+      });
+      row.appendChild(button('Share these places', '', 'group-share-submit', () => shareWithGroup(g.groupId, ticks.filter((t) => t.checked).map((t) => t.value))));
+      box.appendChild(row);
+    });
+  }
+
+  function renderShared() {
+    const box = $('shared');
+    box.textContent = '';
+    if (!shared.length) { box.appendChild(el('p', 'empty', 'Nobody shares their arrivals with you.')); return; }
+    shared.forEach((x) => {
+      const row = el('div', 'row');
+      row.dataset.testid = 'shared-row';
+      row.appendChild(el('span', 'grow', (x.shareKind === 'guardian' ? 'Guarded member ' : 'Member ') + x.subjectSub + ' '
+        + (x.transition === 'enter' ? 'arrived at ' : 'left ') + x.place.name + (x.since ? ' · ' + new Date(x.since).toLocaleString() : '')));
+      box.appendChild(row);
+    });
+  }
+
+  function sharingRow(text, testid, controls) {
+    const row = el('div', 'row');
+    row.dataset.testid = testid;
+    row.appendChild(el('span', 'grow', text));
+    controls.forEach((c) => row.appendChild(c));
+    return row;
+  }
+
+  function guardianForm(restriction) {
+    const grantees = el('input');
+    grantees.placeholder = 'Members to share with (ids, comma separated)'; grantees.dataset.testid = 'guardian-grantees';
+    const groupPlaces = places.places.filter((p) => p.group && p.group.groupId === restriction.groupId);
+    const ticks = groupPlaces.map((p) => { const t = el('input'); t.type = 'checkbox'; t.value = p.placeId; t.title = p.name; t.dataset.testid = 'guardian-place'; return t; });
+    const share = button('Share for them', '', 'guardian-create', () => createGuardian(restriction.groupId, restriction.memberSub,
+      grantees.value.split(',').map((x) => x.trim()).filter(Boolean), ticks.filter((t) => t.checked).map((t) => t.value)));
+    const lift = button('Lift restriction', 'danger', 'restriction-lift', () => liftRestriction(restriction.groupId, restriction.memberSub));
+    return [grantees].concat(ticks).concat([share, lift]);
+  }
+
+  function renderInviteForm(box) {
+    const admin = adminGroupOptions();
+    if (!admin.length) return;
+    const group = el('select'); group.dataset.testid = 'invite-group';
+    fillSelect(group, admin);
+    const who = el('input'); who.placeholder = 'Account id to invite'; who.dataset.testid = 'invite-sub';
+    box.appendChild(sharingRow('Invite an account to join as a restricted member (for a child: they cannot share their own location).', 'invite-form',
+      [group, who, button('Invite', '', 'invite-submit', () => issueInvite(group.value, who.value.trim()))]));
+  }
+
+  function renderSharing() {
+    const box = $('sharing');
+    box.textContent = '';
+    sharing.received.forEach((i) => box.appendChild(sharingRow('Group ' + (i.groupName || i.groupId) + ' invites you to join as a restricted member. Its admins could then share your arrivals and departures with named members.',
+      'invite-received', [button('Accept', 'primary', 'invite-accept', () => acceptInvite(i.inviteId)), button('Decline', '', 'invite-decline', () => declineInvite(i.inviteId))])));
+    sharing.issued.forEach((i) => box.appendChild(sharingRow('Invited ' + i.account.sub + ' (open until ' + new Date(i.expiresAt).toLocaleDateString() + ')',
+      'invite-issued', [button('Withdraw', '', 'invite-withdraw', () => declineInvite(i.inviteId))])));
+    sharing.restrictions.forEach((r) => box.appendChild(sharingRow('Restricted member ' + r.memberSub, 'restriction-row', guardianForm(r))));
+    sharing.guardianShares.filter((g) => !g.revokedAt).forEach((g) => box.appendChild(sharingRow('Sharing ' + g.minorSub + ' with ' + g.grantees.map((x) => x.sub).join(', ')
+      + ' at ' + g.placeIds.length + ' place(s)', 'guardian-share-row', [button('Revoke', 'danger', 'guardian-revoke', () => revokeGuardian(g.shareId))])));
+    renderInviteForm(box);
+    if (!box.childNodes.length) box.appendChild(el('p', 'empty', 'No invitations and no restricted members.'));
+  }
+
+  async function loadReminders() {
+    const [r, f, s, g] = await Promise.all([api('GET', '/rules'), api('GET', '/fires'), api('GET', '/shared'), api('GET', '/group-sharing')]);
+    if ([r, f, s, g].some((x) => x.status !== 200)) { setStatus('Could not load your reminders and sharing.', true); return false; }
+    rules = r.json; fires = f.json.fires; shared = s.json.shared; sharing = g.json;
+    renderRules(); renderRuleForm(); renderFires(); renderGroupShare(); renderShared(); renderSharing();
+    return true;
+  }
+
+  async function afterL5(r, okStatus, okText) {
+    await load();
+    await loadPlaces();
+    await loadReminders();
+    if (r) setStatus(r.status === okStatus ? okText : 'Not saved (' + (r.json.error || r.status) + ').', r.status !== okStatus);
+  }
+
+  async function addRule() {
+    const group = $('ruleOwner').value || null;
+    const text = $('ruleText').value;
+    const body = { placeId: $('rulePlace').value, on: $('ruleOn').value, repeat: $('ruleRepeat').value, groupId: group,
+      subject: group ? 'any-member' : 'self', action: { kind: group ? 'notify' : 'remind', text: text || null } };
+    const r = await api('POST', '/rules', body);
+    if (r.status === 201) $('ruleText').value = '';
+    await afterL5(r, 201, group ? 'Group notice added.' : 'Reminder added.');
+  }
+
+  async function deleteRule(ruleId) {
+    await afterL5(await api('DELETE', '/rules/' + encodeURIComponent(ruleId)), 200, 'Removed.');
+  }
+
+  async function shareWithGroup(groupId, placeIds) {
+    if (!placeIds.length) { setStatus('Tick at least one place to share.', true); return; }
+    const body = { tenantId: groupId, placeIds: placeIds };
+    const r = await withStepUp('accept-share', body, (headers) => api('POST', '/shares', body, headers));
+    if (r) await afterL5(r, 201, 'Shared with the group at the places you ticked.');
+  }
+
+  async function acceptInvite(inviteId) {
+    const r = await withStepUp('accept-restricted-invite', { inviteId: inviteId },
+      (headers) => api('POST', '/invites/' + encodeURIComponent(inviteId) + '/accept', {}, headers));
+    if (r) await afterL5(r, 200, 'You joined the group as a restricted member.');
+  }
+
+  async function declineInvite(inviteId) {
+    await afterL5(await api('DELETE', '/invites/' + encodeURIComponent(inviteId)), 200, 'Invitation removed.');
+  }
+
+  async function issueInvite(groupId, sub) {
+    if (!sub) { setStatus('Enter the account id to invite.', true); return; }
+    await afterL5(await api('POST', '/invites', { groupId: groupId, account: { sub: sub } }), 201, 'Invitation sent.');
+  }
+
+  async function createGuardian(groupId, minorSub, granteeSubs, placeIds) {
+    if (!granteeSubs.length || !placeIds.length) { setStatus('Name at least one member and tick at least one place.', true); return; }
+    const body = { tenantId: groupId, minorSub: minorSub, grantees: granteeSubs.map((sub) => ({ sub: sub })), placeIds: placeIds };
+    const r = await withStepUp('create-guardian-share', body, (headers) => api('POST', '/guardian-shares', body, headers));
+    if (r) await afterL5(r, 201, 'Shared their arrivals and departures with the members named.');
+  }
+
+  async function revokeGuardian(shareId) {
+    await afterL5(await api('POST', '/guardian-shares/' + encodeURIComponent(shareId) + '/revoke'), 200, 'Guardian share revoked.');
+  }
+
+  async function liftRestriction(groupId, memberSub) {
+    if (!window.confirm('Lift this restriction? Its guardian shares end with it.')) return;
+    await afterL5(await api('POST', '/restrictions/lift', { groupId: groupId, memberSub: memberSub }), 200, 'Restriction lifted.');
+  }
+
+  $('ruleOwner').addEventListener('change', renderRuleForm);
+  $('ruleAdd').addEventListener('click', addRule);
+
   $('placeAdd').addEventListener('click', addPlace);
   $('placeHere').addEventListener('click', fillHere);
   $('enrolKind').addEventListener('change', () => renderEnrolForm(true));
@@ -674,7 +915,10 @@
     api('GET', '/step-up/' + encodeURIComponent(challengeId)).then((r) => { if (r.json.state === 'proven') stepUpDone(true); });
   });
 
-  Promise.all([load(), loadPlaces()]).then(([ok, placesOk]) => { if (ok && placesOk) setStatus(''); });
+  Promise.all([load(), loadPlaces()]).then(async ([ok, placesOk]) => {
+    const remindersOk = ok && placesOk ? await loadReminders() : false;
+    if (ok && placesOk && remindersOk) setStatus('');
+  });
 })();
 </script>
 </body>

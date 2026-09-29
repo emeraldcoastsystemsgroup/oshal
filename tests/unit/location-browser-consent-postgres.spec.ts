@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L3 over HTTP on localhost with MOCK_OIDC and a private PostgreSQL (tables owned by the enforcing runtime role, so FORCE row-level security is what holds). A browser fix is stored for the signed-in person whatever owner, subject, issuer, source, precision or place the body names, minimised to the device's class, and placed against the person's own place, never another person's; a fix naming someone else's device is refused. The service secret is refused with 401 alongside a valid session and writes nothing. Without a spent proof nobody can opt in, raise a device's or the default precision, or accept a share, while lowering needs none; a proof is single use, bound to its parameters and to its person. Opting out clears the current row and stops ingest while the history stays; the purge removes the person's history and current row and nobody else's. The overview carries no coordinate.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L5: the purge answer also carries evaluationCount (rule state, share presence and fires deleted); this person armed no rule, so it reads 0.
  */
 
 import http from 'node:http';
@@ -186,7 +187,7 @@ describe('opt-out and purge', () => {
     const bFix = await call(B, 'POST', '/presence', { deviceId: (await fx.db.pool.query('SELECT device_id FROM location_devices WHERE owner_sub = $1', [B])).rows[0].device_id, lat: 10, lon: 10 });
     expect(bFix.status).toBe(201);
     const purged = await call(A, 'POST', '/history/purge');
-    expect(purged.json).toEqual({ observationCount: history, currentCount: 0 });
+    expect(purged.json).toEqual({ observationCount: history, currentCount: 0, evaluationCount: 0 });
     expect(await countRows(fx, 'location_observations WHERE owner_sub = $1', [A])).toBe(0);
     expect(await countRows(fx, 'location_observations WHERE owner_sub = $1', [B])).toBe(1);
   });

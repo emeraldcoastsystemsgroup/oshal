@@ -63,6 +63,7 @@
  * 29 | maintainer@emeraldcoastsystemsgroup.com   | Report a selected-file model timeout with only the caller-visible compatible destinations and an explicit no-send/no-work receipt; preserve the selected-file handoff guard.
  * 30 | maintainer@emeraldcoastsystemsgroup.com   | Serve fixed Jarvis files from a trusted hidden install directory; Express otherwise treats a dot-prefixed parent as a hidden file and returns 404.
  * 31 | maintainer@emeraldcoastsystemsgroup.com   | Late answers and honest infra errors. A conversational turn that outlives the decision window no longer answers "my model provider did not respond in time" while the bot is still working (live 2026-09-27: the recall turn's real answer landed ~2 min after that text and reached nobody). The job stays pending with a still-working note and the SAME turn's answer takes the ordinary path into the same thread when it lands; a real failure the turn reports still reaches the job as its own error. The selected-file and work-filing timeout branches are unchanged. The /ask session gate and /ask/result now tell a store that could not answer (a pool connect timeout) apart from a refusal: a retryable 503 instead of 404 session_not_found or 'expired'.
+ * 32 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L5: the deterministic location-reminder turn ("remind me next time I'm at the grocery store", "I'm at the grocery store, remind me next time", "... here") is detected before the time-reminder intent and answered by location-jarvis-intent.ts without a model turn, sharing the reminder branch; the build-request guard yields to it. Net +4 code lines.
  */
 
 import { getJarvisBriefingDelivery } from './jarvis-briefing-delivery';
@@ -126,6 +127,7 @@ import {
   jarvisSchedulingAvailable,
   schedulingTimezone,
 } from './jarvis-schedule-intent';
+import { detectJarvisLocationTurn, runJarvisLocationTurn } from '../location-jarvis-intent';
 import { detectBuildRequest, fileBuildHandoff } from './jarvis-build-handoff';
 import { visualSpecForDirectRequest } from './jarvis-visuals';
 import { visibleArtifactActions } from './artifact-action-visibility';
@@ -736,7 +738,10 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
     // a media turn, a provider-bound ask, or a plain question — and only when a runner exists to fire
     // it (jarvisSchedulingAvailable). The fired prompt re-enters the orchestrator with
     // autoApprove:false, so any outward action still hits the interactive approval gates.
-    const scheduleIntent = (!doRecall && !hasAttachments && !artifactSelection && !providerBoundIntent && !providerClarification && jarvisSchedulingAvailable())
+    // Location reminders (ADR-169 L5, deterministic): "remind me next time I'm at the grocery store".
+    const locationTurn = (!doRecall && !hasAttachments && !artifactSelection && !providerBoundIntent && !providerClarification)
+      ? detectJarvisLocationTurn(message, req, sessionId) : null;
+    const scheduleIntent = (!locationTurn && !doRecall && !hasAttachments && !artifactSelection && !providerBoundIntent && !providerClarification && jarvisSchedulingAvailable())
       ? detectScheduleIntent(message, { now: new Date(), timezone: schedulingTimezone() })
       : null;
     // Build intent (deterministic): an imperative "build me X" is handed to the swarm HERE, before
@@ -746,7 +751,7 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
     // and a 75-second wait for the acknowledgement. Last of the deterministic guards so recall,
     // media, provider-bound reads, clarifications and reminders all keep precedence.
     const buildRequest = (!doRecall && !hasAttachments && !artifactSelection && !providerBoundIntent
-      && !providerClarification && !scheduleIntent)
+      && !providerClarification && !scheduleIntent && !locationTurn)
       ? detectBuildRequest(message)
       : null;
     const artifactDestinationInquiry = !!artifactSelection && isArtifactDestinationInquiry(message);
@@ -848,9 +853,10 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
           });
           return;
         }
-        if (scheduleIntent) {
-          const answer = (await createJarvisReminder(scheduleIntent, sub, JARVIS_AGENT_ID))
-            ?? 'I could not set that reminder up just now — try again in a moment.';
+        if (scheduleIntent || locationTurn) {
+          const answer = locationTurn ? await runJarvisLocationTurn(ctx.pool, locationTurn)
+            : ((scheduleIntent && await createJarvisReminder(scheduleIntent, sub, JARVIS_AGENT_ID))
+              ?? 'I could not set that reminder up just now — try again in a moment.');
           await persistJarvisTurn(ctx, sessionId, 'assistant', answer);
           await markJarvisSessionTaskStatus(ctx, sessionId, 'active');
           const j = askJobs.get(jobId);
