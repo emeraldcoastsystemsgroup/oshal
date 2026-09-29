@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Acceptance fixes: family and company send no /api/education request, and Home no Little Monsters ribbon-profile read, unless Little Monsters' read-only probe answers 200 (and none for an entry outside the plan) while the classroom still reads; authorization refusals read "not available to you", the no-profile refusal says to open Little Monsters once, other refusals show their status; UTC-midnight due and event dates show their own day in America/Chicago; the learner card has no completion count or progress bar; an approval_required ticket leads the six project rows; a timed event shows its day. The context setup moved into openContext so a case can choose a zone and locale.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | A hosted tool opens in view: on the Business preset with every assembly host installed, scrolled to the bottom of the sidebar (the page is scrolled, the precondition), opening the last host's tool puts the frame's top inside the viewport and focuses the frame, both for a reader who prefers reduced motion and for one who does not. openContext also takes reducedMotion.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | The reduced-motion pass reads the frame position once, right after the frame appears, so only an instant scroll passes it; the other pass still polls for the smooth scroll
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | The learner card now carries the learner's own level and XP progress from Little Monsters' dashboard (built by the home build lane); the case still proves no classwork completion is claimed, and that the only progress bar is the XP bar.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -390,7 +391,11 @@ describe('acceptance fixes: Little Monsters reads, dates, the learner card, proj
     const card = await moduleText('learning');
     expect(card).toContain('1 class · 1 open classwork item.'); expect(card).toContain('Next: Observe a seed · Synthetic Science · due');
     expect(card).not.toContain('classwork done'); expect(card).not.toMatch(/\d+ \/ \d+/);
-    expect(await page.locator('[data-module="learning"] :is([role="progressbar"], .progress-track, .focus-count)').count()).toBe(0);
+    // The only progress on the card is the learner's own level and XP from Little Monsters' dashboard, never classwork done.
+    const bars = page.locator('[data-module="learning"] [role="progressbar"]');
+    expect(await bars.count()).toBe(1);
+    expect(await bars.getAttribute('aria-label')).toBe('XP toward level 3');
+    expect(await page.locator('[data-module="learning"] .focus-count').getAttribute('data-progress')).toBe('level');
     expect(errors).toEqual([]);
   });
 

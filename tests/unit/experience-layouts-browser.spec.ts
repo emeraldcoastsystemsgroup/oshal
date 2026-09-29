@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | The Studio app panel's relationship to Synthetic finance is now a declared app dependency read from the package record (waited for, never labelled an integration source), and its in-place frame requests the Studio's company audience
  * 5 | maintainer@emeraldcoastsystemsgroup.com | The learner view is recognised by its open classwork count: the classwork done/total count was removed (Little Monsters records no per-learner completion)
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Phase-4 assemblies: the classroom lists AI Office ("Make and share") and Circuit Lab ("Build and test"), Home lists Watch / Listen / Go, and Business lists its Office, Communications and Growth hosts, each host in its own group in both the sidebar and the tile row, each opened with the preset's audience, and only the view page of a host whose ribbon lists several surfaces. The Little Monsters case reads its own section now that the classroom hosts more than one application.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Homebase cases follow the home build lane: Home names the missing household group, and a caller Finance does not admit gets no money module at all: a teacher keeps the teaching card, anyone else gets their personal workspace (ADR-164 D10).
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -196,7 +197,7 @@ describe('experience shells over the real routes', () => {
     expect(fixture.state.purchasing.removed).toEqual(['i1']);
     await page.getByRole('button', { name: 'Our people' }).click();
     const people = await page.locator('.main-column').innerText();
-    expect(people).toContain('synthetic@fixture.test'); expect(people).toContain('no household directory'); expect(people).not.toContain('Other Person');
+    expect(people).toContain('synthetic@fixture.test'); expect(people).toContain('not in a household group yet'); expect(people).not.toContain('Other Person');
   });
 
   it('Classroom preset follows the caller’s real role: teacher roster, learner checklist, missing profile', async () => {
@@ -350,8 +351,12 @@ describe('experience shells over the real routes', () => {
     expect(await page.locator('[data-module="finance"]').innerText()).not.toContain('$');
     const finance = fixture.state.apps.find(a => a.summary.name === 'finance')!;
     finance.workspace = null; if (finance.plan) finance.plan.firstSurfaceUrl = undefined;
-    await page.reload(); await page.waitForSelector('[data-module="finance"]');
-    await page.waitForFunction(() => document.querySelector('[data-module="finance"]')?.textContent?.includes('not available in your workspace'));
+    // Not admitted to Finance: no money module at all (ADR-164 D10); this caller teaches, so the teaching card takes its place.
+    await page.reload(); await page.waitForFunction(() => document.querySelector('[data-module="learning"]')?.textContent?.includes('You teach'));
+    expect(await page.locator('[data-module="finance"]').count()).toBe(0);
+    fixture.state.education.me = { ...fixture.state.education.me, role: 'parent' };
+    await page.reload(); await page.waitForFunction(() => document.querySelector('[data-module="personal"]')?.textContent?.includes('Room for your best work.'));
+    expect(await page.locator('[data-module="finance"]').count()).toBe(0);
   });
 
   it('the central assistant runs the real ask flow, opens handoffs and falls back to the labelled browser voice', async () => {
