@@ -163,7 +163,9 @@ stylesheets under `/experience/…`, so the strict CSP applies unchanged.
   cards (Finance's spend read once, no-data, outside the plan never read); package facts; Orbit's cross-suite follow and
   Studio's related context; pin focus; Orbit's hubs clear of the legend; household or team membership and the caller's
   place with each source read once and their refusals; the portal's sections with live facts; the demo's six-width layout
-  check; the provenance of on-demand reads; entered markup staying text.
+  check; the provenance of on-demand reads; entered markup staying text; and the demo's remaining interactions (the
+  directory's empty state, drafts kept per room, keyboard tabs, Room details and the private space, Orbit's hub ask and
+  its way back, a fresh conversation, the phone-width menu).
 - AI Test Lab card `experience-shells` (`test-lab-experience-scenarios.ts`): a read-only step over
   the entry pages and the feeds they join, classified as gap when the running image predates
   `src/experience`.
