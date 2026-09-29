@@ -1,9 +1,10 @@
 # Qualified connector credentials: foundation and integration contract
 
-Status: **Foundation source only; not activated.** Personal credentials only. No
-qualified connection route, OAuth ceremony, broker or Home integration is provided
-by this slice. Every L8 physical-readiness hold remains in place. No PostgreSQL or
-provider acceptance is claimed.
+Status: **Foundation and bounded broker/session source; not activated.** Personal
+credentials only. This candidate supplies no qualified HTTP route, fresh-grant API,
+OAuth ceremony or Home integration. Those are separate coordinated slices. Every
+L8 physical-readiness hold remains in place. No PostgreSQL or provider acceptance
+is claimed; migration promotion remains blocked on real enforcing-role proof.
 
 ## Why an additive namespace
 
@@ -86,6 +87,67 @@ KEK rotation/recovery is not implemented: changing the secret does not adopt or
 repair keys. That remains separate governed work; never recover by minting a key
 for existing ciphertext.
 
+## Shared personal transaction boundary
+
+[connector-qualified-session.ts](../../src/app/routes/connector-qualified-session.ts)
+exports `withQualifiedConnectorSession(db, principal, work, { signal? })`. The pool
+must be the existing request-bound GUC pool, not an ambient transaction or raw/system
+pool. Existing request ALS must match the exact issuer/sub and `isOperator === false`;
+the helper does not establish identity or trust a request/header claim. Authenticated
+HTTP integration owns any explicit same-verified-principal operator downgrade.
+
+The helper takes a dedicated GUC client and runs short database-only work in a
+`READ COMMITTED` transaction. No provider requests or nested commit/rollback belong
+in its callback. It rechecks context after awaits, rolls back failures with a bounded
+one-second cleanup attempt, and physically ends suspect concrete `pg.Client`s before
+wrapped release. Release alone can queue RESET behind unresolved SQL. Cancellation
+rejects the waiting caller, prevents late continuation, disposes an acquired client,
+and discards a late checkout before callback admission. Successful release retains
+the existing GUC wrapper's reset-before-reuse behavior.
+
+Lifecycle errors have fixed codes without driver diagnostics. Callback business
+errors are rethrown after cleanup for caller-owned classification; callers must not
+serialize arbitrary callback error messages. A failed/aborted commit acknowledgment
+may have committed: do not assume rollback reversed it or automatically retry a
+fresh grant/provider operation. Re-read authoritative metadata through its normal
+authenticated path before deciding what happened.
+
+## Strict qualified personal broker
+
+[connector-qualified-broker.ts](../../src/app/routes/connector-qualified-broker.ts)
+exports `resolveQualifiedPersonalCredential(db, principal, selection, options)`:
+
+```ts
+selection = { connectionId, provider, expectedRevision }; // revision: exact BIGINT string
+options = { refresh?, signal? }; // trusted server adapter, never request input
+result = { accessToken, connectionId, provider, revision, expiresAt };
+```
+
+The result is controller-only plaintext for one fixed operation, never an HTTP,
+model, CLI or workspace payload. Selection requires an exact lowercase UUID,
+provider and canonical positive revision string, with exact matching non-operator
+request identity. Queries use only qualified personal tables and match issuer,
+subject, UUID, provider, revision and connected status. No default-account, legacy,
+environment, directory, LOCAL, operator or household fallback exists.
+
+Finite expiry must remain in the future; null explicitly means no recorded expiry.
+Expired rows require a qualified refresh token and an injected refresh adapter.
+There is no live provider implementation here. Adapter input binds the same owner,
+UUID/provider/revision; output requires nonempty bounded tokens and canonical future
+UTC expiry. Omitted refresh rotation retains only that exact qualified row's token.
+Unknown/legacy formats, missing keys, malformed expiry, stale selection, storage
+failure and refresh failure are fixed-code refusals, not credential fallbacks.
+
+Refresh happens **outside** a transaction. Decryption and provider settlement are
+followed by fresh row checks. Only then does the shared session lock the exact row,
+encrypt the refreshed values, compare-and-set the original revision and credential
+snapshot, require the database's next revision and acknowledge commit. A fresh
+post-commit check catches revocation/replacement before returning plaintext. Failed
+CAS, revocation, replacement and abort never retry the provider automatically.
+Hung refresh can be abandoned using the supplied abort signal; late results cannot
+persist. Token resolution establishes a revalidation point, not execution authority
+after additional caller awaits: Home must retain its own final authorization checks.
+
 ## Verification boundaries
 
 - [Focused crypto suite](../../tests/unit/connector-qualified-token-crypto.spec.ts):
@@ -99,17 +161,31 @@ for existing ciphertext.
   same-sub issuers coexist without cross-reads/writes, operator flag cannot widen,
   revisions/immutability, races/rollback and mixed legacy rows unchanged/readable
   through their original codec. It never targets an inherited DSN.
+- [Broker suite](../../tests/unit/connector-qualified-broker.spec.ts): actual broker,
+  crypto and request ALS; explicit SQL/transaction/provider doubles. Covers exact
+  selection, missing provenance, stale/revoked/replaced rows during decryption and
+  refresh, expiry, CAS refusal, abort and sanitized errors. Real-source negative
+  controls remove access-decrypt, refresh-admission and post-commit revalidation;
+  each must fail its intended assertion before byte-identical restoration.
+- [Session suite](../../tests/unit/connector-qualified-session.spec.ts): actual ALS
+  and GUC wrapper against a named SQL client double, plus installed `pg` pool/client
+  and GUC/DDL wrappers over an in-memory held transport. It proves physical
+  end-before-release eviction, queued RESET rejection, bounded rollback, late
+  checkout and reset-before-reuse, without a network socket or PostgreSQL server.
+  Removing physical `end()` must fail the transport-destroyed assertion. This is
+  pool/protocol lifecycle evidence, **not SQL, locking or RLS proof**.
 
-The authorized local command selects only the first file with a 128 MiB runner and
+The authorized local command selects only the three non-PostgreSQL files with a 128 MiB runner and
 one 384 MiB worker. The handover supervisor requires fresh free RAM of at least
 1800 MiB, monitors a 600 MiB reserve and imposes a 180-second process deadline:
 
 ```sh
-node --max-old-space-size=128 node_modules/vitest/vitest.mjs run --config vitest.config.ts --pool=forks --maxWorkers=1 --no-file-parallelism --execArgv=--max-old-space-size=384 --testTimeout=15000 --hookTimeout=15000 tests/unit/connector-qualified-token-crypto.spec.ts
+node --max-old-space-size=128 node_modules/vitest/vitest.mjs run --config vitest.config.ts --pool=forks --maxWorkers=1 --no-file-parallelism --execArgv=--max-old-space-size=384 --testTimeout=15000 --hookTimeout=15000 tests/unit/connector-qualified-token-crypto.spec.ts tests/unit/connector-qualified-broker.spec.ts tests/unit/connector-qualified-session.spec.ts
 ```
 
-Actual run receipts/hashes belong to the local handover. No full typecheck,
-committed-head gate, migration execution or deployed acceptance is implied here.
+Actual run receipts/hashes belong to the local handover; gates are tied to their
+exact heads, never inherited by a later broker/session increment. No migration
+execution or deployed acceptance is implied here.
 Docs index and Test Lab registration belong to the separately coordinated
 integration, outside this exact foundation scope.
 
@@ -118,8 +194,10 @@ integration, outside this exact foundation scope.
 1. Authenticated fresh-connect/reconnect/token submission binds issuer **and** sub
    throughout initiation/completion. Explicitly distinguish qualified from legacy
    status; never coalesce an ambiguous legacy refresh token into a new grant.
-2. Strict server broker selects only qualified personal rows, honors status/revision
-   and permissions, persists refresh by exact row/version and rechecks after awaits.
+2. Independently review and integrate the bounded broker/session at authenticated
+   server operation boundaries, including current permission checks. Supply only
+   trusted refresh adapters and exact selections; the source primitive does not
+   establish HTTP/operation authority or an end-to-end fresh-connect contract.
    No legacy, household, environment, directory-collision or LOCAL-only shortcut.
 3. Home consumes that broker and retains fire authorization, deadline/abort,
    connection-replacement/refusal guards and no-retry behavior. Only then may
@@ -128,5 +206,6 @@ integration, outside this exact foundation scope.
    protocol tests in coordinated slots. Provider acceptance is separately labelled.
    Shared/household grants require additional issuer-qualified use authority.
 
-This foundation supplies no connection selector, authenticated endpoint, physical
-operation, provider call or new application permission. No full Home/L8 completion.
+This candidate supplies no default-account selector, authenticated endpoint,
+physical operation, live provider implementation or new application permission.
+No full Home/L8 completion.
