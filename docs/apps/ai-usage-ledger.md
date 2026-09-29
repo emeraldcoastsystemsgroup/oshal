@@ -15,7 +15,9 @@ container with a declared `mem_limit` counts that limit as its high and a quarte
 These are declared ceilings, not measurements.
 
 Tier is the capability the feature asks of a model today (ADR-170 D1): T1 pick from a set, T2 a bounded plan code
-renders, T3 grounded reasoning over retrieved context, T4 long tool loops. A package with no model in the loop is T0.
+renders, T3 grounded reasoning over retrieved context, T4 long tool loops. T0 means no language model: a feature
+declares it only when a template prompt drives an image, audio or video model (generation local or hosted).
+A package with no model at all shows "none (T0, no model in the loop)".
 Tokens per unit and models verified read "not yet measured" / "none recorded" until the P0 and P1 generators exist;
 a number in those columns is never typed by hand.
 

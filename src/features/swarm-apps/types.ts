@@ -35,6 +35,7 @@
  * 29 | maintainer@emeraldcoastsystemsgroup.com   | SwarmApplicationSummary gained `connectors: {required, optional}` - the provider ids this bundle includes, projected from the ADR-085 dependency tiers. The applications catalog could list installed and available packages but had no way to say which providers a bundle uses or whether they are connected, so it could not tell a connected bundle from one waiting on a credential. Projected here, beside icon/hasSurface, because a second reader of the raw dependencies keys would disagree with the shared tier contract the installer and loader already use.
  * 30 | maintainer@emeraldcoastsystemsgroup.com   | P8 makes chatBot the explicit metadata-only concierge pointer for surfaced apps and code-less groups. Groups may reference only a required active member's canonical concierge (activation proves it); they still cannot carry executable bots, workflows, or tools.
  * 31 | maintainer@emeraldcoastsystemsgroup.com   | ADR-170 rating label: the closed APP_RATING_TIERS (T1-T4; T0 is code and never declared), APP_RATING_GENERATIONS (none|local|hosted), APP_RATING_DEGRADES (template|hosted|disable|reduced) and APP_RATING_MEMORY_BASES (declared|observed) with guards, the AppRatingMemory/AppRatingFeature/AppRatingDeclaration shapes, and an optional `rating` on SwarmAppManifest (operator 2026-09-29: token rating per application plus container memory low/high).
+ * 32 | maintainer@emeraldcoastsystemsgroup.com   | APP_RATING_TIERS gains T0 for a generation-only feature: the store survey found template-prompt image features (Portrait Studio, Create region regenerate, Switchboard compose preview) that drive a hosted image model with no language model, which no T1-T4 value described honestly.
  */
 
 import type { BriefingDeclaration } from '@/shared/briefings';
@@ -110,12 +111,14 @@ export const SWARM_APP_SUITES = [
 export type SwarmAppSuite = (typeof SWARM_APP_SUITES)[number];
 
 /**
- * ADR-170 D1: the closed capability tiers, what a feature asks of a model. T0 (deterministic code)
- * is never declared: a package with no model-touching feature declares `rating.features: []`.
+ * ADR-170 D1: the closed capability tiers, what a feature asks of a language model.
  *   T1 pick from an enumerated set, route, rank, yes/no · T2 a bounded JSON plan code renders ·
  *   T3 grounded reasoning with citations over retrieved context · T4 long-horizon tool loops.
+ * T0 means no language model. It is declared only for a generation-only feature (a template prompt
+ * driving an image, audio or video model, so `generation` is local or hosted); a package with no
+ * model at all declares `rating.features: []`.
  */
-export const APP_RATING_TIERS = ['T1', 'T2', 'T3', 'T4'] as const;
+export const APP_RATING_TIERS = ['T0', 'T1', 'T2', 'T3', 'T4'] as const;
 /** One of the closed capability tiers (ADR-170 D1). */
 export type AppRatingTier = (typeof APP_RATING_TIERS)[number];
 /** @description Type guard for the closed tier set; the loader fails the load on anything else. */

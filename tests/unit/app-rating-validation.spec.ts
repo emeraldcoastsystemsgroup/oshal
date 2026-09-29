@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the ADR-170 rating label: the closed tier/generation/degrade/basis sets, readManifest accepting a valid `rating:` block and refusing each malformed shape (unknown tier, memory low > high, bytes typed as MiB, duplicate id, `reduced` without text, unknown keys), a missing block staying warn-only, every in-repo kernel manifest rated, and the REAL ledger generator over a temp checkout going red on a stale file and on an unrated manifest.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Expected ledger rows follow the generator dropping its Version column.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | T0 closed-set membership, T0 accepted for a hosted-generation feature, T0 with no generation refused.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -51,11 +52,11 @@ function read(body: string) {
 
 describe('rating closed sets (ADR-170 D1/D9)', () => {
   it('are exactly the documented values', () => {
-    expect([...APP_RATING_TIERS]).toEqual(['T1', 'T2', 'T3', 'T4']);
+    expect([...APP_RATING_TIERS]).toEqual(['T0', 'T1', 'T2', 'T3', 'T4']);
     expect([...APP_RATING_GENERATIONS]).toEqual(['none', 'local', 'hosted']);
     expect([...APP_RATING_DEGRADES]).toEqual(['template', 'hosted', 'disable', 'reduced']);
     expect([...APP_RATING_MEMORY_BASES]).toEqual(['declared', 'observed']);
-    expect(isAppRatingTier('T0')).toBe(false); // T0 is code; it is never declared
+    expect(isAppRatingTier('T5')).toBe(false);
     expect(isAppRatingGeneration('cloud')).toBe(false);
     expect(isAppRatingDegrade('fallback')).toBe(false);
     expect(isAppRatingMemoryBasis('guessed')).toBe(false);
@@ -79,13 +80,28 @@ describe('readManifest and the rating block', () => {
     expect(read('rating:\n  memoryMb: { low: 32, high: 32 }\n  features: []\n').rating?.features).toEqual([]);
   });
 
+  it('T0 is accepted for a generation-only feature (template prompt driving a hosted image model)', () => {
+    const body = [
+      'rating:',
+      '  memoryMb: { low: 32, high: 128 }',
+      '  features:',
+      '    - id: portrait',
+      '      unit: portrait',
+      '      tier: T0',
+      '      generation: hosted',
+      '      degrade: disable',
+      '',
+    ].join('\n');
+    expect(read(body).rating?.features[0]).toMatchObject({ tier: 'T0', generation: 'hosted' });
+  });
+
   it('a MISSING block is allowed — installed pre-170 packages keep booting', () => {
     expect(read('').rating).toBeUndefined();
   });
 
   it.each([
-    ['unknown tier', VALID.replace('tier: T3', 'tier: T5'), /tier "T5" is not one of T1, T2, T3, T4/],
-    ['tier T0 typed', VALID.replace('tier: T3', 'tier: T0'), /tier "T0" is not one of/],
+    ['unknown tier', VALID.replace('tier: T3', 'tier: T5'), /tier "T5" is not one of T0, T1, T2, T3, T4/],
+    ['T0 with no generation backend', VALID.replace('tier: T3', 'tier: T0'), /tier T0 is declared only for a generation-only feature/],
     ['unknown generation', VALID.replace('generation: none', 'generation: cloud'), /generation "cloud" is not one of/],
     ['unknown degrade', VALID.replace('degrade: reduced', 'degrade: fallback'), /degrade "fallback" is not one of/],
     ['reduced without text', VALID.replace('      reducedEdition: T2 summary over code-ranked signals\n', ''), /requires reducedEdition/],

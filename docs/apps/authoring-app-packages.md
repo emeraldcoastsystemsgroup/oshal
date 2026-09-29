@@ -501,6 +501,8 @@ rating:
 ```
 
 - A package with no model in the loop declares `features: []`. That is a statement, not an omission.
+- A feature where a template prompt drives an image, audio or video model, with no language model,
+  declares `tier: T0` with `generation: local` or `hosted`. `T0` with `generation: none` is refused.
 - Memory is what this one app needs on the swarm host. Count every bot container it uses, even one
   another app shares, and leave out services on another machine such as a GPU box.
 - Declared memory follows one rule until a measurement replaces it with `basis: observed`: a bot-node

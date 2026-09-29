@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The `rating:` block validator (ADR-170 D2/D9/D10, plus the operator's 2026-09-29 ask for container memory low/high per application). VALUES fail the load exactly as `suite:` does, so a typo'd tier cannot invent a fifth one; PRESENCE is warn-only so installed pre-170 packages keep booting and the ledger lists them as unrated. Own file so the loader gains one call, not a block.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | T0 is accepted only with generation local or hosted; T0 with generation none is refused (a package with no model at all declares features: []).
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -104,6 +105,9 @@ function validateRatingFeature(value: unknown, index: number, seen: Set<string>,
   }
   if (!isAppRatingGeneration(generation)) {
     fail(absPath, at, `generation "${String(generation)}" is not one of ${APP_RATING_GENERATIONS.join(', ')}`);
+  }
+  if (tier === 'T0' && generation === 'none') {
+    fail(absPath, at, 'tier T0 is declared only for a generation-only feature (generation local or hosted); with no model at all, declare features: []');
   }
   if (!isAppRatingDegrade(degrade)) {
     fail(absPath, at, `degrade "${String(degrade)}" is not one of ${APP_RATING_DEGRADES.join(', ')}`);
