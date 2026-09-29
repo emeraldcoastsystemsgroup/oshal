@@ -14,6 +14,7 @@
  * deterministic in-memory adapters.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Partial-mock the database barrel instead of listing its exports. createPersistenceActivation arrived in the barrel and both in-memory stores call it, so this file's mock threw on construction and the suite was red on main with nobody acting on it.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The Jarvis task/artifact SQL fake, owner-aware task store, user-auth rail and poll helper moved verbatim to tests/helpers/jarvis-delayed-lifecycle-harness.ts so the JVV-003 queue-backed lifecycle spec shares them; no assertion changed.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Four of six cases were red on main ('Jarvis result identity unavailable'): the router resolves result reads through ctx.applicationAuthorization and checks the session task's stored owner issuer, and these contexts supplied neither. Every context now carries testApplicationAuthorization and the real InMemoryTaskStore seeded with the owner issuer (createIssuerKeepingTaskStore), and the auth rail signs callers in with an issuer, as tests/unit/jarvis-queue-lifecycle.integration.spec.ts does. createOptionalPostgresPool is mocked to null so that store can never reach a configured database. No assertion changed; the cross-owner case now runs on the issuer-bound path production uses.
  */
 
 import type { AddressInfo } from 'node:net';
@@ -34,6 +35,8 @@ vi.mock('@/features/user-model', () => ({
 // the spec never asked about - which is how six files were left red on main at once.
 vi.mock('@/shared/services/database', async (importOriginal) => ({
   ...await importOriginal<object>(),
+  // The real InMemoryTaskStore asks for a pool at construction; it must stay in memory here.
+  createOptionalPostgresPool: () => null,
 
   runRuntimeSchemaBootstrap: vi.fn().mockResolvedValue(undefined),
   buildOwnerRlsPolicyStatements: vi.fn().mockReturnValue([]),
@@ -43,7 +46,8 @@ import { createJarvisRoutes } from '../../src/app/routes/jarvis-routes';
 import { serviceSecretOr } from '../../src/shared/middleware/authz';
 import {
   DelayedLifecyclePool,
-  createOwnerAwareTaskStore,
+  createIssuerKeepingTaskStore,
+  testApplicationAuthorization,
   testUserAuth,
   waitFor,
   type StoredMessage,
@@ -126,7 +130,7 @@ describe('Jarvis delayed worker visual lifecycle integration', () => {
   it('keeps the handoff acknowledgement text-only, then persists and reloads the completed visual in the original Discussion', async () => {
     const pool = new DelayedLifecyclePool();
     const messages: StoredMessage[] = [];
-    const sessionTasks = createOwnerAwareTaskStore();
+    const taskStore = await createIssuerKeepingTaskStore();
     const workTicket = {
       ticketId: 'ticket-weather-1', title: 'Prepare the trip weather brief', ticketType: 'task',
       status: 'approved', createdAt: '2026-07-10T15:00:00.000Z', updatedAt: '2026-07-10T15:00:00.000Z',
@@ -164,7 +168,8 @@ describe('Jarvis delayed worker visual lifecycle integration', () => {
     const ctx = {
       pool,
       orchestrator: { processMessage: vi.fn() },
-      taskStore: sessionTasks.store,
+      taskStore,
+      applicationAuthorization: testApplicationAuthorization,
       messageStore: {
         save: vi.fn(async (message: StoredMessage) => { messages.push(message); }),
         getByTask: vi.fn(async (taskId: string) => {
@@ -294,7 +299,7 @@ describe('Jarvis delayed worker visual lifecycle integration', () => {
       error: null, kind: 'complex', ticket_id: ticketId, visual: null, delivered: false,
       created_at: '2026-07-12T14:00:00.000Z', finished_at: null, summarize_started_at: null,
     });
-    const sessionTasks = createOwnerAwareTaskStore([{ taskId: sessionId, ownerSub: OWNER }]);
+    const taskStore = await createIssuerKeepingTaskStore([{ taskId: sessionId, ownerSub: OWNER }]);
     const messages: StoredMessage[] = [];
     const providerRecord = {
       schemaVersion: 1,
@@ -330,7 +335,8 @@ describe('Jarvis delayed worker visual lifecycle integration', () => {
     const ctx = {
       pool,
       orchestrator: { processMessage: vi.fn() },
-      taskStore: sessionTasks.store,
+      taskStore,
+      applicationAuthorization: testApplicationAuthorization,
       messageStore: {
         save: vi.fn(async (message: StoredMessage) => { messages.push(message); }),
         getByTask: vi.fn(async (id: string) => id === ticketId ? [{
@@ -438,7 +444,7 @@ describe('Jarvis delayed worker visual lifecycle integration', () => {
       created_at: '2026-07-11T01:00:00.000Z', finished_at: '2026-07-11T01:05:00.000Z',
       summarize_started_at: '2026-07-11T01:04:00.000Z',
     });
-    const sessionTasks = createOwnerAwareTaskStore([{ taskId: sessionId, ownerSub: OWNER }]);
+    const taskStore = await createIssuerKeepingTaskStore([{ taskId: sessionId, ownerSub: OWNER }]);
     const messages: StoredMessage[] = [{
       taskId: sessionId, role: 'assistant', type: 'say', text: result,
       metadata: { sourceJarvisTaskId: taskId, sourceTicketId: ticketId },
@@ -451,7 +457,8 @@ describe('Jarvis delayed worker visual lifecycle integration', () => {
     const ctx = {
       pool,
       orchestrator: { processMessage: vi.fn() },
-      taskStore: sessionTasks.store,
+      taskStore,
+      applicationAuthorization: testApplicationAuthorization,
       messageStore: {
         save: vi.fn(async (message: StoredMessage) => { messages.push(message); }),
         getByTask: vi.fn(async (id: string) => messages.filter((message) => message.taskId === id)),
@@ -526,7 +533,7 @@ describe('Jarvis delayed worker visual lifecycle integration', () => {
   it('suppresses every schema-valid direct visual kind at the real ask/history route boundary', async () => {
     const pool = new DelayedLifecyclePool();
     const messages: StoredMessage[] = [];
-    const sessionTasks = createOwnerAwareTaskStore();
+    const taskStore = await createIssuerKeepingTaskStore();
     const byKind = new Map(DIRECT_VISUAL_SPECS.map((spec) => [spec.kind, spec]));
 
     executeBot.mockImplementation(async (_ctx: unknown, _client: unknown, _agentId: string, input: { text: string }) => {
@@ -558,7 +565,8 @@ describe('Jarvis delayed worker visual lifecycle integration', () => {
     const ctx = {
       pool,
       orchestrator: { processMessage: vi.fn() },
-      taskStore: sessionTasks.store,
+      taskStore,
+      applicationAuthorization: testApplicationAuthorization,
       messageStore: {
         save: vi.fn(async (message: StoredMessage) => { messages.push(message); }),
         getByTask: vi.fn(async (taskId: string) => messages.filter((message) => message.taskId === taskId)),
@@ -613,7 +621,7 @@ describe('Jarvis delayed worker visual lifecycle integration', () => {
   it('materializes an explicitly requested timeline once and replays its owner-scoped artifact from history', async () => {
     const pool = new DelayedLifecyclePool();
     const messages: StoredMessage[] = [];
-    const sessionTasks = createOwnerAwareTaskStore();
+    const taskStore = await createIssuerKeepingTaskStore();
     const sessionId = 'jarvis-explicit-timeline';
     const timeline = {
       kind: 'timeline',
@@ -642,7 +650,8 @@ describe('Jarvis delayed worker visual lifecycle integration', () => {
     const ctx = {
       pool,
       orchestrator: { processMessage: vi.fn() },
-      taskStore: sessionTasks.store,
+      taskStore,
+      applicationAuthorization: testApplicationAuthorization,
       messageStore: {
         save: vi.fn(async (message: StoredMessage) => { messages.push(message); }),
         getByTask: vi.fn(async (taskId: string) => messages.filter((message) => message.taskId === taskId)),
@@ -730,7 +739,7 @@ describe('Jarvis delayed worker visual lifecycle integration', () => {
     const foreignSession = 'jarvis-foreign-session';
     const newSession = 'jarvis-intruder-new-session';
     const pool = new DelayedLifecyclePool();
-    const sessionTasks = createOwnerAwareTaskStore([{ taskId: foreignSession, ownerSub: foreignOwner }]);
+    const taskStore = await createIssuerKeepingTaskStore([{ taskId: foreignSession, ownerSub: foreignOwner }]);
     const privateVisual = {
       artifactId: '11111111-1111-4111-8111-111111111111',
       type: 'image', kind: 'priority-email', mimeType: 'image/svg+xml',
@@ -748,7 +757,8 @@ describe('Jarvis delayed worker visual lifecycle integration', () => {
     const ctx = {
       pool,
       orchestrator: { processMessage: vi.fn() },
-      taskStore: sessionTasks.store,
+      taskStore,
+      applicationAuthorization: testApplicationAuthorization,
       messageStore: { save, getByTask },
       ticketService: {
         openChatTicket: vi.fn().mockResolvedValue({ ticketId: 'ticket-owner-isolation' }),
@@ -802,7 +812,7 @@ describe('Jarvis delayed worker visual lifecycle integration', () => {
         const body = await result.json() as { status?: string };
         return body.status === 'done' ? body : undefined;
       });
-      expect(sessionTasks.tasks.get(newSession)?.ownerSub).toBe(intruder);
+      expect((await taskStore.get(newSession))?.ownerSub).toBe(intruder);
       expect(messages.filter((message) => message.taskId === newSession).map((message) => message.text)).toEqual([
         'Start my own thread.', 'Safe owner-scoped response.',
       ]);

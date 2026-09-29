@@ -6,6 +6,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the shared host runner for the automated live-acceptance sweep: `node scripts/operations/live-acceptance.js <case|all|list> [--record-doc]`. As the operator automation identity (OSHAL_VERIFY_OPERATOR_PAT, read by name from the environment or the box's .env, never printed or put on a command line) it binds each case in scripts/lib/live-acceptance-cases.js to the running box: bearer HTTP against OSHAL_VERIFY_BASE_URL, a named-statement/ticket/workspace helper staged once into the api container and called with its request forwarded by name, the Jarvis bot's call log through `docker logs`, and a 390 x 844 headless Chromium whose same-origin requests carry the token and whose every other request is aborted. It prints PASS/FAIL/DEGRADED/UNAVAILABLE per case with the cleanup receipt, then one summary line, and exits 0 only when every selected case passed. `--record-doc` writes the Jarvis cache measurement into docs/architecture/jarvis-own-task-recall.md of this checkout.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | An `anonymous` port beside `api`: the same JSON request with NO credential (no Authorization header), so a case can prove a route refuses an unauthenticated caller (the dev-workspace query route must answer 401/403). The token never reaches that request.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Every HTTP reply also carries `byteLength` and `sha256` of its raw body (the text is decoded from the same bytes, as fetch's text() would), so a case can prove a binary route served exact bytes: the vids-publish case compares the anonymous public read with the MP4 it uploaded. And a `files` port over the helper's new `file-state` op: whether a NAMED probe's file (never a path) exists in the api container.
  */
 
 'use strict';
@@ -58,11 +59,13 @@ function httpPorts(base, token, fetchImpl = fetch) {
     const headers = { ...(init.headers || {}), ...(withToken ? { authorization: `Bearer ${token}` } : {}) };
     const response = await fetchImpl(`${base}${route}`, { method, redirect: 'manual', signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
       ...init, headers });
-    const text = await response.text().catch(() => '');
+    const raw = Buffer.from(await response.arrayBuffer().catch(() => new ArrayBuffer(0)));
+    const text = new TextDecoder().decode(raw);
     let json = {};
     try { json = text ? JSON.parse(text) : {}; } catch { json = {}; }
     return { status: response.status, json: json && typeof json === 'object' ? json : {}, text: text.slice(0, 65_536),
-      contentType: String(response.headers.get('content-type') || ''), location: response.headers.get('location') || null };
+      contentType: String(response.headers.get('content-type') || ''), location: response.headers.get('location') || null,
+      byteLength: raw.length, sha256: crypto.createHash('sha256').update(raw).digest('hex') };
   };
   const jsonInit = (body, options = {}) => ({
     headers: { ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...(options.headers || {}) },
@@ -125,10 +128,10 @@ function dockerCall(args, env) {
 }
 
 /**
- * @description The named-statement, ticket and workspace ports over the helper, as the owner.
+ * @description The named-statement, ticket, workspace and named-file ports over the helper, as the owner.
  * @param {ReturnType<typeof containerHelper>} helper - The helper.
  * @param {string} sub - The owner subject.
- * @returns {{sql: Function, tickets: object, workspace: object}} The ports.
+ * @returns {{sql: Function, tickets: object, workspace: object, files: object}} The ports.
  */
 function containerPorts(helper, sub) {
   return {
@@ -140,6 +143,9 @@ function containerPorts(helper, sub) {
     workspace: {
       state: async (id) => (await helper.call({ op: 'workspace-state', sub, id })).state,
       remove: async (id) => (await helper.call({ op: 'workspace-remove', sub, id })).error || null,
+    },
+    files: {
+      state: async (name, id) => (await helper.call({ op: 'file-state', sub, name, id })).state,
     },
   };
 }

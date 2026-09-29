@@ -4,12 +4,24 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the in-memory `api` port the live-acceptance case specs drive: routes keyed `METHOD /path` (query string stripped, `:param` segments matched), every call recorded with its body and extra headers, and an unrouted call answering 404 like an unmounted package. It doubles only the HTTP transport; each spec says which product boundary it stands in for, and the live run through scripts/operations/live-acceptance.js is the real companion.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | A reply may carry raw `bytes`; every reply now also reports `byteLength` and `sha256` of its body (the bytes, else the text), as the two real bindings do, so a case that proves a binary route served exact bytes (vids-publish) can be driven here.
  */
+import { createHash } from 'node:crypto';
 
 /** One recorded call. */
 export interface RecordedCall { method: string; path: string; query: string; body: unknown; headers: Record<string, string> }
-/** What a route handler returns; `json` becomes the reply body, `text` defaults to its JSON. */
-export interface FakeReply { status: number; json?: unknown; text?: string; contentType?: string; location?: string | null }
+/** What a route handler returns; `json` becomes the reply body, `text` defaults to its JSON, `bytes` is a binary body. */
+export interface FakeReply { status: number; json?: unknown; text?: string; bytes?: Uint8Array; contentType?: string; location?: string | null }
+
+/**
+ * @description The digest fields the real bindings add to every reply.
+ * @param body - The raw body.
+ * @returns Its byte length and sha256.
+ */
+function digestOf(body: Uint8Array): { byteLength: number; sha256: string } {
+  return { byteLength: body.length, sha256: createHash('sha256').update(body).digest('hex') };
+}
+
 /** A route handler. */
 export type FakeHandler = (call: RecordedCall & { params: Record<string, string> }) => FakeReply | Promise<FakeReply>;
 
@@ -35,10 +47,13 @@ export function fakeApi(routes: Record<string, FakeHandler>) {
       if (!match) continue;
       const params = Object.fromEntries(entry.names.map((name, i) => [name, decodeURIComponent(match[i + 1])]));
       const reply = await entry.handler({ ...call, params });
-      const json = reply.json === undefined ? {} : reply.json;
-      return { status: reply.status, json, text: reply.text ?? JSON.stringify(json), contentType: reply.contentType ?? 'application/json', location: reply.location ?? null };
+      const json = reply.bytes || reply.json === undefined ? {} : reply.json;
+      const text = reply.text ?? (reply.bytes ? '' : JSON.stringify(json));
+      return { status: reply.status, json, text, contentType: reply.contentType ?? (reply.bytes ? 'application/octet-stream' : 'application/json'),
+        location: reply.location ?? null, ...digestOf(reply.bytes ?? Buffer.from(text)) };
     }
-    return { status: 404, json: { error: 'not_found' }, text: '{"error":"not_found"}', contentType: 'application/json', location: null };
+    const text = '{"error":"not_found"}';
+    return { status: 404, json: { error: 'not_found' }, text, contentType: 'application/json', location: null, ...digestOf(Buffer.from(text)) };
   };
   return { api, calls };
 }

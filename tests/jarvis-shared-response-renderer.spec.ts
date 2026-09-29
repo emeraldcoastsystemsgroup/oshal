@@ -4,13 +4,16 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Prove the real Jarvis browser surface consumes the shipped shared response-renderer bundle for a bounded oshal:doc block while keeping typed text escaped and action-free.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The page loads on the configured Playwright origin (jarvisPageUrl) and reaches the composer through openTyper, the shared Options -> Type path that also asserts the control closes Options and focuses the input.
  */
 
 import { expect, test } from '@playwright/test';
 import {
   fulfillJarvisWithResponseRenderer,
   installSpeechStub,
+  jarvisPageUrl,
   json,
+  openTyper,
 } from './helpers/jarvis-rich-response-fixtures';
 
 test('Jarvis renders a bounded document through the shared response renderer', async ({ page }) => {
@@ -34,9 +37,8 @@ test('Jarvis renders a bounded document through the shared response renderer', a
     return fulfillJarvisWithResponseRenderer(route);
   });
 
-  await page.goto('http://jarvis.test/api/jarvis/');
-  await page.locator('#assistantOptions > summary').click();
-  await page.locator('#typeToggle').click();
+  await page.goto(jarvisPageUrl());
+  await openTyper(page);
   await page.locator('#typein').fill('Show the document note.');
   await page.locator('#typer button[type="submit"]').click();
 

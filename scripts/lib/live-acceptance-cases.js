@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the registry of automated live-acceptance cases, in run order. scripts/operations/live-acceptance.js selects from it by key, and the Test Lab cards (test-lab-live-acceptance-scenarios.ts) register one card per entry, so the runner and the Lab can never list different cases.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Register the trading-parity case (live-acceptance-trading-parity.js) for "Queued paper-to-live parity features": read-only, no model turn.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Register the vids-publish case (live-acceptance-vids-publish.js) for "Vids public-publish rail": writes one tagged job, export and publication and removes them, no model turn.
  */
 
 'use strict';
@@ -23,6 +24,7 @@ const CASES = Object.freeze([
   { module: require('./live-acceptance-lm-class-material.js'), backlog: 'ADR-139 - the little-monsters class-materials destination', spendsModel: false, writes: true },
   { module: require('./live-acceptance-jarvis-cache.js'), backlog: 'Jarvis starts cold on every conversation - prime the invariant context once', spendsModel: true, writes: true },
   { module: require('./live-acceptance-trading-parity.js'), backlog: 'Queued paper-to-live parity features', spendsModel: false, writes: false },
+  { module: require('./live-acceptance-vids-publish.js'), backlog: 'Vids public-publish rail', spendsModel: false, writes: true },
 ]);
 
 /**

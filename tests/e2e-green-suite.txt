@@ -121,3 +121,16 @@ tests/app-access-rls-live.spec.ts
 # when the service's transaction-local broker marker is removed. Does not skip - it FAILS when
 # DATABASE_URL is absent.
 tests/swarm-memory-rls-live.spec.ts
+# Jarvis rich-response browser specs (BACKLOG "Shared response-renderer completion", JVV-004
+# automated half, 2026-09-28). They were 21 failed / 7 passed on main: the compact dashboard
+# layout (0c287223) puts Type, Voice, Discussion and the ambient controls in the collapsed
+# #assistantOptions disclosure and the fixture did not serve jarvis-dashboard.css/js; the first
+# task poll is the catch-up summary, never a named offer (fd2ff5ea); a raw workspace path renders
+# inert (6c96e253). Updated to that layout, the page on the configured origin (test-origins.ts), every
+# request answered by route stubs so no database or model is reached. Each file alone with
+# FORCE_LLM_PROVIDER=noop --workers=1 --retries=0: 10 + 4 + 9 + 4 + 1 passed, 0 failed.
+tests/jarvis-rich-response-integration.spec.ts
+tests/jarvis-rich-response-native-wake.spec.ts
+tests/jarvis-rich-response-responsive-a11y.spec.ts
+tests/jarvis-rich-response-visual-trust.spec.ts
+tests/jarvis-shared-response-renderer.spec.ts

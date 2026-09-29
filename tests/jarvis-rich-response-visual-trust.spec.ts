@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Split verbatim out of tests/jarvis-rich-response-integration.spec.ts at the 1000-code-line cap: the visual-trust group — workspace Markdown link bridging, model-authored remote/data image links staying inert, and visual metadata rejected unless its URL is exactly the owner-scoped artifact URL.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Follow the product. A raw workspace path renders inert ('#') since 6c96e253 (the old /code?file= link opened code-server, which a customer box does not run); the first case now pins that, and adds the owner-scoped /api/files/download link captured deliverables are rewritten to, which must stay a link. The page loads on the configured Playwright origin, so the 'same-origin absolute' visual is built from baseOrigin(); the composer is reached through Options -> Type (openTyper).
  */
 
 import { expect, test } from '@playwright/test';
@@ -13,35 +14,43 @@ import {
   SVG,
   fulfillJarvis,
   installSpeechStub,
+  jarvisPageUrl,
   json,
+  openTyper,
 } from './helpers/jarvis-rich-response-fixtures';
+import { baseOrigin } from './helpers/test-origins';
 
-test('bridges only strict workspace Markdown files to the authenticated code surface', async ({ page }) => {
+test('renders raw workspace paths inert and keeps the owner-scoped download and safe web links', async ({ page }) => {
   await installSpeechStub(page);
   await page.route('**/*', fulfillJarvis);
-  await page.goto('http://jarvis.test/api/jarvis/');
+  await page.goto(jarvisPageUrl());
   const ticketId = '08ad8960-2920-4761-9cf4-6d126b1119b7';
   const workspacePath = `/app/workspace-shared/${ticketId}/deliverables/order-options.md`;
+  const ownerDownload = '/api/files/download?provider=oshal-local&path=deliverables%2Forder-options.md';
 
-  const hrefs = await page.evaluate(({ ticketId: id, workspacePath: pathName }) => {
+  const hrefs = await page.evaluate(({ ticketId: id, workspacePath: pathName, ownerDownload: download }) => {
     const markdown = [
       `[notes](${pathName})`,
       `[traversal](/app/workspace-shared/${id}/deliverables/../private.md)`,
       `[query](${pathName}?token=secret)`,
       '[protocol-relative](//attacker.example/file.md)',
       '[Uber Eats](https://www.ubereats.com/search?q=ice-cream)',
+      `[report](${download})`,
     ].join('\n');
     const host = document.createElement('div');
     host.innerHTML = (window as any).renderMarkdown(markdown);
     return [...host.querySelectorAll('a')].map((link) => link.getAttribute('href'));
-  }, { ticketId, workspacePath });
+  }, { ticketId, workspacePath, ownerDownload });
 
+  // A workspace path still in the text is one the server did not capture: nothing the user can
+  // reach serves it, so it must not render as a link (jarvis.html safeUrl).
   expect(hrefs).toEqual([
-    `/code?file=${encodeURIComponent(workspacePath)}`,
+    '#',
     '#',
     '#',
     '#',
     'https://www.ubereats.com/search?q=ice-cream',
+    ownerDownload,
   ]);
 });
 
@@ -68,8 +77,8 @@ test('keeps model-authored remote and data image Markdown inert without making h
     }
     return fulfillJarvis(route);
   });
-  await page.goto('http://jarvis.test/api/jarvis/');
-  await page.locator('#typeToggle').click();
+  await page.goto(jarvisPageUrl());
+  await openTyper(page);
   await page.locator('#typein').fill('Show the model-authored images.');
   await page.locator('#typer button[type="submit"]').click();
 
@@ -119,8 +128,8 @@ test('accepts an owner-scoped gallery SVG while keeping its model-authored remot
     }
     return fulfillJarvis(route);
   });
-  await page.goto('http://jarvis.test/api/jarvis/');
-  await page.locator('#typeToggle').click();
+  await page.goto(jarvisPageUrl());
+  await openTyper(page);
   await page.locator('#typein').fill('Show me the product options.');
   await page.locator('#typer button[type="submit"]').click();
 
@@ -154,7 +163,7 @@ test('ignores visual metadata whose URL is not the exact owner-scoped artifact U
   const invalidVisuals: Array<{ label: string; overrides: Record<string, unknown> }> = [
     { label: 'cross-origin', overrides: { url: 'https://attacker.example/stolen.svg' } },
     { label: 'protocol-relative', overrides: { url: '//attacker.example/stolen.svg' } },
-    { label: 'same-origin absolute', overrides: { url: `http://jarvis.test${ARTIFACT_URL}` } },
+    { label: 'same-origin absolute', overrides: { url: `${baseOrigin()}${ARTIFACT_URL}` } },
     { label: 'data URL', overrides: { url: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=' } },
     { label: 'other root-relative', overrides: { url: '/uploads/untrusted.svg' } },
     { label: 'mismatched artifact', overrides: { url: '/api/jarvis/visuals/22222222-2222-4222-8222-222222222222' } },
@@ -199,8 +208,8 @@ test('ignores visual metadata whose URL is not the exact owner-scoped artifact U
     }
     return fulfillJarvis(route);
   });
-  await page.goto('http://jarvis.test/api/jarvis/');
-  await page.locator('#typeToggle').click();
+  await page.goto(jarvisPageUrl());
+  await openTyper(page);
 
   for (const invalid of invalidVisuals) {
     await page.locator('#typein').fill(`Try the ${invalid.label} visual.`);
