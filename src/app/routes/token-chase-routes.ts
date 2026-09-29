@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Tail-replay action (ADR-046 §1/§8): new POST /runs/:runId/tail-replay restages frame N's workspace tree and replays N..end on the accountable bot, determinism-gating each frame and stopping at the first divergence (which frame + why). Read-of-the-run + bot re-fires only; the controller never calls an LLM. Additive — the promotion routes and every existing action are untouched.
  * 10 | maintainer@emeraldcoastsystemsgroup.com  | Wire Token Chase's aggregate `free:auto` selector into variant and savings actions: health-qualified free lanes rotate on classified provider walls, expose exact provider/model evidence, and fail closed without falling through to the bot's paid/default lane.
  * 11 | maintainer@emeraldcoastsystemsgroup.com  | Tail replay delegated to the bot node (BACKLOG "Workspace-bound checkpoint and tail replay"): POST /runs/:runId/tail-replay no longer restages anything on the controller; TokenChaseTailReplayService asks the producing bot for the hermetic no-edit tail and relays its artifact/store verdict. Body gains optional refire:true for the token-spending prompt re-fire pass; default off.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com  | GET /runs/:runId/final — the run's end-of-run checkpoint (final.json: outcome, tree digest, checkpoint completeness, store binding) through the read service's existing getFinal, owner-scoped like the frames. Read-only. The live-acceptance case token-chase-replay compares a tail replay's replayTreeSha with final.checkpoint.treeSha read HERE, independently of the node's own baseline field, and selects store-bound runs by storeBound.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -192,6 +193,7 @@ export function createTokenChaseRoutes(apiDir: string, ctx: AppContext): Router 
   router.get('/runs', handleListRuns(service));
   router.get('/runs/:runId', handleGetFrames(service));
   router.get('/runs/:runId/frames/:seq', handleGetFrame(service));
+  router.get('/runs/:runId/final', handleGetFinal(service));
   // Step 2b (ADR-046 §10) — the debugger's READ-ONLY trace endpoints: the run's persisted
   // replay/variant/grade observations (timeline badges) and the single-frame inspect bundle
   // (captured payload + recorded results side-by-side). The debugger never fires replays —
@@ -370,6 +372,30 @@ function handleTailReplay(service: TokenChaseTailReplayService) {
     } catch (error) {
       logger.error({ err: error, runId, fromFrame }, 'Token Chase tail replay failed');
       res.status(500).json({ error: 'Tail replay failed' });
+    }
+  };
+}
+
+/**
+ * @description GET /runs/:runId/final — the run's end-of-run checkpoint (final.json), owner-scoped
+ * exactly like its frames: 404 when the run has no checkpoint or the caller may not see it. Read-only;
+ * it is the independent baseline a tail-replay consumer compares replayTreeSha against.
+ * @param service - The read service.
+ * @returns Express handler.
+ */
+function handleGetFinal(service: TokenChaseReadService) {
+  return async (req: Request, res: Response): Promise<void> => {
+    const runId = String(req.params.runId);
+    try {
+      const final = await service.getFinal(runId, accessOf(req));
+      if (!final) {
+        res.status(404).json({ error: 'Final checkpoint not found' });
+        return;
+      }
+      res.json({ runId, final });
+    } catch (error) {
+      logger.error({ err: error, runId }, 'Failed to get Token Chase final checkpoint');
+      res.status(500).json({ error: 'Failed to get final checkpoint' });
     }
   };
 }

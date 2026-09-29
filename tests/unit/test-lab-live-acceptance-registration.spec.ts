@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The adapter's `anonymous` port reaches the same loopback base with no session cookie, while `api` keeps forwarding the caller's.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Runner inputs are host-only. A card may not name an OSHAL_VERIFY_* variable as an api-environment source unless compose forwards it; today compose forwards none. Such a variable may appear only inside the host command that supplies it. And the dev-workspace card, run with OSHAL_VERIFY_DEV_NOTES_PROBE set in this process (standing in for the api's environment), must still answer the handover ask as a host-runner gap: no anonymous query, no Jarvis call, dev mode put back. Red if the Lab adapter stops passing its empty runner environment, or if the description again sends the operator to the api's environment.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The registry gains the vids-publish case. The adapter's replies carry the raw body's byte length and sha256, and its `files` port answers a named probe from this process's disk (a real file under a temporary workspace root) and refuses any other probe name.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | The registry gains the token-chase-replay case (explicit-only: it may spend one model turn starting a tagged file-tools run).
  */
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -49,7 +50,7 @@ async function labFileProbe(ports: { files: { state: (n: string, id: string) => 
 describe('live-acceptance Test Lab cards', () => {
   it('registers one explicit-only card per case, with its host command and suites on disk', () => {
     expect(LIVE_ACCEPTANCE_SCENARIOS).toHaveLength(LIVE_ACCEPTANCE_CASES.length);
-    expect(LIVE_ACCEPTANCE_CASES.map((c) => c.module.KEY)).toEqual(['response-renderer', 'congress', 'dev-workspace', 'floater', 'linkedin', 'commerce', 'lm-class-material', 'jarvis-cache', 'trading-parity', 'vids-publish']);
+    expect(LIVE_ACCEPTANCE_CASES.map((c) => c.module.KEY)).toEqual(['response-renderer', 'congress', 'dev-workspace', 'floater', 'linkedin', 'commerce', 'lm-class-material', 'jarvis-cache', 'trading-parity', 'vids-publish', 'token-chase-replay']);
     for (const scenario of LIVE_ACCEPTANCE_SCENARIOS) {
       const key = scenario.id.replace(/^live-acceptance-/, '');
       expect(SCENARIOS.filter((s) => s.id === scenario.id)).toEqual([scenario]);

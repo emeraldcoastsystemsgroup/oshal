@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the shared live-acceptance machinery: fixture tags; the cleanup ledger (anything created and not removed, or any cleanup error, turns the result red); fixture-workspace removal that refuses non-fixture ids and frames stamped for another owner (real files on disk); the closed statement set (every statement owner-scoped by $1, unknown names refused); the in-container helper (validated requests, every database operation inside the owner's request identity); and the host runner (the operator token only ever in the Authorization header of the runner's own requests, never on a docker command line; the helper's request forwarded by name; exit codes; list and no-token paths).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The host runner's `anonymous` port sends the same JSON request with no Authorization header at all (the dev-workspace case proves its query route refuses such a caller), while `api` keeps sending the token.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The closed file-probe set on real files: `vids.export` resolves only a lower-case UUID under the configured workspace root, answers present/absent from disk, refuses any other probe name, a traversal or an upper-case id (in the helper's request validation too), and the helper's `file-state` op runs with no pool and no identity scope. The runner reports each reply's raw byte length and sha256 beside the decoded text, and its `files` port asks the helper for a named probe, never a path.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The `--expect-store-bound` flag parses into the case options every selected case receives (expectStoreBound), false when absent.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
@@ -206,6 +207,13 @@ describe('the host runner', () => {
     expect(calls.flatMap((c) => c.args).some((a) => a.includes(OWNER) || a.includes('oshal_pat_'))).toBe(false);
     expect(calls.map((c) => c.args[0])).toEqual(['exec', 'cp', 'cp', 'cp', 'exec', 'exec']);
     expect(calls[calls.length - 1].args.slice(-3, -1)).toEqual(['rm', '-rf']);
+  });
+
+  it('parses --expect-store-bound into the options every case receives', () => {
+    expect(runner.parseArgs(['token-chase-replay', '--expect-store-bound'])).toEqual({ selector: 'token-chase-replay', recordDoc: false, expectStoreBound: true });
+    expect(runner.parseArgs(['all', '--record-doc'])).toEqual({ selector: 'all', recordDoc: true, expectStoreBound: false });
+    expect(runner.caseOptions(runner.parseArgs(['all', '--expect-store-bound']))).toEqual({ expectStoreBound: true });
+    expect(runner.caseOptions(runner.parseArgs(['all']))).toEqual({ expectStoreBound: false });
   });
 
   it('exits 0 only when every case passed, and refuses without a token', async () => {

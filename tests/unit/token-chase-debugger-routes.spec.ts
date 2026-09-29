@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the Token Chase step-2b debugger endpoints (ADR-046 §10): GET /runs/:runId/observations and GET /runs/:runId/frames/:seq/inspect must 401 an unauthenticated caller BEFORE touching the corpus, scope corpus reads to the caller's own user_sub, 404 a missing or other-owner frame, 400 a bad sequence, return the documented camelCase shapes, and DEGRADE to frame-only (observationsUnavailable) when the corpus read fails — the debugger is READ-ONLY and must never fire a replay.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | GET /runs/:runId/final (the end-of-run checkpoint the live-acceptance case token-chase-replay reads as its independent baseline): 401 unauthenticated, 404 when the run has no final.json, 404 for another owner's run, and for the owner the documented fields (outcome, treeSha, checkpointComplete, storeBound, workspaceCommit) lifted off final.json.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -82,6 +83,27 @@ function writeFrame(seq: number, userSub: string | null): void {
     response: { content: 'baseline answer', blocks: [] },
   };
   fs.writeFileSync(path.join(dir, `frame-${String(seq).padStart(4, '0')}.json`), JSON.stringify(frame));
+}
+
+/** Writes the run's end-of-run checkpoint (final.json) as the capture lane records it. */
+function writeFinal(userSub: string | null): void {
+  const dir = path.join(workspaceRoot, RUN_ID, '.tokenchase');
+  fs.mkdirSync(dir, { recursive: true });
+  const record = {
+    taskId: RUN_ID,
+    userSub: userSub ?? undefined,
+    outcome: 'completed',
+    turns: 3,
+    at: '2026-09-28T12:00:00.000Z',
+    workspaceCommit: 'c'.repeat(40),
+    ownerStoreVersion: null,
+    ownerStore: { bound: false },
+    checkpoint: { treeSha: 'a'.repeat(64), complete: true, redactedPaths: [] },
+    replayable: true,
+    pins: [],
+    workspaceTree: { treeSha: 'a'.repeat(64), files: [{ path: 'out.txt', sha256: 'b'.repeat(64), size: 5 }] },
+  };
+  fs.writeFileSync(path.join(dir, 'final.json'), JSON.stringify(record));
 }
 
 /** Builds the app exactly as server.ts mounts it: requiresAuth in front of the router. */
@@ -245,6 +267,50 @@ describe('Token Chase step-2b debugger endpoints (read-only trace inspector)', (
       expect(inspect.observationsUnavailable).toBe(true);
       expect(inspect.observations).toEqual([]);
       expect((inspect.frame as Record<string, unknown>).responseContent).toBe('baseline answer');
+    });
+  });
+
+  describe('GET /runs/:runId/final', () => {
+    it('rejects an unauthenticated caller with 401', async () => {
+      writeFrame(1, OWNER.sub);
+      writeFinal(OWNER.sub);
+      const res = await get(appFor(null, fakePool().pool), `/runs/${RUN_ID}/final`);
+      expect(res.status).toBe(401);
+    });
+
+    it('404s a run with no final checkpoint', async () => {
+      writeFrame(1, OWNER.sub);
+      const res = await get(appFor(OWNER, fakePool().pool), `/runs/${RUN_ID}/final`);
+      expect(res.status).toBe(404);
+      expect(res.body?.error).toBe('Final checkpoint not found');
+    });
+
+    it("404s another owner's checkpoint", async () => {
+      writeFrame(1, 'someone-else-entirely');
+      writeFinal('someone-else-entirely');
+      const res = await get(appFor(OWNER, fakePool().pool), `/runs/${RUN_ID}/final`);
+      expect(res.status).toBe(404);
+    });
+
+    it('returns the owner the checkpoint fields the tail-replay baseline is compared against', async () => {
+      writeFrame(1, OWNER.sub);
+      writeFinal(OWNER.sub);
+      const res = await get(appFor(OWNER, fakePool().pool), `/runs/${RUN_ID}/final`);
+      expect(res.status).toBe(200);
+      expect(res.body?.runId).toBe(RUN_ID);
+      expect(res.body?.final).toMatchObject({
+        taskId: RUN_ID,
+        outcome: 'completed',
+        turns: 3,
+        workspaceCommit: 'c'.repeat(40),
+        ownerStoreVersion: null,
+        storeBound: false,
+        treeSha: 'a'.repeat(64),
+        checkpointComplete: true,
+        redactedPaths: [],
+        replayable: true,
+        pins: [],
+      });
     });
   });
 });
