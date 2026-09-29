@@ -178,6 +178,31 @@ The autonomous backlog suites have matching Lab registrations and local commands
 Docker-backed suites create their own temporary databases. Do not substitute a deployment DSN or
 run the unrestricted historical unit collection against a live application database.
 
+### Tree-walk default-runner isolation
+
+`npm run test:unit` still discovers both original test trees, with no removed specs or new skips.
+The three Tree-walk guards (`alert-incident-cutover`, `alert-incident-reopen`, `topology-traversal`)
+run in the `tree-walk-postgres` project: one isolated fork, no file parallelism, in a later scheduling
+group than `unit`. They already own disposable PostgreSQL instances; this partition prevents their
+files from competing with one another or with the ordinary corpus in the same invocation. Other
+database suites are not reclassified by this narrow change. Separate Vitest invocations still need
+host resource coordination. Existing global/per-suite budgets and zero default retries are unchanged.
+
+Database-free configuration/discovery proof:
+
+```sh
+node --max-old-space-size=128 node_modules/vitest/vitest.mjs run tests/unit/vitest-db-serialization.spec.ts tests/unit/autonomous-test-lab-registration.spec.ts tests/unit/nightly-isolated-runner.spec.ts --pool=forks --maxWorkers=1 --no-file-parallelism --execArgv=--max-old-space-size=384
+```
+
+The new guard uses the real Vitest resolver and file discovery, compares against the original full
+collection, and checks exact membership, scheduler groups, worker isolation, budgets and retries.
+It does not collect or execute the PostgreSQL specs. The existing Isolated nightly regressions Lab
+card and fixed runner include this guard. Removing the database exclusion or its serial group must
+make it fail. With an authorized disposable-container slot, `npx vitest run --project tree-walk-postgres`
+runs the three actual database suites. That execution, a real scheduler-overlap receipt and the
+backlog's three consecutive complete unit runs remain required; discovery proof alone closes none
+of those runtime claims.
+
 ## Line coverage is measured, and the figure carries its scope
 
 `npm run test:coverage` is the only place a coverage percentage for this repo comes from. It runs
