@@ -125,3 +125,5 @@ a.action.primary,a.action{display:inline-flex;align-items:center;gap:6px;cursor:
 .mock-home .m-top{grid-column:1/-1}
 .mock-home .m-grid{height:auto;flex:1;border:1px solid var(--swatch-line);background:repeating-linear-gradient(90deg,var(--swatch-line) 0 1px,transparent 1px 14.28%),repeating-linear-gradient(0deg,var(--swatch-line) 0 1px,transparent 1px 25%),var(--swatch-surface)}
 .homebase-card .live-mock{height:190px;border-radius:0;border:0;border-bottom:1px solid var(--line)}
+/* With the day focus and skin pickers side by side the study caption wraps on a phone instead of pushing past the edge. */
+@media (max-width:560px){.full-swarm .study-caption{flex-wrap:wrap;row-gap:6px;justify-content:flex-start}.full-swarm .study-caption select.layout-picker{min-width:0}}

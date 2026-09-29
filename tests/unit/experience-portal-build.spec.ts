@@ -11,10 +11,11 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Package facts (registry and record, the listed-only and not-visible states), Orbit's cross-suite follow and Studio's related context, pin focus in the directory and the Commons room grid with the sidebar following, and Orbit's six hubs clear of the legend.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Membership and the caller's place: Commons' team name, members by role with the caller's place and each source read once; the no-team state; Studio's People panel without a directory read; the tenants and location refusals.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Portal sections: the central assistant feature, the three homebases and the four numbered layouts with their live facts and no screenshot, in the demo's order; the classroom card's listed-only and not-in-catalog states without any Little Monsters request.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | The demo's six-width layout check over the four layouts (home, directory, application panel with its package facts, work panel with its workflow) and the portal at four widths; the provenance panel's on-demand reads before and after they are made; the other games in a game's panel.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
-import { portalState, startExperienceBrowserFixture } from '../fixtures/experience-browser';
+import { portalState, startExperienceBrowserFixture, syntheticApp } from '../fixtures/experience-browser';
 
 vi.mock('@/shared/logger', () => ({ createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }) }));
 vi.setConfig({ testTimeout: 90000, hookTimeout: 60000 });
@@ -564,6 +565,86 @@ describe('portal sections over the live swarm', () => {
     await page.reload(); await page.waitForSelector('.experience-cards');
     expect(await page.locator('.live-homebases .homebase-card').nth(1).locator('.card-meta span:first-child').textContent()).toBe('Little Monsters is not in your catalog');
     expect(fixture.state.calls.filter(c => c.includes('/api/education/') || c.includes('little-monsters/home-summary'))).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+});
+
+/** @description The demo's layout check: no horizontal page overflow and no control or heading outside the viewport (closed dialogs excepted). */
+async function layoutProblems() {
+  return page.evaluate(() => {
+    const width = document.documentElement.clientWidth;
+    const out = [...document.querySelectorAll('button,input,textarea,select,h1,h2,h3')].filter(e => {
+      if (e.closest('dialog:not([open])')) return false;
+      const r = e.getBoundingClientRect(); return r.width > 0 && (r.right > width + 2 || r.left < -2);
+    }).map(e => e.outerHTML.slice(0, 120));
+    return { pageOverflow: document.documentElement.scrollWidth > width + 1, elements: out };
+  });
+}
+const CLEAN = { pageOverflow: false, elements: [] };
+
+describe('six widths, the provenance of on-demand reads, and the other games', () => {
+  for (const layout of ['studio', 'jarvis', 'orbit', 'commons']) {
+    it(`${layout}: home, directory, application panel and work panel fit from 1440 down to 320 pixels`, async () => {
+      portalState(fixture.state).ticketWorkflows[LEDGER] = recordedWorkflow();
+      for (const width of [1440, 1024, 768, 600, 390, 320]) {
+        await page.setViewportSize({ width, height: 1000 });
+        await open(`/${layout}`, '.app-shell');
+        await page.waitForTimeout(150);
+        expect(await layoutProblems(), `${layout} home ${width}`).toEqual(CLEAN);
+        await page.keyboard.press('Control+k'); await page.waitForSelector('#app-search');
+        await page.locator('[data-action="filter"][data-suite="ai-engineering"]').click();
+        expect(await layoutProblems(), `${layout} directory ${width}`).toEqual(CLEAN);
+        expect(await page.locator('.directory-panel').evaluate(e => e.scrollWidth <= e.clientWidth + 1)).toBe(true);
+        await page.locator('.catalog-card[data-catalog-app="forge"] .catalog-main').click();
+        await page.waitForSelector('#full-dialog [data-detail-part="facts"] .package-facts');
+        expect(await layoutProblems(), `${layout} app panel ${width}`).toEqual(CLEAN);
+        await page.keyboard.press('Escape');
+        // The work list is opened programmatically: at phone width the layout's own entry sits in a collapsed menu.
+        await page.evaluate(() => (document.querySelector('[data-action="all-work"]') as HTMLElement).click());
+        await page.locator(`#full-dialog [data-work="ticket:${LEDGER}"]`).click();
+        await page.waitForSelector('#full-dialog .live-stages');
+        expect(await layoutProblems(), `${layout} work panel ${width}`).toEqual(CLEAN);
+        await page.keyboard.press('Escape');
+      }
+      expect(errors).toEqual([]);
+    });
+  }
+
+  it('the portal fits at 1440, 768, 390 and 320 pixels', async () => {
+    for (const width of [1440, 768, 390, 320]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await open('/portal', '.experience-cards');
+      expect(await layoutProblems(), `portal ${width}`).toEqual(CLEAN);
+    }
+  });
+
+  it('"What is live" names each on-demand read with its status once made, and a game lists the other games', async () => {
+    fixture.state.apps.push(syntheticApp('dungeon-crawl', 'ai-creative'));
+    portalState(fixture.state).tenantsStatus = 503;
+    await open('/jarvis', '.full-jarvis');
+    await page.locator('.jarvis-footer [data-action="provenance"]').click();
+    let facts = await page.locator('#full-dialog .provenance-facts').innerText();
+    expect(facts).toMatch(/Your routines\s*\/api\/v1\/agent\/schedules · read when you open it/);
+    expect(facts).toMatch(/Your households and teams\s*\/api\/tenants · read when you open it/);
+    await page.keyboard.press('Escape');
+    await page.locator('.jarvis-rail [data-action="routines"]').click();
+    await page.waitForSelector('#routines-body .note-line');
+    await page.keyboard.press('Escape');
+    await page.locator('.jarvis-rail [data-action="people"]').click();
+    await page.waitForFunction(() => (document.querySelector('#full-dialog [data-membership-slot]')?.textContent || '').includes('HTTP 503'));
+    await page.keyboard.press('Escape');
+    await page.locator('.jarvis-footer [data-action="provenance"]').click();
+    facts = await page.locator('#full-dialog .provenance-facts').innerText();
+    expect(facts).toMatch(/Your routines\s*\/api\/v1\/agent\/schedules · live/);
+    expect(facts).toMatch(/Your households and teams\s*\/api\/tenants · HTTP 503/);
+    expect(facts).toMatch(/Your own place \(ADR-169\)\s*\/api\/location\/state · live/);
+    expect(await page.locator('#full-dialog').innerText()).toContain('only your own place is shown');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Control+k'); await page.fill('#app-search', 'arcade');
+    await page.locator('.catalog-card[data-catalog-app="arcade-games"] .catalog-main').click();
+    expect(await page.locator('#full-dialog').innerText()).toMatch(/Other games on this swarm\s*Synthetic dungeon-crawl/);
+    await page.locator('#full-dialog [data-action="open-app"][data-app="dungeon-crawl"]').click();
+    expect(await page.locator('#full-dialog-title').innerText()).toBe('Synthetic dungeon-crawl');
     expect(errors).toEqual([]);
   });
 });
