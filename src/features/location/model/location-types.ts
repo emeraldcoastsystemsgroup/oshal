@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L2: the location store's table inventory and the shapes its storage functions exchange. The table lists are the single source the erase, purge and export functions and the /api/me registry exclusion read, so a table added to migration 175 without being added here is caught by the live spec that compares this list with the database.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L4: the shapes of the package-facing reads (placeAt, currentPlace, distanceBand, operationAddress) and their two refusals. A place is returned by reference (id, name, label); only operationAddress carries an address or a centre, and it is for server code that passes them into a fixed provider operation or the owner's own page, never a prompt. LocationInputError and LocationNotFoundError carry fixed text, never a coordinate, a place name or a subject.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L5: migration 177's five tables join the inventory (rules, rule state, the fire ledger, share presence, restricted invitations), so the erase, the purge, the export, the /api/me discovery exclusion and the live table-list check all see them. Rules, rule state, fires and share presence can be a person's own rows; restricted invitations are tenant rows naming the invited account. The owner's purge also counts the evaluation history it removed (rule state, share presence and fires, which are history under Q4).
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L7: migration 179's location_map_anchors joins the inventory (a person's or a group's rows), and the shapes of the two map operations: what anchorMap takes (a map by kind and reference, its geodetic anchor and footprint, an optional place and capturing device, an optional owning group) and answers (ids only), and the map reference mapsNear returns (kind, reference, captured at, place id), which carries no coordinate. LocationPrecisionError is the refusal for an owner whose precision class stores no coordinates; LocationNotFoundError also names a map.
  *
  * @module location/model/location-types
  */
@@ -34,6 +35,7 @@ export const LOCATION_TABLES: readonly string[] = Object.freeze([
   'location_member_restrictions',
   'location_restricted_invites',
   'location_rules',
+  'location_map_anchors',
   'location_devices',
   'location_places',
   'location_settings',
@@ -52,6 +54,7 @@ export const LOCATION_PERSON_TABLES: readonly string[] = Object.freeze([
   'location_rule_fires',
   'location_shares',
   'location_rules',
+  'location_map_anchors',
   'location_devices',
   'location_places',
   'location_settings',
@@ -159,13 +162,75 @@ export class LocationInputError extends Error {
   }
 }
 
-/** @description Raised when a place or device does not exist or the caller may not read it (the two are not told apart). */
+/** @description Raised when a place, device or map does not exist or the caller may not use it (the two are not told apart). */
 export class LocationNotFoundError extends Error {
   /** @description Stable code for callers that map it to an outcome. */
   readonly code = 'location_not_found';
 
-  constructor(what: 'place' | 'device') {
-    super(what === 'place' ? 'No such place of yours or your groups.' : 'No such device of yours or your groups.');
+  constructor(what: 'place' | 'device' | 'map') {
+    super(`No such ${what} of yours or your groups.`);
     this.name = 'LocationNotFoundError';
+  }
+}
+
+/** @description The kinds of map an anchor may reference (ADR-169 D3; `embodied-scene` is a later slice). */
+export const LOCATION_MAP_KINDS: readonly string[] = Object.freeze(['spatial-scan']);
+
+/** @description Where an anchor's position came from. */
+export const LOCATION_ANCHOR_SOURCES: readonly string[] = Object.freeze(['capture-gps', 'mavlink', 'manual']);
+
+/** @description What anchorMap takes (ADR-169 D3). The caller is the ambient request identity, never a field here. */
+export interface LocationMapAnchorInput {
+  /** The kind of map: 'spatial-scan'. */
+  mapKind: string;
+  /** The map's own id (a scan id). The anchor holds this reference and no geometry. */
+  mapRef: string;
+  /** The map's geodetic origin, full precision; it is minimised before it is stored. */
+  anchor: { lat: number; lon: number; altM?: number | null; headingDeg?: number | null; accuracyM?: number | null };
+  /** How far the map extends from its origin, metres (1 to 50 000). */
+  footprintRadiusM: number;
+  /** 'capture-gps', 'mavlink' or 'manual'. */
+  source: string;
+  /** When the map was captured. */
+  capturedAt: string | Date;
+  /** The capturing location device, when it is enrolled; its precision class is then the anchor's. */
+  deviceId?: string | null;
+  /** An optional grouping place. When omitted, the smallest place of the owner that contains the origin. */
+  placeId?: string | null;
+  /** The owning group of a group's map; omitted for the caller's own map. */
+  groupId?: string | null;
+}
+
+/** @description What anchorMap answers: ids only, never a coordinate. */
+export interface LocationMapAnchorResult {
+  /** The anchor id. */
+  anchorId: string;
+  /** The place the anchor is grouped under, or null. */
+  placeId: string | null;
+}
+
+/** @description A map near a point, by reference (ADR-169 D3 mapsNear): never a coordinate or a distance. */
+export interface LocationMapRef {
+  /** The kind of map. */
+  mapKind: string;
+  /** The map's own id. */
+  mapRef: string;
+  /** When it was captured; ISO time. */
+  capturedAt: string;
+  /** The place it is grouped under, or null. */
+  placeId: string | null;
+}
+
+/**
+ * @description Raised when an anchor is asked for by an owner whose precision class is place-only:
+ * that class stores no coordinates, and an anchor is a coordinate.
+ */
+export class LocationPrecisionError extends Error {
+  /** @description Stable code for callers that map it to an outcome. */
+  readonly code = 'location_precision_stores_no_coordinates';
+
+  constructor() {
+    super('This precision class stores no coordinates, so a map cannot be anchored.');
+    this.name = 'LocationPrecisionError';
   }
 }

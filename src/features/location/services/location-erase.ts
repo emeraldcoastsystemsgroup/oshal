@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L2 (D6 "Deletion and takeout"): the one location erase function both account-erasure routes call. In one transaction under the person's own identity it revokes the location device credentials they hold, then deletes every location row they own (current, observations, shares, devices, places, settings); after commit it runs every registered evaluator-state eraser so in-memory state about them goes too. Restrictions and guardian shares are tenant rows and go with the membership (the D3 cascade), never through this function. An eraser that throws is named in the result, never swallowed.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L5: the erase also deletes the person's rules, rule state, share presence, fire rows and the restricted invitations addressed to them, and, through migration 177's location_erase_session_rule_references(), every group rule they armed or that names them as its subject and their name on fires they were the actor of, so no group's rule tables name them afterwards (D6 "after member B is erased").
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L7: the erase also deletes the map anchors the person owns. A group's anchors are the group's and stay.
  *
  * @module location/services/location-erase
  */
@@ -50,6 +51,7 @@ const PERSON_DELETES: ReadonlyArray<readonly [string, string]> = [
   ['location_shares', 'DELETE FROM location_shares WHERE owner_sub = $1 AND principal_issuer = $2'],
   ['location_restricted_invites', 'DELETE FROM location_restricted_invites WHERE user_sub = $1 AND principal_issuer = $2'],
   ['location_rules', 'DELETE FROM location_rules WHERE tenant_id IS NULL AND owner_sub = $1 AND principal_issuer = $2'],
+  ['location_map_anchors', 'DELETE FROM location_map_anchors WHERE tenant_id IS NULL AND owner_sub = $1 AND principal_issuer = $2'],
   ['location_devices', 'DELETE FROM location_devices WHERE tenant_id IS NULL AND owner_sub = $1 AND principal_issuer = $2'],
   ['location_places', 'DELETE FROM location_places WHERE tenant_id IS NULL AND owner_sub = $1 AND principal_issuer = $2'],
   ['location_settings', 'DELETE FROM location_settings WHERE owner_sub = $1 AND principal_issuer = $2'],

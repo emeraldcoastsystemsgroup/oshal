@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation (ADR-169 L1). GeoPoint, haversineM and the metres-per-degree constant live here so the location slice never imports the drone slice; the drone copies stay where they are (ADR-169 D3). Adds circle containment for places, the four precision classes of D3 (exact 5 decimals, block 3, city 2, place-only none) with the rounding applied before a fix is persisted, and the distanceBand labels of the D3 kernel operation. Every function refuses a non-finite or out-of-range coordinate with a RangeError instead of answering, so a malformed fix can never read as "inside" a place.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L7: precisionSlackM, how far a stored (rounded) point can lie from the full-precision point it was minimised from. mapsNear adds it to its reach, so a map anchored at block or city precision is still found from where it was captured although its stored origin moved by the rounding.
  */
 
 /**
@@ -156,6 +157,28 @@ export function minimiseGeoPoint(point: GeoPoint, precision: LocationPrecisionCl
   const decimals = LOCATION_PRECISION_DECIMALS[precision];
   if (decimals === null) return null;
   return { lat: roundDegrees(point.lat, decimals), lon: roundDegrees(point.lon, decimals) };
+}
+
+/**
+ * @description How far a stored point can lie from the full-precision point it was minimised from:
+ * half a rounding cell in latitude and in longitude, combined. About 1 m for `exact`, 79 m for
+ * `block` and 787 m for `city` at the equator, less towards the poles. A search over stored points
+ * adds this to its reach so rounding never hides what is really within range. It is an upper
+ * bound whichever of the two points is passed: the longitude term is taken at the latitude half
+ * a cell nearer the equator, where a degree of longitude is longest.
+ * @param point - The stored point or the full-precision point it came from.
+ * @param precision - The class the stored point was minimised to.
+ * @returns The slack in metres; 0 for `place-only`, which stores no point to be displaced.
+ */
+export function precisionSlackM(point: GeoPoint, precision: LocationPrecisionClass): number {
+  assertGeoPoint(point);
+  if (!isLocationPrecisionClass(precision)) throw new RangeError('precision must be exact, block, city or place-only');
+  const decimals = LOCATION_PRECISION_DECIMALS[precision];
+  if (decimals === null) return 0;
+  const halfCellDeg = 0.5 / 10 ** decimals;
+  const northM = halfCellDeg * METRES_PER_DEGREE_LAT;
+  const eastM = northM * Math.cos(Math.max(0, Math.abs(point.lat) - halfCellDeg) * DEG_TO_RAD);
+  return Math.hypot(northM, eastM);
 }
 
 /**

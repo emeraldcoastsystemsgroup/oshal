@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 D3/L2 static guard (operator decision Q2): no location_* policy, no function such a policy calls (transitively), no membership-fence helper and no dynamically built location policy in scripts/migrations may mention oshal.is_operator. Runs over the real migrations tree (non-vacuous: every location table's policies are read and the tenant-admin helper is reached), and goes red on each planted shape: a bypass policy, a bypass in a helper two calls deep, a dynamic EXECUTE format policy, a later migration that redefines a helper with a bypass, and a planted policy appended to the real 175 file. Prose (comments, COMMENT ON strings) and policies on non-location tables are not flagged.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L4: the real-tree check also proves the scan reaches migration 176's device identity fence and the namespace-key helper it calls, and a planted bypass inside that fence (a later migration redefining it) goes red.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L7: the real-tree check proves the scan reaches migration 179's anchor predicate, class lookup, precision rank and scan-removal trigger function; a planted bypass in the anchor predicate goes red; and the two group policies migration 179 puts on spatial_scans (not a location table, so outside the scan above) are read from the file and carry no operator branch, with a planted one going red.
  */
 
 import fs from 'node:fs';
@@ -27,7 +28,14 @@ describe('ADR-169 L2: no oshal.is_operator in any location policy or its helpers
       'oshal_is_tenant_admin', 'oshal_is_tenant_member', 'location_row_writable', 'location_member_share_admissible',
       'location_guardian_share_admissible', 'location_places_digest', 'oshal_tenant_membership_fence',
       'location_device_identity_fence', 'location_owner_ref_key',
+      'location_map_anchorable', 'location_map_anchor_class', 'location_precision_rank', 'location_map_anchor_scan_removed',
     ]));
+  });
+
+  it('goes red when the map anchor predicate gains a bypass', () => {
+    const predicate = `CREATE OR REPLACE FUNCTION location_map_anchorable(a text, b text, c text, d uuid) RETURNS boolean LANGUAGE sql STABLE
+      AS $$ SELECT current_setting('oshal.is_operator', true) = 'on' $$;`;
+    expect(scanForOperatorBypass([...realFiles(), ['999-anchor.sql', predicate]]).bypasses).toEqual(['function location_map_anchorable']);
   });
 
   it('goes red on a planted bypass policy on a location table, and not on one elsewhere', () => {
@@ -52,6 +60,26 @@ describe('ADR-169 L2: no oshal.is_operator in any location policy or its helpers
     expect(scanForOperatorBypass([...realFiles(), ['999-fence.sql', fence]]).bypasses).toEqual(['function location_device_identity_fence']);
   });
 
+});
+
+describe('ADR-169 L7: the group policies on spatial_scans carry no operator branch', () => {
+  const GROUP_POLICY = /CREATE\s+POLICY\s+(spatial_scans_tenant_[a-z_]+)\s+ON\s+spatial_scans([\s\S]*?);/gi;
+  const groupPolicies = (sql: string): Array<[string, string]> => [...stripSqlProse(sql).matchAll(GROUP_POLICY)].map((m) => [m[1], m[2]]);
+  const migration = (): string => fs.readFileSync(path.join(MIGRATIONS, '179-location-map-anchors.sql'), 'utf8');
+
+  it('holds for both policies in migration 179, and the fence is restrictive', () => {
+    const found = groupPolicies(migration());
+    expect(found.map(([name]) => name)).toEqual(['spatial_scans_tenant_fence', 'spatial_scans_tenant_member']);
+    expect(found[0][1]).toMatch(/^\s*AS\s+RESTRICTIVE\s+FOR\s+ALL/i);
+    expect(found.filter(([, text]) => text.includes('is_operator'))).toEqual([]);
+    expect(stripSqlProse(migration())).not.toContain('is_operator');
+  });
+
+  it('goes red on a planted operator branch', () => {
+    const planted = migration().replace('WITH CHECK (tenant_id IS NOT NULL',
+      "WITH CHECK (current_setting('oshal.is_operator', true) = 'on' OR tenant_id IS NOT NULL");
+    expect(groupPolicies(planted).filter(([, text]) => text.includes('is_operator')).map(([name]) => name)).toEqual(['spatial_scans_tenant_member']);
+  });
 });
 
 describe('ADR-169 L2 static guard: the shapes it must catch and must not', () => {

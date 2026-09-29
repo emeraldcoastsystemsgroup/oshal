@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-111 Phase 1 — SpatialScanStore: the spaces-operator bot's owner-scoped scan store (ADR-036). Every query is pinned to WHERE user_sub=$1 so cross-user rows are impossible by construction; the GUC-wrapped pool + spatial_scans RLS are the defense-in-depth beneath that. ensureSchema bootstraps the table + the SAME owner-or-operator policy the 093 migration installs, so a fresh boot is never policy-less.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-111 amendment (ADR-169 L7): a scan row carries tenant_id (a group's scan) and capture_session_id (the guided-capture session that produced it); insert writes both, and getGroupScan reads a group's scan for a member of that group, pinned to the caller's own membership. Every other method stays pinned to WHERE user_sub=$1, so the capturer's reads are unchanged. The bootstrap adds the two columns and the group fence migration 179 installs (a RESTRICTIVE policy: a row with a group is reached only by a signed-in member of it, whatever the owner policy admits) plus the member policy; on a database that has no tenancy helper the fence admits no group row at all, so a group's scan is never readable through the owner policy alone.
  */
 
 import type { Pool } from 'pg';
@@ -11,6 +12,7 @@ import { createChildLogger } from '@/shared/logger';
 import { buildOwnerRlsPolicyStatements } from '@/shared/services/database/owner-rls-policy';
 import { runRuntimeSchemaBootstrap } from '@/shared/services/database/schema-bootstrap-policy';
 import { SCHEMA_LOCK_KEYS } from '@/shared/services/database/schema-lock';
+import { CAPTURE_SESSION_ID_RE } from './capture-telemetry';
 import type {
   SpatialScan,
   ScanStatus,
@@ -22,7 +24,47 @@ import type {
 const logger = createChildLogger({ module: 'spatial-scan-store' });
 
 const SELECT_COLS =
-  'id, user_sub, title, status, source_kind, source_name, source_ref, source_bytes, provider, artifact_ref, gaussian_count, error, created_at, updated_at';
+  'id, user_sub, title, status, source_kind, source_name, source_ref, source_bytes, provider, artifact_ref, gaussian_count, error, created_at, updated_at, tenant_id, capture_session_id';
+
+const TENANT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A signed-in member of the row's group: the predicate migration 179's group policies carry. */
+const GROUP_MEMBER = "COALESCE(current_setting('oshal.current_sub', true), '') <> '' AND oshal_is_tenant_member(tenant_id::text)";
+
+/**
+ * @description The ADR-111 amendment as idempotent bootstrap statements: the two columns, then the
+ * group fence and the member policy of migration 179, created only when absent. Where the tenancy
+ * helper does not exist the fence admits no group row at all (fail closed), and the migration
+ * replaces it with the member form when it runs.
+ * @returns Ordered idempotent SQL statements
+ */
+export function buildGroupScanStatements(): string[] {
+  return [
+    'ALTER TABLE spatial_scans ADD COLUMN IF NOT EXISTS tenant_id UUID',
+    'ALTER TABLE spatial_scans ADD COLUMN IF NOT EXISTS capture_session_id TEXT',
+    `DO $$
+     BEGIN
+       IF NOT EXISTS (SELECT 1 FROM pg_policy
+                       WHERE polname = 'spatial_scans_tenant_fence' AND polrelid = 'spatial_scans'::regclass) THEN
+         IF to_regprocedure('public.oshal_is_tenant_member(text)') IS NOT NULL THEN
+           CREATE POLICY spatial_scans_tenant_fence ON spatial_scans AS RESTRICTIVE FOR ALL
+             USING (tenant_id IS NULL OR (${GROUP_MEMBER}))
+             WITH CHECK (tenant_id IS NULL OR (${GROUP_MEMBER}));
+         ELSE
+           CREATE POLICY spatial_scans_tenant_fence ON spatial_scans AS RESTRICTIVE FOR ALL
+             USING (tenant_id IS NULL) WITH CHECK (tenant_id IS NULL);
+         END IF;
+       END IF;
+       IF to_regprocedure('public.oshal_is_tenant_member(text)') IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM pg_policy
+                           WHERE polname = 'spatial_scans_tenant_member' AND polrelid = 'spatial_scans'::regclass) THEN
+         CREATE POLICY spatial_scans_tenant_member ON spatial_scans AS PERMISSIVE FOR ALL
+           USING (tenant_id IS NOT NULL AND ${GROUP_MEMBER})
+           WITH CHECK (tenant_id IS NOT NULL AND ${GROUP_MEMBER});
+       END IF;
+     END $$`,
+  ];
+}
 
 /** Raw DB row shape (snake_case) for spatial_scans. */
 interface ScanRow {
@@ -40,6 +82,8 @@ interface ScanRow {
   error: string | null;
   created_at: Date | string;
   updated_at: Date | string;
+  tenant_id?: string | null;
+  capture_session_id?: string | null;
 }
 
 /** Result of a completed reconstruction, written onto the row. */
@@ -68,6 +112,8 @@ function mapRow(r: ScanRow): SpatialScan {
     error: r.error,
     createdAt: toIso(r.created_at),
     updatedAt: toIso(r.updated_at),
+    tenantId: r.tenant_id ?? null,
+    captureSessionId: r.capture_session_id ?? null,
   };
 }
 
@@ -123,25 +169,38 @@ export class SpatialScanStore {
         )`,
         'CREATE INDEX IF NOT EXISTS spatial_scans_user_created_idx ON spatial_scans (user_sub, created_at DESC)',
         ...buildOwnerRlsPolicyStatements('spatial_scans', 'user_sub'),
+        ...buildGroupScanStatements(),
       ],
       requirements: [
-        { table: 'spatial_scans', columns: ['id', 'user_sub', 'title', 'status', 'source_kind', 'artifact_ref', 'created_at'] },
+        {
+          table: 'spatial_scans',
+          columns: ['id', 'user_sub', 'title', 'status', 'source_kind', 'artifact_ref', 'created_at', 'tenant_id', 'capture_session_id'],
+        },
       ],
     });
   }
 
   /**
-   * @description Insert a freshly-uploaded scan in the `queued` state.
-   * @param input - The scan's id, owner, title and stored-source metadata
+   * @description Insert a freshly-uploaded scan in the `queued` state. A group's scan names its
+   * group; a scan from a guided capture names the session that produced it (a value that is not a
+   * session id is not stored).
+   * @param input - The scan's id, owner, title and stored-source metadata, and optionally its group and capture session
    * @returns The inserted scan
+   * @throws {RangeError} When `tenantId` is present and not a group id
    */
   async insert(input: RegisterScanInput): Promise<SpatialScan> {
     await this.ensureSchema();
+    const tenantId = input.tenantId ?? null;
+    if (tenantId !== null && !TENANT_ID_RE.test(tenantId)) throw new RangeError('tenantId must be a group id');
+    const session = input.captureSessionId ?? null;
     const row = (
       await this.pool.query<ScanRow>(
-        `INSERT INTO spatial_scans (id, user_sub, title, status, source_kind, source_name, source_ref, source_bytes)
-         VALUES ($1,$2,$3,'queued',$4,$5,$6,$7) RETURNING ${SELECT_COLS}`,
-        [input.id, input.userSub, input.title, input.sourceKind, input.sourceName, input.sourceRef, input.sourceBytes],
+        `INSERT INTO spatial_scans (id, user_sub, title, status, source_kind, source_name, source_ref, source_bytes, tenant_id, capture_session_id)
+         VALUES ($1,$2,$3,'queued',$4,$5,$6,$7,$8,$9) RETURNING ${SELECT_COLS}`,
+        [
+          input.id, input.userSub, input.title, input.sourceKind, input.sourceName, input.sourceRef, input.sourceBytes,
+          tenantId, session !== null && CAPTURE_SESSION_ID_RE.test(session) ? session : null,
+        ],
       )
     ).rows[0];
     return mapRow(row);
@@ -171,6 +230,25 @@ export class SpatialScanStore {
     await this.ensureSchema();
     const res = await this.pool.query<ScanRow>(
       `SELECT ${SELECT_COLS} FROM spatial_scans WHERE user_sub=$1 AND id=$2`,
+      [userSub, id],
+    );
+    return res.rows[0] ? mapRow(res.rows[0]) : null;
+  }
+
+  /**
+   * @description Fetch one scan of a group the caller is a member of, whoever captured it. Pinned
+   * to the caller's own membership row; the group fence on the table decides the same thing.
+   * @param userSub - The caller's sub
+   * @param id - Scan id
+   * @returns The scan, or null when it is not a group's scan or the caller is not a member of that group
+   */
+  async getGroupScan(userSub: string, id: string): Promise<SpatialScan | null> {
+    await this.ensureSchema();
+    const res = await this.pool.query<ScanRow>(
+      `SELECT ${SELECT_COLS} FROM spatial_scans
+        WHERE id=$2 AND tenant_id IS NOT NULL
+          AND EXISTS (SELECT 1 FROM oshal_tenant_memberships m
+                       WHERE m.tenant_id = spatial_scans.tenant_id AND m.user_sub=$1)`,
       [userSub, id],
     );
     return res.rows[0] ? mapRow(res.rows[0]) : null;

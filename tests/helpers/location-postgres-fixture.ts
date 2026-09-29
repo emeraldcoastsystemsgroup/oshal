@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L4: the location store now also needs 115 (the durable remote-client owner binding that migration 176's device identity fence reads for a node) and 176 itself (place "since" columns, the group-only kinds CHECK, the identity fence).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L5: and 177 (rules, rule state, fires, share presence, restricted invitations, the acceptance function, the grantee projection and the membership fence's L5 branches).
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L6: and 102 (the node binding the token-auth middleware selects) and 178 (the location credential binding, the device subject's policies, the revoke and touch definers, location_device_named), so the device ingest specs drive the real credential path against the enforcing role.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L7: and 093 (spatial_scans, the maps an anchor references) and 179 (the group columns and fence on spatial_scans, location_map_anchors, the anchor predicate and the scan-removal trigger), so the map specs register real scans and anchor them against the enforcing role.
  */
 
 import type { Pool, PoolClient } from 'pg';
@@ -23,6 +24,7 @@ export const FIXTURE_ISSUER = 'https://login.oshal.example.com';
 /** The migrations the location store needs, in order. */
 export const LOCATION_MIGRATIONS: readonly string[] = [
   '060-platform-rls-tenancy.sql',
+  '093-spatial-scans.sql',
   '100-cli-token-base-schema.sql',
   '102-cli-token-node-binding.sql',
   '115-durable-remote-task-journal.sql',
@@ -31,6 +33,7 @@ export const LOCATION_MIGRATIONS: readonly string[] = [
   '176-location-places-and-devices.sql',
   '177-location-rules-and-shares.sql',
   '178-location-device-credentials.sql',
+  '179-location-map-anchors.sql',
 ];
 
 /**

@@ -4,11 +4,12 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-111 Phase 1 guard — owner-scoping: every data query the SpatialScanStore issues is pinned to WHERE user_sub=$1 with the caller's sub bound, so cross-user rows are impossible by construction (the ADR-036 store contract + the belt beneath the spatial_scans RLS). Uses a fake pool that captures every query; guards against a regression that drops the user_sub predicate and leaks another user's scans.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-111 amendment (ADR-169 L7): insert binds the scan's group and capture session (a value that is not a session id is stored as none, a group that is not an id is refused before any statement), the one group read is pinned to the caller's own membership, and the bootstrap carries the group fence in both its forms.
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Pool } from 'pg';
-import { SpatialScanStore } from '@/features/spatial-mapping';
+import { SpatialScanStore, buildGroupScanStatements } from '@/features/spatial-mapping';
 
 interface Captured { sql: string; params: unknown[]; }
 
@@ -79,6 +80,47 @@ describe('SpatialScanStore owner-scoping', () => {
     for (const u of updates) {
       expect(u.sql).toMatch(/WHERE user_sub=\$1 AND id=\$2/);
     }
+  });
+});
+
+describe('SpatialScanStore group scans (ADR-111 amendment)', () => {
+  const GROUP = '7f0c1b9e-2a44-4c55-9d3e-0a1b2c3d4e5f';
+  const SESSION = '0b6f6c1a-52a5-4d0b-9a36-6f4e2f0c9d11';
+  const scan = { id: 's2', userSub: 'user-a', title: 'Team', sourceKind: 'video' as const, sourceName: 'r.mp4', sourceRef: '/x/r.mp4', sourceBytes: 10 };
+
+  it('binds the group and the capture session on insert, and stores a non-id session as none', async () => {
+    const { pool, calls } = fakePool();
+    const store = new SpatialScanStore(pool);
+    await store.insert({ ...scan, tenantId: GROUP, captureSessionId: SESSION });
+    await store.insert({ ...scan, captureSessionId: '../capture-sessions/other' });
+    const inserts = calls.filter((c) => /INSERT INTO spatial_scans/i.test(c.sql));
+    expect(inserts.map((c) => c.params.slice(7))).toEqual([[GROUP, SESSION], [null, null]]);
+    expect(inserts[0].sql).toMatch(/tenant_id, capture_session_id\)/);
+  });
+
+  it('refuses a group that is not an id before any statement', async () => {
+    const { pool, calls } = fakePool();
+    const store = new SpatialScanStore(pool);
+    await expect(store.insert({ ...scan, tenantId: 'the-team' })).rejects.toThrow(RangeError);
+    expect(calls.filter((c) => /INSERT/i.test(c.sql))).toEqual([]);
+  });
+
+  it('pins the group read to the membership of the caller', async () => {
+    const { pool, calls } = fakePool();
+    const store = new SpatialScanStore(pool);
+    await store.getGroupScan('user-b', 's2');
+    const read = calls.find((c) => /tenant_id IS NOT NULL/i.test(c.sql));
+    expect(read?.sql).toMatch(/oshal_tenant_memberships m\s+WHERE m\.tenant_id = spatial_scans\.tenant_id AND m\.user_sub=\$1/);
+    expect(read?.params).toEqual(['user-b', 's2']);
+  });
+
+  it('bootstraps the group fence as a restrictive policy, closed where there is no tenancy helper', () => {
+    const [tenant, session, policies] = buildGroupScanStatements();
+    expect(tenant).toBe('ALTER TABLE spatial_scans ADD COLUMN IF NOT EXISTS tenant_id UUID');
+    expect(session).toBe('ALTER TABLE spatial_scans ADD COLUMN IF NOT EXISTS capture_session_id TEXT');
+    expect(policies.match(/CREATE POLICY spatial_scans_tenant_fence ON spatial_scans AS RESTRICTIVE FOR ALL/g)).toHaveLength(2);
+    expect(policies).toMatch(/USING \(tenant_id IS NULL\) WITH CHECK \(tenant_id IS NULL\)/);
+    expect(policies).not.toContain('is_operator');
   });
 });
 

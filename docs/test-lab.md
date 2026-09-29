@@ -602,6 +602,46 @@ No real person's location is read or written, and no position is logged. The lin
 Run them with `npm run test:location` (Docker is required for the PostgreSQL suites). That is local
 evidence. After a deploy, run the card from the Test Lab.
 
+### Location: a map is found again where it was captured (ADR-169 L7)
+
+**Location — a map is found again where it was captured (ADR-169 L7)** (`location-map-anchors`, Tools)
+runs two steps on the build that is running:
+
+- `map-posture` reads only the catalog. `spatial_scans` must carry `tenant_id` and
+  `capture_session_id`; the group fence must be installed as a restrictive policy beside the member
+  policy, and neither may name the operator flag; the owner fence and the scan-removal trigger must be
+  installed.
+- `map-lifecycle` runs for three uniquely tagged synthetic people on the real database and the real scans
+  root. An admin makes a group with a member and a group place, and registers two group scans through the
+  scan store, each naming a guided-capture session whose telemetry was written to the capturer's sidecar:
+  one captured inside the place, one outside every saved place. Each scan is anchored from the GPS its
+  own session recorded. On a later visit the member must get both from `mapsNear`, newest first and by
+  reference, and open a group scan they did not capture. A stranger, operator-stamped or not, must get
+  nothing from `mapsNear` and read neither scan. A member who is not an admin must be refused when
+  anchoring a group's map. Everything created is deleted (the scans and with them their anchors, the
+  capture sidecars, the place, the group and its memberships) and a zero-row check runs; incomplete
+  cleanup fails the step.
+
+No real person's location is read or written, and no position is logged. The linked suites:
+
+- `tests/unit/location-map-anchors-postgres.spec.ts`: the slice's done-when through the real scan store,
+  the real capture join and the real operations; who may anchor what; the anchor policies written to
+  directly; the precision an anchor is stored at; re-anchoring; the erase and the export.
+- `tests/unit/spatial-group-scans-postgres.spec.ts`: the ADR-111 amendment. A person's own scans are
+  unchanged; a group's scan is reached only by its members; a scan's owner and group cannot be
+  rewritten; a deleted scan takes its anchor with it; a group's scan is reconstructed as its capturer;
+  the store's bootstrap against the migration.
+- `tests/unit/spatial-capture-anchor.spec.ts`, `tests/unit/spatial-mapping-store.spec.ts` and
+  `tests/unit/shared-geo.spec.ts`: the capture anchor, the store's statements, and the rounding reach.
+- `tests/unit/location-rls-no-operator-guard.spec.ts`, `tests/unit/location-log-guard.spec.ts` and
+  `tests/unit/provisioner-migrated-helpers-postgres.spec.ts`: no operator branch in migration 179, no
+  location data in a log line, and the two new privileged functions on the provisioner's approved list.
+- `tests/unit/test-lab-location-map-registration.spec.ts`: this card on a private database, green and
+  red.
+
+Run them with `npm run test:location` (Docker is required for the PostgreSQL suites). That is local
+evidence. After a deploy, run the card from the Test Lab.
+
 ---
 
 ## Application-installed smoke cases

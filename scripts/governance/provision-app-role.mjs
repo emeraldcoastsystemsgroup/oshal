@@ -17,6 +17,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Add the metadata-only conversation list and exact-id message fetch columns to the governed bot read contract without introducing table-wide privileges.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | jarvis_tasks enters the bot contract with column-level SELECT, under the same operator decision (2026-09-22: column SELECT via the governed allowlist, RLS scopes rows): the bot-node recall tools now list and fetch the caller's Jarvis work items. Exactly the columns the two statements in jarvis-task-source.ts name - id, title, status, kind, session_id, created_at, finished_at in the list, title/result in its match, ticket_id/session_id in its protected-lineage predicate, result/error in the fetch, user_sub in the adapter's owner predicate. visual, files, delivered, briefing_source_id, principal_issuer and summarize_started_at are named by no bot read and stay out. The table is required, not optional: migration 100-jarvis-tasks-base-schema.sql now creates it before this final phase runs.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Approve the 24 SECURITY DEFINER functions migrations 174-178 create (the tenant-admin membership fence and the ADR-169 location store). The migrations shipped without registering them, so the final phase counted 30 helpers against an approved 6 and the api exited at boot on any database that had applied them. Each was checked against the per-helper rules on a migrated server: owned by the bootstrap role, exactly search_path=public, pg_temp, executable by oshal_app, not by PUBLIC and not by oshal_bot. None joins BOT_HELPERS. tests/unit/provisioner-migrated-helpers-postgres.spec.ts runs the final phase over the whole migration tree so the next unregistered function fails there.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Approve the two SECURITY DEFINER functions migration 179 creates (ADR-169 L7, map anchors): location_map_anchorable, the predicate behind the anchor write policies that reads spatial_scans past row-level security so an anchor references only a map of the same owner, and location_map_anchor_scan_removed, the trigger function that deletes a scan's anchor with the scan. Both are owned by the bootstrap role, pin search_path=public, pg_temp, and are executable by oshal_app only. Neither joins BOT_HELPERS.
  */
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -37,7 +38,7 @@ export const EXPECTED_HELPERS = new Set([
   'oshal_is_tenant_admin(text)',
   'oshal_tenant_creator_fence()',
   'oshal_tenant_membership_fence()',
-  // Migrations 175-178 (ADR-169): location storage, places and devices, rules and shares, device credentials.
+  // Migrations 175-179 (ADR-169): location storage, places and devices, rules and shares, device credentials, map anchors.
   'location_accept_restricted_invite(uuid)',
   'location_device_identity_fence()',
   'location_device_in_scope(uuid,text,text,uuid)',
@@ -49,6 +50,8 @@ export const EXPECTED_HELPERS = new Set([
   'location_fire_admissible(uuid,text,text,text)',
   'location_guardian_share_admissible(uuid,text,jsonb,uuid[],text)',
   'location_invite_admissible(uuid,text)',
+  'location_map_anchor_scan_removed()',
+  'location_map_anchorable(text,text,text,uuid)',
   'location_mark_fire_dispatched(uuid,text)',
   'location_member_share_admissible(uuid,uuid[],text)',
   'location_place_assignable(uuid,text,text,uuid)',

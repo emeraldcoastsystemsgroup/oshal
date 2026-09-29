@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L1 shared geo maths (src/shared/utils/geo.ts). Haversine against independent reference distances (meridian degree, antimeridian, pole, antipode without NaN); circle containment at its edges (just inside, just outside, exactly on, east-west at 60 degrees, across the antimeridian, zero radius); the four precision classes with their stored decimals, their resolution in metres as the ADR tables them, altitude dropped, negative zero normalised and a deterministic sweep proving no stored value keeps more decimals than its class; distance bands measured from the place's edge at every threshold; and every function refusing a non-finite or out-of-range input with a RangeError that does not echo the coordinate. Synthetic coordinates only.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L7: precisionSlackM, the reach mapsNear adds for a stored point's rounding. Its size at the equator per class, zero for place-only, and a deterministic sweep proving it bounds how far minimising moved a point whichever end it is measured from.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -16,6 +17,7 @@ import {
   LOCATION_PRECISION_DECIMALS,
   METRES_PER_DEGREE_LAT,
   minimiseGeoPoint,
+  precisionSlackM,
   type GeoCircle,
   type GeoPoint,
 } from '@/shared/utils/geo';
@@ -128,6 +130,36 @@ describe('precision classes', () => {
     expect(isLocationPrecisionClass('block')).toBe(true);
     expect(isLocationPrecisionClass('toString')).toBe(false);
     expect(isLocationPrecisionClass(undefined)).toBe(false);
+  });
+});
+
+describe('precisionSlackM', () => {
+  it('is about 1 m, 79 m and 787 m at the equator, and nothing for a class that stores no point', () => {
+    const equator: GeoPoint = { lat: 0, lon: -31.25 };
+    expect(precisionSlackM(equator, 'exact')).toBeCloseTo(0.787, 2);
+    expect(Math.round(precisionSlackM(equator, 'block'))).toBe(79);
+    expect(Math.round(precisionSlackM(equator, 'city'))).toBe(787);
+    expect(precisionSlackM(equator, 'place-only')).toBe(0);
+    expect(precisionSlackM({ lat: 60, lon: 0 }, 'block')).toBeLessThan(precisionSlackM(equator, 'block'));
+  });
+
+  it('bounds how far minimising moved a point, measured from either end', () => {
+    let seed = 11;
+    const next = (): number => { seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648; return seed / 2_147_483_648; };
+    for (let i = 0; i < 2_000; i += 1) {
+      const point: GeoPoint = { lat: next() * 180 - 90, lon: next() * 360 - 180 };
+      for (const precision of ['exact', 'block', 'city'] as const) {
+        const stored = minimiseGeoPoint(point, precision)!;
+        const moved = haversineM(point, stored);
+        expect(moved).toBeLessThanOrEqual(precisionSlackM(stored, precision));
+        expect(moved).toBeLessThanOrEqual(precisionSlackM(point, precision));
+      }
+    }
+  });
+
+  it('refuses an unusable point and an unknown class', () => {
+    expect(() => precisionSlackM({ lat: 91, lon: 0 }, 'block')).toThrow(RangeError);
+    expect(() => precisionSlackM(CENTRE, 'street' as never)).toThrow(RangeError);
   });
 });
 

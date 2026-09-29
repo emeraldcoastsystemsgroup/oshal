@@ -7,19 +7,21 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Completeness-sweep fix: the two best-effort cleanup paths (markFailed terminalize, source-video reclaim) log their failures at warn instead of swallowing them silently (CLAUDE.md: no silent catches). Guarded by spatial-mapping-conventions.spec.ts.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Audit fix: the finally-block deleted the source video even when reconstruction FAILED — one transient error across a 90-minute edge job and the user's 300MB upload was gone with no retry possible. The source is now reclaimed only on success; on failure it stays (bounded by the per-user quota; deleteScan removes the whole dir).
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-111 geometry export: (1) an IMPORT ('model') source is the user's OWN accurate metric capture (the LiDAR/photogrammetry .ply) — it IS the exportable model, so it is now KEPT on success (reclaim only fires for video/sim-mission intermediates); (2) getGeometryPath serves that model (source .ply for imports, produced .splat for reconstructions) and getDimensions returns its to-scale bbox/size (metres for LiDAR, labelled relative otherwise) — so a build can CONSUME the space, not just view it. splatBounds guarded by spatial-geometry-export.spec.ts.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-111 amendment (ADR-169 L7): a group's scan is reconstructed under its capturer's own identity with the operator flag off, never SYSTEM, because a group's row is reached only by that group's members; a group scan registered without its capturer signed in is refused before the row is written. A person's own scan keeps the SYSTEM identity exactly as before. getGroupScan opens a group's scan for a member of that group, and captureAnchorForScan joins capture GPS to the scan: the scan names its capture session, and the session's telemetry yields the anchor.
  */
 
 import type { Pool } from 'pg';
 import { promises as fs, existsSync } from 'fs';
 import path from 'path';
 import { createChildLogger } from '@/shared/logger';
-import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
+import { getRequestIdentity, runWithRequestIdentity, runWithSystemIdentity } from '@/shared/services/database/request-identity';
 import type { SpatialScan, RegisterScanInput, ReconstructionSpec, ScanSourceKind } from '../model/spatial-types';
 import type { ReconstructionProvider } from './reconstruction-provider';
 import { SimReconstructionProvider } from './sim-reconstruction-provider';
 import { EdgeReconstructionProvider } from './edge-reconstruction-provider';
 import { ImportReconstructionProvider } from './import-reconstruction-provider';
 import { SpatialScanStore } from './spatial-scan-store';
+import { readCaptureAnchor, type CaptureAnchor } from './capture-anchor';
 import { artifactPath, posesPath, scanDir } from './scan-paths';
 import { splatBounds } from './splat-format';
 
@@ -64,12 +66,31 @@ export class SpatialMappingService {
    * @returns The inserted (queued) scan
    */
   async registerAndStart(input: RegisterScanInput): Promise<SpatialScan> {
+    const detached = this.detachedIdentity(input);
     const scan = await this.store.insert(input);
-    void runWithSystemIdentity(() => this.runReconstruction(input.userSub, input.id)).catch((err) =>
+    void detached(() => this.runReconstruction(input.userSub, input.id)).catch((err) =>
       logger.error({ err, scanId: input.id }, 'detached reconstruction task rejected'),
     );
     logger.info({ scanId: scan.id, userSub: input.userSub }, 'scan registered, reconstruction started');
     return scan;
+  }
+
+  /**
+   * @description The identity the detached reconstruction runs under. A person's own scan runs as
+   * SYSTEM (after the request ends there is no request identity). A group's scan runs as its
+   * capturer with the operator flag off: only that group's members reach a group's row.
+   * @param input - The scan being registered
+   * @returns A runner that establishes that identity around the job
+   * @throws {Error} When a group scan is registered without its capturer signed in
+   */
+  private detachedIdentity(input: RegisterScanInput): (job: () => Promise<void>) => Promise<void> {
+    if (!input.tenantId) return (job) => runWithSystemIdentity(job);
+    const caller = getRequestIdentity();
+    if (!caller || caller.system === true || !caller.sub || caller.sub !== input.userSub) {
+      throw new Error('a group scan is registered by its capturer, signed in');
+    }
+    const capturer = { sub: caller.sub, principalIssuer: caller.principalIssuer ?? null, isOperator: false };
+    return (job) => runWithRequestIdentity(capturer, job);
   }
 
   /** True if the user is under the per-user scan cap (quota gate, checked before upload). */
@@ -96,6 +117,29 @@ export class SpatialMappingService {
       return this.store.getById(userSub, id);
     }
     return scan;
+  }
+
+  /**
+   * @description Open a scan of a group the caller is a member of, whoever captured it.
+   * @param userSub - The caller's sub
+   * @param id - Scan id
+   * @returns The scan, or null when it is not a group's scan or the caller is not a member of that group
+   */
+  async getGroupScan(userSub: string, id: string): Promise<SpatialScan | null> {
+    return this.store.getGroupScan(userSub, id);
+  }
+
+  /**
+   * @description Capture GPS joined to its scan (ADR-169 L7): the anchor the scan's own capture
+   * session recorded. The scan names the session; the session's telemetry is the capturer's.
+   * @param userSub - The capturer's sub
+   * @param id - Scan id
+   * @returns The anchor, or null when the scan is not the caller's, names no session, or the session recorded no GPS fix
+   */
+  async captureAnchorForScan(userSub: string, id: string): Promise<CaptureAnchor | null> {
+    const scan = await this.store.getById(userSub, id);
+    if (!scan || !scan.captureSessionId) return null;
+    return readCaptureAnchor(scan.userSub, scan.captureSessionId);
   }
 
   /**

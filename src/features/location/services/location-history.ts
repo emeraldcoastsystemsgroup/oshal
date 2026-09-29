@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L2: the owner's purge and export over the location store (Q4: history is the person's own data, kept until they purge it). purgeOwnLocationHistory deletes the person's observations and current rows under their own identity; purgeGroupDeviceHistory lets an admin of a group purge one group-owned device's rows and refuses anyone else before touching a row; exportOwnLocationData reads every location row the person owns or that names them, for the /api/me takeout. Nothing here runs as SYSTEM or as an operator, and nothing deletes by age.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L5: the owner's purge also deletes the person's evaluation history (rule state, share presence and fire rows they own as the subject), which D3 makes deletable only through this purge, and reports it as evaluationCount. Rules and shares are configuration, not history, and stay. The export adds the person's rules, rule state, fires, share presence and the restricted invitations addressed to them.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L7: the export adds the map anchors the person owns. The owner's purge leaves them: an anchor is an attribute of a map the person keeps, not history, and it goes when its map is deleted.
  *
  * @module location/services/location-history
  */
@@ -121,6 +122,7 @@ const EXPORT_READS: ReadonlyArray<readonly [string, 'owner' | 'member', string]>
   ['location_rule_fires', 'owner', 'SELECT * FROM location_rule_fires WHERE tenant_id IS NULL AND owner_sub = $1 AND principal_issuer = $2 ORDER BY fired_at'],
   ['location_share_presence', 'owner', 'SELECT * FROM location_share_presence WHERE owner_sub = $1 AND principal_issuer = $2'],
   ['location_restricted_invites', 'owner', 'SELECT * FROM location_restricted_invites WHERE user_sub = $1 AND principal_issuer = $2 ORDER BY created_at'],
+  ['location_map_anchors', 'owner', 'SELECT * FROM location_map_anchors WHERE tenant_id IS NULL AND owner_sub = $1 AND principal_issuer = $2 ORDER BY created_at'],
   ['location_member_restrictions', 'member', 'SELECT * FROM location_member_restrictions WHERE user_sub = $1 ORDER BY created_at'],
   ['location_guardian_shares', 'member', 'SELECT * FROM location_guardian_shares WHERE user_sub = $1 ORDER BY created_at'],
 ];
