@@ -15,6 +15,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Unified file browser — GET /roots, GET /browse (drill-down folders/files), GET /preview (inline text/image), provider-aware GET /download across Dropbox/GitHub/OSHAL-local (via storage-browse). Upload now takes an optional ?dir= so it lands in the open Dropbox folder.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 2: POST /upload also accepts provider=oshal-local (uploadBytes grew the branch) — the always-present local store no longer needs a connector to receive a file.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 fix: callerSub resolves the trusted service-rail identity first (getTrustedServiceUserSub) — the artifact-handle relay redeems files-browser sources by re-fetching /download as the minting caller over that rail, and the session-only resolution 401'd it (found live; the mount widened to serviceSecretOr in the same change).
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | DELETE / also accepts provider=oshal-local (one file in the caller's own local store; storage-browse guards the path and refuses folders), so a file the surface uploaded without a connector can be removed the same way — the live-acceptance class-material case cleans up its synthetic PDF through it.
  *
  * @module files-routes
  */
@@ -176,14 +177,14 @@ export function createFilesRoutes(ctx: AppContext, apiDir: string): Router {
     }
   });
 
-  /** DELETE /?provider=<dropbox|google-drive>&path=<path> — delete a file from a writable provider. */
+  /** DELETE /?provider=<oshal-local|dropbox|google-drive>&path=<path> — delete a file from a writable provider. */
   router.delete('/', async (req: Request, res: Response) => {
     const sub = callerSub(req);
     if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
     const pth = String(req.query.path || '');
     if (!pth) { res.status(400).json({ error: 'path query param required' }); return; }
     const provider = String(req.query.provider || 'dropbox') as StorageProvider;
-    if (provider !== 'dropbox' && provider !== 'google-drive') { res.status(400).json({ error: 'delete supports dropbox or google-drive' }); return; }
+    if (provider !== 'oshal-local' && provider !== 'dropbox' && provider !== 'google-drive') { res.status(400).json({ error: 'delete supports oshal-local, dropbox, or google-drive' }); return; }
     try {
       await deleteEntry(ctx, sub, provider, pth);
       res.json({ ok: true });

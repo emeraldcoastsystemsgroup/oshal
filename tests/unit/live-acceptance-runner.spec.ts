@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The host runner's `anonymous` port sends the same JSON request with no Authorization header at all (the dev-workspace case proves its query route refuses such a caller), while `api` keeps sending the token.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The closed file-probe set on real files: `vids.export` resolves only a lower-case UUID under the configured workspace root, answers present/absent from disk, refuses any other probe name, a traversal or an upper-case id (in the helper's request validation too), and the helper's `file-state` op runs with no pool and no identity scope. The runner reports each reply's raw byte length and sha256 beside the decoded text, and its `files` port asks the helper for a named probe, never a path.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The `--expect-store-bound` flag parses into the case options every selected case receives (expectStoreBound), false when absent.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | The `raw` port sends exact bytes under the one content type it was given, with the token, the way the files browser uploads.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
@@ -172,6 +173,17 @@ describe('the host runner', () => {
     expect(seen[0].init.headers).toEqual({});
     expect(JSON.stringify(seen[0].init)).not.toContain(TOKEN);
     expect(seen[1].init.headers).toEqual({ authorization: `Bearer ${TOKEN}` });
+  });
+
+  it('sends exact bytes under one content type on the raw port, with the token', async () => {
+    const seen: Array<{ url: string; init: RequestInit }> = [];
+    const fetchImpl = async (url: string, init: RequestInit) => { seen.push({ url, init }); return new Response('{"ok":true,"path":"a.pdf"}', { status: 200, headers: { 'content-type': 'application/json' } }); };
+    const res = await runner.httpPorts('http://127.0.0.1:35457', TOKEN, fetchImpl).raw('POST', '/api/files/upload?provider=oshal-local&name=a.pdf', Buffer.from('%PDF-1.4'), 'application/pdf');
+    expect(res).toMatchObject({ status: 200, json: { ok: true, path: 'a.pdf' } });
+    expect(seen[0].url).toBe('http://127.0.0.1:35457/api/files/upload?provider=oshal-local&name=a.pdf');
+    expect(seen[0].init.method).toBe('POST');
+    expect(seen[0].init.headers).toEqual({ 'content-type': 'application/pdf', authorization: `Bearer ${TOKEN}` });
+    expect(Buffer.from(seen[0].init.body as Uint8Array).toString()).toBe('%PDF-1.4');
   });
 
   it('reports the raw body byte length and sha256 beside the decoded text', async () => {

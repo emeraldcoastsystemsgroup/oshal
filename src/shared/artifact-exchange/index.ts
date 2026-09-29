@@ -13,6 +13,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial barrel.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 wave 2: export the shared package-side redeem (redeemArtifactViaRelay) — new app destinations import it instead of hand-copying the loopback idiom.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Amendment D: export the mint-with-bytes sibling (mintInlineArtifactHandle) and the inline byte-budget reader.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Export callerRelayHeaders and the RedeemingRequest shape beside the redeem, so an importing route (or its guard) can see exactly which of its headers the loopback forwards.
  *
  * @module shared/artifact-exchange
  */
@@ -45,5 +46,5 @@ export {
   artifactHandleCount,
 } from './handles';
 export type { ArtifactHandleRecord } from './handles';
-export { redeemArtifactViaRelay } from './redeem';
-export type { RedeemedArtifact, RedeemFailure } from './redeem';
+export { redeemArtifactViaRelay, callerRelayHeaders } from './redeem';
+export type { RedeemedArtifact, RedeemFailure, RedeemingRequest } from './redeem';
