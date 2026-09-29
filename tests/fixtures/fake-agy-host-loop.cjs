@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Stand-in agy executable for the host-tool-loop seam guard (tests/unit/antigravity-host-tool-loop.spec.ts). It runs as a REAL child process under the wrapper's real argv, cwd and env, records what agy itself would see (argv, the private HOME's settings.json, custom agent and MCP config, and whether the task workspace grew a .agents folder) to FAKE_AGY_OBSERVE_FILE, then answers the stream-json turn the way the live model answered the same prompt in the 2026-09-27 repro: conversation_query first, conversation_fetch with the returned taskId next, then attempt_completion carrying the codeword it was handed. FAKE_AGY_MODE=deny replays the live failure shape instead: a native view_file refused by the permission check and an empty SUCCESS result. It never contacts a model.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added the bare-value answers (BARE_VALUE_ANSWERS) for the 2026-09-29 live defect, where a Jarvis ask that says "Reply with just the number." lost its answer. For those questions the stand-in completes in one turn with a single result parameter holding only the value (5, 3.14, true, false), which is the reply shape the any-bot parser converts to a Number or Boolean. The recall replies are unchanged: a prompt without one of these questions takes the same path as before.
  */
 'use strict';
 
@@ -33,8 +34,18 @@ function observe(prompt) {
   })}\n`);
 }
 
+/** Questions that ask for a bare value, with the value the live model answered in one turn. */
+const BARE_VALUE_ANSWERS = [
+  ['What is 2 plus 3? Reply with just the number.', '5'],
+  ['What is pi to two decimal places? Reply with just the number.', '3.14'],
+  ['Is 5 greater than 3? Reply with just true or false.', 'true'],
+  ['Is 3 greater than 5? Reply with just true or false.', 'false'],
+];
+
 /** The next host-loop reply for the prompt the host sent, as the live model produced it. */
 function hostLoopReply(prompt) {
+  const bareValue = BARE_VALUE_ANSWERS.find(([question]) => prompt.includes(question));
+  if (bareValue) return `<attempt_completion><result>${bareValue[1]}</result></attempt_completion>`;
   if (!prompt.includes('tool-result:conversation_query')) {
     return '<conversation_query>\n<query>Recall drill fixture codeword</query>\n</conversation_query>';
   }

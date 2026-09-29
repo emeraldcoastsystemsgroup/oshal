@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Seam guard for the 2026-09-27 live defect (automated case jarvis-cross-thread-recall): a Jarvis recall ask on the Antigravity brain ran 10 min 45 s and died on a headless read_file denial, because agy chased the answer with its own tools instead of the host loop's. Crosses the real boundary chain - the bot-node handler's direct marker, the REAL AgenticController XML loop over a REAL ToolRegistry, the REAL AntigravityProvider and AntigravityCLIWrapper, and a REAL child process (tests/fixtures/fake-agy-host-loop.cjs) spawned with the wrapper's own argv, cwd and env - and asserts from inside that child what agy is handed on every turn: the tool-less host agent in the private HOME, an empty permission allow list, one --add-dir equal to the task workspace, --sandbox, no accept-edits, no bypass flag, no MCP config and no .agents folder in the workspace. The recall tools run through the registry for the calling owner. A workspace task turn (no marker) keeps its existing shape, and a denied native read now names its tool and target.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Regression guard for the 2026-09-29 live defect (live case jarvis-cache, 3 of 3 answers lost): a Jarvis answer that is a bare number or true/false never reached the caller. This file already held the real agentic loop and the real bot-node handler, but apart - the task double of the loop discarded saved messages and the handler read a canned reply - so the value that crossed between them was never exercised. The new cases wire them: the real handler calls the real TaskController message path (processMessage, processWithAgenticMode, addMessage) over in-memory stores, which runs the real loop, parser and provider against the stand-in agy child, and the handler reads back what the loop saved. Asserted for 5, 3.14, true and false: the saved completion text and the delivered content are the string the model wrote. A second block pins the handler alone against a number, a boolean and an unreadable value as message text.
  */
 
 import { spawn } from 'node:child_process';
@@ -17,6 +18,8 @@ import { createBotNodeExecutionHandler } from '../../src/app/bot-node-execution-
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const AgenticController = require('../../any-bot/server/controllers/AgenticController');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
+const TaskController = require('../../any-bot/server/controllers/TaskController');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const ToolRegistry = require('../../any-bot/server/services/ToolRegistry');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const AntigravityProvider = require('../../any-bot/server/services/llm/AntigravityProvider');
@@ -26,7 +29,7 @@ const OWNER = 'operator-sub';
 const CODEWORD = 'TESTLAB-RECALL-5D0C1E77';
 const THREAD_A = 'testlab-recall-a-fixture-thread';
 const ENV_KEYS = ['DEMO_MODE', 'OSHAL_OPERATOR_SUBS', 'ANTIGRAVITY_OAUTH_TOKEN_PATH', 'SHARED_WORKSPACE_ROOT',
-  'SWARM_CONTROLLER_URL', 'FAKE_AGY_OBSERVE_FILE', 'FAKE_AGY_MODE'];
+  'SWARM_CONTROLLER_URL', 'FAKE_AGY_OBSERVE_FILE', 'FAKE_AGY_MODE', 'OSHAL_TOOL_LESS'];
 
 interface Observation {
   argv: string[]; cwd: string; home: string; settings: string | null; agentMd: string | null;
@@ -54,6 +57,8 @@ beforeEach(() => {
     FAKE_AGY_OBSERVE_FILE: observeFile,
   });
   delete process.env.FAKE_AGY_MODE;
+  // The real processMessage routing reads this; an inherited value must not pick the path.
+  delete process.env.OSHAL_TOOL_LESS;
 });
 
 afterEach(() => {
@@ -198,5 +203,95 @@ describe('bot-node handler marks only interactive dispatches host-tools-only', (
     const ticket = run({ agenticMode: true });
     await ticket.done;
     expect(ticket.processMessage.mock.calls[0][2]).not.toHaveProperty('hostToolsOnly');
+  });
+});
+
+interface SavedMessage { say: string; text?: unknown }
+
+/** One interactive Jarvis ask, the shape the controller dispatches for POST /api/jarvis/ask. */
+function jarvisAsk(text: string, thread: string) {
+  return { correlationId: `c-${thread}`, fromAgentId: 'swarm-controller', toAgentId: 'jarvis', channel: 'agent.jarvis',
+    messageType: 'request' as const, payload: { text, userSub: OWNER, workspaceTaskId: thread, direct: true, agenticMode: true } };
+}
+
+/**
+ * The REAL message path of a bot node over in-memory stores: processMessage routes into the real
+ * agentic loop, addMessage keeps what the loop saved, and processWithAgenticMode hands that list
+ * back to the handler - the in-memory route the lost answer travelled. The doubles sit outside
+ * that path: the two sqlite stores and task creation (one workspace folder under the scratch root).
+ */
+function botNodeTaskController(workspaceRoot: string) {
+  const controller = Object.create(TaskController.prototype);
+  const registry = new ToolRegistry();
+  const stream = { broadcast() {} };
+  Object.assign(controller, {
+    activeTasks: new Map(), toolRegistry: registry, stream, llm: null,
+    taskStore: { saveTask: async (task: unknown) => task, loadTask: async () => null },
+    messageStore: { saveMessage: async () => undefined, getMessages: async () => [] },
+    createTask: async (text: string, _mode: string, opts: { forceTaskId: string; userSub?: string }) => {
+      const workspace = path.join(workspaceRoot, opts.forceTaskId);
+      fs.mkdirSync(workspace, { recursive: true });
+      const task = { id: opts.forceTaskId, text, userSub: opts.userSub ?? null, workspace_dir: workspace, messages: [], apiMetrics: {} };
+      controller.activeTasks.set(task.id, task);
+      return task;
+    },
+  });
+  controller.agenticController = new AgenticController({
+    bedrockProvider: null, clineProvider: null, claudeCodeProvider: null, codexProvider: null,
+    antigravityProvider: antigravityProvider(), getCurrentProvider: () => 'antigravity-cli',
+  }, registry, stream, controller);
+  return controller;
+}
+
+describe('a bare number or boolean answer reaches the caller as the text the model wrote', () => {
+  it.each([
+    ['What is 2 plus 3? Reply with just the number.', '5'],
+    ['What is pi to two decimal places? Reply with just the number.', '3.14'],
+    ['Is 5 greater than 3? Reply with just true or false.', 'true'],
+    ['Is 3 greater than 5? Reply with just true or false.', 'false'],
+  ])('%s -> %s, through the real loop and the real handler', async (question, answer) => {
+    const controller = botNodeTaskController(path.join(scratch, 'workspaces'));
+    const handler = createBotNodeExecutionHandler({
+      anyBotTaskController: controller, providerName: 'antigravity-cli', modelName: 'gemini-3.8-flash-low',
+    });
+
+    const outcome = await handler(jarvisAsk(question, 'jarvis-bare-value-thread'));
+
+    expect(outcome).toMatchObject({ success: true, output: { content: answer, response: answer } });
+    const [task] = [...controller.activeTasks.values()];
+    const saved = (task.messages as SavedMessage[]).filter((m) => m.say === 'completion_result');
+    expect(saved.map((m) => m.text)).toEqual([answer]);
+    // One turn: agy was asked once and completed with a single result parameter.
+    const seen = observations();
+    expect(seen).toHaveLength(1);
+    expect(seen[0].prompt).toContain(question);
+    expect(seen[0].argv.slice(0, 2)).toEqual(['--agent', 'oshal-host-tools']);
+  }, 30_000);
+});
+
+describe('the bot-node handler reads a message text that is not a string', () => {
+  function answerFrom(messages: SavedMessage[]) {
+    const handler = createBotNodeExecutionHandler({
+      anyBotTaskController: { getTask: async () => null,
+        createTask: async (_t: string, _m: string, o?: { forceTaskId?: string }) => ({ id: o?.forceTaskId ?? 'task' }),
+        processMessage: async () => ({ messages, apiMetrics: { totalCost: 0, totalTokens: 0 } }) },
+      providerName: 'antigravity-cli', modelName: 'gemini-3.8-flash-low',
+    });
+    return handler(jarvisAsk('What is 2 plus 3? Reply with just the number.', 'jarvis-typed-text-thread'));
+  }
+
+  it.each([[5, '5'], [3.14, '3.14'], [0, '0'], [true, 'true'], [false, 'false']])(
+    'delivers %s as the text "%s" instead of throwing', async (text, delivered) => {
+      const outcome = await answerFrom([{ say: 'completion_result', text }]);
+      expect(outcome).toMatchObject({ success: true, output: { content: delivered, response: delivered } });
+    });
+
+  it('passes over a text it cannot read and delivers the latest readable answer', async () => {
+    const outcome = await answerFrom([
+      { say: 'completion_result', text: 'The answer is 5.' },
+      { say: 'completion_result', text: { nested: 'value' } },
+      { say: 'completion_result', text: Number.NaN },
+    ]);
+    expect(outcome).toMatchObject({ success: true, output: { content: 'The answer is 5.' } });
   });
 });

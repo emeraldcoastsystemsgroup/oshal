@@ -87,6 +87,17 @@ The card's live steps run each Jarvis ask as before; they do not assert a cache 
 installed before/after measurement is read from `chat_tasks` and the jarvis bot's call log, not
 from the Lab.
 
+### Jarvis answers that are a bare number or true/false
+
+The same card carries the guards for an answer such as `5`, `3.14`, `true` or `false`. The text of
+a completion is the literal result the model wrote, always a string, and the bot-node handler reads
+a message text by its type. `tests/unit/antigravity-host-tool-loop.spec.ts` (integration) wires the
+real handler to the real `TaskController` message path and agentic loop against the stand-in agy
+child and asserts the delivered content; `tests/unit/completion-result-text.spec.ts` (unit) pins
+the rule over the real parser. Run them with
+`npx vitest run tests/unit/antigravity-host-tool-loop.spec.ts tests/unit/completion-result-text.spec.ts`.
+The installed check is the `jarvis-cache` live acceptance case below, which asks for a bare number.
+
 ### Social signal subscriptions
 
 **Social signals — your watches reach only your bot** (`social-signal-subscriptions`, Tools) runs
