@@ -144,6 +144,13 @@ encrypt the refreshed values, compare-and-set the original revision and credenti
 snapshot, require the database's next revision and acknowledge commit. A fresh
 post-commit check catches revocation/replacement before returning plaintext. Failed
 CAS, revocation, replacement and abort never retry the provider automatically.
+Creation and expiry equality use separate database-formatted UTC witnesses with
+all six fractional digits, selected as text so the default `pg` Date decoder cannot
+truncate them. The same exact witnesses participate in post-await snapshot checks
+and the timestamp CAS; the database column is never rounded for comparison. Public
+expiry metadata still uses millisecond ISO format. This distinction prevents an
+unchanged microsecond row from losing an already-rotated provider result to a false
+CAS failure, while retaining detection of same-millisecond delete/reinsert changes.
 Hung refresh can be abandoned using the supplied abort signal; late results cannot
 persist. Token resolution establishes a revalidation point, not execution authority
 after additional caller awaits: Home must retain its own final authorization checks.
@@ -167,6 +174,13 @@ after additional caller awaits: Home must retain its own final authorization che
   refresh, expiry, CAS refusal, abort and sanitized errors. Real-source negative
   controls remove access-decrypt, refresh-admission and post-commit revalidation;
   each must fail its intended assertion before byte-identical restoration.
+- [Broker PostgreSQL companion](../../tests/unit/connector-qualified-broker-postgres.spec.ts):
+  **prepared, not executed**. Runs the actual migration, enforcing table-owner role,
+  `pg` timestamp decoder, GUC/session wrappers, crypto and broker. Only the refresh
+  provider is doubled. Explicit six-digit creation/expiry rows demonstrate the old
+  Date equality failure, successful persisted refresh/rotation, same-millisecond
+  delete/reinsert refusal, actual revocation/replacement and same-sub cross-issuer
+  isolation. Unit timestamp/CAS doubles are not substitutes for this boundary run.
 - [Session suite](../../tests/unit/connector-qualified-session.spec.ts): actual ALS
   and GUC wrapper against a named SQL client double, plus installed `pg` pool/client
   and GUC/DDL wrappers over an in-memory held transport. It proves physical

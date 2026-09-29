@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Add an inactive exact-personal-row broker using request identity, qualified crypto, refresh CAS and post-await revalidation. No legacy/provider implementation or readiness activation.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Declare the terminating refusal function explicitly so TypeScript narrows validated row fields and optional refresh inputs without casts or weaker guards.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Preserve database UTC microsecond witnesses for creation and expiry across refresh CAS and replacement checks; never round PostgreSQL timestamps through Date for equality.
  */
 import { createChildLogger } from '@/shared/logger';
 import { getRequestIdentity, isSystemIdentity } from '@/shared/services/database/request-identity';
@@ -18,7 +19,10 @@ import {
 
 const log = createChildLogger({ module: 'connector-qualified-broker' });
 const MAX_REVISION = 9_223_372_036_854_775_807n;
-const FIELDS = 'connection_id, principal_issuer, owner_sub, provider, account_key, status, revision, access_token, refresh_token, expiry, created_at';
+const WITNESS_FORMAT = '\'YYYY-MM-DD"T"HH24:MI:SS.US"Z"\'';
+const FIELDS = 'connection_id, principal_issuer, owner_sub, provider, account_key, status, revision, access_token, refresh_token, expiry, '
+  + 'to_char(created_at AT TIME ZONE \'UTC\', ' + WITNESS_FORMAT + ') AS created_at_witness, '
+  + 'to_char(expiry AT TIME ZONE \'UTC\', ' + WITNESS_FORMAT + ') AS expiry_witness';
 const SCOPE = 'principal_issuer=$1 AND owner_sub=$2 AND connection_id=$3 AND provider=$4 AND revision=$5 AND status=\'connected\'';
 
 /** Already request-bound GUC client; the broker never stamps or manufactures database identity. */
@@ -83,6 +87,7 @@ interface Snapshot {
   readonly refresh: string | null;
   readonly expiresAt: string | null;
   readonly createdAt: string;
+  readonly expiryWitness: string | null;
 }
 
 function refuse(code: QualifiedCredentialRefusal): never { throw new QualifiedCredentialUnavailableError(code); }
@@ -129,6 +134,13 @@ function timestamp(value: unknown): string {
   return iso;
 }
 
+/** SQL text bypasses pg's millisecond Date parser. Validate without discarding the final three digits. */
+function timestampWitness(value: unknown): string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/u.test(value)
+    || timestamp(new Date(value)) !== value.slice(0, 23) + 'Z') refuse('not_found_or_stale');
+  return value;
+}
+
 /** Validate returned identity as well as SQL scope, so a broken adapter cannot retarget a ciphertext. */
 function snapshot(ctx: Context, row: Record<string, unknown>, revision: string): Snapshot {
   if (row.connection_id !== ctx.selection.connectionId || row.principal_issuer !== ctx.principal.principalIssuer
@@ -137,8 +149,11 @@ function snapshot(ctx: Context, row: Record<string, unknown>, revision: string):
     || typeof row.access_token !== 'string' || !row.access_token.startsWith(QUALIFIED_CONNECTOR_TOKEN_PREFIX)
     || (row.refresh_token !== null && (typeof row.refresh_token !== 'string'
       || !row.refresh_token.startsWith(QUALIFIED_CONNECTOR_TOKEN_PREFIX)))) refuse('not_found_or_stale');
+  const expiresAt = row.expiry === null ? null : timestamp(row.expiry);
+  const expiryWitness = row.expiry_witness === null ? null : timestampWitness(row.expiry_witness);
+  if ((expiryWitness === null ? null : expiryWitness.slice(0, 23) + 'Z') !== expiresAt) refuse('not_found_or_stale');
   return { revision, accountKey: row.account_key, access: row.access_token, refresh: row.refresh_token,
-    expiresAt: row.expiry === null ? null : timestamp(row.expiry), createdAt: timestamp(row.created_at) };
+    expiresAt, expiryWitness, createdAt: timestampWitness(row.created_at_witness) };
 }
 
 /** A locking read is fresh-or-error even if a caller mistakenly supplied a repeatable-read client. */
@@ -153,7 +168,8 @@ async function read(db: QualifiedConnectorQueryable, ctx: Context, revision: str
 /** Full snapshot comparison also refuses delete/reinsert/replacement with an accidentally reused revision. */
 function unchanged(before: Snapshot, after: Snapshot): void {
   if (before.revision !== after.revision || before.accountKey !== after.accountKey || before.access !== after.access
-    || before.refresh !== after.refresh || before.expiresAt !== after.expiresAt || before.createdAt !== after.createdAt) refuse('not_found_or_stale');
+    || before.refresh !== after.refresh || before.expiresAt !== after.expiresAt || before.createdAt !== after.createdAt
+    || before.expiryWitness !== after.expiryWitness) refuse('not_found_or_stale');
 }
 const unexpired = (row: Snapshot): boolean => row.expiresAt === null || Date.parse(row.expiresAt) > Date.now();
 
@@ -200,7 +216,7 @@ async function writeRefresh(client: QualifiedConnectorBrokerClient, ctx: Context
   unchanged(before, await read(client, ctx, before.revision, 'UPDATE'));
   if (Date.parse(result.expiresAt) <= Date.now()) refuse('refresh_failed');
   const values = [...params(ctx, before.revision), access, refresh, result.expiresAt,
-    before.access, before.refresh, before.expiresAt, before.accountKey, before.createdAt];
+    before.access, before.refresh, before.expiryWitness, before.accountKey, before.createdAt];
   const updated = await client.query('UPDATE oshal_qualified_connections SET access_token=$6, refresh_token=$7, expiry=$8 WHERE ' + SCOPE
     + ' AND access_token=$9 AND refresh_token IS NOT DISTINCT FROM $10 AND expiry IS NOT DISTINCT FROM $11'
     + ' AND account_key=$12 AND created_at=$13 RETURNING ' + FIELDS, values);
