@@ -21,6 +21,160 @@
   <!-- Shared portal palette: resolve before paint and follow the parent or saved choice live. -->
   <link rel="stylesheet" href="/shared/ui/css/surface-themes.css">
   <script src="/shared/ui/js/surface-theme.js"></script>
+  <!-- ADR-164 D6 audience view kit: loaded right after the theme bootstrap so a shell's ?audience= request is decided before the page paints. -->
+  <link rel="stylesheet" href="/shared/ui/css/app-view.css" />
+  <script src="/shared/ui/js/app-view.js"></script>
+  <script>
+  /* Audience view (ADR-164 D6). Framed by a whole-portal shell with ?audience=company (Studio, Orbit, Commons) or
+     ?audience=family (Jarvis), this page paints an at-a-glance card of the self-healing queue instead of the full
+     page. It reads one GET the full page itself makes: /api/tickets, the page's "All" filter, under the caller's
+     session. It keeps this application's tickets and groups them by alert fingerprint exactly as the full page does
+     (one issue per row, its state from its newest ticket, the parked reason from the budget flag the consolidator
+     writes). A refused read is said in the card with no figure in its place. Without an audience, with one this page
+     does not provide, or on a core without the kit, the full page below runs exactly as before. */
+  (function () {
+    var A = window.AppView; if (!A) return;
+    var NAME = 'Intelligent Processing';
+    var TICKET_TYPE = 'intelligent-processing';
+    var BUDGET_PARK_FLAG = 'analysis-skipped:budget';
+    var ROWS = 8, RECENT = 5, DOT = ' \u00b7 ';
+    var LEDE = 'Alerts about the swarm\u2019s own containers land here, grouped by alert fingerprint so one issue is one row however often it fires. A parked issue waits until someone promotes it; the RCA pipeline then root-causes it and proposes a fix.';
+    var SEV_ORDER = { critical: 0, urgent: 0, warning: 1, high: 1, major: 1, minor: 2, medium: 2, info: 3, low: 3 };
+    var SEV_TONE = { critical: 'bad', urgent: 'bad', warning: 'warn', high: 'warn', major: 'warn' };
+    var STATE = { backlog: 'Parked', approval_required: 'Awaiting approval', approved: 'Approved, queued for RCA', in_process: 'Being root-caused', complete: 'Complete', escalated: 'Escalated', dead_letter: 'Dead-lettered', paused: 'Paused', cancelled: 'Cancelled', customer_action: 'Waiting on a customer' };
+
+    function isMap(v) { return !!v && typeof v === 'object' && !Array.isArray(v); }
+    function own(map, key) { return Object.prototype.hasOwnProperty.call(map, key); }
+    function txt(v) { return v === null || v === undefined ? '' : String(v); }
+
+    /** @description The sentence for a refused read: what failed and why, never a figure. */
+    function refusal(status, body) {
+      if (status === 401) return 'You are not signed in (HTTP 401). Sign in, then open ' + NAME + ' again.';
+      if (status === 403 && isMap(body) && body.error === 'Operator privilege required') return NAME + ' refused this account (HTTP 403): it is open to operators only.';
+      if (status === 403 && isMap(body) && body.guest === true && typeof body.message === 'string' && body.message.trim()) return NAME + ' refused this account (HTTP 403). ' + body.message.trim().slice(0, 240);
+      if (status === 403) return NAME + ' refused this account (HTTP 403).';
+      if (status === 404) return NAME + ' did not answer on this core (HTTP 404).';
+      if (status >= 500) return NAME + ' failed to answer (HTTP ' + status + ').';
+      return NAME + ' refused the read (HTTP ' + status + ').';
+    }
+
+    function validQueue(b) { return isMap(b) && Array.isArray(b.tickets) && b.tickets.every(isMap); }
+
+    /** @description The full page's own GET /api/tickets (its "All" filter); resolves { ok, body } or { ok: false, why } and never rejects. */
+    function readQueue() {
+      return fetch('/api/tickets', { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' } }).then(function (r) {
+        if (!r.ok) return r.json().then(function (b) { return b; }, function () { return null; }).then(function (b) { return { ok: false, why: refusal(r.status, b) }; });
+        return r.json().then(function (body) {
+          return validQueue(body) ? { ok: true, body: body } : { ok: false, why: NAME + ' answered in a shape this view cannot read.' };
+        }, function () { return { ok: false, why: NAME + ' answered with something that is not JSON.' }; });
+      }, function () { return { ok: false, why: NAME + ' could not be reached (network failure).' }; });
+    }
+
+    function metaOf(t) { return isMap(t.metadata) ? t.metadata : {}; }
+    function sevOf(t) { return txt(metaOf(t).severity || t.priority || 'medium').toLowerCase(); }
+    function fpOf(t) { var m = metaOf(t); return txt(m.alertFingerprint || (txt(m.alertname || t.title) + ':' + txt(m.target))); }
+    function time(t) { var n = new Date(t.createdAt || 0).getTime(); return isFinite(n) ? n : 0; }
+    function toneOf(sev) { return own(SEV_TONE, sev) ? SEV_TONE[sev] : null; }
+    function rank(sev) { return own(SEV_ORDER, sev) ? SEV_ORDER[sev] : 4; }
+    function alertOf(g) { return txt(g.m.alertname) || txt(g.title) || 'Untitled alert'; }
+
+    /** @description Whether the RCA spend gate parked this ticket: the flag is a label or sits in metadata.incident.flags, as the full page reads it. */
+    function budgetParked(t) {
+      var incident = isMap(metaOf(t).incident) ? metaOf(t).incident : {};
+      var flags = (Array.isArray(t.labels) ? t.labels : []).concat(Array.isArray(incident.flags) ? incident.flags : []);
+      return flags.indexOf(BUDGET_PARK_FLAG) !== -1;
+    }
+
+    /** @description This application's tickets grouped by alert fingerprint, as the full page groups them: one issue each, its state from its newest ticket. */
+    function issues(tickets) {
+      var groups = new Map();
+      tickets.forEach(function (t) {
+        if (t.ticketType !== TICKET_TYPE) return;
+        var k = fpOf(t), g = groups.get(k) || { tickets: [], sev: sevOf(t), m: metaOf(t), title: t.title };
+        g.tickets.push(t); groups.set(k, g);
+      });
+      return Array.from(groups.values()).map(function (g) {
+        g.latest = g.tickets.slice().sort(function (a, b) { return time(b) - time(a); })[0];
+        g.status = txt(g.latest.status);
+        return g;
+      });
+    }
+
+    function bucket(status) {
+      if (status === 'backlog') return 'parked';
+      if (status === 'approval_required') return 'approval';
+      if (status === 'approved' || /^in_process(_|$)/.test(status)) return 'pipeline';
+      return status === 'complete' ? 'complete' : 'other';
+    }
+    function stateLabel(status) { return own(STATE, status) ? STATE[status] : /^in_process_/.test(status) ? 'Being root-caused' : (status || 'Unknown state'); }
+    function plural(n, one, many) { return A.num(n) + ' ' + (n === 1 ? one : many); }
+
+    /** @description Issue counts per bucket, why each parked issue parked, and which other states hold issues. */
+    function tally(list) {
+      var t = { parked: 0, approval: 0, pipeline: 0, complete: 0, other: 0, person: 0, budget: 0, others: {} };
+      list.forEach(function (g) {
+        var b = bucket(g.status); t[b]++;
+        if (b === 'parked') t[budgetParked(g.latest) ? 'budget' : 'person']++;
+        if (b === 'other') t.others[g.status] = (own(t.others, g.status) ? t.others[g.status] : 0) + 1;
+      });
+      return t;
+    }
+
+    /** @description The glance figures, every one counted from the /api/tickets answer. */
+    function stats(list, alerts) {
+      var t = tally(list), why = [];
+      if (t.person) why.push(A.num(t.person) + ' waiting for a person');
+      if (t.budget) why.push(A.num(t.budget) + ' stopped by the RCA spend budget');
+      var out = [
+        { id: 'parked', label: 'Parked issues', value: A.num(t.parked), tone: t.parked ? 'warn' : null, hint: why.length ? why.join(DOT) : 'An empty backlog is the normal state.' },
+        { id: 'approval', label: 'Awaiting approval', value: A.num(t.approval) },
+        { id: 'pipeline', label: 'In the RCA pipeline', value: A.num(t.pipeline), hint: 'Approved, queued or being root-caused.' },
+        { id: 'complete', label: 'Complete', value: A.num(t.complete) }
+      ];
+      if (t.other) out.push({ id: 'other', label: 'Other states', value: A.num(t.other), hint: Object.keys(t.others).map(function (s) { return A.num(t.others[s]) + ' ' + stateLabel(s).toLowerCase(); }).join(DOT) });
+      out.push({ id: 'alerts', label: 'Alerts received', value: A.num(alerts), hint: alerts ? 'Folded into ' + plural(list.length, 'distinct issue', 'distinct issues') + '.' : 'No alert has opened a ticket yet.' });
+      return out;
+    }
+
+    /** @description The parked issues, most severe first, with why each one parked. */
+    function parkedSection(list) {
+      var parked = list.filter(function (g) { return g.status === 'backlog'; }).sort(function (a, b) { return (rank(a.sev) - rank(b.sev)) || (time(b.latest) - time(a.latest)); });
+      return {
+        id: 'parked', kind: 'table', wide: true, title: 'Parked, waiting to be promoted',
+        note: !parked.length ? null : parked.length > ROWS ? 'The ' + ROWS + ' most severe of ' + A.num(parked.length) + ' parked issues. Promoting one sends it into the RCA pipeline.' : 'Most severe first. Promoting one sends it into the RCA pipeline.',
+        columns: ['Severity', 'Alert', 'Target', { label: 'Alerts', align: 'right' }, 'Last seen', 'Why parked'],
+        rows: parked.slice(0, ROWS).map(function (g) {
+          return [{ text: g.sev, tone: toneOf(g.sev) }, alertOf(g), txt(g.m.target) || '\u2014', A.num(g.tickets.length), A.when(g.latest.createdAt), budgetParked(g.latest) ? 'Stopped by the RCA spend budget' : 'Waiting for a person'];
+        }),
+        empty: 'Nothing is parked. An empty backlog is the normal state: alerts arrive only once the monitoring overlay is running and the alert receiver has its token.'
+      };
+    }
+
+    /** @description The most recently seen issues in any state. */
+    function recentSection(list) {
+      var items = list.slice().sort(function (a, b) { return time(b.latest) - time(a.latest); }).slice(0, RECENT).map(function (g) {
+        var target = txt(g.m.target), n = g.tickets.length;
+        return { when: A.when(g.latest.createdAt), title: alertOf(g), text: stateLabel(g.status) + (target ? DOT + target : '') + (n > 1 ? DOT + plural(n, 'alert', 'alerts') : ''), tone: toneOf(g.sev) };
+      });
+      return { id: 'recent', kind: 'timeline', title: 'Latest issues', items: items, empty: 'No alert has opened a ticket yet.' };
+    }
+
+    /** @description The card for both shells, from one read of the queue; a refusal is said with no figure. */
+    function card(ctx) {
+      var open = function () { window.location.assign(window.location.pathname); };
+      var primary = { label: 'Open the self-healing queue', primary: true, onClick: open };
+      var head = { kicker: 'Self-Healing Queue', title: NAME };
+      return readQueue().then(function (q) {
+        if (!q.ok) return Object.assign({}, head, { lede: q.why, actions: [primary, { label: 'Try again', onClick: function () { ctx.refresh(); } }], stats: [], sections: [] });
+        var list = issues(q.body.tickets);
+        var alerts = list.reduce(function (n, g) { return n + g.tickets.length; }, 0);
+        return Object.assign({}, head, { lede: LEDE, actions: [primary], stats: stats(list, alerts), sections: [parkedSection(list), recentSection(list)] });
+      });
+    }
+
+    A.boot({ app: 'intelligent-processing', escapeLabel: 'Open Intelligent Processing in the cockpit', audiences: { company: card, family: card } });
+  })();
+  </script>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Intelligent Processing — Self-Healing Queue</title>
@@ -226,10 +380,14 @@
       load();
     }
 
-    $('statusFilter').addEventListener('change', load);
-    $('refreshBtn').addEventListener('click', load);
-    load();
-    setInterval(load, 20000);
+    // The full page starts only when no audience view is active (ADR-164 D6): without the kit, without ?audience=,
+    // or with an audience this page does not provide, it runs exactly as before.
+    if (!window.AppView || !AppView.active()) {
+      $('statusFilter').addEventListener('change', load);
+      $('refreshBtn').addEventListener('click', load);
+      load();
+      setInterval(load, 20000);
+    }
   </script>
 </body>
 </html>
