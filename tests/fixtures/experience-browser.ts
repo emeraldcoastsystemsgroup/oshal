@@ -17,6 +17,8 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com | Full-swarm build routes (portalBuildRoutes, lane "portal", registered first among the lane routes): one ticket's workflow read model shaped like GET /api/v1/tickets/:ticketId/workflow with per-ticket overrides and statuses, and a cancel pre-handler that moves the synthetic ticket to cancelled whenever the existing cancel route will answer 200.
  * 13 | maintainer@emeraldcoastsystemsgroup.com | portalBuildRoutes gains the schedule and workflow-definition reads (scheduleRoutes): an owner-scoped schedule list, pause/resume with the controller's 404 / managed-manifest 403 / operator 403 refusals, and Workflow Studio definition summaries, each with a controllable status.
  * 14 | maintainer@emeraldcoastsystemsgroup.com | portalBuildRoutes gains the membership and own-location reads (peopleRoutes): GET /api/tenants with a controllable status, members-only GET /api/tenants/:id/members, and the caller's GET /api/location/state overview (no coordinates) with a controllable status.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com | Central-assistant build routes (lane "orb", `state.nexusBuild`, registered by nexusGapRoutes ahead of the defaults): the caller's busy windows through GET /api/experience/availability (or its refusal body), the Google row of GET /api/connect/list, and Travel's GET /config, GET/POST /profile, GET /flights (four synthetic offers, source, price read) and GET/POST /watches, each with a controllable status and a log of what the page sent; installTravelHost admits Travel into a case's catalog (or installs it outside the plan).
+ * 16 | maintainer@emeraldcoastsystemsgroup.com | nexusBuildRoutes keep the fixture's contract: they answer only once a case opts in (enableNexusBuild, which installTravelHost also does) and fall through to the defaults otherwise; the lane can answer POST /api/voice/synthesize with a WAV clip (`nexusBuild.voice.audioData`) for the readback watchdog case.
  */
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -315,6 +317,7 @@ function nexusGapRoutes(app: express.Application, state: ExperienceState) {
     res.type('image/svg+xml').send('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20" fill="gray"/></svg>');
   });
   app.use(router);
+  nexusBuildRoutes(app, state);
 }
 
 /**
@@ -569,6 +572,16 @@ function peopleRoutes(router: express.Router, state: ExperienceState, portal: Po
   });
   router.get('/api/location/state', (_req, res) => { res.status(portal.location.status).json(portal.location.status === 200 ? portal.location.body : { error: 'location_session_required' }); });
 }
+/** @description Opt a case into the central assistant's build routes; without it they fall through to the defaults. */
+export function enableNexusBuild(state: ExperienceState): void { (state as ExperienceState & { nexusBuild: { active: boolean } }).nexusBuild.active = true; }
+/** @description A silent 8 kHz, 8-bit mono WAV clip of the given length, base64, for the synthesize route of a case. */
+export function silentWav(seconds = 1): string {
+  const samples = Math.round(8000 * seconds), header = Buffer.alloc(44);
+  header.write('RIFF', 0); header.writeUInt32LE(36 + samples, 4); header.write('WAVE', 8); header.write('fmt ', 12);
+  header.writeUInt32LE(16, 16); header.writeUInt16LE(1, 20); header.writeUInt16LE(1, 22); header.writeUInt32LE(8000, 24); header.writeUInt32LE(8000, 28); header.writeUInt16LE(1, 32); header.writeUInt16LE(8, 34);
+  header.write('data', 36); header.writeUInt32LE(samples, 40);
+  return Buffer.concat([header, Buffer.alloc(samples, 128)]).toString('base64');
+}
 /** The ADR-169 location overview as GET /api/location/state answers it for its owner (places by reference, never coordinates). */
 type HomeLocationState = {
   settings: { defaultPrecisionClass: string };
@@ -701,3 +714,119 @@ function homeRoutineRoutes(router: express.Router, home: HomeBuildState, refused
 
 /** @description The home-build synthetic state of a running fixture (created by homebaseBuildRoutes). */
 export function homeBuildState(state: ExperienceState): HomeBuildState { return (state as ExperienceState & { homeBuild: HomeBuildState }).homeBuild; }
+/** A synthetic busy window as GET /api/experience/availability returns it. */
+type BusyWindow = { start: string; end: string };
+/** A synthetic Travel offer shaped like the package's normalised Duffel card (scripts/oshal-duffel.js normalizeOffer). */
+type SyntheticOffer = { id: string; price: number; currency: string; airline: string; cabin: string; expiresAt: string | null;
+  slices: Array<{ origin: string; destination: string; originCity?: string; destinationCity?: string; departAt: string; arriveAt: string; duration: string; stops: number; carriers: string[] }> };
+
+/**
+ * @description The synthetic state behind the central assistant's build routes (lane "orb"), reachable as `state.nexusBuild`:
+ * the caller's busy windows and availability refusal, the Google connection status, and Travel's config, profile, flight
+ * search (offers, source, price read) and fare watches, each with a controllable status and a log of what the page sent.
+ * @returns The fresh lane state.
+ */
+function nexusBuildState() {
+  return {
+    /** Off until the case opts in: an inactive lane falls through to the default routes (the fixture's contract). */
+    active: false,
+    /** A WAV clip for POST /api/voice/synthesize; empty keeps the default refusal. */
+    voice: { audioData: '' },
+    availability: { status: 200, state: 'ready', error: '', busy: [] as BusyWindow[], calls: [] as Array<{ timeMin: string; timeMax: string }> },
+    google: { status: 200, connected: true, expired: false },
+    travel: {
+      configStatus: 200, config: { connected: true, mode: 'live', live: false } as Record<string, unknown>,
+      profileStatus: 200, profile: { user_sub: 'synthetic-user', home_airport: 'PNS', preferred_cabin: 'economy', onboarded: true } as Record<string, unknown>,
+      profileWrites: [] as Array<Record<string, unknown>>, profileWriteStatus: 200,
+      flightsStatus: 200, source: 'duffel', error: '', searches: [] as Array<Record<string, string>>,
+      price: { verdict: 'typical', advice: 'Typical price — around the recent average ($260). Fine to book, or watch for a dip.', samples: 12, avg: 260, min: 199, p25: 230, currentBest: 218 } as Record<string, unknown>,
+      offers: null as SyntheticOffer[] | null,
+      watches: [] as Array<Record<string, unknown>>, watchStatus: 200, watchPosts: [] as Array<Record<string, unknown>>,
+    },
+  };
+}
+
+/**
+ * @description Four synthetic offers for one search, the way Travel returns them: A 238 one stop 4:20 PM, B 318 nonstop
+ * 1:15 PM, C 218 one stop 2:10 PM, D 286 one stop 5:05 PM (so price order is C, A, D, B; nonstop keeps B; after 3pm keeps
+ * A and D; both together match nothing).
+ * @param q The search query the page sent.
+ * @returns The offers.
+ */
+export function syntheticOffers(q: Record<string, string>): SyntheticOffer[] {
+  const back = q.returnDate || q.departDate;
+  const offer = (id: string, airline: string, price: number, stops: number, depart: string, duration: string): SyntheticOffer => ({
+    id, price, currency: 'USD', airline, cabin: 'economy', expiresAt: new Date(Date.now() + 3 * HOUR).toISOString(),
+    slices: [{ origin: q.origin, destination: q.destination, departAt: `${q.departDate}T${depart}:00`, arriveAt: `${q.departDate}T21:30:00`, duration, stops, carriers: [airline] },
+      { origin: q.destination, destination: q.origin, departAt: `${back}T18:10:00`, arriveAt: `${back}T23:40:00`, duration: '4h 30m', stops: 0, carriers: [airline] }],
+  });
+  return [offer('syn-a', 'Synthetic Air A', 238, 1, '16:20', '5h 24m'), offer('syn-b', 'Synthetic Air B', 318, 0, '13:15', '4h 06m'),
+    offer('syn-c', 'Synthetic Air C', 218, 1, '14:10', '6h 12m'), offer('syn-d', 'Synthetic Air D', 286, 1, '17:05', '5h 06m')];
+}
+
+/**
+ * @description Central-assistant build routes (lane "orb"), synthetic and driven through `state.nexusBuild`, mirroring the real
+ * shapes: GET /api/experience/availability (busy windows clamped to the asked window, or the route's refusal body), GET
+ * /api/connect/list (the Google provider row, status only), and Travel's GET /config, GET/POST /profile, GET /flights (offers,
+ * source, price read, error) and GET/POST /watches. Registered by nexusGapRoutes, ahead of the default routes and their `/api`
+ * catch-all.
+ * @param app The fixture application.
+ * @param state The per-case synthetic state; `state.nexusBuild` is created here.
+ * @returns Nothing; the routes are registered on `app`.
+ */
+function nexusBuildRoutes(app: express.Application, state: ExperienceState) {
+  const lane = nexusBuildState(), travel = lane.travel;
+  Object.assign(state, { nexusBuild: lane });
+  const router = express.Router();
+  router.use((_req, _res, next) => { if (!lane.active) { next('router'); return; } next(); });
+  router.post('/api/voice/synthesize', (_req, res, next) => { if (!lane.voice.audioData) { next(); return; } res.json({ success: true, data: { audioData: lane.voice.audioData, format: 'wav' } }); });
+  router.get('/api/experience/availability', (req, res) => {
+    const timeMin = String(req.query.timeMin || ''), timeMax = String(req.query.timeMax || ''), a = lane.availability;
+    a.calls.push({ timeMin, timeMax });
+    if (a.status !== 200) { res.status(a.status).json({ state: a.state, error: a.error }); return; }
+    const lo = Date.parse(timeMin), hi = Date.parse(timeMax);
+    const busy = a.busy.filter(b => Date.parse(b.end) > lo && Date.parse(b.start) < hi);
+    res.json({ state: 'ready', source: 'google-calendar', calendar: 'primary', timeMin, timeMax, checkedAt: iso(0), busy });
+  });
+  router.get('/api/connect/list', (_req, res) => {
+    const g = lane.google;
+    if (g.status !== 200) { res.status(g.status).json({ error: 'Synthetic connections unavailable' }); return; }
+    res.json({ providers: [{ id: 'google', label: 'Google', connected: g.connected, connections: g.connected ? [{ connectionId: 'c1', label: 'Synthetic', expired: g.expired, expiring: false }] : [] }] });
+  });
+  router.get('/api/travel/config', (_req, res) => { res.status(travel.configStatus).json(travel.configStatus === 200 ? travel.config : { error: 'Synthetic Travel refused' }); });
+  router.get('/api/travel/profile', (_req, res) => { res.status(travel.profileStatus).json(travel.profileStatus === 200 ? { profile: travel.profile } : { error: 'Synthetic Travel refused' }); });
+  router.post('/api/travel/profile', express.json(), (req, res) => {
+    travel.profileWrites.push(req.body || {});
+    if (travel.profileWriteStatus !== 200) { res.status(travel.profileWriteStatus).json({ error: 'Synthetic profile refused' }); return; }
+    if (req.body && req.body.homeAirport) travel.profile = { ...travel.profile, home_airport: String(req.body.homeAirport) };
+    res.json({ profile: travel.profile });
+  });
+  router.get('/api/travel/flights', (req, res) => {
+    const q = Object.fromEntries(Object.entries(req.query).map(([k, v]) => [k, String(v)]));
+    travel.searches.push(q);
+    if (travel.flightsStatus !== 200) { res.status(travel.flightsStatus).json({ error: 'origin, destination and departDate are required' }); return; }
+    res.json({ items: travel.offers ?? syntheticOffers(q), source: travel.source, deepLink: 'https://flights.example.invalid/', price: travel.price, routeKey: `flight:${q.origin}-${q.destination}`, error: travel.error || undefined });
+  });
+  router.get('/api/travel/watches', (_req, res) => { res.json({ items: travel.watches }); });
+  router.post('/api/travel/watches', express.json(), (req, res) => {
+    travel.watchPosts.push(req.body || {});
+    if (travel.watchStatus !== 200) { res.status(travel.watchStatus).json({ error: 'Synthetic watch refused' }); return; }
+    const watch = { watch_id: `w${travel.watches.length + 1}`, kind: 'flight', route_key: `flight:${req.body.origin}-${req.body.destination}:${req.body.departDate}`, query: req.body, last_price: req.body.lastPrice, currency: 'USD', status: 'active', last_checked_at: null, created_at: iso(0) };
+    travel.watches.unshift(watch); res.json({ watch });
+  });
+  app.use(router);
+}
+
+/**
+ * @description Install Travel into a case's synthetic catalog (admitted: in the plan, navigable, with its Travel surface as
+ * the manifest lists it), so the central assistant's Travel view is offered; `admitted: false` keeps it installed but
+ * outside the caller's plan, which must render nothing and ask nothing (ADR-164 D10).
+ * @param state The case's synthetic state (from the running fixture).
+ * @param admitted Whether the caller's plan admits Travel.
+ * @returns Nothing; the catalog is changed in place.
+ */
+export function installTravelHost(state: ExperienceState, admitted = true): void {
+  enableNexusBuild(state);
+  if (admitted) { installHosts(state, { travel: { suite: 'ai-home', surfaces: [['travel-concierge', 'Travel']] } }); return; }
+  if (!state.apps.some(a => a.summary.name === 'travel')) state.apps.push(syntheticApp('travel', 'ai-home', { inPlan: false, navigable: false }));
+}

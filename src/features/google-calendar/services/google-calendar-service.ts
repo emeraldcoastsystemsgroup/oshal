@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Google Calendar v3 client — reuses the google-bot OAuth access token (injected, no cross-feature import) to push/pull events. Backs the Little Monsters calendar sync.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | freeBusy(): the Calendar API's free/busy query for one calendar. It returns busy windows only (Google sends no titles, and events marked "free" or declined are not busy), which is what an availability view needs; a per-calendar error in the answer is raised rather than read as "free". Additive: no existing method changed.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -36,6 +37,12 @@ export interface NormalizedCalendarEvent {
   end: string | null;
   allDay: boolean;
   htmlLink: string | null;
+}
+
+/** @description One busy window from a free/busy query: ISO instants, end exclusive. No title or detail. */
+export interface CalendarBusyWindow {
+  start: string;
+  end: string;
 }
 
 /** @description Input to createEvent — a local LM calendar event, normalized. */
@@ -118,6 +125,32 @@ export class GoogleCalendarService {
       allDay: !!e.start?.date && !e.start?.dateTime,
       htmlLink: e.htmlLink || null,
     }));
+  }
+
+  /**
+   * @description Ask the free/busy endpoint for one calendar's busy windows. Availability views use
+   * this instead of listing events: the answer carries no titles, and Google already leaves out
+   * events marked "free" and invitations the person declined.
+   * @param opts - calendarId (default 'primary') and the ISO timeMin/timeMax window
+   * @returns the busy windows Google reported, in its order
+   * @throws GoogleCalendarError when the call fails or the answer names an error for the calendar
+   * (an unreadable calendar must never look free)
+   */
+  async freeBusy(opts: { calendarId?: string; timeMin: string; timeMax: string }): Promise<CalendarBusyWindow[]> {
+    const calendarId = opts.calendarId || 'primary';
+    const data = await this.call('/freeBusy', {
+      method: 'POST',
+      body: JSON.stringify({ timeMin: opts.timeMin, timeMax: opts.timeMax, items: [{ id: calendarId }] }),
+    });
+    const entry = data && data.calendars ? data.calendars[calendarId] : null;
+    if (!entry) throw new GoogleCalendarError('Google Calendar free/busy answer did not include the calendar');
+    if (Array.isArray(entry.errors) && entry.errors.length) {
+      const reason = String(entry.errors[0]?.reason || 'unknown');
+      throw new GoogleCalendarError(`Google Calendar free/busy error: ${reason}`, reason === 'notFound' ? 404 : undefined);
+    }
+    return (Array.isArray(entry.busy) ? entry.busy : [])
+      .filter((b: any) => b && typeof b.start === 'string' && typeof b.end === 'string')
+      .map((b: any): CalendarBusyWindow => ({ start: b.start, end: b.end }));
   }
 
   /**

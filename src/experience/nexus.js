@@ -8,17 +8,19 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Hand-off links accept only same-origin paths (a protocol-relative '//host' target is shown by name, never linked), and a transcription failure the route reports with HTTP 200 no longer quotes that success status
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Integration review: hand-off links go through the shared LIVE.localHref guard (isLocalPath is gone), so a tab-split or backslash target that the browser would resolve off this origin is shown by name, never linked. Reaching the ask poll limit (code 'poll_limit') is a "Still running" state that says this page stopped checking and the job may still finish, never FAILED. The page no longer marks handed-off results delivered: the Jarvis page stays the one surface that announces and marks them. Request progress is honest about a stop before the swarm answered the send (never "Not accepted") and counts checks as checks without an outcome.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Fix round 1: the Request progress polling row says the first check had the outcome only when the request reached an outcome (ready, partial, failed, setup needed, still running). While the first check is still out it reads "Checking now."; after Stop it reads "This page stopped before the first check answered." and stays pending, never done. Hand-off chips and the Applications tab inherit the dot-segment fix in LIVE.localHref, and applications named in the answer link through the catalog href that the same guard now covers.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Readback to the demo's rules: the sound meter and the play button's progress fill follow the voice through --voice-level and --readback-progress (frozen at zero when motion is off), data-state="speaking" while it plays, and the status line keeps the outcome afterwards (READBACK COMPLETE, STOPPED, PAUSED WHILE AWAY, AUDIO DID NOT START from a start watchdog, no engine); a ticket per readback keeps an older one's callbacks off the page. The request ledger adds the page's own Calendar read, Travel search and preferences rows; the workspace title names Calendar/Travel as in-context app previews; the compact composer note offers "after 3pm"/"nonstop" while offers are on screen.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Phase-8 build to the demo: the workspace gains Calendar (the caller's busy windows through GET /api/experience/availability: month grid, free weekends, unknown never free) and, for a caller whose plan admits Travel, a Travel view (free weekends as dates, Travel's flight search, filters, offer cards, fare dialog with save-to-device and an explicit Travel fare watch), both in nexus-trip.js over nexus-data.js. The welcome's connected items are the caller's real capabilities (Google connection, Travel's provider mode, preferences), the idle core offers a spoken briefing built from the live snapshot, a trip suggestion opens its answer on Calendar, short follow-ups ('after 3pm', 'nonstop', 'calendar') refine what is on screen instead of starting a request, the answer offers the trip views when it is about travel or free time, the shelf adds the device shortlist and Travel watches, preferences add the departure airport (Travel profile) and budget (device), sources name what each view read, and speech stops when the page is hidden or left and shows the transcript when no voice engine exists.
  */
 (() => {
   'use strict';
-  const S = window.OSHAL_SHELL, LIVE = window.OSHAL_LIVE, esc = S.esc;
+  const S = window.OSHAL_SHELL, LIVE = window.OSHAL_LIVE, D = window.OSHAL_NEXUS_DATA, TRIP = window.OSHAL_NEXUS_TRIP, esc = S.esc;
   const root = document.getElementById('nexus-root');
   const btn = (label, action, cls = 'secondary', attrs = '') => `<button type="button" class="${cls}" data-action="${action}" ${attrs}>${label}</button>`;
   const link = (label, href, cls = 'secondary') => `<a class="${cls}" href="${esc(href)}">${label}</a>`;
-  let snapshot, shell, thread;
+  let snapshot, shell, thread, trip;
   const freshObs = () => ({ sentAt: null, rolled: false, jobId: '', refused: 0, polls: 0 });
-  const state = { name: LIVE.prefs.get('nexus:name', 'Jarvis'), phase: 'idle', resume: '', busy: false, draft: '', query: '', view: 'summary', jobId: '', result: null, error: '', code: '', obs: freshObs(), work: [], workNote: '', motion: !matchMedia('(prefers-reduced-motion: reduce)').matches };
-  const voice = { active: false, level: 0, mode: '', controller: null, text: '' };
+  const state = { name: LIVE.prefs.get('nexus:name', 'Jarvis'), phase: 'idle', resume: '', busy: false, draft: '', query: '', view: 'summary', pendingView: '', jobId: '', result: null, error: '', code: '', obs: freshObs(), work: [], workNote: '', motion: !matchMedia('(prefers-reduced-motion: reduce)').matches };
+  const voice = { active: false, level: 0, progress: 0, mode: '', outcome: '', heard: false, ticket: 0, watchdog: 0, controller: null, text: '' };
   const mic = { state: 'idle', recorder: null, stream: null, chunks: [], note: '', kind: '' };
   let animation, observer, noticeTimer, activeModal = null, previousFocus;
   /* Stale-completion guard: every wait belongs to one generation; Stop, New and Home move the generation on and abort the wait. */
@@ -46,6 +48,7 @@
     snapshot = loaded;
     if (!snapshot.me.authenticated) { root.innerHTML = `<div class="nexus"><main class="nexus-main"><section class="welcome"><h1>Sign in to talk to your swarm.</h1><p>${link('Sign in', '/login', 'primary')}</p></section></main></div>`; return; }
     shell = S.createShell({ snapshot, layoutId: 'nexus', hooks: {} });
+    trip = TRIP.createTrip({ LIVE, D, shell, snapshot, esc, btn, link, notify, repaint: repaintTrip, setView, closeDialog: close, name: () => state.name });
     thread = shell.createThread(LIVE.sessionId(), state.name);
     bind(); render();
     const loadingThread = thread;
@@ -61,7 +64,10 @@
     return null;
   }
   const firstName = () => snapshot.me.name.split(/[\s.@_-]+/)[0] || snapshot.me.name;
-  const greeting = () => { const h = new Date().getHours(); return h < 12 ? 'GOOD MORNING' : h < 18 ? 'GOOD AFTERNOON' : 'GOOD EVENING'; };
+  const greetingWord = () => { const h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'; };
+  const greeting = () => greetingWord().toUpperCase();
+  /** The idle readback: a spoken briefing built only from the live snapshot (counts, the latest open item). */
+  const briefing = () => D.briefingText(snapshot, { greeting: greetingWord(), firstName: firstName(), open: shell.openWork() });
   const tasks = () => snapshot.work.filter(w => w.kind === 'task');
   function notify(text) { clearTimeout(noticeTimer); const n = document.getElementById('notice'); if (n) { n.textContent = text; noticeTimer = setTimeout(() => { const m = document.getElementById('notice'); if (m) m.textContent = ''; }, 4500); } }
 
@@ -69,28 +75,73 @@
   const shownPhase = () => state.phase === 'idle' ? state.resume : state.phase;
   /** Terminal text the readback may speak: the answer when one arrived, the refusal or setup sentence otherwise. */
   function readbackText() {
-    const p = shownPhase(); if (!TERMINAL[p]) return '';
+    const p = shownPhase(); if (!p) return briefing();
+    if (!TERMINAL[p]) return '';
     if (p === 'unsettled') return UNSETTLED_TEXT;
     return p === 'failed' || p === 'setup' ? state.error : (state.result && state.result.answer) || '';
   }
+  /* Outcomes the status line keeps after the voice stops: what this page observed, until the next play. */
+  const READBACK_OUTCOMES = { complete: 'READBACK COMPLETE · READY WHEN YOU ARE', stopped: 'STOPPED · READY WHEN YOU ARE', away: 'PAUSED WHILE AWAY · PRESS PLAY TO RESTART', 'no-start': 'AUDIO DID NOT START · PRESS PLAY TO RETRY', unavailable: 'NO VOICE ENGINE AVAILABLE · TRANSCRIPT BELOW' };
+  /** How long a readback may stay silent after Play before it is reported as not started. */
+  const READBACK_START_MS = 8000;
   function speakAnswer() {
     const text = readbackText();
     if (!text) { notify('There is no answer to speak yet.'); return; }
-    stopVoice();
-    voice.text = text; voice.active = true; voice.level = 0; voice.mode = 'starting'; paintVoice();
+    stopVoice('');
+    const ticket = voice.ticket;
+    Object.assign(voice, { text, active: true, level: 0, progress: 0, mode: 'starting', outcome: '', heard: false });
+    // Sound that never arrives is reported, not waited on: silence past the window ends this readback as not started.
+    voice.watchdog = setTimeout(() => { if (ticket === voice.ticket && voice.active && !voice.heard) stopVoice('no-start'); }, READBACK_START_MS);
+    paintVoice();
+    // Every callback checks the ticket: a readback that was stopped, restarted or replaced never touches the page again.
     voice.controller = LIVE.speak(text, {
-      onStart: mode => { voice.mode = mode; paintVoice(); },
-      onLevel: level => { voice.level = level; },
-      onEnd: () => { voice.active = false; voice.level = 0; voice.controller = null; paintVoice(); }
+      onStart: mode => { if (ticket !== voice.ticket) return; voice.mode = mode; if (mode === 'unavailable') voice.outcome = 'unavailable'; paintVoice(); },
+      onLevel: level => { if (ticket !== voice.ticket) return; voice.level = level; if (level > 0.02) voice.heard = true; paintLevel(); },
+      onProgress: fraction => { if (ticket !== voice.ticket) return; voice.progress = Math.min(1, Math.max(0, Number(fraction) || 0)); paintLevel(); },
+      onEnd: () => { if (ticket !== voice.ticket) return; finishVoice(voice.outcome || (voice.heard ? 'complete' : 'no-start')); }
     });
   }
-  function stopVoice() { if (voice.controller) voice.controller.stop(); voice.active = false; voice.level = 0; voice.controller = null; paintVoice(); }
-  function voiceStatus() { return !voice.active ? 'SWARM VOICE · PRESS PLAY TO HEAR THE ANSWER' : voice.mode === 'amplitude' ? 'SWARM VOICE · CORE FOLLOWS PLAYBACK AMPLITUDE' : voice.mode === 'lifecycle' ? 'BROWSER VOICE · LIFECYCLE ANIMATION ONLY' : voice.mode === 'unavailable' ? 'NO VOICE ENGINE AVAILABLE · SHOWING TEXT' : 'STARTING VOICE…'; }
-  function paintVoice() { const box = root.querySelector('.readback'); if (!box) return; box.dataset.state = voice.active ? 'playing' : 'idle'; const s = box.querySelector('.readback-status'); if (s) s.textContent = voiceStatus(); const b = box.querySelector('.readback-button'); if (b) { b.textContent = voice.active ? '■ Stop' : '▶ Speak the answer'; b.setAttribute('aria-pressed', String(voice.active)); } }
+  /** Stop the readback. While one plays, the outcome names why ('stopped', 'away', 'no-start'); otherwise the status returns to its resting prompt. */
+  function stopVoice(outcome) {
+    const controller = voice.controller, wasActive = voice.active;
+    voice.ticket++; voice.controller = null;
+    finishVoice(wasActive ? outcome || 'stopped' : '');
+    if (controller) controller.stop();
+  }
+  function finishVoice(outcome) {
+    clearTimeout(voice.watchdog);
+    Object.assign(voice, { active: false, level: 0, progress: 0, outcome: outcome || '' });
+    paintVoice();
+  }
+  const playLabel = () => shownPhase() ? '▶ Speak the answer' : '▶ Play briefing';
+  /** The status line: the engine while it speaks (and that the visual motion is off when it is), then the outcome until the next play. */
+  function voiceStatus() {
+    if (voice.active) {
+      if (voice.mode === 'starting') return 'STARTING VOICE…';
+      if (voice.mode === 'unavailable') return 'NO VOICE ENGINE AVAILABLE · SHOWING TEXT';
+      const engine = voice.mode === 'amplitude' ? 'SWARM VOICE · CORE FOLLOWS PLAYBACK AMPLITUDE' : 'BROWSER VOICE · LIFECYCLE ANIMATION ONLY';
+      return `SPEAKING · ${engine}${state.motion ? '' : ' · VISUAL MOTION IS OFF'}`;
+    }
+    if (READBACK_OUTCOMES[voice.outcome]) return READBACK_OUTCOMES[voice.outcome];
+    return shownPhase() ? 'SWARM VOICE · PRESS PLAY TO HEAR THE ANSWER' : 'SWARM VOICE · PRESS PLAY TO HEAR YOUR BRIEFING';
+  }
+  /** The sound meter and the play button's progress fill follow the voice through two custom properties; both rest at zero when motion is off or nothing plays. */
+  function paintLevel() {
+    const box = root.querySelector('.readback'); if (!box) return;
+    box.style.setProperty('--voice-level', (voice.active && state.motion ? voice.level : 0).toFixed(3));
+    box.style.setProperty('--readback-progress', (voice.active ? voice.progress : 0).toFixed(3));
+  }
+  function paintVoice() {
+    const box = root.querySelector('.readback'); if (!box) return;
+    box.dataset.state = voice.active ? 'speaking' : 'idle'; box.dataset.outcome = voice.outcome || ''; paintLevel();
+    const s = box.querySelector('.readback-status'); if (s) s.textContent = voiceStatus();
+    const b = box.querySelector('.readback-button'); if (b) { b.textContent = voice.active ? '■ Stop' : playLabel(); b.setAttribute('aria-pressed', String(voice.active)); }
+    const det = box.querySelector('details'); if (det && voice.mode === 'unavailable') det.open = true;
+  }
   function voiceControls() {
     const text = readbackText(); if (!text) return '';
-    const source = state.result && state.result.status === 'done' ? 'The text Jarvis returned for this request.' : 'The message this page shows for the request’s outcome.';
-    return `<div class="readback" data-state="${voice.active ? 'playing' : 'idle'}" data-reduced="${!state.motion}"><div class="readback-controls">${btn(voice.active ? '■ Stop' : '▶ Speak the answer', 'readback', 'readback-button', `aria-pressed="${voice.active}"`)}<span class="voice-bars" aria-hidden="true">${[.32, .65, 1, .55, .85, .44, .72].map(h => `<i style="--bar-height:${h}"></i>`).join('')}</span></div><div class="readback-status" role="status" aria-live="polite">${esc(voiceStatus())}</div><details><summary>Transcript</summary><p>${esc(text)}</p><small>${source} Speech uses the swarm voice route, falling back to your browser’s engine.</small></details></div>`;
+    const source = !shownPhase() ? 'A briefing built from your swarm as this page loaded.' : state.result && state.result.status === 'done' ? 'The text Jarvis returned for this request.' : 'The message this page shows for the request’s outcome.';
+    return `<div class="readback" data-state="${voice.active ? 'speaking' : 'idle'}" data-outcome="${esc(voice.outcome)}" data-reduced="${!state.motion}"><div class="readback-controls">${btn(voice.active ? '■ Stop' : playLabel(), 'readback', 'readback-button', `aria-pressed="${voice.active}"`)}<span class="voice-bars" aria-hidden="true">${[.32, .65, 1, .55, .85, .44, .72].map(h => `<i style="--bar-height:${h}"></i>`).join('')}</span></div><div class="readback-status" role="status" aria-live="polite">${esc(voiceStatus())}</div><details${voice.mode === 'unavailable' ? ' open' : ''}><summary>Transcript</summary><p>${esc(text)}</p><small>${source} Speech uses the swarm voice route, falling back to your browser’s engine.</small></details></div>`;
   }
 
   /* ── voice input (push-to-talk dictation; never a visualization signal, ADR-164 D8) ── */
@@ -148,17 +199,19 @@
 
   /* ── views ───────────────────────────────────────────────────── */
   function composer(compact = false) {
-    return `<div class="composer-wrap"><form id="intent-form" class="composer"><label class="sr-only" for="intent-input">Ask your assistant</label><textarea id="intent-input" rows="2" maxlength="1200" placeholder="Tell me what you have in mind…"${state.busy ? ' disabled' : ''}>${esc(state.draft)}</textarea><div class="composer-controls"><div class="context-label"><span>Personal space</span><span>${snapshot.apps.length} applications · ${shell.openWork().length} open</span></div><div class="composer-actions">${micButton()}<button class="send-button" type="submit" aria-label="Send to Jarvis"${state.busy ? ' disabled' : ''}>↑</button></div></div></form>${micStatus()}<p class="composer-note">${compact ? 'Ask a follow-up. It continues the same thread.' : 'Your intent, not a list of apps. Answered by your own Jarvis with the swarm’s tools.'}</p></div>`;
+    return `<div class="composer-wrap"><form id="intent-form" class="composer"><label class="sr-only" for="intent-input">Ask your assistant</label><textarea id="intent-input" rows="2" maxlength="1200" placeholder="Tell me what you have in mind…"${state.busy ? ' disabled' : ''}>${esc(state.draft)}</textarea><div class="composer-controls"><div class="context-label"><span>Personal space</span><span>${snapshot.apps.length} applications · ${shell.openWork().length} open</span></div><div class="composer-actions">${micButton()}<button class="send-button" type="submit" aria-label="Send to Jarvis"${state.busy ? ' disabled' : ''}>↑</button></div></div></form>${micStatus()}<p class="composer-note">${compact ? followUpNote() : 'Your intent, not a list of apps. Answered by your own Jarvis with the swarm’s tools.'}</p></div>`;
   }
+  /** The compact composer's note: while Travel offers are on screen, the two refinements this page keeps locally are named. */
+  const followUpNote = () => trip.hasOffers() ? 'Ask a follow-up, or refine the offers on screen with “after 3pm” or “nonstop”. It continues the same thread.' : 'Ask a follow-up. It continues the same thread.';
   function rail() {
     return `<aside class="rail"><a href="/portal" class="rail-logo" aria-label="All experiences">${esc(state.name.slice(0, 1).toLowerCase())}</a><nav class="rail-nav" aria-label="Assistant navigation">${btn('<span class="rail-symbol" aria-hidden="true">◎</span>Assistant', 'home', `rail-button${state.phase === 'idle' ? ' active' : ''}`)}${btn('<span class="rail-symbol" aria-hidden="true">＋</span>New', 'new', 'rail-button')}${btn('<span class="rail-symbol" aria-hidden="true">◇</span>Shelf', 'saved', 'rail-button')}${btn('<span class="rail-symbol" aria-hidden="true">⠿</span>Swarm', 'swarm', 'rail-button')}</nav><div class="rail-bottom">${btn('⌘', 'settings', 'icon-button', 'aria-label="Preferences"')}<span class="profile" aria-label="${esc(snapshot.me.name)}">${esc(snapshot.me.initials)}</span></div></aside>`;
   }
   function suggestions() {
     const latest = snapshot.work[0];
-    return `<div class="suggestions">${btn('What needs my attention today?', 'prompt', 'suggestion', 'data-prompt="What needs my attention today across my swarm? List what is waiting on me first."')}${latest ? btn(`Tell me about “${esc(latest.title.slice(0, 40))}${latest.title.length > 40 ? '…' : ''}”`, 'prompt', 'suggestion', `data-prompt="${esc(`Tell me about ${latest.kind === 'task' ? 'the task' : 'the ticket'} “${latest.title}” and what I should do next.`)}"`) : ''}${btn('What can my swarm do for me?', 'prompt', 'suggestion', 'data-prompt="Which applications do I have and what can each of them do for me? Keep it short."')}${state.resume ? btn(RESUME_LABELS[state.resume] || 'Resume the last answer', 'result', 'suggestion') : ''}</div>`;
+    return `<div class="suggestions">${btn('What needs my attention today?', 'prompt', 'suggestion', 'data-prompt="What needs my attention today across my swarm? List what is waiting on me first."')}${latest ? btn(`Tell me about “${esc(latest.title.slice(0, 40))}${latest.title.length > 40 ? '…' : ''}”`, 'prompt', 'suggestion', `data-prompt="${esc(`Tell me about ${latest.kind === 'task' ? 'the task' : 'the ticket'} “${latest.title}” and what I should do next.`)}"`) : ''}${btn('What can my swarm do for me?', 'prompt', 'suggestion', 'data-prompt="Which applications do I have and what can each of them do for me? Keep it short."')}${btn('Find a free weekend to get away ↗', 'prompt', 'suggestion', 'data-view="calendar" data-prompt="Help me find a free weekend in the next two months for a short trip, and tell me what I should plan for it."')}${state.resume ? btn(RESUME_LABELS[state.resume] || 'Resume the last answer', 'result', 'suggestion') : ''}</div>`;
   }
   function welcome() {
-    return `<section class="welcome"><div class="presence"><canvas id="core-canvas" role="img" aria-label="Luminous particle core: the assistant’s presence, moving with its voice"></canvas></div><div class="orb-caption">YOUR WORLD. CONNECTED.</div>${voiceControls()}<div class="eyebrow">${greeting()}, ${esc(firstName().toUpperCase())} / ${snapshot.apps.length} APPS · ${shell.openWork().length} OPEN · ${snapshot.botsOnline} ASSISTANTS ONLINE</div><h1>A little ambition.<br><em>A whole swarm behind you.</em></h1><p>Tell me what you want to do. I’ll bring the right tools to you.</p>${composer()}${suggestions()}<div class="welcome-bottom">${snapshot.suites.slice(0, 3).map(s => `<div class="connected-item"><strong><span class="status-dot"></span>${esc(s.name)}</strong><small>${s.count} application${s.count === 1 ? '' : 's'}</small></div>`).join('')}</div></section>`;
+    return `<section class="welcome"><div class="presence"><canvas id="core-canvas" role="img" aria-label="Luminous particle core: the assistant’s presence, moving with its voice"></canvas></div><div class="orb-caption">YOUR WORLD. CONNECTED.</div>${voiceControls()}<div class="eyebrow">${greeting()}, ${esc(firstName().toUpperCase())} / ${snapshot.apps.length} APPS · ${shell.openWork().length} OPEN · ${snapshot.botsOnline} ASSISTANTS ONLINE</div><h1>A little ambition.<br><em>A whole swarm behind you.</em></h1><p>Tell me what you want to do. I’ll bring the right tools to you.</p>${composer()}${suggestions()}<div class="welcome-bottom" aria-label="Connected capabilities">${trip.capabilities()}</div></section>`;
   }
   /* ── request progress: what this page observed, never the tools Jarvis used ── */
   const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -199,6 +252,7 @@
   function ledger() {
     const p = shownPhase(), r = state.result || {}, handoffs = (r.handoffs || []).filter(h => h && h.name), used = r.brainFallback && r.brainFallback.providerUsed;
     const rows = askRows(p).concat(outcomeRow(p), state.work.map(w => progressRow(`Background work · ${w.title}`, workLabel(w) + (w.cancel === 'cancelled' ? ' · cancel accepted' : ''), settledItem(w) ? (w.status === 'error' ? 'failed' : 'done') : 'now')));
+    rows.push(...trip.ledgerRows(progressRow));
     if (handoffs.length) rows.push(progressRow('Handoffs', `${plural(handoffs.length, 'application handoff')}: ${handoffs.map(h => h.name).join(', ')}.`, 'done'));
     if (used) rows.push(progressRow('Provider', `Answered by ${used} (fallback).`, 'done'));
     return `<div class="action-ledger" aria-label="Request progress"><div class="ledger-head"><strong>Request progress</strong><small>What this page observed about your request. It is not a record of the tools Jarvis used.</small></div>${rows.join('')}</div>`;
@@ -253,7 +307,7 @@
   }
   function overviewBody() {
     const r = state.result, { chips, named } = handoffApps(), routed = chips.map(c => ({ name: c && c.name, href: c ? LIVE.localHref(c.deepLink) : '' })).filter(c => c.href);
-    return `<div class="section-head"><h3>The answer</h3>${btn('Speak it', 'readback', 'quiet')}</div>${S.answerHtml(r.answer)}${providerNote(r)}${visualCard(r.visual)}${proposalCard(r.packageToolProposal)}${workCard()}${routed.length ? `<h3>Open where the work lives</h3><div class="work-actions">${routed.map(c => link(`Open ${esc(c.name)} ↗`, c.href, 'primary')).join('')}</div>` : ''}${named.length ? `<h3>Applications mentioned</h3><div class="work-actions">${named.map(a => a.navigable ? link(`${esc(a.name)} ↗`, a.href, 'secondary') : `<span class="secondary">${esc(a.name)}</span>`).join('')}</div>` : ''}${(r.files || []).length ? `<h3>Files</h3>${r.files.map(f => `<p>${S.fileLink(f) || esc(f.name || 'file')}</p>`).join('')}` : ''}<div class="work-actions">${link('Continue in Jarvis ↗', '/api/jarvis/', 'secondary')}${btn('View sources', 'sources-tab', 'quiet')}</div>`;
+    return `<div class="section-head"><h3>The answer</h3>${btn('Speak it', 'readback', 'quiet')}</div>${S.answerHtml(r.answer)}${providerNote(r)}${visualCard(r.visual)}${proposalCard(r.packageToolProposal)}${workCard()}${trip.planHint(state.query, r.answer || '')}${routed.length ? `<h3>Open where the work lives</h3><div class="work-actions">${routed.map(c => link(`Open ${esc(c.name)} ↗`, c.href, 'primary')).join('')}</div>` : ''}${named.length ? `<h3>Applications mentioned</h3><div class="work-actions">${named.map(a => a.navigable ? link(`${esc(a.name)} ↗`, a.href, 'secondary') : `<span class="secondary">${esc(a.name)}</span>`).join('')}</div>` : ''}${(r.files || []).length ? `<h3>Files</h3>${r.files.map(f => `<p>${S.fileLink(f) || esc(f.name || 'file')}</p>`).join('')}` : ''}<div class="work-actions">${link('Continue in Jarvis ↗', '/api/jarvis/', 'secondary')}${btn('View sources', 'sources-tab', 'quiet')}</div>`;
   }
   function shelfBody() {
     const list = tasks().slice(0, 12);
@@ -261,7 +315,7 @@
   }
   function sourcesBody() {
     const r = state.result || {};
-    return `<div class="eyebrow">WHAT THIS ANSWER USES</div><h2 style="font-size:25px;font-weight:400;margin-top:12px">A clear trail back to the source.</h2><div class="source-row"><span class="source-label">LIVE / YOUR THREAD</span><h3>Conversation</h3><p>Thread <code>${esc(thread.sessionId)}</code>, the same one the cockpit’s Jarvis page uses. ${state.jobId ? `Job <code>${esc(state.jobId)}</code>.` : ''} ${r.taskId ? `Task <code>${esc(r.taskId)}</code>.` : ''}</p></div><div class="source-row"><span class="source-label">LIVE / ACCOUNTABLE ASSISTANT</span><h3>Execution</h3><p>The answer was produced by the Jarvis bot with the swarm’s tools under your identity. Per-tool activity is not part of the result contract this page reads, so it is not shown; the Jarvis page keeps the full conversation.</p></div><div class="source-row"><span class="source-label">${(r.handoffs || []).length ? 'LIVE / HANDOFFS' : 'NONE'}</span><h3>Application handoffs</h3><p>${(r.handoffs || []).length ? r.handoffs.map(h => esc(h.name)).join(', ') : 'No application handoff was returned for this request.'}</p></div><div class="source-row"><h3>Control stays with you</h3><p>Opening an application is separate from saving, sending, booking or scheduling anything inside it. Nothing here performs those actions.</p></div>`;
+    return `<div class="eyebrow">WHAT THIS ANSWER USES</div><h2 style="font-size:25px;font-weight:400;margin-top:12px">A clear trail back to the source.</h2><div class="source-row"><span class="source-label">LIVE / YOUR THREAD</span><h3>Conversation</h3><p>Thread <code>${esc(thread.sessionId)}</code>, the same one the cockpit’s Jarvis page uses. ${state.jobId ? `Job <code>${esc(state.jobId)}</code>.` : ''} ${r.taskId ? `Task <code>${esc(r.taskId)}</code>.` : ''}</p></div><div class="source-row"><span class="source-label">LIVE / ACCOUNTABLE ASSISTANT</span><h3>Execution</h3><p>The answer was produced by the Jarvis bot with the swarm’s tools under your identity. Per-tool activity is not part of the result contract this page reads, so it is not shown; the Jarvis page keeps the full conversation.</p></div><div class="source-row"><span class="source-label">${(r.handoffs || []).length ? 'LIVE / HANDOFFS' : 'NONE'}</span><h3>Application handoffs</h3><p>${(r.handoffs || []).length ? r.handoffs.map(h => esc(h.name)).join(', ') : 'No application handoff was returned for this request.'}</p></div>${trip.sourcesRows()}<div class="source-row"><h3>Control stays with you</h3><p>Opening an application is separate from saving, sending, booking or scheduling anything inside it. Searching Travel, saving an option on this device and watching a route each happen only when you press the button that says so; nothing here books, pays or writes your calendar.</p></div>`;
   }
   function appsBody() {
     const { chips, named } = handoffApps();
@@ -278,14 +332,40 @@
     const s = stage();
     return `<div class="eyebrow">WORKSPACE TAKING SHAPE</div><h2 id="run-stage">${['Sending your request.', 'The swarm is working.', 'Still working on it.'][s]}</h2><p>The workspace forms around the answer: applications to open, files that were produced, and the trail back to the source.</p><div class="run-progress" role="progressbar" aria-label="Request stages" aria-valuemin="0" aria-valuemax="3" aria-valuenow="${s + 1}"><span style="width:${(s + 1) / 3 * 100}%"></span></div><div class="loading-lines" aria-hidden="true"><span></span><span></span><span></span></div>${btn('Stop waiting', 'stop', 'quiet')}`;
   }
+  /** The workspace title: the request, or the application's in-context name while Calendar or Travel is open inside the conversation. */
+  const workspaceTitle = () => state.view === 'travel' ? 'Travel / in-context app preview' : state.view === 'calendar' ? 'Calendar / in-context app preview' : state.query.slice(0, 80) || 'Your request';
   function workspace() {
     const p = state.phase, answered = p === 'ready' || p === 'partial';
-    const tabs = [['summary', 'Overview'], ['apps', 'Applications'], ['shelf', 'Shelf'], ['sources', 'Sources']];
-    const body = () => state.view === 'shelf' ? shelfBody() : state.view === 'sources' ? sourcesBody() : state.view === 'apps' ? appsBody() : overviewBody();
-    const top = `<div class="workspace-top"><div class="workspace-title"><span class="tiny-orb" aria-hidden="true"></span><strong>${esc(state.query.slice(0, 80) || 'Your request')}</strong></div><span class="mode-indicator" data-phase="${p}">${PHASES[p] ? PHASES[p].mode : ''}</span></div>`;
+    const tabs = workspaceTabs();
+    const views = { shelf: shelfBody, sources: sourcesBody, apps: appsBody, calendar: trip.calendarBody, travel: trip.travelBody };
+    if (!tabs.some(([id]) => id === state.view)) state.view = 'summary';
+    const body = () => (views[state.view] || overviewBody)();
+    const top = `<div class="workspace-top"><div class="workspace-title"><span class="tiny-orb" aria-hidden="true"></span><strong>${esc(workspaceTitle())}</strong></div><span class="mode-indicator" data-phase="${p}">${PHASES[p] ? PHASES[p].mode : ''}</span></div>`;
     const inner = answered ? `<div class="workspace-tabs" role="tablist" aria-label="Answer workspace">${tabs.map(([id, label]) => btn(label, 'tab', '', `id="tab-${id}" data-tab="${id}" role="tab" aria-selected="${state.view === id}" aria-controls="workspace-content"`)).join('')}</div><div class="workspace-body" id="workspace-content" role="tabpanel" aria-labelledby="tab-${state.view}">${body()}</div>`
       : `<div class="loading-body" data-phase="${p}"><span class="tiny-orb" style="width:28px;height:28px" aria-hidden="true"></span>${p === 'running' ? loadingBody() : terminalBody(p)}</div>`;
     return `<section class="workspace" aria-label="Workspace assembled for your request">${top}${inner}</section>`;
+  }
+  /** The workspace tabs: Travel only for a caller whose plan admits it (ADR-164 D10). */
+  function workspaceTabs() {
+    return [['summary', 'Overview'], ['calendar', 'Calendar']].concat(trip.travelAdmitted() ? [['travel', 'Travel']] : [], [['apps', 'Applications'], ['shelf', 'Shelf'], ['sources', 'Sources']]);
+  }
+  /** Switch the workspace view and put focus on its tab. */
+  function setView(view) {
+    state.view = view; render();
+    const tab = document.getElementById('tab-' + state.view); if (tab) tab.focus();
+  }
+  /** Repaint what a trip read changed: the welcome's capabilities, or the Calendar / Travel body, keeping focus and caret. */
+  function repaintTrip() {
+    if (state.phase === 'idle') { const wb = root.querySelector('.welcome-bottom'); if (wb) wb.innerHTML = trip.capabilities(); return; }
+    // The page's own ledger rows and the compact composer note follow the trip reads as well.
+    const ledgerEl = root.querySelector('.action-ledger'); if (ledgerEl) ledgerEl.outerHTML = ledger();
+    const note = root.querySelector('.mission-left .composer-note'); if (note) note.textContent = followUpNote();
+    const body = document.getElementById('workspace-content');
+    if (!body || !(state.view === 'calendar' || state.view === 'travel')) return;
+    const active = document.activeElement, id = active && active.id, caret = active && typeof active.selectionStart === 'number' ? [active.selectionStart, active.selectionEnd] : null;
+    body.innerHTML = state.view === 'calendar' ? trip.calendarBody() : trip.travelBody();
+    const again = id ? document.getElementById(id) : null;
+    if (again && body.contains(again)) { again.focus(); if (caret) { try { again.setSelectionRange(caret[0], caret[1]); } catch (_) { /* not a text field */ } } }
   }
   function mission() {
     const meta = PHASES[state.phase] || PHASES.running;
@@ -367,11 +447,11 @@
     if (pending) { pending.abort(); pending = null; }
     state.busy = false;
   }
-  async function run(query) {
+  async function run(query, view) {
     const text = String(query || '').trim(); if (!text || state.busy) return;
     stopVoice(); endWait();
     const gen = generation, controller = new AbortController(); pending = controller;
-    Object.assign(state, { query: text, draft: '', phase: 'running', resume: '', busy: true, view: 'summary', result: null, error: '', code: '', jobId: '', work: [], workNote: '', obs: Object.assign(freshObs(), { sentAt: new Date() }) });
+    Object.assign(state, { query: text, draft: '', phase: 'running', resume: '', busy: true, view: 'summary', pendingView: view || '', result: null, error: '', code: '', jobId: '', work: [], workNote: '', obs: Object.assign(freshObs(), { sentAt: new Date() }) });
     render();
     const result = await LIVE.ask(text, { signal: controller.signal, onPhase: p => { if (gen === generation) observe(p); } });
     // A stopped, restarted or superseded request never reopens or overwrites the workspace.
@@ -401,6 +481,9 @@
       if (!state.obs.jobId && result.httpStatus) state.obs.refused = result.httpStatus;
     }
     state.resume = state.phase;
+    // A suggestion that names a view (the trip suggestion opens Calendar) applies it once the answer is in.
+    if ((state.phase === 'ready' || state.phase === 'partial') && state.pendingView) state.view = state.pendingView;
+    state.pendingView = '';
     render();
     if (state.phase === 'partial') track(generation);
     if ((state.phase === 'ready' || state.phase === 'partial') && LIVE.prefs.get('nexus:autoSpeak', false)) speakAnswer();
@@ -464,53 +547,74 @@
 
   /* ── dialogs ─────────────────────────────────────────────────── */
   function close() { const d = document.getElementById('nexus-dialog'); if (d) d.close(); document.getElementById('modal-host').replaceChildren(); activeModal = null; if (previousFocus && previousFocus.isConnected) previousFocus.focus(); }
-  function modal(kind) {
+  function modal(kind, id) {
     previousFocus = document.activeElement; activeModal = kind; let title = '', body = '';
-    if (kind === 'settings') { title = 'Preferences on this device'; body = `<p>These choices are remembered in this browser only. Renaming the assistant changes the label on this page, not the bot that answers.</p><form id="settings-form"><label class="field">Assistant display name<input id="assistant-name" value="${esc(state.name)}" maxlength="16" required></label><label class="field"><input id="auto-speak" type="checkbox" ${LIVE.prefs.get('nexus:autoSpeak', false) ? 'checked' : ''}> Speak each new answer automatically</label><div class="dialog-buttons"><button type="submit" class="primary">Save on this device</button></div></form>`; }
-    else if (kind === 'sources') { title = 'What is live in this view'; body = `<div class="source-row"><span class="source-label">LIVE</span><h3>Your swarm</h3><p>${snapshot.apps.length} installed applications in ${snapshot.suites.length} suites, ${snapshot.botsOnline} of ${snapshot.bots.length} assistants online, ${shell.openWork().length} open work items, all read in your session.</p></div><div class="source-row"><span class="source-label">LIVE</span><h3>Conversation</h3><p>Requests post to your Jarvis thread and are answered by the accountable Jarvis bot with its real tools. Handoffs and files come back with the answer; nothing is scripted.</p></div><div class="source-row"><span class="source-label">LIVE</span><h3>Voice</h3><p>Playback uses the swarm voice route; the core follows playback amplitude when the browser exposes it and is labelled as lifecycle animation otherwise. The microphone opens only while a Talk recording you started is running: the clip goes to the swarm’s transcription route and the words land in the composer for you to send. It never drives the core.</p></div>`; }
-    else if (kind === 'saved') { title = 'Your Jarvis shelf'; body = shelfBody(); }
+    if (kind === 'settings') { title = 'Preferences'; body = `<p>The name and voice choices are remembered in this browser only. Renaming the assistant changes the label on this page, not the bot that answers.${trip.travelAdmitted() ? ' The departure airport is saved to your Travel profile; the budget stays on this device.' : ''}</p><form id="settings-form" novalidate><label class="field">Assistant display name<input id="assistant-name" value="${esc(state.name)}" maxlength="16" required></label><label class="field"><input id="auto-speak" type="checkbox" ${LIVE.prefs.get('nexus:autoSpeak', false) ? 'checked' : ''}> Speak each new answer automatically</label>${trip.settingsFields()}<p class="result-note tone-warn" id="settings-error" role="alert"></p><div class="dialog-buttons"><button type="submit" class="primary">Save preferences</button></div></form>`; }
+    else if (kind === 'sources') { title = 'What is live in this view'; body = `<div class="source-row"><span class="source-label">LIVE</span><h3>Your swarm</h3><p>${snapshot.apps.length} installed applications in ${snapshot.suites.length} suites, ${snapshot.botsOnline} of ${snapshot.bots.length} assistants online, ${shell.openWork().length} open work items, all read in your session.</p></div><div class="source-row"><span class="source-label">LIVE</span><h3>Conversation</h3><p>Requests post to your Jarvis thread and are answered by the accountable Jarvis bot with its real tools. Handoffs and files come back with the answer; nothing is scripted.</p></div><div class="source-row"><span class="source-label">LIVE</span><h3>Voice</h3><p>Playback uses the swarm voice route; the core follows playback amplitude when the browser exposes it and is labelled as lifecycle animation otherwise. The microphone opens only while a Talk recording you started is running: the clip goes to the swarm’s transcription route and the words land in the composer for you to send. It never drives the core.</p></div>${trip.sourcesRows()}`; }
+    else if (kind === 'saved') { title = 'Your shelf and shortlist'; body = trip.shelfExtra() + shelfBody(); }
+    else if (kind === 'fare') { title = 'Review this offer'; body = trip.fareBody(id); if (!body) { activeModal = null; return; } }
     else if (kind === 'swarm') { title = 'One conversation. The whole swarm.'; body = `<p>${snapshot.apps.length} applications across ${snapshot.suites.length} suites can be reached from this conversation.</p>${snapshot.suites.map(s => `<div class="source-row"><h3>${esc(s.name)} · ${s.count}</h3><p>${esc(s.apps.slice(0, 6).map(a => a.name).join(', ') || 'Nothing installed')}</p></div>`).join('')}<div class="dialog-buttons" style="display:flex;gap:8px;flex-wrap:wrap">${link('Explore in Orbit ↗', '/orbit', 'primary')}${link('Open the cockpit ↗', '/cockpit/', 'primary')}</div>`; }
     if (!title) return;
     document.getElementById('modal-host').innerHTML = `<dialog id="nexus-dialog" class="nexus-dialog" aria-labelledby="dialog-title"><div class="dialog-head"><h2 id="dialog-title">${esc(title)}</h2>${btn('×', 'close', 'icon-button', 'aria-label="Close panel"')}</div>${body}</dialog>`;
     const d = document.getElementById('nexus-dialog'); d.showModal(); d.addEventListener('cancel', e => { e.preventDefault(); close(); }); d.addEventListener('click', e => { if (e.target === d) close(); });
   }
 
+  /** Preferences: the name and auto-speak stay on this device; trip fields apply through the trip workspace, and a refusal keeps the dialog open with its sentence. */
+  async function saveSettings() {
+    const name = document.getElementById('assistant-name').value.trim(), err = document.getElementById('settings-error');
+    if (!name || name.length > 16) { if (err) err.textContent = 'Give the assistant a display name of 1 to 16 characters.'; return; }
+    const autoSpeak = document.getElementById('auto-speak').checked, problem = await trip.saveSettings();
+    if (problem) { if (err) err.textContent = problem; return; }
+    state.name = name; LIVE.prefs.set('nexus:name', name); LIVE.prefs.set('nexus:autoSpeak', autoSpeak);
+    close(); render(); notify('Preferences saved.');
+  }
+  /** A short follow-up that refines the answered workspace stays on the page; anything else goes to Jarvis. */
+  function submitIntent(q) {
+    const answered = state.phase === 'ready' || state.phase === 'partial';
+    if (answered && trip.refine(q)) { state.draft = ''; const input = document.getElementById('intent-input'); if (input) input.value = ''; return; }
+    run(q);
+  }
+
   /* ── events ──────────────────────────────────────────────────── */
   function bind() {
     root.addEventListener('click', e => {
       const b = e.target.closest('[data-action]'); if (!b) return; const a = b.dataset.action;
+      if (trip.onAction(a, b)) return;
       if (a === 'home') return goHome();
       if (a === 'new') return newChat();
       if (a === 'mic') return mic.state === 'recording' ? stopRecording() : startRecording();
       if (a === 'cancel-work') return cancelWork(b.dataset.job);
       if (a === 'close') return close();
-      if (a === 'readback') { if (voice.active) stopVoice(); else speakAnswer(); return; }
+      if (a === 'readback') { if (voice.active) stopVoice('stopped'); else speakAnswer(); return; }
       if (a === 'motion') { state.motion = !state.motion; render(); return; }
       if (a === 'stop') return stopWaiting();
       if (a === 'retry') return run(state.query);
       if (a === 'result') { if (state.resume) { state.phase = state.resume; render(); } return; }
-      if (a === 'prompt') return run(b.dataset.prompt);
-      if (a === 'tab' || a === 'sources-tab') { state.view = a === 'tab' ? b.dataset.tab : 'sources'; render(); if (a === 'tab') { const tab = document.getElementById('tab-' + state.view); if (tab) tab.focus(); } return; }
-      if (['settings', 'sources', 'saved', 'swarm'].includes(a)) return modal(a);
+      if (a === 'prompt') return run(b.dataset.prompt, b.dataset.view);
+      if (a === 'tab' || a === 'sources-tab') { if (activeModal) close(); if (a === 'tab') setView(b.dataset.tab); else { state.view = 'sources'; render(); } return; }
+      if (['settings', 'sources', 'saved', 'swarm', 'fare'].includes(a)) return modal(a, b.dataset.fare);
     });
     root.addEventListener('change', e => {
+      if (trip.onChange(e)) return;
       if (e.target.dataset.role === 'experience-picker') { const exp = S.experienceFor(e.target.value); if (exp) location.href = exp.href; }
       if (e.target.id === 'universal-skin-picker' && window.OSHAL_STYLE_SWITCHER) window.OSHAL_STYLE_SWITCHER.applySkin(e.target.value);
     });
     root.addEventListener('submit', e => {
       e.preventDefault();
-      if (e.target.id === 'settings-form') { const name = document.getElementById('assistant-name').value.trim(); if (!name || name.length > 16) return; state.name = name; LIVE.prefs.set('nexus:name', name); LIVE.prefs.set('nexus:autoSpeak', document.getElementById('auto-speak').checked); close(); render(); notify('Preferences saved on this device.'); }
-      if (e.target.id === 'intent-form') { const q = document.getElementById('intent-input').value.trim(); if (q) run(q); }
+      if (trip.onSubmit(e)) return;
+      if (e.target.id === 'settings-form') return saveSettings();
+      if (e.target.id === 'intent-form') { const q = document.getElementById('intent-input').value.trim(); if (q) submitIntent(q); }
     });
-    root.addEventListener('input', e => { if (e.target.id === 'intent-input') state.draft = e.target.value; });
+    root.addEventListener('input', e => { if (e.target.id === 'intent-input') state.draft = e.target.value; else trip.onInput(e); });
     // An owner-checked visual the image route refuses (or that expired) says so instead of showing a broken image.
     root.addEventListener('error', e => { const fig = e.target && e.target.closest ? e.target.closest('.result-visual') : null; if (fig) fig.innerHTML = '<figcaption><span class="source-label">VISUAL</span> The visual could not be loaded. The text answer above is unaffected.</figcaption>'; }, true);
-    window.addEventListener('pagehide', () => { if (mic.recorder && mic.state === 'recording') { mic.recorder.onstop = null; try { mic.recorder.stop(); } catch (_) { /* already stopped */ } } releaseMic(); });
+    window.addEventListener('pagehide', () => { stopVoice(); if (mic.recorder && mic.state === 'recording') { mic.recorder.onstop = null; try { mic.recorder.stop(); } catch (_) { /* already stopped */ } } releaseMic(); });
     root.addEventListener('keydown', e => {
       if (e.target.id === 'intent-input' && e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); e.target.form.requestSubmit(); }
-      if (e.target.getAttribute('role') === 'tab' && ['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(e.key)) { const tabs = ['summary', 'apps', 'shelf', 'sources'], i = tabs.indexOf(state.view); state.view = e.key === 'Home' ? tabs[0] : e.key === 'End' ? tabs[3] : tabs[(i + (e.key === 'ArrowRight' ? 1 : 3)) % 4]; e.preventDefault(); render(); const tab = document.getElementById('tab-' + state.view); if (tab) tab.focus(); }
+      if (e.target.getAttribute('role') === 'tab' && ['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(e.key)) { const tabs = workspaceTabs().map(([id]) => id), n = tabs.length, i = Math.max(0, tabs.indexOf(state.view)); e.preventDefault(); setView(e.key === 'Home' ? tabs[0] : e.key === 'End' ? tabs[n - 1] : tabs[(i + (e.key === 'ArrowRight' ? 1 : n - 1)) % n]); }
     });
-    document.addEventListener('visibilitychange', () => { if (document.hidden) cancelAnimationFrame(animation); else attachOrb(); });
+    // Speech stops when the page is hidden, like the core's motion: nothing keeps talking in a background tab.
+    document.addEventListener('visibilitychange', () => { if (document.hidden) { cancelAnimationFrame(animation); if (voice.active) stopVoice('away'); } else attachOrb(); });
     matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', e => { if (e.matches) { state.motion = false; render(); } });
   }
 })();

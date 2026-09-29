@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Phase-4 assemblies: the classroom lists AI Office ("Make and share") and Circuit Lab ("Build and test"), Home lists Watch / Listen / Go, and Business lists its Office, Communications and Growth hosts, each host in its own group in both the sidebar and the tile row, each opened with the preset's audience, and only the view page of a host whose ribbon lists several surfaces. The Little Monsters case reads its own section now that the classroom hosts more than one application.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Homebase cases follow the home build lane: Home names the missing household group, and a caller Finance does not admit gets no money module at all: a teacher keeps the teaching card, anyone else gets their personal workspace (ADR-164 D10).
  * 8 | maintainer@emeraldcoastsystemsgroup.com | A ticked shopping item leaves the Purchasing list and stays struck through for the visit (the design study's checked state).
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | The central assistant's readback keeps its outcome on the status line after Stop (STOPPED · READY WHEN YOU ARE, the demo's rule) instead of returning to the resting prompt; the ask-flow case asserts that outcome.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -376,7 +377,7 @@ describe('experience shells over the real routes', () => {
     await page.locator('.readback-button').first().click();
     await page.waitForFunction(() => document.querySelector('.readback-status')?.textContent?.includes('BROWSER VOICE'));
     await page.locator('.readback-button').first().click();
-    expect(await page.locator('.readback-status').innerText()).toContain('PRESS PLAY');
+    expect(await page.locator('.readback-status').innerText()).toBe('STOPPED · READY WHEN YOU ARE');
     expect(errors).toEqual([]);
   });
 
