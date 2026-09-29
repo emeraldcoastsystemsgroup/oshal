@@ -15,6 +15,11 @@ Documentation for individual OSHAL applications (the `?app=` bundles) and app mi
   package. The 13-class resource ledger (routes/tools/bots/containers/security/tables/…),
   the proven LM playbook, Wave 0 framework gaps (incl. the bot-container model decision),
   and the four migration waves ending with the live-money trading apps.
+- [ai-usage-ledger.md](./ai-usage-ledger.md) — **GENERATED + CI-enforced (ADR-170 D10):** the AI
+  usage and requirements ledger for the kernel manifests: container memory low/high per application
+  and each model-touching feature's unit, tier, generation backend and degrade behaviour, from every
+  manifest's `rating:` block. Regenerate with
+  `node scripts/ai-usage-ledger.js --core . --out docs/apps/ai-usage-ledger.md`; never edit it by hand.
 - [kernel-skills.md](./kernel-skills.md) — **BUILT + CI-enforced (ADR-090 D8):** the ten kernel
   skills are the framework's stable, package-facing API — what an installed app may import and the
   kernel promises to keep. Explains the silent-prune bug class it closes (`tsconfig.server.json`

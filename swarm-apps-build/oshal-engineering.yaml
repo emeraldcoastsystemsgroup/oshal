@@ -11,6 +11,16 @@
 
 name: oshal-engineering
 suite: ai-engineering   # ADR-097: primary catalog shelf (tools keep their own category:)
+# ADR-170 rating label: container memory in MiB (declared by the rule in docs/apps/ai-usage-ledger.md)
+# and each model-touching feature. Token and model columns are generated, never typed here.
+rating:
+  memoryMb: { low: 352, high: 1408, basis: declared }
+  features:
+    - id: build-ticket
+      unit: build ticket
+      tier: T4
+      generation: none
+      degrade: disable
 displayName: OSHAL Engineering
 description: >-
   The default OSHAL build swarm published as an application. Ticket

@@ -38,6 +38,7 @@
 # 30 | maintainer@emeraldcoastsystemsgroup.com   | Kubernetes gates, of which this file had none (docs/k8/remote-cluster-work-package.md items 7 and 8). Every full run now adds `argo-manifests` (kubeconform -strict over all five ops/deployment/argo/*.yaml, the Argo WorkflowTemplate included, against pinned schemas) and `terraform` (fmt -check -recursive + validate of deploy/terraform) - cluster-free, and red when kubeconform or terraform is missing rather than skipped. New --cluster-gates opts in to `cluster-bot-manifest` (validate-dynamic-bot-manifest.mjs --require-server) and `cluster-tenant-isolation` (verify-tenant-isolation.sh), the first callers either script has had: they need OSHAL_CLUSTER_CONTEXT and a reachable API server and fail closed without one, and without the flag they do not run and the log says so. New --k8s-only runs just these gates, before the lock, the logs and the Docker cleanup. The gate bodies live in scripts/ci/ci-k8s-gates.sh; tests/unit/ci-local-k8s-gates.spec.ts runs them.
 # 31 | maintainer@emeraldcoastsystemsgroup.com   | New `typecheck-tests` gate: typechecks the test tree against tsconfig.tests.json via scripts/ci/check-tests-typecheck.mjs, enforcing that all new or edited tests are typecheck-clean and pre-existing errors remain quarantined with explicit reasons in tests/typecheck-quarantine.json.
 # 32 | maintainer@emeraldcoastsystemsgroup.com   | Timeout-bounded export step. The `git archive | tar` export that follows the purge in prepare_head_src and gate_secrets had no timeout of its own, so a hang there held ci-local.lock indefinitely without writing an outcome line. Both now export through export_tree (scripts/ci/ci-export.sh), which runs under a watchdog and logs an export: OK|FAIL line, failing the gate and letting the run reach its outcome line on timeout.
+# 34 | maintainer@emeraldcoastsystemsgroup.com   | gate_ai_usage_ledger (ADR-170 D10) beside repo-separation, against $GATE_SRC: a stale docs/apps/ai-usage-ledger.md or an unrated kernel manifest fails the run.
 # =============================================================================
 #
 # Usage:  bash scripts/ci-local.sh [--scheduled] [--head] [--skip-e2e] [--skip-image] [--install]
@@ -403,6 +404,13 @@ gate_repo_separation() {
   (cd "$GATE_SRC" && timeout 120 node scripts/check-repo-separation.js);
 }
 
+# LEDGER GUARD (ADR-170 D10): every kernel manifest carries a `rating:` block (container memory
+# low/high, per-feature tier) and docs/apps/ai-usage-ledger.md is its generated view. A stale
+# ledger or an unrated manifest fails; the numbers on the label are generated, never typed.
+gate_ai_usage_ledger() {
+  (cd "$GATE_SRC" && timeout 120 node scripts/ai-usage-ledger.js --core . --check docs/apps/ai-usage-ledger.md);
+}
+
 # STRUCTURAL GUARD (2026-09-15): no test file may reach the operator LIVE Postgres by DEFAULT.
 # The local stack publishes the real trading database on 127.0.0.1:55433, and 23 DB-backed specs
 # fell back to exactly that when no environment variable was set - so running them created and
@@ -697,6 +705,7 @@ if [ "$NODE_GATES_OK" = "1" ]; then
   run_gate workflow-triggers gate_workflow_triggers
   run_gate security-policy gate_security_policy
   run_gate repo-separation gate_repo_separation
+  run_gate ai-usage-ledger gate_ai_usage_ledger
   run_gate spec-database-default gate_spec_database_default
   run_gate worktree-strays gate_worktree_strays
   # Cluster-free Kubernetes artifact gates (scripts/ci/ci-k8s-gates.sh). Red, not skipped, when

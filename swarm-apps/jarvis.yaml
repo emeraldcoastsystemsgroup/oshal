@@ -17,6 +17,16 @@
 
 name: jarvis
 suite: platform   # ADR-097: primary catalog shelf (tools keep their own category:)
+# ADR-170 rating label: container memory in MiB (declared by the rule in docs/apps/ai-usage-ledger.md)
+# and each model-touching feature. Token and model columns are generated, never typed here.
+rating:
+  memoryMb: { low: 64, high: 256, basis: declared }
+  features:
+    - id: assistant-turn
+      unit: assistant turn
+      tier: T2
+      generation: none
+      degrade: disable
 displayName: OSHAL Assistant
 description: >-
   Your single assistant over everything OSHAL connects to. Ask in plain language — Jarvis routes

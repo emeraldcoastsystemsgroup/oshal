@@ -15,6 +15,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Export SwarmAppServiceRouteScheduleDeclaration so the ADR-157 activation wiring can narrow a manifest's schedules to the deterministic ones before reading runsAs/requires.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Export the ADR-145 D4 per-name status plan and its D5 jarvis_tasks fallback composer/reader.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | Export the P8 canonical concierge selector, rollout mode, and coverage contract.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | Export the ADR-170 rating closed sets, guards, types, validateAppRating and APP_RATING_MEMORY_MAX_MB.
  */
 
 export type {
@@ -54,6 +55,16 @@ export type {
 
 // ADR-097 — the closed suite set + guard (apps declare ONE primary catalog shelf).
 export { SWARM_APP_SUITES, isSwarmAppSuite } from './types';
+// ADR-170 — the rating label's closed sets (tier, generation, degrade, memory basis) + validator.
+export {
+  APP_RATING_TIERS, isAppRatingTier,
+  APP_RATING_GENERATIONS, isAppRatingGeneration,
+  APP_RATING_DEGRADES, isAppRatingDegrade,
+  APP_RATING_MEMORY_BASES, isAppRatingMemoryBasis,
+  type AppRatingTier, type AppRatingGeneration, type AppRatingDegrade, type AppRatingMemoryBasis,
+  type AppRatingMemory, type AppRatingFeature, type AppRatingDeclaration,
+} from './types';
+export { validateAppRating, APP_RATING_MEMORY_MAX_MB } from './services/swarm-app-rating';
 export { APP_ACCESS_TIERS, isAppAccessTier } from './types';
 // NOTE: the ADR-090 skill-profile primitives are NOT re-exported here — `@/shared/skill-profiles`
 // is their canonical barrel and every consumer (loader validation, dispatch resolution, the email

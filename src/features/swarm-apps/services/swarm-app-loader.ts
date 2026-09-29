@@ -28,6 +28,7 @@
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | P8 concierge coverage: every manifest read resolves the fail-closed OSHAL_CONCIERGE_COVERAGE_MODE. A package with a real cockpit surface and no canonical concierge emits one stable structured warning in the migration default (`warn`) or fails the load in `enforce`; there is no package-name allowlist.
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | Complete the P8 rollout after the store backfill: surfaced packages without a canonical concierge now fail under the unset `enforce` default; `warn` remains an explicit temporary observation/rollback posture.
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | readManifest refuses an unknown `scope:` by name (unknown_app_scope) through the contract `oshal-app validate` shares (@/shared/app-scope). loadApp calls readManifest before any database read or write, so dev-workspace-index 0.2.0's `scope: deployment` now fails here instead of at the swarm_applications CHECK mid-install.
+ * 25 | maintainer@emeraldcoastsystemsgroup.com   | readManifest validates the optional ADR-170 `rating:` block through swarm-app-rating.ts, beside the suite check and with the same posture: a malformed value fails the load, a missing block warns.
  */
 
 import { validateBriefingDeclarations } from '@/shared/briefings';
@@ -37,6 +38,7 @@ import yaml from 'js-yaml';
 import { CronExpressionParser } from 'cron-parser';
 import { createChildLogger } from '@/shared/logger';
 import { KERNEL_SKILL_IDS, isKernelSkillId } from '@/shared/kernel-skills';
+import { validateAppRating } from './swarm-app-rating';
 import { SKILL_CAPABILITY_IDS, isSkillCapabilityId } from '@/shared/skill-profiles';
 import { SWARM_ACCESS_ROLES, isSwarmAccessRole } from '@/shared/types/access-roles';
 import { GUEST_TIERS, isGuestTier } from '@/shared/middleware/guest-capability-matrix';
@@ -814,6 +816,10 @@ export function readManifest(manifestPath: string): SwarmAppManifest {
       'Manifest declares no suite (ADR-097) — it will list under "More" in the catalog until one is added',
     );
   }
+
+  // ADR-170: the rating label (memory low/high, per-feature tier). Same posture as suite: a bad
+  // VALUE fails the load, a MISSING block only warns. The rules live in swarm-app-rating.ts.
+  validateAppRating(manifest, absPath);
 
   // ADR-139: the artifacts: block ("Send to…" declarations) is optional, but a malformed one
   // fails the LOAD — a bad MIME glob or an off-mount endpoint must never half-register into the

@@ -13,6 +13,16 @@
 
 name: intelligent-operations
 suite: ai-engineering   # ADR-097: primary catalog shelf (tools keep their own category:)
+# ADR-170 rating label: container memory in MiB (declared by the rule in docs/apps/ai-usage-ledger.md)
+# and each model-touching feature. Token and model columns are generated, never typed here.
+rating:
+  memoryMb: { low: 192, high: 768, basis: declared }
+  features:
+    - id: incident-rca
+      unit: incident ticket
+      tier: T3
+      generation: none
+      degrade: disable
 displayName: Intelligent Operations
 description: >-
   The base ticket system with the RCA process enabled. The swarm triages an
