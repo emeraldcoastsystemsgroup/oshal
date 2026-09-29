@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-111 Phase 1 — shared domain types for the spatial-mapping slice: a scan (video->3D reconstruction job) and the provider contract's spec/artifact shapes. Kept engine-agnostic so a sim provider (local synthetic room) and an edge provider (real GPU gaussian-splat train) satisfy the same interface, exactly like DroneProvider/SimDroneProvider.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-111 amendment (ADR-169 L7): a scan may belong to a group (tenantId; the capturer stays userSub) and names the guided-capture session whose phone telemetry produced it (captureSessionId), which is what joins capture GPS to its scan. Both are optional on registration and null on every earlier scan.
  */
 
 import type { ScanPoses } from './pose-types';
@@ -53,6 +54,10 @@ export interface SpatialScan {
   error: string | null;
   createdAt: string;
   updatedAt: string;
+  /** The group that owns the scan, or null for the capturer's own. Only that group's members reach a group's scan. */
+  tenantId: string | null;
+  /** The guided-capture session whose telemetry produced the scan, or null. */
+  captureSessionId: string | null;
 }
 
 /**
@@ -68,6 +73,10 @@ export interface RegisterScanInput {
   sourceName: string;
   sourceRef: string;
   sourceBytes: number;
+  /** Register the scan as a group's (the registrant must be a member of it). Omitted for the capturer's own. */
+  tenantId?: string | null;
+  /** The guided-capture session that produced the scan, when there was one. */
+  captureSessionId?: string | null;
 }
 
 /**

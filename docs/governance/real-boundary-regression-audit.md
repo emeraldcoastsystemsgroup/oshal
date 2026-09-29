@@ -553,6 +553,15 @@ provider/nightly evidence and paper acceptance remain owed. No deployment or bac
 | The machine-write class gate's driver for the ingest (`tests/unit/machine-write-identity.spec.ts`, `location-device-ingest`) | A capturing pool answers the device read as the recorded owner and records the identity in scope at the observation INSERT; the token store is the same stand-in. The middleware, the router and the ingest service are real and driven over HTTP. | The first row above. | Scoped double |
 | The store drone package's position scoping (`store/drone/tests/location-scoping.test.cjs`) | The compiled route module is real; `@/features/location` (`locatedDevice`) and `@/features/drone` (`DroneService`) are stubs, so the test proves the routes strip position and home on the kernel's answer and never that the kernel answers correctly. | `tests/unit/location-device-ingest-postgres.spec.ts`, which proves `locatedDevice` against row-level security for a member and a stranger. | Scoped double |
 
+## Location map anchors and group-owned scans (ADR-169 L7, 2026-09-29)
+
+| Boundary audited | Mock/stub disposition | Required real companion | Status |
+|---|---|---|---|
+| `anchorMap`, `mapsNear`, the anchor policies, and the group fence, owner fence and scan-removal trigger on `spatial_scans` (`tests/unit/location-map-anchors-postgres.spec.ts`, `tests/unit/spatial-group-scans-postgres.spec.ts`, `tests/unit/test-lab-location-map-registration.spec.ts`) | None at the boundary: the real `SpatialScanStore` and `SpatialMappingService`, the real capture join over telemetry files under a temporary scans root, the real kernel operations, and a disposable PostgreSQL whose tables are owned by the NOSUPERUSER NOBYPASSRLS runtime role with migrations 093 and 179 applied. The reconstruction engine in the group-scan case is a provider that answers at once; the identity the job runs under and its writes are real. | This is the real companion. | Real |
+| The scan store's statements (`tests/unit/spatial-mapping-store.spec.ts`) | A capturing pool records the statements and their parameters; nothing is executed. It proves what the store sends, never what the database admits. | The first row above. | Scoped double |
+| The capture anchor (`tests/unit/spatial-capture-anchor.spec.ts`) | None: the picking is pure, and the reader runs over real files under a temporary scans root. | This is the real companion. | Real |
+| The store spaces package anchoring a scan on capture (`store/spaces/tests/capture-anchor.core.test.js`) | The compiled route module, Express, multer, the route's own telemetry sink and the kernel's telemetry sanitizer, sidecar path and capture reader are real; the scan store and `anchorMap` are recording doubles, so the test proves what the route registers, joins and hands the kernel and never that the kernel stores it. | The first row above. | Scoped double |
+
 ## Migrated privileged functions against the role provisioner (2026-09-29)
 
 | Boundary audited | Mock/stub disposition | Required real companion | Status |

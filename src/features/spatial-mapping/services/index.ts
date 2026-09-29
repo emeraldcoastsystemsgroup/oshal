@@ -5,10 +5,15 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-111 Phase 1 — services sub-barrel for the spatial-mapping slice.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export the .ply import limits (resolvePlyImportLimits, formatByteLimit, PLY_IMPORT_ENV, PLY_IMPORT_DEFAULTS) so the store's spaces route reads its 413 gate from configuration instead of a literal, and the off-loop converter (convertPlyOffLoop) so the worker-thread boundary is testable through the public barrel.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L7: export the capture anchor (readCaptureAnchor, captureAnchorFromRecords, the footprint bounds and their environment names) and the group-scan bootstrap statements, so the store's spaces route joins capture GPS to a scan through the barrel and the specs reach the same functions.
  */
 
 export { SpatialMappingService, type SpatialMappingOptions } from './spatial-mapping-service';
-export { SpatialScanStore, type ReadyPatch } from './spatial-scan-store';
+export { SpatialScanStore, buildGroupScanStatements, type ReadyPatch } from './spatial-scan-store';
+export {
+  CAPTURE_ANCHOR_DEFAULTS, CAPTURE_ANCHOR_ENV, captureAnchorFromRecords, readCaptureAnchor, resolveCaptureAnchorLimits,
+  type CaptureAnchor, type CaptureAnchorLimits,
+} from './capture-anchor';
 export { SimReconstructionProvider, type SimReconstructionOptions } from './sim-reconstruction-provider';
 export { EdgeReconstructionProvider } from './edge-reconstruction-provider';
 export { ImportReconstructionProvider } from './import-reconstruction-provider';

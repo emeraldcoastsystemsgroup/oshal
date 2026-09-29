@@ -1,7 +1,7 @@
 # ADR-169: Location, places and proximity
 
 Date: 2026-09-28
-Status: **Proposed; the operator answered Q1-Q7 on 2026-09-28 (see "Operator decisions"). Slices L1 (shared geo maths, namespaced location redaction keys, static log guard), L2 (storage and row-level security with no operator bypass, the membership fence, the location erase in both erasure routes), L3 (browser ingest, the step-up proof, the Settings Location tab) L4 (places, the four package-facing reads, device enrolment at places), L5 (rules, rule state and the fire ledger, the evaluator, two-rail delivery, member and guardian shares with restricted invitations, the grantee projection, the Jarvis "next time I'm at X" intent) and L6 (the location credential and its scope, the core device ingest as the device subject, the drone node posting fixes, the store drone package scoping position to group members) are built; L7-L9 are not.**
+Status: **Proposed; the operator answered Q1-Q7 on 2026-09-28 (see "Operator decisions"). Slices L1 (shared geo maths, namespaced location redaction keys, static log guard), L2 (storage and row-level security with no operator bypass, the membership fence, the location erase in both erasure routes), L3 (browser ingest, the step-up proof, the Settings Location tab) L4 (places, the four package-facing reads, device enrolment at places), L5 (rules, rule state and the fire ledger, the evaluator, two-rail delivery, member and guardian shares with restricted invitations, the grantee projection, the Jarvis "next time I'm at X" intent), L6 (the location credential and its scope, the core device ingest as the device subject, the drone node posting fixes, the store drone package scoping position to group members) and L7 (map anchors: `anchorMap` and `mapsNear`, capture GPS joined to its scan, group-owned scans as the ADR-111 amendment, the store spaces package anchoring a scan on capture) are built; L8-L9 are not.**
 The Context records what exists at core `main` `e1fd5b0f` and store `main` `6fdc1a1`. The Decision carries
 the operator's answers; each Rollout slice is still accepted on its own.
 
@@ -1125,6 +1125,71 @@ on; what remains is order by dependency.
   `tenant_id` on `spatial_scans` (ADR-111 amendment). Done when a scan captured inside place P and a scan
   captured outside every saved place are both returned by `mapsNear` on a later visit, and a non-member cannot
   open them.
+
+  **Built:**
+  - **Migration 179.** `location_map_anchors`: a map by kind and reference (`spatial-scan`; no geometry),
+    its origin, heading, footprint radius, accuracy, source, capturing device and time, an optional
+    place, owned by a person or a group. ENABLE + FORCE with hand-written policies and no operator
+    branch: the owner or the group's members read, the owner or the group's admins write. A definer
+    predicate, `location_map_anchorable()`, admits an anchor only on a map of the same owner (a person's
+    anchor on that person's own scan, a group's anchor on that group's scan); the place must be one the
+    owner may use (the L4 assignability rule) and the capturing device one in the owner's scope. One
+    anchor per map; anchoring again replaces it. A trigger deletes a scan's anchor with the scan.
+  - **The ADR-111 amendment.** `spatial_scans` gains a nullable `tenant_id` and `capture_session_id`.
+    `user_sub` stays the capturer and stays NOT NULL. A RESTRICTIVE policy,
+    `spatial_scans_tenant_fence`, admits a row with a group only to a signed-in member of that group,
+    whatever the owner policy of migration 093 admits, and a permissive member policy is the tenant
+    branch of the 060 shape. Neither has an operator branch. A person's own scans (no group) behave as
+    before, operator branch included (D7). A trigger fixes a scan's owner and group at registration. The
+    scan store's runtime bootstrap carries the same columns and policies, puts a missing fence back, and
+    where the tenancy helper does not exist installs a fence that admits no group row at all.
+  - **Capture GPS joined to its scan.** A scan names the guided-capture session that produced it. The
+    `spatial-mapping` skill reads that session's owner-scoped telemetry and yields the scan's anchor: the
+    most accurate fix as the origin, the heading the capture began with, and a footprint from how far
+    the fixes spread, between `OSHAL_SPACES_CAPTURE_FOOTPRINT_MIN_M` (default 10 m) and
+    `OSHAL_SPACES_CAPTURE_FOOTPRINT_MAX_M` (default 500 m). A session with no GPS fix yields no anchor.
+  - **The kernel operations** (`src/features/location`, `uses: location`). `anchorMap(pool, input)`
+    records the anchor as the ambient caller and returns the anchor id and the place id. The place is
+    the one the input names, else the smallest place of the owner that contains the full-precision
+    origin, else none. `mapsNear(pool, point, radiusM)` returns the maps the caller may read whose
+    anchor lies within the radius plus the map's footprint, newest first, as kind, reference, capture
+    time and place id, capped at `OSHAL_LOCATION_MAPS_NEAR_LIMIT` (default 50). Neither returns or logs
+    a coordinate. SYSTEM and an identity without a verified issuer are refused.
+  - **Group scans in the engine.** The scan store registers a group's scan and opens one for a member of
+    that group (`getGroupScan`). A group's scan is reconstructed under its capturer's identity with the
+    operator flag off, never SYSTEM; registered without the capturer signed in it is refused before the
+    row is written.
+  - **The erase and the export** cover the anchors a person owns; a group's anchors stay with the group.
+  - **The store spaces package** (`uses: location`). The guided capture page remembers its session, the
+    upload names it, and the route anchors the new scan from its joined capture GPS. The upload answers
+    the anchor's ids or the reason there is none, never a coordinate.
+
+  Choices made here:
+  - An anchor is stored minimised to the precision class its owner chose: the capturing device's class
+    when the anchor names an enrolled device, else the person's default, else `block`. The write policy
+    refuses a finer class. `mapsNear` adds the rounding of the stored class to its reach, so a map is
+    still found from where it was captured. An owner at `place-only` gets no anchor, because that class
+    stores no coordinates. Altitude is stored only at `exact`.
+  - A group's anchor is written by an admin of the group (the D3 tenant-row rule). Any member may
+    register, change or delete a group's scan (the 060 shape), and a capturer who has left the group no
+    longer reads the scan they captured.
+  - The owner's purge leaves anchors: an anchor is an attribute of a map the person keeps, not history.
+  - `map_kind` admits `spatial-scan` only; `embodied-scene` joins with the slice that anchors one.
+  - No `/api/location` route is added. The Settings Location tab does not list maps.
+
+  Evidence:
+  - `tests/unit/location-map-anchors-postgres.spec.ts` (the done-when through the real scan store, the
+    real capture join and the real operations; who may anchor what; the policies written to directly;
+    precision; re-anchoring; the erase and the export);
+  - `tests/unit/spatial-group-scans-postgres.spec.ts` (the amendment: a person's own scans unchanged, the
+    group fence, the owner fence, a scan's anchor deleted with it, reconstruction as the capturer, the
+    capture join, the bootstrap against the migration);
+  - `tests/unit/spatial-capture-anchor.spec.ts`, `tests/unit/spatial-mapping-store.spec.ts` and
+    `tests/unit/shared-geo.spec.ts`;
+  - `tests/unit/location-rls-no-operator-guard.spec.ts`, `tests/unit/location-log-guard.spec.ts` and
+    `tests/unit/provisioner-migrated-helpers-postgres.spec.ts`;
+  - the store spaces package's `tests/capture-anchor.core.test.js` and `tests/spaces-capture-session.test.js`;
+  - the Test Lab card `location-map-anchors`.
 - **L8: Device-action triggers (act on arrival, no confirmation; enrolled-device evidence).** The home
   package handler with its closed allowlist, registered through `package-tools`; arming as the
   pre-authorization; the evidence rule. Done when:

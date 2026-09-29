@@ -13,6 +13,10 @@ nodes — the future autonomous capture platform), [ADR-036](036-bot-owned-appli
 (suite), [ADR-110](110-jarvis-media-input-vision-as-transcription.md) (vision-describe — a sibling
 media transform, not this pipeline).
 
+**Amended 2026-09-29 by [ADR-169](169-location-places-and-proximity.md) slice L7:** a scan may belong to a
+group, and names the capture session that produced it. See "Amendment: group-owned scans and the capture
+session" below.
+
 ## Context
 
 Operator vision (2026-07-19): produce a **digital 3D rendering of a physical space** — a room,
@@ -174,3 +178,30 @@ architecture.
   exercisable with no GPU; pointing `RECON_URL` at a reconstruction box runs the real video→splat
   train (the honest sim/edge split, mirroring SimDroneProvider/MavlinkDroneProvider). Still roadmap:
   GoPro media ingest, real-drone MAVLink media ingest, and the drone mission-overlay handoff.
+
+## Amendment: group-owned scans and the capture session (ADR-169 L7, 2026-09-29)
+
+Decision 4 keeps a `user_sub`-keyed scan store. ADR-169 needs a group's map to be read by that group's
+members, so that a drone, or another member, finds the layout the group captured earlier. Migration 179
+amends the store as follows.
+
+- **`spatial_scans.tenant_id`**, nullable. NULL is a person's own scan, which behaves as before. A value
+  names the group (an `oshal_tenants` row) that owns the scan. `user_sub` stays NOT NULL and stays the
+  capturer.
+- **Who reaches a group's scan.** Only a signed-in member of that group. `spatial_scans_tenant_fence` is a
+  RESTRICTIVE policy, so it holds whatever the owner policy of migration 093 admits: an operator-stamped
+  session, SYSTEM, a stranger and a capturer who has left the group get nothing. The member policy is the
+  tenant branch of migration 060's personal-or-tenant shape, without its operator branch. The operator
+  branch on a person's own scans is unchanged.
+- **A scan's owner and group are fixed when it is registered.** A trigger refuses an update of `user_sub`
+  or `tenant_id`.
+- **Reconstruction of a group's scan runs as its capturer**, with the operator flag off. A person's own scan
+  keeps the SYSTEM identity of Decision 4's as-built engine.
+- **`spatial_scans.capture_session_id`**, nullable: the guided-capture session whose phone telemetry
+  produced the scan. It joins the session's capture GPS to the scan; the telemetry itself stays in the
+  capturer's owner-scoped sidecar.
+- **Relocalization is unchanged**: still not built. ADR-169 provides the lookup by position
+  (`mapsNear`), not room-level matching against the stored map.
+
+Guards: `tests/unit/spatial-group-scans-postgres.spec.ts`, `tests/unit/spatial-mapping-store.spec.ts` and
+`tests/unit/spatial-capture-anchor.spec.ts`.
