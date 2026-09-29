@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 D2: lock the route auth contract. Auth is OPT-IN per route in this codebase, so a package route is publicly callable unless something wraps it — every test here exists to keep a manifest from becoming anonymous by omission, typo, or a sibling's declaration order. Includes the standing guard that a manifest's declared `auth:` matches what server.ts ACTUALLY mounts: eight manifests were misdeclaring theirs (saying requiresAuth: true against serviceSecretOr mounts), harmless only because route blocks are informational until an app carves — at which point it becomes a 401 storm for every bot node and the headless CLI.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Sanity floor 10->3: ADR-085 Wave 3 carved most route-declaring manifests to the store (8 kernel declarations remain; Wave G leaves 5). The floor is anti-empty-scan only; the auth-truth guards below are unchanged.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Replace the stale numeric floor with the exact remaining kernel route identity and operator auth. A missing or substituted Security declaration must fail; framework-owned Engineering routes remain intentionally undeclared.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -153,19 +154,26 @@ describe('manifests tell the truth about their auth (the standing guard)', () =>
       .filter((f) => /\.ya?ml$/.test(f))
       .flatMap((f) => {
         const m = yaml.load(readFileSync(join(dir, f), 'utf8')) as {
-          routes?: Array<{ mountPath: string; auth?: string; requiresAuth?: boolean; module: string }>;
+          routes?: Array<{ mountPath: string; auth?: string; requiresAuth?: boolean; module: string; factory: string }>;
         };
         return (m.routes ?? []).map((r) => ({ file: `${dir}/${f}`, ...r }));
       }),
   );
 
-  it('finds route declarations to check', () => {
-    // Anti-empty-scan floor only — the real guards below run over whatever is found.
-    // ADR-085 Wave 3 carved most route-declaring manifests to the app store (kernel now
-    // declares 10; Wave G — kalshi/trading/world — takes it to 5). Floor sits below the
-    // post-Wave-G count so the carve chain can't red-flag this guard again, while a
-    // broken/empty scan (0 declarations) still fails loudly.
-    expect(declarations.length).toBeGreaterThan(3);
+  it('declares exactly the required kernel route identities and auth', () => {
+    // Store carves left Security as the only manifest-owned kernel route. Both Engineering
+    // variants deliberately omit their framework-owned routes to avoid inactive-app 503s.
+    // Pin identity, not just a lower count: removing, replacing, or adding a declaration
+    // requires an explicit contract review. Keep the auth-truth guards below unchanged.
+    expect(declarations.map(({ file, module, factory, mountPath, auth }) => ({
+      file, module, factory, mountPath, auth,
+    }))).toEqual([{
+      file: 'swarm-apps/security.yaml',
+      module: 'src/app/routes/security-routes.ts',
+      factory: 'createSecurityRoutes',
+      mountPath: '/api/security',
+      auth: 'operator',
+    }]);
   });
 
   it('every route declaration carries an EXPLICIT auth: (no relying on the default)', () => {
