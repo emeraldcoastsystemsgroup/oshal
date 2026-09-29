@@ -698,3 +698,50 @@ preflight at least 1800 MiB):
 The focused command is documented in [tests/README.md](../../tests/README.md#kernel-manifest-route-auth-inventory).
 Full typechecking/pre-push and final backlog closure are separate coordinated gates, not claimed
 by these unit receipts.
+
+## Pre-push unknown-range verification (2026-09-29)
+
+`tests/unit/pre-push-unknown-range.spec.ts` executes the actual candidate hook in
+owned disposable Git repositories, with real commits, local tracking refs, a
+docs-only merge, `git archive HEAD`, dependency links and the installed TypeScript
+compiler. Earlier committed source errors remain errors even when a final commit
+contains only documentation and the working tree has separately been repaired.
+Unknown/missing push ranges enter verification; known docs-only ranges retain the
+existing optimization. Known-range source errors still fail.
+
+The only replaced collaborator is a named synthetic `scripts/publish-gate.sh`
+that records argv/stdin and returns success or failure to prove ordering. It is
+not a leak-scanner test. No remote push, download, provider, database, browser,
+shared-hook configuration or runtime deployment is used. Clean child environments
+isolate Git/npm configuration and deny npm installation/network access. The actual
+hook/compiler receive a 128 MiB Node heap; owned hook subprocess trees are bounded
+at 30 seconds and awaited before cleanup. A timeout/spawn error is a test failure,
+not an expected type-error refusal. Archive cleanup is asserted and owned fixture
+dependency junctions are removed before recursive fixture cleanup.
+
+Recorded focused results:
+
+- Original production hook baseline: **4 expected failures / 4 passed**,
+  exit 1, 14.23 s, fresh 4322 MiB / minimum 4060 MiB. Failures are unknown-range
+  linear/docs-merge/missing-ref admission and the absent verification-success
+  message for valid unknown-range HEAD; the known-range compiler control passed.
+- Corrected hook: **8/8 passed**, exit 0, 23.31 s, fresh 4268 MiB / minimum 3988 MiB.
+- Actual-hook negative control reinstating only the unsafe last-commit fallback,
+  with the final explicitly sequential/45-second-case guard: **4 expected failures
+  / 4 passed**, exit 1, 13.60 s, fresh 4266 MiB / minimum 2964 MiB.
+- Exact fix restored, plus existing ordering, verification-tree and real compiler
+  symlink guards: **25/25 passed across four files**, zero skips, exit 0, 44.58 s,
+  fresh 4008 MiB / minimum 3461 MiB. No source mutation remains.
+
+All runs used runner 128 MiB / one worker 384 MiB, a fresh 1800 MiB floor, 600 MiB
+reserve and 180-second external deadline. Earlier fixture-development receipts
+containing a subprocess timeout or an unaccounted npm compile-cache directory are
+excluded from these results. Windows child executable lookup was made explicit,
+hook process-tree teardown was added, and the fixture disables Node compile cache
+before the clean original-hook baseline above.
+
+The focused command and standard CI discovery are documented in the indexed
+[verification runbook](../runbooks/pre-push-commit-verification.md). This guard
+changes only unknown-range classification, not other existing hook exits or the
+active primary checkout's hook. Full project compilation, normal publication,
+primary-hook activation and backlog closure remain separate integration gates.
