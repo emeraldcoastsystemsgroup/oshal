@@ -9,6 +9,8 @@
   4 | maintainer@emeraldcoastsystemsgroup.com   | The cockpit firewall rule is named for the product as it is called today, and an upgrade renames it in place (operator decision 2026-09-20). Windows matches firewall rules by DisplayName, so simply changing the string would have left an upgraded box carrying two rules for the same port -- the old one still advertising the retired standalone name. Open-CockpitFirewallPort now looks the old rule up once, removes it, then creates the oshal-named one, which is the only place in the installer that still knows the old name.
   5 | maintainer@emeraldcoastsystemsgroup.com   | -OffLan now REFUSES instead of silently degrading (operator decision 2026-09-21: Headscale stays opt-in, but it must fail loudly). Test-ShouldGoOffLan returned $false the moment Test-HeadscaleRunning was false -- before it ever looked at the switch -- so an explicit -OffLan against a stopped Headscale emitted a LAN-only OSJOIN1 code, and the operator found out when the remote machine could not join. The refusal is Stop-WithError naming scripts/headscale-setup.sh, and it fires in Assert-OffLanPrerequisites right after Assert-Docker -- BEFORE the .env write, the AI-login step and the build -- because the join code is minted in Show-Summary, the last step, and a refusal there would leave a running swarm behind a 'did not finish' exit with no RESULT: lines for the GUI. Test-ShouldGoOffLan repeats the check as defence in depth for a Headscale that dies mid-build. When Headscale IS running but the server_url, tailnet IP or pre-auth key comes back empty, an explicit -OffLan also refuses (that shape cannot be known before minting), so a partial success cannot mint a code weaker than the one asked for. The interactive prompt, its yes-then-fallback, and the -NonInteractive no-op path are unchanged.
 
+  6 | maintainer@emeraldcoastsystemsgroup.com | Fail before firewall replacement on query/removal errors and verify legacy absence before claiming a successful naming migration.
+
   installer/lib/install-swarm.ps1 -- make THIS machine the swarm controller.
 
   Runs standalone from a terminal, or as a subprocess of installer/install.ps1 (the GUI).
@@ -367,9 +369,10 @@ function Invoke-Verification {
 }
 
 <#
-.SYNOPSIS Opens the cockpit port to the LAN so other machines can join. Best effort.
+.SYNOPSIS Opens the cockpit port to the LAN so other machines can join.
 .DESCRIPTION Requires elevation. Without it a node on the same LAN simply cannot reach the
-controller, so we say exactly that instead of failing the whole install.
+controller, so we say exactly that instead of failing the whole install. With elevation, a failed
+query or legacy-name removal stops the upgrade before a replacement or success claim.
 #>
 function Open-CockpitFirewallPort {
     Write-Step "Opening the firewall for other machines"
@@ -388,16 +391,26 @@ function Open-CockpitFirewallPort {
         Write-Info "To do it later, right-click Install-OpenSwarm.bat and choose 'Run as administrator'."
         return
     }
-    $legacy = Get-NetFirewallRule -DisplayName $legacyRuleName -ErrorAction SilentlyContinue
+    # Enumerate once with terminating errors: an exact-name query reports a missing rule as
+    # an error, and suppressing it also hides failures that make an old rule unknowable.
+    $rules = @(Get-NetFirewallRule -ErrorAction Stop)
+    $legacy = @($rules | Where-Object { $_.DisplayName -eq $legacyRuleName })
     if ($legacy) {
-        Remove-NetFirewallRule -DisplayName $legacyRuleName -ErrorAction SilentlyContinue
+        Remove-NetFirewallRule -DisplayName $legacyRuleName -ErrorAction Stop
+        $rules = @(Get-NetFirewallRule -ErrorAction Stop)
+        if ($rules | Where-Object { $_.DisplayName -eq $legacyRuleName }) {
+            throw "Legacy cockpit firewall rule still exists after removal; no replacement was created. Correct the rule permission or policy and rerun."
+        }
         Write-Info "Removed the cockpit firewall rule an earlier install left under the old name."
     }
-    $existing = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
+    $existing = @($rules | Where-Object { $_.DisplayName -eq $ruleName })
+    if ($existing.Count -gt 1) {
+        throw "More than one current cockpit firewall rule exists; resolve the duplicate rules before rerunning."
+    }
     if ($existing) { Write-Ok "Firewall rule already present"; return }
 
     New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Action Allow `
-        -Protocol TCP -LocalPort $CockpitPort -Profile Private | Out-Null
+        -Protocol TCP -LocalPort $CockpitPort -Profile Private -ErrorAction Stop | Out-Null
     Write-Ok "Allowed inbound TCP $CockpitPort on private networks"
 }
 

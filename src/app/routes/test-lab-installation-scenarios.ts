@@ -20,6 +20,7 @@
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | Attach the ADR-167 core release pipeline guards to the same deploy-contract family: the cut (one build, proved, recorded, tagged), the promote driver (the same image ID moves; production needs a staging receipt), the on-box managed release transaction (capture, history, restore, rollback), the drift check, the live acceptance drill (scripts/operations/core-release-drill.sh), the release name on /api/version and the Dockerfile tail placement of OSHAL_RELEASE. Like deploy-rollback-outcome they run the shipped scripts; no runnable Lab step, because a step would have to build an image or promote a box from inside the Lab.
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | Attach compose-yaml-merge-key-budget to the deploy/build-contract family. #869 pushed docker-compose.oshal-local.yml past js-yaml's default merge-key limit and the image build died at gen-dist-compose.js; the guard runs that build step on the real file from the files the image has at that point, pins every compose parse to the shared loader, and fails at 80% of the loader's budget.
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Attach app-scope-contract: a package whose scope: the swarm_applications CHECK refuses (dev-workspace-index 0.2.0, scope: deployment) passed oshal-app validate and failed mid-install; the guard proves validate and the loader now refuse it by name before any database call.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com | Register installer naming, real PowerShell upgrade-failure and rendered node/channel copy guards without running an installer from a browser.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -91,6 +92,8 @@ export const INSTALLATION_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/pool-connection-errors.spec.ts' },
     { level: 'integration', path: 'tests/unit/api-storm-probe.spec.ts' },
     { level: 'integration', path: 'tests/unit/installer-offlan-refusal.spec.ts' },
+    { level: 'integration', path: 'tests/unit/installer-scripts-parse.spec.ts' },
+    { level: 'unit', path: 'tests/unit/node-installer.spec.ts' },
     { level: 'integration', path: 'tests/unit/core-cut-release.spec.ts' },
     { level: 'integration', path: 'tests/unit/core-promote.spec.ts' },
     { level: 'integration', path: 'tests/unit/managed-core-release.spec.ts' },

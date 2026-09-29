@@ -95,6 +95,14 @@ Those two lookups — `$legacyRuleName` in `install-swarm.ps1` and `$legacyShort
 `install-node.ps1` — are the only places in the installer that still know the old name, and each is
 consumed by a removal rather than merely declared.
 
+The upgrade also checks the result of removal. A locked or undeletable legacy shortcut stops
+before either new Desktop/Startup shortcut is created, so it cannot silently add a second
+startup entry. An elevated firewall migration fails on query/removal errors or an old rule
+that remains after removal; it never reports that rule removed or creates a duplicate.
+More than one already-current firewall rule is also reported for correction, not accepted as
+healthy. Fix the reported permission, lock or policy and rerun. A non-elevated install still
+warns and leaves the firewall untouched; it does not claim firewall migration success.
+
 ## What keeps this closed
 
 - [`tests/unit/installer-scripts-parse.spec.ts`](../../tests/unit/installer-scripts-parse.spec.ts)
@@ -108,3 +116,28 @@ consumed by a removal rather than merely declared.
   [`tests/helpers/retired-product-name.ts`](../../tests/helpers/retired-product-name.ts). It matches
   the space-separated display form only, so the class-1 filenames cannot trip it, and excludes the
   class-2 attached expansion and the attached mark by lookahead rather than by allowlist.
+
+The parser suite additionally executes the actual PowerShell removal functions and the actual
+shortcut main-flow slice with in-memory filesystem, COM/shortcut and firewall command boundaries
+from `tests/fixtures/installer-upgrade-naming.ps1`. It covers old-only, mixed-name, current-only and
+fresh states, failed/no-op deletion, failed firewall queries and the non-administrator path.
+The installer scripts are parsed, never dot-sourced or installed by the fixture. Unrelated
+artifacts must survive. On a host without PowerShell only the explicit source guards execute;
+that is not Windows runtime evidence. Both naming suites are registered under the existing
+installation scenario in Test Lab; its browser catalog check never runs an installer.
+
+### Validation receipt — 2026-09-29
+
+On Windows, the two registered suites passed 63/63, including the real PowerShell parser and
+the 15-case executed migration matrix (each successful state is run twice). The actual legacy
+shortcut catch was temporarily changed back to warning-and-continuing: the executable guard
+failed on `shortcuts-delete-fails` (62 pass/1 expected failure). Restoring the firewall's
+suppressed removal and removing its absence check likewise failed on `firewall-delete-fails`.
+Both production files were restored byte-for-byte; the final two-suite run passed 63/63 with
+no skips. An initial overlapping mutation attempt is not used as evidence; the shortcut case
+was repeated with process completion confirmed before restoring the source.
+
+Command: `npm run test:unit -- --pool=forks --maxWorkers=1 --no-file-parallelism tests/unit/node-installer.spec.ts tests/unit/installer-scripts-parse.spec.ts`.
+This proves the naming/upgrade decision and its failure handling with named OS-boundary doubles,
+not a live firewall change, actual Desktop/Startup shortcut, clean-machine install, node enrollment
+or reboot. Those broader installation proofs remain separate backlog work.
