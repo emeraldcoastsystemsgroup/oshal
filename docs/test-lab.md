@@ -275,6 +275,67 @@ request from the page never reaches a second loopback listener). An unreadable p
 is named in the verdict: which field is wrong, the probe task's exit, and the first 300 redacted
 characters of the worker's stdout.
 
+### Career worker rail (live acceptance)
+
+`node scripts/operations/career-rail-live-proof.js` proves that career-hunter's model work runs on
+the dedicated Career bot (`cb000000-0000-0000-0000-000000000001`) and is attributed to the owner who
+started it. It runs as the operator PAT (read by name from the environment or
+`OSHAL_VERIFY_ENV_FILE`, default `./.env`), stages itself with `career-rail-worker-loss.js`,
+`career-rail-draft.js` and `live-proof-runner.js` into the api container
+(`OSHAL_VERIFY_API_CONTAINER`, default `oshal-local-api`) and forwards the token by name only. It
+needs career-hunter 1.24.0 or later active on the box; exit 0 is pass, 1 fail, 2 not runnable. It
+has three modes:
+
+- **Default** (`career-worker-rail-completion`): starts the owner's manual score run
+  (`POST /api/career-hunter/run/score`), watches `GET /runs`, and cancels the run
+  (`POST /run/:runId/cancel`) once its first rail call is admitted, so the spend stays bounded. It
+  passes when `oshal_cost_events` holds rows for the Career bot under the owner since the run
+  started, no more of them than the calls the run admitted, read under the owner's own RLS
+  identity. The `chat_tasks` rollup is recorded as evidence only. A rail call the kernel refused
+  before package code (`authorization_identity_required`, 401, 403) fails and names the refusal.
+- **`--complete`** (`career-worker-rail-complete`): nothing is cancelled. The score run must end
+  `succeeded` on its own within its budget (30 minutes by default) with at least one admitted call
+  and the same ledger rows. Then the approve -> draft half runs, which needs career-hunter 1.27.0 or
+  later and auto-submit off. It borrows one untouched posting from the first page of the owner's
+  board (status `new`, no packet, no application) and plants ONE application tagged
+  `rail-draft-<hex>` through the package's Test Lab seam (`POST /test-lab/applications`). It
+  approves that application through the real route (`POST /applications/:postingId/approve`, which
+  runs the engine's `draft --job` on the rail). It requires the draft run `succeeded` in
+  `GET /runs`, the application `drafted`, and the Career bot's ledger rows under the owner since the
+  approve, no more of them than the calls the draft admitted. It then deletes the packet and the
+  tagged application with its ticket, and reads back that no application exists for the posting and
+  that the posting's status, generation time and packet flags are as they were. The shared jobs
+  corpus is never written. An incomplete cleanup is red. Without the seam, with auto-submit on, or
+  with no untouched posting, the mode is not runnable and plants nothing.
+- **`--worker-loss --announced-window`** (`career-worker-rail-worker-loss`): stopping the Career
+  bot takes it away from every user of the box, so without `--announced-window` the mode exits 2
+  before it starts a run or calls docker. It also exits 2 when `oshal-local-career-bot`
+  (`OSHAL_VERIFY_CAREER_BOT_CONTAINER`) is not running. The container half requires the bot online
+  in the runtime registry, starts a score run and waits for its first admitted rail call. The host
+  half then runs `docker stop` on the bot by name. The run must end `failed` with reason
+  `career-worker-unavailable`, and the run route must answer `503 career-worker-unavailable`. The
+  host runs `docker start`, and the bot must publish a heartbeat strictly newer than the record it
+  left behind; a bot that does not come back is red. The host restarts the container when the proof
+  ends, whatever happened. A failed stop or start, or a container that is not running afterwards,
+  turns the verdict red. No cost table is read.
+
+Budgets: `OSHAL_CAREER_RAIL_RUN_BUDGET_MS`, `OSHAL_CAREER_RAIL_LEDGER_BUDGET_MS`,
+`OSHAL_CAREER_RAIL_POLL_MS`, `OSHAL_CAREER_RAIL_HEARTBEAT_BUDGET_MS` (worker loss) and
+`OSHAL_CAREER_RAIL_DRAFT_BUDGET_MS` (complete). The scores a run writes are the owner's own scoring
+work and stay. A run still in flight at the end is cancelled, and one that stays running is
+reported as incomplete cleanup.
+
+The suites are regression tests on the **Application access administration** card
+(`authorization-management`), because the refusal the proof names belongs to application
+authorization: `npx vitest run tests/unit/career-rail-enforce-posture.spec.ts
+tests/unit/career-rail-live-proof.spec.ts tests/unit/career-rail-draft.spec.ts` (also in
+`npm run test:authorization`). The proof's exact ledger and rollup reads run against a disposable
+PostgreSQL with the shipped cost schema and owner RLS. The worker-loss host refusals run the real
+script as a child process. The package routes, the runtime registry and docker are doubles; the
+rows in [the real-boundary audit](governance/real-boundary-regression-audit.md) name each one. The
+default mode has passed on the box (2026-09-28). `--complete` and `--worker-loss` are tested
+locally only and have not run on the box.
+
 ### Automated live acceptance sweep
 
 `node scripts/operations/live-acceptance.js <case|all|list> [--record-doc] [--allow-paid]` runs the automated live

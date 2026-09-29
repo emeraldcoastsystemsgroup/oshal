@@ -343,8 +343,16 @@ attributes and one script include — the integration cost a source surface now 
 |---|---|---|
 | **1 — now** | presentations (Office files → outline import), little-monsters class materials (any file), print-ingest (text via the kernel extract-text) | presentations "My files" rows, Jarvis deliverable chips (already `/api/files/download` URLs), Video Studio rendered cards |
 | **2** | dnd character import (pdf/json), youtube-kids Takeout (zip/json), spaces scan import (video/ply/splat) | career submissions screenshots + resume/cover PDFs, switchboard compose image, venture-plan exports, dnd & game-show art, task-explorer Files tab, rag-center documents, little-monsters materials/lecture audio |
-| **3 — needs new mechanism or endpoint** | **lora** (no HTTP image-ingest exists — the dataset lives on the GPU box; needs a real ingest route first) | camera / payroll / ocean-lab / workflow-studio exports — these are **client-generated blobs** with no server URL, which the handle contract cannot point at today |
+| **3 — needs new mechanism or endpoint** | **lora** (ingest now built: LoRA 1.7.3 declares `dataset-image`, `image/*`, `mode: open`; the studio submits the owner-bound handle to `POST /api/lora/dataset/import`; portrait-gallery live proof still owed) | camera / payroll / ocean-lab / workflow-studio exports — these are **client-generated blobs** with no server URL, which the handle contract cannot point at today |
 | excluded | config/credential import lanes (manifests, auth.json, avatars — deliberately never artifact destinations); third-party imagery (posters, album art — not the user's artifacts) | |
+
+**LoRA status, reconciled 2026-09-29:** the recorded 2026-09-28 inline-mode PASS on LoRA 1.7.1
+proved the owner-scoped import and the worker's image/caption pair, not a portrait-gallery dispatch
+or the rendered studio. The 2026-09-29 gallery-mode attempt on 1.7.3 was UNAVAILABLE
+(`portrait_cli_authorization_unavailable`), with nothing written. The
+[coverage inventory](../apps/artifact-exchange-coverage.md) records the current declaration and
+the [real-boundary audit](../governance/real-boundary-regression-audit.md) keeps those two receipts
+separate. No gallery-mode PASS is claimed.
 
 **Open mechanism item (wave 3 blocker):** a mint-with-bytes variant — `POST /api/artifacts/handles`
 accepting a small multipart body for client-generated files — would let blob-only exports
