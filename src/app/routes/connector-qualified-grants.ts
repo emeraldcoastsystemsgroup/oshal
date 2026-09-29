@@ -4,6 +4,7 @@
  * SEQ | AUTHOR                                    | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Persist fresh issuer-qualified personal grants with exact-owner CAS and metadata-only results; callers own authentication, provider validation and transactions.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Resolve one exact owner-qualified UUID for server-owned reconnect/revoke targets without list-page guessing or credential selection.
  */
 import { createChildLogger } from '@/shared/logger';
 import {
@@ -38,6 +39,8 @@ export interface ReconnectFreshQualifiedGrantInput extends FreshQualifiedGrantIn
 }
 /** Stable keyset pagination without exposing another principal or unbounded result sets. */
 export interface QualifiedGrantListInput { readonly limit?: number; readonly afterConnectionId?: string }
+/** UUID-only lookup; the server learns the immutable provider/account/revision from stored metadata. */
+export interface QualifiedGrantLookupInput { readonly connectionId: string }
 /** Public result allowlist: never include encrypted or plaintext credential material. */
 export interface QualifiedGrantMetadata {
   readonly connectionId: string; readonly provider: string; readonly accountKey: string;
@@ -175,6 +178,26 @@ export function reconnectFreshQualifiedGrant(db: QualifiedConnectorQueryable, pr
     const encrypted = await encryptFresh(db, who, fresh);
     const result = await db.query(`UPDATE oshal_qualified_connections SET access_token = $7, refresh_token = $8, expiry = $9, status = 'connected'
       WHERE ${EXACT} RETURNING ${COLUMNS}`, [...values, ...encrypted]);
+    if (result.rows.length !== 1) refuse('not_found_or_stale');
+    return metadata(result.rows[0]);
+  });
+}
+
+/**
+ * @description Resolve exact personal grant metadata for server-owned ceremony/DELETE target selection.
+ * @param db Already-bound caller transaction query port.
+ * @param principal Verified exact issuer/subject.
+ * @param input Connection UUID only; provider/account must not be guessed from browser input.
+ * @returns Allowlisted metadata, or the same sanitized not_found_or_stale for foreign/missing UUIDs.
+ */
+export function getQualifiedGrant(db: QualifiedConnectorQueryable, principal: QualifiedConnectorPrincipal,
+  input: QualifiedGrantLookupInput): Promise<QualifiedGrantMetadata> {
+  return run('get', async () => {
+    const who = principalSnapshot(principal);
+    if (!input || typeof input !== 'object') refuse('invalid_input');
+    const connectionId = uuid(input.connectionId);
+    const result = await db.query(`SELECT ${COLUMNS} FROM oshal_qualified_connections WHERE ${OWNER} AND connection_id = $3::uuid`,
+      [...ownerValues(who), connectionId]);
     if (result.rows.length !== 1) refuse('not_found_or_stale');
     return metadata(result.rows[0]);
   });

@@ -4,6 +4,7 @@
  * SEQ | AUTHOR                                    | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise production grant lifecycle and real qualified crypto with named SQL/logger doubles; no database/RLS/provider acceptance claim.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Guard exact UUID-only metadata lookup, owner isolation, snapshots and safe errors independently of list pagination.
  */
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -11,7 +12,7 @@ import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createFreshQualifiedGrant as create, reconnectFreshQualifiedGrant as reconnect,
-  revokeQualifiedGrant as revoke, listQualifiedGrants as list,
+  revokeQualifiedGrant as revoke, listQualifiedGrants as list, getQualifiedGrant as get,
   type FreshQualifiedGrantInput, type QualifiedGrantMetadata,
 } from '@/app/routes/connector-qualified-grants';
 import { decryptQualifiedConnectorToken as decrypt } from '@/app/routes/connector-qualified-token-crypto';
@@ -65,6 +66,11 @@ function grantQuery(sql: string, values: unknown[], grants: Map<string, Row>): {
   expect(sql).toContain('principal_issuer = $1 AND owner_sub = $2');
   const rows = [...grants.values()];
   if (sql.includes('connection_id = $3::uuid')) {
+    if (sql.startsWith('SELECT connection_id,') && !sql.includes('AND provider = $4')) {
+      expect(sql).toMatch(/WHERE principal_issuer = \$1 AND owner_sub = \$2 AND connection_id = \$3::uuid$/);
+      expect(sql).not.toMatch(/access_token|refresh_token|SELECT \*/);
+      return { rows: owned(rows, values).filter(row => row.connection_id === values[2]) };
+    }
     expect(sql).toContain('connection_id = $3::uuid AND provider = $4 AND account_key = $5 AND revision = $6::bigint');
     if (sql.startsWith('UPDATE')) return updateQuery(sql, values, exact(rows, values));
     expect(sql).toMatch(/ FOR UPDATE$/);
@@ -230,6 +236,58 @@ describe('qualified grants production lifecycle / named SQL double + real crypto
     db.control.before = () => { who.principalIssuer = B.principalIssuer; input.limit = 100; };
     expect(await list(db, who, input)).toEqual([row]);
     expect(db.query.mock.calls.at(-1)?.[1]).toEqual([A.principalIssuer, A.sub, null, 1]);
+  });
+});
+
+describe('exact qualified UUID metadata lookup / named SQL double', () => {
+  it('gets an owned UUID outside the first list page in one credential-free query', async () => {
+    const db = qualifiedSqlDouble();
+    for (const accountKey of ['first-sentinel', 'second-sentinel', 'third-sentinel']) {
+      await create(db, A, { ...fresh(), validatedIdentity: { provider: 'smartthings', accountKey } });
+    }
+    const all = await list(db, A), desired = all[2];
+    expect((await list(db, A, { limit: 1 }))[0].connectionId).not.toBe(desired.connectionId);
+    db.query.mockClear();
+    expect(await get(db, A, { connectionId: desired.connectionId })).toEqual(desired);
+    expect(db.query).toHaveBeenCalledTimes(1); expect(writes(db)).toEqual([]);
+    const [sql, params] = db.query.mock.calls[0];
+    expect(sql).not.toMatch(/access_token|refresh_token|wrapped_dek|LIMIT|SELECT \*/);
+    expect(params).toEqual([A.principalIssuer, A.sub, desired.connectionId]);
+  });
+
+  it.each(['issuer', 'subject', 'missing'])('refuses foreign/missing metadata identically (%s)', async wrong => {
+    const db = qualifiedSqlDouble(), row = await create(db, A, fresh()); db.query.mockClear();
+    const who = wrong === 'issuer' ? B : wrong === 'subject' ? { ...A, sub: 'other-sub-sentinel' } : A;
+    await expect(get(db, who, { connectionId: wrong === 'missing' ? randomUUID() : row.connectionId }))
+      .rejects.toMatchObject({ code: 'not_found_or_stale', message: 'qualified connector grant: not_found_or_stale' });
+    expect(db.query).toHaveBeenCalledTimes(1); expect(writes(db)).toEqual([]);
+  });
+
+  it('returns explicit revoked/expired metadata without credential columns from the doubled row', async () => {
+    const db = qualifiedSqlDouble(), row = await create(db, A, fresh()), stored = db.grants.get(row.connectionId)!;
+    stored.status = 'revoked'; stored.expiry = '2020-01-01T00:00:00.000Z';
+    const result = await get(db, A, { connectionId: row.connectionId });
+    expect(result).toMatchObject({ status: 'revoked', expiresAt: '2020-01-01T00:00:00.000Z' });
+    expect(Object.keys(result).sort()).toEqual(Object.keys(row).sort());
+    expect(JSON.stringify(result)).not.toMatch(/qct1:|qdk1:|access_token|refresh_token|owner_sub|principal_issuer/);
+  });
+
+  it('snapshots exact principal and UUID before awaiting, rejecting bad UUIDs before DB', async () => {
+    const db = qualifiedSqlDouble(), row = await create(db, A, fresh()), who = { ...A }, input = { connectionId: row.connectionId };
+    db.control.before = () => { who.principalIssuer = B.principalIssuer; who.sub = 'changed-sub-sentinel'; input.connectionId = randomUUID(); };
+    expect(await get(db, who, input)).toEqual(row); db.query.mockClear();
+    await expect(get(db, A, { connectionId: 'invalid-uuid' })).rejects.toMatchObject({ code: 'invalid_input' });
+    expect(db.query).not.toHaveBeenCalled();
+  });
+
+  it('sanitizes metadata lookup errors, with no raw SQL/identity/credential cause in errors or logs', async () => {
+    const db = qualifiedSqlDouble(), raw = 'lookup-raw-' + fresh().accessToken + A.principalIssuer;
+    db.control.before = () => { throw new Error(raw); };
+    const error = await get(db, A, { connectionId: randomUUID() }).catch(reason => reason);
+    expect(error).toMatchObject({ code: 'storage_failure', message: 'qualified connector grant: storage_failure' });
+    expect(error.cause).toBeUndefined(); expect(error.stack).not.toContain(raw);
+    const logs = JSON.stringify(logger.error.mock.calls, (_key, value) => value instanceof Error ? { message: value.message, stack: value.stack } : value);
+    expect(logs).not.toContain(raw); expect(logs).not.toContain(A.principalIssuer); expect(writes(db)).toEqual([]);
   });
 });
 

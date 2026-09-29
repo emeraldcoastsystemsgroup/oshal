@@ -8,7 +8,7 @@ provider behavior. Home/L8 physical readiness remains false.
 ## Service contract
 
 [connector-qualified-grants.ts](../../src/app/routes/connector-qualified-grants.ts)
-exports four functions. Each takes `db: QualifiedConnectorQueryable` and
+exports five functions. Each takes `db: QualifiedConnectorQueryable` and
 `principal: QualifiedConnectorPrincipal` from the real qualified crypto module.
 
 | Function | Third argument | Result |
@@ -16,6 +16,7 @@ exports four functions. Each takes `db: QualifiedConnectorQueryable` and
 | `createFreshQualifiedGrant` | `{validatedIdentity:{provider,accountKey},accessToken,refreshToken?,expiresAt}` | New grant metadata; same-account collision refuses |
 | `reconnectFreshQualifiedGrant` | Same fresh input plus `{connectionId,expectedRevision}` | Exact existing account replacement by CAS |
 | `listQualifiedGrants` | Optional `{limit?,afterConnectionId?}` | Metadata array, default 50 / maximum 100, UUID keyset order |
+| `getQualifiedGrant` | `{connectionId}` | Exact owner-qualified UUID metadata; foreign/missing refuses identically |
 | `revokeQualifiedGrant` | `{connectionId,provider,accountKey,expectedRevision}` | Exact grant marked revoked by CAS |
 
 Metadata is an explicit allowlist: `connectionId`, `provider`, `accountKey`,
@@ -24,6 +25,13 @@ plaintext, token envelope or wrapped key is returned. Listing does not select
 credential columns. `revision` and `expectedRevision` are canonical positive
 decimal strings in PostgreSQL BIGINT range, never JavaScript numbers. The
 database trigger alone assigns revisions. Timestamps returned are ISO UTC strings.
+
+Use `getQualifiedGrant` for reconnect initiation and DELETE target lookup. It
+performs one exact issuer/sub/UUID query without selecting credential columns or
+searching a bounded list page. The caller compares its returned provider with the
+expected ceremony provider, then stores immutable account/revision server-side.
+Do not guess account/provider from browser input. A lookup is a snapshot, not a
+write grant: reconnect/revoke still require their existing exact-target revision CAS.
 
 Fresh `expiresAt` is required: either `null` (provider did not supply an expiry)
 or a future canonical 24-character UTC ISO string, e.g. `2099-01-01T00:00:00.000Z`.
@@ -78,6 +86,8 @@ It does **not** prove PostgreSQL parsing, transactions, locking, constraints or 
 Coverage includes success, account collision/race, issuer/subject separation,
 exact target refusals, missing-refresh clearing, revocation, mutable inputs,
 metadata-only pagination, expiry race, bounded validation and sanitized failures.
+The exact UUID lookup guards additionally cover targets outside the first page,
+foreign/missing refusal, revoked/expired metadata, snapshotting and safe errors.
 
 Authorized focused command (one 384 MiB worker, 128 MiB runner):
 
@@ -96,6 +106,13 @@ substituting revision `1` failed the stale-revision guard and two lifecycle case
 deriving issuer from subject failed 13 identity/crypto/refusal cases, including a
 wrong-issuer operation succeeding unexpectedly. All three source mutations were
 restored byte-for-byte. These are source/double outcomes, not RLS evidence.
+
+Exact-UUID follow-up: the focused suite grew to 63 passing cases. An actual-source
+mutation spreading the doubled raw row into the lookup result failed three
+metadata-allowlist assertions; restored before final verification. The double
+deliberately returns extra credential fields to exercise defensive projection;
+the production SELECT itself still requests metadata only. Existing four lifecycle
+function bodies are unchanged by this additive lookup.
 
 [PostgreSQL companion](../../tests/unit/connector-qualified-grants-postgres.spec.ts)
 is **SOURCE ONLY / UNRUN**. When explicitly scheduled, its actual
