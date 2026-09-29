@@ -251,20 +251,38 @@ The `PROVIDERS` registry in `connector-provider-registry.ts` defines every OAuth
 entry declares `authUrl`, `tokenUrl`, `scopes`, `scopeSep`, `redirectPath`, `flavor`, and optional
 flags:
 
-- `pkce: true` — X/Twitter requires PKCE (S256). The verifier is generated at `/start`, encrypted
-  with AES-256-GCM under `SESSION_SECRET`, and stored in a short-lived HttpOnly cookie
-  (`oshalpkce_<provider>`, 10 min) — not in the `state` param (which was bloating X's authorize
-  URL). The verifier is recovered at callback via `readPkceVerifier()`, then the cookie is cleared.
+- `pkce: true` — X/Twitter requires PKCE (S256). The verifier is generated at `/start` and
+  retained in the controller's ten-minute ceremony, not sent in the signed state or a cookie.
+  It is used only after authenticated completion on the initiating origin.
 - `tokenAuth: 'basic'` — Twitter, Spotify, Schwab, SmartThings, PayPal, and RingCentral require
   HTTP Basic on the token endpoint (client_id:client_secret base64), not a form body.
 - `allowTokenFallback: true` — SmartThings accepts a pasted Personal Access Token when the OAuth
   app (`SMARTTHINGS_CLIENT_ID`) is not configured, so the connector is immediately usable without
   partner app registration.
 
-The CSRF `state` is an HMAC-signed, time-boxed (10-minute) token — no server-side store needed.
-`signState` encodes `{ provider, sub, ts }` (plus optional `tenant` for a shared/household
-connect and `label` for a nicknamed account, ADR-042/ADR-113) as a base64url JSON body signed
-with `HMAC-SHA256(SESSION_SECRET)`. `verifyState` rejects bad signatures and expired states.
+The CSRF `state` contains an HMAC-signed nonce and timestamp. The controller stores the
+provider, original configured origin, verified issuer **and** subject, reconnect label,
+optional household, PKCE verifier and a hash of a separate HttpOnly browser secret.
+`connector-oauth-state.ts` owns this bounded, one-time ceremony. A sessionless fixed provider
+callback only relays to that original origin; it never exchanges or persists tokens. If a
+session is present at the relay, its issuer and subject must both match. Completion requires
+the original browser secret, origin and the same verified issuer/subject before any provider
+request. An absent verified issuer is refused rather than inferred from email, a request
+parameter or deployment settings. Protocol claims take precedence over the OIDC display user.
+
+Pending consent limits are eight per issuer/subject and 1000 per controller; the ten-minute
+deadline is not renewed by the relay. A restart discards outstanding ceremonies. Multiple
+controllers need routing affinity across the configured origins or a shared atomic ceremony
+store; the current process-local store is not a distributed completion guarantee.
+
+Validation on 2026-09-29: the callback, reconnect and decomposition suites pass 29/29, using
+real loopback HTTP with explicit session/provider/SQL fixtures. Removing the production
+issuer comparison from completion and from signed-in relay independently produces 28 passes
+and one expected refusal failure; the restored source passes again. The existing source
+registration guard follows the extracted `server-auxiliary-routes.ts` mount and its server
+call site. This is not real provider consent, database RLS, deployed browser acceptance or
+issuer-qualified ownership of legacy stored credentials. Those storage/broker and installed
+proof requirements remain separate.
 
 Access and refresh tokens are stored in `oshal_connections` (Postgres), AES-256-GCM encrypted
 at rest under **per-user envelope encryption** (`connector-token-crypto.ts`, default ON since

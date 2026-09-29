@@ -3,6 +3,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register connector callback refusal and browser-bound OAuth regression suites with the existing Test Lab.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Register the Yahoo Mail connector card: the anonymous credential refusal on /api/connect/yahoo/access-token, with the loopback-IMAP reader suite and the connector schema/card suite attached. No mailbox is contacted; a live Yahoo connect is an operator acceptance step.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Register the ESPN Fantasy league-read card for the fantasy-leagues kernel skill (ADR-146 D2): the anonymous refusal on /api/connect/espn-fantasy/access-token, with the loopback protocol-seam suite and the kernel-skill contract suite attached. No ESPN host is contacted and no real league is read; a real-league read stays an operator acceptance step behind a signed-in session.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Describe same-subject issuer-switch refusal in the linked real-HTTP consent suite; the installed card remains anonymous refusal only.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -20,7 +21,7 @@ async function refusal(path: string, expected: number, label: string): Promise<S
 
 export const CONNECTOR_OAUTH_SCENARIOS: Scenario[] = [{
   id: 'connector-oauth-boundary', title: 'Connector sign-in callback boundary', group: 'tool',
-  description: 'Check that an anonymous callback reaches state validation while connector data and completion still require sign-in. Cross-domain success and replay cases use the isolated provider fixtures in the linked suites.',
+  description: 'Check that an anonymous callback reaches state validation while connector data and completion still require sign-in. Cross-domain success, replay and same-subject issuer-switch refusals use real HTTP with isolated authentication/provider/storage fixtures in the linked suites; this card does not perform provider consent.',
   regressionTests: [
     { level: 'integration', path: 'tests/unit/connector-oauth-callback.spec.ts' },
     { level: 'integration', path: 'tests/unit/connector-reconnect.spec.ts' },

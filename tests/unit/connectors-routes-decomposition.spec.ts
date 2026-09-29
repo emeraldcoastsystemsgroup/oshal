@@ -11,6 +11,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial guard for the provider-registry/credentials, OAuth-ceremony, account-operation, response-helper, and stable-facade split.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard absent and protocol-qualified issuer provenance in the shared connector caller.
  * -----------------------------------------------------------------------------
  */
 
@@ -209,6 +210,16 @@ describe('connectors route decomposition boundary', () => {
     expect(caller(req)).toEqual({
       sub: 'auth0|connector-owner',
       email: 'owner@example.com',
+      principalIssuer: null,
     });
+  });
+
+  it('carries the verified protocol issuer and never takes a conflicting display issuer', () => {
+    const req = { oidc: {
+      isAuthenticated: () => true,
+      idTokenClaims: { iss: 'https://verified-identity.example.test/' },
+      user: { sub: 'same-subject', email: 'owner@example.com', iss: 'https://display.example.test/' },
+    } } as unknown as Request;
+    expect(caller(req)?.principalIssuer).toBe('https://verified-identity.example.test/');
   });
 });

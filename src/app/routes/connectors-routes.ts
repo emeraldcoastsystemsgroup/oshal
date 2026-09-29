@@ -49,6 +49,7 @@
  * -----------------------------------------------------------------------------
  *
  * 30 | maintainer@emeraldcoastsystemsgroup.com | Relay fixed provider callbacks to a one-time completion on the configured initiating origin; require its session and browser cookie before code exchange or persistence.
+ * 31 | maintainer@emeraldcoastsystemsgroup.com | Require verified issuer provenance throughout OAuth consent and refuse a same-subject issuer switch before provider exchange or storage.
  * @module connectors-routes
  */
 
@@ -121,6 +122,7 @@ export function createConnectorsRoutes(ctx: AppContext): Router {
     const me = caller(req);
     if (!def) { res.status(404).json({ error: 'unknown provider' }); return; }
     if (!me) { res.status(401).json({ error: 'not authenticated' }); return; }
+    if (!me.principalIssuer) { res.status(403).json({ error: 'verified_issuer_required' }); return; }
     if ((def.auth || 'oauth') !== 'oauth') { res.status(404).json({ error: 'not an OAuth connector' }); return; }
     const origin = connectorOrigin(req);
     if (!origin) { res.status(400).json({ error: 'connector origin is not configured' }); return; }
@@ -240,7 +242,7 @@ export function createConnectorsRoutes(ctx: AppContext): Router {
         || code.length > 8192 || error.length > 200 || (!code && !error) || (code && error)) {
       res.status(400).json({ error: 'invalid connector callback' }); return;
     }
-    const relay = ceremonies.relay(state, provider, me?.sub, code, error);
+    const relay = ceremonies.relay(state, provider, me, code, error);
     if (!relay) { res.status(400).json({ error: 'invalid or expired connector state' }); return; }
     res.redirect(302, relay.location);
   });
@@ -252,6 +254,7 @@ export function createConnectorsRoutes(ctx: AppContext): Router {
     const def = PROVIDERS[provider];
     const me = caller(req);
     if (!me) { res.status(401).json({ error: 'not authenticated' }); return; }
+    if (!me.principalIssuer) { res.status(403).json({ error: 'verified_issuer_required' }); return; }
     const ticket = typeof req.query.ticket === 'string' ? req.query.ticket : '';
     const data = def && ticket.length <= 100 ? ceremonies.complete(ticket, provider, req, me) : null;
     if (!data) { res.status(400).json({ error: 'invalid or expired connector completion' }); return; }

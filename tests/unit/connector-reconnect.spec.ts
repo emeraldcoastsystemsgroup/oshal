@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Reconnect-in-place guard (the "dead connection forces delete + re-add" fix). Over a real express app with a fake pool: /start?reconnect=<id> pins login_hint to the STORED account_email (not the session email), does NOT force the ADR-113 account chooser (Google's def prompt=consent survives — the exact param that re-issues a dead refresh token; `select_account` reappearing goes red), carries the STORED label through the signed state (the upsert's label refresh would otherwise rename the account to its email mid-repair), and 404s for a connection id outside the caller's accessible rows. A plain /start with an existing connection must STILL force the chooser, so the repair path cannot regress multi-account (ADR-113 section 4).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Supply verified protocol issuer provenance in the reconnect session fixture.
  */
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import express, { type NextFunction, type Request, type Response } from 'express';
@@ -51,6 +52,7 @@ async function start(rows: ConnectionRow[]): Promise<string> {
   app.use((req: Request, _res: Response, next: NextFunction) => {
     (req as unknown as { oidc: unknown }).oidc = {
       isAuthenticated: () => true,
+      idTokenClaims: { iss: 'https://reconnect-identity.example.test/' },
       user: { sub: SUB, email: SESSION_EMAIL },
     };
     next();
