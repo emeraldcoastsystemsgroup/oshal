@@ -4,6 +4,7 @@
  * SEQ | AUTHOR                                    | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise the real inactive qualified broker, crypto and request ALS with explicit SQL/transaction/provider doubles and deterministic revocation barriers. Not PostgreSQL/RLS or live provider proof.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Model timestamp parser precision loss separately from exact stored microseconds; guard refresh CAS and same-millisecond replacement without claiming PostgreSQL proof.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { encryptQualifiedConnectorToken as encrypt, decryptQualifiedConnectorToken as decrypt } from '@/app/routes/connector-qualified-token-crypto';
@@ -39,6 +40,20 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+/** Named SQL timestamp double: preserve six stored digits; never compare through a JS Date. */
+function storedTimestamp(value: unknown): unknown {
+  return typeof value === 'string' ? value.replace(/\.(\d{3})Z$/, '.$1000Z') : value;
+}
+
+/** Model pg's default Date decoding separately from explicit SQL text projections. Real PG companion is separate. */
+function projectedRow(row: Row, sql: string): Row {
+  const result = { ...row, created_at: new Date(String(row.created_at)),
+    expiry: row.expiry === null ? null : new Date(String(row.expiry)) };
+  return { ...result,
+    ...(sql.includes('AS created_at_witness') ? { created_at_witness: storedTimestamp(row.created_at) } : {}),
+    ...(sql.includes('AS expiry_witness') ? { expiry_witness: storedTimestamp(row.expiry) } : {}) };
+}
+
 /** Deliberately not a database/RLS/lock model: named query double with only the CAS/rollback branches needed here. */
 function fixture() {
   const rows = new Map<string, Row>(), deks = new Map<string, string>(), pending = new Map<string, Row>();
@@ -63,7 +78,7 @@ function fixture() {
     else if (kind === 'read') {
       expect(sql).toMatch(/principal_issuer=\$1 AND owner_sub=\$2 AND connection_id=\$3 AND provider=\$4 AND revision=\$5 AND status='connected' FOR (SHARE|UPDATE)$/);
       const row = transaction ? pending.get(String(p[2])) ?? rows.get(String(p[2])) : rows.get(String(p[2]));
-      if (row && matches(row, p)) result = [{ ...row }];
+      if (row && matches(row, p)) result = [projectedRow(row, sql)];
     } else if (kind === 'begin') { expect(sql).toBe('BEGIN ISOLATION LEVEL READ COMMITTED'); inTransaction = true; }
     else if (kind === 'update') {
       expect(transaction && inTransaction).toBe(true);
@@ -71,9 +86,10 @@ function fixture() {
       expect(sql).toContain('access_token=$9 AND refresh_token IS NOT DISTINCT FROM $10 AND expiry IS NOT DISTINCT FROM $11');
       const row = rows.get(String(p[2]));
       if (row && matches(row, p) && row.access_token === p[8] && row.refresh_token === p[9]
-        && row.expiry === p[10] && row.account_key === p[11] && row.created_at === p[12]) {
+        && storedTimestamp(row.expiry) === storedTimestamp(p[10]) && row.account_key === p[11]
+        && storedTimestamp(row.created_at) === storedTimestamp(p[12])) {
         const next = { ...row, access_token: p[5], refresh_token: p[6], expiry: p[7], revision: String(BigInt(String(row.revision)) + 1n) };
-        pending.set(String(p[2]), next); result = [{ ...next }];
+        pending.set(String(p[2]), next); result = [projectedRow(next, sql)];
       }
     } else if (kind === 'commit') {
       for (const [key, row] of pending) rows.set(key, { ...row });
@@ -214,6 +230,52 @@ describe('qualified broker: actual production/crypto/ALS, named SQL and provider
     const update = f.calls.find(c => c.kind === 'update')!;
     expect(update.transaction).toBe(true); expect(update.values[4]).toBe('1');
     expect(update.sql.split(' WHERE ')[0]).not.toMatch(/\brevision\s*=/i);
+  });
+
+  it.each(['created_at', 'expiry', 'both'])('refreshes unchanged microsecond %s after pg Date truncation without losing rotated credentials', async field => {
+    const f = fixture(), row = await f.seed(A, ID, expired()), refresh = provider();
+    if (field !== 'expiry') row.created_at = '2026-09-29T11:58:20.123456Z';
+    if (field !== 'created_at') row.expiry = '2026-09-29T11:59:00.987654Z';
+    const result = await f.run({ refresh });
+    expect(result.revision).toBe('2'); expect(refresh).toHaveBeenCalledOnce();
+    expect(await decrypt(f.db, A, String(f.rows.get(ID)!.refresh_token))).toBe('new-refresh-token-sentinel');
+    const update = f.calls.find(call => call.kind === 'update')!;
+    expect(update.values[12]).toBe(storedTimestamp(row.created_at));
+    expect(update.values[10]).toBe(storedTimestamp(row.expiry));
+    expect(f.calls.some(call => call.kind === 'commit')).toBe(true);
+  });
+
+  it.each(['created_at', 'expiry'] as const)('rejects same-millisecond %s replacement after provider await before persistence', async field => {
+    const f = fixture(), row = await f.seed(A, ID, expired());
+    row[field] = '2026-09-29T11:58:20.123456Z';
+    const refresh = vi.fn(async () => {
+      row[field] = '2026-09-29T11:58:20.123457Z';
+      return { accessToken: 'rotated-access-sentinel', refreshToken: 'rotated-refresh-sentinel', expiresAt: future() };
+    });
+    await expect(f.run({ refresh })).rejects.toMatchObject(code('not_found_or_stale'));
+    expect(refresh).toHaveBeenCalledOnce(); expect(f.db.connect).not.toHaveBeenCalled();
+    expect(f.calls.some(call => call.kind === 'update')).toBe(false);
+  });
+
+  it.each(['created_at', 'expiry'] as const)('CAS rejects same-millisecond %s change instead of weakening the exact witness', async field => {
+    const f = fixture(), row = await f.seed(A, ID, expired());
+    row[field] = '2026-09-29T11:58:20.123456Z';
+    f.hooks.before = kind => { if (kind === 'update') row[field] = '2026-09-29T11:58:20.123457Z'; };
+    await expect(f.run({ refresh: provider() })).rejects.toMatchObject(code('not_found_or_stale'));
+    expect(f.calls.some(call => call.kind === 'update')).toBe(true);
+    expect(f.calls.some(call => call.kind === 'commit')).toBe(false);
+  });
+
+  it.each([
+    { created_at_witness: undefined }, { created_at_witness: new Date(NOW) },
+    { created_at_witness: '2026-09-29T11:58:20.123Z' },
+    { created_at_witness: '2026-02-30T11:58:20.123456Z' },
+    { expiry_witness: null }, { expiry_witness: '2001-01-01T00:00:00.987654Z' },
+  ])('refuses missing, rounded, malformed or inconsistent database witness %j without provider calls', async invalid => {
+    const f = fixture(), row = await f.seed(), refresh = provider();
+    f.db.query.mockResolvedValueOnce({ rows: [{ ...projectedRow(row, 'AS created_at_witness AS expiry_witness'), ...invalid }] });
+    await expect(f.run({ refresh })).rejects.toMatchObject(code('not_found_or_stale'));
+    expect(refresh).not.toHaveBeenCalled(); expect(f.db.connect).not.toHaveBeenCalled();
   });
 
   it('preserves only this qualified refresh ciphertext when the adapter omits rotation', async () => {
