@@ -20,6 +20,7 @@
     "swarm-cli": "./packages/swarm-cli/bin/swarm-cli.js"
   },
   "scripts": {
+    "test:package-anonymous-routes": "vitest run --pool=forks --maxWorkers=1 --no-file-parallelism tests/unit/package-anonymous-routes.spec.ts tests/unit/package-anonymous-routes-http.spec.ts tests/unit/authorization-runtime.spec.ts tests/unit/manifest-route-mounter.spec.ts",
     "start": "bash scripts/start-with-rag.sh",
     "start:local": "bash scripts/start-localhost.sh",
     "start:legacy": "node src/api/server.js",

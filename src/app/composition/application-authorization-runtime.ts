@@ -12,13 +12,14 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Return role guidance for denied app-open browser documents without dispatching package code.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Check workspace navigation against the current mounted HTTP policy without dispatching a page.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | AUTH-07: prepare now classifies a changed catalog instead of refusing every change. A non-widening revision passes and start() re-stamps the existing assignments atomically; a widening or breaking one refuses with the review id an administrator approves through /api/authorization/catalog-migrations.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Bind exact anonymous reads to detached active catalog-less route declarations.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import type { Request, Response } from 'express';
 import type { ApplicationAuthorizationService } from '@/features/application-authorization';
-import type { ManifestAuthorizationRegistrar, SwarmAppManifest, SwarmApplicationRecord } from '@/features/swarm-apps';
+import type { ManifestAuthorizationRegistrar, SwarmAppManifest, SwarmApplicationRecord, SwarmAppRouteDeclaration } from '@/features/swarm-apps';
 import { loadApplicationAuthorization, type AuthorizationActor, type AuthorizationAppRegistration,
   type AuthorizationDecision, type AuthorizationOperation, type AuthorizationResourceAdapter } from '@/shared/application-authorization';
 import { getApplicationAuthorizationActor, runWithApplicationAuthorizationActor } from '@/shared/application-authorization-context';
@@ -27,9 +28,10 @@ import { createChildLogger } from '@/shared/logger';
 import type { RemoteApplicationSnapshot } from '@/shared/application-remote-execution';
 import { assertPackageToolInvocation, validatePackageTools, type PackageToolDeclaration } from '@/shared/package-tools';
 import { authorizeApplicationNavigation, navigationWorkspace, sendApplicationNavigationDenied } from './application-navigation-authorization';
+import { readAnonymousPackageMounts, matchesAnonymousPackageRoute, type AnonymousPackageMount } from '@/shared/package-anonymous-routes';
 
 const logger = createChildLogger({ module: 'application-authorization-runtime' });
-interface RuntimeRegistration { registration: AuthorizationAppRegistration; displayName: string; generation: string; available: boolean; agents: string[]; tools: string[]; packageTools: PackageToolDeclaration[] }
+interface RuntimeRegistration { registration: AuthorizationAppRegistration; displayName: string; generation: string; available: boolean; agents: string[]; tools: string[]; packageTools: PackageToolDeclaration[]; anonymousMounts: AnonymousPackageMount[] }
 export interface PackageAuthorizationContext {
   registerResource(resource: string, adapter: AuthorizationResourceAdapter): void;
   currentActor(): AuthorizationActor | undefined;
@@ -40,6 +42,7 @@ export interface ApplicationRouteAuthorization {
   guardCallback?(appName: string, req: Request, res: Response, principal: { sub: string; issuer: string }, next: () => void): Promise<void>;
   forPackage(appName: string): PackageAuthorizationContext;
   protectedApp(appName: string): boolean;
+  allowsAnonymousRoute?(appName: string, route: Pick<SwarmAppRouteDeclaration, 'module' | 'factory' | 'mountPath' | 'anonymousRoutes'>, req: Request): boolean;
   packageToolDeclarations?(appName: string): PackageToolDeclaration[];
 }
 
@@ -70,6 +73,7 @@ export class ApplicationAuthorizationRuntime implements ManifestAuthorizationReg
       private readonly callbackActor?: (sub: string, issuer: string) => Promise<AuthorizationActor | null>) {}
 
   private candidate(manifest: SwarmAppManifest, manifestPath: string): AuthorizationAppRegistration {
+    readAnonymousPackageMounts(manifest);
     validatePackageTools(manifest);
     const catalog = loadApplicationAuthorization(path.dirname(path.resolve(manifestPath)), manifest);
     const isPackage = path.basename(manifestPath) === 'oshal-app.yaml';
@@ -95,7 +99,8 @@ export class ApplicationAuthorizationRuntime implements ManifestAuthorizationReg
     const registration = this.candidate(record.manifest, record.manifestPath);
     this.registrations.set(record.name, { registration, displayName: record.displayName || record.manifest.displayName || record.name, generation: randomUUID(), available: false,
       agents: (record.manifest.bots ?? []).flatMap(bot => bot.agentId ? [bot.agentId] : []),
-      tools: (record.manifest.tools ?? []).map(tool => tool.name), packageTools: validatePackageTools(record.manifest) });
+      tools: (record.manifest.tools ?? []).map(tool => tool.name), packageTools: validatePackageTools(record.manifest),
+      anonymousMounts: readAnonymousPackageMounts(record.manifest) });
     this.service.unregisterApp(record.name);
     await this.service.registerApp(registration);
   }
@@ -108,6 +113,21 @@ export class ApplicationAuthorizationRuntime implements ManifestAuthorizationReg
   protectedApp(appName: string): boolean {
     const state = this.registrations.get(appName);
     return Boolean(state && (state.registration.catalog || state.registration.mode === 'enforce'));
+  }
+  /**
+   * @description Admit only an active catalog-less module's exact declared read; the caller gains no principal or grants.
+   * @param appName Mounted package owner.
+   * @param route Exact mounted module/factory identity, not a caller-supplied permission.
+   * @param req Current raw HTTP request.
+   * @returns False during activation, after retirement, for catalogs and for all undeclared paths/methods.
+   */
+  allowsAnonymousRoute(appName: string,
+    route: Pick<SwarmAppRouteDeclaration, 'module' | 'factory' | 'mountPath' | 'anonymousRoutes'>, req: Request): boolean {
+    const state = this.registrations.get(appName);
+    if (!state?.available || state.registration.catalog) return false;
+    return state.anonymousMounts.some(mount => mount.module === route.module && mount.factory === route.factory
+      && mount.mountPath === route.mountPath && JSON.stringify(mount.anonymousRoutes) === JSON.stringify(route.anonymousRoutes)
+      && matchesAnonymousPackageRoute(mount, req.method, req.path));
   }
   /** @description Return validated declarations for one activation-scoped tool registry.
    * @param appName Installed package owner. @returns Detached declarations, including disabled tools.

@@ -29,9 +29,11 @@
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | Complete the P8 rollout after the store backfill: surfaced packages without a canonical concierge now fail under the unset `enforce` default; `warn` remains an explicit temporary observation/rollback posture.
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | readManifest refuses an unknown `scope:` by name (unknown_app_scope) through the contract `oshal-app validate` shares (@/shared/app-scope). loadApp calls readManifest before any database read or write, so dev-workspace-index 0.2.0's `scope: deployment` now fails here instead of at the swarm_applications CHECK mid-install.
  * 25 | maintainer@emeraldcoastsystemsgroup.com   | readManifest validates the optional ADR-170 `rating:` block through swarm-app-rating.ts, beside the suite check and with the same posture: a malformed value fails the load, a missing block warns.
+ * 26 | maintainer@emeraldcoastsystemsgroup.com | Refuse malformed or overbroad anonymous read declarations before activation.
  */
 
 import { validateBriefingDeclarations } from '@/shared/briefings';
+import { readAnonymousPackageMounts } from '@/shared/package-anonymous-routes';
 import fs from 'fs';
 import path from 'path';
 import yaml from 'js-yaml';
@@ -346,6 +348,7 @@ function validateRouteDeclarations(manifest: SwarmAppManifest, absPath: string):
   if (!Array.isArray(manifest.routes)) {
     throw new Error(`Manifest ${absPath}: routes, when present, must be an array`);
   }
+  readAnonymousPackageMounts(manifest);
 
   const modeByMount = new Map<string, { mode: SwarmAppRouteAuthMode; module: string }>();
 

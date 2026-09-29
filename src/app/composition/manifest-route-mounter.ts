@@ -15,11 +15,14 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Stage package specialist readers with successful route factories and retract them on empty reload or unmount.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Publish all declared package tools across route factories as one activation and fence unload synchronously.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | Resolve app tiers for exact verified subject/issuer pairs and refuse missing issuer before dispatch.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com | Admit only explicitly declared anonymous reads without inherited principal authority or sibling bypass.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com | Fence retired anonymous-declaring entries captured before an asynchronous predecessor yields to reload or unmount.
  */
 
 import type { Express, Request, Response, NextFunction, RequestHandler } from 'express';
 import { resolve as resolvePath } from 'path';
 import { createRequire } from 'module';
+import { AsyncResource } from 'node:async_hooks';
 import * as tsconfigPaths from 'tsconfig-paths';
 import { createChildLogger } from '@/shared/logger';
 import {
@@ -42,6 +45,9 @@ import type { ApplicationRouteAuthorization } from './application-authorization-
 import type { SpecialistContextRegistry } from '@/shared/specialist-context';
 import type { PackageToolRegistry } from '@/shared/package-tools';
 import { validCallbackPrincipal, type PackageCallbackVerifier } from '@/shared/package-callbacks';
+import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
+import { runWithoutApplicationAuthorizationActor } from '@/shared/application-authorization-context';
+import { invokeAnonymousPackageHandler } from './manifest-anonymous-request';
 
 const logger = createChildLogger({ module: 'manifest-route-mounter' });
 
@@ -78,6 +84,8 @@ interface MountedRoute {
   /** Explicit manifest contract; only inference-bearing routes are unavailable on a no-AI box. */
   requiresAi: boolean;
   callbackVerifier?: PackageCallbackVerifier;
+  /** Exact declaration identity; anonymous authority is checked against the active runtime snapshot. */
+  declaration: Pick<SwarmAppRouteDeclaration, 'module' | 'factory' | 'mountPath' | 'anonymousRoutes'>;
 }
 
 /**
@@ -241,6 +249,8 @@ export class ManifestRouteMounterImpl implements ManifestRouteMounter {
           access,
           requiresAi: decl.requiresAi === true,
           callbackVerifier,
+          declaration: { module: decl.module, factory: decl.factory, mountPath: decl.mountPath,
+            anonymousRoutes: decl.anonymousRoutes?.map(route => ({ ...route })) },
         });
         logger.info({ appName, mountPath: decl.mountPath, module: decl.module, auth: mode }, 'Mounted package route');
       } catch (err) {
@@ -395,6 +405,17 @@ export class ManifestRouteMounterImpl implements ManifestRouteMounter {
       // a valid secret passes WITHOUT populating req.oidc, so a carved app reading getCaller(req)
       // would see a null sub and mis-scope its user_sub-keyed store — the ADR-036 failure mode.
       // Core's serviceSecretOr routers each resolve this themselves; packages get it for free.
+      // A delayed predecessor may retain old entries across reload with an identical policy snapshot.
+      if (entry.declaration.anonymousRoutes && !this.byApp.get(entry.appName)?.includes(entry)) {
+        res.status(503).end(); return;
+      }
+      if (entry.mode === 'public' && this.applicationAuthorization?.allowsAnonymousRoute?.(entry.appName, entry.declaration, req)) {
+        const resume = AsyncResource.bind(next);
+        runWithRequestIdentity({ sub: null, principalIssuer: null, isOperator: false },
+          () => runWithoutApplicationAuthorizationActor(() => invokeAnonymousPackageHandler(req, res,
+            (anonymousReq, anonymousRes, anonymousNext) => this.invokeHandler(entry, anonymousReq, anonymousRes, anonymousNext, remainder), resume)));
+        return;
+      }
       const trusted = getTrustedServiceUserSub(req);
       if (trusted) (req as Request & { oshalCallerSub?: string }).oshalCallerSub = trusted;
 
@@ -411,6 +432,13 @@ export class ManifestRouteMounterImpl implements ManifestRouteMounter {
       });
     };
     this.runGuards(entry.guards, 0, req, res, next, invoke);
+  }
+
+  /** @description Preserve the handler result so the anonymous scope owns async failure and URL restoration. */
+  private invokeHandler(entry: MountedRoute, req: Request, res: Response, next: NextFunction,
+    remainder: string): ReturnType<RequestHandler> {
+    req.url = remainder.startsWith('/') ? remainder : '/' + remainder;
+    return entry.handler(req, res, next);
   }
 
   /**
