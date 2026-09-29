@@ -86,6 +86,28 @@ async function namesLocationDevice(pool: Pool, clientId: string): Promise<boolea
   }
 }
 
+/**
+ * @description Answers 409 location_device_id when a caller-named client id names a location device
+ * (ADR-169 L6). A located device's id is never a node's: its credential is a different binding,
+ * minted only by the location enrolment route behind the step-up proof, so POST /enroll mints no
+ * node token for it. Kept out of the enrol handler so that handler does not grow.
+ * @param pool - Postgres pool.
+ * @param clientId - The id the caller named; empty when the swarm will mint one.
+ * @param sub - The signed-in caller, for the refusal log line.
+ * @param res - The enrol response, answered only when the id is refused.
+ * @returns true when the response was answered and the handler must stop.
+ */
+async function refuseLocationDeviceClientId(pool: Pool, clientId: string, sub: string, res: Response): Promise<boolean> {
+  if (!clientId || !(await namesLocationDevice(pool, clientId))) return false;
+  logger.warn({ sub, clientId }, 'refused node enrolment: the client id names a location device');
+  res.status(409).json({
+    error: 'location_device_id',
+    message: 'That id belongs to a located device. A node credential is never minted for it; '
+      + 'a location credential comes from Settings, Location.',
+  });
+  return true;
+}
+
 /** Hostnames that only ever resolve back to the controller's own machine. */
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 
@@ -203,17 +225,7 @@ export function createJoinRoutes(apiDir: string, pool?: Pool): Router {
       });
       return;
     }
-    // A located device's id is never a node's (ADR-169 L6): its credential is a different binding,
-    // minted only by the location enrolment route behind the step-up proof.
-    if (requestedClientId && await namesLocationDevice(pool, requestedClientId)) {
-      logger.warn({ sub, clientId: requestedClientId }, 'refused node enrolment: the client id names a location device');
-      res.status(409).json({
-        error: 'location_device_id',
-        message: 'That id belongs to a located device. A node credential is never minted for it; '
-          + 'a location credential comes from Settings, Location.',
-      });
-      return;
-    }
+    if (await refuseLocationDeviceClientId(pool, requestedClientId, sub, res)) return;
     const clientId = requestedClientId || `node-${randomUUID()}`;
     // A DEVICE-bound token is the node's steady-state credential, not a 60-minute handoff, so
     // it does not expire by default: an edge machine that is off for a week must still come back

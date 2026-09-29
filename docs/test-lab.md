@@ -576,6 +576,12 @@ No real person's location is read or written, and no position is logged. The lin
   migration 178, and the machine-write class gate that discovers and drives the ingest.
 - `tests/unit/test-lab-location-device-registration.spec.ts`: this card on the fixture server, green and
   red.
+- `tests/unit/drone-node-location-fix.spec.ts`: the drone node itself, as its own process. A half credential
+  pair or a device id that is not a location device id stops it at start (exit 1); with a credential a
+  group admin issued, its fixes reach the real ingest as `POST /api/location/devices/<id>/presence` with
+  the Bearer credential and no service secret, flagged mock for the sim engine, on the interval, and are
+  stored as the device subject in the group place; `DRONE_LOCATION_INTERVAL_S=0` posts nothing. The card's
+  lifecycle step posts its fix with its own request, so this suite is what proves the node's posting.
 
 Run them with `npm run test:location` (Docker is required for the PostgreSQL suites). That is local
 evidence. After a deploy, run the card from the Test Lab.

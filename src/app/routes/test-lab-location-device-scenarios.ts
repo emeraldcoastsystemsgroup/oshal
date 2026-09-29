@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | AI Test Lab registration for ADR-169 slice L6 (group ownership, the location credential and the device ingest). Two steps on the running build. The route step, as the Lab's signed-in person over the loopback: the device ingest refuses a browser session (401 device_credential_required), issuing a credential is refused without a fresh sign-in (403 step_up_required), the devices list names the kinds that report under a credential, and nothing of the person's changes. The lifecycle step, for three uniquely tagged synthetic people on the real database: an admin makes a group with a member and a group place, enrols a drone to the group and issues its credential in process (the same service the route calls); the credential then drives the REAL ingest over the loopback as a drone node would, with the bearer alone, and the fix is stored as the device subject and placed in the group place; the same credential is refused on another device's path; the Lab's signed-in person cannot mint a node token for the drone's id through the real /api/join/enroll; the member reads the drone by reference (currentPlace, distanceBand, locatedDevice) and the stranger gets nothing. Everything created is deleted (the credential row, the device record with its observation and current rows, the place, the group with its memberships) and a zero-row check runs; incomplete cleanup is a failure. No real person's location is read or written and no position is ever logged.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The card links tests/unit/drone-node-location-fix.spec.ts: the lifecycle step posts the fix with its own request, so the drone node's own posting (the Bearer credential and no service secret, the path, the mock flag for the sim engine, the interval, and refusing to start on a half pair or a non-location device id) is proven by that suite, which runs the real node process against the real ingest.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -189,6 +190,7 @@ export const LOCATION_DEVICE_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/location-rls-no-operator-guard.spec.ts' },
     { level: 'unit', path: 'tests/unit/machine-write-identity.spec.ts' },
     { level: 'integration', path: 'tests/unit/test-lab-location-device-registration.spec.ts' },
+    { level: 'integration', path: 'tests/unit/drone-node-location-fix.spec.ts' },
   ],
   steps: [
     { id: 'device-routes', app: APP, label: ROUTES_LABEL, run: async (cookie, _prior, runtime) => deviceRoutesStep(cookie, runtime) },
