@@ -24,6 +24,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — guard-per-fix for the CSP default flip (report-only strict), the explicit env-tunable express.json limit, the reserved-prefix passthrough, and the report dedupe. Drives the REAL helmet + parser middleware over real HTTP.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Prove Alertmanager is reserved from the global parser and its route-local parser verifies a signature over the exact original JSON bytes, including insignificant whitespace.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The report-only header must not carry upgrade-insecure-requests (browsers ignore it there and log a console error on every page, which failed every surface in tests/app-surface-validation.spec.ts); the enforce header must still carry it.
  */
 
 import { createHmac } from 'node:crypto';
@@ -158,6 +159,8 @@ describe('CSP over real HTTP', () => {
     expect(policy['script-src']).not.toContain("'unsafe-inline'");
     // The collector is wired so report-only actually teaches us something.
     expect(policy['report-uri']).toEqual(['/api/security/csp-report']);
+    // Ignored on a report-only policy, and Chromium logs a console error for it on every page.
+    expect(policy).not.toHaveProperty('upgrade-insecure-requests');
   });
 
   it('ENFORCE: the same policy moves onto the BLOCKING header', async () => {
@@ -171,6 +174,8 @@ describe('CSP over real HTTP', () => {
     expect(blocking).toBeTruthy();
     expect(res.headers.get('content-security-policy-report-only')).toBeNull();
     expect(parseCsp(blocking as string)['object-src']).toEqual(["'none'"]);
+    // The blocking header is where the upgrade can take effect, so it keeps the directive.
+    expect(parseCsp(blocking as string)).toHaveProperty('upgrade-insecure-requests');
   });
 
   it('KILL SWITCH: OSHAL_CSP=off emits neither header', async () => {

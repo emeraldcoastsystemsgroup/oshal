@@ -253,7 +253,9 @@ linked ticket ownership is fallback; legacy unowned rows deny by default unless
      UI-tested pass" caution was costing observability for nothing. `OSHAL_STRICT_CSP=on` enforces
      (blocking header); `OSHAL_CSP=off` is the kill switch. Directives pinned: `default-src 'self'`,
      `object-src 'none'`, `base-uri`/`form-action`/`frame-ancestors`/`frame-src` `'self'`,
-     `worker-src 'self' blob:`, `upgrade-insecure-requests`, and `script-src` WITHOUT
+     `worker-src 'self' blob:`, `upgrade-insecure-requests` (on the blocking header only: browsers ignore it
+     on a report-only policy and log a console error for it on every page, so the report-only header
+     leaves it out), and `script-src` WITHOUT
      `'unsafe-inline'` unless a nonce is supplied. Inline `style=` is still permitted (styles cannot
      exfiltrate the way scripts can — the documented pragmatic step). The collector dedupes by
      `directive|blockedUri|documentUri` so report-only on a cockpit full of inline scripts cannot
