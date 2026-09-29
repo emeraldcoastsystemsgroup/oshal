@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The per-bot switch row is an operator-written row of oshal_bot_provider_switch, never the agent_config record: the store double now holds per-bot rows written ONLY through the runtime route's writeBotSwitch seam (wired as agent-provider-mount.ts wires it) and listAll no longer projects agentConfig — the pre-fix projection let the bot-row case pass with the seam absent. The case now asserts the row itself (scope, provider, updatedBy = the session's sub) and that the other bot has none; with the seam unwired the case is red (no bot-row ever appears).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The fallback-order control, driven in a real browser against the real route: an administrator types an ordered list and the stored row carries that EXACT order (asserted as an array - a chain that arrives reordered is a different chain), and an empty box stores [] rather than being guessed as "unchanged". The store double now mirrors the real upsert contract on that argument.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Two cases for the panel defects a review found: editing the MODEL used to wipe a stored fallback chain, because the panel sent fallbackOrder on every save and so could never ask the API to leave it alone; and null ("nothing configured") rendered identically to [] ("deliberately no failover"), so an administrator could not tell which one the fleet had. An untouched control now writes nothing, and a stored empty chain renders as `none`, which round-trips back to [].
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Agent-scoped Config Admin proves it never reads hidden shared configuration: an intentional legacy-secret refusal on GET /api/config cannot prevent the independent provider catalog, fleet row, or per-bot provider/model controls from rendering.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -183,6 +184,42 @@ async function providerSource(): Promise<string | null> {
 }
 
 describe('provider-switch-cockpit', () => {
+  it('keeps the per-bot provider controls live when shared config is intentionally unavailable', async () => {
+    let sharedConfigReads = 0;
+    const sharedConfigPattern = '**/api/config';
+    const isolatedPage = await browser!.newPage();
+    await isolatedPage.route(sharedConfigPattern, async (route) => {
+      sharedConfigReads += 1;
+      await route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: false,
+          error: 'Legacy plaintext secrets.json is present; run encrypted migration before secret operations',
+        }),
+      });
+    });
+    try {
+      await isolatedPage.goto(
+        `${origin}/config/?agentId=${encodeURIComponent(BOT_A.agentId)}&scope=agent#agentConfigSection`,
+        { waitUntil: 'networkidle' },
+      );
+      await isolatedPage.waitForSelector('#fleetDefaultForm[data-fleet-source="registry"]');
+      await isolatedPage.waitForSelector('#agentProviderInput');
+      await isolatedPage.waitForFunction(
+        () => (document.querySelector('#statusBanner')?.textContent || '').startsWith('Loaded bot config for'),
+      );
+
+      expect(sharedConfigReads, 'agent scope must not touch the hidden shared secret store').toBe(0);
+      expect(await isolatedPage.isDisabled('#fleetDefaultProviderInput')).toBe(false);
+      expect(await isolatedPage.isDisabled('#agentProviderInput')).toBe(false);
+      expect(await isolatedPage.locator('#agentProviderInput option[value="gemini"]').count()).toBe(1);
+      expect(await isolatedPage.getAttribute('#statusBanner', 'data-tone')).toBe('success');
+    } finally {
+      await isolatedPage.close();
+    }
+  }, 60_000);
+
   it('the per-bot provider select is live for a registry-declared bot and reports the registry rung', async () => {
     expect(BOT_A && BOT_B, 'the shipped registry must hold two declared-harness LLM bots').toBeTruthy();
     await page!.goto(`${origin}/config/`, { waitUntil: 'networkidle' });
@@ -283,6 +320,10 @@ describe('provider-switch-cockpit', () => {
 
     // And typing that same word back is not a provider named "none" — it round-trips to [].
     await page!.click('#saveFleetDefaultButton');
+    await page!.waitForFunction(
+      () => (document.querySelector('#statusBanner')?.textContent || '').startsWith('Fleet default is now'),
+      undefined, { timeout: 20_000 },
+    );
     expect(fleetRow?.fallbackOrder).toEqual([]);
   }, 60_000);
 
