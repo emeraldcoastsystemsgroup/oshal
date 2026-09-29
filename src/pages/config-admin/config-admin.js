@@ -16,6 +16,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | CM-6: Decomposed 1277-line file into orchestrator + 4 modules; added RAG + Google Search MCP service runtime sections
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Removed the retired Presentron + deprecated Google Search MCP service-runtime sections (wiring, state, load, render); RAG runtime config retained
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Fleet-default LLM provider switch panel (config-admin-fleet-default.js) above the per-bot section: loaded with the rest of the page, rendered from state, Save/Clear wired to PUT/DELETE /api/agents/provider-switch/fleet-default. The per-bot provider select is live now that the API reports providerOverridable for every registry bot (its save path is unchanged: PUT /runtime writes the bot's own row).
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | The page's start (app.init: event wiring plus the six load reads) runs only when no ADR-164 D6 audience view is active, so a shell framing /config/ with ?audience=company|family gets the read-only card from index.html and the full page never loads or wires its save controls; without an audience, with one the page does not provide, or on a core without the kit, it starts exactly as before.
  */
 
 import { createUiLogger, serializeUiError } from '../shared/ui-debug.js';
@@ -316,11 +317,13 @@ class ConfigAdminApp {
 }
 
 const app = new ConfigAdminApp();
-app.init().catch((error) => {
-  logger.error('Config admin bootstrap failed', { error: serializeUiError(error) });
-  const banner = document.getElementById('statusBanner');
-  if (banner) {
-    banner.textContent = `Config admin failed to load: ${error.message}`;
-    banner.dataset.tone = 'error';
-  }
-});
+if (!window.AppView || !AppView.active()) {
+  app.init().catch((error) => {
+    logger.error('Config admin bootstrap failed', { error: serializeUiError(error) });
+    const banner = document.getElementById('statusBanner');
+    if (banner) {
+      banner.textContent = `Config admin failed to load: ${error.message}`;
+      banner.dataset.tone = 'error';
+    }
+  });
+}
