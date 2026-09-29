@@ -69,6 +69,19 @@ Paths are core-relative unless prefixed `store/`, which means the store reposito
   the reason: a CLI harness owns its own tool loop, can read its credential home, and cannot revalidate
   oshal's handler generation or operation scopes mid-loop. So today an open model through Cline runs for
   the deployment operator in demo mode and for nobody unattended.
+- **Cline is the widest provider surface in the codebase, and the operator's point that "all models are
+  covered" through it is correct.** Cline's README ("Works With Every Model") lists Anthropic, OpenAI,
+  Google, OpenRouter with 200+ models, Vercel AI Gateway, Bedrock, Azure and Vertex, Cerebras and Groq,
+  Ollama and LM Studio, and any OpenAI-compatible API. In this tree the Cline-facing registry
+  (`any-bot/server/services/llm/registry/provider-definitions.js`) declares 21 provider ids with 24
+  `clineProvider` mappings, and the TS catalog (`src/features/llm-provider/services/provider-definitions.ts`)
+  declares 40 (counts from the commands at the end of this ADR). The cockpit's LLM Settings page
+  (`src/pages/chat/ui/chat-config-api-runtime.mjs`, fields from `src/api/ui-provider-fields.js`) is that
+  surface: saving a provider and model writes Cline's `globalState.json` through `buildGlobalState`
+  (`any-bot/server/app-modules/routes-llm-settings-stream.js:190-199`). D8 by contrast covers one shape,
+  the OpenAI-compatible HTTP API, which is what Ollama, LM Studio, vLLM and llama.cpp expose but not what
+  Bedrock, Vertex or Anthropic-native expose. Coverage and permission are separate questions: Cline
+  reaches every model and is refused unattended; D8 reaches a subset and would run unattended.
 - **The non-CLI route keeps oshal's own tool loop, and exists only as a caller's BYO connection.** An
   OpenAI-compatible provider with a base URL (`any-bot/server/controllers/TaskController.js:1229`) is built
   per request from `byoLlmConnection`, and it runs tool-less by the operator's 2026-09-22 decision
@@ -268,9 +281,17 @@ additive, and decide C after P1 has recorded what a 20B-class local model actual
   (proposal), or fully generated with no declaration?
 - **Q4. Degrade default.** `disable` with a message (proposal), `template` where one exists, or `hosted`
   when an account is present?
-- **Q5. Approve D8** (an operator-configured OpenAI-compatible provider as a bot's default, running
-  oshal's tool loop) before P3 starts, or choose the alternative: audit a brokered sandbox so the Cline
-  route to open models can run unattended.
+- **Q5. Which route carries the fleet to open models.** Two options, both real:
+  (a) **D8**, an operator-configured OpenAI-compatible provider as a bot's default running oshal's tool
+  loop; small, core, covers the OpenAI-compatible shape only, and does not wait on anything.
+  (b) **The audited brokered sandbox**, which is not hypothetical: it is ADR-040 step 1, the
+  "Multi-user ephemeral privileged runtime" entry in `docs/BACKLOG.md` (line 754 at core `3a31aa67`),
+  greenlit as operator decision 19 on 2026-09-21 and sequenced after "Production Vault hardening"
+  (decision 17) and the Postgres-engine issue/use/revoke proof (decision 18), with a written threat
+  model and an adversarial review as its security gate. Once it lands, the Cline route runs unattended
+  with Cline's full provider coverage and no new provider code in oshal. Choosing (b) means P3 waits
+  on that chain; choosing (a) does not. They are not exclusive: (a) can carry the Local edition until
+  (b) lands, after which a bot's harness is a per-bot choice.
 - **Q6. Persona doctrine.** ADR-036 says the persona embeds the full quality gate. D6 narrows that to
   identity and judgement and moves the gate into code. Confirm this is wanted before the P2 persona
   rewrite of `oshal-assistant` and `rca-specialist`.
@@ -340,4 +361,9 @@ for d in */; do d=${d%/}; [ -f "$d/oshal-app.yaml" ] || continue
   h=$(grep -rhoi "swarm-execute\|BotNodeClient\|executeBotOrInline\|inline-bot" "$d/routes" "$d/src-routes" 2>/dev/null | wc -l)
   printf "%-22s %5s %8s %6s %6s\n" "$d" "$p" "$pb" "$r" "$h"
 done | sort -k3 -rn
+
+# provider coverage (core, 2026-09-29 at 3a31aa67): Cline-facing registry ids, clineProvider mappings, TS catalog ids
+f=any-bot/server/services/llm/registry/provider-definitions.js
+grep -c "^  [a-z0-9-]*: {" $f; grep -c "clineProvider:" $f
+grep -c "^    id: '" src/features/llm-provider/services/provider-definitions.ts
 ```
