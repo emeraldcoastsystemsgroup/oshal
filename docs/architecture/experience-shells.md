@@ -25,6 +25,17 @@ Eight selectable experiences over one unchanged backend:
 same eight entries, every shell carries an experience picker in its top bar, and `/little-monsters`
 redirects to the classroom preset. Plain `/cockpit/` is unchanged: the experiences are opt-in.
 
+**Kernel applications inside the shells.** The whole-portal shells frame an application's first surface with the audience
+they request (`company` from Studio, Orbit and Commons; `family` from Jarvis). Seven kernel applications serve core
+pages there, and each now boots the shared kit with both audiences (one builder): Security Center (`/api/security/`, its
+own security status), Workflow Studio (`/workflow-studio/`, the caller's definitions and runs), DevOps + Vault
+(`/api/devops/console`, the caller's access and the Vault health), Bot Forge (`/api/forge`, the caller's active
+applications and pending imports), OSHAL Engineering's configuration page (`/config/`), Intelligent Processing
+(`/intelligent-processing`) and Person model (`/api/jarvis/ambient/person/`, voices heard, open asks and the
+projection status). Each card reads only GETs its page already makes, says every refusal with no figure in its place, and
+offers the full page in the same frame; the page's own start is gated on the kit's decision, so without an audience the
+page runs exactly as before. No route, authorization or data change.
+
 **Front-page modules.** Each homebase preset declares its front page in
 [homebase-config.js](../../src/experience/homebase-config.js) as two ordered columns (`modules.main`,
 `modules.aside`) of three entry kinds: a core module by name (`calendar`, `shopping`, `home-facts`,
@@ -188,6 +199,11 @@ stylesheets under `/experience/…`, so the strict CSP applies unchanged.
   free weekends; typed dates against the calendar; the page's ledger rows; in-context titles; the destination city; six widths
   across the welcome and every tab; the fixture's fall-through before opt-in).
 - `tests/unit/duffel-normalize-offer.spec.ts`: `scripts/oshal-duffel.js` flattens a Duffel offer and keeps each slice's city names.
+- `tests/unit/experience-kernel-<app>-view.spec.ts` (security-center, workflow-studio, devops, codex-packer, oshal-engineering,
+  intelligent-processing, person-model): the kernel applications' audience views. Each serves the real page at its real
+  route with the real kit and synthetic answers for exactly the reads the page already makes, and proves the company and
+  family cards, every refusal said with no figure, the in-frame action to the full page, and the full page starting
+  unchanged without an audience or with one it does not provide.
 - AI Test Lab card `experience-shells` (`test-lab-experience-scenarios.ts`): a read-only step over
   the entry pages and the feeds they join, classified as gap when the running image predates
   `src/experience`.

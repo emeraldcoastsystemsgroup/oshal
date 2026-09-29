@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Scenario text names the classroom homebase hosting the Little Monsters tools in place (ribbon profile); the browser suite it references now covers hosted tools and the two-phase paint.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Register the gap-closure specs (full-swarm hosting and declared facts, dependency-tier parity, central assistant, homebase) and the audience-view kit spec as regression tests of the experience scenario
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Register the composed front-pages spec (declared module order per preset, package summary cards from each application's own probe, D10 silence for an application outside the plan) as a regression test of the experience scenario
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Register the kernel applications' audience-view specs (Security Center, Workflow Studio, DevOps + Vault, Bot Forge, OSHAL Engineering's configuration page, Intelligent Processing, Person model): each serves the real page at its real route with the real kit and proves the company and family cards from the page's own reads, the refusals, the in-frame action, and the full page starting unchanged without an audience or with one it does not provide.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Register the Home build specs (opt-in check-ins over ADR-169, the household, the learner and the classroom, Routines, search, tabs, the agenda, the dialogs and the choices; the data seam) and the central-assistant build specs (the availability route over real HTTP, the data kit, and the Chromium build: Calendar and Travel in context, readback states and meter, the best-match line, the comparison across free weekends, the fit of typed dates, the page's ledger rows, six widths) plus the Duffel normaliser's unit spec.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Register the full-swarm build specs (pure readers; work panels with workflow, Approve and Cancel, the Routines panel, the day focus, visual cards, package facts, membership and the caller's own place, the portal sections and the six-width layout check) as regression tests of the experience scenario, and name them in its description
  */
@@ -85,6 +86,13 @@ export const EXPERIENCE_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/experience-nexus-data.spec.ts' },
     { level: 'browser', path: 'tests/unit/experience-nexus-build.spec.ts' },
     { level: 'unit', path: 'tests/unit/duffel-normalize-offer.spec.ts' },
+    { level: 'browser', path: 'tests/unit/experience-kernel-security-center-view.spec.ts' },
+    { level: 'browser', path: 'tests/unit/experience-kernel-workflow-studio-view.spec.ts' },
+    { level: 'browser', path: 'tests/unit/experience-kernel-devops-view.spec.ts' },
+    { level: 'browser', path: 'tests/unit/experience-kernel-codex-packer-view.spec.ts' },
+    { level: 'browser', path: 'tests/unit/experience-kernel-oshal-engineering-view.spec.ts' },
+    { level: 'browser', path: 'tests/unit/experience-kernel-intelligent-processing-view.spec.ts' },
+    { level: 'browser', path: 'tests/unit/experience-kernel-person-model-view.spec.ts' },
   ],
   steps: [{ id: 'pages', app: 'cockpit', label: 'Experience pages and their joined reads', run: (cookie) => experienceShellsStep(cookie) }],
 }];
