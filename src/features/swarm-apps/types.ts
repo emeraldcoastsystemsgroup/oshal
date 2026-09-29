@@ -34,6 +34,7 @@
  * 28 | maintainer@emeraldcoastsystemsgroup.com   | Removed `foundation?: { persona: string }` (CKR-14 / D7). The key was declared here and in five store manifests and read by NOTHING - not either persona parser, not either bot-node provider. Its only other appearance is GROUP_FORBIDDEN_KEYS, which checks for its ABSENCE and is left in place: a group manifest declaring it is still rejected, which costs nothing and keeps group manifests clean. Deleted only AFTER the five store manifests dropped the key and shipped (oshal-applications #240) - core-first would have left the store validating a path field core no longer typed. Existing manifests keep the key harmlessly, as entry 26 records: the loader tolerates unknown keys.
  * 29 | maintainer@emeraldcoastsystemsgroup.com   | SwarmApplicationSummary gained `connectors: {required, optional}` - the provider ids this bundle includes, projected from the ADR-085 dependency tiers. The applications catalog could list installed and available packages but had no way to say which providers a bundle uses or whether they are connected, so it could not tell a connected bundle from one waiting on a credential. Projected here, beside icon/hasSurface, because a second reader of the raw dependencies keys would disagree with the shared tier contract the installer and loader already use.
  * 30 | maintainer@emeraldcoastsystemsgroup.com   | P8 makes chatBot the explicit metadata-only concierge pointer for surfaced apps and code-less groups. Groups may reference only a required active member's canonical concierge (activation proves it); they still cannot carry executable bots, workflows, or tools.
+ * 31 | maintainer@emeraldcoastsystemsgroup.com   | ADR-170 rating label: the closed APP_RATING_TIERS (T1-T4; T0 is code and never declared), APP_RATING_GENERATIONS (none|local|hosted), APP_RATING_DEGRADES (template|hosted|disable|reduced) and APP_RATING_MEMORY_BASES (declared|observed) with guards, the AppRatingMemory/AppRatingFeature/AppRatingDeclaration shapes, and an optional `rating` on SwarmAppManifest (operator 2026-09-29: token rating per application plus container memory low/high).
  */
 
 import type { BriefingDeclaration } from '@/shared/briefings';
@@ -107,6 +108,82 @@ export const SWARM_APP_SUITES = [
 
 /** One of the closed set of catalog suites (ADR-097). */
 export type SwarmAppSuite = (typeof SWARM_APP_SUITES)[number];
+
+/**
+ * ADR-170 D1: the closed capability tiers, what a feature asks of a model. T0 (deterministic code)
+ * is never declared: a package with no model-touching feature declares `rating.features: []`.
+ *   T1 pick from an enumerated set, route, rank, yes/no · T2 a bounded JSON plan code renders ·
+ *   T3 grounded reasoning with citations over retrieved context · T4 long-horizon tool loops.
+ */
+export const APP_RATING_TIERS = ['T1', 'T2', 'T3', 'T4'] as const;
+/** One of the closed capability tiers (ADR-170 D1). */
+export type AppRatingTier = (typeof APP_RATING_TIERS)[number];
+/** @description Type guard for the closed tier set; the loader fails the load on anything else. */
+export function isAppRatingTier(value: unknown): value is AppRatingTier {
+  return typeof value === 'string' && (APP_RATING_TIERS as readonly string[]).includes(value);
+}
+
+/** ADR-170 D9: the generation backend class a feature depends on, separate from the LLM tier. */
+export const APP_RATING_GENERATIONS = ['none', 'local', 'hosted'] as const;
+/** One of the closed generation backend classes (ADR-170 D9). */
+export type AppRatingGeneration = (typeof APP_RATING_GENERATIONS)[number];
+/** @description Type guard for the closed generation set. */
+export function isAppRatingGeneration(value: unknown): value is AppRatingGeneration {
+  return typeof value === 'string' && (APP_RATING_GENERATIONS as readonly string[]).includes(value);
+}
+
+/**
+ * ADR-170 D4/D9: what a feature does when the active model is under its tier or context floor.
+ * `template` runs the T0 path, `hosted` routes to a hosted rail only when the caller has one,
+ * `disable` returns a clear message, `reduced` runs a declared smaller instruction set locally.
+ */
+export const APP_RATING_DEGRADES = ['template', 'hosted', 'disable', 'reduced'] as const;
+/** One of the closed degrade behaviours (ADR-170 D4/D9). */
+export type AppRatingDegrade = (typeof APP_RATING_DEGRADES)[number];
+/** @description Type guard for the closed degrade set. */
+export function isAppRatingDegrade(value: unknown): value is AppRatingDegrade {
+  return typeof value === 'string' && (APP_RATING_DEGRADES as readonly string[]).includes(value);
+}
+
+/** Where a memory figure came from: typed by the maintainer, or observed by a measurement run. */
+export const APP_RATING_MEMORY_BASES = ['declared', 'observed'] as const;
+/** One of the closed memory-basis values. */
+export type AppRatingMemoryBasis = (typeof APP_RATING_MEMORY_BASES)[number];
+/** @description Type guard for the closed memory-basis set. */
+export function isAppRatingMemoryBasis(value: unknown): value is AppRatingMemoryBasis {
+  return typeof value === 'string' && (APP_RATING_MEMORY_BASES as readonly string[]).includes(value);
+}
+
+/**
+ * Container memory the application needs, in MiB, including any engine container it owns:
+ * `low` is what it takes to install and run, `high` the peak or comfortable size.
+ */
+export interface AppRatingMemory {
+  low: number;
+  high: number;
+  basis: AppRatingMemoryBasis;
+}
+
+/** One model-touching feature's label fields (ADR-170 D2/D9/D10); the token numbers are generated, not declared. */
+export interface AppRatingFeature {
+  /** Kebab-case feature id, unique within the package. */
+  id: string;
+  /** The thing one transaction is: an email, a deck, a tutoring turn, a portrait. */
+  unit: string;
+  tier: AppRatingTier;
+  generation: AppRatingGeneration;
+  degrade: AppRatingDegrade;
+  /** Smallest context window (tokens) the feature is declared to need. */
+  contextFloor?: number;
+  /** What the reduced edition drops; required when degrade is `reduced`. */
+  reducedEdition?: string;
+}
+
+/** The `rating:` block a package declares: the label a person reads before installing (ADR-170 D10). */
+export interface AppRatingDeclaration {
+  memoryMb: AppRatingMemory;
+  features: AppRatingFeature[];
+}
 
 /**
  * @description Type guard for SwarmAppSuite — used by the manifest loader to fail closed on
@@ -772,6 +849,8 @@ export interface SwarmAppManifest {
    *  Optional for pre-097 installed packages (loader warns); every in-repo manifest and
    *  everything the generators emit declares it. Never derived from tool categories. */
   suite?: SwarmAppSuite;
+  /** ADR-170: the rating label (memory low/high, per-feature tier); validated by swarm-app-rating.ts. */
+  rating?: AppRatingDeclaration;
   /** Optional: a deterministic / UI-only app (e.g. payments) declares no bots. */
   bots?: SwarmAppBotDeclaration[];
   briefings?: BriefingDeclaration[];

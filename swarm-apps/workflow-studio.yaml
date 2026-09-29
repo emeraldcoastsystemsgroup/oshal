@@ -22,6 +22,16 @@
 
 name: workflow-studio
 suite: ai-engineering   # ADR-097: primary catalog shelf (tools keep their own category:)
+# ADR-170 rating label: container memory in MiB (declared by the rule in docs/apps/ai-usage-ledger.md)
+# and each model-touching feature. Token and model columns are generated, never typed here.
+rating:
+  memoryMb: { low: 64, high: 256, basis: declared }
+  features:
+    - id: workflow-draft
+      unit: workflow draft
+      tier: T2
+      generation: none
+      degrade: template
 displayName: Workflow Studio
 description: >-
   Design workflows by conversation. Tell the workflow-assistant what process you want to

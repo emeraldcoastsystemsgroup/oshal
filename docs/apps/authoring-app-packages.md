@@ -482,6 +482,35 @@ Operators manage explicit assignments in the framework-owned Applications matrix
 not write the assignment store. Deploy migration 121 before a declared app, observe with
 `OSHAL_APP_ACCESS_MODE=shadow`, seed assignments, then switch to `enforce` (the default).
 
+## Rating label (`rating:`, ADR-170)
+
+Every package declares what it asks of the platform, so a person can read it before installing: the
+container memory it adds, and for each feature that calls a model, what one transaction is and what
+capability the model needs.
+
+```yaml
+rating:
+  memoryMb: { low: 64, high: 256, basis: declared }   # MiB the app adds, incl. its engine containers
+  features:
+    - id: daily-digest
+      unit: daily digest          # the thing one transaction is
+      tier: T3                    # T1 pick | T2 bounded plan | T3 grounded reasoning | T4 tool loops
+      generation: none            # none | local (ComfyUI, TTS harness) | hosted (Veo)
+      degrade: reduced            # template | hosted | disable | reduced
+      reducedEdition: T2 summary over signals ranked in code
+```
+
+- A package with no model in the loop declares `features: []`. That is a statement, not an omission.
+- Declared memory follows one rule until a measurement replaces it with `basis: observed`: 64 MiB low
+  per bot-node container, 32 MiB for an inline-only app, an engine container at its idle from the
+  [sizing runbook](../runbooks/docker-engine-memory-sizing.md) rounded up to the next 32 MiB, and
+  `high` at four times `low`.
+- Token counts and verified models are never typed here. They are generated from `chat_tasks`, Token
+  Chase frames and Test Lab runs, and the loader refuses them as unknown fields.
+- The loader fails a malformed block and warns on a missing one. Each repository's generated ledger
+  (`node scripts/ai-usage-ledger.js --core . --out docs/apps/ai-usage-ledger.md` in core) lists every
+  package, and its `--check` gate fails on a stale ledger or an unrated package.
+
 ## Dependencies + lifecycle
 
 An app declares what it needs in two tiers. The difference is what the installer does when the
