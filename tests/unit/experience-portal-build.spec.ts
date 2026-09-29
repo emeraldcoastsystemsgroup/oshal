@@ -574,7 +574,7 @@ describe('portal sections over the live swarm', () => {
 async function layoutProblems() {
   return page.evaluate(() => {
     const width = document.documentElement.clientWidth;
-    const out = [...document.querySelectorAll('button,input,textarea,select,h1,h2,h3')].filter(e => {
+    const out = Array.from(document.querySelectorAll('button,input,textarea,select,h1,h2,h3')).filter(e => {
       if (e.closest('dialog:not([open])')) return false;
       const r = e.getBoundingClientRect(); return r.width > 0 && (r.right > width + 2 || r.left < -2);
     }).map(e => e.outerHTML.slice(0, 120));
