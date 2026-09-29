@@ -9,6 +9,9 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Runner inputs are host-only. A card may not name an OSHAL_VERIFY_* variable as an api-environment source unless compose forwards it; today compose forwards none. Such a variable may appear only inside the host command that supplies it. And the dev-workspace card, run with OSHAL_VERIFY_DEV_NOTES_PROBE set in this process (standing in for the api's environment), must still answer the handover ask as a host-runner gap: no anonymous query, no Jarvis call, dev mode put back. Red if the Lab adapter stops passing its empty runner environment, or if the description again sends the operator to the api's environment.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The registry gains the vids-publish case. The adapter's replies carry the raw body's byte length and sha256, and its `files` port answers a named probe from this process's disk (a real file under a temporary workspace root) and refuses any other probe name.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | The registry gains the token-chase-replay case (explicit-only: it may spend one model turn starting a tagged file-tools run).
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | The registry gains the create-region-edit case. The adapter's replies carry the raw body as `bytes`, and its upload names the file part the case gives (`image` for Create). The card, run as the Lab's principal against a PAID provider, answers a gap naming the host command that carries --allow-paid after the two read-only preconditions and nothing else; against a free provider its upload reaches Create's route with exactly one `image` part carrying a real PNG.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Run the Lab ports against a real loopback Express/multer server: exact PNG bytes, the single image part Create accepts, default file compatibility, session-cookie isolation and anonymous reads. No replacement fetch or installed service.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | The Create provider fixture advertises costConsentVersion 1, matching the required server-enforced cost-cap contract.
  */
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -19,6 +22,7 @@ import { SCENARIOS, scenariosForRun, type ScenarioRunContext } from '@/app/route
 import { LIVE_ACCEPTANCE_SCENARIOS } from '@/app/routes/test-lab-live-acceptance-scenarios';
 import { LIVE_ACCEPTANCE_CASES, labPorts, runLiveAcceptanceCase } from '@/app/routes/test-lab-live-acceptance';
 import type { AppContext } from '@/app/composition/app-context';
+import { assertImageHttpPorts, type ImageHttpPorts } from '../fixtures/live-acceptance-http';
 
 /** Runner-input variables a card names; compose forwards none of them to the api today. */
 const RUNNER_VARIABLE = /\bOSHAL_VERIFY_[A-Z0-9_]*[A-Z0-9]\b/g;
@@ -48,9 +52,15 @@ async function labFileProbe(ports: { files: { state: (n: string, id: string) => 
 }
 
 describe('live-acceptance Test Lab cards', () => {
+  it('carries binary bodies and multipart image fields over real HTTP as the Lab caller', async () => {
+    await assertImageHttpPorts(apiBaseUrl => labPorts('sid=fixture', {
+      ownerSub: 'fixture|lab-owner', issuer: 'https://issuer.example', apiBaseUrl, ctx: {} as AppContext,
+    } as ScenarioRunContext) as unknown as ImageHttpPorts, { cookie: 'sid=fixture' });
+  });
+
   it('registers one explicit-only card per case, with its host command and suites on disk', () => {
     expect(LIVE_ACCEPTANCE_SCENARIOS).toHaveLength(LIVE_ACCEPTANCE_CASES.length);
-    expect(LIVE_ACCEPTANCE_CASES.map((c) => c.module.KEY)).toEqual(['response-renderer', 'congress', 'dev-workspace', 'floater', 'linkedin', 'commerce', 'lm-class-material', 'jarvis-cache', 'trading-parity', 'vids-publish', 'token-chase-replay']);
+    expect(LIVE_ACCEPTANCE_CASES.map((c) => c.module.KEY)).toEqual(['response-renderer', 'congress', 'dev-workspace', 'floater', 'linkedin', 'commerce', 'lm-class-material', 'jarvis-cache', 'trading-parity', 'vids-publish', 'token-chase-replay', 'create-region-edit']);
     for (const scenario of LIVE_ACCEPTANCE_SCENARIOS) {
       const key = scenario.id.replace(/^live-acceptance-/, '');
       expect(SCENARIOS.filter((s) => s.id === scenario.id)).toEqual([scenario]);
@@ -146,6 +156,7 @@ describe('live-acceptance Test Lab cards', () => {
       const anonymous = (labPorts('sid=abc', runtime) as { anonymous: (m: string, r: string) => Promise<{ status: number; byteLength: number; sha256: string }> }).anonymous;
       const refused = await anonymous('GET', '/api/dev-workspace-index/query?q=ADR-077');
       expect(refused).toMatchObject({ status: 404, byteLength: 2, sha256: createHash('sha256').update('{}').digest('hex') });
+      expect((refused as unknown as { bytes: Buffer }).bytes).toEqual(Buffer.from('{}'));
       expect(seen).toEqual([{ url: 'http://127.0.0.1:5000/api/dev-workspace-index/query?q=ADR-077', cookie: null }]);
       seen.length = 0;
       await labFileProbe(labPorts('sid=abc', runtime) as { files: { state: (n: string, id: string) => Promise<string> } });
@@ -156,6 +167,41 @@ describe('live-acceptance Test Lab cards', () => {
       }
       expect(seen).toEqual([]);
       expect((await runLiveAcceptanceCase('congress', '', runtime)).state).toBe('degraded');
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it('never runs a paid image edit from the Lab, and uploads the one `image` part Create reads on a free provider', async () => {
+    const seen: Array<{ route: string; cookie: string | null; parts: string[]; png: boolean }> = [];
+    let costClass = 'paid';
+    const realFetch = globalThis.fetch;
+    const reply = (status: number, json: unknown) => new Response(JSON.stringify(json), { status, headers: { 'content-type': 'application/json' } });
+    globalThis.fetch = (async (url: string, init: RequestInit) => {
+      const route = `${init.method} ${new URL(url).pathname}`;
+      const form = init.body instanceof FormData ? init.body : null;
+      const file = form?.get('image');
+      const png = file instanceof Blob && Buffer.from(await file.arrayBuffer()).subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+      seen.push({ route, cookie: new Headers(init.headers).get('cookie'), parts: form ? [...form.keys()] : [], png });
+      if (route === 'GET /api/create/permissions') return reply(200, { permissions: { view: true, read: true, create: true, change: true, delete: true, export: true, generate: true } });
+      if (route === 'GET /api/create/region-edit-provider') return reply(200, { configured: true, provider: 'fixture-image', costClass, dailyCap: 25, costConsentVersion: 1 });
+      return reply(400, { error: 'invalid_project_upload' });
+    }) as typeof fetch;
+    const runtime = { ownerSub: 'fixture|lab-owner', issuer: 'https://issuer.example', apiBaseUrl: 'http://127.0.0.1:5000',
+      ctx: { pool: { query: async () => ({ rows: [] }) }, ticketService: { getTicket: async () => null, deleteTicket: async () => undefined } } as unknown as AppContext } as ScenarioRunContext;
+    try {
+      const paid = await runLiveAcceptanceCase('create-region-edit', 'sid=abc', runtime);
+      expect(paid.state).toBe('gap');
+      expect(paid.detail).toContain('The operator consents by running node scripts/operations/live-acceptance.js create-region-edit --allow-paid on the host.');
+      expect(seen.map((s) => s.route)).toEqual(['GET /api/create/permissions', 'GET /api/create/region-edit-provider']);
+      seen.length = 0;
+      costClass = 'free';
+      const free = await runLiveAcceptanceCase('create-region-edit', 'sid=abc', runtime);
+      expect(free.state).toBe('fail');
+      expect(free.detail).toContain('the image upload answered HTTP 400 invalid_project_upload, not 201 with an asset');
+      expect(seen[2]).toEqual({ route: 'POST /api/create/project-assets', cookie: 'sid=abc', parts: ['image'], png: true });
+      expect(seen).toHaveLength(3);
+      expect(seen.every((s) => s.cookie === 'sid=abc')).toBe(true);
     } finally {
       globalThis.fetch = realFetch;
     }

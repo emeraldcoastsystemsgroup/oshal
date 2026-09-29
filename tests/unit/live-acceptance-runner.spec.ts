@@ -9,6 +9,8 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The `--expect-store-bound` flag parses into the case options every selected case receives (expectStoreBound), false when absent.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The `raw` port sends exact bytes under the one content type it was given, with the token, the way the files browser uploads.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | The `second` port. OSHAL_VERIFY_SECOND_PAT is read by name from the environment or a real .env file on disk (quoted, CRLF), the same read as the operator token, and a name that is not a plain variable name is refused. bindPorts binds `second` only when that token is present: its requests carry the second token and never the operator's, the operator's ports keep the operator's, it carries the subject its own whoami resolved, and a second token that resolves to nobody still binds (the case reports the refusal). Without the token there is no port and no extra request. The runner's own entry, given a .env with both tokens, resolves both callers before the case runs and prints neither token nor either subject. Fetch is a recording double; the real companion is the host run with both tokens on the box.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | For the create-region-edit case: `--allow-paid` parses into the `allowPaid` option every selected case receives, false unless typed; every reply carries its raw body as `bytes` (a binary body with bytes that are not valid UTF-8 comes back exact); the multipart port names its file part `file.field` when given (`image`, which Create's upload route reads) and `file` otherwise.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Run the shipping HTTP ports against a real loopback Express/multer server: exact PNG bytes and digest, the single image part Create accepts, a refused default part there, legacy file-part compatibility, bearer isolation and anonymous reads.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
@@ -16,6 +18,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { assertImageHttpPorts } from '../fixtures/live-acceptance-http';
 
 const requireCjs = createRequire(import.meta.url);
 const common = requireCjs('../../scripts/lib/live-acceptance-common.js');
@@ -169,16 +172,26 @@ describe('the closed statement set and the in-container helper', () => {
 });
 
 describe('the host runner', () => {
+  it('carries binary bodies and multipart image fields over real HTTP with the operator credential', async () => {
+    await assertImageHttpPorts(base => runner.httpPorts(base, TOKEN), { authorization: `Bearer ${TOKEN}` });
+  });
+
   it('sends the token only as the Authorization header of its own requests', async () => {
     const seen: Array<{ url: string; init: RequestInit }> = [];
     const fetchImpl = async (url: string, init: RequestInit) => { seen.push({ url, init }); return new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } }); };
     const ports = runner.httpPorts('http://127.0.0.1:35457', TOKEN, fetchImpl);
     const res = await ports.api('POST', '/api/x', { a: 1 }, { headers: { origin: 'http://127.0.0.1:35457', 'x-oshal-test-lab': '1' } });
     await ports.upload('/api/artifacts/handles/upload', { type: 'application/pdf' }, { name: 'a.pdf', type: 'application/pdf', bytes: Buffer.from('%PDF-') });
+    await ports.upload('/api/create/project-assets', {}, { field: 'image', name: 'a.png', type: 'image/png', bytes: Buffer.from([0x89, 0x50]) });
     expect(res).toMatchObject({ status: 200, json: { ok: true } });
     expect(seen[0].init.headers).toEqual({ 'content-type': 'application/json', origin: 'http://127.0.0.1:35457', 'x-oshal-test-lab': '1', authorization: `Bearer ${TOKEN}` });
     expect(seen[0].init.redirect).toBe('manual');
     expect(seen[1].init.body).toBeInstanceOf(FormData);
+    expect([...(seen[1].init.body as FormData).keys()]).toEqual(['type', 'file']);
+    const image = seen[2].init.body as FormData;
+    expect([...image.keys()]).toEqual(['image']);
+    expect(Buffer.from(await (image.get('image') as Blob).arrayBuffer())).toEqual(Buffer.from([0x89, 0x50]));
+    expect(seen[2].init.headers).toEqual({ authorization: `Bearer ${TOKEN}` });
     expect(seen.every((s) => s.url.startsWith('http://127.0.0.1:35457/'))).toBe(true);
   });
 
@@ -212,6 +225,7 @@ describe('the host runner', () => {
     const res = await runner.httpPorts('http://127.0.0.1:35457', TOKEN, fetchImpl).anonymous('GET', '/api/vids-public/x/video.mp4');
     expect(res).toMatchObject({ status: 200, contentType: 'video/mp4', byteLength: body.length, json: {} });
     expect(res.sha256).toBe(createHash('sha256').update(body).digest('hex'));
+    expect(Buffer.isBuffer(res.bytes) && res.bytes.equals(body)).toBe(true);
     expect(res.text).toBe(await new Response(body).text());
   });
 
@@ -316,11 +330,14 @@ describe('the host runner', () => {
     expect(one.seen.map((s) => s.authorization)).toEqual([`Bearer ${TOKEN}`, `Bearer ${TOKEN}`]);
   });
 
-  it('parses --expect-store-bound into the options every case receives', () => {
-    expect(runner.parseArgs(['token-chase-replay', '--expect-store-bound'])).toEqual({ selector: 'token-chase-replay', recordDoc: false, expectStoreBound: true });
-    expect(runner.parseArgs(['all', '--record-doc'])).toEqual({ selector: 'all', recordDoc: true, expectStoreBound: false });
-    expect(runner.caseOptions(runner.parseArgs(['all', '--expect-store-bound']))).toEqual({ expectStoreBound: true });
-    expect(runner.caseOptions(runner.parseArgs(['all']))).toEqual({ expectStoreBound: false });
+  it('parses --expect-store-bound and --allow-paid into the options every case receives', () => {
+    expect(runner.parseArgs(['token-chase-replay', '--expect-store-bound'])).toEqual({ selector: 'token-chase-replay', recordDoc: false, expectStoreBound: true, allowPaid: false });
+    expect(runner.parseArgs(['all', '--record-doc'])).toEqual({ selector: 'all', recordDoc: true, expectStoreBound: false, allowPaid: false });
+    expect(runner.parseArgs(['create-region-edit', '--allow-paid'])).toEqual({ selector: 'create-region-edit', recordDoc: false, expectStoreBound: false, allowPaid: true });
+    expect(runner.caseOptions(runner.parseArgs(['all', '--expect-store-bound']))).toEqual({ expectStoreBound: true, allowPaid: false });
+    expect(runner.caseOptions(runner.parseArgs(['all']))).toEqual({ expectStoreBound: false, allowPaid: false });
+    expect(runner.caseOptions(runner.parseArgs(['create-region-edit', '--allow-paid']))).toEqual({ expectStoreBound: false, allowPaid: true });
+    expect(runner.caseOptions(runner.parseArgs(['create-region-edit', '--allow-paid=yes'])).allowPaid).toBe(false);
   });
 
   it('exits 0 only when every case passed, and refuses without a token', async () => {

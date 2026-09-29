@@ -591,3 +591,73 @@ provider/nightly evidence and paper acceptance remain owed. No deployment or bac
 |---|---|---|---|
 | The replay store and its Redis client on the first connect (`tests/unit/delegation-replay-store-redis.spec.ts`) | None at the boundary: the store is built from a Redis address alone, as a bot node builds it, so the client and its options (`lazyConnect`, `maxRetriesPerRequest: 1`, `enableOfflineQueue: false`) are the store's own, against a `redis:7-alpine` server the spec starts and removes (`tests/helpers/disposable-redis.ts`; no address is read from the environment). Two concurrent first `consume()` calls with different `jti` values are both accepted, the two receipts are read back from the server, and the server's client list shows one connection that issued `SET`. A replay of either receipt is refused, and two concurrent uses of one `jti` yield one acceptance and one key. The failed connect runs against a loopback listener that accepts and hangs up: every waiter and a later caller get `DelegationReplayStoreUnavailableError`. | This is the real companion. Live: `node scripts/operations/career-rail-live-proof.js --complete` as the first delegations a career bot receives after it starts, on a deploy that carries this change. | Guard green 2026-09-29. On `c6cf0f94` the first three cases are red: one of the two calls rejects and the store logs `Stream isn't writeable and enableOfflineQueue options is false`. Live receipt owed. |
 | The same race and the fail-closed paths over a stand-in client (`tests/unit/delegation-replay-store.spec.ts`, the first-connect cases) | The client is a stand-in that holds the status the way the real one does at this boundary: `connect()` moves it to `connecting` before returning and settles when the test says, a second `connect()` is refused, and `SET` is refused until the status is `ready`. It lets the spec place the second caller at `connecting` and at `connect`, fail the connect with both callers waiting, and bring the client back to `ready` afterwards. It proves nothing about what the real client does. | The first row above. | Scoped double |
+
+## Create region-edit live acceptance (2026-09-29)
+
+The existing `create-region-edit` host case and explicit-only Lab card are one API-driven
+generate/accept cycle. Review is against the shipped Create region routes, project/region stores,
+asset normalization and compositor in the applications repository, not only the case's own doubles.
+After the first independent-review corrections, the core region guard passed 37/37 and final
+Lab registration guard 7/7. A combined targeted mutation caused 16 expected failures; restoring all safeguards
+returned the region suite to 37/37. None of these guards is an installed-provider pass.
+
+A subsequent correction tracks possible admission before sending the POST. Lost or
+malformed admission replies preserve the tagged project; ordinary ready replies now require the
+same terminal/candidate/reported-spend accounting as cancellation before deletion is permitted.
+Regressions preserve an actually admitted doubled job after connection rejection or a missing ID,
+retain malformed ordinary ready candidates/spend while recording valid partial evidence, and refuse
+an HTTP 200 cancellation without the matching terminal record.
+
+The coordinating parent's fresh run covers this exact frozen revision: **73/73 tests across 3 files**
+(region case, host runner and Lab registration), exit 0 in 35.32 s, started 2026-09-29 at 12:51:21
+America/Chicago. Preflight free memory was 2084 MiB; one fork worker used a 384 MiB heap cap with
+a 128 MiB runner. No provider execution occurred. The parent also reports independent source
+review approval with unchanged implementation/test hashes. Two subsequent minimal cleanup mutations
+caused exactly 2 expected failures without pre-POST admission tracking and 6 with premature ordinary
+terminal accounting. Each was restored to the approved case-module hash; the nine new cleanup guards
+passed before and after, then the full three-file set passed **73/73** in 24.04 s, exit 0, with no
+failures or skips. Tests remained unchanged. Only proof documentation changes after restoration.
+
+The parent subsequently reports both full core typechecks passed: `tsconfig.json` and
+`tsconfig.server.json`, with outer exit 0 through file-redirected stdin. The locked compiler ran
+in a 3 GiB container with `--noEmit --preserveSymlinks`; inputs were the exact HEAD source archive
+plus the sole dirty TypeScript Lab-scenarios overlay. No implementation or test changes followed.
+These are core typecheck receipts, not compiled-store or installed-service proof.
+
+Separate parent-reported actual compiled Create results: API **7/7** (1.30 s), real PostgreSQL
+**22/22** (9.25 s), real browser **6/6** (22.61 s), zero failures/skips, run sequentially with a
+synthetic provider only. Each PostgreSQL fixture reported `cleanupVerified: true`; the parent still
+owns separate final empty-inventory verification. These are not installed-provider or canonical
+accounting receipts.
+
+| Boundary audited | Mock/stub disposition | Required real companion | Status |
+|---|---|---|---|
+| PNG generation, decoding and per-pixel comparison (`tests/unit/live-acceptance-create-region-edit.spec.ts`) | Real zlib/CRC code and real `sharp` generate independent PNG encodings and expected RGBA. New RGB/grey fixtures require sharp to observe a transparent pixel while this reader explicitly refuses `tRNS`. The case tests synthesize candidate pixels themselves; they do not call Create's shipping compositor. | Applications repository `create/tests/region-edit-composite.test.mjs` runs that compositor with real `sharp`, including masks, feathering and crop geometry. | Current PNG guards green. Ignoring tRNS reds both transparency cases in the combined mutation. Store companion unrun here. |
+| Admission, acceptance verdict and cleanup (same spec) | `live-acceptance-fake-api.ts` and in-memory project, revision, permission, provider and accounting replies are doubles. Cases change layer order/canvas in both accepted and stored documents, and complete a candidate during cancellation. Additional cases cover uncertain admission and malformed ordinary terminal replies; unresolved provenance must retain the project. | Applications repository `create/tests/region-edit-api.test.mjs` exercises compiled routes over loopback HTTP with a strict non-writing database double. `create/tests/region-edit-postgres.test.mjs` adds actual migrations, owner policies and revision transactions on disposable PostgreSQL. The named fixture provider and cost recorder remain doubles in both. | Current core three-file set 73/73 after exact restoration; independent source review approved. New cleanup mutations caused 2/6 expected failures. Bypassing original-document checks and post-cancel accounting caused 5/3 failures in the prior combined mutation; earlier persisted-readback and early-cancellation mutations caused 3/4 separately. Parent reports compiled API 7/7 and PostgreSQL 22/22 green. |
+| Server-enforced cost-class consent | Core fixtures advertise `costConsentVersion: 1`; unsupported/missing versions must cause zero uploads/project writes. Every body carries `maxCostClass: free`, except explicit paid opt-in plus paid preflight permits `paid`. These doubled-body assertions do not prove the server enforces a queued job's cap. | The separately implemented server companion must resolve the actual provider after queueing, validate the captured cap immediately before generation, reject unknown classes or paid-under-free with `region_edit_cost_cap_exceeded`, and record zero generation calls on refusal. No unchecked fallback. Omitted caps preserve legacy semantics; the new core driver never omits one. | Core guards green; disabling version checking and widening a free preflight to paid reds 5 and 1 guards in the combined mutation. Parent reports actual compiled API 7/7 and PostgreSQL 22/22 with a synthetic provider; no installed-provider enforcement receipt is claimed. This caps a class, not dollars or provider identity. |
+| Host and Lab binary reply/multipart wiring (`tests/unit/live-acceptance-runner.spec.ts`, `tests/unit/test-lab-live-acceptance-registration.spec.ts`) | Existing fetch recorders remain for branch and option-isolation coverage. The new `tests/fixtures/live-acceptance-http.ts` companion uses real fetch, an ephemeral loopback Express server and real multer with Create's single-image/zero-field upload contract. Synthetic credentials only; no database or installed route. | Both shipping adapters cross HTTP with exact PNG bytes and digests, the `image` part succeeds, the default part is refused there but remains compatible with the legacy `file` route, and anonymous reads omit credentials. Installed acceptance still owes the actual Create route/store boundary. | Both specs passed again within the parent's current 73/73 three-file run, including both real transport guards. Earlier separate results were host runner 20/20 and Lab registration 7/7. |
+| Editor workflow, installed provider and accounting | The core case proves mask/document preservation only: it does not open the editor, perform two manual-edit/regenerate cycles, grade instruction fidelity, test another owner, or independently query canonical spend records. Reported cost metadata and a retained-ledger receipt are not accounting verification. | Applications repository `create/tests/browser/create-region-edit-proof.mjs` covers the editor in real Chromium with disposable PostgreSQL and the named fixture provider. Separately, an authorized installed run and independent canonical accounting evidence are required for real provider/spend claims. | Parent reports real browser companion 6/6 green with a synthetic provider. Installed acceptance and canonical accounting evidence remain pending. |
+
+Earlier focused runs and the combined mutation used one fork worker, 128 MiB runner / 384 MiB worker
+heap caps and UV threadpool 1, without Docker or an installed service. Each preflight had at least
+1400 MiB free and allowed 250 MiB overhead while retaining at least 600 MiB reserve. The latest
+cleanup runs used the same bounds; the final three-file run had 5188 MiB free at preflight.
+Commit/push hooks remain separate gates. Do not substitute focused verdicts, source review or
+synthetic-provider companions for installed acceptance.
+
+The store companions require the applications checkout's compiled `create/routes` matching its
+source and `OSHAL_CORE_ROOT` pointing to the intended core checkout with its dependencies. The
+compositor and HTTP-admission specs are offline; the latter uses only ephemeral loopback listeners
+and temporary asset storage. The PostgreSQL and browser companions require an operator-ready
+Docker engine and the already-local `postgres:16-alpine` image (`--pull=never`): one uniquely named,
+labelled fixture container, 512 MiB/one CPU, a 256 MiB temporary database, a random loopback port,
+migrations 001-005 and a non-bypass application role. No installed connection string is used.
+The browser companion additionally needs Playwright Chromium and core shared theme assets.
+These fixtures remain parent-coordinated; this lane does not start them independently.
+
+Once separately authorized, the installed command is
+`node scripts/operations/live-acceptance.js create-region-edit` (add `--allow-paid` only with explicit
+spend consent). It needs a region API advertising the enforced `costConsentVersion: 1` contract, the caller's project
+view/read/create/change/delete/generate grants and a configured provider; its fixture uploads are
+reported as retained for later cleanup rather than falsely reported deleted. No such command was
+run for this review, and no service start, deployment or accounting read was attempted.
