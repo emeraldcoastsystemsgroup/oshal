@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | An `anonymous` port: the same loopback JSON request with no session cookie, so a case can prove a route refuses an unauthenticated caller (the dev-workspace query route must answer 401/403).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Every case now runs with an empty runner environment (`env: {}`). The case modules read runner inputs such as OSHAL_VERIFY_DEV_NOTES_PROBE from process.env on the host, but inside the api that is the api's environment, and no compose file forwards any OSHAL_VERIFY_* variable to the api. The dev-workspace card used to fall back to it and told operators to set a variable the api never receives. Now it reports the handover ask as host-runner-only, naming the command.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Every loopback reply also carries `byteLength` and `sha256` of its raw body (text decoded from the same bytes), so a case can prove a binary route served exact bytes, and a `files` port answers whether a NAMED probe's file (live-acceptance-common.js FILE_PROBES, never a path) exists in this server's process. Both serve the vids-publish case: the anonymous public read must equal the uploaded MP4, and cleanup must leave no MP4 on disk.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | The same two additions as the host runner, for the create-region-edit card: every reply carries its raw body as `bytes` (the case decodes the PNGs Create serves), and `upload` names its file part `file.field` when the case gives one (Create's upload route reads exactly one part, `image`), `file` otherwise. The card never receives the host runner's `--allow-paid` consent, so on a paid image provider it answers a gap naming that command.
  */
 import { createHash } from 'node:crypto';
 import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
@@ -76,8 +77,8 @@ const LAB_CASE_OPTIONS: Readonly<Record<string, unknown>> = Object.freeze({ env:
 /** How a case state shows on a Lab card: a deployment that cannot exercise the claim is a gap. */
 const LAB_STATE: Record<LiveAcceptanceResult['state'], State> = { pass: 'pass', fail: 'fail', degraded: 'degraded', unavailable: 'gap' };
 
-/** One loopback reply in the shape the case modules read; the digest and length are of the raw body. */
-interface CallResult { status: number; json: Record<string, unknown>; text: string; contentType: string; location: string | null; byteLength: number; sha256: string }
+/** One loopback reply in the shape the case modules read; `bytes` is the raw body, and the digest and length are of it. */
+interface CallResult { status: number; json: Record<string, unknown>; text: string; contentType: string; location: string | null; bytes: Buffer; byteLength: number; sha256: string }
 
 /**
  * @description One loopback request to the running server as the initiating signed-in caller.
@@ -86,7 +87,7 @@ interface CallResult { status: number; json: Record<string, unknown>; text: stri
  * @param method - HTTP method.
  * @param route - API path beginning with a slash.
  * @param init - Body and extra headers.
- * @returns The status, parsed JSON (empty object when not JSON), text, content type, redirect target, and the raw body's byte length and sha256.
+ * @returns The status, parsed JSON (empty object when not JSON), text, content type, redirect target, and the raw body with its byte length and sha256.
  */
 async function send(base: string, cookie: string | null, method: string, route: string, init: { body?: string | FormData; headers?: Record<string, string> }): Promise<CallResult> {
   const response = await fetch(`${base}${route}`, {
@@ -99,7 +100,7 @@ async function send(base: string, cookie: string | null, method: string, route: 
   try { json = text ? JSON.parse(text) as Record<string, unknown> : {}; } catch { json = {}; }
   return { status: response.status, json: json && typeof json === 'object' ? json : {}, text: text.slice(0, 65_536),
     contentType: String(response.headers.get('content-type') || ''), location: response.headers.get('location'),
-    byteLength: raw.length, sha256: createHash('sha256').update(raw).digest('hex') };
+    bytes: raw, byteLength: raw.length, sha256: createHash('sha256').update(raw).digest('hex') };
 }
 
 /**
@@ -120,10 +121,10 @@ export function labPorts(cookie: string, runtime: ScenarioRunContext): Record<st
     origin: base,
     api: (method: string, route: string, body?: unknown, options?: { headers?: Record<string, string> }) => send(base, cookie, method, route, jsonInit(body, options)),
     anonymous: (method: string, route: string, body?: unknown, options?: { headers?: Record<string, string> }) => send(base, null, method, route, jsonInit(body, options)),
-    upload: (route: string, fields: Record<string, string>, file: { name: string; type: string; bytes: Buffer }) => {
+    upload: (route: string, fields: Record<string, string>, file: { name: string; type: string; bytes: Buffer; field?: string }) => {
       const form = new FormData();
       for (const [name, value] of Object.entries(fields || {})) form.append(name, String(value));
-      form.append('file', new Blob([new Uint8Array(file.bytes)], { type: file.type }), file.name);
+      form.append(file.field || 'file', new Blob([new Uint8Array(file.bytes)], { type: file.type }), file.name);
       return send(base, cookie, 'POST', route, { body: form });
     },
     // The Lab step runs inside the caller's own request, whose identity the pool already stamps.
