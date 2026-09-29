@@ -79,7 +79,7 @@ carries the evidence that survived an adversarial re-derivation and the correcti
 - **Status:** OPEN — needs live proof
 
 - **Implemented:** the workspace navigation and earlier installed checkpoints are documented in [the navigation backlog](backlog/cockpit-workspace-navigation.md) and the September 11–13 release records. The latest closure cited only local route/model tests; the earlier records need reconciliation against the complete current acceptance.
-- **Remaining:** record current desktop and mobile direct-navigation, reload/context, authorization-boundary and AI Test Lab registration evidence for the complete application set.
+- **Remaining:** record current desktop and mobile direct-navigation, reload/context, authorization-boundary and AI Test Lab registration evidence for the complete application set. The 2026-09-29 PAT sweep covered current pages and audience views but could not exercise the browser session-cookie Test Lab boundary, so it is supporting evidence rather than closure. Preserve the handover's all-page/audience/Create, first-page and Test Lab acceptance runners in a durable repository location instead of relying on the ephemeral session scratchpad before the next full run.
 - **Done when:** desktop and mobile users can switch directly into permitted complete applications, use existing pages, recover context after reload, and reach the remaining apps without a crowded top bar; hidden or unavailable destinations remain enforced at the application boundary; actual implementation tests register with AI Test Lab.
 
 ### Trading — timed orders: the STORE half of the D4 follow-ups (ADR-136 D4)
