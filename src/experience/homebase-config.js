@@ -9,13 +9,17 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Presets name the `audience` (family, classroom, company) each hosted page is asked to render; the shared kit in /shared/ui reads the same word
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Wider assemblies (ADR-164: an experience is an assembly of shared applications rewritten for its audience). The classroom also hosts AI Office ("Make and share") and Circuit Lab ("Build and test"); Home adds Movies & TV, Music and Travel as "Watch", "Listen" and "Go"; Business adds Intelligent Communication and World Intelligence under Office, Social beside Switchboard under Communications, and Marketing Engine and Venture Plan under Growth. Existing hosts and hidden prefixes are unchanged. Where a new host's ribbon lists several surfaces, the ones that are not the page carrying the audience view are hidden (Intelligent Communication keeps My Day, Social keeps the Composer, Marketing Engine keeps its campaign page).
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Composed front pages (`modules`): each preset declares its front page as two ordered columns of core modules, role pairs ({teacher, otherwise}) and package summary cards ({card, title, kicker, action}) that homebase.js renders from the application's own ADR-145 home-summary probe. Business leads with today's email digest, the office calendar, recent documents and the Federal CRM pipeline, with payroll, calls and lists beside; Home leads with the shared calendar and the person's money or school by role; the classroom is unchanged. Business also hosts Calendar, Federal CRM (six of its twenty surfaces in the rails) and Calling Assistant; Home hosts AI Office for its documents card. The shopping module's heading is per preset (`shoppingHeading`).
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | The design study's Home check-ins and household: the front page opens with the room strip (the home assistant and the household), gains the opt-in check-ins after the personal module and the Family admin card in the aside. Business and the classroom are unchanged.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Home's navigation gains Routines, and Room / Tasks / Files tabs sit above the page (`tabs`).
  */
 window.HOMEBASE_PRESETS = {
   family: {
     id: 'family', skin: 'family', name: 'Home', short: 'homebase', mark: 'h',
     eyebrow: 'OUR LITTLE CORNER OF THE WORLD', title: 'Everyone has a place here.',
     subtitle: 'The shared parts of life, together. A little space for yourself, too.',
-    nav: [['home', 'Our home'], ['calendar', 'Calendar'], ['shopping', 'Shopping list'], ['people', 'Our people'], ['personal', 'Just for me']],
+    nav: [['home', 'Our home'], ['calendar', 'Calendar'], ['shopping', 'Shopping list'], ['people', 'Our people'], ['personal', 'Just for me'], ['routines', 'Routines']],
+    // Room sections above the page: the room itself, the open things to take care of, and the files from the assistant.
+    tabs: [['home', 'Room'], ['tasks', 'Tasks'], ['files', 'Files']],
     suites: ['ai-home', 'ai-creative', 'ai-knowledge', 'ai-finance'], featured: ['home', 'little-monsters', 'purchasing', 'games'],
     peopleKicker: 'AT HOME WITH YOU', appsHeading: 'A few things that make life easier.', updatesHeading: 'Around the house',
     calendarHeading: 'Today, together.', assistantPrompt: 'What would make today a little easier?', assistantLabel: 'Your home assistant',
@@ -38,8 +42,8 @@ window.HOMEBASE_PRESETS = {
     // The front page, main column then aside: the shared calendar first, then money (a parent) or school (a learner)
     // through the role-led personal module, the house, the tools; the list, recent documents and the noticeboard beside.
     modules: {
-      main: ['calendar', 'personal', 'home-facts', 'apps'],
-      aside: ['shopping', { card: 'presentations', title: 'Recent documents', kicker: 'OFFICE', action: { label: 'Open AI Office', tool: 'tool-presentations-studio' } }, 'updates']
+      main: ['room', 'calendar', 'personal', 'locations', 'home-facts', 'apps'],
+      aside: ['shopping', { card: 'presentations', title: 'Recent documents', kicker: 'OFFICE', action: { label: 'Open AI Office', tool: 'tool-presentations-studio' } }, 'family-admin', 'updates']
     }
   },
   classroom: {

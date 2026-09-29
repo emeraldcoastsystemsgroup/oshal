@@ -15,11 +15,14 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Acceptance fixes: the family and company homes read Little Monsters' read-only home-summary probe first and call /api/education/* only when it answers 200 (those routes can provision a learner row), and send nothing for an entry the plan does not admit; the family home's Little Monsters ribbon profile is gated the same way, because the profile asks the package's visibility route, which provisions too (proven in the acceptance sandbox). The classroom still reads them. A refusal names itself: not admitted reads "Little Monsters is not available to you", no school profile reads "Open Little Monsters once to set up your school profile", anything else shows its status. Due, event and last-active dates are read as the calendar day they name (LIVE.calendarDay). The learner card drops the classwork done/total count and progress bar (assignment status is class-wide, not per learner). Tickets awaiting approval lead the six project rows. A timed calendar event shows its day as well as its time.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | A hosted tool opens in view: after the tool page renders, the tool shell is scrolled to the top of the viewport (smoothly, or at once when the reader prefers reduced motion) and the frame is then focused without a second scroll. Opening a tool from low in a long sidebar kept the old scroll offset and left the frame above the viewport (Business preset, Marketing: frame top at -908px).
  * 12 | maintainer@emeraldcoastsystemsgroup.com | Composed front pages: the home page renders the preset's declared `modules` (two ordered columns of core modules, teacher/otherwise pairs and package summary cards) instead of a fixed triple per preset. A summary card is one generic renderer over the application's own ADR-145 probe (tiles, the first three items, the probe's timestamp), shown only for an application in the caller's plan that declares a probe (nothing rendered and nothing asked otherwise, ADR-164 D10), with a refusal shown as its status and nothing assumed; its action opens the named hosted tool in place when this caller is admitted to it, else links to the application. Consecutive cards in the main column share a two-up grid. The About dialog names each card's source and status. The shopping heading follows the preset.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com | Home build, check-ins and people: Home shows the caller's own check-in from ADR-169 location state (a place name and age, never coordinates; household members with nothing shown because no group presence read exists; who can see the caller), a switch that stops this browser's reporting through the location route and opens Settings, Location to turn it on (fresh sign-in there), and re-reads it on return; the household group (GET /api/tenants and its members, names only where the directory already shares them) labels the home, the badge, the breadcrumb, the people lists and the room strip, and Business lists the caller's team group when the directory is not theirs; the Family admin card opens People & roles (members and roles, or creating a household with the caller as admin) and Devices (the caller's location devices, stop reporting). A learner sees their own level and XP from Little Monsters' dashboard (asked only for a learner, and outside the classroom only after the probe gate), the family learner is greeted with their day, the classwork pill names the next due day, and unread Little Monsters notices lead the noticeboard with mark read. Money shows only when Finance admits the caller (ADR-164 D10); anyone else gets the teaching card or their personal workspace. The About dialog names the new sources.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com | Home build, pages and choices: Routines (Jarvis briefing sources switched on or off, the caller's schedules in words with pause and resume, a routine asked of Jarvis), search in this home from the top bar (this page's reads plus the caller-scoped GET /api/search), the Room / Tasks / Files tabs, the day-by-day agenda and a read-only event dialog, View all and View list on the front page, the assistant bubble (the newest reply, or a catch-up of the day's finished tasks dismissed on this device) with an inline composer on the same Jarvis thread, and the "Make it yours" choices saved on this device (how the assistant offers help, what greets you first, what stays close at hand). A ticked shopping item stays struck through for the visit; the sidebar links the help guides.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com | A notice survives the repaint that follows it: adding an event or a list item showed its notice and then re-read and repainted the page, which replaced the toast element and wiped the text (and the four-second clear kept pointing at the old element). The repaint now carries the text over and the clear looks the toast up again.
  */
 (() => {
   'use strict';
   const S = window.OSHAL_SHELL, LIVE = window.OSHAL_LIVE, esc = S.esc;
-  const presets = window.HOMEBASE_PRESETS;
+  const presets = window.HOMEBASE_PRESETS, HD = window.HOMEBASE_DATA.createHomebaseData(LIVE);
   const requested = new URLSearchParams(location.search).get('preset');
   const key = Object.prototype.hasOwnProperty.call(presets, requested) ? requested : 'family';
   const preset = presets[key], root = document.getElementById('homebase-root');
@@ -35,9 +38,9 @@
   const money = n => new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
   const isoDay = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-  let snapshot, shell, data = {}, thread, dialogKind = null, dialogId = null, opener = null, timer, config;
-  const state = { page: 'home', tool: null };
-  const defaultConfig = () => ({ density: 'comfortable', updates: true, week: true, revision: 1, previous: null });
+  let snapshot, shell, data = {}, thread, dialogKind = null, dialogId = null, opener = null, timer, config, M, locationAsked = false;
+  const state = { page: 'home', tool: null, search: null };
+  const defaultConfig = () => ({ density: 'comfortable', updates: true, week: true, lead: 'room', hide: [], bot: 'suggest', revision: 1, previous: null });
   const me = () => snapshot.me;
   const app = id => shell.byId(id);
   const has = id => Boolean(app(id));
@@ -56,7 +59,8 @@
   const human = s => String(s).replace(/_/g, ' ');
   // The package's allowed assignment types (the lm_assignments CHECK constraint), with display labels.
   const CLASSWORK_TYPES = [['homework', 'Homework'], ['reading', 'Reading'], ['project', 'Project'], ['lab', 'Lab'], ['quiz-prep', 'Quiz prep'], ['test', 'Test']];
-  const notice = s => { clearTimeout(timer); const t = document.getElementById('toast'); if (t) { t.textContent = s; timer = setTimeout(() => { t.textContent = ''; }, 4000); } };
+  /** A status line for four seconds. The clear looks the toast up again, because a repaint in between replaces the element. */
+  const notice = s => { clearTimeout(timer); const t = document.getElementById('toast'); if (t) { t.textContent = s; timer = setTimeout(() => { const now = document.getElementById('toast'); if (now) now.textContent = ''; }, 4000); } };
 
   root.innerHTML = '<div class="experience"><div class="home-shell"><main class="home-main"><section class="hero"><div><div class="eyebrow">CONNECTING</div><h1>Reading your home…</h1></div></section></main></div></div>';
   LIVE.readyCore.then(boot).catch(err => { root.innerHTML = `<div class="experience"><main class="home-main"><section class="hero"><div><h1>This home could not load.</h1><p>${esc(err && err.message ? err.message : String(err))}</p></div></section></main></div>`; });
@@ -67,12 +71,29 @@
     shell = S.createShell({ snapshot, layoutId: key, hooks: {} });
     config = { ...defaultConfig(), ...(LIVE.prefs.get(`homebase:${key}`, {}) || {}) };
     thread = shell.createThread(LIVE.sessionId(), preset.assistantLabel);
+    M = window.HOMEBASE_MODULES.create(moduleContext());
     bind();
     render();
     // Work, tasks and the overview arrive in the second phase; repaint then unless a tool is open (a repaint would reload its frame).
-    LIVE.ready.then(() => { if (state.page !== 'tool') render(); }).catch(() => { /* a home paints without work */ });
-    await Promise.all([loadEducation(), loadTools(), loadShopping(), loadFinance(), loadHome(), loadDirectory(), loadUpdates(), loadCards()]);
-    if (state.page !== 'tool') render();
+    LIVE.ready.then(repaint).catch(() => { /* a home paints without work */ });
+    thread.load().then(repaint).catch(() => { /* the bubble waits for a reply in this page */ });
+    await Promise.all([loadEducation().then(loadLearner), loadTools(), loadShopping(), loadFinance(), loadHome(), loadDirectory().then(loadGroup), loadLocation(), loadUpdates(), loadCards()]);
+    repaint();
+  }
+  /** Repaint unless a hosted tool is open: a repaint would reload its frame. */
+  function repaint() { if (state.page !== 'tool') render(); }
+  /**
+   * @description The render context the homebase modules (homebase-modules.js) read at call time: markup helpers, the
+   * live data object and accessors, so a module never holds a stale copy of an answer.
+   * @returns {object} The context.
+   */
+  function moduleContext() {
+    return {
+      esc, btn, link, pill, head, avatar, LIVE, S, data, state, preset, key, dueOn,
+      config: () => config, me, displayName, snapshot: () => snapshot, isTeacher, isLearner, toolById, app, canConfigure,
+      thread: () => thread, openWork: () => shell.openWork(), events: () => (data.edu && data.edu.ok ? data.edu.events : []), assignments: assignmentsOpen,
+      bubbleSeen: () => LIVE.prefs.get(`homebase:${key}:bubble`, '')
+    };
   }
 
   /* ── live sources ────────────────────────────────────────────── */
@@ -144,11 +165,37 @@
     data.fin = { installed: true, available: true, status: summary.status, noData: summary.status === 404, aggregate: agg, syncedAt: summary.ok && summary.body ? summary.body.syncedAt : null, tiles: home.ok && home.body && Array.isArray(home.body.tiles) ? home.body.tiles.slice(0, 4) : [], app: fin };
   }
   async function loadHome() { const h = app('home'); data.home = h ? { installed: true, app: h, summary: await LIVE.probeSummary(h) } : { installed: false }; }
+  /**
+   * @description A learner's own progress (the package's dashboard) and, whenever Little Monsters answered for the caller,
+   * their unread notices. Both follow loadEducation, so outside the classroom they are asked only after its probe gate.
+   * @returns {Promise<void>} Resolves when both have an answer or were not asked.
+   */
+  async function loadLearner() {
+    const edu = data.edu, ok = Boolean(edu && edu.ok && edu.me);
+    const [progress, notices] = await Promise.all([ok && isLearner() ? HD.progress(edu.me.studentId) : null, ok ? HD.notifications() : null]);
+    data.progress = progress; data.notices = notices;
+  }
+  /** The household (Home) or team (Business) group; the classroom's people are its classes. Names come from the directory only when it answers. */
+  async function loadGroup() {
+    const kind = key === 'family' ? 'space' : key === 'company' ? 'org' : '';
+    if (!kind) { data.group = null; return; }
+    data.group = await HD.household(kind, { sub: me().sub, name: displayName() }, directoryUsers);
+  }
+  /** Directory users this caller may see (the Business read when there is one, else a read now); a refusal names nobody. */
+  async function directoryUsers() {
+    if (data.dir) return data.dir.users;
+    const r = await LIVE.packages.directory();
+    return r.ok && r.body && Array.isArray(r.body.users) ? r.body.users : [];
+  }
+  /** The caller's own check-in (Home only): their place, devices and who can see them, from ADR-169 location state. */
+  async function loadLocation() { data.loc = key === 'family' ? await HD.location() : null; }
+  /** Briefing sources and schedules, read when the Routines page opens. */
+  async function loadRoutines() { data.routines = await HD.routines(); }
   async function loadDirectory() {
     if (key !== 'company') { data.dir = null; return; }
     const r = await LIVE.packages.directory();
     const users = r.ok && r.body && Array.isArray(r.body.users) ? r.body.users : [];
-    data.dir = { status: r.status, people: users.filter(u => u && u.sub !== me().sub).map(u => ({ name: String(u.label || 'Member').replace(/\s*\([^)]*\)\s*$/, ''), role: [u.source === 'verified-sign-in' ? 'Signed in' : u.source, u.signIn].filter(Boolean).join(' · ') })) };
+    data.dir = { status: r.status, users, people: users.filter(u => u && u.sub !== me().sub).map(u => ({ name: String(u.label || 'Member').replace(/\s*\([^)]*\)\s*$/, ''), role: [u.source === 'verified-sign-in' ? 'Signed in' : u.source, u.signIn].filter(Boolean).join(' · ') })) };
   }
   async function loadUpdates() {
     const featured = featuredApps().slice(0, 4);
@@ -265,17 +312,17 @@
     const time = e.event_time
       ? `${esc(LIVE.clockTime(e.when).replace(/\s?[AP]M$/i, ''))}<small>${e.when.getHours() >= 12 ? 'PM' : 'AM'}</small><small class="event-day">${esc(eventDay(e.when))}</small>`
       : `${esc(isoDay(e.when) === isoDay(new Date()) ? 'Today' : e.when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))}<small></small>`;
-    return `<div class="event"><div class="event-time">${time}</div><div><strong>${esc(e.title)}</strong><p>${esc(e.class_name ? `${e.class_name}${e.subject ? ` · ${e.subject}` : ''}` : 'Personal')}${e.event_type && e.event_type !== 'custom' ? ` · ${esc(e.event_type)}` : ''}</p></div>${pill(e.class_name ? 'Class' : 'Personal')}</div>`;
+    return `<div class="event"><div class="event-time">${time}</div><div><strong><button type="button" class="event-link" data-action="event-detail" data-event="${esc(e.event_id)}">${esc(e.title)}</button></strong><p>${esc(e.class_name ? `${e.class_name}${e.subject ? ` · ${e.subject}` : ''}` : 'Personal')}${e.event_type && e.event_type !== 'custom' ? ` · ${esc(e.event_type)}` : ''}</p></div>${pill(e.class_name ? 'Class' : 'Personal')}</div>`;
   }
   function calendar() {
     const edu = data.edu, events = upcomingEvents(), canAdd = Boolean(edu && edu.ok);
     const body = !edu ? '<p class="subtle">Reading the calendar…</p>' : !edu.installed ? '<p class="subtle">No application on this swarm contributes a shared calendar yet. Little Monsters adds class and personal events when it is installed.</p>' : !edu.ok ? `<p class="subtle">${esc(eduRefusal(edu, `The calendar could not be read (HTTP ${edu.status}${edu.error ? `: ${edu.error}` : ''}).`))}</p>` : events.length ? events.map(eventRow).join('') : '<p class="subtle">Nothing scheduled in the next weeks. Add a moment below or open Little Monsters.</p>';
-    return `<section class="panel" data-module="calendar">${head(preset.calendarHeading, canAdd ? btn('+ Add', 'event', 'text-button') : '')}${config.week ? weekStrip() : ''}${body}<p class="subtle" style="margin-top:17px">${edu && edu.ok ? `Class events from ${edu.classes.length} class${edu.classes.length === 1 ? '' : 'es'} plus your personal events, read from Little Monsters.` : 'Calendar source: Little Monsters class and personal events.'}</p></section>`;
+    return `<section class="panel" data-module="calendar">${head(preset.calendarHeading, `<span class="head-actions">${state.page === 'home' ? btn('View all', 'page', 'text-button', 'data-page="calendar"') : ''}${canAdd ? btn('+ Add', 'event', 'text-button') : ''}</span>`)}${config.week ? weekStrip() : ''}${body}<p class="subtle" style="margin-top:17px">${edu && edu.ok ? `Class events from ${edu.classes.length} class${edu.classes.length === 1 ? '' : 'es'} plus your personal events, read from Little Monsters.` : 'Calendar source: Little Monsters class and personal events.'}</p></section>`;
   }
   function shopping() {
     const s = data.shop;
-    const body = !s ? '<p class="subtle">Reading your list…</p>' : !s.installed ? '<p class="subtle">The Purchasing application is not installed on this swarm, so there is no shared shopping list here.</p>' : !s.ok ? `<p class="subtle">Your shopping list could not be read (HTTP ${s.status}).</p>` : !s.list ? '<p class="subtle">You have no shopping list yet. Add the first item below to create one in Purchasing.</p>' : `<div class="list-items">${s.items.map(i => `<label class="list-item"><input type="checkbox" data-shopping-item="${esc(i.item_id)}"><span><span class="item-title">${esc(i.title)}</span><small>${i.quantity > 1 ? `×${i.quantity} · ` : ''}${i.unit_price ? `${money(Number(i.unit_price))} · ` : ''}added ${esc(LIVE.relativeTime(LIVE.parseDate(i.created_at)))}</small></span></label>`).join('') || '<p class="subtle">Nothing pending on this list.</p>'}</div>`;
-    return `<section class="panel" data-module="shopping">${head(esc(preset.shoppingHeading || 'One list. Fewer texts.'), s && s.list ? pill(`${s.items.length} to get`) : '')}${body}${s && s.installed && s.ok ? '<form id="shopping-form" class="add-form"><label class="screenreader" for="shopping-input">Add to the shopping list</label><input id="shopping-input" maxlength="100" placeholder="Anything else we need?" required><button class="button" type="submit" aria-label="Add item">+</button></form><p class="subtle">Ticking an item removes it from the list in Purchasing.</p>' : ''}</section>`;
+    const body = !s ? '<p class="subtle">Reading your list…</p>' : !s.installed ? '<p class="subtle">The Purchasing application is not installed on this swarm, so there is no shared shopping list here.</p>' : !s.ok ? `<p class="subtle">Your shopping list could not be read (HTTP ${s.status}).</p>` : !s.list ? '<p class="subtle">You have no shopping list yet. Add the first item below to create one in Purchasing.</p>' : `<div class="list-items">${s.items.map(i => `<label class="list-item"><input type="checkbox" data-shopping-item="${esc(i.item_id)}"><span><span class="item-title">${esc(i.title)}</span><small>${i.quantity > 1 ? `×${i.quantity} · ` : ''}${i.unit_price ? `${money(Number(i.unit_price))} · ` : ''}added ${esc(LIVE.relativeTime(LIVE.parseDate(i.created_at)))}</small></span></label>`).join('') || (data.shopDone && data.shopDone.length ? '' : '<p class="subtle">Nothing pending on this list.</p>')}${(data.shopDone || []).map(t => `<label class="list-item got-it"><input type="checkbox" checked disabled><span><span class="item-title">${esc(t)}</span><small>Got it · removed from your list</small></span></label>`).join('')}</div>`;
+    return `<section class="panel" data-module="shopping">${head(esc(preset.shoppingHeading || 'One list. Fewer texts.'), s && s.list ? pill(`${s.items.length} to get`) : '')}${body}${s && s.installed && s.ok ? '<form id="shopping-form" class="add-form"><label class="screenreader" for="shopping-input">Add to the shopping list</label><input id="shopping-input" maxlength="100" placeholder="Anything else we need?" required><button class="button" type="submit" aria-label="Add item">+</button></form><p class="subtle">Ticking an item removes it from the list in Purchasing.</p>' : ''}${s && s.list && state.page === 'home' && preset.nav.some(n => n[0] === 'shopping') ? btn('View list', 'page', 'text-button', 'data-page="shopping"') : ''}</section>`;
   }
   function homeFacts() {
     const h = data.home; if (!h || !h.installed) return '';
@@ -311,7 +358,7 @@
     if (isTeacher()) return `<section class="panel feature-card" data-module="learning"><div class="panel-kicker">JUST FOR ${esc(displayName().toUpperCase())}</div><h2>You teach ${edu.me.classCount || edu.classes.length} class${(edu.me.classCount || edu.classes.length) === 1 ? '' : 'es'}.</h2><p>${assignmentsOpen().length} open classwork item${assignmentsOpen().length === 1 ? '' : 's'} across them.</p>${lm ? link('Open Little Monsters ↗', lm.href, 'button') : ''}</section>`;
     // Open classwork only: assignment status is class-wide, and Little Monsters records no per-learner completion to count.
     const open = assignmentsOpen(), next = open[0];
-    return `<section class="panel feature-card" data-module="learning"><div class="panel-kicker">JUST FOR ${esc(displayName().toUpperCase())}</div><h2>A little progress, every day.</h2><p>${edu.classes.length} class${edu.classes.length === 1 ? '' : 'es'} · ${open.length} open classwork item${open.length === 1 ? '' : 's'}.</p><p>${next ? `Next: ${esc(next.title)}${next.class_name ? ` · ${esc(next.class_name)}` : ''}${next.due_date ? ` · due ${esc(dueOn(next.due_date))}` : ''}` : 'Nothing is due right now.'}</p>${btn('Open my checklist', 'learning', 'button')}</section>`;
+    return `<section class="panel feature-card" data-module="learning"><div class="panel-kicker">JUST FOR ${esc(displayName().toUpperCase())}</div><h2>A little progress, every day.</h2><p>${edu.classes.length} class${edu.classes.length === 1 ? '' : 'es'} · ${open.length} open classwork item${open.length === 1 ? '' : 's'}.</p>${M.progressBlock()}<p>${next ? `Next: ${esc(next.title)}${next.class_name ? ` · ${esc(next.class_name)}` : ''}${next.due_date ? ` · due ${esc(dueOn(next.due_date))}` : ''}` : 'Nothing is due right now.'}</p>${btn('Open my checklist', 'learning', 'button')}</section>`;
   }
   /** @description The learning card when Little Monsters did not answer: not admitted (no way in offered), no school profile yet (open it once), or the refusal as read. */
   function learningRefused(edu, lm) {
@@ -324,7 +371,7 @@
     const edu = data.edu, lm = app('little-monsters'), open = assignmentsOpen(), next = open[0];
     if (!edu) return `<section class="panel ${state.page === 'home' ? 'quest-card' : ''}" data-module="requirements-loading"><div class="panel-kicker">CLASSWORK</div><p>Reading classwork…</p></section>`;
     if (!edu.installed || !edu.ok) return `<section class="panel ${state.page === 'home' ? 'quest-card' : ''}" data-module="requirements"><div class="panel-kicker">CLASSWORK</div><h2>${esc(!edu.installed ? 'Little Monsters is not installed.' : eduRefusal(edu, 'Open Little Monsters to join a class.'))}</h2><p>${edu.refusal === 'not-granted' ? 'An administrator manages that access.' : 'Classwork appears here once you belong to a class.'}</p></section>`;
-    return `<section class="panel ${state.page === 'home' ? 'quest-card' : ''}" data-module="requirements"><div class="panel-kicker">CLASSWORK / ${open.length} OPEN</div><h2>${next ? esc(next.title) : 'No open classwork.'}</h2><p style="margin:12px 0 16px">${next ? esc(next.description || `${next.class_name || 'Class'}${next.assignment_type ? ` · ${next.assignment_type}` : ''}`) : 'When a teacher publishes an assignment it appears here with its due date.'}</p>${open.length ? `<ol class="requirement-list">${open.slice(0, 4).map((a, i) => `<li><span class="step-num">${i + 1}</span><span>${esc(a.title)}${a.class_name ? ` <small class="subtle">· ${esc(a.class_name)}</small>` : ''}${a.due_date ? ` <small class="subtle">· due ${esc(dueOn(a.due_date))}</small>` : ''}</span></li>`).join('')}</ol>` : ''}<div class="quest-footer">${isTeacher() ? `${btn('Add classwork', 'classwork', 'button primary')}${lm ? link('Manage classwork in Little Monsters ↗', lm.href, 'button') : ''}` : btn('Open my checklist', 'learning', 'button primary')}${pill(`${edu.classes.length} class${edu.classes.length === 1 ? '' : 'es'} · shared with your class`)}</div></section>`;
+    return `<section class="panel ${state.page === 'home' ? 'quest-card' : ''}" data-module="requirements"><div class="panel-kicker">CLASSWORK / ${open.length} OPEN</div><h2>${next ? esc(next.title) : 'No open classwork.'}</h2><p style="margin:12px 0 16px">${next ? esc(next.description || `${next.class_name || 'Class'}${next.assignment_type ? ` · ${next.assignment_type}` : ''}`) : 'When a teacher publishes an assignment it appears here with its due date.'}</p>${open.length ? `<ol class="requirement-list">${open.slice(0, 4).map((a, i) => `<li><span class="step-num">${i + 1}</span><span>${esc(a.title)}${a.class_name ? ` <small class="subtle">· ${esc(a.class_name)}</small>` : ''}${a.due_date ? ` <small class="subtle">· due ${esc(dueOn(a.due_date))}</small>` : ''}</span></li>`).join('')}</ol>` : ''}<div class="quest-footer">${isTeacher() ? `${btn('Add classwork', 'classwork', 'button primary')}${lm ? link('Manage classwork in Little Monsters ↗', lm.href, 'button') : ''}` : btn('Open my checklist', 'learning', 'button primary')}${pill(next && next.due_date ? `Due ${dueOn(next.due_date)} · shared with ${next.class_name || 'your class'}` : `${edu.classes.length} class${edu.classes.length === 1 ? '' : 'es'} · shared with your class`)}</div></section>`;
   }
   /** @description One learner's activity pill from the teacher analytics row: level, daily streak, quiz average and flashcards reviewed. It is activity; Little Monsters records no per-learner classwork completion. */
   function activityPill(a) {
@@ -363,28 +410,51 @@
     const shown = open.filter(awaitsApproval).concat(open.filter(w => !awaitsApproval(w))).slice(0, 6);
     return `<section class="panel" data-module="projects">${head('The work we share.', pill(`${open.length} open`))}${shown.map((w, i) => `<div class="project-row">${avatar(LIVE.initials(w.appName), i)}<div><strong>${esc(w.title)}</strong><small>${esc(w.appName)} · ${esc(w.typeLabel)} · ${esc(LIVE.relativeTime(w.at))}</small></div>${btn(`${esc(w.status.label)} ↗`, 'project', 'button', `data-work="${esc(w.id)}"`)}</div>`).join('') || '<p class="subtle">No open tickets or tasks. Ask the assistant for something and it lands here.</p>'}<div class="summary-line"><div><strong>${open.length}</strong><small>Open items</small></div><div><strong>${apps.size}</strong><small>Applications involved</small></div><div><strong>${snapshot.botsOnline}</strong><small>Assistants online</small></div></div></section>`;
   }
+  /**
+   * @description The person's own module. A learner gets their learning space; money shows only when Finance admits the
+   * caller (ADR-164 D10: an application the caller is not admitted to renders nothing); otherwise a teacher at home keeps
+   * the teaching card and everyone else gets the personal workspace.
+   * @returns {string} Markup.
+   */
   function personal() {
-    if (key === 'classroom') return learning();
-    if (key === 'family') return isLearner() ? learning() : (data.fin && data.fin.installed ? finance() : learning());
-    return data.fin && data.fin.installed ? finance() : `<section class="panel feature-card" data-module="personal"><div class="panel-kicker">${esc(displayName().toUpperCase())} / PERSONAL WORKSPACE</div><h2>Room for your best work.</h2><p>Your drafts and assistant conversations stay personal until you share them with the team.</p><div class="dialog-actions">${btn('My drafts', 'drafts', 'button primary')}${link('Open Jarvis ↗', '/api/jarvis/', 'button')}</div></section>`;
+    if (key === 'classroom' || (key === 'family' && isLearner())) return learning();
+    if (data.fin === undefined && key === 'family') return finance();
+    if (data.fin && data.fin.installed && data.fin.available) return finance();
+    return key === 'family' && isTeacher() ? learning() : personalWorkspace();
+  }
+  function personalWorkspace() {
+    return `<section class="panel feature-card" data-module="personal"><div class="panel-kicker">${esc(displayName().toUpperCase())} / PERSONAL WORKSPACE</div><h2>Room for your best work.</h2><p>Your drafts and assistant conversations stay personal until you share them${key === 'company' ? ' with the team' : ''}.</p><div class="dialog-actions">${btn('My drafts', 'drafts', 'button primary')}${link('Open Jarvis ↗', '/api/jarvis/', 'button')}</div></section>`;
   }
   function updates() {
     if (!config.updates) return '';
     const rows = (data.updates || []).slice(0, 4), work = snapshot.work.slice(0, 3);
-    return `<section class="panel" data-module="updates">${head(preset.updatesHeading)}${rows.map(u => `<div class="update"><strong>${esc(u.who)}</strong><p>${esc(u.what)}</p><small>${esc(u.when)}${u.detail ? ` · ${esc(u.detail.slice(0, 90))}` : ''}</small></div>`).join('')}${work.map(w => `<div class="update"><strong>${esc(w.appName)}</strong><p>${esc(w.title)}</p><small>${esc(w.status.label)} · ${esc(LIVE.relativeTime(w.at))}</small></div>`).join('')}${rows.length || work.length ? '' : '<p class="subtle">Nothing new from your applications yet.</p>'}</section>`;
+    return `<section class="panel" data-module="updates">${head(preset.updatesHeading)}${M.notices()}${rows.map(u => `<div class="update"><strong>${esc(u.who)}</strong><p>${esc(u.what)}</p><small>${esc(u.when)}${u.detail ? ` · ${esc(u.detail.slice(0, 90))}` : ''}</small></div>`).join('')}${work.map(w => `<div class="update"><strong>${esc(w.appName)}</strong><p>${esc(w.title)}</p><small>${esc(w.status.label)} · ${esc(LIVE.relativeTime(w.at))}</small></div>`).join('')}${rows.length || work.length ? '' : '<p class="subtle">Nothing new from your applications yet.</p>'}</section>`;
   }
   function peopleList() {
     const edu = data.edu, rows = [];
-    rows.push({ mark: me().initials, name: `${displayName()} · you`, role: key === 'classroom' ? (isTeacher() ? 'Teacher' : isLearner() ? 'Student' : 'Not in a class yet') : me().email || 'Signed in' });
+    rows.push({ mark: me().initials, name: `${displayName()} · you`, role: key === 'classroom' ? (isTeacher() ? 'Teacher' : isLearner() ? 'Student' : 'Not in a class yet') : groupName() ? `${(groupMembers().find(m => m.self) || {}).role === 'admin' ? 'Admin' : 'Member'} · ${groupName()}` : me().email || 'Signed in' });
     if (key === 'classroom' && edu && edu.ok) edu.classes.forEach(c => { if (c.teacher_name && !rows.some(r => r.name === c.teacher_name)) rows.push({ mark: LIVE.initials(c.teacher_name), name: c.teacher_name, role: `Teacher · ${c.name}` }); (edu.rosters.get(c.class_id) || {}).students?.forEach(s => rows.push({ mark: LIVE.initials(s.name), name: s.name, role: `Student · ${c.name}` })); });
     if (key === 'company' && data.dir && data.dir.status === 200) data.dir.people.slice(0, 12).forEach(p => rows.push({ mark: LIVE.initials(p.name), name: p.name, role: p.role || 'Member' }));
+    else groupMembers().filter(m => !m.self).slice(0, 12).forEach(m => rows.push({ mark: LIVE.initials(m.name || 'Member'), name: m.name || (key === 'family' ? 'Household member' : 'Team member'), role: `${m.role === 'admin' ? 'Admin' : 'Member'} · ${groupName()}` }));
     return rows;
+  }
+  /** Members of the caller's household (Home) or team (Business) group, the caller first; empty when there is none or it was refused. */
+  const groupMembers = () => (data.group && data.group.ok && data.group.group ? data.group.members : []);
+  const groupName = () => (data.group && data.group.group ? data.group.group.name : '');
+  /** @description The people page's source line: the class, the directory, the household or team group, or why there is none. */
+  function peopleNote() {
+    if (key === 'classroom') return 'Names come from your classes in Little Monsters. Grades and personal study records are not a class feed.';
+    if (key === 'company' && data.dir && data.dir.status === 200) return 'Members come from this swarm’s user directory.';
+    const g = data.group, word = key === 'family' ? 'household' : 'team';
+    if (g && g.ok && g.group) return `Members of your ${word} group “${g.group.name}” (${groupMembers().length}). Names appear where this swarm’s directory shares them with you.`;
+    if (g && !g.ok) return `Your ${word} group could not be read (HTTP ${g.status || 'network'}).`;
+    return key === 'family' ? 'You are not in a household group yet. Family admin, People & roles, creates one.' : 'This swarm does not share a people directory or a team group with your account; teammates appear where an application publishes membership.';
   }
   const memberLine = (r, i) => `<div class="member-line">${avatar(r.mark, i)}<span>${esc(r.name)}<small>${esc(r.role)}</small></span></div>`;
   function people() {
-    const rows = peopleList();
-    const note = key === 'classroom' ? 'Names come from your classes in Little Monsters. Grades and personal study records are not a class feed.' : key === 'company' ? (data.dir && data.dir.status === 200 ? 'Members come from this swarm’s user directory.' : 'This swarm does not share a people directory with your account; teammates appear where an application publishes membership.') : 'This swarm has no household directory yet. People appear where an application shares membership with you.';
-    return `<section class="panel">${head(key === 'family' ? 'Our people' : key === 'classroom' ? 'Your classroom' : 'Your team')}<div class="side-section">${rows.map(memberLine).join('')}</div><p class="subtle" style="margin-top:20px">${note}</p><p class="subtle">${snapshot.botsOnline} of ${snapshot.bots.length} swarm assistants are online.</p></section>`;
+    const rows = peopleList(), note = peopleNote();
+    const count = groupMembers().length;
+    return `<section class="panel" data-module="people">${head(key === 'family' ? (count > 1 ? `${count} people. One home.` : 'Our people') : key === 'classroom' ? 'Your classroom' : 'Your team')}<div class="side-section">${rows.map(memberLine).join('')}</div><p class="subtle" style="margin-top:20px">${note}</p><p class="subtle">${snapshot.botsOnline} of ${snapshot.bots.length} swarm assistants are online.</p></section>`;
   }
   function apps() {
     const groups = hostGroups();
@@ -398,13 +468,14 @@
     const lm = key === 'classroom' && data.edu && data.edu.installed;
     const people = peopleList().slice(0, 6);
     const toolSection = hostGroups().map(g => `<div class="side-section"><div class="side-kicker">${esc(g.kicker)}</div><div class="tool-nav">${g.tools.slice(0, 6).map(t => btn(`<span class="nav-symbol" aria-hidden="true">${esc(t.label.slice(0, 1))}</span>${esc(t.label)}`, 'tool', 'nav-link', `data-tool="${esc(t.id)}" ${state.page === 'tool' && state.tool === t.id ? 'aria-current="page"' : ''}`)).join('')}</div></div>`).join('');
-    return `<aside class="home-sidebar"><div><div class="wordmark ${key === 'classroom' ? 'class-brand' : ''}">${lm ? '<img class="monster-logo" src="/api/education/logo-96.png" alt="">' : `<span class="brand-glyph">${preset.mark}</span>`}${preset.short}</div><p class="workspace-label">${esc(displayName())}’s ${key === 'family' ? 'home' : key === 'classroom' ? 'classroom' : 'company swarm'} · ${snapshot.apps.length} apps</p></div><nav class="side-nav" aria-label="Homebase navigation">${preset.nav.map(([id, label], i) => btn(`<span class="nav-symbol" aria-hidden="true">${['⌂', '▦', '☷', '◎', '◇'][i]}</span>${esc(label)}`, 'page', 'nav-link', `data-page="${id}" ${id === state.page ? 'aria-current="page"' : ''}`)).join('')}</nav><div class="side-section"><div class="side-kicker">${preset.peopleKicker}</div>${people.map(memberLine).join('')}</div>${toolSection}<div class="side-section"><div class="side-kicker">YOUR APPLICATIONS</div>${featuredApps().slice(0, 5).map(a => btn(`<span class="nav-symbol" aria-hidden="true">${esc(a.name.slice(0, 1))}</span>${esc(a.name)}`, 'app', 'nav-link', `data-app="${esc(a.id)}"`)).join('')}${btn('<span class="nav-symbol" aria-hidden="true">…</span>All applications', 'all-apps', 'nav-link')}</div><div class="sidebar-note"><strong>${esc(preset.sidebarNote[0])}</strong>${esc(preset.sidebarNote[1])}${canConfigure() ? btn('Configure this home', 'configure', 'button sidebar-config') : ''}</div></aside>`;
+    return `<aside class="home-sidebar"><div><div class="wordmark ${key === 'classroom' ? 'class-brand' : ''}">${lm ? '<img class="monster-logo" src="/api/education/logo-96.png" alt="">' : `<span class="brand-glyph">${preset.mark}</span>`}${preset.short}</div><p class="workspace-label">${groupName() ? `${esc(groupName())} · ${groupMembers().length} ${groupMembers().length === 1 ? 'person' : 'people'}` : `${esc(displayName())}’s ${key === 'family' ? 'home' : key === 'classroom' ? 'classroom' : 'company swarm'}`} · ${snapshot.apps.length} apps</p></div><nav class="side-nav" aria-label="Homebase navigation">${preset.nav.map(([id, label], i) => btn(`<span class="nav-symbol" aria-hidden="true">${['⌂', '▦', '☷', '◎', '◇', '↻', '▤'][i] || '·'}</span>${esc(label)}`, 'page', 'nav-link', `data-page="${id}" ${id === state.page ? 'aria-current="page"' : ''}`)).join('')}</nav><div class="side-section"><div class="side-kicker">${preset.peopleKicker}</div>${people.map(memberLine).join('')}</div>${toolSection}<div class="side-section"><div class="side-kicker">YOUR APPLICATIONS</div>${featuredApps().slice(0, 5).map(a => btn(`<span class="nav-symbol" aria-hidden="true">${esc(a.name.slice(0, 1))}</span>${esc(a.name)}`, 'app', 'nav-link', `data-app="${esc(a.id)}"`)).join('')}${btn('<span class="nav-symbol" aria-hidden="true">…</span>All applications', 'all-apps', 'nav-link')}</div><div class="sidebar-note"><strong>${esc(preset.sidebarNote[0])}</strong>${esc(preset.sidebarNote[1])}${canConfigure() ? btn('Configure this home', 'configure', 'button sidebar-config') : ''}${link('Help and guides ↗', '/api/help', 'text-button sidebar-help', 'target="_blank" rel="noopener"')}</div></aside>`;
   }
   function hero() {
     if (state.page === 'tool') return '';
     const learner = isLearner();
-    const heading = learner ? `Ready to explore, ${displayName().split(' ')[0]}?` : preset.title;
-    const badgeText = key === 'family' ? `${snapshot.apps.length} apps · ${shell.openWork().length} open items` : key === 'classroom' ? (data.edu && data.edu.ok ? `${isTeacher() ? 'Teacher' : 'Student'} · ${data.edu.classes.length} class${data.edu.classes.length === 1 ? '' : 'es'}` : 'Classroom') : `${shell.openWork().length} open items · ${snapshot.botsOnline} assistants online`;
+    const heading = learner ? (key === 'family' ? `Your day, ${displayName().split(' ')[0]}.` : `Ready to explore, ${displayName().split(' ')[0]}?`) : preset.title;
+    const admins = groupMembers().filter(m => m.role === 'admin').length;
+    const badgeText = key === 'family' ? (groupName() ? `${groupMembers().length} ${groupMembers().length === 1 ? 'person' : 'people'} · ${admins} admin${admins === 1 ? '' : 's'} · ${shell.openWork().length} open items` : `${snapshot.apps.length} apps · ${shell.openWork().length} open items`) : key === 'classroom' ? (data.edu && data.edu.ok ? `${isTeacher() ? 'Teacher' : 'Student'} · ${data.edu.classes.length} class${data.edu.classes.length === 1 ? '' : 'es'}` : 'Classroom') : `${shell.openWork().length} open items · ${snapshot.botsOnline} assistants online`;
     const art = key === 'family' ? '<div class="family-scene" role="img" aria-label="A little house among green trees"><span class="plant"></span><span class="little-house"></span><span class="plant"></span></div>' : key === 'classroom' ? (data.edu && data.edu.installed ? '<img class="hero-monster" src="/api/education/logo-256.png" alt="Little Monsters study companion">' : '') : '<div class="company-emblem" aria-hidden="true"><span></span><span></span><span></span></div>';
     return `<section class="hero ${key === 'company' ? 'professional-hero' : ''}"><div><div class="eyebrow">${esc(preset.eyebrow)}</div><h1>${esc(heading)}</h1><p>${learner ? 'Your own learning space, with the shared moments close by.' : esc(preset.subtitle)}</p><div class="hero-cta">${pill(badgeText)}</div></div>${art}</section>`;
   }
@@ -436,7 +507,8 @@
   }
   /** The About dialog's line per applicable card: the application and the status its own probe answered. */
   const cardSources = () => cardEntries().map(m => ({ m, a: cardApp(m.card) })).filter(x => x.a).map(({ m, a }) => { const sm = data.cards && data.cards.get(m.card); return `<li>${esc(m.title || a.name)}: ${esc(a.name)}’s own summary probe ${!sm ? '(reading)' : sm.ok ? `(HTTP ${sm.status})` : sm.status === 401 || sm.status === 403 ? '(not available to you)' : `(HTTP ${sm.status || 'network'})`}.</li>`; }).join('');
-  const MODULES = { calendar, shopping, 'home-facts': homeFacts, finance, learning, requirements, roster, projects, personal, updates, apps };
+  const MODULES = { calendar, shopping, 'home-facts': homeFacts, finance, learning, requirements, roster, projects, personal, updates, apps,
+    locations: () => (key === 'family' ? M.locations() : ''), room: () => M.room(), 'family-admin': () => (key === 'family' ? M.familyAdmin() : '') };
   /** @description One declared module entry to markup: a named core module, a role pair ({teacher, otherwise}) or a package summary card ({card}). Anything else renders nothing. */
   function moduleHtml(entry) {
     if (typeof entry === 'string') return MODULES[entry] ? MODULES[entry]() : '';
@@ -453,22 +525,38 @@
     flush();
     return out.join('');
   }
+  /** The calendar card the preset declares (Business: the Calendar application), for the calendar page. */
+  const calendarCard = () => { const entry = cardEntries().find(m => m.card === 'calendar'); return entry ? summaryCard(entry) : ''; };
+  /** @description The main and aside columns of each page; the front page is the preset's declared modules after the device's layout choices. */
+  function pageColumns() {
+    const p = state.page, family = key === 'family';
+    if (p === 'home') { const m = preset.modules || {}; return [[columnHtml(M.arrange(m.main, true), true)], [columnHtml(M.arrange(m.aside, false), false)]]; }
+    if (p === 'calendar') return [[calendarCard(), calendar(), M.dayAgenda()], [updates()]];
+    if (p === 'shopping') return [[shopping()], [family ? M.locations() : '', homeFacts()]];
+    if (p === 'people') return [[people(), family ? M.locations() : '', key === 'classroom' && isTeacher() ? roster() : ''], [family ? M.familyAdmin() : '', updates()]];
+    if (p === 'requirements') return [[requirements()], [isTeacher() ? roster() : personal()]];
+    if (p === 'projects') return [[projects(), apps()], [updates()]];
+    if (p === 'routines') return [[M.routinesPage()], [calendar()]];
+    if (p === 'search') return [[M.searchPage()], [updates()]];
+    if (p === 'files') return [[M.filesPage()], [personal()]];
+    if (p === 'tasks') return [[M.tasksPage()], [calendar()]];
+    return [[personal()], [key === 'classroom' ? requirements() : calendar()]];
+  }
   function content() {
     if (state.page === 'tool') return `<div class="home-content is-tool">${toolPanel()}</div>`;
-    let main = [], aside = [];
-    if (state.page === 'home') { const m = preset.modules || {}; main = [columnHtml(m.main, true)]; aside = [columnHtml(m.aside, false)]; }
-    else if (state.page === 'calendar') { main = [calendar()]; aside = [updates()]; }
-    else if (state.page === 'shopping') { main = [shopping()]; aside = [homeFacts()]; }
-    else if (state.page === 'people') { main = [people(), key === 'classroom' && isTeacher() ? roster() : ''].filter(Boolean); aside = [updates()]; }
-    else if (state.page === 'requirements') { main = [requirements()]; aside = [isTeacher() ? roster() : personal()]; }
-    else if (state.page === 'projects') { main = [projects(), apps()]; aside = [updates()]; }
-    else { main = [personal()]; aside = [key === 'classroom' ? requirements() : calendar()]; }
-    const last = thread.turns.filter(t => t.role === 'jarvis' && !t.pending).slice(-1)[0];
-    return `<div class="home-content"><div class="main-column">${main.join('')}<div class="assistant"><span class="assistant-orb" aria-hidden="true"></span><div>${esc(preset.assistantPrompt)}<small>${esc(preset.assistantLabel)} · answered by your Jarvis${last ? ` · last reply ${esc(String(last.text).slice(0, 60))}…` : ''}</small></div>${btn('Ask', 'ask', 'text-button')}</div></div><aside class="aside-column">${aside.join('')}</aside></div>`;
+    const [main, aside] = pageColumns();
+    return `${M.roomTabs()}<div class="home-content"><div class="main-column">${main.join('')}<div class="assistant"><div class="assistant-line"><span class="assistant-orb" aria-hidden="true"></span><div>${esc(preset.assistantPrompt)}<small>${esc(preset.assistantLabel)} · answered by your Jarvis</small></div>${btn('Ask', 'ask', 'text-button')}</div>${M.bubble()}${M.composer()}</div></div><aside class="aside-column">${aside.join('')}</aside></div>`;
   }
+  /** The breadcrumb's page name: the open tool, a nav or tab page, or Search. */
+  const pageName = () => (state.page === 'tool' && toolById(state.tool) ? toolById(state.tool).label : state.page === 'search' ? 'Search' : ((preset.nav.concat(preset.tabs || [])).find(n => n[0] === state.page) || [])[1] || 'Home');
+  /** The top bar's search box: it searches what this home read and the caller's own swarm data. */
+  const searchBox = () => `<form id="home-search" class="home-search" role="search"><label class="screenreader" for="home-search-input">Search in this home</label><input id="home-search-input" type="search" maxlength="100" placeholder="Search in this home…" value="${esc(state.search ? state.search.query : '')}"><button class="text-button" type="submit" aria-label="Search">⌕</button></form>`;
   function render() {
-    root.innerHTML = `<div class="experience" data-skin="${esc(document.body.dataset.skin || preset.skin)}" data-density="${esc(config.density)}"><div class="preview-bar"><a href="/cockpit/">← Cockpit</a><span class="demo-tag">LIVE · ${esc(displayName().toUpperCase())}</span><div class="preview-selects"><label>Experience ${S.pickerMarkup(key)}</label><label>Style ${S.skinPicker()}</label></div></div><div class="home-shell">${sidebar()}<main class="home-main"><header class="main-top"><div class="breadcrumb">${esc(preset.name)} / ${esc(state.page === 'tool' && toolById(state.tool) ? toolById(state.tool).label : (preset.nav.find(n => n[0] === state.page) || [])[1] || 'Home')}</div><div class="top-controls"><span class="date-chip">${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</span>${canConfigure() ? btn('Configure home', 'configure') : ''}${btn('My access', 'policy')}${avatar(me().initials, 0)}</div></header>${hero()}${content()}<footer class="page-footer"><span>One platform · ${key} preset · ${esc(document.body.dataset.skin || preset.skin)} skin · display choices saved on this device (v${config.revision})<br>Access follows this swarm’s authorization; appearance never changes it.</span>${btn('About this data', 'about', 'text-button')}</footer></main></div><div id="dialog-host"></div><div class="toast" id="toast" role="status" aria-live="polite"></div></div>`;
+    // A notice shown just before a repaint (an add, then the list re-read) stays: the new toast element takes its text.
+    const shown = document.getElementById('toast') ? document.getElementById('toast').textContent : '';
+    root.innerHTML = `<div class="experience" data-skin="${esc(document.body.dataset.skin || preset.skin)}" data-density="${esc(config.density)}"><div class="preview-bar"><a href="/cockpit/">← Cockpit</a><span class="demo-tag">LIVE · ${esc(displayName().toUpperCase())}</span><div class="preview-selects"><label>Experience ${S.pickerMarkup(key)}</label><label>Style ${S.skinPicker()}</label></div></div><div class="home-shell">${sidebar()}<main class="home-main"><header class="main-top"><div class="breadcrumb">${esc(groupName() || preset.name)} / ${esc(pageName())}</div><div class="top-controls">${searchBox()}<span class="date-chip">${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</span>${canConfigure() ? btn('Configure home', 'configure') : ''}${btn('My access', 'policy')}${avatar(me().initials, 0)}</div></header>${hero()}${content()}<footer class="page-footer"><span>One platform · ${key} preset · ${esc(document.body.dataset.skin || preset.skin)} skin · display choices saved on this device (v${config.revision})<br>Access follows this swarm’s authorization; appearance never changes it.</span>${btn('About this data', 'about', 'text-button')}</footer></main></div><div id="dialog-host"></div><div class="toast" id="toast" role="status" aria-live="polite"></div></div>`;
     if (window.OSHAL_STYLE_SWITCHER) { const exp = root.querySelector('.experience'); const def = window.OSHAL_STYLE_SWITCHER.FLAT_SKINS.find(s => s.id === (document.body.dataset.skin || preset.skin)); if (exp && def) exp.dataset.skin = def.alias || def.id; }
+    if (shown) document.getElementById('toast').textContent = shown;
     if (dialogKind) openDialog(dialogKind, dialogId);
   }
 
@@ -491,15 +579,30 @@
     if (kind === 'configure' && !canConfigure()) return ['', ''];
     if (kind === 'classwork') return isTeacher() ? classworkDialog() : ['', ''];
     if (kind === 'drafts') return draftsDialog();
-    if (kind === 'configure') return ['Make this home your own', `<p>A preset supplies the starting point; a skin supplies the look. What you may see is decided by this swarm’s authorization, independently.</p><div class="config-flow"><span>${key} preset</span> → <span>your authorized modules</span> → <span>chosen skin</span></div><form id="config-form"><label class="field">Visual skin<select id="skin-choice">${window.OSHAL_STYLE_SWITCHER.FLAT_SKINS.map(s => `<option value="${s.id}" ${(document.body.dataset.skin || preset.skin) === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select></label><label class="field">Density<select id="density-choice"><option value="comfortable" ${config.density === 'comfortable' ? 'selected' : ''}>Comfortable</option><option value="compact" ${config.density === 'compact' ? 'selected' : ''}>Compact</option></select></label><label class="config-check"><input id="show-updates" type="checkbox" ${config.updates ? 'checked' : ''}>Show the activity panel</label><label class="config-check"><input id="show-week" type="checkbox" ${config.week ? 'checked' : ''}>Show the calendar week strip</label><p>Changing a skin never grants Finance, reveals student records, installs an app or enrolls anyone in anything.</p><div class="dialog-actions"><button type="submit" class="button primary">Save on this device</button>${config.previous ? btn('Restore previous', 'restore') : ''}</div></form><p>Version ${config.revision} · saved in this browser only. No server setting changes.</p>`];
+    if (kind === 'event-detail') return M.eventDialog(id);
+    if (kind === 'people-roles') return M.peopleRolesDialog();
+    if (kind === 'devices') return key === 'family' ? M.devicesDialog() : ['', ''];
+    if (kind === 'location-on') return key === 'family' ? M.locationOnDialog() : ['', ''];
+    if (kind === 'configure') return ['Make this home your own', `<p>A preset supplies the starting point; a skin supplies the look. What you may see is decided by this swarm’s authorization, independently.</p><div class="config-flow"><span>${key} preset</span> → <span>your authorized modules</span> → <span>chosen skin</span></div><form id="config-form"><label class="field">Visual skin<select id="skin-choice">${window.OSHAL_STYLE_SWITCHER.FLAT_SKINS.map(s => `<option value="${s.id}" ${(document.body.dataset.skin || preset.skin) === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select></label><label class="field">Density<select id="density-choice"><option value="comfortable" ${config.density === 'comfortable' ? 'selected' : ''}>Comfortable</option><option value="compact" ${config.density === 'compact' ? 'selected' : ''}>Compact</option></select></label><label class="config-check"><input id="show-updates" type="checkbox" ${config.updates ? 'checked' : ''}>Show the activity panel</label><label class="config-check"><input id="show-week" type="checkbox" ${config.week ? 'checked' : ''}>Show the calendar week strip</label>${M.configExtras()}<p>Changing a skin never grants Finance, reveals student records, installs an app or enrolls anyone in anything.</p><div class="dialog-actions"><button type="submit" class="button primary">Save on this device</button>${config.previous ? btn('Restore previous', 'restore') : ''}</div></form><p>Version ${config.revision} · saved in this browser only. No server setting changes.</p>`];
     if (kind === 'event') return ['Add a shared moment', data.edu && data.edu.ok ? `<p>This adds a personal event to your Little Monsters calendar${isTeacher() ? '; class-wide events are published from a class in Little Monsters' : ''}. No invitation is sent.</p><form id="event-form"><label class="field">Event title<input id="event-title" maxlength="200" required placeholder="A moment to make time for"></label><label class="field">Date<input id="event-date" type="date" value="${isoDay(new Date())}" required></label><label class="field">Time (optional)<input id="event-time" type="time"></label><div class="dialog-actions"><button class="button primary" type="submit">Add event</button></div></form>` : '<p>No calendar source accepts events here yet.</p>'];
     if (kind === 'learning') return [`${displayName()}’s learning space`, data.edu && data.edu.ok ? `<p>Your open classwork from Little Monsters. Nothing is submitted from here: Little Monsters keeps no per-learner submission record.</p><div class="list-items">${assignmentsOpen().map(a => `<div class="list-item"><span><span class="item-title">${esc(a.title)}</span><small>${esc(a.class_name || '')}${a.due_date ? ` · due ${esc(dueOn(a.due_date))}` : ''}${a.assignment_type ? ` · ${esc(a.assignment_type)}` : ''}</small></span></div>`).join('') || '<p class="subtle">Nothing open right now.</p>'}</div><div class="dialog-actions">${toolById('tool-lm-myday') ? btn('Open My Day here', 'tool', 'button primary', 'data-tool="tool-lm-myday"') : ''}${lm ? link('Open Little Monsters ↗', lm.href, toolById('tool-lm-myday') ? 'button' : 'button primary') : ''}</div>` : `<p>${esc(!data.edu ? 'Reading your learning space…' : !data.edu.installed ? 'Little Monsters is not installed on this swarm.' : eduRefusal(data.edu, `Your learning space could not be read (HTTP ${data.edu.status}).`))}</p>`];
     if (kind === 'app') { const a = app(id); if (!a) return ['', '']; const sm = shell.state.summaries.get(a.id); return [a.name, `<p>${esc(a.description)}</p><p class="pill">${esc(shell.suiteOf(a.suite).name)}${a.version ? ` · v${esc(a.version)}` : ''} · ${a.navigable ? 'available to you' : 'not available in your workspace'}</p><div id="app-summary-slot">${shell.summaryMarkup(a, sm || null)}</div><div class="dialog-actions">${a.navigable ? link(`Open ${esc(a.name)} ↗`, a.href, 'button primary') : ''}${btn('Review access', 'policy', 'button')}</div>`]; }
     if (kind === 'project') return projectDialog(id);
     if (kind === 'policy') return ['The same home, different access', `<p>Signed in as ${esc(displayName())}${data.edu && data.edu.me ? ` · ${esc(data.edu.me.role)} in Little Monsters` : ''}.</p><ul class="policy-list"><li>Applications appear only when this swarm’s authorization admits you to them.</li><li>Personal records require explicit, server-enforced access; a parent, teacher or admin label alone grants nothing.</li><li>Only a swarm administrator installs applications.</li><li>Class rosters are visible to each class’s teacher; students never see them.</li><li>Skins, density and pins are saved on this device and never change permissions.</li></ul>`];
     if (kind === 'ask') return [key === 'classroom' ? 'Ask your study companion' : 'Ask your assistant', `<p>Answered by your own Jarvis, in the same thread the cockpit uses.</p><form id="ask-form"><label class="field">Your question<input id="ask-input" maxlength="600" required placeholder="What should I focus on today?"${thread.busy ? ' disabled' : ''}></label><button class="button primary" type="submit"${thread.busy ? ' disabled' : ''}>Ask</button></form><div id="ask-answer" role="status">${thread.turns.slice(-4).map(t => t.role === 'user' ? `<p><strong>${esc(t.text)}</strong></p>` : t.pending ? `<p class="subtle">${esc(t.text)}</p>` : S.answerHtml(t.text)).join('')}</div>`];
-    if (kind === 'about') { const e = data.edu || {}, s = data.shop || {}, f = data.fin || {}; return ['What this home reads', `<ul class="policy-list"><li>Applications, suites and availability: your authorized home plan and installed listing (HTTP ${snapshot.sources.plan}/${snapshot.sources.apps}).</li><li>Work items: your tickets (HTTP ${snapshot.sources.tickets}) and Jarvis tasks (HTTP ${snapshot.sources.tasks}).</li><li>Calendar, classes, classwork and rosters: Little Monsters ${e.installed ? (e.refusal === 'not-granted' && !e.status ? '(not available to you)' : `(HTTP ${e.status})`) : '(not installed)'}.</li><li>Shopping list: Purchasing ${s.installed ? `(HTTP ${s.status})` : '(not installed)'}.</li><li>Money: Finance ${f.installed ? (f.available ? `(HTTP ${f.status})` : '(not available to you)') : '(not installed)'}.</li>${cardSources()}<li>Assistant: your Jarvis thread <code>${esc(thread.sessionId.slice(0, 18))}…</code>.</li></ul><p>No check-in, location or presence source exists on this swarm, so no such module is shown.</p>`]; }
+    if (kind === 'about') { const e = data.edu || {}, s = data.shop || {}, f = data.fin || {}; return ['What this home reads', `<ul class="policy-list"><li>Applications, suites and availability: your authorized home plan and installed listing (HTTP ${snapshot.sources.plan}/${snapshot.sources.apps}).</li><li>Work items: your tickets (HTTP ${snapshot.sources.tickets}) and Jarvis tasks (HTTP ${snapshot.sources.tasks}).</li><li>Calendar, classes, classwork and rosters: Little Monsters ${e.installed ? (e.refusal === 'not-granted' && !e.status ? '(not available to you)' : `(HTTP ${e.status})`) : '(not installed)'}.</li><li>Shopping list: Purchasing ${s.installed ? `(HTTP ${s.status})` : '(not installed)'}.</li><li>Money: Finance ${f.installed ? (f.available ? `(HTTP ${f.status})` : '(not available to you)') : '(not installed)'}.</li>${cardSources()}<li>Assistant: your Jarvis thread <code>${esc(thread.sessionId.slice(0, 18))}…</code>.</li>${aboutExtras()}</ul>`]; }
     return ['', ''];
+  }
+  /** @description The About dialog's lines for the homebase's own sources: the household or team group, the check-in, learner progress and notices. */
+  function aboutExtras() {
+    const status = r => (!r ? '(reading)' : r.ok ? `(HTTP ${r.status})` : `(HTTP ${r.status || 'network'}${r.code ? `: ${esc(r.code)}` : ''})`);
+    const lines = [];
+    if (key !== 'classroom') lines.push(`<li>People: your ${key === 'family' ? 'household' : 'team'} group ${status(data.group)}; names only where the swarm directory shares them.</li>`);
+    if (key === 'family') lines.push(`<li>Check-ins: your own place from Location ${status(data.loc)}, as a place name and never coordinates. No one else’s place is read: this swarm has no group presence read.</li>`);
+    if (data.progress) lines.push(`<li>Your progress: Little Monsters’ dashboard for you ${status(data.progress)}.</li>`);
+    if (data.notices) lines.push(`<li>Notices: your unread Little Monsters notices ${status(data.notices)}.</li>`);
+    if (data.routines) lines.push(`<li>Routines: Jarvis briefings ${status(data.routines.briefings)} and your schedules ${status(data.routines.schedules)}.</li>`);
+    return lines.join('');
   }
   function openDialog(kind, id) {
     const [title, body] = dialogBody(kind, id); if (!title) return;
@@ -564,7 +667,8 @@
   /** @description Read the caller's saved drafts and Jarvis shelf together and paint both sections, each with its own empty and failure state. */
   async function fillDrafts() {
     const [drafts, tasks] = await Promise.all([LIVE.packages.content.drafts(), LIVE.packages.jarvis.tasks()]);
-    const slot = document.getElementById('drafts-slot'); if (slot) slot.innerHTML = draftsMarkup(drafts) + finishedTaskMarkup(tasks);
+    data.draftsHtml = draftsMarkup(drafts);
+    const slot = document.getElementById('drafts-slot'); if (slot) slot.innerHTML = data.draftsHtml + (dialogKind === 'drafts' ? finishedTaskMarkup(tasks) : '');
   }
   function draftRow(d) {
     const when = LIVE.parseDate(d.created_at), lines = String(d.draft || '').split('\n').map(s => s.trim()).filter(Boolean).slice(0, 2).join(' ');
@@ -604,32 +708,136 @@
   function saveConfig(next) { config = { ...next, revision: config.revision + 1, previous: { ...config, previous: null } }; LIVE.prefs.set(`homebase:${key}`, config); }
   function bind() {
     window.addEventListener('message', onSurfaceMessage);
-    root.addEventListener('click', e => {
-      const b = e.target.closest('[data-action]'); if (!b) return; const a = b.dataset.action;
-      if (a === 'close') return close();
-      if (a === 'page') { state.page = b.dataset.page; state.tool = null; render(); return; }
-      if (a === 'tool') { if (dialogKind) close(); openTool(b.dataset.tool); return; }
-      if (a === 'ticket-approve') { approveTicket(b); return; }
-      if (a === 'all-apps') { location.href = '/portal#catalog-directory'; return; }
-      if (a === 'restore' && config.previous) { const prev = config.previous; config = { ...prev, revision: config.revision + 1, previous: null }; LIVE.prefs.set(`homebase:${key}`, config); close(); render(); notice('Previous display choices restored.'); return; }
-      if (a === 'project') return open('project', b.dataset.work);
-      open(a, b.dataset.app);
-    });
-    root.addEventListener('change', async e => {
-      if (e.target.dataset.role === 'experience-picker') { const exp = S.experienceFor(e.target.value); if (exp) location.href = exp.href; }
-      if (e.target.id === 'universal-skin-picker') { window.OSHAL_STYLE_SWITCHER.applySkin(e.target.value); render(); }
-      if (e.target.dataset.shoppingItem) {
-        const itemId = e.target.dataset.shoppingItem, item = data.shop.items.find(i => i.item_id === itemId);
-        e.target.disabled = true;
-        const r = await LIVE.packages.purchasing.remove(data.shop.list.list_id, itemId);
-        if (r.ok) { notice(`Got it: ${item ? item.title : 'item'} removed from your list.`); await loadShopping(); render(); }
-        else { e.target.checked = false; e.target.disabled = false; notice(`Could not update the list (HTTP ${r.status}).`); }
-      }
-    });
+    // Turning a check-in on happens in Settings, Location (another tab); coming back re-reads it.
+    window.addEventListener('focus', () => { if (locationAsked) { locationAsked = false; loadLocation().then(repaint); } });
+    root.addEventListener('click', onClick);
+    root.addEventListener('change', onChange);
     root.addEventListener('submit', onSubmit);
   }
+  /** Click actions that act on a record through its own route. */
+  const ACTIONS = { 'device-stop': b => stopDevice(b), 'schedule-toggle': b => toggleSchedule(b), 'notice-read': b => markNotice(b), 'bubble-dismiss': b => { LIVE.prefs.set(`homebase:${key}:bubble`, b.dataset.seen || ''); repaint(); } };
+  function onClick(e) {
+    const b = e.target.closest('[data-action]'); if (!b) return; const a = b.dataset.action;
+    if (a === 'close') return close();
+    if (a === 'page') { goPage(b.dataset.page); return; }
+    if (ACTIONS[a]) { ACTIONS[a](b); return; }
+    if (a === 'tool') { if (dialogKind) close(); openTool(b.dataset.tool); return; }
+    if (a === 'ticket-approve') { approveTicket(b); return; }
+    if (a === 'all-apps') { location.href = '/portal#catalog-directory'; return; }
+    if (a === 'restore' && config.previous) { const prev = config.previous; config = { ...prev, revision: config.revision + 1, previous: null }; LIVE.prefs.set(`homebase:${key}`, config); close(); render(); notice('Previous display choices restored.'); return; }
+    if (a === 'project') return open('project', b.dataset.work);
+    if (a === 'event-detail') return open('event-detail', b.dataset.event);
+    open(a, b.dataset.app);
+  }
+  /** @description Show a page; Routines reads its sources the first time it opens and Files reads the caller's drafts. */
+  function goPage(page) {
+    if (dialogKind) close();
+    state.page = page; state.tool = null; render();
+    if (page === 'routines' && !data.routines) loadRoutines().then(repaint);
+    if (page === 'files') fillDrafts();
+  }
+  async function onChange(e) {
+    if (e.target.dataset.role === 'experience-picker') { const exp = S.experienceFor(e.target.value); if (exp) location.href = exp.href; }
+    if (e.target.id === 'universal-skin-picker') { window.OSHAL_STYLE_SWITCHER.applySkin(e.target.value); render(); }
+    if (e.target.id === 'share-location') { shareToggle(e.target); return; }
+    if (e.target.dataset.briefing) { briefingToggle(e.target); return; }
+    if (e.target.dataset.shoppingItem) {
+      const itemId = e.target.dataset.shoppingItem, item = data.shop.items.find(i => i.item_id === itemId);
+      e.target.disabled = true;
+      const r = await LIVE.packages.purchasing.remove(data.shop.list.list_id, itemId);
+      if (r.ok) { data.shopDone = (data.shopDone || []).concat(item ? [item.title] : []); notice(`Got it: ${item ? item.title : 'item'} removed from your list.`); await loadShopping(); render(); }
+      else { e.target.checked = false; e.target.disabled = false; notice(`Could not update the list (HTTP ${r.status}).`); }
+    }
+  }
+
+  /* ── check-ins, routines, notices, search and the household ─── */
+  /**
+   * @description The "share my check-in from this browser" switch. Switching off stops this browser's device through
+   * the location route (no fresh sign-in: it only reduces exposure); switching on needs the step-up and the browser's
+   * permission, so it opens the way to Settings, Location and leaves the switch as the server has it.
+   * @param {HTMLInputElement} input The switch.
+   * @returns {Promise<void>} Resolves once the state is re-read or the refusal shown.
+   */
+  async function shareToggle(input) {
+    const dev = data.loc && data.loc.ok ? data.loc.thisDevice : null;
+    if (input.checked) { input.checked = false; locationAsked = true; open('location-on'); return; }
+    if (!dev) return;
+    input.disabled = true;
+    const r = await HD.optOut(dev.id);
+    if (!r.ok) { input.checked = true; input.disabled = false; notice(`Could not stop sharing (HTTP ${r.status}${refusal(r)}).`); return; }
+    await loadLocation(); repaint();
+    notice('This browser no longer reports your check-in. Your current place is cleared; your history stays until you delete it.');
+  }
+  /** @description Stop one of the caller's devices from the Devices dialog; the dialog repaints with the state the server now holds. */
+  async function stopDevice(b) {
+    const feedback = document.getElementById('device-feedback'); b.disabled = true;
+    const r = await HD.optOut(b.dataset.device);
+    if (!r.ok) { b.disabled = false; if (feedback) feedback.textContent = `Could not stop this device (HTTP ${r.status}${refusal(r)}).`; return; }
+    await loadLocation(); repaint(); notice('That device no longer reports your check-in.');
+  }
+  /** @description Pause or resume one of the caller's schedules through its owner-checked route, then re-read the routines. */
+  async function toggleSchedule(b) {
+    const pause = b.dataset.paused !== 'true'; b.disabled = true;
+    const r = await HD.setSchedule(b.dataset.schedule, pause);
+    if (!r.ok) { b.disabled = false; notice(`Could not ${pause ? 'pause' : 'resume'} that schedule (HTTP ${r.status}${refusal(r)}).`); return; }
+    await loadRoutines(); repaint(); notice(pause ? 'Paused: it will not run until you resume it.' : 'Resumed.');
+  }
+  /** @description Turn one briefing source on or off, keeping its frequency and channel; the switch returns to the server's answer on a refusal. */
+  async function briefingToggle(input) {
+    const b = data.routines && data.routines.briefings, src = b && b.ok ? b.sources.find(x => x.id === input.dataset.briefing) : null; if (!src) return;
+    const enabled = input.checked; input.disabled = true;
+    const r = await HD.setBriefing(src, enabled);
+    if (!r.ok) { input.checked = !enabled; input.disabled = false; notice(`Could not change ${src.title} (HTTP ${r.status}${refusal(r)}).`); return; }
+    await loadRoutines(); repaint(); notice(`${src.title} is ${enabled ? 'on' : 'off'}.`);
+  }
+  /** @description Mark one Little Monsters notice read through the package route, then re-read the notices. */
+  async function markNotice(b) {
+    b.disabled = true;
+    const r = await HD.markRead(b.dataset.notice);
+    if (!r.ok) { b.disabled = false; notice(`Could not mark it read (HTTP ${r.status}).`); return; }
+    data.notices = await HD.notifications(); repaint();
+  }
+  /** Everything this home already read, as rows the local search matches. */
+  function searchPools() {
+    return {
+      events: (data.edu && data.edu.ok ? data.edu.events : []).map(e => ({ id: e.event_id, title: e.title, detail: e.class_name || 'Personal' })),
+      items: data.shop && data.shop.items ? data.shop.items.map(i => ({ id: i.item_id, title: i.title })) : [],
+      classwork: assignmentsOpen().map(a => ({ id: a.assignment_id, title: a.title, detail: a.class_name || '' })),
+      tools: navTools().map(t => ({ id: t.id, title: t.label, detail: app(t.host) ? app(t.host).name : '' })),
+      apps: snapshot.apps.filter(a => a.navigable).map(a => ({ id: a.id, title: a.name, detail: a.description })),
+      work: snapshot.work.map(w => ({ id: w.id, title: w.title, detail: `${w.appName} · ${w.status.label}` }))
+    };
+  }
+  /** @description Search this home's own reads at once, then the caller-scoped swarm search; a late answer for an older query is dropped. */
+  async function runSearch(q) {
+    if (dialogKind) close();
+    state.search = { query: q, local: window.HOMEBASE_DATA.localMatches(q, searchPools()), global: null }; state.page = 'search'; state.tool = null; render();
+    const global = await HD.search(q);
+    if (state.search && state.search.query === q) { state.search.global = global; repaint(); }
+  }
+  /** @description Ask Jarvis for a routine in words; its answer lands in the home's thread and the schedules are re-read. */
+  async function askRoutine(form) {
+    const input = form.querySelector('#routine-input'), q = input.value.trim(), feedback = document.getElementById('routine-feedback'); if (!q || thread.busy) return;
+    input.value = ''; if (feedback) feedback.textContent = 'Asking Jarvis…';
+    const result = await thread.send(q, () => {});
+    await loadRoutines(); repaint();
+    notice(result && result.status === 'done' ? 'Jarvis answered; your schedules were read again.' : `Jarvis could not do that${result && result.error ? `: ${result.error}` : ''}.`);
+  }
+  /** @description Create the caller's household (they become its admin); the People & roles dialog repaints with it. */
+  async function createHousehold(form) {
+    const name = form.querySelector('#household-name').value.trim(), feedback = document.getElementById('household-feedback'), submit = form.querySelector('[type="submit"]'); if (!name) return;
+    submit.disabled = true; if (feedback) feedback.textContent = 'Creating…';
+    const r = await HD.createHousehold(name);
+    if (!r.ok) { submit.disabled = false; if (feedback) feedback.textContent = `Could not create the household (HTTP ${r.status}${refusal(r)}).`; return; }
+    await loadGroup(); repaint(); notice(`${name} is set up. You are its admin.`);
+  }
+  /** Submit handlers of the homebase's own forms. */
+  const FORMS = { 'routine-form': f => askRoutine(f), 'household-form': f => createHousehold(f),
+    'home-search': f => { const q = f.querySelector('#home-search-input').value.trim(); if (q) runSearch(q); },
+    'composer-form': f => { const input = f.querySelector('#composer-input'), q = input.value.trim(); if (!q || thread.busy) return; input.value = ''; thread.send(q, repaint); } };
   async function onSubmit(e) {
     e.preventDefault();
+    if (FORMS[e.target.id]) { await FORMS[e.target.id](e.target); return; }
     if (e.target.id === 'classwork-form') { await submitClasswork(e.target); return; }
     if (e.target.id === 'shopping-form') {
       const input = document.getElementById('shopping-input'), text = input.value.trim(); if (!text) return;
@@ -640,7 +848,7 @@
       if (r.ok) { notice(`Added ${text} to your list.`); await loadShopping(); render(); const again = document.getElementById('shopping-input'); if (again) again.focus(); }
       else { input.disabled = false; notice(`Could not add that (HTTP ${r.status}).`); }
     }
-    if (e.target.id === 'config-form') { saveConfig({ density: document.getElementById('density-choice').value, updates: document.getElementById('show-updates').checked, week: document.getElementById('show-week').checked }); window.OSHAL_STYLE_SWITCHER.applySkin(document.getElementById('skin-choice').value); close(); render(); notice('Display choices saved on this device. No permissions changed.'); }
+    if (e.target.id === 'config-form') { saveConfig({ density: document.getElementById('density-choice').value, updates: document.getElementById('show-updates').checked, week: document.getElementById('show-week').checked, lead: (e.target.querySelector('input[name="lead-choice"]:checked') || { value: 'room' }).value, bot: document.getElementById('bot-choice').value === 'ask' ? 'ask' : 'suggest', hide: Array.from(e.target.querySelectorAll('input[data-keep]')).filter(i => !i.checked).map(i => i.dataset.keep) }); window.OSHAL_STYLE_SWITCHER.applySkin(document.getElementById('skin-choice').value); close(); render(); notice('Display choices saved on this device. No permissions changed.'); }
     if (e.target.id === 'event-form') {
       const title = document.getElementById('event-title').value.trim(), date = document.getElementById('event-date').value, time = document.getElementById('event-time').value;
       if (!title || !date) return;

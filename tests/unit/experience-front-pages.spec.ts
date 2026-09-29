@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Composed front pages in headless Chromium over the isolated synthetic swarm: each preset's declared module order (Business leads with the email digest, office calendar, documents and Federal CRM cards; Home with the shared calendar and money or school by role; the classroom unchanged), a package summary card rendered from the application's own probe (tiles, items, timestamp, the admitted tool as its action), nothing rendered and nothing requested for an application outside the caller's plan or not installed, a refusal shown as its status, the action opening the hosted tool in place with the preset's audience or falling back to the application link, the About dialog naming each card's source, and the per-preset shopping heading.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Home's declared front page gained the room strip first, the opt-in check-ins after the personal module and the Family admin card in the aside (the design study's remaining Home pieces); Business and the classroom orders are unchanged.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -135,18 +136,18 @@ describe('composed front pages: Business', () => {
 });
 
 describe('composed front pages: Home and the classroom', () => {
-  it('Home leads with the shared calendar, then money for a parent or school for a learner; the list and recent documents beside', async () => {
+  it('Home opens with the room strip, then the shared calendar, money for a parent or school for a learner and the check-ins; the list, recent documents and Family admin beside', async () => {
     installAssemblyHosts(fixture.state);
     await open('family', '[data-card="presentations"] .card-tile');
-    expect(await columnOrder('main')).toEqual(['calendar', 'finance', 'home-facts', 'apps', 'assistant']);
-    expect(await columnOrder('aside')).toEqual(['shopping', 'card:presentations', 'updates']);
+    expect(await columnOrder('main')).toEqual(['room', 'calendar', 'finance', 'locations', 'home-facts', 'apps', 'assistant']);
+    expect(await columnOrder('aside')).toEqual(['shopping', 'card:presentations', 'family-admin', 'updates']);
     expect(await card('presentations').locator('h2').textContent()).toBe('Recent documents');
     expect(await card('presentations').locator('.panel-kicker').textContent()).toBe('OFFICE');
     expect(await card('presentations').locator('button[data-action="tool"]').getAttribute('data-tool')).toBe('tool-presentations-studio');
     expect(await page.locator('[data-module="shopping"] h2').textContent()).toBe('One list. Fewer texts.');
     asStudent();
     await reload('[data-module="learning"]');
-    expect(await columnOrder('main')).toEqual(['calendar', 'learning', 'home-facts', 'apps', 'assistant']);
+    expect(await columnOrder('main')).toEqual(['room', 'calendar', 'learning', 'locations', 'home-facts', 'apps', 'assistant']);
     expect(await page.locator('[data-module="finance"]').count()).toBe(0);
     expect(errors).toEqual([]);
   });
