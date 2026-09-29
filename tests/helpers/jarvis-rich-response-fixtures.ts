@@ -6,16 +6,18 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted the Jarvis rich-response route/speech/audio stubs verbatim out of tests/jarvis-rich-response-integration.spec.ts, which had grown to 1006 code lines (over the 1000-line cap) and now splits into four topic specs that all share these fixtures
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Serve the framework theme off disk (surface-themes.css, surface-theme.js and the /cockpit/css/themes/*.css files the aggregator @imports): jarvis.html has read its orb colours from those tokens since BUG-12 (#191), and this fixture 404ing them is what left the native-wake spec red 3 of 3 (the unthemed page threw inside its first synchronous canvas tick, so the wake listener never registered). THEME_ASSET_PATHS is exported so the guard can withhold exactly these on purpose.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | fulfillJarvisWithResponseRenderer bundles the REAL response-renderer from source (esbuild, the way vite.config.ts bundles it) instead of reading a prebuilt src/api/dist/response-renderer.js: jarvis.html now requires the bundle's DISPLAY_ONLY_RESPONSE_CAPABILITIES, so a stale or missing dist would silently put the guard on the legacy fallback path.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Follow the compact dashboard layout (0c287223): serve jarvis-dashboard.css/js off disk, which jarvis.html has loaded since that change and which this fixture 404ed, so the specs measured a layout no deployment ships and rendered tasks through the no-dashboard fallback. jarvisPageUrl() puts the page on the configured Playwright origin (tests/helpers/test-origins.ts) instead of an invented host, which also makes it a secure context like a deployed https page. openAssistantOptions()/openTyper() reach Type, Voice, Discussion and the ambient controls through the real Options disclosure they now live in.
  */
 
-// DELIBERATELY NOT re-exported through tests/helpers/index.ts. This module reads eight Jarvis
+// DELIBERATELY NOT re-exported through tests/helpers/index.ts. This module reads the Jarvis
 // surface files at import time; putting it in the shared barrel would make every spec that
 // imports './helpers' for an unrelated origin helper pay those reads and fail if the surface
-// files move. The four jarvis-rich-response specs import this path directly.
+// files move. The five Jarvis rich-response specs import this path directly.
 import { readFileSync } from 'node:fs';
 import { buildSync } from 'esbuild';
 import path from 'node:path';
-import { type Page, type Route } from '@playwright/test';
+import { expect, type Page, type Route } from '@playwright/test';
+import { baseOrigin } from './test-origins';
 
 const ROOT = path.resolve(__dirname, '../..');
 const HTML = readFileSync(path.join(ROOT, 'src/api/jarvis.html'), 'utf8');
@@ -37,6 +39,8 @@ const AMBIENT_RECOGNITION_JS = readFileSync(path.join(ROOT, 'src/api/jarvis-ambi
 const AMBIENT_JS = readFileSync(path.join(ROOT, 'src/api/jarvis-ambient.js'), 'utf8');
 const AMBIENT_CSS = readFileSync(path.join(ROOT, 'src/api/jarvis-ambient.css'), 'utf8');
 const SPEAKER_CAPTURE_JS = readFileSync(path.join(ROOT, 'src/api/jarvis-speaker-capture.js'), 'utf8');
+const DASHBOARD_JS = readFileSync(path.join(ROOT, 'src/api/jarvis-dashboard.js'), 'utf8');
+const DASHBOARD_CSS = readFileSync(path.join(ROOT, 'src/api/jarvis-dashboard.css'), 'utf8');
 const THEME_CSS = readFileSync(path.join(ROOT, 'src/shared/ui/css/surface-themes.css'), 'utf8');
 const THEME_JS = readFileSync(path.join(ROOT, 'src/shared/ui/js/surface-theme.js'), 'utf8');
 const COCKPIT_THEMES_DIR = path.join(ROOT, 'src/pages/cockpit/css/themes');
@@ -96,8 +100,48 @@ export function json(route: Route, body: unknown): Promise<void> {
 }
 
 /**
- * @description The baseline Jarvis surface stub: serves the real jarvis.html plus its stage and
- * ambient scripts/styles off disk, so the specs exercise production code rather than a fake, and
+ * @description The Jarvis page on the configured Playwright origin. Every request the page makes is
+ * still answered by the spec's route stub; the origin only has to be the one the harness is
+ * configured for (and, like a deployed https page, a secure context).
+ * @returns The absolute Jarvis page URL.
+ */
+export function jarvisPageUrl(): string {
+  return `${baseOrigin()}/api/jarvis/`;
+}
+
+/**
+ * @description Open the compact layout's Options disclosure through its own summary control. Type,
+ * Voice, Discussion and the ambient listening controls live inside it and are not rendered while it
+ * is closed. A no-op when it is already open, so a spec can check its contents and then use them.
+ * @param page - The Playwright page showing the Jarvis surface.
+ * @returns Promise resolving once the disclosure is open.
+ */
+export async function openAssistantOptions(page: Page): Promise<void> {
+  const options = page.locator('#assistantOptions');
+  if (!await options.evaluate((node) => (node as HTMLDetailsElement).open)) {
+    await options.locator(':scope > summary').click();
+  }
+  await expect(options).toHaveAttribute('open', '');
+}
+
+/**
+ * @description Use the Type control the way a user does: open Options, press Type, and land in the
+ * composer. The control closes Options and focuses the input; both are asserted so a spec cannot
+ * reach the composer by a path the product does not offer.
+ * @param page - The Playwright page showing the Jarvis surface.
+ * @returns Promise resolving once the composer has focus.
+ */
+export async function openTyper(page: Page): Promise<void> {
+  await openAssistantOptions(page);
+  await page.locator('#typeToggle').click();
+  await expect(page.locator('#assistantOptions')).not.toHaveAttribute('open', '');
+  await expect(page.locator('#typer')).toBeVisible();
+  await expect(page.locator('#typein')).toBeFocused();
+}
+
+/**
+ * @description The baseline Jarvis surface stub: serves the real jarvis.html plus its stage,
+ * ambient and compact-dashboard scripts/styles off disk, so the specs exercise production code rather than a fake, and
  * answers every backing API with an empty-but-valid payload. Anything unrecognized 404s on purpose
  * — a spec that silently depends on an unstubbed endpoint should fail, not pass.
  * @param route - The intercepted Playwright route.
@@ -120,6 +164,8 @@ export async function fulfillJarvis(route: Route): Promise<void> {
   if (pathName.endsWith('/jarvis-ambient-recognition.js')) return route.fulfill({ contentType: 'application/javascript', body: AMBIENT_RECOGNITION_JS });
   if (pathName.endsWith('/jarvis-ambient.js')) return route.fulfill({ contentType: 'application/javascript', body: AMBIENT_JS });
   if (pathName.endsWith('/jarvis-ambient.css')) return route.fulfill({ contentType: 'text/css', body: AMBIENT_CSS });
+  if (pathName.endsWith('/jarvis-dashboard.js')) return route.fulfill({ contentType: 'application/javascript', body: DASHBOARD_JS });
+  if (pathName.endsWith('/jarvis-dashboard.css')) return route.fulfill({ contentType: 'text/css', body: DASHBOARD_CSS });
   if (pathName === ARTIFACT_URL) return route.fulfill({ contentType: 'image/svg+xml', body: SVG });
   if (pathName === '/api/jarvis/ambient/settings') return json(route, { settings: {
     assistantName: 'Computer', wakePhrases: ['Hey Computer'], ambientEnabled: false,

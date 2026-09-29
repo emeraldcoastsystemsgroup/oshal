@@ -5,9 +5,19 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted verbatim from tests/unit/jarvis-delayed-visual-lifecycle.integration.spec.ts (931 code lines, near the 1000-line cap) so the JVV-003 queue-backed lifecycle spec reuses the same Jarvis task/artifact SQL fake, owner-aware session task store, test user-auth rail and poll helper instead of a drifting copy. No behaviour change.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | JSDoc on every export the move made public (the two row shapes and the message shape, the SQL fake and its query, the auth rail, the owner-aware task store and the poll helper), stating that each is an in-memory test double and what it models. No behaviour change.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The delayed-visual lifecycle spec was 4 failed / 2 passed on main with 'Jarvis result identity unavailable': the Jarvis router now resolves every result read through ctx.applicationAuthorization and checks the session task's stored owner issuer, and this harness gave it neither. testUserAuth now carries the issuer the way the OIDC/PAT rail and the server's request-identity middleware do (req.oidc.user.iss plus the request identity's principalIssuer); testApplicationAuthorization resolves the actor from that same verified user and answers owner()/canDiscover() as the real runtime does with no package registered (the catalog block used to die on a TypeError there); createIssuerKeepingTaskStore replaces the metadata-dropping owner-aware double with the real InMemoryTaskStore, seeded with the owner issuer the ownership checks read back (the JVV-003 queue spec already runs on it). Importers must mock createOptionalPostgresPool to null so the store never reaches a configured database.
  */
-import type { RequestHandler } from 'express';
-import { vi } from 'vitest';
+import type { Request, RequestHandler } from 'express';
+import { InMemoryTaskStore } from '../../src/entities/task';
+import { runWithRequestIdentity } from '../../src/shared/services/database/request-identity';
+import { OWNER_PRINCIPAL_ISSUER_METADATA_KEY } from '../../src/shared/security/owner-principal-issuer';
+import type { AuthorizationActor } from '../../src/shared/application-authorization/types';
+
+/**
+ * @description The verified issuer every test user signs in with: a neutral example.com issuer, not a
+ * real tenant, stamped on req.oidc.user.iss, the request identity and seeded session-task metadata.
+ */
+export const TEST_PRINCIPAL_ISSUER = 'https://issuer.oshal.example.com/';
 
 /**
  * @description One `jarvis_tasks` row as the in-memory SQL fake stores it: the columns the Jarvis
@@ -193,11 +203,13 @@ export class DelayedLifecyclePool {
 }
 
 /**
- * @description Test-only user-auth rail mirroring the req.oidc shape produced by OIDC and PAT
- * middleware. The caller's sub comes from the `x-test-authenticated-sub` header; no issuer is set.
+ * @description Test-only user-auth rail mirroring what OIDC/PAT middleware and the server's
+ * request-identity middleware give a signed-in request: `req.oidc.user` with the caller's sub and
+ * issuer, and a request identity carrying the same principal issuer. The caller's sub comes from the
+ * `x-test-authenticated-sub` header; every caller signs in with TEST_PRINCIPAL_ISSUER.
  * @param req - The request; its `x-test-authenticated-sub` header names the caller.
  * @param res - The response; answered 401 when the header is missing.
- * @param next - Continues the chain once `req.oidc` is attached.
+ * @param next - Continues the chain inside the caller's request identity.
  * @returns Nothing; it either responds 401 or calls `next`.
  */
 export const testUserAuth: RequestHandler = (req, res, next) => {
@@ -205,35 +217,66 @@ export const testUserAuth: RequestHandler = (req, res, next) => {
   if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
   (req as unknown as { oidc: unknown }).oidc = {
     isAuthenticated: () => true,
-    user: { sub },
+    user: { sub, iss: TEST_PRINCIPAL_ISSUER },
   };
-  next();
+  runWithRequestIdentity({ sub, principalIssuer: TEST_PRINCIPAL_ISSUER, isOperator: false } as never, next);
 };
 
 /**
- * @description In-memory, owner-aware session task store double: `create` keeps the first owner of
- * a task id, and `get` returns it, so session ownership checks have something real to read back.
- * @param initial - Tasks (id and owner) to seed before the spec runs.
- * @returns The backing map (for assertions) and the `vi.fn`-wrapped store handed to the routes.
+ * @description Stub ctx.applicationAuthorization for the Jarvis router: it resolves the actor from the
+ * verified user testUserAuth attached (sub and issuer, active, not a swarm admin) and refuses a request
+ * that carries none, as the real resolver refuses an unauthenticated one. Its package registry is empty,
+ * so owner() and canDiscover() answer as ApplicationAuthorizationRuntime does with nothing registered.
+ * It stands in for the directory, role and package lookups only; the router's owner, issuer and
+ * protected-result checks still run for real.
  */
-export function createOwnerAwareTaskStore(initial: Array<{ taskId: string; ownerSub: string }> = []) {
-  const tasks = new Map(initial.map((task) => [task.taskId, { ...task }]));
-  return {
-    tasks,
-    store: {
-      get: vi.fn(async (taskId: string) => tasks.get(taskId) ?? null),
-      create: vi.fn(async (input: { taskId: string; ownerSub?: string }) => {
-        const existing = tasks.get(input.taskId);
-        if (existing) return existing;
-        const created = { taskId: input.taskId, ownerSub: input.ownerSub || '' };
-        tasks.set(input.taskId, created);
-        return created;
-      }),
-      updateStatus: vi.fn().mockResolvedValue(undefined),
-      incrementMessageCount: vi.fn().mockResolvedValue(undefined),
-      incrementTurnCount: vi.fn().mockResolvedValue(undefined),
-    },
-  };
+export const testApplicationAuthorization = {
+  /**
+   * @description Resolve the signed-in actor for one request.
+   * @param req - The request testUserAuth authenticated.
+   * @returns The active, non-admin actor for the request's verified sub and issuer.
+   */
+  async resolveActor(req: Request): Promise<AuthorizationActor> {
+    const user = (req as unknown as { oidc?: { user?: { sub?: string; iss?: string } } }).oidc?.user;
+    if (!user?.sub || !user.iss) throw new Error('No verified user on this request');
+    return { sub: user.sub, issuer: user.iss, isActive: true, isSwarmAdmin: false };
+  },
+  /**
+   * @description The package that owns a bot or tool; none, since no package is registered here.
+   * @param _kind - Whether a bot or a tool is being looked up.
+   * @param _id - The bot or tool id.
+   * @returns Always undefined: an empty registry owns nothing.
+   */
+  owner(_kind: 'bots' | 'tools', _id: string): string | undefined {
+    return undefined;
+  },
+  /**
+   * @description Whether an installed package may be shown to the caller; an unregistered one never is.
+   * @param _appName - The package name.
+   * @returns Always false: nothing is registered, so nothing is discoverable.
+   */
+  async canDiscover(_appName: string): Promise<boolean> {
+    return false;
+  },
+};
+
+/**
+ * @description The real InMemoryTaskStore (the canonical session/ticket task store) seeded with Jarvis
+ * session tasks that carry their owner's principal issuer in metadata, exactly as ensureSessionTask
+ * writes it, so the router's owner-and-issuer session checks read back what production stores. The
+ * importing spec must mock createOptionalPostgresPool to null so the store stays in memory.
+ * @param initial - Session tasks (id and owner) to seed, owned under TEST_PRINCIPAL_ISSUER.
+ * @returns The seeded store, handed to the routes as ctx.taskStore.
+ */
+export async function createIssuerKeepingTaskStore(initial: Array<{ taskId: string; ownerSub: string }> = []): Promise<InMemoryTaskStore> {
+  const store = new InMemoryTaskStore();
+  for (const { taskId, ownerSub } of initial) {
+    await store.create({
+      taskId, ownerSub, title: 'Jarvis chat', processingMode: 'agentic',
+      metadata: { origin: 'jarvis-chat', [OWNER_PRINCIPAL_ISSUER_METADATA_KEY]: TEST_PRINCIPAL_ISSUER },
+    });
+  }
+  return store;
 }
 
 /**

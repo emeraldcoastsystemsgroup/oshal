@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Split verbatim out of tests/jarvis-rich-response-integration.spec.ts at the 1000-code-line cap: the native-wake microphone lifecycle group, which proves the command stream, its AudioContext, and the recorder are released on speech end, on the no-voice timeout, on user interruption, and on page hide, while ambient speaker capture keeps its own stream.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Fourth case: the page must still stand up its native-wake listener and open/release the command microphone when the framework theme assets fail to load. BUG-12 (#191) left the orb's colour fallbacks as the literal 'var(--accent-primary)', canvas addColorStop threw on it inside the first synchronous tick(), and the rest of the main script (mic handlers, wake listener, pagehide release) never registered. Red on the origin/main page.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The page loads on the configured Playwright origin (jarvisPageUrl, from tests/helpers/test-origins.ts) instead of an invented host; every request is still answered by the same route stubs.
  */
 
 import { expect, test } from '@playwright/test';
@@ -12,6 +13,7 @@ import {
   fulfillNativeWake,
   installNativeWakeAudioStub,
   installSpeechStub,
+  jarvisPageUrl,
   THEME_ASSET_PATHS,
 } from './helpers/jarvis-rich-response-fixtures';
 
@@ -19,7 +21,7 @@ test('native wake releases its command microphone after speech while ambient spe
   await installSpeechStub(page);
   await installNativeWakeAudioStub(page);
   await page.route('**/*', (route) => fulfillNativeWake(route, true));
-  await page.goto('http://jarvis.test/api/jarvis/');
+  await page.goto(jarvisPageUrl());
 
   await expect.poll(() => page.evaluate(() => (window as any).__nativeWakeAudio.streams.length)).toBe(1);
   await page.evaluate(() => {
@@ -59,7 +61,7 @@ test('native wake releases tracks and AudioContext on the no-voice timeout', asy
   // the real timeout branch without making the browser test sleep for 12 seconds.
   await installNativeWakeAudioStub(page, 13_000);
   await page.route('**/*', (route) => fulfillNativeWake(route, false));
-  await page.goto('http://jarvis.test/api/jarvis/');
+  await page.goto(jarvisPageUrl());
   await page.evaluate(() => {
     const state = (window as any).__nativeWakeAudio;
     state.voice = false;
@@ -79,7 +81,7 @@ test('native wake releases the microphone on user interruption and page close', 
   await installSpeechStub(page);
   await installNativeWakeAudioStub(page);
   await page.route('**/*', (route) => fulfillNativeWake(route, false));
-  await page.goto('http://jarvis.test/api/jarvis/');
+  await page.goto(jarvisPageUrl());
 
   const wake = async (detectedAtOffset: number) => page.evaluate((offset) => {
     (window as any).__nativeWakeAudio.voice = true;
@@ -119,7 +121,7 @@ test('native wake still opens and releases the command microphone when the frame
     const themeAsset = (THEME_ASSET_PATHS as readonly string[]).includes(pathName) || pathName.startsWith('/cockpit/css/themes/');
     return themeAsset ? route.fulfill({ status: 404, body: '' }) : fulfillNativeWake(route, false);
   });
-  await page.goto('http://jarvis.test/api/jarvis/');
+  await page.goto(jarvisPageUrl());
 
   // Set at the end of the main script, right before the listener: unset means the script died above it.
   expect(await page.evaluate(() => (window as any).__OSHAL_JARVIS_NATIVE_WAKE_READY__)).toBe(true);

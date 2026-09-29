@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Split verbatim out of tests/jarvis-rich-response-integration.spec.ts at the 1000-code-line cap: the phone-width, 200%-zoom reflow, keyboard-operation, focus-trap, and reduced-motion acceptance group for the Jarvis rich-response surface.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Follow the compact dashboard layout (0c287223). The always-listening state and its settings button moved from a halo around the orb into the Options disclosure, so the narrow-screen case opens Options through its summary and asserts the state label overlaps none of the orb, the status line or the Options controls (it used to sit above the status line, which is no longer where the product puts it). Type, Discussion and the ambient controls are reached through Options (openAssistantOptions/openTyper). The composer is shown from load, so the keyboard-orb case now proves the Enter press itself: the denied microphone moves focus into the composer and says why. The closed Discussion drawer is visibility:hidden, so the transcript facts are compared by textContent while it is closed and again as rendered innerText once it is open. The page loads on the configured Playwright origin (jarvisPageUrl).
  */
 
 import { expect, test } from '@playwright/test';
@@ -12,22 +13,36 @@ import {
   ARTIFACT_URL,
   fulfillJarvis,
   installSpeechStub,
+  jarvisPageUrl,
   json,
+  openAssistantOptions,
+  openTyper,
 } from './helpers/jarvis-rich-response-fixtures';
 
-test('keeps the orb halo, state label, and controls separated on a narrow screen', async ({ page }) => {
+test('keeps the orb, ambient state label, and controls separated on a narrow screen', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await installSpeechStub(page);
   await page.route('**/*', fulfillJarvis);
-  await page.goto('http://jarvis.test/api/jarvis/');
+  await page.goto(jarvisPageUrl());
+  // The compact layout keeps the always-listening state and its settings in Options.
+  await openAssistantOptions(page);
 
   const layout = await page.evaluate(() => {
-    const state = document.querySelector('.jarvis-ambient__state')!.getBoundingClientRect();
-    const status = document.getElementById('status')!.getBoundingClientRect();
-    const settings = document.querySelector('.jarvis-ambient__settings-button')!.getBoundingClientRect();
-    const chips = document.getElementById('chips')!.getBoundingClientRect();
+    const rect = (element: Element) => element.getBoundingClientRect();
+    const overlaps = (a: DOMRect, b: DOMRect) =>
+      a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+    const stateElement = document.querySelector('#assistantOptions .jarvis-ambient__state')!;
+    const state = rect(stateElement);
+    const status = rect(document.getElementById('status')!);
+    const orb = rect(document.getElementById('orb')!);
+    const settings = rect(document.querySelector('#assistantOptions .jarvis-ambient__settings-button')!);
+    const chips = rect(document.getElementById('chips')!);
+    const controls = Array.from(document.querySelectorAll('#assistantOptions > summary, #ctlrow > .ctl'), rect);
     return {
-      noStateOverlap: state.bottom <= status.top,
+      stateHasBox: state.width > 0 && state.height > 0,
+      noStateOverlap: !overlaps(state, status) && !overlaps(state, orb) && !overlaps(state, settings)
+        && controls.every((control) => !overlaps(state, control)),
+      controlCount: controls.length,
       settingsWidth: settings.width,
       settingsHeight: settings.height,
       chipsBottom: chips.bottom,
@@ -35,6 +50,8 @@ test('keeps the orb halo, state label, and controls separated on a narrow screen
       documentWidth: document.documentElement.scrollWidth,
     };
   });
+  expect(layout.stateHasBox).toBe(true);
+  expect(layout.controlCount).toBeGreaterThan(1);
   expect(layout.noStateOverlap).toBe(true);
   expect(layout.settingsWidth).toBeGreaterThanOrEqual(44);
   expect(layout.settingsHeight).toBeGreaterThanOrEqual(44);
@@ -52,9 +69,9 @@ test('wraps a complete mobile text reply without horizontal clipping', async ({ 
     }
     return fulfillJarvis(route);
   });
-  await page.goto('http://jarvis.test/api/jarvis/');
+  await page.goto(jarvisPageUrl());
   await expect(page.locator('#chips .chip')).toHaveCount(3);
-  await page.locator('#typeToggle').click();
+  await openTyper(page);
 
   await page.locator('#typein').fill('Give me a compact mobile answer.');
   await page.locator('#typer button[type="submit"]').click();
@@ -96,8 +113,8 @@ test('hard-wraps a generated visual caption inside a 320px response stage', asyn
     }
     return fulfillJarvis(route);
   });
-  await page.goto('http://jarvis.test/api/jarvis/');
-  await page.locator('#typeToggle').click();
+  await page.goto(jarvisPageUrl());
+  await openTyper(page);
   await page.locator('#typein').fill('Show me the forecast.');
   await page.locator('#typer button[type="submit"]').click();
   await expect(page.locator('#responseStage')).toHaveAttribute('data-state', 'speaking', { timeout: 6_000 });
@@ -124,8 +141,8 @@ test('hard-wraps a generated visual caption inside a 320px response stage', asyn
 test('opens Discussion from the active visual plane and restores modal focus safely', async ({ page }) => {
   await installSpeechStub(page);
   await page.route('**/*', fulfillJarvis);
-  await page.goto('http://jarvis.test/api/jarvis/');
-  await page.locator('#typeToggle').click();
+  await page.goto(jarvisPageUrl());
+  await openTyper(page);
   await page.locator('#typein').fill("What's the weather today?");
   await page.locator('#typer button[type="submit"]').click();
   await expect(page.locator('#responseDiscussionBtn')).toBeVisible({ timeout: 6_000 });
@@ -155,16 +172,22 @@ test('lets keyboard users activate the orb', async ({ page }) => {
     });
   });
   await page.route('**/*', fulfillJarvis);
-  await page.goto('http://jarvis.test/api/jarvis/');
+  await page.goto(jarvisPageUrl());
+  // The composer is visible from load, so its class alone cannot show the key press did anything.
+  await expect(page.locator('#typein')).not.toBeFocused();
   await page.locator('#orb').focus();
   await page.keyboard.press('Enter');
+  // Enter on the orb starts push-to-talk; the denied microphone falls back to the composer.
+  await expect(page.locator('#status')).toContainText('Microphone blocked');
   await expect(page.locator('#typer')).toHaveClass(/show/);
+  await expect(page.locator('#typein')).toBeFocused();
 });
 
 test('opens and closes ambient settings by keyboard while containing and restoring focus', async ({ page }) => {
   await installSpeechStub(page);
   await page.route('**/*', fulfillJarvis);
-  await page.goto('http://jarvis.test/api/jarvis/');
+  await page.goto(jarvisPageUrl());
+  await openAssistantOptions(page);
 
   const settings = page.getByRole('button', { name: 'Ambient listening settings' });
   await settings.focus();
@@ -187,11 +210,12 @@ test('honors reduced motion and keeps Stop and Discussion immediately operable',
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await installSpeechStub(page);
   await page.route('**/*', fulfillJarvis);
-  await page.goto('http://jarvis.test/api/jarvis/');
+  await page.goto(jarvisPageUrl());
   await page.evaluate(() => (window as any).JarvisAmbient.getInstance().setState('armed'));
+  await openAssistantOptions(page);
 
   const reducedStyles = await page.evaluate(() => {
-    const halo = document.querySelector('.jarvis-ambient__bar')!;
+    const halo = document.querySelector('#assistantOptions .jarvis-ambient__bar')!;
     const image = document.getElementById('responseStageImage')!;
     return {
       mediaMatches: matchMedia('(prefers-reduced-motion: reduce)').matches,
@@ -204,7 +228,7 @@ test('honors reduced motion and keeps Stop and Discussion immediately operable',
   expect(reducedStyles.haloAnimation).toBe('none');
   expect(Math.max(...reducedStyles.imageTransitionSeconds)).toBeLessThanOrEqual(0.001);
 
-  await page.locator('#typeToggle').click();
+  await openTyper(page);
   await page.locator('#typein').fill("What's the weather today?");
   await page.locator('#typer button[type="submit"]').click();
   await expect(page.locator('#responseStage')).toHaveAttribute('data-state', 'speaking', { timeout: 2_000 });
@@ -216,8 +240,8 @@ test('honors reduced motion and keeps Stop and Discussion immediately operable',
 test('keeps the authoritative text and saved image alt equivalent, and keyboard Stop restores the surface', async ({ page }) => {
   await installSpeechStub(page);
   await page.route('**/*', fulfillJarvis);
-  await page.goto('http://jarvis.test/api/jarvis/');
-  await page.locator('#typeToggle').click();
+  await page.goto(jarvisPageUrl());
+  await openTyper(page);
   await page.locator('#typein').fill("What's the weather today?");
   await page.locator('#typer button[type="submit"]').click();
 
@@ -225,9 +249,12 @@ test('keeps the authoritative text and saved image alt equivalent, and keyboard 
   const activeAlt = await page.locator('#responseStageImage').getAttribute('alt');
   expect(activeAlt).toBe('Sunny weather, 72 degrees');
   await expect(page.locator('#convo')).toContainText('Today is sunny with a high of 72 degrees.');
+  // The closed Discussion drawer is visibility:hidden in the compact layout, so its rendered
+  // innerText is empty until it opens; the transcript it holds is compared here, and the same facts
+  // are checked again as rendered text once the drawer is open below.
   for (const fact of ['sunny', '72']) {
     expect(activeAlt?.toLowerCase()).toContain(fact);
-    expect((await page.locator('#convo').innerText()).toLowerCase()).toContain(fact);
+    expect(((await page.locator('#convo').textContent()) || '').toLowerCase()).toContain(fact);
   }
 
   await page.keyboard.press('Enter');
@@ -238,10 +265,16 @@ test('keeps the authoritative text and saved image alt equivalent, and keyboard 
   // Focus returns to the control that submitted the answer, not to the now-removed Stop action.
   await expect(page.locator('#typer button[type="submit"]')).toBeFocused();
 
+  // Discussion lives in Options; Type closed it on the way to the composer.
+  await openAssistantOptions(page);
   await page.locator('#discussionBtn').click();
   const savedImage = page.locator('#discussionDrawer .discussion-visual-thumb');
   await expect(savedImage).toHaveAttribute('alt', activeAlt || '');
   await expect(page.locator('#discussionDrawer')).toContainText('Today is sunny with a high of 72 degrees.');
+  await expect(page.locator('#discussionDrawer')).toHaveClass(/open/);
+  for (const fact of ['sunny', '72']) {
+    expect((await page.locator('#convo').innerText()).toLowerCase()).toContain(fact);
+  }
 });
 
 test('reflows visual controls at 200% text size and a half-width viewport without clipping', async ({ page }) => {
@@ -250,9 +283,9 @@ test('reflows visual controls at 200% text size and a half-width viewport withou
   await page.setViewportSize({ width: 640, height: 800 });
   await installSpeechStub(page);
   await page.route('**/*', fulfillJarvis);
-  await page.goto('http://jarvis.test/api/jarvis/');
+  await page.goto(jarvisPageUrl());
   await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
-  await page.locator('#typeToggle').click();
+  await openTyper(page);
   await page.locator('#typein').fill("What's the weather today?");
   await page.locator('#typer button[type="submit"]').click();
   await expect(page.locator('#responseStage')).toHaveAttribute('data-state', 'speaking', { timeout: 6_000 });
