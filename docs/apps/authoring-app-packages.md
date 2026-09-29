@@ -501,10 +501,13 @@ rating:
 ```
 
 - A package with no model in the loop declares `features: []`. That is a statement, not an omission.
-- Declared memory follows one rule until a measurement replaces it with `basis: observed`: 64 MiB low
-  per bot-node container, 32 MiB for an inline-only app, an engine container at its idle from the
-  [sizing runbook](../runbooks/docker-engine-memory-sizing.md) rounded up to the next 32 MiB, and
-  `high` at four times `low`.
+- Memory is what this one app needs on the swarm host. Count every bot container it uses, even one
+  another app shares, and leave out services on another machine such as a GPU box.
+- Declared memory follows one rule until a measurement replaces it with `basis: observed`: a bot-node
+  container is 64 MiB low and 256 high; an app with no bot container of its own is 32 and 128; a core
+  engine container is its idle from the [sizing runbook](../runbooks/docker-engine-memory-sizing.md)
+  rounded up to the next 32 MiB, times four for high; a package engine container with a declared
+  `mem_limit` counts that limit as its high and a quarter of it as its low.
 - Token counts and verified models are never typed here. They are generated from `chat_tasks`, Token
   Chase frames and Test Lab runs, and the loader refuses them as unknown fields.
 - The loader fails a malformed block and warns on a missing one. Each repository's generated ledger
