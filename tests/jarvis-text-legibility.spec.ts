@@ -6,11 +6,13 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard the "bare minimum: the
  *            | text is visible" floor — the transcribed user line must WRAP (never clip to one line
  *            | with an ellipsis) and must never force the surface to scroll horizontally.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The webServer origin comes from the shared baseOrigin() helper (tests/helpers/test-origins.ts), which resolves PLAYWRIGHT_PORT and the MOCK_OIDC default exactly as playwright.config.ts does, instead of a spec-built origin whose fallback diverged from the config (localhost, fallback 4458 whatever MOCK_OIDC was).
  */
 
 import { expect, test } from '@playwright/test';
+import { baseOrigin } from './helpers';
 
-const BASE = `http://localhost:${process.env.PLAYWRIGHT_PORT ?? '4458'}`;
+const BASE = baseOrigin();
 
 // A realistic long dictation plus one very long unbroken token (the classic horizontal-overflow trap).
 const LONG_YOU = 'Please look up the current weather in Destin Florida and then also summarize my '

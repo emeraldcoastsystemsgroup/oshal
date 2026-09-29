@@ -12,11 +12,13 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | MOCK_OIDC runs get a deterministic SESSION_SECRET when none is configured: a clean checkout has no .env, MOCK_OIDC boots without a session secret, and every HMAC-minting path (TV pairing approve, guest cookies) 500s "TV pairing requires SESSION_SECRET" — the 2026-07-09 firetv-tv-pairing quarantine. Same keyless-CI class as the noop default above; real values always win, and non-mock runs are untouched.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | The webServer reaches Postgres through its PUBLISHED port. `.env`'s DATABASE_URL names the compose service host, which does not resolve off-container, so the managed server ran DB-less and every database-backed e2e skipped — a green run that proved nothing (it is why the swarm-apps framework spec and the ADR-141 group spec could only be proven against the live stack). Resolution lives in tests/helpers/host-database-url.ts, guarded by tests/unit/host-database-url.spec.ts.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | BASE_URL pins the IPv4 loopback 127.0.0.1 instead of the hostname "localhost": on this host a stale wslrelay squats ::1 ports (docs/runbooks/localhost-wedge-wslrelay.md), so clients resolving localhost→::1 got ECONNREFUSED ::1:3456 (258 hits in the 2026-07-23 ci-local --head e2e run) while the webServer stayed reachable over IPv4. ci-local's NODE_OPTIONS=--dns-result-order=ipv4first mitigation demonstrably did not cover Playwright's request contexts or Chromium; naming the IPv4 address removes name resolution from the failure surface entirely. tests/helpers/test-origins.ts moves in the same change so URL-host waits keep matching.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | testIgnore is derived from tests/e2e-dispositions.json: every spec the registry classes unsupported-in-ci (the CDP-attached tests/live proofs, the Keycloak specs, the real-model chat spec, the default-OFF A2A gateway, the docker-stack dynamic-agent proof, and a node script that only matches the file pattern) is left out of the default run, so a plain `npx playwright test` stops collecting specs that cannot pass here. The list is read, not hand-copied, so a new unsupported row changes the config with no second edit; OSHAL_E2E_INCLUDE_UNSUPPORTED=true lifts it to run one deliberately with the harness its row names.
  */
 
 import { defineConfig } from '@playwright/test';
 import { config as loadEnvFile } from 'dotenv';
 import { hostReachableDatabaseUrl } from './tests/helpers/host-database-url';
+import { readE2eDispositions, unsupportedInCiIgnores } from './tests/helpers/e2e-dispositions';
 
 // The managed server calls dotenv itself, and dotenv NEVER overrides an already-set variable —
 // so the one value that must be corrected has to be computed here. `.env` names the compose
@@ -37,13 +39,18 @@ const PLAYWRIGHT_PORT = parseInt(process.env.PLAYWRIGHT_PORT ?? String(DEFAULT_P
 // IPv4; naming 127.0.0.1 makes every client — browser and node request context — hit it directly.
 const BASE_URL = `http://127.0.0.1:${PLAYWRIGHT_PORT}`;
 const REUSE_EXISTING_SERVER = process.env.PLAYWRIGHT_REUSE_SERVER === 'true';
+// Specs the disposition registry classes unsupported-in-ci never run under this config: they need
+// a signed-in hosted browser, an identity provider, a real model or a docker stack. Read from the
+// registry (resolved against this file, not the cwd) so the config and the guard
+// (tests/unit/e2e-dispositions.spec.ts) cannot disagree about which specs those are.
+const UNSUPPORTED_IN_CI = unsupportedInCiIgnores(readE2eDispositions(__dirname));
 
 /**
  * @description Playwright configuration for OSHAL browser validation against the local Express server.
  */
 const config = defineConfig({
   testDir: './tests',
-  testIgnore: ['tests/unit/**'],
+  testIgnore: ['tests/unit/**', ...UNSUPPORTED_IN_CI],
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,

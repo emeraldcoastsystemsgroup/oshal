@@ -16,12 +16,13 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Updated Presentron coverage for the shared studio and shared-runtime config guidance
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Added regression coverage proving swarmbot PM intake switches onto the dedicated ticket-linked task returned by the server
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Retired the Presentron studio coverage (studio removed); the toolbar presentation button (#openAiOfficeBtn) now links to AI Office (?app=presentations) — assert that navigation instead. RAG coverage unchanged.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | The webServer origin comes from the shared baseOrigin() helper (tests/helpers/test-origins.ts), which resolves PLAYWRIGHT_PORT and the MOCK_OIDC default exactly as playwright.config.ts does, instead of a spec-built origin whose fallback diverged from the config (localhost, then the generic PORT, then 3456); APP_URL still wins when set.
  */
 
 import { test, expect } from '@playwright/test';
+import { baseOrigin } from './helpers';
 
-const PLAYWRIGHT_PORT = process.env.PLAYWRIGHT_PORT ?? process.env.PORT ?? '3456';
-const BASE_URL = process.env.APP_URL ?? `http://localhost:${PLAYWRIGHT_PORT}`;
+const BASE_URL = process.env.APP_URL ?? baseOrigin();
 const PROJECT_MANAGER_AGENT_ID = 'a0000000-0000-0000-0000-000000000001';
 
 /**

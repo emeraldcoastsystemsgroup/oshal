@@ -7,12 +7,13 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added live-registry filtering coverage so stale undeployed profiles like devops-bot do not appear in the cockpit bot selector
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added selector-refresh coverage so an already-open cockpit rechecks the live swarm registry and drops stale dead-bot options on focus
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Added offline-registry coverage so standalone hosts keep the deployed registry roster instead of falling back to stale persisted bot profiles
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | The webServer origin comes from the shared baseOrigin() helper (tests/helpers/test-origins.ts), which resolves PLAYWRIGHT_PORT and the MOCK_OIDC default exactly as playwright.config.ts does, instead of a spec-built origin whose fallback diverged from the config (localhost, then the generic PORT, then 3456); APP_URL still wins when set.
  */
 
 import { test, expect } from '@playwright/test';
+import { baseOrigin } from './helpers';
 
-const PLAYWRIGHT_PORT = process.env.PLAYWRIGHT_PORT ?? process.env.PORT ?? '3456';
-const BASE_URL = process.env.APP_URL ?? `http://localhost:${PLAYWRIGHT_PORT}`;
+const BASE_URL = process.env.APP_URL ?? baseOrigin();
 
 /**
  * @description Navigate to cockpit after clearing prior cockpit rail session state.
