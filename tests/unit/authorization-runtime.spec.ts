@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Prove escaped browser denial guidance, API JSON parity and absence of unauthorized handler dispatch.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | AUTH-07 through real package loading and mounted routes: a non-widening catalog upgrade keeps an existing grant working on the new binding with no revoke or re-grant and records the installer migration event; a widening one refuses with the review id while the installed package keeps serving, and loads once an administrator approves that review.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Exercise signed callback revocation, exact refreshed owners and retirement across deferred verifier, directory and real resource-policy boundaries.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Hold the real policy's final tier resolver to prove revocation cannot hide behind an effective-policy snapshot.
  */
 /** Real temporary package activation and Express dispatch; persistence is isolated, policy and lifecycle are real. */
 import express, { type Request, type RequestHandler } from 'express';
@@ -79,7 +80,7 @@ let memberTenants: string[];
 let callbackActive: boolean;
 let callbackPrincipal: { sub: string; issuer: string } | null;
 let callbackDirectoryActor: AuthorizationActor;
-type CallbackStage = 'verifier' | 'directory' | 'adapter';
+type CallbackStage = 'verifier' | 'directory' | 'adapter' | 'tier';
 let callbackPause: { stage: CallbackStage; skip: number; entered(): void; wait: Promise<void> } | undefined;
 let activationPause: { entered(): void; wait: Promise<void> } | undefined;
 
@@ -163,7 +164,9 @@ beforeEach(async () => {
     delete: async (name: string) => { repoWrites++; return records.delete(name); },
   };
   store = new MemoryAuthorizationStore();
-  policy = new ApplicationAuthorizationService(store, { resolveTier: async () => ({ tier: 'admin', explicit: false }) });
+  policy = new ApplicationAuthorizationService(store, { resolveTier: async () => {
+    await waitCallback('tier'); return { tier: 'admin', explicit: false };
+  } });
   const actor = async (req: Request) => {
     const name = req.get('x-fixture-user');
     if (name === 'alice') return structuredClone({ ...alice, ...(memberTenants.length ? { tenantIds: memberTenants } : {}) });
@@ -266,6 +269,14 @@ describe('Application authorization runtime integration', () => {
     it('revokes a previously allowed callback through the real preview/apply policy', async () => {
       await allowedCallback(); await changeGrant('revoke');
       expect((await call('/records', signed)).status).toBe(403); noHandler();
+    });
+    it.each(['revoke', 'deny'] as const)('refuses %s while the final effective-policy tier resolver awaits', async action => {
+      await allowedCallback();
+      // Skip authorize()'s first tier read; hold the second, inside the final effective() call.
+      const result = await duringCallback('tier', () => changeGrant(action), 1);
+      expect.soft(result).toMatchObject({ status: 403, body: { error: 'callback_authorization_changed' } });
+      noHandler();
+      expect((await call('/records', signed)).status).toBe(403);
     });
     it.each(['verifier', 'directory', 'adapter'] as const)('rechecks revocation after deferred %s', async stage => {
       await allowedCallback();

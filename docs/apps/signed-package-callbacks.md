@@ -14,7 +14,10 @@ No browser cookie or fleet-secret impersonation is involved. Deactivation retire
 A package without this explicit contract continues through normal application authorization.
 
 After an awaited resource adapter, callback admission refreshes the exact owner again and reads
-current effective policy. A changed policy revision, catalog, tier or required grant refuses
+current effective policy. That policy-state read follows the asynchronous explicit-tier resolver;
+the returned revision and grants are then derived without another await. Revocation during the
+final tier lookup cannot be hidden by a pre-lookup snapshot.
+A changed policy revision, catalog, tier or required grant refuses
 dispatch with `403 callback_authorization_changed`; an unavailable owner also refuses.
 Activation identity is checked again after that read, and the mounter checks that the exact
 handler is still mounted. Unavailable/retired activation returns 503 (or 404 when no entry was
@@ -32,7 +35,7 @@ Callbacks must return quickly, with expensive processing tracked durably and pol
 Run the real loader/Express listener/policy regression with the anonymous-route companions:
 
 ```sh
-node --max-old-space-size=128 node_modules/vitest/vitest.mjs run tests/unit/authorization-runtime.spec.ts tests/unit/package-anonymous-routes.spec.ts tests/unit/package-anonymous-routes-http.spec.ts --pool=forks --maxWorkers=1 --no-file-parallelism --execArgv=--max-old-space-size=384
+node --max-old-space-size=128 node_modules/vitest/vitest.mjs run tests/unit/authorization-runtime.spec.ts tests/unit/authorization-policy.spec.ts tests/unit/package-anonymous-routes.spec.ts tests/unit/package-anonymous-routes-http.spec.ts --pool=forks --maxWorkers=1 --no-file-parallelism --execArgv=--max-old-space-size=384
 ```
 
 The runtime spec is already linked by AI Test Lab's application-access-administration scenario.
@@ -40,7 +43,9 @@ Its callback cases cover an initially allowed POST followed by actual preview/ap
 explicit deny, exact owner/issuer changes, unavailable registration, unload and identical-policy
 reload while signature verification, directory lookup or resource authorization waits. They
 assert handler counts, callback scope restoration on fallthrough, unusable verifier refusal and
-the activation fence after the final owner lookup. The anonymous companions retain the separate
+the activation fence after the final owner lookup. Revoke/deny barriers also hold the real policy's
+final tier resolver and require refusal with zero handler calls after release; the policy companion
+checks existing grant semantics. The anonymous companions retain the separate
 exact GET/HEAD contract; callback/catalog declarations cannot opt into that bypass.
 
 These are local source/listener proofs: provider signatures, principal-directory lookup, policy
@@ -48,7 +53,8 @@ persistence and application persistence use explicitly isolated doubles. Resourc
 policy decisions, package loading and HTTP dispatch execute production code. They are **not**
 carrier-signature cryptography, database/RLS, installed-image or public callback reachability proof.
 Sequential production negative controls exercise the post-adapter policy/owner checks, activation
-fences and fallthrough scope; restore the source exactly before the final green run.
+fences and fallthrough scope. Restoring the old state-before-tier read order must make the final-tier
+revocation cases fail. Restore the source exactly before the final green run.
 
 The intended installed core still needs retained success, invalid-signature, revoked-grant,
 wrong-owner/issuer and unavailable-registration receipts, with Calling Assistant **off**.
