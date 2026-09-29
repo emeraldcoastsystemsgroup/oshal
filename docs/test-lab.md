@@ -521,6 +521,41 @@ No real person's location is read or written. The linked suites:
 Run them with `npm run test:location` (Docker is required for the PostgreSQL suites). That is local
 evidence. After a deploy, run the card from the Test Lab.
 
+### Location: a group drone reports under its own credential (ADR-169 L6)
+
+**Location — a group drone reports under its own credential (ADR-169 L6)** (`location-device-ingest`,
+Tools) runs two steps on the build that is running:
+
+- `device-routes` runs as the signed-in person. The device ingest must refuse a browser session
+  (401 `device_credential_required`), issuing a credential must be refused without a fresh sign-in
+  (403 `step_up_required`), the devices list must name the kinds that report under a credential, and the
+  person's devices must not change.
+- `device-lifecycle` runs for three uniquely tagged synthetic people on the real database. An admin makes
+  a group with a member and a group place, enrols a drone to the group and issues its credential. That
+  credential then drives the real ingest over the loopback exactly as a drone node does (the bearer alone):
+  the fix must be accepted, placed in the group place and stored as the device subject; the same
+  credential must be refused on another device's path; the signed-in person must be refused a node token
+  for the drone's id at `/api/join/enroll`; the member reads the drone by reference through
+  `currentPlace`, `distanceBand` and `locatedDevice` and the stranger gets nothing. Everything created is
+  deleted (the credential row, the device with its fixes, the place, the group and its memberships) and
+  a zero-row check runs; incomplete cleanup fails the step.
+
+No real person's location is read or written, and no position is logged. The linked suites:
+
+- `tests/unit/location-device-ingest-postgres.spec.ts`: the credential behind the step-up, the ingest as
+  the device subject, every refusal the slice names (each writes nothing), rotation, opting out and removal,
+  and the kernel reads for a member and a stranger, over HTTP with the real CLI-token middleware.
+- `tests/unit/location-token-scope.spec.ts`: the credential's scope, pure and through the real middleware;
+  a node token and an account PAT unchanged by the new column.
+- `tests/unit/location-route-policy.spec.ts`, `tests/unit/location-rls-no-operator-guard.spec.ts` and
+  `tests/unit/machine-write-identity.spec.ts`: the declared routes, the static no-bypass guard over
+  migration 178, and the machine-write class gate that discovers and drives the ingest.
+- `tests/unit/test-lab-location-device-registration.spec.ts`: this card on the fixture server, green and
+  red.
+
+Run them with `npm run test:location` (Docker is required for the PostgreSQL suites). That is local
+evidence. After a deploy, run the card from the Test Lab.
+
 ---
 
 ## Application-installed smoke cases

@@ -13,6 +13,7 @@
  *   one-use exact-task capability and prove the ticket write uses the digest-bound owner identity.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Keep the Apply ingest identity driver explicit about confirmation-artifact retention so the callback cannot imply verified submission evidence without the reviewed persistence boundary.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Keep the internal-tool identity probe on its intended grant-denial path by supplying the request-start executor descriptor now required by the fail-closed MCP boundary.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L6: readLocationTokenBinding joins the machine-auth markers (a location credential is a per-credential bearer the token-auth middleware admits on one path), so the core device ingest is discovered; its driver sends a real bearer through the real createCliTokenAuthMiddleware and the real location router over HTTP, answers the device read as the recorded owner, and observes the device subject 'device:<id>' with isOperator false on the connection at the observation INSERT, with the row's subject equal to it.
  */
 
 /**
@@ -73,7 +74,10 @@ import { createJarvisRoutes } from '@/app/routes/jarvis-routes';
 import { createTestLabGoldenRoutes } from '@/app/routes/test-lab-golden';
 import { createInternalToolBridgeRoutes } from '@/app/routes/internal-tool-bridge-routes';
 import { createMessageRoutes } from '@/app/routes/message-routes';
+import { createCliTokenAuthMiddleware } from '@/app/routes/cli-token-routes';
+import { createLocationRoutes } from '@/app/routes/location-routes';
 import { ChannelLinkService } from '@/features/chat-channels';
+import { FakeCliTokenPool } from '../helpers/fake-cli-token-pool';
 import {
   MACHINE_WRITE_IDENTITY_RESIDUAL_DRIVERS,
   SERVICE_USER_PLACEHOLDER,
@@ -118,6 +122,7 @@ const MACHINE_AUTH_MARKERS: readonly RegExp[] = [
   /[A-Z_]*WEBHOOK_TOKEN/,
   /[A-Z_]*INGEST_TOKEN/,
   /x-oshal-callback-capability/i,
+  /readLocationTokenBinding/,
 ];
 
 /** Where a machine entry point can live: routers, the webhook framework, and the node processes. */
@@ -236,8 +241,65 @@ function alertIdentityDriverPayload(): Record<string, unknown> {
   };
 }
 
+/** The location store as the device ingest sees it: the device read as the recorded owner, then the device subject's writes. */
+function locationDeviceIngestPool(observations: WriteObservation[], deviceId: string, tokenId: string) {
+  const query = async (sql: string, params: unknown[] = []) => {
+    if (/INSERT INTO location_observations/i.test(sql)) {
+      observations.push({ identity: getRequestIdentity(), ownerValue: params[3] as string, label: 'location_observations insert' });
+      return { rows: [], rowCount: 1 };
+    }
+    if (/FROM location_devices WHERE device_id/i.test(sql)) {
+      return {
+        rows: [{ device_kind: 'drone', owner_sub: null, principal_issuer: null, tenant_id: 'gate-group', credential_id: tokenId,
+          reporting_enabled: true, precision_class: 'exact', last_seen_at: null }],
+        rowCount: 1,
+      };
+    }
+    if (/oshal_is_tenant_admin/i.test(sql)) return { rows: [{ admin: true }], rowCount: 1 };
+    if (/location_device_touch/i.test(sql)) return { rows: [{ touched: true }], rowCount: 1 };
+    if (/UPDATE location_current/i.test(sql)) return { rows: [], rowCount: 1 };
+    return { rows: [], rowCount: 0 };
+  };
+  const tokens = new FakeCliTokenPool();
+  const pool = {
+    query: async (sql: string, params?: unknown[]) => (/oshal_cli_tokens/i.test(sql) ? tokens.query(sql, params) : query(sql, params)),
+    connect: async () => ({ query, release: () => undefined }),
+  };
+  return { pool, tokens, deviceId };
+}
+
 const DRIVERS: Record<string, MachineWriteIdentityDriver> = {
   ...MACHINE_WRITE_IDENTITY_RESIDUAL_DRIVERS,
+
+  /** POST /api/location/devices/:id/presence — a real location credential through the real middleware and router. */
+  'location-device-ingest': async () => {
+    vi.stubEnv('MOCK_OIDC', 'false');
+    vi.stubEnv('SWARM_SERVICE_SECRET', SERVICE_USER_PLACEHOLDER);
+    const observations: WriteObservation[] = [];
+    const deviceId = '0f0f0f0f-1111-4222-8333-444444444444';
+    const tokenId = 'gate-location-credential';
+    const { pool, tokens } = locationDeviceIngestPool(observations, deviceId, tokenId);
+    const token = tokens.seed({ sub: 'auth0|drone-admin', locationDeviceId: deviceId, principalIssuer: 'https://login.oshal.example.com', id: tokenId });
+    const app = express();
+    app.use(createCliTokenAuthMiddleware(pool as never));
+    app.use('/api/location', createLocationRoutes({ pool: pool as never, ingestMinIntervalMs: 0 }));
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>((resolve) => server.once('listening', () => resolve()));
+    try {
+      const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+      const endpoint = `${base}/api/location/devices/${deviceId}/presence`;
+      const body = JSON.stringify({ lat: -12.35, lon: -31.99, altM: 30, observedAt: new Date().toISOString() });
+      const unauthenticated = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body });
+      if (unauthenticated.status !== 401) throw new Error(`device ingest admitted a bare request: HTTP ${unauthenticated.status}`);
+      const response = await fetch(endpoint, {
+        method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body,
+      });
+      if (response.status !== 201) throw new Error(`device ingest identity probe failed: HTTP ${response.status} ${await response.text()}`);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+    return observations;
+  },
 
   /** POST /api/jarvis/tasks/:id/delivered — a literal owner-scoped Jarvis update. */
   'jarvis-service-callers': async () => {

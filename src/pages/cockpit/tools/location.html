@@ -6,6 +6,7 @@
   -----------------------------------------------------------------------------
   1   | maintainer@emeraldcoastsystemsgroup.com | ADR-169 L3: Settings, Location. Off by default: a person turns location on per browser at a precision class they choose, sees where they are as a place (never coordinates), stops reporting (the current place clears, the history stays), sees who can see them, and deletes their history. Turning on, raising precision and accepting a share need a fresh sign-in (the step-up): a sign-in window for an identity-provider or mock session, a two-factor code for a local account. The browser reports only while this page is open, at most every 30 seconds.
   2   | maintainer@emeraldcoastsystemsgroup.com | ADR-169 L4: places and devices at places. "Where you are" says since when. Places: the person's own and their groups' places by name, label and radius (never a centre or an address, only whether one is on file); add one from where the browser is now or from typed coordinates, for yourself or for a group you administer; resize or delete the ones you may change. Devices at places: enrol an existing node (from the nodes you own), camera or drone (to a group you administer), TV (by the room its screen shows) or hub device, give it a place and a room, change or clear them, or remove its location record; a device you may only see (a group's, when you are not its admin) shows its place with no controls. "Your devices" lists only the devices that report (browsers and phones).
+  4   | maintainer@emeraldcoastsystemsgroup.com | ADR-169 L6: a drone reports under its own credential. A placed drone's row says whether it reports and at what class; its owner (a group admin) issues its credential behind a fresh sign-in, sees the two node variables exactly once (issuing again retires the earlier credential), and stops its reporting. The kinds that report under a credential come from the devices list, not from this page.
   3   | maintainer@emeraldcoastsystemsgroup.com | ADR-169 L5: reminders and group sharing. Reminders: add one at any of your places or your groups' places (on arrival or on leaving, next time only or every visit); a group admin can add a group notice that fires when any member who shares that place arrives; your reminders, your groups' rules and the group rules watching you now are listed. Recent reminders show the full text here (the Jarvis shelf and any deployment-run text or call carry only "You have a location reminder"); a #fire=<id> link highlights one. Share with your groups: pick which of a group's places it may see you arrive at and leave (confirmed with a fresh sign-in). What your groups share with you: arrivals and departures at shared places, never positions. Invitations and guardian shares: accept (with a fresh sign-in) or decline an invitation to join a group as a restricted member; a group admin invites accounts as restricted members, lifts restrictions, and shares a restricted member's arrivals and departures with named members at chosen group places (with a fresh sign-in), or revokes that share.
 -->
 <html lang="en" data-theme="midnight">
@@ -51,6 +52,7 @@
   button:disabled { opacity: .55; cursor: default; }
   .pill { display: inline-block; border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; font-size: 11.5px; color: var(--muted); }
   .pill.on { border-color: var(--ok); color: var(--ok); }
+  .env { font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; word-break: break-all; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; margin: 8px 0 0; }
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 7px 0; border-top: 1px solid var(--line); font-size: 13.5px; }
   .row:first-child { border-top: none; }
   .row .grow { flex: 1; min-width: 160px; }
@@ -149,6 +151,11 @@
     <div class="actions">
       <button class="primary" id="enrolAdd" data-testid="enrol-add" type="button">Add device</button>
     </div>
+  </section>
+  <section class="card" id="credentialBox" data-testid="credential-box" hidden>
+    <h3>Credential issued</h3>
+    <p class="meta" id="credentialText"></p>
+    <pre class="env" id="credentialEnv" data-testid="credential-env"></pre>
   </section>
 
   <h2>Reminders</h2>
@@ -571,7 +578,39 @@
     row.appendChild(select);
     row.appendChild(room);
     row.appendChild(button('Save', '', 'placed-save', () => saveDevicePlace(d.deviceId, select.value || null, room.value || null)));
+    if ((placed.credentialKinds || []).includes(d.kind)) credentialControls(row, d);
     row.appendChild(button('Remove', 'danger', 'placed-remove', () => removeDevice(d.deviceId)));
+  }
+
+  // ── ADR-169 L6: a drone reports under its own credential, issued here behind a fresh sign-in ──
+  function credentialControls(row, d) {
+    const reporting = d.reporting || {};
+    const pill = el('span', 'pill' + (reporting.enabled ? ' on' : ''), reporting.enabled ? 'reporting · ' + reporting.precisionClass : 'not reporting');
+    pill.dataset.testid = 'placed-reporting';
+    row.appendChild(pill);
+    row.appendChild(button(reporting.hasCredential ? 'Issue a new credential' : 'Issue credential', '', 'placed-credential', () => issueCredential(d)));
+    if (reporting.enabled) row.appendChild(button('Stop reporting', '', 'placed-stop', () => stopReporting(d.deviceId)));
+  }
+
+  async function issueCredential(d) {
+    const params = { deviceId: d.deviceId, precisionClass: 'exact' };
+    const r = await withStepUp('approve-enrolment', params, (headers) =>
+      api('POST', '/devices/' + encodeURIComponent(d.deviceId) + '/credential', { precisionClass: params.precisionClass }, headers));
+    if (r.status === 201) showCredential(d, r.json);
+    await afterChange(r, 201, r.json.rotated ? 'A new credential was issued; the previous one no longer works.' : 'Credential issued.');
+  }
+
+  function showCredential(d, issued) {
+    const box = $('credentialBox');
+    box.hidden = false;
+    $('credentialText').textContent = 'Set these on the ' + KIND_NAMES[d.kind].toLowerCase() + ' node ' + d.name
+      + '. The token is shown once and never again; issue a new one if it is lost.';
+    $('credentialEnv').textContent = 'OSHAL_LOCATION_DEVICE_ID=' + issued.deviceId + '\nOSHAL_LOCATION_TOKEN=' + issued.credential.token;
+  }
+
+  async function stopReporting(deviceId) {
+    if (!window.confirm('Stop this device reporting? Its credential is retired; issue a new one to start again.')) return;
+    await afterChange(await api('POST', '/devices/' + encodeURIComponent(deviceId) + '/opt-out'), 200, 'Reporting stopped.');
   }
 
   function renderPlaced() {

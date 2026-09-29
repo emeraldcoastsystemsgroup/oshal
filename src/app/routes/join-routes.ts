@@ -37,6 +37,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Delegate the signed-in user's verified issuer into enrollment and node credentials so derived authentication preserves the complete principal namespace.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Mount GET /node-installer: the same per-device enrollment, delivered as a runnable script with the credential already in it.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | POST /enroll is DEVICE-BOUND by default, and every instruction it prints carries the device id. Seq 3 left the binding opt-in, and no caller could opt in: the id does not exist until something mints one, so the first enrolment of a new machine always took the unbound branch - an account-wide PAT clamped to an hour, sitting on an edge machine, dying under the node it was meant to keep alive. The route mints the id itself when the caller has none (the shape GET /node-installer already used) and returns it beside the token, and existingNode/newInstall now seed OSHAL_CLIENT_ID / -ClientId, without which the node keeps the id it invented for itself and register answers 403 node_token_client_mismatch. An explicit ttlMinutes is still honoured, so a caller that deliberately wants a short handoff still gets one.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L6 (D3 "Location enrolment"): POST /enroll refuses a clientId that names a location device (location_device_named, migration 178). A location credential is a different binding (location_device_id) checked against the device's recorded credential, so a node token for the same id could never reach the presence path anyway; refusing the mint here closes the other half, so no signed-in account or same-origin package script can hold a worker-plane credential named after somebody's located device. The check runs as the caller through a definer function and fails closed: if it cannot be asked, the enrolment is refused.
  *
  * @module join-routes
  */
@@ -66,6 +67,24 @@ const MAX_ENROLL_TTL_MINUTES = 24 * 60;
  * the same call `renderNodeInstaller` makes about the one-click download.
  */
 const SAFE_CLIENT_ID = /^[A-Za-z0-9._:-]+$/;
+
+/**
+ * @description Whether a caller-named client id names a location device (ADR-169 L6), asked of
+ * migration 178's definer function. Fails CLOSED: when the question cannot be asked, the answer is
+ * "refuse", because minting a node token for a located device's id is the thing being prevented.
+ * @param pool - Postgres pool.
+ * @param clientId - The id the caller named.
+ * @returns true when a node token must not be minted for it.
+ */
+async function namesLocationDevice(pool: Pool, clientId: string): Promise<boolean> {
+  try {
+    const { rows } = await pool.query('SELECT location_device_named($1) AS named', [clientId]);
+    return rows[0]?.named === true;
+  } catch (err) {
+    logger.error({ err, clientId }, 'could not ask whether a client id names a location device - refusing the enrolment');
+    return true;
+  }
+}
 
 /** Hostnames that only ever resolve back to the controller's own machine. */
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
@@ -181,6 +200,17 @@ export function createJoinRoutes(apiDir: string, pool?: Pool): Router {
         error: 'unsupported_client_id',
         message: 'A device id may contain letters, digits, and . _ : - only. Leave it out and '
           + 'this swarm will mint one for the computer.',
+      });
+      return;
+    }
+    // A located device's id is never a node's (ADR-169 L6): its credential is a different binding,
+    // minted only by the location enrolment route behind the step-up proof.
+    if (requestedClientId && await namesLocationDevice(pool, requestedClientId)) {
+      logger.warn({ sub, clientId: requestedClientId }, 'refused node enrolment: the client id names a location device');
+      res.status(409).json({
+        error: 'location_device_id',
+        message: 'That id belongs to a located device. A node credential is never minted for it; '
+          + 'a location credential comes from Settings, Location.',
       });
       return;
     }

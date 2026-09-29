@@ -1,7 +1,7 @@
 # ADR-169: Location, places and proximity
 
 Date: 2026-09-28
-Status: **Proposed; the operator answered Q1-Q7 on 2026-09-28 (see "Operator decisions"). Slices L1 (shared geo maths, namespaced location redaction keys, static log guard), L2 (storage and row-level security with no operator bypass, the membership fence, the location erase in both erasure routes), L3 (browser ingest, the step-up proof, the Settings Location tab) L4 (places, the four package-facing reads, device enrolment at places) and L5 (rules, rule state and the fire ledger, the evaluator, two-rail delivery, member and guardian shares with restricted invitations, the grantee projection, the Jarvis "next time I'm at X" intent) are built; L6-L9 are not.**
+Status: **Proposed; the operator answered Q1-Q7 on 2026-09-28 (see "Operator decisions"). Slices L1 (shared geo maths, namespaced location redaction keys, static log guard), L2 (storage and row-level security with no operator bypass, the membership fence, the location erase in both erasure routes), L3 (browser ingest, the step-up proof, the Settings Location tab) L4 (places, the four package-facing reads, device enrolment at places), L5 (rules, rule state and the fire ledger, the evaluator, two-rail delivery, member and guardian shares with restricted invitations, the grantee projection, the Jarvis "next time I'm at X" intent) and L6 (the location credential and its scope, the core device ingest as the device subject, the drone node posting fixes, the store drone package scoping position to group members) are built; L7-L9 are not.**
 The Context records what exists at core `main` `e1fd5b0f` and store `main` `6fdc1a1`. The Decision carries
 the operator's answers; each Rollout slice is still accepted on its own.
 
@@ -1067,6 +1067,60 @@ on; what remains is order by dependency.
   - a location credential is refused on `/api/remote-clients/register` and on every path but its own
     device's presence path, and an account PAT or node token is unchanged by the new column;
   - a non-member gets no position from the location reads or from the three drone routes.
+
+  **Built:**
+  - **Migration 178.** `oshal_cli_tokens.location_device_id`, a second nullable binding beside
+    `node_client_id` with a CHECK that a row never carries both, so `decideNodeTokenScope` never sees a
+    location credential and the worker plane never admits one. The device subject's policies: a
+    `device:<id>` session inserts observations and upserts the current row whose owner columns are its
+    device's (a definer predicate reads the device row on its behalf; the device must report and have a
+    recorded credential), reads the places its owner may use (the L4 assignability rule), touches its own
+    `last_seen_at` through a definer, and reads no observation and no device row.
+    `location_revoke_device_credential()` retires the credential a device row names when the session may
+    write the row (owner, or group admin, whoever minted it); `location_device_named()` backs the
+    `/api/join/enroll` refusal. No `is_operator` anywhere.
+  - **The location credential** (`src/features/location/services/location-token-scope.ts`;
+    `cli-token-routes.ts`). The token-auth middleware applies the location scope before the node scope
+    and the account-PAT path: a bound token is admitted on `POST /api/location/devices/<its id>/presence`
+    only and refused everywhere else, stamping the binding the ingest reads. `insertCliToken` takes the
+    binding and any query-capable handle, so the mint shares the enrolment transaction.
+  - **The credential route and the ingest** (`src/app/location-device-ingest.ts`,
+    `src/app/routes/location-device-routes.ts`). `POST /api/location/devices/:id/credential` is a
+    browser-session route behind the `approve-enrolment` proof (bound to the device id and the precision
+    class): the owner or a group admin issues, or rotates, a drone's credential; reporting turns on at the
+    class and the previous credential is revoked. `POST /api/location/devices/:id/presence` sits before
+    the browser gate and admits only the stamped binding; it checks the token id against
+    `credential_id` and the token's user against the owner or `oshal_is_tenant_admin`, then writes as
+    `device:<id>` with `isOperator: false`, in process and in the transaction. Opting a device out (now
+    also a group device, by its admin) and removing its record revoke the credential; the erase already
+    did. `machine-write-identity.spec.ts` discovers the route through the `readLocationTokenBinding`
+    marker and drives a real credential through the real middleware and router.
+  - **The drone node** posts its telemetry point every `DRONE_LOCATION_INTERVAL_S` (default 10 s) under
+    `OSHAL_LOCATION_DEVICE_ID` + `OSHAL_LOCATION_TOKEN` (both or neither), flagged `mock` for the sim
+    engine, never with the service secret and never logging a position.
+  - **`locatedDevice`**, a new package-facing read (ids only): whether the ambient caller may read a
+    device's location record by kind and reference. The store drone package (`uses: location`) returns
+    live `position` and `home` from `/state`, `/fleet` and `/fleet/:id/state` only to a caller for whom
+    `locatedDevice('drone', id)` answers; everyone else, including an unenrolled drone's viewers, gets
+    them as `null`, and the surface says "position withheld".
+  - **Settings, Location** issues a drone's credential (shown once, as the two node variables) and
+    stops its reporting.
+
+  Choices made here: a device fix is stored and placed but not evaluated against rules; a device
+  subject stays refused by `createLocationRule` until the slice that evaluates device fixes (L8's
+  enrolled-device evidence) lifts it. A credential is issued for `drone` only; the Android phone joins
+  the kind list with L9. A drone's default class is `exact` (the page's choice; the route takes any
+  class). The store surface hides the map marker of a drone whose position is withheld rather than
+  failing.
+
+  Evidence:
+  - `tests/unit/location-device-ingest-postgres.spec.ts` (the credential, the ingest, every refusal,
+    rotation, opt-out and removal, the kernel reads for a member and a stranger);
+  - `tests/unit/location-token-scope.spec.ts` (the pure scope matrix and the real middleware over HTTP);
+  - `tests/unit/location-route-policy.spec.ts`, `tests/unit/location-rls-no-operator-guard.spec.ts`,
+    `tests/unit/machine-write-identity.spec.ts`;
+  - the store drone package's `tests/location-scoping.test.cjs`;
+  - the Test Lab card `location-device-ingest`.
 - **L7: Map anchors.** `location_map_anchors`, `anchorMap`, `mapsNear`, capture GPS joined to its scan, and
   `tenant_id` on `spatial_scans` (ADR-111 amendment). Done when a scan captured inside place P and a scan
   captured outside every saved place are both returned by `mapsNear` on a later visit, and a non-member cannot

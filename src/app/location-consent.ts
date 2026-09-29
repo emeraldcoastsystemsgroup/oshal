@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L3 (D6 "Off by default"): a person's consent over their own location. Opting a browser in creates (or re-enables) a person-owned, carried `browser` device that reports at the precision class they chose; opting out stops its ingest and clears the location_current row it fed while its history stays until they purge it (Q4); a precision change that raises precision, of a device or of the person's default, is admitted only when the caller's step-up check says so, inside the same transaction that reads the class in force, so a concurrent change cannot turn a lowering into an unproven raise. Every statement runs under withLocationOwnerSession as the person, never as an operator; row-level security (no operator branch) is the enforcement and the explicit owner predicates only keep each statement to the rows it means.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L6: opting out also covers a group device (a drone) for an admin of its group: the update is scoped by row-level security alone (owner, or group admin), the device's location credential is revoked through migration 178's definer function (so a retired drone cannot keep posting; issuing again mints a new one), and the current row that device fed is cleared whoever owns it. A person's browser device behaves exactly as before.
  *
  * @module app/location-consent
  */
@@ -166,14 +167,15 @@ export async function optOutDevice(
   db: LocationDb, principal: LocationPrincipal, deviceIdValue: unknown,
 ): Promise<{ device: LocationDeviceView; currentCleared: number }> {
   const deviceId = requireLocationId(deviceIdValue);
-  const result = await withLocationOwnerSession(db, principal, async (client, who) => {
+  const result = await withLocationOwnerSession(db, principal, async (client) => {
+    // Row-level security admits the update for the person's own device and, for a group device,
+    // its group's admins (ADR-169 L6); anyone else finds no row.
     const updated = await client.query(`UPDATE location_devices SET reporting_enabled = false, updated_at = NOW()
-       WHERE device_id = $1 AND tenant_id IS NULL AND owner_sub = $2 AND principal_issuer = $3
-       RETURNING ${DEVICE_COLUMNS}`, [deviceId, who.sub, who.principalIssuer]);
+       WHERE device_id = $1 RETURNING ${DEVICE_COLUMNS}`, [deviceId]);
     if (!updated.rows[0]) throw new LocationRequestError('device_not_found', 404, 'No such device of yours.');
-    const cleared = await client.query(
-      'DELETE FROM location_current WHERE tenant_id IS NULL AND owner_sub = $1 AND principal_issuer = $2 AND device_id = $3',
-      [who.sub, who.principalIssuer, deviceId]);
+    // A credentialed device's credential is retired with its reporting; issuing again mints a new one.
+    await client.query('SELECT location_revoke_device_credential($1)', [deviceId]);
+    const cleared = await client.query('DELETE FROM location_current WHERE device_id = $1', [deviceId]);
     return { device: toDeviceView(updated.rows[0]), currentCleared: cleared.rowCount ?? 0 };
   });
   const { currentCleared: count } = result;

@@ -23,10 +23,23 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Require an exact MAVLink 2 signing key for hardware mode
  *                     |                             | and reuse the shared constant-time service-secret gate for
  *                     |                             | command envelopes instead of a local string comparison.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L6: the node posts its position to the core
+ *                     |                             | device ingest under its own LOCATION CREDENTIAL, never the
+ *                     |                             | service secret (which the location routes refuse). A group
+ *                     |                             | admin issues the credential from Settings, Location and sets
+ *                     |                             | OSHAL_LOCATION_DEVICE_ID + OSHAL_LOCATION_TOKEN on the node
+ *                     |                             | (both or neither; a half pair refuses to start). Every
+ *                     |                             | DRONE_LOCATION_INTERVAL_S (default 10, 0 off) the current
+ *                     |                             | telemetry point goes to POST /api/location/devices/<id>/
+ *                     |                             | presence as a Bearer, flagged mock for the sim engine so a
+ *                     |                             | simulated fix is never evidence. The heartbeat is unchanged.
+ *                     |                             | No position is ever logged.
  *
  * Run one per drone (host, Pi, or ground station):
  *   SWARM_SERVICE_SECRET=<secret> DRONE_NODE_ID=drone-1 OSHAL_API_URL=http://localhost:35457 \
  *     npm run drone:node
+ * To report position (ADR-169), add the credential a group admin issued in Settings, Location:
+ *   OSHAL_LOCATION_DEVICE_ID=<location device id> OSHAL_LOCATION_TOKEN=oshal_pat_...
  * ALWAYS set DRONE_NODE_ENDPOINT to an address the CONTROLLER can dial back:
  *   - controller in Docker, node on the host → http://host.docker.internal:<port>
  *   - same host, both native → http://127.0.0.1:<port>  (use the literal IP — on Windows,
@@ -52,6 +65,15 @@ import {
 const logger = createChildLogger({ module: 'drone-node' });
 
 const HEARTBEAT_INTERVAL_MS = 2_000;
+/** Default interval between position posts to the location ingest (its server minimum is 5 s). */
+const LOCATION_INTERVAL_S_DEFAULT = 10;
+
+/** The location credential a group admin issued for this vehicle (ADR-169 L6). */
+interface LocationCredentialConfig {
+  deviceId: string;
+  token: string;
+  intervalMs: number;
+}
 
 interface NodeConfig {
   droneId: string;
@@ -67,6 +89,32 @@ interface NodeConfig {
   videoUrl: string;
   /** Airborne link-loss self-RTL threshold, seconds (0 disables). */
   linkFailsafeS: number;
+  /** Position reporting under the location credential; null when the node has none. */
+  location: LocationCredentialConfig | null;
+}
+
+/**
+ * @description The location credential from the environment: both halves or neither. A half pair
+ * is a misconfiguration the operator must see, so the node refuses to start rather than fly
+ * silently unreported. DRONE_LOCATION_INTERVAL_S=0 keeps the credential but posts nothing.
+ * @returns The credential config, or null when the node does not report position.
+ */
+function loadLocationConfig(): LocationCredentialConfig | null {
+  const deviceId = (process.env.OSHAL_LOCATION_DEVICE_ID || '').trim();
+  const token = (process.env.OSHAL_LOCATION_TOKEN || '').trim();
+  if (!deviceId && !token) return null;
+  if (!deviceId || !token) {
+    logger.error('OSHAL_LOCATION_DEVICE_ID and OSHAL_LOCATION_TOKEN go together — set both (from Settings, Location) or neither');
+    process.exit(1);
+  }
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(deviceId)) {
+    logger.error('OSHAL_LOCATION_DEVICE_ID must be the location device id Settings, Location issued the credential for');
+    process.exit(1);
+  }
+  const rawInterval = Number(process.env.DRONE_LOCATION_INTERVAL_S);
+  const intervalS = Number.isFinite(rawInterval) ? Math.max(0, rawInterval) : LOCATION_INTERVAL_S_DEFAULT;
+  if (intervalS === 0) logger.warn('DRONE_LOCATION_INTERVAL_S=0 — the location credential is set but no position will be posted');
+  return { deviceId, token, intervalMs: Math.round(intervalS * 1000) };
 }
 
 function loadConfig(): NodeConfig {
@@ -118,6 +166,7 @@ function loadConfig(): NodeConfig {
     mavlinkSigningLinkId: signingLinkId,
     videoUrl: /^https?:\/\/\S{1,300}$/.test(rawVideo) ? rawVideo : '',
     linkFailsafeS: Number.isFinite(failsafeRaw) ? Math.max(0, failsafeRaw) : 20,
+    location: loadLocationConfig(),
   };
 }
 
@@ -203,6 +252,45 @@ async function sendHeartbeat(cfg: NodeConfig, provider: DroneProvider, lastAck: 
 }
 
 /**
+ * @description One position post to the core device ingest (ADR-169 L6), as a Bearer under the
+ * node's own location credential and never with the service secret. The body carries the
+ * current telemetry point, the observation time and, for the sim engine, the mock flag; the
+ * device is named by the path only, because the ingest derives the identity from the credential.
+ * A refusal is logged by status and code, never with the position.
+ * @param cfg - Node config with a location credential.
+ * @param provider - The engine whose telemetry is reported.
+ * @returns Resolves after the attempt; never rejects.
+ */
+async function sendLocationFix(cfg: NodeConfig, provider: DroneProvider): Promise<void> {
+  const loc = cfg.location;
+  if (!loc) return;
+  let point: { lat: number; lon: number; alt: number };
+  try {
+    point = provider.getTelemetry().position;
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, 'Location fix skipped — no telemetry from the engine');
+    return;
+  }
+  try {
+    const res = await fetch(`${cfg.apiUrl}/api/location/devices/${encodeURIComponent(loc.deviceId)}/presence`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${loc.token}` },
+      body: JSON.stringify({
+        lat: point.lat, lon: point.lon, altM: point.alt,
+        observedAt: new Date().toISOString(),
+        mock: cfg.engine === 'sim',
+      }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      logger.warn({ status: res.status, error: body.error }, 'Location fix rejected by the controller');
+    }
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, 'Location fix failed (controller unreachable) — retrying next interval');
+  }
+}
+
+/**
  * @description The vehicle-side link-loss failsafe: airborne with no successful heartbeat
  * for the configured window → return to launch, decided HERE so a dead controller (or dead
  * network) can never strand a flying drone. Fires once per outage; re-arms on link restore.
@@ -268,13 +356,18 @@ async function main(): Promise<void> {
   app.listen(cfg.port, () => {
     logger.info(
       { droneId: cfg.droneId, port: cfg.port, endpointUrl: cfg.endpointUrl, apiUrl: cfg.apiUrl, engine: cfg.engine,
-        linkFailsafeS: cfg.linkFailsafeS, videoUrl: cfg.videoUrl || null },
+        linkFailsafeS: cfg.linkFailsafeS, videoUrl: cfg.videoUrl || null,
+        locationDeviceId: cfg.location?.deviceId ?? null, locationIntervalMs: cfg.location?.intervalMs ?? null },
       'Drone node up — heartbeating into the swarm',
     );
   });
   const link: LinkState = { lastOkMs: Date.now(), failsafeFired: false };
   setInterval(() => { void sendHeartbeat(cfg, provider, lastAck, link); }, HEARTBEAT_INTERVAL_MS);
   if (cfg.linkFailsafeS > 0) setInterval(() => checkLinkFailsafe(cfg, provider, link), 5_000);
+  if (cfg.location && cfg.location.intervalMs > 0) {
+    setInterval(() => { void sendLocationFix(cfg, provider); }, cfg.location.intervalMs);
+    void sendLocationFix(cfg, provider);
+  }
   void sendHeartbeat(cfg, provider, lastAck, link);
 }
 
