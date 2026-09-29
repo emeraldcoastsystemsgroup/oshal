@@ -389,7 +389,9 @@ Bot-generated code must be real, functional implementation. Mock/stub output is 
 
 ## Logging: structured JSON, no silent catches
 
-- Use the project's Pino logger: `createChildLogger({ module: '...' })` from `@/shared/logger`. Never `console.log` in production code.
+- TypeScript uses `createChildLogger({ module: '...' })` from `@/shared/logger`; JavaScript under `any-bot/server/` uses `require('./relative/path/to/utils/logger').child({ module: '...' })`. Both load the one `src/shared/logger/pino-config.json` contract and write Pino JSON to stdout, including in development. The TypeScript per-container file remains a fallback.
+- Use structured `ticketId`, `agentId`, `runId` and `phase` whenever known. TypeScript uses `log.error({ err, ticketId }, 'failed')`; the JavaScript adapter also preserves legacy `log.error('failed', { err, ticketId })`, Error-first and message-plus-Error calls. Queue-manager `LoggingStandard` helpers bind their service as `module` and retain their signatures.
+- No console references or Winston imports under `any-bot/server/`: `scripts/check-javascript-logging.cjs` and its negative controls block `ci-local.sh`. Do not stringify secret-bearing metadata into messages: field redaction cannot mask arbitrary message/stack text or paths beyond the configured depth. See [the logging runbook](docs/runbooks/javascript-structured-logging.md).
 - Every public method and API route logs entry/exit with sanitized params and duration.
 - Every `catch` block logs at ERROR with the error and stack trace. No swallowed exceptions.
 - Never log API keys, tokens, or secrets.

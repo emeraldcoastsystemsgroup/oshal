@@ -109,6 +109,7 @@
  * 57 | maintainer@emeraldcoastsystemsgroup.com   | Registered the ADR-169 L6 location device card (LOCATION_DEVICE_SCENARIOS, test-lab-location-device-scenarios.ts): as the signed-in person the device ingest refuses a browser session and issuing a credential needs a fresh sign-in, then three uniquely tagged synthetic people on the real database enrol a drone to a group, issue its credential, drive the real ingest over the loopback under that credential (placed in the group place as the device subject), see it refused on another device's path and the node-token mint refused for its id, and read it by reference as a member while a stranger gets nothing; everything is deleted with a zero-row check. The ingest, token-scope, route-policy, static-guard, machine-write and registration suites are attached as regressionTests.
  * 58 | maintainer@emeraldcoastsystemsgroup.com   | Attached completion-result-text to 'jarvis-routing' regressionTests. The 2026-09-29 sweep found a Jarvis answer that is a bare number or true/false never delivered (live case jarvis-cache, 3 of 3): the completion text was stored as the converted Number and the bot-node handler threw reading it. The delivery path is guarded in antigravity-host-tool-loop, already attached here; this adds the unit guard for the rule itself.
  * 59 | maintainer@emeraldcoastsystemsgroup.com   | Registered the ADR-169 L7 location map card (LOCATION_MAP_SCENARIOS, test-lab-location-map-scenarios.ts): a catalog read of the group fence, the amendment's columns and the two triggers on spatial_scans, then three uniquely tagged synthetic people on the real database: two group scans are registered naming their capture sessions, one captured inside a group place and one outside every saved place, each anchored from the GPS its own session recorded; on a later visit a member gets both from mapsNear and opens a group scan, and a stranger, operator-stamped or not, gets nothing and reads neither. Everything created is deleted and a zero-row check runs.
+ * 60 | maintainer@emeraldcoastsystemsgroup.com | Register ADR-171 structured logging proofs with explicit pending container stdout acceptance.
  * @module test-lab-scenarios
  */
 
@@ -134,6 +135,7 @@ import { SOCIAL_SIGNAL_SCENARIOS } from './test-lab-social-signal-scenarios';
 import { LINKEDIN_CONTENT_SCENARIOS } from './test-lab-linkedin-content-scenarios';
 import { RESPONSE_RENDERER_SCENARIOS } from './test-lab-response-renderer-scenarios';
 import { WORLD_SIGNAL_SCENARIOS } from './test-lab-world-signal-scenarios';
+import { LOGGING_SCENARIOS } from './test-lab-logging-scenarios';
 import { TOKEN_CHASE_SCENARIOS } from './test-lab-token-chase-scenarios';
 import { JARVIS_RECALL_SCENARIOS } from './test-lab-jarvis-recall-scenarios';
 import { TRADING_SLEEVES_SCENARIOS } from './test-lab-trading-sleeves-scenarios';
@@ -330,6 +332,7 @@ export const SCENARIOS: Scenario[] = [
   ...LINKEDIN_CONTENT_SCENARIOS,
   ...RESPONSE_RENDERER_SCENARIOS,
   ...WORLD_SIGNAL_SCENARIOS,
+  ...LOGGING_SCENARIOS,
   ...TOKEN_CHASE_SCENARIOS,
   ...JARVIS_RECALL_SCENARIOS,
   ...TRADING_SLEEVES_SCENARIOS,

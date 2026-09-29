@@ -8,11 +8,13 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added file transport — verbose debug logs to output/logs/OSHAL.log (user requested readable log file)
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Redaction hardening: OAuth credential keys (accessToken/access_token/refreshToken/refresh_token/bearer + one-level wildcard variants) were missing from the redact list and could reach logs verbatim. Extracted the list as the exported LOG_REDACT_OPTIONS (same object the singleton uses) so tests/unit/logger-redaction.spec.ts asserts the exact shipped config; public API otherwise unchanged.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L1: the namespaced location keys `location`, `*.location`, `coords` and `*.coords` join the redact list. Only these namespaced keys: generic words such as `accuracy`, `address` and `position` are deliberately NOT added platform-wide because other slices log them with unrelated meanings. Pino redaction reaches only top-level keys and one `*.` level, so a deeper value such as telemetry.position.lat or a coordinate inside an error string is out of its reach; the control for those is the static log guard over src/features/location and the location routes (tests/unit/location-log-guard.spec.ts).
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Share the exact Pino JSON/redaction contract with the JavaScript runtime; keep stdout JSON in every environment and serialize err explicitly.
  */
 
 import pino from 'pino';
 import path from 'path';
 import fs from 'fs';
+import pinoConfig from './pino-config.json';
 
 /**
  * @description The platform-wide pino redaction config — the SINGLE list of secret-bearing
@@ -20,48 +22,7 @@ import fs from 'fs';
  * nested request-header paths). Exported so the redaction regression spec exercises the exact
  * object the production logger ships with, not a copy that can drift.
  */
-export const LOG_REDACT_OPTIONS: { paths: string[]; censor: string } = {
-  paths: [
-    'anthropicApiKey',
-    'openRouterApiKey',
-    'bedrockAccessKey',
-    'bedrockSecretKey',
-    'openAiApiKey',
-    'geminiApiKey',
-    'openAiNativeApiKey',
-    'deepSeekApiKey',
-    'mistralApiKey',
-    'clineApiKey',
-    'clineAccountId',
-    'password',
-    'token',
-    'secret',
-    'authorization',
-    'accessToken',
-    'access_token',
-    'refreshToken',
-    'refresh_token',
-    'bearer',
-    'req.headers.authorization',
-    'req.headers.cookie',
-    '*.apiKey',
-    '*.secretKey',
-    '*.accessKey',
-    '*.password',
-    '*.token',
-    '*.accessToken',
-    '*.access_token',
-    '*.refreshToken',
-    '*.refresh_token',
-    '*.bearer',
-    // ADR-169 L1: namespaced location keys only (see change log 5); deeper paths are the static guard's job.
-    'location',
-    '*.location',
-    'coords',
-    '*.coords',
-  ],
-  censor: '[REDACTED]',
-};
+export const LOG_REDACT_OPTIONS = pinoConfig.redact;
 
 /**
  * @description Default Pino logger configuration for the OSHAL platform.
@@ -72,30 +33,19 @@ export const LOG_REDACT_OPTIONS: { paths: string[]; censor: string } = {
  * @returns Configured Pino logger instance
  */
 function createLogger(): pino.Logger {
-  const level = process.env.LOG_LEVEL || 'info';
-  const isDev = process.env.NODE_ENV !== 'production';
-
-  // Check if pino-pretty is available (may be missing in production Docker builds)
-  let usePretty = false;
-  if (isDev) {
-    try {
-      require.resolve('pino-pretty');
-      usePretty = true;
-    } catch {
-      // pino-pretty not available, fall back to JSON logging
-      usePretty = false;
-    }
-  }
+  const level = process.env.LOG_LEVEL || pinoConfig.level;
 
   return pino({
+    ...pinoConfig,
     level,
-    name: process.env.SERVICE_NAME || 'OSHAL',
+    name: process.env.SERVICE_NAME || pinoConfig.name,
+    serializers: { err: pino.stdSerializers.err },
 
     // Redact sensitive fields from logs (API keys, passwords, tokens)
     redact: LOG_REDACT_OPTIONS,
 
     // File + console transport: always write debug-level JSON to output/logs/OSHAL.log
-    // plus human-readable console output in development
+    // plus the same structured JSON on stdout in every environment
     transport: (() => {
       const logDir = path.resolve(process.cwd(), 'output', 'logs');
       try { fs.mkdirSync(logDir, { recursive: true }); } catch { /* ignore */ }
@@ -116,27 +66,15 @@ function createLogger(): pino.Logger {
         },
       ];
 
-      // Add pretty console output in dev if available (replaces raw JSON stdout)
-      if (usePretty) {
-        targets.pop(); // remove raw JSON stdout
-        targets.push({
-          target: 'pino-pretty',
-          options: {
-            colorize: true,
-            translateTime: 'SYS:standard',
-            ignore: 'pid,hostname',
-          },
-          level: level as string,
-        });
-      }
-
       return { targets };
     })(),
 
     // Base context added to every log line
     base: {
-      service: process.env.SERVICE_NAME ? `${process.env.SERVICE_NAME}-control-plane` : 'OSHAL-control-plane',
-      env: process.env.NODE_ENV || 'development',
+      ...pinoConfig.base,
+      module: 'control-plane',
+      service: process.env.SERVICE_NAME ? `${process.env.SERVICE_NAME}-control-plane` : pinoConfig.base.service,
+      env: process.env.NODE_ENV || pinoConfig.base.env,
     },
 
     // Timestamp format

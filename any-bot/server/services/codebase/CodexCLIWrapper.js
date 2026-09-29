@@ -11,10 +11,12 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: default-deny unbrokered autonomous CLI execution before copying OAuth material or spawning danger-full-access Codex.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: isolate the live Codex availability probe from ambient process credentials.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Pin `-c model_reasoning_effort` on every spawn (CODEX_REASONING_EFFORT, default high). _ensureHome copies the HOST config.toml into the per-workspace home, so a host-side effort tuned for an interactive frontier model (ultra → gpt-5.6-sol-only) rode into fleet runs and 400'd every fresh workspace on gpt-5.5/gpt-5.4 — verified live. Pinning makes the fleet effort deterministic regardless of host config drift.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Route existing diagnostics through structured Pino metadata and err without changing execution behavior.
  */
 
 'use strict';
 
+const logger = require('../../utils/logger').child({ module: 'CodexCLIWrapper' });
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -192,10 +194,10 @@ class CodexCLIWrapper {
     }
     try {
       fs.writeFileSync(path.join(codexDir, 'auth.json'), sourceNow, { encoding: 'utf8', mode: 0o600 });
-      console.log('[CodexCLIWrapper] auth source advanced while queued — per-workspace copy re-seeded with the fresh chain');
+      logger.info('[CodexCLIWrapper] auth source advanced while queued — per-workspace copy re-seeded with the fresh chain');
       return sourceNow;
     } catch (err) {
-      console.error('[CodexCLIWrapper] auth re-seed failed — spawning against the possibly-stale copy:', err && err.message ? err.message : err);
+      logger.error('[CodexCLIWrapper] auth re-seed failed — spawning against the possibly-stale copy:', { err });
       return snapshot;
     }
   }
@@ -225,7 +227,7 @@ class CodexCLIWrapper {
     }
     if (current === snapshot) return 'unchanged';
     if (!this._looksLikeAuth(current)) {
-      console.error('[CodexCLIWrapper] auth changed during the run but is not a valid auth shape (torn write or injected content) — NOT propagated to the shared source');
+      logger.error('[CodexCLIWrapper] auth changed during the run but is not a valid auth shape (torn write or injected content) — NOT propagated to the shared source');
       return 'invalid';
     }
     let sourceNow = null;
@@ -237,7 +239,7 @@ class CodexCLIWrapper {
         sourceMissing = true;
       } else {
         // EACCES/EIO etc. — NOT "the source moved"; report honestly.
-        console.error('[CodexCLIWrapper] auth write-back could not READ the source file — rotation not propagated:', err && err.message ? err.message : err);
+        logger.error('[CodexCLIWrapper] auth write-back could not READ the source file — rotation not propagated:', { err });
         return 'failed';
       }
     }
@@ -251,28 +253,28 @@ class CodexCLIWrapper {
         fs.mkdirSync(path.dirname(this.authSourcePath), { recursive: true });
         fs.writeFileSync(createTmp, current, { encoding: 'utf8', mode: 0o600 });
         fs.linkSync(createTmp, this.authSourcePath);
-        console.log('[CodexCLIWrapper] auth rotated and no source file existed — rotated token persisted as the new shared source:', this.authSourcePath);
+        logger.info('[CodexCLIWrapper] auth rotated and no source file existed — rotated token persisted as the new shared source:', this.authSourcePath);
         return 'written';
       } catch (err) {
-        console.error('[CodexCLIWrapper] auth write-back could not create the missing source file:', err && err.message ? err.message : err);
+        logger.error('[CodexCLIWrapper] auth write-back could not create the missing source file:', { err });
         return 'failed';
       } finally {
         try { fs.unlinkSync(createTmp); } catch { /* tmp may not exist */ }
       }
     }
     if (sourceNow !== snapshot) {
-      console.error('[CodexCLIWrapper] auth rotated during the run but the source changed since seeding — write-back skipped to protect the newer credential:', this.authSourcePath);
+      logger.error('[CodexCLIWrapper] auth rotated during the run but the source changed since seeding — write-back skipped to protect the newer credential:', this.authSourcePath);
       return 'source-moved';
     }
     const tmpPath = path.join(path.dirname(this.authSourcePath), `.auth.json.writeback-${process.pid}-${Date.now()}.tmp`);
     try {
       fs.writeFileSync(tmpPath, current, { encoding: 'utf8', mode: 0o600 });
       fs.renameSync(tmpPath, this.authSourcePath);
-      console.log('[CodexCLIWrapper] codex auth rotated during the run — rotated token written back to', this.authSourcePath);
+      logger.info('[CodexCLIWrapper] codex auth rotated during the run — rotated token written back to', this.authSourcePath);
       return 'written';
     } catch (err) {
       try { fs.unlinkSync(tmpPath); } catch { /* tmp may not exist */ }
-      console.error('[CodexCLIWrapper] auth write-back FAILED — rotated single-use refresh token lives only in the per-workspace copy (read-only source mount?):', err && err.message ? err.message : err);
+      logger.error('[CodexCLIWrapper] auth write-back FAILED — rotated single-use refresh token lives only in the per-workspace copy (read-only source mount?):', { err });
       return 'failed';
     }
   }

@@ -1,0 +1,52 @@
+{
+  "level": "info",
+  "name": "OSHAL",
+  "messageKey": "msg",
+  "errorKey": "err",
+  "base": {
+    "service": "OSHAL-control-plane",
+    "env": "development",
+    "module": "runtime"
+  },
+  "redact": {
+    "paths": [
+      "anthropicApiKey",
+      "openRouterApiKey",
+      "bedrockAccessKey",
+      "bedrockSecretKey",
+      "openAiApiKey",
+      "geminiApiKey",
+      "openAiNativeApiKey",
+      "deepSeekApiKey",
+      "mistralApiKey",
+      "clineApiKey",
+      "clineAccountId",
+      "password",
+      "token",
+      "secret",
+      "authorization",
+      "accessToken",
+      "access_token",
+      "refreshToken",
+      "refresh_token",
+      "bearer",
+      "req.headers.authorization",
+      "req.headers.cookie",
+      "*.apiKey",
+      "*.secretKey",
+      "*.accessKey",
+      "*.password",
+      "*.token",
+      "*.accessToken",
+      "*.access_token",
+      "*.refreshToken",
+      "*.refresh_token",
+      "*.bearer",
+      "location",
+      "*.location",
+      "coords",
+      "*.coords"
+    ],
+    "censor": "[REDACTED]"
+  }
+}
