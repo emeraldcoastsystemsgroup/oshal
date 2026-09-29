@@ -852,7 +852,10 @@ flow, real provider access or legacy credential ownership.
 anonymous refusal on metadata and SmartThings consent initiation. Its linked HTTP suite uses
 the actual routes, browser ceremony, crypto and session/store code with explicit session,
 provider-response and transactional SQL doubles. The SmartThings companion exercises a
-loopback provider protocol, not a real account. Dedicated PostgreSQL companions prove the
+loopback provider protocol, not a real account. Held checkout/query/commit regressions cover
+HTTP identity changes and consent expiry: pre-commit invalidation rolls back; post-commit
+invalidation suppresses metadata without claiming to undo the commit. The dedicated
+PostgreSQL companions prove the
 storage boundary only when executed with a real owned enforcing-role fixture. The card does
 not create a grant, arm a location rule or enable device actions. The endpoint contract and
 focused test command are in [the connector architecture](architecture/connectors-and-graph-architecture.md#36-fresh-issuer-qualified-personal-grants).

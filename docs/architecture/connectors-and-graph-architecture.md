@@ -398,6 +398,12 @@ before authenticated completion exchanges it. The qualified namespace and reconn
 are snapshotted server-side, not selected by callback query parameters. A changed revision
 during consent refuses persistence; no silent overwrite of a revocation.
 
+The HTTP identity and consumed consent deadline are rechecked after database checkout and
+after credential work, inside the transaction before commit. Identity substitution or expired
+consent rolls back that work. They are checked again after commit before responding; if
+invalidation occurs during an acknowledged commit, the response is refused without pretending
+the already committed write was rolled back. Restart the consent flow if its deadline expires.
+
 SmartThings verification uses its fixed read-only `GET /v1/locations`. The account key is
 `smartthings-location:<locationId>`: a verified **location resource**, not a verified person
 or provider-wide account identity. New grants choose the lexically smallest returned location;

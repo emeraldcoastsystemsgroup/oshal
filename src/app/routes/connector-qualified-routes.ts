@@ -4,6 +4,7 @@
  * SEQ | AUTHOR                                    | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Add fresh personal SmartThings consent and metadata-only grant management under exact verified issuer/subject identity; never adopt legacy credentials or enable device actions.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Revalidate request identity and consumed consent inside persistence before commit and suppress metadata after invalidation during commit.
  */
 import type { Request, Response, Router } from 'express';
 import type { AppContext } from '@/app/composition/app-context';
@@ -77,9 +78,16 @@ async function requestScope(req: Request, res: Response, work: (scope: Scope) =>
     log.debug({ durationMs: Date.now() - started }, 'qualified connector request completed');
   }
 }
-function transaction<T>(ctx: AppContext, scope: Scope, work: (db: QualifiedConnectorQueryable) => Promise<T>): Promise<T> {
+async function transaction<T>(ctx: AppContext, scope: Scope, work: (db: QualifiedConnectorQueryable) => Promise<T>): Promise<T> {
   scope.check();
-  return withQualifiedConnectorSession(ctx.pool, scope.principal, work, { signal: scope.signal });
+  const result = await withQualifiedConnectorSession(ctx.pool, scope.principal, async db => {
+    scope.check();
+    const value = await work(db);
+    scope.check(); // Refuse inside the transaction so identity/consent loss rolls back before COMMIT.
+    return value;
+  }, { signal: scope.signal });
+  scope.check(); // A completed commit cannot be undone here, but its metadata must not leak.
+  return result;
 }
 function mutationOrigin(req: Request): void {
   const origin = connectorOrigin(req);
@@ -194,13 +202,18 @@ export async function completeQualifiedConnector(req: Request, res: Response, ct
       || data.caller.sub !== scope.principal.sub || data.caller.principalIssuer !== scope.principal.principalIssuer
       || data.expiresAt <= Date.now() || data.redirect !== redirectUri(PROVIDER)) refuse(400, 'invalid_qualified_consent');
     if (data.error || !data.code) refuse(400, 'provider_consent_refused');
+    const expiresAt = data.expiresAt;
+    const consentScope: Scope = { ...scope, check: () => {
+      scope.check();
+      if (expiresAt <= Date.now()) refuse(400, 'invalid_qualified_consent');
+    } };
     const fresh = await exchangeQualifiedSmartThings(data.code, { redirect: data.redirect, signal: scope.signal });
-    scope.check();
+    consentScope.check();
     const validatedIdentity = await verifyQualifiedSmartThings(fresh.accessToken,
       { expectedAccountKey: data.qualified.reconnect?.accountKey, signal: scope.signal });
-    scope.check();
-    if (data.expiresAt <= Date.now()) refuse(400, 'invalid_qualified_consent');
-    const result = await saveFresh(ctx, scope, { ...fresh, validatedIdentity }, data.qualified.reconnect);
+    consentScope.check();
+    const result = await saveFresh(ctx, consentScope, { ...fresh, validatedIdentity }, data.qualified.reconnect);
+    consentScope.check();
     res.redirect(302, '/utilities?qualified=connected&connection=' + encodeURIComponent(result.connectionId));
   });
 }

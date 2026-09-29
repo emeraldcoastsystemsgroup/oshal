@@ -4,6 +4,7 @@
  * SEQ | AUTHOR                                    | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise qualified grant HTTP routes, browser consent, real envelope crypto and session code with explicit authentication, provider and transactional SQL doubles; no PostgreSQL/RLS or live-provider claim.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Hold real route persistence awaits to prove identity and consent refusals roll back before commit and suppress post-commit metadata.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import express, { type Request, type RequestHandler } from 'express';
@@ -30,6 +31,7 @@ let server: Server, base: string, rows: Row[], deks: Map<string, string>, legacy
 let queries: { sql: string; values: unknown[]; identity: ReturnType<typeof getRequestIdentity> }[];
 let providerCalls: string[], providerHook: (() => void) | undefined, providerMode: 'ok' | 'refused' | 'no-location';
 let activeRequest: Request;
+let persistenceHook: ((stage: string) => Promise<void>) | undefined, transactionCommands: string[];
 
 /** Explicit SQL double: exercises the actual SQL caller/crypto, not database policy or concurrency. */
 async function sql(query: string, values: unknown[] = []): Promise<{ rows: Row[]; rowCount: number }> {
@@ -82,11 +84,15 @@ function insert(values: unknown[]) {
 const pool = {
   query: sql,
   async connect() {
+    await persistenceHook?.('checkout');
     let savedRows: Row[], savedDeks: Map<string, string>;
     return { release: vi.fn(), query: async (statement: string, values?: unknown[]) => {
+      if (/^(BEGIN|COMMIT|ROLLBACK)/.test(statement)) transactionCommands.push(statement);
       if (statement.startsWith('BEGIN')) { savedRows = structuredClone(rows); savedDeks = new Map(deks); }
       if (statement === 'ROLLBACK') { rows = savedRows; deks = savedDeks; }
-      return sql(statement, values);
+      const response = await sql(statement, values);
+      await persistenceHook?.(statement);
+      return response;
     } };
   },
 };
@@ -123,9 +129,22 @@ async function relay(flow: Awaited<ReturnType<typeof start>>) {
   const url = new URL(response.location);
   return url.pathname + url.search;
 }
+/** Await a real production persistence boundary; only the SQL transport is doubled. */
+function holdPersistence(stage: string) {
+  let entered!: () => void, release!: () => void;
+  const arrival = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  persistenceHook = async statement => {
+    if (!statement.startsWith(stage)) return;
+    persistenceHook = undefined;
+    entered(); await gate;
+  };
+  return { entered: arrival, release };
+}
 
 beforeEach(async () => {
   rows = []; deks = new Map(); queries = []; legacyReads = 0; providerCalls = []; providerHook = undefined; providerMode = 'ok';
+  persistenceHook = undefined; transactionCommands = [];
   vi.clearAllMocks();
   vi.stubEnv('SESSION_SECRET', 'qualified-http-isolated-secret');
   vi.stubEnv('APP_URL', 'https://' + HOST); vi.stubEnv('OIDC_BASE_URLS', '');
@@ -210,6 +229,40 @@ describe('qualified personal connector real HTTP boundary (named provider/auth/S
     providerHook = () => { (activeRequest as any).oidc.idTokenClaims.iss = OTHER_ISSUER; };
     const response = await call('/api/connect/qualified/smartthings/token', { method: 'POST', origin: 'https://' + HOST, body: { token: ACCESS } });
     expect(response.status).toBe(403); expect(rows).toEqual([]); expect(queries).toEqual([]);
+  });
+  it.each(['checkout', 'INSERT INTO oshal_qualified_connections'])('rolls back identity substitution during %s before committing credentials', async stage => {
+    const held = holdPersistence(stage);
+    const pending = call('/api/connect/qualified/smartthings/token', { method: 'POST', origin: 'https://' + HOST, body: { token: ACCESS } });
+    await held.entered;
+    (activeRequest as any).oidc.idTokenClaims.iss = OTHER_ISSUER;
+    held.release();
+    const response = await pending;
+    expect(response.status, response.body).toBe(403);
+    expect(response.body).not.toContain('connectionId'); expect(rows).toEqual([]); expect(deks.size).toBe(0);
+    expect(transactionCommands).not.toContain('COMMIT'); expect(transactionCommands).toContain('ROLLBACK');
+  });
+  it('suppresses metadata after identity changes during an acknowledged commit without claiming rollback', async () => {
+    const held = holdPersistence('COMMIT');
+    const pending = call('/api/connect/qualified/smartthings/token', { method: 'POST', origin: 'https://' + HOST, body: { token: ACCESS } });
+    await held.entered;
+    (activeRequest as any).oidc.idTokenClaims.iss = OTHER_ISSUER;
+    held.release();
+    const response = await pending;
+    expect(response.status, response.body).toBe(403); expect(response.body).not.toContain('connectionId');
+    expect(transactionCommands).toContain('COMMIT'); expect(transactionCommands).not.toContain('ROLLBACK');
+    expect(rows).toHaveLength(1); // A completed commit cannot be retroactively undone by response suppression.
+  });
+  it('rejects consumed OAuth consent that expires while the final database work is held', async () => {
+    const flow = await start(), complete = await relay(flow), now = Date.now();
+    const held = holdPersistence('INSERT INTO oshal_qualified_connections');
+    const pending = call(complete, { cookie: flow.cookie });
+    await held.entered;
+    vi.spyOn(Date, 'now').mockReturnValue(now + 10 * 60 * 1000 + 1);
+    held.release();
+    const response = await pending;
+    expect(response.status, response.body).toBe(400); expect(JSON.parse(response.body).error).toBe('invalid_qualified_consent');
+    expect(response.location).toBe(''); expect(rows).toEqual([]); expect(deks.size).toBe(0);
+    expect(transactionCommands).toContain('ROLLBACK'); expect(transactionCommands).not.toContain('COMMIT');
   });
   it('keeps duplicate creation distinct from explicit revision-bound reconnect', async () => {
     const grant = await create();
