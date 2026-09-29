@@ -25,6 +25,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — guard-per-fix for the CSP default flip (report-only strict), the explicit env-tunable express.json limit, the reserved-prefix passthrough, and the report dedupe. Drives the REAL helmet + parser middleware over real HTTP.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Prove Alertmanager is reserved from the global parser and its route-local parser verifies a signature over the exact original JSON bytes, including insignificant whitespace.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The report-only header must not carry upgrade-insecure-requests (browsers ignore it there and log a console error on every page, which failed every surface in tests/app-surface-validation.spec.ts); the enforce header must still carry it.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Exercise explicitly pinned report-only mode over HTTP with enforcement also enabled, including nonce, source and report URI overrides; verify that enforcement changes only the upgrade directive.
  */
 
 import { createHmac } from 'node:crypto';
@@ -163,7 +164,7 @@ describe('CSP over real HTTP', () => {
     expect(policy).not.toHaveProperty('upgrade-insecure-requests');
   });
 
-  it('ENFORCE: the same policy moves onto the BLOCKING header', async () => {
+  it('ENFORCE: the blocking policy includes the upgrade directive', async () => {
     process.env.OSHAL_STRICT_CSP = 'on';
     const base = await boot((app) => {
       app.use(helmet({ contentSecurityPolicy: cspFromEnv() }));
@@ -175,7 +176,43 @@ describe('CSP over real HTTP', () => {
     expect(res.headers.get('content-security-policy-report-only')).toBeNull();
     expect(parseCsp(blocking as string)['object-src']).toEqual(["'none'"]);
     // The blocking header is where the upgrade can take effect, so it keeps the directive.
-    expect(parseCsp(blocking as string)).toHaveProperty('upgrade-insecure-requests');
+    expect(parseCsp(blocking as string)['upgrade-insecure-requests']).toEqual([]);
+  });
+
+  it('PINNED REPORT-ONLY: overrides enforcement without losing configured directives', async () => {
+    const opts = {
+      nonce: 'fixture-nonce',
+      allowInlineStyles: false,
+      connectSrc: ['https://api.example.test'],
+      imgSrc: ['https://images.example.test'],
+      reportUri: '/fixture-csp-report',
+    };
+    const base = await boot((app) => {
+      app.use('/observe', helmet({ contentSecurityPolicy: cspFromEnv(opts, {
+        OSHAL_STRICT_CSP: 'on', OSHAL_CSP_REPORT_ONLY: 'on',
+      }) }));
+      app.use('/enforce', helmet({ contentSecurityPolicy: cspFromEnv(opts, {
+        OSHAL_STRICT_CSP: 'on',
+      }) }));
+      app.get(['/observe', '/enforce'], (_req, res) => res.send('ok'));
+    });
+    const observed = await fetch(`${base}/observe`);
+    expect(observed.headers.get('content-security-policy')).toBeNull();
+    const report = observed.headers.get('content-security-policy-report-only');
+    expect(report).toBeTruthy();
+    const policy = parseCsp(report as string);
+    expect(policy).not.toHaveProperty('upgrade-insecure-requests');
+    expect(policy['script-src']).toEqual(["'self'", "'nonce-fixture-nonce'", "'strict-dynamic'"]);
+    expect(policy['style-src']).toEqual(["'self'", "'nonce-fixture-nonce'"]);
+    expect(policy['connect-src']).toEqual(["'self'", 'https://api.example.test']);
+    expect(policy['img-src']).toEqual(["'self'", 'data:', 'blob:', 'https://images.example.test']);
+    expect(policy['report-uri']).toEqual(['/fixture-csp-report']);
+
+    const enforced = await fetch(`${base}/enforce`);
+    expect(enforced.headers.get('content-security-policy-report-only')).toBeNull();
+    const blocking = enforced.headers.get('content-security-policy');
+    expect(blocking).toBeTruthy();
+    expect(parseCsp(blocking as string)).toEqual({ ...policy, 'upgrade-insecure-requests': [] });
   });
 
   it('KILL SWITCH: OSHAL_CSP=off emits neither header', async () => {

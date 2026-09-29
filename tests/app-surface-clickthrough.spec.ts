@@ -12,6 +12,7 @@
  *                     |               | store (ADR-085 Wave 2).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Make the connector clickthrough honor per-user storage: the mock identity has no real accounts, so prove an honest empty result rather than borrowing another user's GitHub connection.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The connector search list is the whole provider CATALOG (buildConnectorListResponse maps every PROVIDERS entry), so a 'github' search always finds the GitHub card and 'No connectors match' could never appear; the case failed the zero-retry CI-mirror run on exactly that. Per-user isolation is what the card shows, not whether it exists: the mock identity's GitHub card must render with no connection pill ('N connected') and no account.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Assert that the GitHub card has zero account rows as well as an unconnected status, so an account leak cannot hide behind an incorrect status pill.
  */
 
 import { test, expect, type Page } from '@playwright/test';
@@ -64,6 +65,7 @@ test.describe('priority app click-through polish', () => {
     const githubCard = page.locator('#list .card').filter({ has: page.locator('.name', { hasText: /^GitHub$/ }) });
     await expect(githubCard).toHaveCount(1, { timeout: 10_000 });
     await expect(githubCard.locator('.cardhead .statuspill')).toHaveText(/^(needs setup|ready)$/);
+    await expect(githubCard.locator('.conn')).toHaveCount(0);
     await page.locator('#connectorSearch').fill('zzzz-no-real-connector');
     await expect(page.locator('#list')).toContainText(/No connectors match/i, { timeout: 10_000 });
   });
