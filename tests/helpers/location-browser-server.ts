@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L3: a localhost server shaped like the real one for the location consent specs. The REAL MOCK_OIDC middleware set from createOidcMiddleware (with the header override on, so each browser context or request picks its synthetic person), the same request-identity stamp server.ts installs, the real /api/location mount exactly as server.ts writes it (service-rail refusal, requiresAuth, createLocationRoutes), the real cockpit tool pages and shared UI assets, and a same-origin page standing in for a packaged surface, over a private PostgreSQL whose tables are owned by the NOSUPERUSER NOBYPASSRLS runtime role (FORCE row-level security is what holds). Synthetic identities and coordinates only; nothing reaches a deployment database.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L4: seedNodeBinding writes a node's durable ADR-114 owner binding (remote_task_journal_client_owners) as the superuser, the way the remote-client registry records it on registration, so the enrolment specs can prove that only a node's owner may enrol it.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L5: a spec may name extra shipped migrations applied before the location ones (the reminders card needs the Jarvis shelf table, which the production shelf rail writes), so the fixture hosts what the deployment has; the default set is unchanged.
  */
 
 import express from 'express';
@@ -47,14 +48,15 @@ export interface LocationBrowserServer {
 /**
  * @description Start the private database and the localhost server.
  * @param purpose - Names the database container.
+ * @param extraMigrations - Shipped migrations applied before the location ones (e.g. the Jarvis shelf table).
  * @returns The running server.
  */
-export async function startLocationBrowserServer(purpose: string): Promise<LocationBrowserServer> {
+export async function startLocationBrowserServer(purpose: string, extraMigrations: readonly string[] = []): Promise<LocationBrowserServer> {
   vi.stubEnv('MOCK_OIDC', 'true');
   vi.stubEnv('MOCK_OIDC_ALLOW_HEADER', 'true');
   vi.stubEnv('SWARM_SERVICE_SECRET', FIXTURE_SERVICE_SECRET);
   vi.stubEnv('LOG_LEVEL', 'silent');
-  const db = locationDatabase(purpose);
+  const db = locationDatabase(purpose, extraMigrations);
   await db.start();
   const runtime = await convergeAppRole(db);
   const store = new LocationStepUpStore();

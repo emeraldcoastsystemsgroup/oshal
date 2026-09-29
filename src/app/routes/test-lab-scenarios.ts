@@ -105,6 +105,7 @@
  * 53 | maintainer@emeraldcoastsystemsgroup.com   | Registered the ADR-169 L2 location storage card (LOCATION_STORAGE_SCENARIOS, test-lab-location-storage-scenarios.ts): a catalog read of the location tables' row-level-security posture on the running database (ENABLE+FORCE with policies, no oshal.is_operator in any policy or helper it reaches, both membership fences) and a two-identity probe inside a transaction that is always rolled back, with the live RLS, erasure-route, static-guard and registration suites attached as regressionTests.
  * 54 | maintainer@emeraldcoastsystemsgroup.com   | Registered the ADR-169 L3 location consent card (LOCATION_CONSENT_SCENARIOS, test-lab-location-consent-scenarios.ts): the service secret refused on /api/location over the loopback, the signed-in person unable to opt in or accept a share without a fresh sign-in (with no proof and with an unproven challenge the Lab withdraws), and the consent and ingest services run for a uniquely tagged synthetic person on the real database with an erase and a zero-row check, with the step-up, route-policy, consent, TOTP, Chromium and real-OIDC suites attached as regressionTests.
  * 55 | maintainer@emeraldcoastsystemsgroup.com   | Registered the ADR-169 L4 location places card (LOCATION_PLACES_SCENARIOS, test-lab-location-places-scenarios.ts): as the signed-in person the places and devices lists carry no coordinate or address and three refusals hold without a write, then three uniquely tagged synthetic people build a group, places and a node, a camera and a TV at places on the real database, prove who can and cannot change them and read them through the kernel, and everything is deleted with a zero-row check; the kernel-read, enrolment, Chromium, route-policy, static-guard and registration suites are attached as regressionTests.
+ * 56 | maintainer@emeraldcoastsystemsgroup.com   | Registered the ADR-169 L5 location reminders card (LOCATION_REMINDERS_SCENARIOS, test-lab-location-reminders-scenarios.ts): as the signed-in person the reminder and sharing reads carry no coordinate, accepting a restricted invitation and creating a guardian share are refused without a fresh sign-in and a foreign place is refused, then three uniquely tagged synthetic people on the real database run the Jarvis grocery-store reminder (proposed at the fix, saved on "yes", fires once on the next visit), its two-rail delivery with tier-aware text, an operator-stamped read that finds no place, subject or reminder text, and a group notice that fires for the sharing member only; everything is deleted with a zero-row check. The evaluator, intent, reminders, group-shares, route-policy, static-guard, log-guard and registration suites are attached as regressionTests.
  * @module test-lab-scenarios
  */
 
@@ -139,6 +140,7 @@ import { LOCATION_SCENARIOS } from './test-lab-location-scenarios';
 import { LOCATION_STORAGE_SCENARIOS } from './test-lab-location-storage-scenarios';
 import { LOCATION_CONSENT_SCENARIOS } from './test-lab-location-consent-scenarios';
 import { LOCATION_PLACES_SCENARIOS } from './test-lab-location-places-scenarios';
+import { LOCATION_REMINDERS_SCENARIOS } from './test-lab-location-reminders-scenarios';
 import { renderCatalogVisual, VISUAL_CATALOG } from './test-lab-visual-catalog';
 import type { AppContext } from '@/app/composition/app-context';
 
@@ -332,6 +334,7 @@ export const SCENARIOS: Scenario[] = [
   ...LOCATION_STORAGE_SCENARIOS,
   ...LOCATION_CONSENT_SCENARIOS,
   ...LOCATION_PLACES_SCENARIOS,
+  ...LOCATION_REMINDERS_SCENARIOS,
   // ── Rich visuals — every kind rendered deterministically through the real renderer ──────────
   ...VISUAL_CATALOG.map((entry): Scenario => ({
     id: `visual-${entry.kind}`,

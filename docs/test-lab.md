@@ -476,6 +476,51 @@ No real person's location is read or written. The linked suites:
 Run them with `npm run test:location` (Docker is required for the PostgreSQL suites). That is local
 evidence. After a deploy, run the card from the Test Lab.
 
+### Location reminders and group sharing (ADR-169 L5)
+
+**Location — reminders and group sharing (ADR-169 L5)** (`location-reminders`, Tools) runs two steps
+on the build that is running:
+
+- `reminder-routes` runs as the signed-in person. The rules, fires, shared-presence and group-sharing
+  reads must carry no coordinate. Accepting a restricted invitation and creating a guardian share are each
+  refused without a fresh sign-in, a reminder at a place that is not theirs is refused, and the person's
+  rules must not change.
+- `reminders-lifecycle` runs the services the routes and Jarvis call for three uniquely tagged synthetic
+  people on the real database, on a scripted server clock. "I'm at the grocery store, remind me next time
+  to buy milk" must propose a place at the person's fix and save it on "yes"; the reminder must not fire
+  while they stay and must fire exactly once when they return. The fire is delivered under the actor over
+  the production Jarvis shelf rail (ids only) and the tier-aware senders: a deployment-tier channel must
+  get only "You have a location reminder — open oshal", an own-tier channel the reminder. An
+  operator-stamped session must find no place, subject or reminder text in the shelf row and no location
+  rule or fire row at all. An admin's group notice must fire for the member who shared the place and never
+  evaluate the member who did not, and a member must see the sharer's arrival by reference. Everything
+  created is deleted (shelf rows, the group and its memberships, each person's location rows through the
+  erase) and a zero-row check runs; incomplete cleanup fails the step.
+
+No real person's location is read or written. The linked suites:
+
+- `tests/unit/location-evaluator.spec.ts`: the scripted fix sequences through the pure presence stepper:
+  edge jitter enters once, exit hysteresis, cooldown, once versus every visit, stale and back-dated fixes,
+  all on server receipt time.
+- `tests/unit/location-reminders-postgres.spec.ts`: the same through the real browser ingest on a private
+  PostgreSQL owned by the enforcing role; a 100 m place for a person stored at `block`; two-rail delivery
+  with tier-aware text; the daily cap and the recovery sweep; an operator-stamped session reading
+  `jarvis_tasks` and `tickets` finds ids only; the Jarvis grocery-store sequence; the owner's purge.
+- `tests/unit/location-group-shares-postgres.spec.ts`: a member who has not shared is never evaluated; a
+  place outside the approved set is never evaluated; the cap, a foreign place and a foreign device are
+  refused; revocation keeps the member's rows and empties the projection; restricted invitations and the
+  acceptance function; guardian shares and their projection; an erased admin named nowhere.
+- `tests/unit/location-jarvis-intent.spec.ts`: the parser, the place guess, proposal replies and the
+  browser-session rule of the intent.
+- `tests/unit/location-route-policy.spec.ts`, `tests/unit/location-rls-no-operator-guard.spec.ts` and
+  `tests/unit/location-log-guard.spec.ts`: the declared step-up rule of every route, no operator bypass in
+  migration 177, and no location data in a log line.
+- `tests/unit/test-lab-location-reminders-registration.spec.ts`: this card on the fixture server, green
+  and red.
+
+Run them with `npm run test:location` (Docker is required for the PostgreSQL suites). That is local
+evidence. After a deploy, run the card from the Test Lab.
+
 ---
 
 ## Application-installed smoke cases

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L2: the owner's purge and export over the location store (Q4: history is the person's own data, kept until they purge it). purgeOwnLocationHistory deletes the person's observations and current rows under their own identity; purgeGroupDeviceHistory lets an admin of a group purge one group-owned device's rows and refuses anyone else before touching a row; exportOwnLocationData reads every location row the person owns or that names them, for the /api/me takeout. Nothing here runs as SYSTEM or as an operator, and nothing deletes by age.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L5: the owner's purge also deletes the person's evaluation history (rule state, share presence and fire rows they own as the subject), which D3 makes deletable only through this purge, and reports it as evaluationCount. Rules and shares are configuration, not history, and stay. The export adds the person's rules, rule state, fires, share presence and the restricted invitations addressed to them.
  *
  * @module location/services/location-history
  */
@@ -23,6 +24,16 @@ const log = createChildLogger({ module: 'location-history' });
 const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
+ * The evaluation history a person owns as a subject (ADR-169 D3: "a person deletes the state, share
+ * presence and fire rows they own only through their purge").
+ */
+const EVALUATION_PURGES: readonly string[] = [
+  'DELETE FROM location_rule_state WHERE tenant_id IS NULL AND owner_sub = $1 AND principal_issuer = $2',
+  'DELETE FROM location_share_presence WHERE owner_sub = $1 AND principal_issuer = $2',
+  'DELETE FROM location_rule_fires WHERE tenant_id IS NULL AND owner_sub = $1 AND principal_issuer = $2',
+];
+
+/**
  * @description Delete the session person's own observations and current rows. Both statements also
  * name the owner explicitly; row-level security (no operator branch) is what guarantees the
  * statement can reach no one else's rows.
@@ -36,12 +47,15 @@ async function deleteOwnHistory(client: PoolClient, principal: LocationPrincipal
     'DELETE FROM location_current WHERE tenant_id IS NULL AND owner_sub = $1 AND principal_issuer = $2', params);
   const observations = await client.query(
     'DELETE FROM location_observations WHERE tenant_id IS NULL AND owner_sub = $1 AND principal_issuer = $2', params);
-  return { observationCount: observations.rowCount ?? 0, currentCount: current.rowCount ?? 0 };
+  let evaluationCount = 0;
+  for (const sql of EVALUATION_PURGES) evaluationCount += (await client.query(sql, params)).rowCount ?? 0;
+  return { observationCount: observations.rowCount ?? 0, currentCount: current.rowCount ?? 0, evaluationCount };
 }
 
 /**
  * @description The owner's purge (ADR-169 Q4): delete every observation and current row the person
- * owns, now, under their own identity. Places, devices, rules and shares are not history and stay.
+ * owns, and the rule state, share presence and fire rows they own as a subject, now, under their own
+ * identity. Places, devices, rules and shares are not history and stay.
  * @param db - The pool.
  * @param principal - The person purging their own history.
  * @returns The counts deleted.
@@ -50,8 +64,9 @@ async function deleteOwnHistory(client: PoolClient, principal: LocationPrincipal
 export async function purgeOwnLocationHistory(db: LocationDb, principal: LocationPrincipal): Promise<LocationPurgeResult> {
   const started = Date.now();
   const result = await withLocationOwnerSession(db, principal, deleteOwnHistory);
+  const purgedCount = result.evaluationCount ?? 0;
   log.info({ op: 'purge-own', outcome: 'ok', observationCount: result.observationCount,
-    durationMs: Date.now() - started }, 'location history purged by its owner');
+    purgedCount, durationMs: Date.now() - started }, 'location history purged by its owner');
   return result;
 }
 
@@ -101,6 +116,11 @@ const EXPORT_READS: ReadonlyArray<readonly [string, 'owner' | 'member', string]>
   ['location_current', 'owner', 'SELECT * FROM location_current WHERE tenant_id IS NULL AND owner_sub = $1 AND principal_issuer = $2'],
   ['location_observations', 'owner', 'SELECT * FROM location_observations WHERE tenant_id IS NULL AND owner_sub = $1 AND principal_issuer = $2 ORDER BY received_at'],
   ['location_shares', 'owner', 'SELECT * FROM location_shares WHERE owner_sub = $1 AND principal_issuer = $2 ORDER BY created_at'],
+  ['location_rules', 'owner', 'SELECT * FROM location_rules WHERE tenant_id IS NULL AND owner_sub = $1 AND principal_issuer = $2 ORDER BY created_at'],
+  ['location_rule_state', 'owner', 'SELECT * FROM location_rule_state WHERE tenant_id IS NULL AND owner_sub = $1 AND principal_issuer = $2'],
+  ['location_rule_fires', 'owner', 'SELECT * FROM location_rule_fires WHERE tenant_id IS NULL AND owner_sub = $1 AND principal_issuer = $2 ORDER BY fired_at'],
+  ['location_share_presence', 'owner', 'SELECT * FROM location_share_presence WHERE owner_sub = $1 AND principal_issuer = $2'],
+  ['location_restricted_invites', 'owner', 'SELECT * FROM location_restricted_invites WHERE user_sub = $1 AND principal_issuer = $2 ORDER BY created_at'],
   ['location_member_restrictions', 'member', 'SELECT * FROM location_member_restrictions WHERE user_sub = $1 ORDER BY created_at'],
   ['location_guardian_shares', 'member', 'SELECT * FROM location_guardian_shares WHERE user_sub = $1 ORDER BY created_at'],
 ];

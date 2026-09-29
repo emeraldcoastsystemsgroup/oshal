@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L2: the shared disposable-PostgreSQL shape for the location specs. It applies the shipped migrations the location store depends on (060 tenancy, 100 CLI tokens, 174 membership fence, 175 location tables; 080 when a spec needs the data-lifecycle audit), creates the NOSUPERUSER NOBYPASSRLS runtime role oshal_app, and then converges ownership the way docs/governance/app-role-provisioning.sql does on a real deployment: every public table is OWNED by oshal_app while the SECURITY DEFINER helpers stay with the bootstrap superuser. That makes the enforcing role the table owner, so a policy only holds because FORCE ROW LEVEL SECURITY is on, which is the posture production runs in. Synthetic identities only.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L4: the location store now also needs 115 (the durable remote-client owner binding that migration 176's device identity fence reads for a node) and 176 itself (place "since" columns, the group-only kinds CHECK, the identity fence).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L5: and 177 (rules, rule state, fires, share presence, restricted invitations, the acceptance function, the grantee projection and the membership fence's L5 branches).
  */
 
 import type { Pool, PoolClient } from 'pg';
@@ -26,6 +27,7 @@ export const LOCATION_MIGRATIONS: readonly string[] = [
   '174-tenant-admin-membership-fence.sql',
   '175-location-storage.sql',
   '176-location-places-and-devices.sql',
+  '177-location-rules-and-shares.sql',
 ];
 
 /**
