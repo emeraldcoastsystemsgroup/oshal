@@ -70,6 +70,7 @@
  * 63 | maintainer@emeraldcoastsystemsgroup.com   | Queue workers now resolve the ticket owner's brain through resolveUserBrain, the same configuration ladder Jarvis uses, instead of bypassing the selected provider through a hosted-only resolver.
  * 64 | maintainer@emeraldcoastsystemsgroup.com   | Treat dead-letter tickets as terminal when stale swarm envelopes are inspected, including immediate deterministic-refusal quarantine.
  * 65 | maintainer@emeraldcoastsystemsgroup.com | Inject exact Futures evidence/result binding into the existing queued worker transport.
+ * 66 | maintainer@emeraldcoastsystemsgroup.com | Expose the already-wired canonical runtime-params resolver on SwarmExtensionBindings so interactive remote execution can honor the explicit `bot-default` user preference with the same per-bot > fleet > agent_config > registry record the queue stamps.
  */
 
 import type { Pool } from 'pg';
@@ -114,6 +115,7 @@ import {
   BotNodeClient,
   createRegistryEndpointResolver,
   isControllerInlineContainer,
+  type RuntimeParamsResolver,
 } from '@/features/agent-management';
 import { resolveBotNodeEndpoint } from './resolve-bot-node-endpoint';
 import { RagService } from '@/features/rag';
@@ -332,6 +334,8 @@ export interface SwarmExtensionBindings {
   swarmTicketProcessingService?: SwarmTicketProcessingService;
   queueManagerService?: QueueManagerService;
   swarmMetricsCollector?: SwarmMetricsCollector;
+  /** Canonical ADR-034 provider/model record used by both queued and interactive bot dispatch. */
+  runtimeParamsResolver?: RuntimeParamsResolver;
 }
 
 /**
@@ -958,6 +962,7 @@ export function createSwarmExtensionBindings(
     swarmTicketProcessingService: swarmProcessingService,
     queueManagerService,
     swarmMetricsCollector,
+    runtimeParamsResolver,
   };
 }
 

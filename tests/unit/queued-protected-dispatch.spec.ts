@@ -4,10 +4,11 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove a queued protected dispatch reaches the real worker gate in the supported hosted shape, refuses honestly without an owner connection, and never admits an agentic queued body.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove `bot-default` keeps the dispatcher's canonical per-bot provider stamp through protected queue shaping and reconciliation instead of falling back to the owner's hosted/CLI lane.
  */
 import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BotNodeClient } from '@/features/agent-management';
+import { BotNodeClient, type RuntimeParamsResolver } from '@/features/agent-management';
 import { ApplicationAuthorizationService, MemoryAuthorizationStore } from '@/features/application-authorization';
 import { ApplicationRemoteExecutionService, MemoryRemoteExecutionStore } from '@/features/application-remote-execution';
 import type { AuthorizationActor, AuthorizationCatalog } from '@/shared/application-authorization';
@@ -48,6 +49,7 @@ let hostedLookups: string[];
 let hostedConnection: typeof HOSTED | null;
 let hostedFailure: Error | null;
 let builtConnections: unknown[];
+let providerSwitches: Array<{ provider: string; model?: string }>;
 
 /** Ticket the queue would dispatch, carrying only durable verified provenance. */
 const ticket = { ticketId: TICKET_ID, ownerSub: REMOTE_SUB, title: 'How did we do in the stock market today?',
@@ -100,7 +102,7 @@ beforeEach(async () => {
   generation = randomUUID();
   tasks = new Map();
   taskStore = memoryTaskStore();
-  hostedLookups = []; hostedConnection = HOSTED; hostedFailure = null; builtConnections = [];
+  hostedLookups = []; hostedConnection = HOSTED; hostedFailure = null; builtConnections = []; providerSwitches = [];
   store = new MemoryAuthorizationStore();
   remoteStore = new MemoryRemoteExecutionStore();
   policy = new ApplicationAuthorizationService(store);
@@ -145,6 +147,7 @@ beforeEach(async () => {
     dispatchConfigRuntime: {
       getActiveProvider: () => activeProvider,
       setActiveProvider: (provider, model) => {
+        providerSwitches.push({ provider, model });
         activeProvider = { provider, model: model ?? activeProvider.model, apiProvider: null };
         return activeProvider;
       },
@@ -290,7 +293,8 @@ describe('the real queue dispatcher on a protected worker', () => {
       createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() } as unknown as InternalTicket;
   }
 
-  function dispatcherDeps(resolveBrain?: (ownerSub: string) => Promise<QueuedResolvedBrain>) {
+  function dispatcherDeps(resolveBrain?: (ownerSub: string) => Promise<QueuedResolvedBrain>,
+    runtimeParamsResolver?: RuntimeParamsResolver) {
     const statuses: Array<{ status: string; metadata: Record<string, unknown> }> = [];
     const messages: Array<Record<string, unknown>> = [];
     const deps = {
@@ -306,6 +310,7 @@ describe('the real queue dispatcher on a protected worker', () => {
       // failure rather than quietly replacing the honest refusal.
       port: '1',
       resolveBrain,
+      runtimeParamsResolver,
     };
     return { deps, statuses, messages };
   }
@@ -320,6 +325,27 @@ describe('the real queue dispatcher on a protected worker', () => {
     expect(fixture.state.calls).toHaveLength(1);
     expect(statuses.at(-1)).toMatchObject({ status: 'complete' });
     expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ role: 'assistant', text: 'Fixture protected answer' });
+  });
+
+  it('keeps the canonical bot provider stamp when the owner selects bot-default', async () => {
+    vi.stubEnv('DEMO_MODE', 'true');
+    vi.stubEnv('OSHAL_OPERATOR_SUBS', REMOTE_SUB);
+    const resolveBrain = vi.fn(async () => ({ kind: 'bot-default' } as const));
+    const runtimeParamsResolver = vi.fn(async () => ({
+      providerId: 'antigravity-cli', model: 'gemini-fixture', configVersion: 17,
+    }));
+    const { deps, statuses, messages } = dispatcherDeps(resolveBrain, runtimeParamsResolver);
+
+    await dispatchManifestWorkerTicket(queuedTicket(), { ticketType: 'trading-decision', name: 'Trading decision',
+      pipeline: 'manifest-worker', workerBot: 'protected-reasoner' } as never, deps as never);
+
+    expect(runtimeParamsResolver).toHaveBeenCalledWith(REMOTE_AGENT);
+    expect(resolveBrain).toHaveBeenCalledWith(REMOTE_SUB);
+    expect(hostedLookups).toEqual([]);
+    expect(providerSwitches).toEqual([]);
+    expect(fixture.state.calls).toHaveLength(1);
+    expect(statuses.at(-1)).toMatchObject({ status: 'complete' });
     expect(messages[0]).toMatchObject({ role: 'assistant', text: 'Fixture protected answer' });
   });
 

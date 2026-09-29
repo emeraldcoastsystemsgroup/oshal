@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Keep configured-brain resolver outages operational: propagate the original lookup error instead of converting transient database or network failures into terminal deterministic refusals.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Reuse the reviewed protected_result_owner_issuer_required code for durable-task principal mismatches so every typed refusal remains covered by the source-locked disposition inventory.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Bound reason-only workflows resolve the owner's configured brain even when application signing is not enabled.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Preserve the dispatcher's canonical provider stamp when the owner explicitly selects `bot-default`; this keeps protected queued work on the same per-bot > fleet > agent_config > registry record as interactive remote execution instead of misclassifying the choice as a missing hosted connection.
  */
 import type { InternalTicket } from '@/entities/ticket';
 import type { BotNodeClient, BotNodeRequest, BotNodeResponse } from '@/features/agent-management';
@@ -32,6 +33,7 @@ export interface QueuedHostedBrainConnection { baseUrl: string; apiKey: string; 
 export type QueuedResolvedBrain =
   | { kind: 'hosted'; connection: QueuedHostedBrainConnection }
   | { kind: 'cli'; providerId: string; model?: string }
+  | { kind: 'bot-default' }
   | { kind: 'none' };
 
 /**
@@ -91,6 +93,21 @@ async function supportedProtectedRequest(request: BotNodeRequest,
     throw new QueuedProtectedDispatchError('this controller has no configured-brain resolver wired for queued protected dispatch');
   }
   const brain = await resolveBrain(ownerSub);
+  if (brain?.kind === 'bot-default') {
+    const providerId = request.providerId?.trim();
+    if (!providerId) {
+      throw new QueuedProtectedDispatchError('the target bot has no actionable administrator/runtime provider record');
+    }
+    const shaped: BotNodeRequest = {
+      ...request,
+      direct: true,
+      agenticMode: false,
+      providerId,
+      providerConfigRequired: true,
+    };
+    delete shaped.byoLlmConnection;
+    return shaped;
+  }
   if (brain?.kind === 'cli') {
     const providerId = brain.providerId?.trim();
     if (!providerId) throw new QueuedProtectedDispatchError('the ticket owner\'s configured CLI brain has no provider id');

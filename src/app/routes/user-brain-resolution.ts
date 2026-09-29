@@ -6,10 +6,11 @@
  * user could not SAY which of their connected providers they wanted, and a mounted CLI login could
  * never be the answer at all, because SEC-05 refuses autonomous CLI harnesses at a bot node.
  *
- * The resolution here returns one of three shapes, and the caller wires each to an existing rail:
+ * The resolution here returns one of four shapes, and the caller wires each to an existing rail:
  *   - `hosted` → the OpenAI-compatible {baseUrl, apiKey, model} that rides as `byoLlmConnection`.
  *   - `cli`    → a provider id the controller STAMPS on the dispatch (the ADR-034 authoritative
  *                dispatch record), which the node reconciles its active provider to before running.
+ *   - `bot-default` → the caller stamps the target bot's canonical admin/runtime record.
  *   - `none`   → nothing usable; the caller owes the user an honest "no engine connected".
  *
  * The CLI shape is only ever produced under the ADR-127 carve (demo deployment + an operator-owned
@@ -29,6 +30,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | A CLI brain is only offered when a bot node can actually EXECUTE it. Entry 5 gated the Gemini selection on a pushed sign-in and stopped there, so the moment a login was pushed the option went live - and the resolved {kind:'cli', providerId:'gemini-cli'} is refused BY NAME at the node, because HARNESS_BY_ID gives it botNodeRuntime: null and it is not a ProviderRegistry id either, so resolveBotNodeSwitch answers null and reconcileDispatchProviderConfig throws AuthoritativeDispatchConfigError. An operator who followed the instructions exactly - sign in, push, pick the option - had every turn afterwards refused. cliBrainOffer now answers one question for all four CLI ids (is the caller carved in, is there a node runtime, can this machine load the binary, is the credential obtainable) and BOTH the offer surface and this resolver call it, so what is offered and what resolves cannot drift apart. It only ever narrows: cliBrainAvailable still decides WHO, unchanged.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | antigravity-cli joins the preference ids and the cli ResolvedBrain. Google retired Gemini Code Assist sign-in for individuals on 2026-09-22 and points them at Antigravity instead, and `agy` is the one Google path measured answering on the models the shared API key 503s on - but it runs as the signed-in user, on a machine that can load it. Both remaining conditions are checked rather than assumed, so on the shipped stack the option is correctly NOT offered (see the backlog entry for what each one needs).
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | isRetryableCliBrainFailure treats an unresolvable dispatch (AuthoritativeDispatchConfigError / AUTHORITATIVE_PROVIDER_UNAVAILABLE) as retryable-to-hosted. It is thrown before the harness does any work, so it is a fact about the LANE and never about the turn - and without this arm the Jarvis CLI-lane retry never fired for it and the raw error reached the user on every turn. Entry 6 makes such a selection unreachable; this makes a future mis-selection DEGRADE instead of dead-ending.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Add the explicit `bot-default` preference: unlike `auto` (which deliberately keeps walking the ADR-127 demo/user ladder), this choice defers the turn to the target bot's canonical admin/runtime record. It resolves as a first-class marker so the remote execution chokepoint can stamp per-bot > fleet > agent_config > registry instead of sending an unstamped request or silently replacing an operator-written bot row with the demo Codex fallback.
  *
  * @module user-brain-resolution
  */
@@ -47,8 +49,8 @@ import {
 
 const logger = createChildLogger({ module: 'user-brain-resolution' });
 
-/** The providers a user may name as their default. `auto` = walk the ladder. */
-export const LLM_PREFERENCE_IDS = ['auto', 'claude-code', 'openai-codex', 'gemini-cli', 'antigravity-cli', 'any-llm', 'free-tier'] as const;
+/** The brain choices a user may name. `auto` walks the user ladder; `bot-default` defers to the bot/admin record. */
+export const LLM_PREFERENCE_IDS = ['auto', 'bot-default', 'claude-code', 'openai-codex', 'gemini-cli', 'antigravity-cli', 'any-llm', 'free-tier'] as const;
 export type LlmPreferenceId = typeof LLM_PREFERENCE_IDS[number];
 
 /** The mounted CLI logins the demo default tries, in order. **Codex is the only rung**
@@ -71,6 +73,7 @@ export interface UserLlmPreference {
 export type ResolvedBrain =
   | { kind: 'hosted'; connection: ResolvedUserLlmConnection }
   | { kind: 'cli'; providerId: CliBrainProviderId; model?: string }
+  | { kind: 'bot-default' }
   | { kind: 'none' };
 
 /**
@@ -411,6 +414,7 @@ async function freeTierHosted(pool: any, userSub: string): Promise<ResolvedBrain
 async function resolveNamedPreference(
   pool: any, userSub: string, pref: UserLlmPreference,
 ): Promise<ResolvedBrain | null> {
+  if (pref.preferred === 'bot-default') return { kind: 'bot-default' };
   if (pref.preferred === 'claude-code' || pref.preferred === 'openai-codex') {
     if (!cliBrainAvailable(userSub)) return null;
     return { kind: 'cli', providerId: pref.preferred, ...(pref.model ? { model: pref.model } : {}) };

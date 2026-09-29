@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127 remote-brain guards for stampRemoteBrain: a CLI-harness node dispatch carries the caller's resolved brain (cli → the ADR-034 providerId/model stamp; hosted → the byoLlmConnection wire trio with resolver metadata stripped), explicit caller choices and identity-less/hosted-harness dispatches pass through with the ladder never consulted, an empty ladder refuses with NO_HOSTED_BRAIN, and a ladder FAILURE dispatches unstamped (fail-open) — the exact behaviours that keep the operator's mounted-CLI turns and guest hosted turns from regressing onto a node's static default.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Require the resolved CLI provider stamp at the protected remote reasoning boundary.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Regression for the live Intelligent Sales reversion: `bot-default` stamps the canonical Sales Gemini record (including required authority) while the existing explicit OpenAI Codex user choice still wins and never consults that resolver.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -17,7 +18,7 @@ import type { AppContext } from '../../src/app/composition/app-context';
 import type { BotNodeRequest } from '../../src/features/agent-management';
 
 const POOL = {} as AppContext['pool'];
-const CLI_AGENT = 'cb000000-0000-0000-0000-000000000001';
+const CLI_AGENT = '15000000-0000-0000-0000-000000000001';
 
 /** Registry seam: one CLI-harness node (the stamp condition) + one non-CLI node (the pass-through). */
 const REGISTRY = [
@@ -54,6 +55,44 @@ describe('stampRemoteBrain (ADR-127 remote branch)', () => {
     expect(req.model).toBe('claude-sonnet-4-6');
     expect(req.providerConfigRequired).toBe(true);
     expect(req.byoLlmConnection).toBeUndefined();
+  });
+
+  it('stamps the canonical Sales Gemini record only when bot-default is selected', async () => {
+    const req = request();
+    const runtimeParamsResolver = vi.fn().mockResolvedValue({
+      providerId: 'gemini',
+      model: 'gemini-3.8-flash',
+      configVersion: 2,
+      fallbackOrder: ['openai-codex'],
+    });
+    await stampRemoteBrain(POOL, CLI_AGENT, req, {
+      ...overrides({ kind: 'bot-default' }),
+      runtimeParamsResolver,
+    });
+    expect(runtimeParamsResolver).toHaveBeenCalledWith(CLI_AGENT);
+    expect(req).toMatchObject({
+      providerId: 'gemini',
+      model: 'gemini-3.8-flash',
+      configVersion: 2,
+      fallbackOrder: ['openai-codex'],
+      providerConfigRequired: true,
+    });
+    expect(req.byoLlmConnection).toBeUndefined();
+  });
+
+  it('preserves an explicit OpenAI Codex user preference above the Sales bot default', async () => {
+    const req = request();
+    const runtimeParamsResolver = vi.fn().mockResolvedValue({
+      providerId: 'gemini', model: 'gemini-3.8-flash', configVersion: 2,
+    });
+    await stampRemoteBrain(POOL, CLI_AGENT, req, {
+      ...overrides({ kind: 'cli', providerId: 'openai-codex', model: 'gpt-5.5' }),
+      runtimeParamsResolver,
+    });
+    expect(req).toMatchObject({
+      providerId: 'openai-codex', model: 'gpt-5.5', providerConfigRequired: true,
+    });
+    expect(runtimeParamsResolver).not.toHaveBeenCalled();
   });
 
   it('threads a resolved hosted brain as the byoLlmConnection wire trio, metadata stripped', async () => {

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the rule a settings surface broke: a brain option is offered only when a bot node can actually EXECUTE it. The Gemini option went live the moment a Google login was pushed, PUT admitted it because PUT admits anything whose availability is true, and the resolved selection was then refused BY NAME at reconcileDispatchProviderConfig - so an operator who followed the instructions exactly had every turn afterwards fail. Three claims are pinned here and they are deliberately in one spec because they are one rule seen from three sides: the OPTION is unavailable and says which piece is missing, the PUT refuses it with that same piece, and the RESOLVER never produces it - all three reading the same executability fact off the harness table rather than a constant, so the day a runtime is wired they flip together. The authorization half is asserted unchanged: a non-operator is refused every CLI id whatever the table says.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Expose and accept the non-provider `bot-default` choice for every authenticated user; it delegates to the bot/admin record and therefore requires no CLI carve or personal credential.
  */
 
 import http from 'node:http';
@@ -211,6 +212,20 @@ describe('the settings surface offers only what a turn can run on', () => {
       method: 'PUT',
       headers: { 'content-type': 'application/json', 'x-test-sub': OPERATOR },
       body: JSON.stringify({ preferred: 'openai-codex' }),
+    });
+    expect(response.status).toBe(200);
+  });
+
+  it('offers and accepts bot-default without a CLI carve or personal provider', async () => {
+    const options = await readOptions(harness, GUEST);
+    expect(options.find((entry) => entry.id === 'bot-default')).toMatchObject({
+      label: 'Bot administrator setting (dedicated bots)',
+      available: true,
+    });
+    const response = await fetch(`${harness.url}/api/settings/llm-default/`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', 'x-test-sub': GUEST },
+      body: JSON.stringify({ preferred: 'bot-default' }),
     });
     expect(response.status).toBe(200);
   });
