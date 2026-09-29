@@ -6,6 +6,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The AI usage and requirements ledger (ADR-170 D10): one generated markdown table per repo from every manifest's `rating:` block (container memory low/high, per-feature unit/tier/generation/degrade), with the token and model columns reserved and reading "not yet measured" until the P0/P1 generators exist. `--check` fails on a stale ledger or an unrated manifest, so the label is never typed by hand and no application ships without one.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Drop the Version column: a version bump by any lane made the ledger stale and failed that lane's push, and the rating does not depend on version. Complete the declared-memory rule for the store: bot containers count per application (not additive), off-box services are not counted, and a package engine container with a declared mem_limit counts it as high and a quarter as low.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Accept T0 with a generation backend, refuse it without one, and say so in the ledger header.
  */
 /**
  * @description Generate or check the ledger for a core checkout (`swarm-apps/*.yaml`) or a store
@@ -27,7 +28,7 @@ const yaml = require('js-yaml');
 
 const NOT_MEASURED = 'not yet measured';
 const NONE_RECORDED = 'none recorded';
-const TIERS = new Set(['T1', 'T2', 'T3', 'T4']);
+const TIERS = new Set(['T0', 'T1', 'T2', 'T3', 'T4']);
 const GENERATIONS = new Set(['none', 'local', 'hosted']);
 const DEGRADES = new Set(['template', 'hosted', 'disable', 'reduced']);
 
@@ -74,6 +75,8 @@ function ratingProblems(rating, label) {
     if (!f || typeof f.id !== 'string' || typeof f.unit !== 'string') problems.push(`${label}: rating.features[${i}] needs id and unit`);
     else if (!TIERS.has(f.tier) || !GENERATIONS.has(f.generation) || !DEGRADES.has(f.degrade)) {
       problems.push(`${label}: rating.features[${i}] (${f.id}) has an unknown tier, generation or degrade`);
+    } else if (f.tier === 'T0' && f.generation === 'none') {
+      problems.push(`${label}: rating.features[${i}] (${f.id}) declares T0 with no generation backend`);
     }
   });
   return problems;
@@ -136,7 +139,9 @@ function render(entries, opts) {
     'These are declared ceilings, not measurements.',
     '',
     'Tier is the capability the feature asks of a model today (ADR-170 D1): T1 pick from a set, T2 a bounded plan code',
-    'renders, T3 grounded reasoning over retrieved context, T4 long tool loops. A package with no model in the loop is T0.',
+    'renders, T3 grounded reasoning over retrieved context, T4 long tool loops. T0 means no language model: a feature',
+    'declares it only when a template prompt drives an image, audio or video model (generation local or hosted).',
+    'A package with no model at all shows "none (T0, no model in the loop)".',
     `Tokens per unit and models verified read "${NOT_MEASURED}" / "${NONE_RECORDED}" until the P0 and P1 generators exist;`,
     'a number in those columns is never typed by hand.',
     '',

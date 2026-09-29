@@ -222,7 +222,7 @@ schedule that files a ticket a bot then works is marked as such.
 | Kalshi scan | configured interval | code scan; model only on user-triggered analysis | 0 | T0 |
 | Calendar meeting briefs | every 15 min | code assembles a cited brief from recorded material | 0 | T0 |
 | Daily trade recap | every 15 min | code reconciles up to 50 journal entries into briefings | 0 | T0 |
-| Venture-plan rebaseline tick | hourly | code | 0 | T0 |
+| Venture-plan rebaseline tick | hourly | code evaluates owner policies; a due, cap-gated run calls the BOM, market and ops analysts (`venture-run.ts` `startScheduledRebaseline`) | 3 per due run, 0 otherwise | T2 |
 | Marketing daily ingest | 06:20 daily | code reads Search Console, PostHog, GitHub traffic | 0 | T0 |
 | Marketing weekly review | Mon 12:00 | code rollup; one ticket per owner; a bot runs only after a human approves it | 0 per run, T3 per approved ticket | T0, then T3 |
 | LoRA overnight | 02:00 daily | kohya training and ComfyUI generation and validation on the operator's GPU box | 0 LLM | T0, local image model |
@@ -242,9 +242,9 @@ workflow-ticket schedules with whatever the operator registers.
 
 | Capability | Where | Backend | LLM in the loop |
 |---|---|---|---|
-| Image generation | store `lora`; core `video-generation` | ComfyUI on the operator's GPU box over the LAN; kohya for training | none; the `lora-director` persona explains scorecards on request (T2) |
+| Image generation | store `lora`, `portrait-studio`, `switchboard`, `video`; core `video-generation` | `resolveStoryboardImageProvider`: default `codex` = OpenAI `/v1/images` (hosted, paid per image), `codex-cli` in demo mode, `comfyui` on the operator's GPU box, `openrouter`, `vertex`; LoRA training with kohya on the GPU box | none for portraits and compose previews (template prompt); the `lora-director` persona explains scorecards on request (T2) |
 | Video generation | core `video-generation` | DeckToVideo (code, free), ComfyUI (free), Veo (paid escalation behind approval) | one file drafts a prompt |
-| Portrait compositing | store `portrait-studio` | `sharp` layers over 225 presets; no external host, no model call anywhere in the package | none |
+| Portrait generation | store `portrait-studio` | a template prompt from 225 presets (`buildPortraitPrompt`) sent to the image provider above, hosted by default; `sharp` for layers | none (T0 with hosted generation) |
 | Office documents | presentations, venture-plan, little-monsters, career-hunter | pptxgenjs, docx, exceljs renderers | T2 outline only |
 | PDF | nowhere | no PDF library in any store route or in core `src` | not built |
 | Speech | core `voice-providers` (pluggable harness); browser speech in surfaces | TTS provider, not model tokens | none |
@@ -252,9 +252,13 @@ workflow-ticket schedules with whatever the operator registers.
 | Media processing | circuit-lab, create, payroll, pumpkin, scan-to-print, video | ffmpeg, sharp, canvas | none |
 | MCP | core `mcp.call-tool` provider intent (browser task, explicit remote ticket, mesh task, series dispatch); store `lora`, `vids`; `remote-client` stdio client | deterministic intent inside the ADR-038 boundary | none; D7 is partly built |
 
-No hosted image API is wired anywhere in the tree. Image generation is local ComfyUI, and the only
-paid generation escalation is Veo for video. Portrait Studio today is entirely code, which makes it
-the reduced edition already; the full edition is what does not exist yet.
+Correction (2026-09-29, from the store survey): an earlier version of this section said no hosted
+image API is wired and that Portrait Studio is entirely code. Both were wrong; the package grep did
+not see the core provider it calls. Image generation resolves through core
+`resolveStoryboardImageProvider`, whose default is OpenAI's hosted image API, with local ComfyUI as an
+opt-in. Portrait Studio has no language model in its loop: a deterministic template prompt drives a
+hosted image model by default. Its reduced edition is the same template on the local ComfyUI
+provider; Veo remains the paid escalation for video.
 
 ## Decision (proposed)
 
@@ -271,7 +275,7 @@ rating:
   features:
     - id: deck-outline
       unit: deck                 # the thing one transaction is
-      tier: T2                   # T1 | T2 | T3 | T4 (T0 is code and never declared)
+      tier: T2                   # T1 | T2 | T3 | T4; T0 only for a generation-only feature
       generation: none           # none | local | hosted (D9)
       degrade: template          # template | hosted | disable | reduced
       contextFloor: 8192         # optional, tokens
@@ -356,7 +360,7 @@ fewer operations, fixed styles, rather than the feature disappearing. Token numb
 
 | Application | Feature | Full edition | Reduced edition (local model, no account) | Today |
 |---|---|---|---|---|
-| Portrait Studio | portrait from a photo | T2 model plans scene, preset and placement from the request; a hosted or local image model renders with the user's LoRA character; T3 art direction on request | preset chosen by menu or a T1 local model; `sharp` compositing; the LoRA character's face through local ComfyUI; fewer presets and styles | T0: 225 presets and `sharp`, no model at all |
+| Portrait Studio | portrait from a photo | T2 model plans scene, preset and placement from the request; a hosted or local image model renders with the user's LoRA character; T3 art direction on request | preset chosen by menu; the same template prompt on local ComfyUI with the LoRA character's face; fewer presets and styles | T0 with hosted generation: 225 presets build a template prompt for the hosted image model by default |
 | LoRA Studio | train and validate a character | T2 director explains scorecards; ComfyUI and kohya local; paid escalation gated | identical; training already runs on the GPU box | built as the reduced edition |
 | AI Office | deck, document, workbook | T2 outline and Guide edits on a hosted model | T2 outline on a 20B-class local model; the starter catalog is the T0 fallback | outline on the hosted comms bot |
 | Little Monsters | tutoring turn | T3 hosted per turn | T2 local explanations; mastery tracking, sequencing and closed-form grading in code; a smaller activity set | T3 hosted |
