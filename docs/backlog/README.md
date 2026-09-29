@@ -5,6 +5,7 @@ queue is [../BACKLOG.md](../BACKLOG.md). Active entries state only reproducible 
 its done-when evidence; resolved history is preserved in the [archive](./archive/README.md), the
 relevant ADR or feature documentation, release notes, and git history.
 
+- [ai-usage-rating-input-guard.md](./ai-usage-rating-input-guard.md) — ADR-170 declaration-only ledger validation, fail-before-write regression evidence, and the separate measured-usage/model-compatibility acceptance still outstanding.
 - [n8n-import-forward-plan.md](./n8n-import-forward-plan.md) — ADR-165 delivery queue: review rollout, versioned adapters, item/port execution, durable ticket assignments and approvals, native process packing, comparison fixtures and searchable proven workflows.
 - [closeout-2026-09-22.md](./closeout-2026-09-22.md) — current core/store backlog counts, merged-work reconciliation, and the acceptance that remains open.
 - [session-handover-2026-09-17.md](./session-handover-2026-09-17.md) — historical September 17 stopping point; its PR and role-assignment status was superseded by later merges and the rollout record.

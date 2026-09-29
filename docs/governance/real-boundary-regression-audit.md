@@ -745,3 +745,34 @@ The focused command and standard CI discovery are documented in the indexed
 changes only unknown-range classification, not other existing hook exits or the
 active primary checkout's hook. Full project compilation, normal publication,
 primary-hook activation and backlog closure remain separate integration gates.
+
+## AI usage rating declaration guard (2026-09-29)
+
+`tests/unit/ai-usage-rating-input-guard.spec.ts` runs the actual standalone
+`scripts/ai-usage-ledger.js` in bounded Node subprocesses, its real YAML parser and
+owned temporary filesystem. The TypeScript `validateAppRating` implementation also
+runs for declaration parity; only its logger is doubled. No CLI, parser, validator
+or filesystem implementation is replaced. Children receive a clean environment;
+timeouts/spawn failures cannot masquerade as validation refusals, and cleanup is
+restricted to the fixture's own temporary directories.
+
+The proven boundary is declaration admission and output safety: unknown fields
+(including handwritten token/model/cost/cadence evidence), malformed values and
+invalid combinations fail before rendering/writing, while valid output and the
+missing-rating rollout remain compatible. Combined `--check`/`--out` cannot rewrite
+a stale checked file and then claim a passing check.
+
+Main-based candidate `2ff4895e` passed 67/67 focused cases with zero skips (42 new
+guard cases and 25 existing `tests/unit/app-rating-validation.spec.ts` cases).
+Removing feature unknown-key rejection produced 8 failures; removing pre-render
+validation produced 4 failures; both changes were restored before the final run.
+The original CLI failed 27 of the initial 32 guard cases. See the
+[scope and local commands](../backlog/ai-usage-rating-input-guard.md).
+
+These are real local CLI/file-boundary results, not model measurements, provider
+acceptance, database proof or a full-suite pass. Generated token ranges, background
+cadence/cost, tested-model compatibility and pause/resume controls remain separate
+ADR-170/A2 acceptance work. No such evidence is inferred from an accepted manifest.
+Both spec files are already selected by `vitest.config.ts`'s
+`tests/unit/**/*.spec.ts` include through `npm run test:unit`, used by the normal
+local CI unit gate and hosted CI unit job; no new runtime Lab card is added.
