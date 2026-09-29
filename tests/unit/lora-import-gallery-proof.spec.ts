@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the gallery mode of the LoRA import live proof (`--gallery`). Pure: the synthetic photo is a valid, unique 512 x 512 RGB PNG; the mint body is exactly the gallery's Send-to body over the portrait's image route; the surface labels are the studio's own; the catalog pick, the Portrait Studio preflight and the container env read. In-memory run: the pass path creates the portrait (multipart `photo`, the first professional style), titles it with the fixture tag, mints through POST /api/artifacts/handles with the image route as source and NEVER the upload mint, imports through the surface port with that handle, and removes the portrait (after it revalidates by title), the character, the ticket and the box files; red when the surface shows queued while the receipt route says ready, when the page raised an error, when the portrait fails or never settles, when the studio's import answers 503, when the catalog has no style, when the title does not revalidate, and when the portrait survives cleanup. Real Chromium: the real surface port against a loopback stand-in of the LoRA studio (lora.html's ids, buttons and receipt labels): a surface that renders the receipt ready passes with the token on every same-origin request and an off-origin beacon that never leaves the browser; a surface that keeps rendering "queued for worker" after the receipt route flipped to ready fails by name.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The off-origin beacon check could not go red: it targeted http://localhost:<port>, which never reached the 127.0.0.1 listener, so the check passed with the browser session continuing off-origin requests WITH the token. The beacon now targets a second loopback listener on 127.0.0.1 (another port, another origin); the stand-in page loads its characters only after the beacon settles and reports the outcome same-origin; the pass case asserts that listener received zero requests, that the page saw the beacon refused, and that no request on either listener carried the token off-origin. A control case opens a session whose origin IS that listener and requires the token to arrive there, so the zero is a measurement of a reachable listener, not of an unreachable one.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import http from 'node:http';
@@ -301,7 +302,11 @@ describe('runLoraImportAcceptance in gallery mode', () => {
   });
 });
 
-/** A loopback stand-in for the LoRA studio: lora.html's ids, buttons and receipt labels. `stale` renders every receipt as queued. */
+/**
+ * A loopback stand-in for the LoRA studio: lora.html's ids, buttons and receipt labels. `stale` renders every receipt as queued.
+ * Before anything else the page fetches `<offOrigin>/beacon`, reports the outcome same-origin, and only then loads the characters,
+ * so every run's import happens after the off-origin request has settled.
+ */
 function studioHtml(stale: boolean, offOrigin: string): string {
   const label = stale
     ? "function label(){ return 'queued for worker'; }"
@@ -317,7 +322,6 @@ function studioHtml(stale: boolean, offOrigin: string): string {
 <script>
 const $=(id)=>document.getElementById(id); let SEL=null;
 const ARTIFACT_REF=new URLSearchParams(location.search).get('artifact')||'';
-fetch('${offOrigin}/beacon').catch(function(){});
 ${label}
 async function api(p,o){ const r=await fetch('/api/lora'+p,o); return {ok:r.ok,j:await r.json().catch(()=>({}))}; }
 async function loadDataset(){ const {j}=await api('/dataset?subject='+encodeURIComponent(SEL));
@@ -329,38 +333,76 @@ $('importArtifactBtn').addEventListener('click',async()=>{ $('importArtifactBtn'
   const {ok}=await api('/dataset/import',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({ref:ARTIFACT_REF,subject:SEL,caption:$('datasetCaption').value.trim()})});
   if(ok) await loadDataset(); else $('importArtifactBtn').disabled=false; });
 $('refreshDatasetBtn').addEventListener('click',()=>loadDataset());
-loadChars();
+fetch('${offOrigin}/beacon').then(()=>'answered',()=>'refused')
+  .then((o)=>fetch('/api/lora/beacon-outcome?o='+o)).catch(()=>undefined).then(()=>loadChars());
 </script></body></html>`;
 }
 
 describe('the surface port in real Chromium against a loopback stand-in of the studio', () => {
-  const seen: Array<{ method: string; path: string; authorization: string | undefined }> = [];
+  type Seen = { origin: string; method: string; path: string; query: string; authorization: string | undefined };
+  /** Requests the studio stand-in received, and requests the second (off-origin) loopback listener received. */
+  const seen: Seen[] = [];
+  const offSeen: Seen[] = [];
   let server: http.Server;
+  let offServer: http.Server;
   let origin = '';
+  let offOrigin = '';
   let stale = false;
   let current: State = newState({});
 
+  const record = (into: Seen[], req: http.IncomingMessage) => {
+    const url = new URL(req.url || '/', 'http://x');
+    into.push({ origin: `http://${req.headers.host}`, method: req.method || '', path: url.pathname, query: url.search, authorization: req.headers.authorization });
+    return url;
+  };
+  const listen = async (s: http.Server) => { await new Promise<void>((resolve) => s.listen(0, '127.0.0.1', () => resolve())); return `http://127.0.0.1:${(s.address() as AddressInfo).port}`; };
   const readBody = (req: http.IncomingMessage) => new Promise<string>((resolve) => { let text = ''; req.on('data', (c) => { text += c; }); req.on('end', () => resolve(text)); });
   const reply = (res: http.ServerResponse, out: { status: number; json: unknown }) => { res.writeHead(out.status, { 'content-type': 'application/json' }); res.end(JSON.stringify(out.json)); };
+  /** No request on either listener carried the token anywhere but the studio origin. */
+  const tokenOffOrigin = () => [...seen, ...offSeen].filter((r) => r.authorization === `Bearer ${TOKEN}` && r.origin !== origin);
 
   beforeAll(async () => {
+    // A second listener on the same loopback address with its own port: a different origin the browser can reach.
+    // It answers with CORS open, so a request that got through would also read as "answered" in the page.
+    offServer = http.createServer((req, res) => {
+      record(offSeen, req);
+      res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+      res.end('{}');
+    });
+    offOrigin = await listen(offServer);
     server = http.createServer(async (req, res) => {
-      const url = new URL(req.url || '/', 'http://x');
-      seen.push({ method: req.method || '', path: url.pathname, authorization: req.headers.authorization });
-      if (url.pathname === '/api/lora/ui') { res.writeHead(200, { 'content-type': 'text/html' }); res.end(studioHtml(stale, origin.replace('127.0.0.1', 'localhost'))); return; }
+      const url = record(seen, req);
+      if (url.pathname === '/api/lora/ui') { res.writeHead(200, { 'content-type': 'text/html' }); res.end(studioHtml(stale, offOrigin)); return; }
+      if (url.pathname === '/api/lora/beacon-outcome') { reply(res, { status: 200, json: {} }); return; }
       if (url.pathname === '/api/lora/characters') { reply(res, { status: 200, json: { characters: current.fixture ? [{ subject: current.fixture.subject, display_name: current.fixture.displayName }] : [] } }); return; }
       if (url.pathname === '/api/lora/dataset') { reply(res, datasetRoute(current, url.searchParams.get('subject') || '')); return; }
       if (url.pathname === '/api/lora/dataset/import' && req.method === 'POST') { reply(res, importRoute(current, JSON.parse(await readBody(req)))); return; }
       reply(res, { status: 404, json: {} });
     });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
-    origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    origin = await listen(server);
+    expect(offOrigin).not.toBe(origin);
   });
-  afterAll(async () => { await new Promise((resolve) => server.close(resolve)); });
+  afterAll(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await new Promise((resolve) => offServer.close(resolve));
+  });
+
+  it('control: the off-origin listener is reachable from this Chromium, and a session whose origin it is delivers the token there', async () => {
+    seen.length = 0;
+    offSeen.length = 0;
+    const status = await source.browserSession(offOrigin, TOKEN)(async (page: { goto: (u: string) => Promise<{ status: () => number } | null> }) => {
+      const loaded = await page.goto(`${offOrigin}/control`);
+      return loaded ? loaded.status() : 0;
+    });
+    expect(status).toBe(200);
+    expect(offSeen.filter((r) => r.path === '/control')).toEqual([{ origin: offOrigin, method: 'GET', path: '/control', query: '', authorization: `Bearer ${TOKEN}` }]);
+    expect(seen).toEqual([]);
+  }, 60_000);
 
   it('passes when the studio page itself shows the file "ready on worker", with the token on every same-origin request and none off-origin', async () => {
     stale = false;
     seen.length = 0;
+    offSeen.length = 0;
     const f = fake({}, source.createSurfacePort({ origin, token: TOKEN }));
     current = f.state;
     const result = await proof.runLoraImportAcceptance(f.ports, { readyBudgetMs: 30_000 });
@@ -370,14 +412,20 @@ describe('the surface port in real Chromium against a loopback stand-in of the s
     expect(f.state.imports).toEqual([{ ref: REF, subject: f.state.fixture!.subject, caption: `${f.state.fixture!.subject}, synthetic Test Lab import fixture` }]);
     expect(seen.map((r) => r.path)).toContain('/api/lora/dataset/import');
     expect(seen.length).toBeGreaterThan(0);
-    expect(seen.every((r) => r.authorization === `Bearer ${TOKEN}`)).toBe(true);
-    expect(seen.some((r) => r.path === '/beacon')).toBe(false);
+    expect(seen.every((r) => r.origin === origin && r.authorization === `Bearer ${TOKEN}`)).toBe(true);
+    // The page fired the off-origin beacon before it loaded the characters, and the browser refused it:
+    // the second listener received nothing, and no request on either listener carried the token off-origin.
+    // Soft, so a session that lets the beacon out reports all three at once.
+    expect.soft(offSeen).toEqual([]);
+    expect.soft(tokenOffOrigin()).toEqual([]);
+    expect.soft(seen.filter((r) => r.path === '/api/lora/beacon-outcome').map((r) => r.query)).toEqual(['?o=refused']);
     expect(f.state.portraits.size + f.state.characters.size + f.state.tickets.size + f.state.box.size).toBe(0);
   }, 90_000);
 
   it('fails by name when the page keeps rendering "queued for worker" after the receipt route flipped to ready', async () => {
     stale = true;
     seen.length = 0;
+    offSeen.length = 0;
     const f = fake({}, source.createSurfacePort({ origin, token: TOKEN }));
     current = f.state;
     const result = await proof.runLoraImportAcceptance(f.ports, { readyBudgetMs: 30_000 });
