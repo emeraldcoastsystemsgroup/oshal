@@ -5,9 +5,10 @@
  * -----------------------------------------------------------------------------
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | A FIFTH state: a holding whose shares all sit in protected lots (ADR-138). `subtractPinnedLots` drops such a symbol before anything costs or governs it - the autopilot's view of the book simply does not contain it - so it never reaches `positionGovernance`, and a surface keying off that output alone read it as an answer nobody gave. That is the inversion of the failure this module exists to prevent: a deliberately protected position looking unexamined. The reason is knowable, benign and complete, so it gets its own kind and its own words HERE, beside the other four, rather than being written a second time in whichever surface noticed the gap - one vocabulary for "what will the engine do with this position" is the whole point of the module. The caller supplies it for the symbols core's OWN subtraction dropped; nothing re-derives which those are.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 made the engine withhold every order for a position its own filled orders cannot account for, and TRADING_CORE_SYMBOLS has always withheld for a ring-fenced name. Both facts were invisible on the surface: the operator could see a holding sitting with no stop and no exit and had no way to tell the silence was deliberate. This module is the ONE place that turns the marks the engine already attaches (`unmanaged` / `engineAvgCost`, from withEngineCostBasis) and the operator's own ring-fence (coreConfig) into a readable answer for a surface. It DECIDES nothing and reads no database: it restates, in the operator's words, what the order paths already do, which is what stops the surface growing a second definition of "unmanaged" that can drift away from the engine's. Deliberately outside the dispatch graph - nothing that emits an order imports it.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | A SIXTH state: the idle-cash yield sleeve's fund on a book where the sleeve is ARMED (ADR-052 addendum P6). resolveYieldSleeve exempts that holding from every leg (sleevePositions, sleeveExemptSymbols), so no stop-loss, take-profit, trailing exit, rotation drop-out or trim ever fires on it, but this readout only knew the core ring-fence and still reported the fund's exits as applying. positionGovernance and positionGovernanceBySymbol take an optional armed sleeve: its fund reads exitsApply false with a 'yield-sleeve' reason, and ordersApply stays what the engine does (true: the sleeve leg sells it first to fund entries and parks or refills it; false for an unaccounted holding, which disarms the sleeve; null when the ledger could not be read). armedYieldSleeve states the arming rule resolveYieldSleeve applies before any I/O - the one resolver yieldSleeveFloatPct over the applied knob and the book kind, the fund from yieldSleeveSymbol, disarmed when the fund is a core symbol - so a caller does not write it a second time. Without a sleeve (every existing caller) the answer is unchanged.
  */
 
-import type { Position } from '@/features/trading';
+import { yieldSleeveFloatPct, yieldSleeveSymbol, type Position, type TradingMode } from '@/features/trading';
 import type { CoreConfig } from './trading-dispatch-core';
 
 /** Why the engine withholds. Each is an INDEPENDENT reason with its own fix. */
@@ -21,6 +22,9 @@ export type PositionGovernanceKind =
   /** Every share held sits in a protected lot (ADR-138), so the autopilot's view of the book has
    *  no such position to govern. A SETTING, like the ring-fence - not a finding. */
   | 'pinned-in-full'
+  /** The armed idle-cash yield sleeve's fund (ADR-052 addendum P6): parked cash, exempt from every
+   *  exit, traded only by the sleeve leg itself. A SETTING - not a finding. */
+  | 'yield-sleeve'
   /** The engine's own ledger could not be read, so its answer for this position is NOT KNOWN. */
   | 'accountability-unknown';
 
@@ -50,6 +54,36 @@ export interface PositionGovernance {
   ordersApply: boolean | null;
   /** Every reason the engine withholds, strongest first. Empty when it manages the position. */
   reasons: PositionGovernanceReason[];
+}
+
+/** The idle-cash yield sleeve as the dispatch arms it for one book (ADR-052 addendum P6). */
+export interface ArmedYieldSleeve {
+  /** The fund the sleeve parks in (UPPER-CASE). */
+  symbol: string;
+  /** The working float, percent of equity. */
+  floatPct: number;
+}
+
+/**
+ * @description Whether the idle-cash yield sleeve is armed for one book, by the rule
+ * `resolveYieldSleeve` applies before it reads anything: the float comes from the ONE resolver
+ * (`yieldSleeveFloatPct` over the applied strategy's knob, else the book kind's mode-aware env arm),
+ * the fund from `yieldSleeveSymbol`, and a fund that is also a core symbol disarms it (the two rails
+ * would fight over one holding). The per-fire conditions stay the dispatch's: an unaccounted holding
+ * disarms the sleeve for that fire, and `positionGovernance` already answers such a holding as
+ * unaccounted. The sleeve's working-order and settlement reads only idle it; its fund stays exempt.
+ * @param override - The book's applied Strategy Library override (only its yieldSleeveFloatPct is read).
+ * @param kind - The book kind the dispatch fires ('paper' | 'live').
+ * @param core - The same parsed ring-fence the caller passes to positionGovernance (`coreConfig(override)`).
+ * @returns The armed sleeve, or null when it is off or disarmed for the book.
+ */
+export function armedYieldSleeve(
+  override: { config?: { yieldSleeveFloatPct?: number | null } } | null | undefined, kind: TradingMode, core: CoreConfig,
+): ArmedYieldSleeve | null {
+  const floatPct = yieldSleeveFloatPct(override?.config?.yieldSleeveFloatPct, kind);
+  if (floatPct <= 0) return null;
+  const symbol = yieldSleeveSymbol();
+  return core.symbols.includes(symbol) ? null : { symbol, floatPct };
 }
 
 /** The engine's own words for a holding it cannot account for (ADR-159). */
@@ -113,6 +147,21 @@ function pinnedInFullReason(symbol: string, qty: number): PositionGovernanceReas
   };
 }
 
+/** The armed yield sleeve's fund: parked cash the sleeve leg trades, exempt from every exit. */
+function yieldSleeveReason(symbol: string, floatPct: number): PositionGovernanceReason {
+  return {
+    kind: 'yield-sleeve',
+    label: 'yield sleeve',
+    detail:
+      `${symbol} is the idle-cash yield sleeve's fund on this book (working float ${floatPct}% of equity), `
+      + 'so the engine counts it as parked cash, not a position: no stop-loss, no take-profit, no trailing '
+      + 'exit, no rotation or rebalance trim runs on it, and it takes no slot. While the engine can account '
+      + `for the holding from its own fills, the sleeve itself trades it: it sells ${symbol} first to fund `
+      + 'entries, and on a quiet fire it parks cash above the float or refills the float. This is a setting, '
+      + 'not a finding: the position leaves this state when the sleeve is disarmed for the book.',
+  };
+}
+
 /** The honest answer when the engine's own ledger could not be read. */
 function unknownReason(symbol: string, longPosition: boolean): PositionGovernanceReason {
   return {
@@ -133,16 +182,18 @@ function unknownReason(symbol: string, longPosition: boolean): PositionGovernanc
  * @description Whether the engine's protective exit set runs for this position.
  *
  * The dispatch drops EVERY exit whose symbol is ring-fenced (`exits.filter(e => !coreSet.has(...))`,
- * whatever its target), and ADR-159 withholds every exit for an unaccounted holding. Otherwise the
- * exits run - unless nobody could check, which is `null`, not `true`.
+ * whatever its target), an armed yield sleeve's fund joins that set and leaves every leg's view, and
+ * ADR-159 withholds every exit for an unaccounted holding. Otherwise the exits run - unless nobody
+ * could check, which is `null`, not `true`. An exempt symbol is `false` either way: whether or not
+ * the ledger covers it, no sleeve exit fires on it.
  *
- * @param fenced - The symbol is named in TRADING_CORE_SYMBOLS.
+ * @param exempt - The symbol is named in TRADING_CORE_SYMBOLS, or it is the armed sleeve's fund.
  * @param unaccounted - The engine's ledger does not cover the quantity held.
  * @param accountabilityKnown - The ledger read succeeded for this position.
  * @returns true / false, or null when it could not be determined.
  */
-function exitsApplyTo(fenced: boolean, unaccounted: boolean, accountabilityKnown: boolean): boolean | null {
-  if (fenced || unaccounted) return false;
+function exitsApplyTo(exempt: boolean, unaccounted: boolean, accountabilityKnown: boolean): boolean | null {
+  if (exempt || unaccounted) return false;
   return accountabilityKnown ? true : null;
 }
 
@@ -181,15 +232,20 @@ function ordersApplyTo(
  *   dispatch applies, so the answer is the engine's own and not a parallel computation.
  * @param core - The parsed TRADING_CORE_SYMBOLS ring-fence (`coreConfig()`), override-aware when
  *   the caller has an applied Strategy Library override.
+ * @param sleeve - The book's armed yield sleeve (`armedYieldSleeve`), or null/absent when it is off.
+ *   Its fund is exempt from every exit; a fund that is also a core symbol is never the sleeve's,
+ *   because the dispatch refuses to arm on that conflict.
  * @returns What the engine will and will not do for this position, and why, in words.
  */
-export function positionGovernance(p: Position, core: CoreConfig): PositionGovernance {
+export function positionGovernance(p: Position, core: CoreConfig, sleeve?: ArmedYieldSleeve | null): PositionGovernance {
   const symbol = p.symbol.toUpperCase();
   const fenced = core.symbols.includes(symbol);
   const targetPct = core.perSymbolPct.get(symbol) ?? 0;
   if (!(p.qty > 0)) {
     return { symbol, exitsApply: null, ordersApply: null, reasons: [unknownReason(symbol, false)] };
   }
+  // The armed sleeve's float when THIS is its fund; null for every other holding.
+  const sleeveFloat = sleeve && !fenced && sleeve.symbol.toUpperCase() === symbol ? sleeve.floatPct : null;
   const unaccounted = p.unmanaged === true;
   // The attachment marks every long it saw, one way or the other. Neither mark = it never ran.
   const accountabilityKnown = unaccounted || p.engineAvgCost !== undefined;
@@ -197,12 +253,14 @@ export function positionGovernance(p: Position, core: CoreConfig): PositionGover
   if (unaccounted) reasons.push(unaccountedReason(symbol, p.qty));
   if (fenced && targetPct <= 0) reasons.push(ringFencedReason(symbol));
   else if (fenced) reasons.push(coreHoldingReason(symbol, targetPct, unaccounted));
+  // An unaccounted fund disarms the sleeve for the fire (resolveYieldSleeve), so it reads unaccounted only.
+  if (sleeveFloat !== null && !unaccounted) reasons.push(yieldSleeveReason(symbol, sleeveFloat));
   // A `:0` ring-fence withholds on its own, so an unreadable ledger changes nothing there and is
   // not reported as doubt. Everywhere else a failed read is reported as a failed read.
   if (!accountabilityKnown && !(fenced && targetPct <= 0)) reasons.push(unknownReason(symbol, true));
   return {
     symbol,
-    exitsApply: exitsApplyTo(fenced, unaccounted, accountabilityKnown),
+    exitsApply: exitsApplyTo(fenced || sleeveFloat !== null, unaccounted, accountabilityKnown),
     ordersApply: ordersApplyTo(fenced, targetPct, unaccounted, accountabilityKnown),
     reasons,
   };
@@ -240,12 +298,13 @@ export function pinnedInFullGovernance(symbol: string, qty: number): PositionGov
  * positions payload.
  * @param positions - The book's positions, marked by `withEngineCostBasis`.
  * @param core - The parsed ring-fence.
+ * @param sleeve - The book's armed yield sleeve (`armedYieldSleeve`), or null/absent when it is off.
  * @returns Symbol to governance, one entry per position.
  */
 export function positionGovernanceBySymbol(
-  positions: readonly Position[], core: CoreConfig,
+  positions: readonly Position[], core: CoreConfig, sleeve?: ArmedYieldSleeve | null,
 ): Record<string, PositionGovernance> {
   const out: Record<string, PositionGovernance> = {};
-  for (const p of positions) out[p.symbol.toUpperCase()] = positionGovernance(p, core);
+  for (const p of positions) out[p.symbol.toUpperCase()] = positionGovernance(p, core, sleeve);
   return out;
 }

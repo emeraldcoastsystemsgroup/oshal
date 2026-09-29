@@ -5,13 +5,15 @@
  * -----------------------------------------------------------------------------
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard the FIFTH state. A holding whose shares all sit in protected lots is dropped by subtractPinnedLots before anything governs it, so it reached no answer at all and a surface read it as NOT KNOWN - a deliberately protected position shown as unexamined, which is this module's own failure inverted. The boundary is driven, not described: the REAL subtraction decides which symbols vanish, and the cases assert the constructor is the only answer available for those and that a partial pin is NOT one of them. The wording is asserted to say the lots still work their own exits, because `exitsApply: false` on its own would read as unprotected, and to say how the state ENDS, because it is a setting and not a finding.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard the readout the trading surface paints from ADR-159. The three cases that matter are the three the operator cannot otherwise tell apart: a holding the engine cannot account for (no order of any kind), a holding the operator ring-fenced himself (a setting, not a finding), and a holding NOBODY LOOKED AT because the ledger read failed - which must never read as "managed". The live-book shape is pinned by name: USO is 0 buys / 4 sells and is also TRADING_CORE_SYMBOLS=USO:0, so it carries BOTH reasons and the readout has to say both. The withholding rules asserted here are read off the order paths themselves (trading-schedule-dispatch.ts:253 filters every exit for a fenced symbol; ensureCore skips only an unmanaged one), so a change to either is meant to turn this red.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Guard the SIXTH state (ADR-052 addendum P6): on a book where the idle-cash yield sleeve is armed, its fund is parked cash the dispatch exempts from every exit, and the readout must say so instead of reporting the fund's exits as applying. The cases pin the answer (exitsApply false, ordersApply true, a 'yield-sleeve' reason that names the float, the withheld exits, the sell-first funding and how the state ends), that an unarmed book reads exactly as before, that an unaccounted fund reads unaccounted only (the dispatch disarms the sleeve for it), that an unread ledger keeps the exits false and the orders unknown, and that a fund named in TRADING_CORE_SYMBOLS is never the sleeve's. The boundary is the dispatch's own arming and exemption, so the parity case drives the REAL resolveYieldSleeve, sleevePositions and sleeveExemptSymbols over one knob, env and ring-fence matrix and requires armedYieldSleeve and the readout to agree with them symbol by symbol; the pool is a double for the working-order read only (paper book, settlement off), and the real companion for the fire is tests/unit/trading-dispatch-yield-sleeve-fire.spec.ts, where the fund sits past its stop and is never sold.
  */
 
-import { describe, expect, it } from 'vitest';
-import type { Position } from '../../src/features/trading/services/broker-adapter';
-import type { CoreConfig } from '../../src/app/trading-dispatch-core';
-import { pinnedInFullGovernance, positionGovernance, positionGovernanceBySymbol } from '../../src/app/trading-position-governance';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { Position, TradingBook } from '../../src/features/trading/services/broker-adapter';
+import { coreConfig, type CoreConfig } from '../../src/app/trading-dispatch-core';
+import { armedYieldSleeve, pinnedInFullGovernance, positionGovernance, positionGovernanceBySymbol, type ArmedYieldSleeve } from '../../src/app/trading-position-governance';
 import { subtractPinnedLots } from '../../src/app/trading-pinned-lots';
+import { resolveYieldSleeve, sleeveExemptSymbols, sleevePositions } from '../../src/app/trading-dispatch-yield-sleeve';
 
 /** A book with nothing ring-fenced. */
 const noFence: CoreConfig = { symbols: [], targetPct: 0, perSymbolPct: new Map() };
@@ -199,5 +201,118 @@ describe('a holding held entirely in protected lots is a state of its own, not a
     // The genuinely unread position still answers not known - this separates two things that shared
     // a bucket, it does not empty the bucket.
     expect(kinds(held('ABT', 134, 'unread'), noFence)).toEqual(['accountability-unknown']);
+  });
+});
+
+/**
+ * The sixth state (ADR-052 addendum P6). On a book where the idle-cash yield sleeve is armed, the
+ * dispatch removes the fund from every leg's view and adds it to the core exemption set, so no exit
+ * ever fires on it - the readout has to say that, and say nothing new on a book where it is off.
+ */
+describe('the armed yield sleeve\'s fund is parked cash: exempt from every exit, traded by the sleeve', () => {
+  const ENV = ['TRADING_YIELD_SLEEVE', 'TRADING_YIELD_SLEEVE_FLOAT_PCT', 'TRADING_YIELD_SLEEVE_SYMBOL', 'TRADING_CORE_SYMBOLS', 'TRADING_CORE_TARGET_PCT'];
+  const saved = new Map<string, string | undefined>();
+  beforeEach(() => { for (const k of ENV) { saved.set(k, process.env[k]); delete process.env[k]; } });
+  afterEach(() => { for (const [k, v] of saved) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
+
+  const sleeve: ArmedYieldSleeve = { symbol: 'SGOV', floatPct: 5 };
+  const knob = (yieldSleeveFloatPct: number | null) => ({ config: { yieldSleeveFloatPct } });
+
+  it('unarmed, the fund is an ordinary holding: the answer is exactly what it was before the sleeve existed', () => {
+    const before = { symbol: 'SGOV', exitsApply: true, ordersApply: true, reasons: [] };
+    expect(positionGovernance(held('SGOV', 150, 'covered'), noFence)).toEqual(before);
+    expect(positionGovernance(held('SGOV', 150, 'covered'), noFence, null)).toEqual(before);
+  });
+
+  it('armed, the fund reads exempt from every exit and still traded - by the sleeve itself', () => {
+    const g = positionGovernance(held('SGOV', 150, 'covered'), noFence, sleeve);
+    expect(g.exitsApply, 'sleevePositions removes it from every exit leg').toBe(false);
+    expect(g.ordersApply, 'the sleeve sells it first to fund entries and parks or refills it').toBe(true);
+    expect(g.reasons.map((r) => r.kind)).toEqual(['yield-sleeve']);
+    const [reason] = g.reasons;
+    expect(reason.label).toBe('yield sleeve');
+    expect(reason.detail).toContain('working float 5% of equity');
+    for (const withheld of ['stop-loss', 'take-profit', 'trailing exit', 'rebalance trim']) {
+      expect(reason.detail, 'the operator must be told the ' + withheld + ' is withheld').toContain(withheld);
+    }
+    expect(reason.detail).toContain('sells SGOV first to fund entries');
+    expect(reason.detail).toContain('setting, not a finding');
+    expect(reason.detail, 'say how the state ends').toContain('when the sleeve is disarmed');
+  });
+
+  it('only the fund changes: every other holding on the armed book reads as it did, and the match ignores case', () => {
+    const book = positionGovernanceBySymbol([held('sgov', 150, 'covered'), held('ANET', 20, 'covered'), held('USO', 400, 'unmanaged')], noFence, sleeve);
+    expect(book.SGOV.reasons.map((r) => r.kind)).toEqual(['yield-sleeve']);
+    expect(book.ANET).toEqual({ symbol: 'ANET', exitsApply: true, ordersApply: true, reasons: [] });
+    expect(book.USO.reasons.map((r) => r.kind)).toEqual(['unaccounted']);
+  });
+
+  it('an unaccounted fund reads unaccounted only: the dispatch disarms the sleeve rather than manage what its fills do not explain', () => {
+    const g = positionGovernance(held('SGOV', 150, 'unmanaged'), noFence, sleeve);
+    expect(g.reasons.map((r) => r.kind)).toEqual(['unaccounted']);
+    expect(g.exitsApply).toBe(false);
+    expect(g.ordersApply).toBe(false);
+  });
+
+  it('an unread ledger keeps the exits false (exempt either way) and the orders NOT KNOWN', () => {
+    const g = positionGovernance(held('SGOV', 150, 'unread'), noFence, sleeve);
+    expect(g.reasons.map((r) => r.kind)).toEqual(['yield-sleeve', 'accountability-unknown']);
+    expect(g.exitsApply).toBe(false);
+    expect(g.ordersApply, 'whether the sleeve trades it depends on a mark nobody read').toBeNull();
+  });
+
+  it('a fund named in TRADING_CORE_SYMBOLS is never the sleeve\'s: the ring-fence answers, as the dispatch refuses to arm', () => {
+    const fence: CoreConfig = { symbols: ['SGOV'], targetPct: 0, perSymbolPct: new Map([['SGOV', 0]]) };
+    expect(armedYieldSleeve(knob(5), 'paper', fence)).toBeNull();
+    expect(kinds(held('SGOV', 150, 'covered'), fence)).toEqual(['ring-fenced']);
+    expect(positionGovernance(held('SGOV', 150, 'covered'), fence, sleeve).reasons.map((r) => r.kind)).toEqual(['ring-fenced']);
+  });
+
+  it('armedYieldSleeve reads the one resolver: a knob decides, an absent knob inherits the mode-aware arm, 0 is off', () => {
+    expect(armedYieldSleeve(null, 'paper', noFence), 'off by default').toBeNull();
+    expect(armedYieldSleeve(knob(8), 'live', noFence)).toEqual({ symbol: 'SGOV', floatPct: 8 });
+    process.env.TRADING_YIELD_SLEEVE = 'paper';
+    expect(armedYieldSleeve(knob(null), 'paper', noFence), 'blank float = the pre-registered 5%').toEqual({ symbol: 'SGOV', floatPct: 5 });
+    expect(armedYieldSleeve(knob(null), 'live', noFence), 'a paper arm does not arm live').toBeNull();
+    expect(armedYieldSleeve(knob(0), 'paper', noFence), 'an explicit 0 disarms an env-armed book').toBeNull();
+    process.env.TRADING_YIELD_SLEEVE_SYMBOL = 'bil';
+    process.env.TRADING_YIELD_SLEEVE_FLOAT_PCT = '7';
+    expect(armedYieldSleeve(undefined, 'paper', noFence)).toEqual({ symbol: 'BIL', floatPct: 7 });
+  });
+
+  it('agrees with the dispatch symbol by symbol: armed exactly when resolveYieldSleeve arms, exempt exactly what it exempts', async () => {
+    const paper: TradingBook = {
+      bookId: '00000000-0000-4000-8000-0000000060f1', ref: 'paper', kind: 'paper', broker: null, accountNumber: null,
+      connectionKey: null, capitalCapUsd: null, learn: true, enabled: true,
+    };
+    const pool = { query: async () => ({ rows: [] }) } as never;
+    const positions = [held('SGOV', 150, 'covered'), held('ANET', 20, 'covered'), held('SPY', 40, 'covered')];
+    const matrix: Array<{ env: Record<string, string>; strategy: ReturnType<typeof knob> | null }> = [
+      { env: {}, strategy: null },
+      { env: {}, strategy: knob(6) },
+      { env: { TRADING_YIELD_SLEEVE: 'paper' }, strategy: null },
+      { env: { TRADING_YIELD_SLEEVE: 'live' }, strategy: null },
+      { env: { TRADING_YIELD_SLEEVE: 'both' }, strategy: knob(0) },
+      { env: { TRADING_YIELD_SLEEVE: 'paper', TRADING_CORE_SYMBOLS: 'SPY:30,SGOV:10' }, strategy: null },
+      { env: { TRADING_YIELD_SLEEVE: 'paper', TRADING_YIELD_SLEEVE_SYMBOL: 'ANET' }, strategy: null },
+    ];
+    for (const { env, strategy } of matrix) {
+      for (const k of ENV) delete process.env[k];
+      Object.assign(process.env, env);
+      const override = strategy as never;
+      const core = coreConfig(override);
+      const control = await resolveYieldSleeve(pool, 'spec-governance-sleeve', paper, override, positions);
+      const armed = armedYieldSleeve(override, paper.kind, core);
+      const label = JSON.stringify({ env, strategy });
+      expect(armed === null, label + ': armed exactly when the dispatch arms').toBe(control === null);
+      if (control) expect(armed).toEqual({ symbol: control.symbol, floatPct: control.floatPct });
+      const answered = positionGovernanceBySymbol(positions, core, armed);
+      const legView = new Set(sleevePositions(positions, control).map((p) => p.symbol));
+      const exempt = new Set([...core.symbols, ...sleeveExemptSymbols(control)]);
+      for (const p of positions) {
+        const dispatchRunsExits = legView.has(p.symbol) && !exempt.has(p.symbol);
+        expect(answered[p.symbol].exitsApply, label + ': ' + p.symbol).toBe(dispatchRunsExits);
+      }
+    }
   });
 });

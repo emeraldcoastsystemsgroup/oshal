@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The ADR-052 addendum trading-parity Test Lab card is registered exactly once with suites that exist on disk, its two DB guards are on the isolated nightly scenario, and its readback grades honestly: paper armed passes and reports the source (env, strategy knob), today's SPY verdict and the counterfactual rows; paper not armed is degraded and names the setting that starts the soak; an explicit strategy 0 reads as off; the plan step summarises open, re-underwritten, amended and closed-by-door plans; no server context is degraded without reading; neither step ever claims the soak.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-052 addendum P6: the card's third step, yield-sleeve-readback, and the sleeve's DB fire spec on the isolated nightly scenario. Paper armed passes and prints the fund and the ledger's sell-first evidence (funding sales a buy followed, and those none did); not armed (or a strategy 0) is degraded and names TRADING_YIELD_SLEEVE=paper; an absent decision ledger says so; it never claims the soak.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The card also lists tests/unit/trading-position-governance.spec.ts, the guard that an armed sleeve's fund reads exempt from every exit on the positions readout; pinned here beside the two sleeve specs.
  */
 import { existsSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
@@ -40,7 +41,7 @@ describe('ADR-052 addendum trading-parity Test Lab card', () => {
     expect(scenario.steps.map((s) => s.id)).toEqual(['market-gap-readback', 'exit-plan-readback', 'yield-sleeve-readback']);
     const nightly = AUTONOMOUS_SCENARIOS.find((s) => s.id === 'nightly-isolated-regression')!.regressionTests!.map((t) => t.path);
     expect(nightly).toEqual(expect.arrayContaining(['tests/unit/trading-position-plans-postgres.spec.ts', 'tests/unit/trading-parity-fire.spec.ts', 'tests/unit/trading-dispatch-yield-sleeve-fire.spec.ts']));
-    expect(scenario.regressionTests!.map((t) => t.path)).toEqual(expect.arrayContaining(['tests/unit/trading-yield-sleeve.spec.ts', 'tests/unit/trading-dispatch-yield-sleeve-fire.spec.ts']));
+    expect(scenario.regressionTests!.map((t) => t.path)).toEqual(expect.arrayContaining(['tests/unit/trading-yield-sleeve.spec.ts', 'tests/unit/trading-dispatch-yield-sleeve-fire.spec.ts', 'tests/unit/trading-position-governance.spec.ts']));
     expect(scenario.description).toContain('never claim the paper soak');
   });
 

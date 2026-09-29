@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register the ADR-052 addendum parity card: two read-only steps over the signed-in caller's own legacy paper and live books. The market-gap step reports each book's resolved bar and where it came from (applied strategy knob, mode-aware env, or off), today's SPY verdict when a book is armed, and the caller's 'market-gap' counterfactual rows; the exit-plan step reports each book's plan life and source and the paper book's open plans and closed-by-door counts. Neither step writes anything (an absent table is reported, never created), and neither claims the paper soak, which only elapsed market time on an armed paper book can produce. Paper not armed = degraded, with the exact setting that starts the soak.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | ADR-052 addendum P6: a third read-only step, yield-sleeve-readback. It reports each legacy book's resolved working float and where it came from (strategy knob, mode-aware env, or off), the fund, and the paper book's own sleeve ledger read from its decisions: funding sales, the funding sales a buy followed within two minutes (the ledger's sell-first evidence), sales no buy followed, parks, refills and the last funding day. Paper not armed = degraded with the setting that starts the soak; it never claims the soak. The two new sleeve specs join regressionTests.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | The positions readout for an armed sleeve: tests/unit/trading-position-governance.spec.ts joins regressionTests, because it now pins that the fund of an armed sleeve reads exempt from every exit (and agrees symbol by symbol with the real resolveYieldSleeve / sleevePositions / sleeveExemptSymbols), which is what the operator sees beside each holding once the sleeve is armed on paper.
  */
 import type { Scenario, StepResult, ScenarioRunContext } from './test-lab-scenarios';
 import { marketGapFilterPct, exitPlanSessions, yieldSleeveFloatPct, yieldSleeveSymbol, type MarketGapVerdict } from '@/features/trading';
@@ -259,6 +260,7 @@ export const TRADING_PARITY_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/trading-dispatch-golden-plan.spec.ts' },
     { level: 'unit', path: 'tests/unit/trading-yield-sleeve.spec.ts' },
     { level: 'integration', path: 'tests/unit/trading-dispatch-yield-sleeve-fire.spec.ts' },
+    { level: 'unit', path: 'tests/unit/trading-position-governance.spec.ts' },
   ],
   steps: [
     { id: 'market-gap-readback', app: APP, label: 'Market-wide gap-down entry filter (ADR-052 addendum)',
