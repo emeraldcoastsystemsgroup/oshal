@@ -7,10 +7,13 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The proof no longer predicts a task id (the first live run reported "no cost" over two real ledger rows keyed `protected-<sha256>::<Career bot>`, the per-execution digest a protected application's bot history carries), so the cases follow it: fixture rows are keyed through the REAL protectedBotWorkspaceId with one execution id per call, and the verdict rests on the Career bot's ledger rows for the owner since the start, no more than the admitted rail calls. Real boundary widened to the read the container mode performs: the whole acceptance runs over a disposable PostgreSQL carrying the chat/cost migrations plus owner-or-operator RLS (112 on oshal_cost_events, the conversation schema's chat_tasks policy via buildOwnerRlsPolicyStatements), read through a NOSUPERUSER NOBYPASSRLS role behind the production GUC wrapper under the owner's request identity. A run shaped like the live one (8 admitted, 2 settled under protected keys) passes; the same fixture with no ledger row since the start fails naming "no cost"; another owner's rows never count (RLS for the identity read, and the SQL's own owner filter read as the superuser); the canonical `career-engine-<owner>` rollup shape is still accepted as evidence; more ledger rows than admitted calls fail. The in-memory verdict cases no longer expect a pre-run baseline read.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The two extra modes. `--complete`: a run that ends succeeded on its own after every call passes on the attribution with no cancellation issued; a run still running at the budget is cancelled by the cleanup and red; a run someone else cancelled is red (the default mode still accepts it); no rail call is not-runnable. `--worker-loss` (container half, over the same in-memory run registry plus a registry double the phase hook drives the way docker would): the run fails 503 career-worker-unavailable once the stop phase took the bot away and a strictly newer heartbeat after the start phase passes; a bot that never comes back is red, and so is a stale-online record whose heartbeat never moves (the record a dead bot leaves behind) or a registration that vanished; a run that ends succeeded, fails for another reason, or whose route answers 502 after the stop is red; a run that hangs after the stop is red and cancelled; a run that ends before the stop, a bot that is offline before, and a refused start stop nothing. Host half: the reactor stops on the stop phase, starts on the start phase, each once, and restarts in finish() when the proof died between them; hostVerdict turns a failed stop/start, a never-issued start or a container not running afterwards red. The mode flags exclude each other and the host spec carries the mode's flag after --in-container. stageAndStream keeps stageAndRun's argv and PAT-by-name contract, hands lines to the reactor as they arrive and always unstages.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | `--complete` now also runs the approve -> draft half (career-rail-draft.js, its own spec career-rail-draft.spec.ts): the staged set is four files for every mode, the complete mode's host ceiling adds the draft budget and its attribution wait, and a score half that passes on a package without the Test Lab application seam (below career-hunter 1.27.0) makes the mode unavailable, naming the seam, with no draft route touched.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Guard the announced window itself. Removing the host's refusal of `--worker-loss` without `--announced-window` (runWorkerLossOnHost) left every case above green: the flag was only proven to be READ (parseArgs), never to be REQUIRED. The new block runs the real script as a child process, the boundary an operator's command line crosses: without the flag it must exit 2 naming the flag with nothing started and docker never consulted; with the flag it must get past that refusal and stop at the next one (the Career bot's container is not running), still stopping nothing. The child has no docker on its PATH and names containers that do not exist, so neither the cases nor a regression of the refusal can reach a real container.
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import type { Pool } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { protectedBotWorkspaceId } from '@/app/bot-node-protected-workspace';
@@ -589,6 +592,47 @@ describe('--worker-loss: the host half', () => {
     const unavailable = { caseId: 'career-worker-rail-worker-loss', state: 'unavailable', detail: 'offline before.', evidence: {} };
     expect(workerLoss.hostVerdict(unavailable, { stop: null, start: null }, true)).toMatchObject({ state: 'unavailable', detail: 'offline before.' });
   });
+});
+
+describe('--worker-loss: the host refusals, through the real script as a child process', () => {
+  const SCRIPT = resolve(process.cwd(), 'scripts/operations/career-rail-live-proof.js');
+  /** Not a credential: a marker the cases look for in everything the child printed. */
+  const PAT = 'fixture-operator-pat-marker';
+  const ABSENT_BOT = 'career-rail-spec-absent-bot';
+  let emptyDir = '';
+
+  beforeAll(() => { emptyDir = mkdtempSync(join(tmpdir(), 'career-rail-host-')); });
+  afterAll(() => { rmSync(emptyDir, { recursive: true, force: true }); });
+
+  /**
+   * Run the host half for real. The child's PATH is an empty directory, so no docker executable
+   * resolves, and both container names are fixtures that do not exist: nothing here can reach a
+   * running container, whatever the script does with its flags.
+   */
+  function runHost(flags: string[]): { status: number | null; stdout: string; stderr: string } {
+    const env: Record<string, string> = { PATH: emptyDir, OSHAL_VERIFY_OPERATOR_PAT: PAT, OSHAL_VERIFY_ENV_FILE: join(emptyDir, 'absent.env'),
+      OSHAL_VERIFY_CAREER_BOT_CONTAINER: ABSENT_BOT, OSHAL_VERIFY_API_CONTAINER: 'career-rail-spec-absent-api' };
+    for (const name of ['SystemRoot', 'windir', 'TEMP', 'TMP']) if (process.env[name]) env[name] = String(process.env[name]);
+    const run = spawnSync(process.execPath, [SCRIPT, ...flags], { cwd: emptyDir, env, encoding: 'utf8', timeout: 60_000 });
+    return { status: run.status, stdout: String(run.stdout || ''), stderr: String(run.stderr || '') };
+  }
+
+  it('refuses --worker-loss without --announced-window: exit 2, naming the flag, nothing started, docker never consulted', () => {
+    const run = runHost(['--worker-loss']);
+    expect(run.status, `${run.stdout}${run.stderr}`).toBe(2);
+    expect(run.stdout).toContain('career-worker-rail-worker-loss UNAVAILABLE: --worker-loss stops the Career bot for every user of this box');
+    expect(run.stdout).toContain('run it inside an announced window with --announced-window. Nothing was started.');
+    expect(run.stdout).not.toContain('docker inspect');
+    expect(`${run.stdout}${run.stderr}`).not.toContain(PAT);
+  }, 90_000);
+
+  it('gets past that refusal only with the flag, and then stops nothing because the Career bot container is not running', () => {
+    const run = runHost(['--worker-loss', '--announced-window']);
+    expect(run.status, `${run.stdout}${run.stderr}`).toBe(2);
+    expect(run.stdout).toContain(`career-worker-rail-worker-loss UNAVAILABLE: the Career bot container ${ABSENT_BOT} is not running (docker inspect); nothing was started and nothing was stopped.`);
+    expect(run.stdout).not.toContain('run it inside an announced window');
+    expect(`${run.stdout}${run.stderr}`).not.toContain(PAT);
+  }, 90_000);
 });
 
 describe('stageAndStream', () => {
