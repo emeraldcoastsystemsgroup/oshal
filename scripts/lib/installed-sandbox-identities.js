@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Initial implementation: the identity half of scripts/operations/installed-sandbox.js. Registers LOCAL_AUTH fake users on a sandbox api through the product's own doors, in the installer's order: the one-use installer proof (scripts/oshal-setup-root.mjs, issued inside the sandbox api) redeemed at POST /api/local-auth/bootstrap claims the swarm root for the first user; every other user is invited by that root (POST /api/local-auth/users), reads its invitation (GET /invite-info), accepts it (POST /accept) and must see the spent link refused with 410; then every user signs in through POST /api/local-auth/login, the session is checked at GET /api/auth/user, and a personal access token is minted through POST /api/cli-tokens and checked at GET /api/cli-tokens/whoami. Subjects are the store's own local-<sha256(email)[0..16]> derivation. Passwords, sessions and tokens only ever go to a mode-600 env file under names like OSHAL_SANDBOX_ALPHA_PAT; nothing here prints a value.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Every request is bounded (120 s by default). A door that accepted the connection and never answered made `up` wait forever, and a wait is not a failure, so nothing was torn down.
  */
 'use strict';
 
@@ -17,6 +18,8 @@ const EMAIL_DOMAIN = 'sandbox.oshal.example.com';
 const DEFAULT_MEMBERS = Object.freeze(['alpha', 'bravo']);
 const ROOT_LABEL = 'admin';
 const CREDENTIAL_FIELDS = Object.freeze(['EMAIL', 'SUB', 'PASSWORD', 'SESSION', 'PAT']);
+/** How long one request to the sandbox api may take. */
+const REQUEST_TIMEOUT_MS = 120000;
 
 /**
  * @description The local-auth subject for an email - byte-for-byte the store's localSubForEmail
@@ -62,10 +65,11 @@ function responseCookies(res) {
 /**
  * @description A JSON client for one sandbox origin. Every request carries the sandbox's own Origin
  * (the bootstrap route refuses any other), and cookies/bearers are passed per call, never stored.
- * @param {string} baseUrl Sandbox origin. @param {Function} fetchImpl fetch.
+ * A request that is not answered in time is refused, never awaited forever.
+ * @param {string} baseUrl Sandbox origin. @param {Function} fetchImpl fetch. @param {number} [timeoutMs] Bound on one request.
  * @returns {Function} call(method, path, { body, cookie, bearer }) -> { status, json, cookies }.
  */
-function createClient(baseUrl, fetchImpl) {
+function createClient(baseUrl, fetchImpl, timeoutMs = REQUEST_TIMEOUT_MS) {
   const origin = new URL(baseUrl).origin;
   return async (method, pathName, options = {}) => {
     const headers = { accept: 'application/json', origin };
@@ -74,6 +78,10 @@ function createClient(baseUrl, fetchImpl) {
     if (options.bearer) headers.authorization = `Bearer ${options.bearer}`;
     const res = await fetchImpl(new URL(pathName, origin), {
       method, headers, redirect: 'manual', body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      signal: AbortSignal.timeout(timeoutMs),
+    }).catch((error) => {
+      if (error && error.name === 'TimeoutError') throw new Error(`${method} ${pathName} was not answered within ${timeoutMs} ms`);
+      throw error;
     });
     const text = await res.text();
     let json = null;
@@ -213,6 +221,6 @@ function readCredentialsFile(file) {
 }
 
 module.exports = {
-  LOCAL_SESSION_COOKIE, PAT_PATTERN, EMAIL_DOMAIN, ROOT_LABEL, CREDENTIAL_FIELDS,
+  LOCAL_SESSION_COOKIE, PAT_PATTERN, EMAIL_DOMAIN, ROOT_LABEL, CREDENTIAL_FIELDS, REQUEST_TIMEOUT_MS,
   localSubForEmail, credentialName, sandboxUsers, createClient, registerIdentities, writeCredentialsFile, readCredentialsFile,
 };

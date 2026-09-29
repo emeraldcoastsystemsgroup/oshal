@@ -5,6 +5,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Initial implementation: a disposable installed-image sandbox for two-identity acceptance (backlog entries #1, #2, #23) that writes nothing to the live box. Run from the HOST only - `docker compose` run inside the api inherits COMPOSE_PROJECT_NAME and joins the core project. `up` builds the plan from the image's own compose file (the api boot command, service definitions and defaults the running image ships), refuses on any static isolation problem or below the stated RAM floor, starts PostgreSQL and Redis on an internal network, stages the requested store (git ref, default origin/main) and private (by path) package commits into the sandbox workspace volume, boots the api under authorization enforce, probes from inside it that no live name resolves and no live published port answers, registers the fake users through the real installer-proof/invite/accept/login flow, writes their sessions and tokens BY NAME to a mode-600 env file, checks each package is active at its version under enforce, then starts the named bot nodes. Secrets reach compose only through its process environment. `status` reports containers, health and a fresh isolation probe; `down` removes containers, volumes and networks by project label and prints a receipt that is red if anything is left. `--dry-run` prints the plan. Results are labelled installed-sandbox.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | The probe now tests addresses, not only names. The first cut resolved live names and knocked on the live published ports through host.docker.internal, which every sandbox service pins to its own loopback, so that knock could never answer; a measurement on this engine showed that the address behind the alias, and a container on another bridge by its own address, both answer from a network with a host route. The probe therefore also reads the container's default routes, asks the resolver directly for the host aliases (which bypasses the pin) and knocks on the live published ports there, and knocks on every address and exposed TCP port of the running live containers, in parallel. It runs in the api before any identity exists and in each bot once it is healthy; `status` runs it in both. The api is reached through the gateway service, which `up` creates and starts with the api. With a forwarded credential the plan, the manifest and the report say that provider egress is on. Each /health request is bounded at 10 s: a gateway that accepted the connection and never answered made the wait endless, and a wait is not a failure, so nothing was torn down.
  *
  * Usage (host shell, from a core checkout whose node_modules resolve):
  *   node scripts/operations/installed-sandbox.js up [--dry-run] [--print-compose] [--name <suffix>] [--port 35459]
@@ -35,18 +36,29 @@ const EXIT = Object.freeze({ ok: 0, failed: 1, usage: 2, ram: 3, isolation: 4, l
 const LIVE_COMPOSE = 'docker-compose.oshal-local.yml';
 const IMAGE_COMPOSE_PATH = '/app/docker-compose.oshal-local.yml';
 const PROJECT_PREFIX = 'oshal-sandbox-';
-const TIMEOUTS = Object.freeze({ infraMs: 180000, apiMs: 420000, autoLoadMs: 420000, botMs: 420000, pollMs: 3000 });
+const TIMEOUTS = Object.freeze({ infraMs: 180000, apiMs: 420000, autoLoadMs: 420000, botMs: 420000, pollMs: 3000, healthRequestMs: 10000 });
 const SINGLE = new Set(['--name', '--port', '--image', '--store-repo', '--store-ref', '--private-ref', '--llm-provider', '--llm-model', '--operator-env', '--state-root', '--host-reserve-mb']);
 const MULTI = new Set(['--package', '--private-package', '--bot', '--user', '--forward-env', '--set-env']);
 const FLAGS = new Set(['--dry-run', '--keep-on-failure', '--print-compose']);
-/** Runs inside the sandbox api: resolve every name, try every live published port through the host aliases. */
+/** One line per live container: its addresses, then the ports its image exposes. */
+const LIVE_ADDRESS_FORMAT = '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}|{{range $port, $_ := .Config.ExposedPorts}}{{$port}} {{end}}';
+/**
+ * Runs inside a sandbox container. It resolves every name the way the application would, reads the
+ * default routes, asks the resolver directly for the host aliases (the pin in the hosts file does
+ * not apply there) and knocks on every target in parallel: the given addresses, and the live
+ * published ports on the host aliases and on the addresses behind them.
+ */
 const PROBE_SCRIPT = [
-  "const dns=require('dns').promises;const net=require('net');const input=JSON.parse(process.env.OSHAL_SANDBOX_PROBE);",
+  "const dns=require('dns').promises;const net=require('net');const fs=require('fs');const input=JSON.parse(process.env.OSHAL_SANDBOX_PROBE);",
   'const look=async(n)=>{try{return (await dns.lookup(n,{all:true})).map((a)=>a.address)}catch(e){return null}};',
+  'const direct=async(n)=>{try{return await dns.resolve4(n)}catch(e){return []}};',
   "const knock=(host,port)=>new Promise((r)=>{const s=net.connect({host,port,timeout:1500});s.on('connect',()=>{s.destroy();r('open')});s.on('timeout',()=>{s.destroy();r('timeout')});s.on('error',(e)=>r(e.code||'error'))});",
+  "const routes=()=>fs.readFileSync('/proc/net/route','utf8').split(String.fromCharCode(10)).slice(1).map((l)=>l.split(String.fromCharCode(9))).filter((c)=>c[1]==='00000000').map((c)=>c[2].match(/../g).reverse().map((h)=>parseInt(h,16)).join('.'));",
   '(async()=>{const resolved={};await Promise.all(input.names.map(async(n)=>{resolved[n]=await look(n)}));',
-  "const connects={};for(const t of input.connects){connects[t.host+':'+t.port]=await knock(t.host,t.port)}",
-  'process.stdout.write(JSON.stringify({resolved,connects}))})();',
+  'const hosts=new Set(input.hostAliases);for(const n of input.hostAliases){for(const ip of await direct(n))hosts.add(ip)}',
+  'const targets=[...input.connects];for(const host of hosts){for(const port of input.hostPorts)targets.push({host,port})}',
+  "const connects={};await Promise.all(targets.map(async(t)=>{connects[t.host+':'+t.port]=await knock(t.host,t.port)}));",
+  'process.stdout.write(JSON.stringify({resolved,connects,defaultRoutes:routes()}))})();',
 ].join('');
 
 class UsageError extends Error {}
@@ -283,7 +295,10 @@ function topologyLines(plan) {
   const on = (network) => Object.entries(plan.compose.services).filter(([, service]) => Object.keys(service.networks || {}).includes(network)).map(([name]) => name);
   const out = [
     `network backend (internal: no egress, no host route): ${on('backend').join(', ')}`,
-    `network edge (the loopback publish${plan.forwardNames.length ? ' and provider egress' : ''}): ${on('edge').join(', ')}`,
+    `network edge (the loopback publish; the gateway forwards to api:${sandbox.API_PORT} and holds nothing else): ${on('edge').join(', ')}`,
+    plan.egress
+      ? `network egress (PROVIDER EGRESS ON - it has a host route; up refuses while any live address answers): ${on('egress').join(', ')}`
+      : 'network egress: none (no credential is forwarded)',
   ];
   for (const [name, service] of Object.entries(plan.compose.services)) {
     const aliases = (service.networks.backend && service.networks.backend.aliases) || [];
@@ -299,7 +314,7 @@ function planLines(prepared) {
   return [
     `project ${plan.project} (label ${sandbox.SANDBOX_LABEL}=${sandbox.EVIDENCE_LABEL}); image ${plan.image}; url ${plan.origin}`,
     ...topologyLines(plan),
-    `isolation: 0 static problems; ${plan.hazards.length} live names must never resolve; in-sandbox aliases ${plan.aliases.join(', ')}`,
+    `isolation: 0 static problems; ${plan.hazards.length} live names must never resolve; no live address may answer from ${plan.probeServices.join(', ')}; in-sandbox aliases ${plan.aliases.join(', ')}`,
     `secrets by name (generated at up, given to docker compose only through its process environment): ${plan.secretRefs.filter((name) => !name.startsWith('OSHAL_SANDBOX_FWD_')).join(', ')}`,
     `forwarded by name from ${prepared.operatorEnv}: ${plan.forwardNames.length ? plan.forwardNames.map((name) => `${name} (present: ${forwarded.has(`OSHAL_SANDBOX_FWD_${name}`) ? 'yes' : 'no'})`).join(', ') : 'none'}`,
     ...users.map((user) => `user ${user.label} ${user.email} sub ${user.sub}${user.root ? ' (root, installer proof)' : ' (invited by the root)'}`),
@@ -341,6 +356,7 @@ function manifestOf(ctx, extra = {}) {
   return {
     evidenceLabel: sandbox.EVIDENCE_LABEL, project: plan.project, url: plan.origin, image: ctx.image, createdAt: ctx.createdAt,
     services: Object.keys(plan.compose.services), bots: plan.bots, aliases: plan.aliases, hazards: plan.hazards,
+    egress: plan.egress, probeServices: plan.probeServices,
     publishedLivePorts: plan.topology.publishedPorts, liveProject: plan.topology.projectName, secretRefs: plan.secretRefs,
     forwarded: plan.forwardNames, users: ctx.users.map(({ label, email, sub, root }) => ({ label, email, sub, root })),
     credentialsFile: ctx.state.credentialsFile, budgetMb: plan.budgetMb, hostReserveMb: plan.hostReserveMb,
@@ -377,7 +393,7 @@ async function waitHttpHealth(deps, origin) {
   let last = 'no answer yet';
   for (;;) {
     try {
-      const res = await deps.fetch(`${origin}/health`);
+      const res = await deps.fetch(`${origin}/health`, { signal: AbortSignal.timeout(TIMEOUTS.healthRequestMs) });
       if (res.status === 200) return;
       last = `HTTP ${res.status}`;
     } catch (error) {
@@ -421,22 +437,43 @@ function sandboxAddresses(deps, project) {
   return mustRun(deps, 'docker', ['inspect', '--format', '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}', ...names]).split(/\s+/).filter(Boolean);
 }
 
+/** @description The running live containers: their names, and their addresses as connect targets. @param {object} deps Deps. @param {string} liveProject Live compose project. @returns {{names: string[], targets: object[]}} Live containers. */
+function liveContainers(deps, liveProject) {
+  const names = lines(run(deps, 'docker', ['ps', '--filter', `label=com.docker.compose.project=${liveProject}`, '--format', '{{.Names}}']).stdout);
+  if (!names.length) return { names, targets: [] };
+  return { names, targets: sandbox.parseLiveAddresses(lines(mustRun(deps, 'docker', ['inspect', '--format', LIVE_ADDRESS_FORMAT, ...names]))) };
+}
+
 /**
- * @description Probe from inside the sandbox api: no live name (from the plan and from the running
- * live project) may resolve, aliases only to sandbox addresses, no live published port may answer.
- * @param {object} deps Deps. @param {object} manifest Plan or sandbox.json fields (project, hazards, aliases, liveProject, publishedLivePorts).
+ * @description Probe from inside each given sandbox service: no live name (from the plan and from
+ * the running live project) may resolve, aliases only to sandbox addresses, no live container
+ * address and no live published port may answer, and without provider egress no default route.
+ * @param {object} deps Deps. @param {object} manifest Plan or sandbox.json fields (project, hazards, aliases, liveProject, publishedLivePorts, egress).
+ * @param {string[]} services Sandbox service keys to probe from.
  * @returns {object} Probe summary; throws IsolationError on any problem.
  */
-function probeIsolation(deps, manifest) {
-  const api = containerFor(deps, manifest.project, 'api');
-  const running = lines(run(deps, 'docker', ['ps', '--filter', `label=com.docker.compose.project=${manifest.liveProject}`, '--format', '{{.Names}}']).stdout);
-  const hazards = [...new Set([...manifest.hazards, ...running.filter((name) => !manifest.aliases.includes(name))])];
-  const connects = sandbox.HOST_ALIASES.flatMap((host) => manifest.publishedLivePorts.map((port) => ({ host, port })));
-  const env = { ...scrubbedEnv(deps.env), OSHAL_SANDBOX_PROBE: JSON.stringify({ names: [...hazards, ...manifest.aliases], connects }) };
-  const result = JSON.parse(mustRun(deps, 'docker', ['exec', '-e', 'OSHAL_SANDBOX_PROBE', api, 'node', '-e', PROBE_SCRIPT], { env, timeoutMs: 180000 }));
-  const problems = sandbox.evaluateIsolationProbe(result, { hazards, aliases: manifest.aliases, sandboxIps: sandboxAddresses(deps, manifest.project) });
+function probeIsolation(deps, manifest, services) {
+  const live = liveContainers(deps, manifest.liveProject);
+  const hazards = [...new Set([...manifest.hazards, ...live.names.filter((name) => !manifest.aliases.includes(name))])];
+  const input = { names: [...hazards, ...manifest.aliases], connects: live.targets, hostAliases: sandbox.HOST_ALIASES, hostPorts: manifest.publishedLivePorts };
+  const env = { ...scrubbedEnv(deps.env), OSHAL_SANDBOX_PROBE: JSON.stringify(input) };
+  const expect = { hazards, aliases: manifest.aliases, sandboxIps: sandboxAddresses(deps, manifest.project), egress: manifest.egress === true };
+  const problems = [];
+  let knocks = 0;
+  for (const service of services) {
+    const container = containerFor(deps, manifest.project, service);
+    const result = JSON.parse(mustRun(deps, 'docker', ['exec', '-e', 'OSHAL_SANDBOX_PROBE', container, 'node', '-e', PROBE_SCRIPT], { env, timeoutMs: 180000 }));
+    knocks += Object.keys(result.connects || {}).length;
+    problems.push(...sandbox.evaluateIsolationProbe(result, expect).map((problem) => `${service}: ${problem}`));
+  }
   if (problems.length) throw new IsolationError(problems);
-  return { liveNamesUnresolved: hazards.length, liveRunningContainers: running.length, portsRefused: connects.length };
+  return { probedFrom: services, liveNamesUnresolved: hazards.length, liveRunningContainers: live.names.length, liveAddressTargets: live.targets.length, knocksRefused: knocks, providerEgress: expect.egress };
+}
+
+/** @description One printable line for a clean probe. @param {object} probe From probeIsolation. @returns {string} Line. */
+function probeLine(probe) {
+  return `isolation probe from ${probe.probedFrom.join(', ')}: ${probe.liveNamesUnresolved} live names unresolved, ${probe.knocksRefused} knocks refused `
+    + `(${probe.liveAddressTargets} live container addresses, the live published ports on the host), ${probe.providerEgress ? 'provider egress ON' : 'no default route'}`;
 }
 
 /** @description Register the fake users and write their credentials file. @param {object} ctx Up context. @param {object} deps Deps. @returns {Promise<object>} { identities, credentialNames, credentials }. */
@@ -488,20 +525,22 @@ async function startSandbox(ctx, deps) {
   const { state, plan, values } = ctx;
   composeRun(deps, state, ['up', '-d', 'db', 'redis'], values, TIMEOUTS.infraMs);
   await waitHealthy(deps, plan.project, ['db', 'redis'], TIMEOUTS.infraMs);
-  composeRun(deps, state, ['up', '--no-start', 'api', ...plan.bots], values, TIMEOUTS.infraMs);
+  composeRun(deps, state, ['up', '--no-start', 'api', sandbox.GATEWAY, ...plan.bots], values, TIMEOUTS.infraMs);
   await stageIntoVolume(ctx, deps);
-  composeRun(deps, state, ['start', 'api'], values, TIMEOUTS.infraMs);
+  composeRun(deps, state, ['start', 'api', sandbox.GATEWAY], values, TIMEOUTS.infraMs);
   await waitHttpHealth(deps, plan.origin);
   const autoLoad = await waitAutoLoad(deps, plan.project);
-  deps.out(`api up; auto-load loaded ${autoLoad.loadedCount}, failed ${autoLoad.failedCount}`);
-  const isolation = probeIsolation(deps, manifestOf(ctx));
-  deps.out(`isolation probe: ${isolation.liveNamesUnresolved} live names unresolved, ${isolation.portsRefused} live ports refused through the host aliases`);
+  deps.out(`api up behind the gateway; auto-load loaded ${autoLoad.loadedCount}, failed ${autoLoad.failedCount}`);
+  const isolation = [probeIsolation(deps, manifestOf(ctx), ['api'])];
+  deps.out(probeLine(isolation[0]));
   const registered = await registerUsers(ctx, deps);
   const installed = await verifyPackages(ctx, deps, registered);
   for (const line of installed) deps.out(line);
   if (plan.bots.length) {
     composeRun(deps, state, ['start', ...plan.bots], values, TIMEOUTS.infraMs);
     await waitHealthy(deps, plan.project, plan.bots, TIMEOUTS.botMs);
+    isolation.push(probeIsolation(deps, manifestOf(ctx), plan.bots));
+    deps.out(probeLine(isolation[1]));
   }
   return { autoLoad, isolation, identities: registered.identities, credentialNames: registered.credentialNames, installed };
 }
@@ -601,10 +640,10 @@ async function runStatus(opts, deps) {
   for (const line of containers.lines) deps.out(`container ${line}`);
   if (!manifest) { deps.err(`no manifest at ${state.manifestFile}; containers exist without state - tear down with down --name ${project}`); return EXIT.failed; }
   let healthy = false;
-  try { healthy = (await deps.fetch(`${manifest.url}/health`)).status === 200; } catch (error) { deps.err(`api /health: ${error.message}`); }
+  try { healthy = (await deps.fetch(`${manifest.url}/health`, { signal: AbortSignal.timeout(TIMEOUTS.healthRequestMs) })).status === 200; } catch (error) { deps.err(`api /health: ${error.message}`); }
   deps.out(`api ${manifest.url} /health ${healthy ? '200' : 'not answering'}`);
   let isolated = false;
-  try { const probe = probeIsolation(deps, manifest); isolated = true; deps.out(`isolation probe clean: ${JSON.stringify(probe)}`); } catch (error) {
+  try { const probe = probeIsolation(deps, manifest, manifest.probeServices || ['api']); isolated = true; deps.out(probeLine(probe)); } catch (error) {
     deps.err(`isolation: ${error.message}`);
     for (const problem of error.problems || []) deps.err(`  ${problem}`);
   }

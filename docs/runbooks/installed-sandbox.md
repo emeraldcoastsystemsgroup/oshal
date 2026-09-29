@@ -10,7 +10,7 @@ It exists because the acceptance cases for backlog entries #1, #2 and #23 need t
 identities with different rights on the installed image. Creating those accounts, grants and
 audit rows on the production swarm is not allowed. An earlier hand-built sandbox shared the stack
 network, and its queue manager dispatched two sandbox tickets to live bots by container name. The
-bots refused with 401, but the route existed. This script removes that route by construction.
+bots refused with 401, but the route existed.
 
 **Run it from the host only.** `docker compose` run inside the api inherits
 `COMPOSE_PROJECT_NAME=oshal-local` and joins the core project, where the next deploy's
@@ -22,13 +22,13 @@ explicitly, and runs compose in its own state directory. That keeps it away from
 
 ```bash
 # Print the plan. Nothing is started, written or removed.
-node scripts/operations/installed-sandbox.js up --dry-run --package little-monsters@1.4.5 --bot career-bot
+node scripts/operations/installed-sandbox.js up --dry-run --package <name>@<version> --bot <bot service>
 
 # Start one (the RAM guard decides first)
 node scripts/operations/installed-sandbox.js up --name accept1 \
-  --store-repo ../oshal-applications --store-ref origin/main --package little-monsters@1.4.5 \
+  --store-repo ../oshal-applications --store-ref origin/main --package <name>@<version> \
   --private-package ../<private repo>/<package dir>@<version> --private-ref origin/main \
-  --bot career-bot --user alpha --user bravo
+  --bot <bot service> --user alpha --user bravo
 
 node scripts/operations/installed-sandbox.js status --name accept1
 node scripts/operations/installed-sandbox.js down --name accept1        # prints the teardown receipt
@@ -37,14 +37,14 @@ node scripts/operations/installed-sandbox.js down --name accept1        # prints
 | Flag | Meaning |
 |---|---|
 | `--name <suffix>` | Project `oshal-sandbox-<suffix>`. Without it, `up` mints a random one. `down` and `status` can only address `oshal-sandbox-*` projects, so the live project can never be named. |
-| `--port` | Loopback port for the sandbox api. Default 35459. A port the live stack publishes is refused. |
+| `--port` | Loopback port the gateway publishes. Default 35459. A port the live stack publishes is refused. |
 | `--image` | Image tag. The default is `OSHAL_BOT_IMAGE`, then the compose default (`oshal-bot:latest`). |
 | `--package name[@version]` | Store package. It is resolved at `--store-ref` (default `origin/main`) of `--store-repo` (default `OSHAL_STORE_DIR`, then a sibling `oshal-applications` clone). Fetch that clone first: the script reads refs and never fetches. |
 | `--private-package <dir>[@version]` | A package directory inside the private repo, at `--private-ref` (default `origin/main`). The name comes from its manifest, so core never names a private package. |
 | `--bot <service>` | A live bot service from the compose file, for example `career-bot`. |
 | `--user <label>` | Invited members. The default is `alpha` and `bravo`. The root is always `admin`. |
 | `--llm-provider`, `--llm-model` | Model rail. The default `noop` also sets `OSHAL_NO_AI=true`. |
-| `--forward-env NAME` | Forward a provider credential by name from `--operator-env` (default `OSHAL_OPERATOR_ENV_FILE`, then the checkout `.env`). The value is never printed or written to disk. |
+| `--forward-env NAME` | Forward a provider credential by name from `--operator-env` (default `OSHAL_OPERATOR_ENV_FILE`, then the checkout `.env`). The value is never printed or written to disk. It turns provider egress on: see below. |
 | `--set-env KEY=VALUE` | Literal api setting. Isolation still rejects secrets, live hosts and posture changes. |
 | `--state-root` | Where `<project>/` state lives. The default is `OSHAL_INSTALLED_SANDBOX_ROOT`, then `<tmp>/oshal-installed-sandbox`. |
 | `--host-reserve-mb` | Host memory kept free beyond the sandbox budget. Default 1024. |
@@ -53,6 +53,38 @@ node scripts/operations/installed-sandbox.js down --name accept1        # prints
 
 Exit codes: 0 ok, 1 failed, 2 usage, 3 RAM guard refused, 4 isolation refused, 5 teardown left
 something behind.
+
+## Networks
+
+| Network | Kind | Members | Why |
+|---|---|---|---|
+| `backend` | internal | db, redis, api, gateway, every bot | Everything the sandbox runs talks here. A container that is only on it has no default route. |
+| `edge` | ordinary bridge | gateway only | A port can only be published from a network with a host route. |
+| `egress` | ordinary bridge | api and bots, only with `--forward-env` | A provider call has to leave the machine. |
+
+The **gateway** is the same image running a TCP forwarder to `api:5000`. It carries no
+environment and no volume, and its entrypoint is checked byte for byte. It is the only service
+that publishes a port and the only one on `edge`.
+
+Names are not enough to close a route. Measured on this engine (Docker 29.6.2, Docker Desktop),
+with a throwaway listener container publishing a port on the host loopback:
+
+| From | The listener on another bridge, by its own address | The published port, on the address `host.docker.internal` stands for | With `host.docker.internal` pinned to the container's loopback |
+|---|---|---|---|
+| A container on an ordinary bridge | open | open | the name is refused, the address is still open |
+| A container on an internal network | `ENETUNREACH` | `ENETUNREACH` | the name is refused, the address is `ENETUNREACH` |
+
+The live Redis is published on the host loopback and the live bots have addresses on the stack
+network, so a sandbox api on an ordinary bridge could have reached both by address. That is why
+the api sits on `backend` only.
+
+### Provider egress
+
+`--forward-env` puts the api and the bots on `egress`, which has a host route. The plan, the
+manifest and the report then say `PROVIDER EGRESS ON`. The probe still runs, and `up` refuses
+(exit 4) and tears down while any live container address or live published port answers. A
+sandbox with a forwarded credential therefore starts only while the live stack is down. `status`
+repeats the probe and goes red if the live stack has come up since.
 
 ## What `up` does, in order
 
@@ -64,12 +96,15 @@ something behind.
 2. **RAM guard.** The stated floor: host free memory must be at least the sandbox budget plus the
    host reserve, and the Docker engine's headroom (`docker info` MemTotal minus
    `docker stats` usage) must be at least the budget. Budget: db 512 MB, redis 128 MB, api 1400 MB,
-   and 640 MB per bot. With one bot that is 2680 MB, so the floor is 3704 MB of free host memory.
-   A figure it cannot read counts as a refusal.
+   gateway 96 MB, and 640 MB per bot. With one bot that is 2776 MB, so the floor is 3800 MB of
+   free host memory. A figure it cannot read counts as a refusal.
 3. **Static isolation check.** `up` refuses when any of these holds:
    - a network or volume is external or explicitly named;
-   - the backend network is not internal;
-   - db or redis sits on anything but the backend network;
+   - the backend network is not internal, or a service does not join it;
+   - any service but the gateway joins `edge` or publishes a port;
+   - an `egress` network exists although no credential is forwarded, or db, redis or the gateway
+     joins it;
+   - the gateway carries environment, a volume, a command or another entrypoint;
    - a service uses a bind mount or the docker socket;
    - `container_name`, `network_mode` or the `oshal.tier` label is set;
    - a port is published beyond `127.0.0.1` or on a live port;
@@ -81,24 +116,30 @@ something behind.
      URL, or holds a literal secret;
    - the api is not `LOCAL_AUTH=true`, `MOCK_OIDC=false`, `OSHAL_APPLICATION_AUTHORIZATION_MODE=enforce`.
 4. **Secrets by name.** Database passwords and DSNs, session, service, encryption and JWT secrets,
-   and a fresh Ed25519 delegation key pair are generated per sandbox. The compose file holds only
-   `${OSHAL_SANDBOX_*}` references. Values reach `docker compose` through its process environment
-   only, and forwarded operator credentials travel the same way.
-5. **Containers.** PostgreSQL and Redis start on the internal `backend` network, which has no
-   egress and no host route. The api joins `backend` and `edge`, the edge network being only for
-   its published loopback port. Bots join `edge` only when a credential is forwarded, because only
-   then do they need provider egress. The api and bots answer the live api's and their own
-   service and container names on `backend`, so dispatch and callbacks stay inside the sandbox.
+   and a fresh Ed25519 delegation key pair are generated per sandbox. The two runtime role
+   passwords are 48 hexadecimal characters, which is what the role provisioner in the api boot
+   command accepts. The compose file holds only `${OSHAL_SANDBOX_*}` references. Values reach
+   `docker compose` through its process environment only, and forwarded operator credentials
+   travel the same way.
+5. **Containers.** PostgreSQL and Redis start on `backend`. The api, the gateway and the bots are
+   created. The api and the bots answer the live api's and their own service and container names
+   on `backend`, so dispatch and callbacks stay inside the sandbox.
 6. **Packages.** Each package is streamed with `git archive` of the exact commit, with
    `core.autocrlf` forced off, into the sandbox workspace volume. A throwaway container from the
    same image does the streaming, with no network. The `.oshal-install.json` beside each package
    records repo, ref, sha, audit posture and `installedBy: installed-sandbox`. A requested version
    that differs from the manifest refuses. A required dependency app must be staged too or ship in
    core, as with the installer.
-7. **Boot and probe.** The api starts and `/health` answers. The script then waits for
-   `Swarm app auto-load complete`. From inside the api, every live name must fail to resolve,
-   sandbox aliases may resolve only to sandbox containers, and no live published port may answer
-   through the host aliases. Any failure is refused (exit 4) and the sandbox is torn down.
+7. **Boot and probe.** The api and the gateway start, and `/health` answers through the gateway.
+   The script then waits for `Swarm app auto-load complete`. The probe runs inside the api:
+   - every live name must fail to resolve, and a sandbox alias may resolve only to a sandbox
+     container;
+   - the container may have no default route (unless provider egress is on);
+   - no address and exposed TCP port of a running live container may answer;
+   - no live published port may answer on the host aliases or on the addresses the resolver
+     gives for them.
+
+   Any failure is refused (exit 4) and the sandbox is torn down.
 8. **Identities** (`scripts/lib/installed-sandbox-identities.js`):
    - The installer proof (`scripts/oshal-setup-root.mjs`, issued inside the sandbox api) is
      redeemed at `/api/local-auth/bootstrap` by `admin`, who becomes the swarm root.
@@ -112,17 +153,20 @@ something behind.
 9. **Package check.** Each staged package must be active at its version, and a member's
    `/api/authorization/me?app=` must come from the enforce policy, never `legacy`. No grants are
    made. Granting, denying and revoking are the acceptance case's own steps.
-10. **Bots** start last and must report healthy.
+10. **Bots** start last and must report healthy. The probe then runs inside each bot.
 
 ## Credentials, by name
 
-`<state-root>/<project>/credentials.env` is written with mode 600. It holds
-`OSHAL_SANDBOX_EVIDENCE_LABEL`, `OSHAL_SANDBOX_PROJECT` and `OSHAL_SANDBOX_BASE_URL`, and for each
-user `OSHAL_SANDBOX_<LABEL>_{EMAIL,SUB,PASSWORD,SESSION,PAT}`. Here `SESSION` is the
-`oshal_local=...` cookie pair and `PAT` is the `oshal_pat_...` token. Acceptance scripts read the
-file with `readCredentialsFile()` from `scripts/lib/installed-sandbox-identities.js`, or load it as
-an env file. The script prints only the names. `sandbox.json` beside it records the plan, the image
-id and revision, the users, the packages and the probe result, with no values.
+`<state-root>/<project>/credentials.env` holds `OSHAL_SANDBOX_EVIDENCE_LABEL`,
+`OSHAL_SANDBOX_PROJECT` and `OSHAL_SANDBOX_BASE_URL`, and for each user
+`OSHAL_SANDBOX_<LABEL>_{EMAIL,SUB,PASSWORD,SESSION,PAT}`. Here `SESSION` is the
+`oshal_local=...` cookie pair and `PAT` is the `oshal_pat_...` token. The file is written with
+mode 600. On Windows that mode has no effect, and the file is protected by the access list of the
+directory it is in; the default state root is the signed-in user's own temporary directory.
+Acceptance scripts read the file with `readCredentialsFile()` from
+`scripts/lib/installed-sandbox-identities.js`, or load it as an env file. The script prints only
+the names. `sandbox.json` beside it records the plan, the image id and revision, the users, the
+packages and the probe results, with no values.
 
 ## Teardown receipt
 
@@ -135,5 +179,7 @@ same teardown unless `--keep-on-failure` is given.
 ## Not a Test Lab card
 
 The Test Lab runs inside the api, and this script must never run there (see above). Its guards are
-`tests/unit/installed-sandbox.spec.ts`. The first real `up`/`down` against the installed image is
-the deploy lane's run. Record its receipt as `installed-sandbox` evidence.
+`tests/unit/installed-sandbox.spec.ts`. That spec needs the Docker engine and the image the
+sandbox runs. It starts at most two 96 MB containers at a time, under a fixture slot, and removes
+them through `down`. The first real `up`/`down` against the installed image is the deploy lane's
+run. Record its receipt as `installed-sandbox` evidence.

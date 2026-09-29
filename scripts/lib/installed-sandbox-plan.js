@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Initial implementation: the pure half of scripts/operations/installed-sandbox.js (backlog entries #1, #2 and #23 need two-identity acceptance on the installed image without writing append-only audit rows on the live box). It reads the live stack's own compose document for names, images, the api boot command and the environment defaults, and builds a disposable compose project from them: its own PostgreSQL, Redis and api, optional named bot nodes, an INTERNAL backend network plus an edge network for the one published loopback port, named volumes only (no bind mount, no docker socket), no container_name, no oshal.tier label, restart "no", a memory limit on every service, the Docker Desktop host aliases pinned to the container's own loopback, and every secret written only as an ${OSHAL_SANDBOX_*} reference so the file on disk never holds a value. A 2026-09-27 sandbox that shared the stack network dispatched two sandbox tickets to live bots by name (COLLABORATE, refused with 401); isolationProblems() is the static refusal for every shape that could route there again, evaluateIsolationProbe() the verdict on the in-container DNS/connect probe, evaluateRamGuard() the stated free-memory floor, and buildTeardownReceipt() the red/green teardown record.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | The api no longer sits on a network with a host route. Measured on this engine (Docker 29.6.2): from a container on an ordinary bridge, a container on ANOTHER bridge answered on its own address, and a port published on the host loopback answered on the address host.docker.internal stands for, while from an internal network every such connect failed with ENETUNREACH. Pinning the host aliases changed the name, not the address, so the first cut's api (on the edge network for its published port) could have reached the live Redis and bots by address and its probe could not see it. Now the api, the database, Redis and the bots sit on the internal backend network only; a `gateway` service - the same image running a TCP forwarder to api:5000, with no environment and no volume - is the one container on the edge network and the only one that publishes a port. A forwarded provider credential puts the api and the bots on a third network, egress, which does have a host route, and the probe verdict then refuses while any live address answers. isolationProblems() refuses each new shape (an api or bot on edge, a second publisher, an egress network with nothing forwarded, a gateway carrying environment or a volume), evaluateIsolationProbe() reads default routes and address connects, and parseLiveAddresses() turns the running live containers into connect targets. Second fix: the two runtime role passwords are 48 hexadecimal characters, which is what scripts/governance/provision-app-role.mjs accepts; the base64url passwords of the first cut made the api boot command exit at "app-role provision FAILED".
  */
 'use strict';
 
@@ -17,9 +18,15 @@ const REF_PATTERN = /^\$\{OSHAL_SANDBOX_[A-Z0-9_]+\}$/;
 /** The three live services every sandbox mirrors; their definitions are read, never copied blindly. */
 const LIVE_SERVICE = Object.freeze({ api: 'oshal-api', db: 'oshal-db', redis: 'oshal-redis' });
 /** Per-service memory ceilings (MB). Their sum is the sandbox budget the RAM guard holds free. */
-const MEMORY_LIMITS_MB = Object.freeze({ db: 512, redis: 128, api: 1400, bot: 640 });
+const MEMORY_LIMITS_MB = Object.freeze({ db: 512, redis: 128, api: 1400, bot: 640, gateway: 96 });
 const DEFAULT_HOST_RESERVE_MB = 1024;
 const DEFAULT_PORT = 35459;
+/** The port the api listens on inside its container, and the gateway forwards to. */
+const API_PORT = 5000;
+/** The one service on the edge network: it publishes the loopback port and forwards to the api. */
+const GATEWAY = 'gateway';
+/** backend is internal; edge carries the published port; egress exists only with a forwarded credential. */
+const SANDBOX_NETWORKS = Object.freeze(['backend', 'edge', 'egress']);
 const LOCAL_AUTH_ISSUER = 'urn:oshal:local-auth';
 /** Docker Desktop resolves these to the host, where the live stack publishes its ports. */
 const HOST_ALIASES = Object.freeze(['host.docker.internal', 'gateway.docker.internal']);
@@ -331,8 +338,7 @@ function apiService(ctx) {
     image: ctx.image, command: options.apiCommand || live.command,
     environment: { ...deriveInheritedEnv(live.environment, hazards), ...apiPosture(options, ctx.origin), ...literalOverrides(options.setEnv) },
     volumes: (live.volumes || []).map(String).filter((entry) => isNamedVolumeMount(entry, topology)),
-    ports: [`${LOOPBACK}:${ctx.port}:5000`],
-    networks: { backend: { aliases: ctx.apiAliases }, edge: {} },
+    networks: { backend: { aliases: ctx.apiAliases }, ...(ctx.egress ? { egress: {} } : {}) },
     depends_on: { db: { condition: 'service_healthy' }, redis: { condition: 'service_healthy' } },
     ...hardening(project, MEMORY_LIMITS_MB.api),
   };
@@ -340,14 +346,53 @@ function apiService(ctx) {
 
 /** @description One sandbox bot service. @param {object} ctx Build context. @param {object} bot From extractBotService. @returns {object} Service. */
 function botService(ctx, bot) {
-  const needsEgress = (ctx.options.forwardNames || []).length > 0;
   return {
-    image: ctx.image, command: bot.command, expose: ['5000'],
+    image: ctx.image, command: bot.command, expose: [String(API_PORT)],
     environment: { ...deriveInheritedEnv(bot.liveEnv, ctx.hazards), ...botPosture(ctx.options) },
     volumes: bot.volumes,
-    networks: { backend: { aliases: bot.aliases }, ...(needsEgress ? { edge: {} } : {}) },
+    networks: { backend: { aliases: bot.aliases }, ...(ctx.egress ? { egress: {} } : {}) },
     depends_on: { api: { condition: 'service_healthy' } },
     ...hardening(ctx.project, MEMORY_LIMITS_MB.bot),
+  };
+}
+
+/**
+ * @description Source of the gateway's TCP forwarder. It relays bytes both ways and closes both
+ * sockets together, so HTTP, server-sent events and upgrades pass unchanged and the api sees the
+ * caller's own Host and Origin. It exits on SIGTERM, which a process running as PID 1 otherwise
+ * ignores until the stop timeout. It holds no `$`, which compose would read as a reference.
+ * @param {string} host Upstream host. @param {number} port Upstream port. @param {number} listenPort Port to listen on.
+ * @param {string} [listenHost] Address to bind; every interface of the container when omitted.
+ * @returns {string} JavaScript for `node -e`.
+ */
+function forwarderScript(host, port, listenPort, listenHost) {
+  const bind = listenHost === undefined ? String(Number(listenPort)) : `${Number(listenPort)},${JSON.stringify(String(listenHost))}`;
+  return [
+    "const net=require('net');for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>process.exit(0));",
+    `net.createServer((client)=>{const upstream=net.connect(${Number(port)},${JSON.stringify(String(host))});`,
+    'const close=()=>{client.destroy();upstream.destroy()};',
+    "client.on('error',close);upstream.on('error',close);client.on('close',close);upstream.on('close',close);",
+    `client.pipe(upstream);upstream.pipe(client)}).listen(${bind});`,
+  ].join('');
+}
+
+/** @description The gateway's entrypoint: node running the forwarder to the api. @returns {string[]} Entrypoint. */
+function gatewayEntrypoint() {
+  return ['node', '-e', escapeCompose(forwarderScript('api', API_PORT, API_PORT))];
+}
+
+/**
+ * @description The gateway: the one container with a host route. It publishes the loopback port
+ * and forwards to the api on the internal network; it carries no environment and no volume.
+ * @param {object} ctx Build context. @returns {object} Service.
+ */
+function gatewayService(ctx) {
+  return {
+    image: ctx.image, entrypoint: gatewayEntrypoint(),
+    ports: [`${LOOPBACK}:${ctx.port}:${API_PORT}`],
+    networks: { backend: {}, edge: {} },
+    depends_on: { api: { condition: 'service_started' } },
+    ...hardening(ctx.project, MEMORY_LIMITS_MB.gateway),
   };
 }
 
@@ -387,20 +432,24 @@ function buildSandboxPlan(options) {
   const port = validatePort(options.port === undefined ? DEFAULT_PORT : options.port, topology);
   const origin = `http://${LOOPBACK}:${port}`;
   const bots = (options.bots || []).map((key) => extractBotService(topology, key));
+  if (bots.some((bot) => bot.key === GATEWAY)) throw new Error(`a bot service may not be named "${GATEWAY}"`);
   const names = nameSets(topology, bots);
-  const ctx = { topology, options, project, port, origin, image: options.image || topology.apiImage, hazards: names.hazards, apiAliases: names.apiAliases };
-  const services = { ...infraServices(topology, project), api: apiService(ctx) };
+  const egress = (options.forwardNames || []).length > 0;
+  const ctx = { topology, options, project, port, origin, egress, image: options.image || topology.apiImage, hazards: names.hazards, apiAliases: names.apiAliases };
+  const services = { ...infraServices(topology, project), api: apiService(ctx), [GATEWAY]: gatewayService(ctx) };
   for (const bot of bots) services[bot.key] = botService(ctx, bot);
   const labels = sandboxLabels(project);
   const compose = {
     name: project, services, volumes: declaredVolumes(services, project),
-    networks: { backend: { internal: true, labels }, edge: { labels } },
+    networks: { backend: { internal: true, labels }, edge: { labels }, ...(egress ? { egress: { labels } } : {}) },
   };
-  const budgetMb = MEMORY_LIMITS_MB.db + MEMORY_LIMITS_MB.redis + MEMORY_LIMITS_MB.api + bots.length * MEMORY_LIMITS_MB.bot;
+  const fixedMb = MEMORY_LIMITS_MB.db + MEMORY_LIMITS_MB.redis + MEMORY_LIMITS_MB.api + MEMORY_LIMITS_MB.gateway;
+  const botKeys = bots.map((bot) => bot.key);
   return {
-    evidenceLabel: EVIDENCE_LABEL, project, port, origin, image: ctx.image, compose, topology, bots: bots.map((bot) => bot.key),
-    aliases: names.aliases, hazards: names.hazards, secretRefs: referencedNames(compose),
-    forwardNames: [...(options.forwardNames || [])], budgetMb, hostReserveMb: options.hostReserveMb ?? DEFAULT_HOST_RESERVE_MB,
+    evidenceLabel: EVIDENCE_LABEL, project, port, origin, image: ctx.image, compose, topology, bots: botKeys,
+    aliases: names.aliases, hazards: names.hazards, secretRefs: referencedNames(compose), egress, probeServices: ['api', ...botKeys],
+    forwardNames: [...(options.forwardNames || [])], budgetMb: fixedMb + bots.length * MEMORY_LIMITS_MB.bot,
+    hostReserveMb: options.hostReserveMb ?? DEFAULT_HOST_RESERVE_MB,
     workspaceVolume: `${project}_${workspaceVolumeKey(services.api)}`,
   };
 }
@@ -423,12 +472,15 @@ function referencedNames(compose) {
 /**
  * @description Generate the sandbox's own disposable secrets (never an operator value): database
  * passwords and URLs for the three roles, session/service/encryption/JWT secrets and a fresh Ed25519
- * delegation key pair, keyed by the reference names the compose file uses.
+ * delegation key pair, keyed by the reference names the compose file uses. The two runtime role
+ * passwords are 48 hexadecimal characters: the role provisioner the api boot command runs accepts
+ * nothing else outside the development defaults.
  * @param {object} deps { randomBytes, generateKeyPairSync }. @param {object} plan From buildSandboxPlan.
  * @returns {Map<string,string>} Reference name -> value.
  */
 function generateSandboxSecrets(deps, plan) {
   const token = (bytes) => deps.randomBytes(bytes).toString('base64url');
+  const rolePassword = () => deps.randomBytes(24).toString('hex');
   const dbEnv = plan.compose.services.db.environment;
   const liveApi = envMap(plan.topology.services[LIVE_SERVICE.api].environment);
   const roleOf = (key) => new URL(resolveComposeDefaults(String(liveApi[key] || '')).value).username;
@@ -439,8 +491,8 @@ function generateSandboxSecrets(deps, plan) {
   const values = new Map([
     ['PG_PASSWORD', superPassword],
     ['BOOTSTRAP_DATABASE_URL', dsn(dbEnv.POSTGRES_USER, superPassword)],
-    ['DATABASE_URL', dsn(roleOf('DATABASE_URL'), token(24))],
-    ['BOT_DATABASE_URL', dsn(roleOf('BOT_DATABASE_URL'), token(24))],
+    ['DATABASE_URL', dsn(roleOf('DATABASE_URL'), rolePassword())],
+    ['BOT_DATABASE_URL', dsn(roleOf('BOT_DATABASE_URL'), rolePassword())],
     ['SESSION_SECRET', token(48)], ['SWARM_SERVICE_SECRET', token(48)], ['JWT_SECRET', token(48)],
     ['ENCRYPTION_KEY', deps.randomBytes(32).toString('base64')],
     ['DELEGATION_PRIVATE_KEY', privateKey.export({ type: 'pkcs8', format: 'pem' })],
@@ -449,15 +501,33 @@ function generateSandboxSecrets(deps, plan) {
   return new Map([...values].map(([name, value]) => [`${REF_PREFIX}${name}`, String(value)]));
 }
 
-/** @description Problems with one service's networks, volumes and published ports. @param {string} name Service key. @param {object} service Service. @param {object} compose Document. @param {object} topology Topology. @returns {string[]} Problems. */
-function wiringProblems(name, service, compose, topology) {
+/** @description Why a service may not join a network, or null. @param {string} name Service key. @param {string} network Network key. @param {object} plan Plan. @returns {string|null} Reason. */
+function networkRefusal(name, network, plan) {
+  if (!SANDBOX_NETWORKS.includes(network)) return `joins "${network}", which is not a sandbox network`;
+  if (network === 'edge' && name !== GATEWAY) return 'only the gateway may join the edge network (it has a host route)';
+  if (network !== 'egress') return null;
+  if (!(plan.forwardNames || []).length) return 'joins the egress network although no credential is forwarded';
+  return name === 'api' || (plan.bots || []).includes(name) ? null : 'only the api and the bots may join the egress network';
+}
+
+/** @description Problems with the networks one service joins. @param {string} name Service key. @param {object} service Service. @param {object} compose Document. @param {object} plan Plan. @returns {string[]} Problems. */
+function networkProblems(name, service, compose, plan) {
   const problems = [];
   if (service.network_mode) problems.push(`${name}: network_mode "${service.network_mode}" bypasses the sandbox networks`);
   if (service.container_name) problems.push(`${name}: container_name is set (names must come from the sandbox project)`);
   const networks = Array.isArray(service.networks) ? service.networks : Object.keys(service.networks || {});
-  if (networks.length === 0) problems.push(`${name}: joins no sandbox network (compose would attach the default)`);
-  for (const network of networks) if (!compose.networks || !compose.networks[network]) problems.push(`${name}: joins undeclared network "${network}"`);
-  if (['db', 'redis'].includes(name) && networks.some((network) => network !== 'backend')) problems.push(`${name}: must sit on the internal backend network only`);
+  if (!networks.includes('backend')) problems.push(`${name}: must join the internal backend network`);
+  for (const network of networks) {
+    const refusal = networkRefusal(name, network, plan);
+    if (!compose.networks || !compose.networks[network]) problems.push(`${name}: joins undeclared network "${network}"`);
+    if (refusal) problems.push(`${name}: ${refusal}`);
+  }
+  return problems;
+}
+
+/** @description Problems with one service's volumes and published ports. @param {string} name Service key. @param {object} service Service. @param {object} compose Document. @param {object} topology Topology. @returns {string[]} Problems. */
+function wiringProblems(name, service, compose, topology) {
+  const problems = [];
   for (const mount of service.volumes || []) {
     const text = typeof mount === 'string' ? mount : JSON.stringify(mount);
     if (/docker\.sock/.test(text)) problems.push(`${name}: mounts the docker socket`);
@@ -467,10 +537,25 @@ function wiringProblems(name, service, compose, topology) {
   for (const port of service.ports || []) {
     const text = String(typeof port === 'object' ? `${port.host_ip || ''}:${port.published}:${port.target}` : port);
     const parts = text.split(':');
-    if (name !== 'api') problems.push(`${name}: only the api may publish a port (${text})`);
+    if (name !== GATEWAY) problems.push(`${name}: only the gateway may publish a port (${text})`);
     if (parts[0] !== LOOPBACK) problems.push(`${name}: port ${text} is not bound to ${LOOPBACK}`);
     if (topology.publishedPorts.includes(Number(parts[1]))) problems.push(`${name}: port ${text} collides with a live published port`);
   }
+  return problems;
+}
+
+/**
+ * @description The gateway has a host route, so it may be nothing but the forwarder: the exact
+ * entrypoint, no command, no environment, no volume.
+ * @param {object} gateway The gateway service, if any. @returns {string[]} Problems.
+ */
+function gatewayProblems(gateway) {
+  if (!gateway) return [`${GATEWAY}: the sandbox has no gateway (nothing else may publish the api)`];
+  const problems = [];
+  if (JSON.stringify(gateway.entrypoint) !== JSON.stringify(gatewayEntrypoint())) problems.push(`${GATEWAY}: its entrypoint is not the forwarder`);
+  if (gateway.command !== undefined) problems.push(`${GATEWAY}: carries a command`);
+  if (Object.keys(envMap(gateway.environment)).length) problems.push(`${GATEWAY}: carries environment (it has a host route and may hold nothing)`);
+  if ((gateway.volumes || []).length) problems.push(`${GATEWAY}: mounts a volume (it has a host route and may hold nothing)`);
   return problems;
 }
 
@@ -510,8 +595,8 @@ function postureProblems(api) {
   return Object.entries(expected).filter(([key, value]) => env[key] !== value).map(([key, value]) => `api: ${key} must be ${value} (got ${env[key]})`);
 }
 
-/** @description Problems with the declared networks and volumes. @param {object} compose Document. @returns {string[]} Problems. */
-function declarationProblems(compose) {
+/** @description Problems with the declared networks and volumes. @param {object} compose Document. @param {object} plan Plan (forwardNames). @returns {string[]} Problems. */
+function declarationProblems(compose, plan) {
   const problems = [];
   for (const [kind, block] of [['network', compose.networks || {}], ['volume', compose.volumes || {}]]) {
     for (const [key, spec] of Object.entries(block)) {
@@ -521,6 +606,7 @@ function declarationProblems(compose) {
     }
   }
   if (!compose.networks || !compose.networks.backend || compose.networks.backend.internal !== true) problems.push('network backend: must be internal (no egress, no host route)');
+  if (compose.networks && compose.networks.egress && !(plan.forwardNames || []).length) problems.push('network egress: declared although no credential is forwarded');
   return problems;
 }
 
@@ -533,29 +619,59 @@ function declarationProblems(compose) {
 function isolationProblems(compose, plan) {
   const problems = [];
   if (!PROJECT_PATTERN.test(String(compose.name)) || compose.name === plan.topology.projectName) problems.push(`project "${compose.name}" is not a sandbox project`);
-  problems.push(...declarationProblems(compose));
+  problems.push(...declarationProblems(compose, plan));
   for (const [name, service] of Object.entries(compose.services || {})) {
     if (plan.topology.serviceKeys.includes(name) && !plan.bots.includes(name)) problems.push(`${name}: reuses a live service key`);
+    problems.push(...networkProblems(name, service, compose, plan));
     problems.push(...wiringProblems(name, service, compose, plan.topology));
     problems.push(...hardeningProblems(name, service, compose.name));
     problems.push(...environmentProblems(name, service, plan.hazards));
   }
+  problems.push(...gatewayProblems(compose.services && compose.services[GATEWAY]));
   problems.push(...postureProblems(compose.services && compose.services.api));
   return problems;
 }
 
 /**
+ * @description Connect targets for the probe from the running live containers: each address of each
+ * container, on each TCP port its image exposes. Names never resolve from a sandbox network, so the
+ * address is what a route would be reached by.
+ * @param {string[]} rows `docker inspect` lines of the form "<ip> <ip> |<port>/tcp <port>/udp ".
+ * @returns {{host: string, port: number}[]} Unique targets.
+ */
+function parseLiveAddresses(rows) {
+  const seen = new Map();
+  for (const row of rows || []) {
+    const [addresses = '', ports = ''] = String(row).split('|');
+    const hosts = addresses.split(/\s+/).filter((item) => /^\d{1,3}(\.\d{1,3}){3}$/.test(item));
+    const tcp = ports.split(/\s+/).map((item) => /^(\d+)\/tcp$/.exec(item)).filter(Boolean).map((match) => Number(match[1]));
+    for (const host of hosts) for (const port of tcp) seen.set(`${host}:${port}`, { host, port });
+  }
+  return [...seen.values()];
+}
+
+/** @description Problems with the routes and connects one container reported. @param {object} result Probe result. @param {boolean} egress Whether provider egress was requested. @returns {string[]} Problems. */
+function routeProblems(result, egress) {
+  const problems = [];
+  const routes = result && result.defaultRoutes;
+  if (!Array.isArray(routes)) problems.push('probe did not report its default routes');
+  else if (!egress && routes.length) problems.push(`has a default route (${routes.join(',')}) although it must sit on the internal network only`);
+  for (const [target, state] of Object.entries((result && result.connects) || {})) if (state === 'open') problems.push(`${target} accepted a connection from the sandbox`);
+  return problems;
+}
+
+/**
  * @description Verdict on the in-container probe: every live-only name must fail to resolve, a
- * sandbox alias may resolve only to a sandbox container, the host aliases only to loopback, and no
- * live published port may accept a connection through them.
- * @param {object} result { resolved: {name: string[]|null}, connects: {"host:port": "open"|string} }.
- * @param {object} expect { hazards: string[], aliases: string[], sandboxIps: string[] }.
+ * sandbox alias may resolve only to a sandbox container, the host aliases only to loopback, no live
+ * container address and no live published port may accept a connection, and without provider egress
+ * the container may have no default route at all.
+ * @param {object} result { resolved: {name: string[]|null}, connects: {"host:port": state}, defaultRoutes: string[] }.
+ * @param {object} expect { hazards: string[], aliases: string[], sandboxIps: string[], egress: boolean }.
  * @returns {string[]} Problems.
  */
 function evaluateIsolationProbe(result, expect) {
   const problems = [];
   const resolved = (result && result.resolved) || {};
-  const connects = (result && result.connects) || {};
   for (const name of expect.hazards) {
     const ips = resolved[name];
     if (!(name in resolved)) problems.push(`probe did not report ${name}`);
@@ -567,8 +683,7 @@ function evaluateIsolationProbe(result, expect) {
     const foreign = ips.filter((ip) => !expect.sandboxIps.includes(ip));
     if (foreign.length) problems.push(`sandbox alias ${name} resolves outside the sandbox (${foreign.join(',')})`);
   }
-  for (const [target, state] of Object.entries(connects)) if (state === 'open') problems.push(`${target} accepted a connection from the sandbox`);
-  return problems;
+  return [...problems, ...routeProblems(result, expect.egress === true)];
 }
 
 /**
@@ -637,8 +752,8 @@ function formatTeardownReceipt(receipt) {
 
 module.exports = {
   EVIDENCE_LABEL, PROJECT_PATTERN, SANDBOX_LABEL, SANDBOX_PROJECT_LABEL, LIVE_SERVICE, MEMORY_LIMITS_MB, DEFAULT_HOST_RESERVE_MB,
-  DEFAULT_PORT, LOCAL_AUTH_ISSUER, HOST_ALIASES, LOOPBACK, WORKSPACE_MOUNT,
+  DEFAULT_PORT, API_PORT, GATEWAY, LOCAL_AUTH_ISSUER, HOST_ALIASES, LOOPBACK, WORKSPACE_MOUNT,
   resolveComposeDefaults, readLiveTopology, validateProjectName, mintProjectName, deriveInheritedEnv, extractBotService,
-  buildSandboxPlan, generateSandboxSecrets, referencedNames, isolationProblems, evaluateIsolationProbe, evaluateRamGuard,
-  parseDockerMemUsage, buildTeardownReceipt, formatTeardownReceipt, isSecretKey, namedHost,
+  forwarderScript, buildSandboxPlan, generateSandboxSecrets, referencedNames, isolationProblems, parseLiveAddresses,
+  evaluateIsolationProbe, evaluateRamGuard, parseDockerMemUsage, buildTeardownReceipt, formatTeardownReceipt, isSecretKey, namedHost,
 };

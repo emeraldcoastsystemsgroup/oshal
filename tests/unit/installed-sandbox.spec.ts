@@ -4,16 +4,21 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Initial implementation: guards for scripts/operations/installed-sandbox.js. Compose generation is built from the REAL docker-compose.oshal-local.yml (the api, database and Redis it mirrors, the bot node it lifts, the installer LOCAL_AUTH posture under enforce, secrets as references only). Network isolation: the generated document has zero static problems, twenty planted violations - joining the live network, a bind mount, the docker socket, a live hostname, a literal secret, oshal.tier, a non-loopback or live port, container_name, host networking, compose control variables, restart, unpinned host aliases, the posture flags, the live project name, a live service key - are each refused, and the in-container probe verdict is red for a live name, a foreign alias address or an open live port. RAM refusal: the guard's floor arithmetic and fail-closed readings, and `up` refusing below the floor before any compose/run/create call. Teardown receipt: clean vs leftover, `down` refusing the live project with no docker call, a sweep that cannot remove a volume exiting 5, and against the REAL Docker engine a labelled volume and network removed with a clean receipt. Also: packages staged from real git repositories (version pin, catalog rules, dependency tiers, LF-exact archive), the dry run as a real child process (no secret value printed, nothing written), and the identity flow against a protocol stub of the local-auth and token routes.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Guards for the two defects found by reading the first cut against what it boots and against this engine. (1) Routes by address: the api sat on a network with a host route, and the probe knocked only on names. New cases: the api and the bots on the internal network only, the gateway as the one publisher and the one edge member, nine more planted violations (an api or a bot on edge, an api publishing, an egress network with nothing forwarded, a database on egress, a gateway with environment, a volume, another entrypoint, or none at all), the verdict on default routes and address connects, the live-address parser, `status` handing the live container addresses to the probe and going red when one answers, the forwarder relaying a real HTTP exchange as a real child process, and against the REAL Docker engine the shipped probe script run from an internal network (clean) and from an ordinary bridge (a default route, and the other container answering on its address). (2) Generated secrets against the validators the image boots with: the real role provisioner accepts the two role passwords and refuses the first cut's base64url shape, and the real delegation issuer and verifier load the generated key pair. The generated document is also parsed by the real `docker compose config`, which starts nothing.
  */
 import { afterAll, describe, expect, it } from 'vitest';
 import { createRequire } from 'node:module';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { localSubForEmail as storeLocalSub } from '@/features/local-auth';
+import { createDelegationTokenIssuer, createDelegationTokenVerifier } from '@/shared/security/delegation-token';
+import { runtimeCredentials } from '../../scripts/governance/provision-app-role.mjs';
+import { acquireFixtureSlot } from '../helpers/fixture-slots';
 
 const requireCjs = createRequire(import.meta.url);
 const plan = requireCjs('../../scripts/lib/installed-sandbox-plan.js');
@@ -30,7 +35,8 @@ const ADMIN = { email: ADMIN_EMAIL, sub: ids.localSubForEmail(ADMIN_EMAIL) };
 const scratch: string[] = [];
 afterAll(() => { for (const dir of scratch) fs.rmSync(dir, { recursive: true, force: true }); });
 
-type Plan = { compose: any; topology: any; hazards: string[]; aliases: string[]; bots: string[]; budgetMb: number; secretRefs: string[]; workspaceVolume: string; origin: string };
+type Plan = { compose: any; topology: any; hazards: string[]; aliases: string[]; bots: string[]; budgetMb: number; secretRefs: string[]; workspaceVolume: string; origin: string; egress: boolean; probeServices: string[]; forwardNames: string[] };
+const realSecrets = (built: Plan): Map<string, string> => plan.generateSandboxSecrets({ randomBytes: crypto.randomBytes, generateKeyPairSync: crypto.generateKeyPairSync }, built);
 const build = (overrides: Record<string, unknown> = {}): Plan => plan.buildSandboxPlan({
   liveDoc: LIVE, project: 'oshal-sandbox-spec01', admin: ADMIN, delegationKid: 'sandbox-spec01', ...overrides,
 });
@@ -61,14 +67,13 @@ function storeFixture(): string {
 }
 
 describe('compose generation from the live compose file', () => {
-  it('mirrors the live api, database and Redis and nothing else', () => {
+  it('mirrors the live api, database and Redis, and adds only the gateway', () => {
     const { compose } = build();
-    expect(Object.keys(compose.services)).toEqual(['db', 'redis', 'api']);
+    expect(Object.keys(compose.services)).toEqual(['db', 'redis', 'api', 'gateway']);
     expect(compose.services.db.image).toBe(LIVE.services['oshal-db'].image);
     expect(compose.services.redis.image).toBe(LIVE.services['oshal-redis'].image);
     expect(compose.services.api.image).toBe(plan.resolveComposeDefaults(LIVE.services['oshal-api'].image).value);
     expect(compose.services.api.command).toBe(LIVE.services['oshal-api'].command);
-    expect(compose.services.api.ports).toEqual(['127.0.0.1:35459:5000']);
     for (const [name, service] of Object.entries<any>(compose.services)) {
       expect(service.restart, name).toBe('no');
       expect(service.pull_policy, name).toBe('never');
@@ -76,6 +81,25 @@ describe('compose generation from the live compose file', () => {
       expect(service.mem_limit, name).toMatch(/^\d+m$/);
     }
     expect(compose.networks.backend.internal).toBe(true);
+  });
+
+  it('keeps the api, the database and Redis on the internal network and publishes only through the gateway', () => {
+    const built = build();
+    const { services, networks } = built.compose;
+    for (const name of ['db', 'redis', 'api']) {
+      expect(Object.keys(services[name].networks), name).toEqual(['backend']);
+      expect(services[name].ports, name).toBeUndefined();
+    }
+    expect(Object.keys(networks)).toEqual(['backend', 'edge']);
+    expect(Object.keys(services.gateway.networks)).toEqual(['backend', 'edge']);
+    expect(services.gateway.ports).toEqual(['127.0.0.1:35459:5000']);
+    expect(services.gateway.image).toBe(services.api.image);
+    expect(services.gateway.entrypoint).toEqual(['node', '-e', plan.forwarderScript('api', 5000, 5000)]);
+    expect(services.gateway.entrypoint[2]).not.toContain('$');
+    expect(services.gateway.environment).toBeUndefined();
+    expect(services.gateway.volumes).toBeUndefined();
+    expect(built.egress).toBe(false);
+    expect(built.probeServices).toEqual(['api']);
   });
 
   it('boots the installer LOCAL_AUTH shape under enforce and drops every inherited live endpoint', () => {
@@ -92,16 +116,57 @@ describe('compose generation from the live compose file', () => {
 
   it('writes secrets only as references and generates every value those references name', () => {
     const built = build({ bots: ['career-bot'] });
-    const values: Map<string, string> = plan.generateSandboxSecrets({ randomBytes: crypto.randomBytes, generateKeyPairSync: crypto.generateKeyPairSync }, built);
+    const values = realSecrets(built);
     const text = JSON.stringify(built.compose);
     expect(built.secretRefs.every((name) => values.has(name))).toBe(true);
     for (const value of values.values()) expect(text.includes(value)).toBe(false);
-    expect(values.get('OSHAL_SANDBOX_DATABASE_URL')).toMatch(/^postgresql:\/\/oshal_app:[A-Za-z0-9_-]+@db:5432\/oshal$/);
-    expect(values.get('OSHAL_SANDBOX_BOT_DATABASE_URL')).toMatch(/^postgresql:\/\/oshal_bot:[A-Za-z0-9_-]+@db:5432\/oshal$/);
+    expect(values.get('OSHAL_SANDBOX_DATABASE_URL')).toMatch(/^postgresql:\/\/oshal_app:[0-9a-f]{48}@db:5432\/oshal$/);
+    expect(values.get('OSHAL_SANDBOX_BOT_DATABASE_URL')).toMatch(/^postgresql:\/\/oshal_bot:[0-9a-f]{48}@db:5432\/oshal$/);
     const ring = JSON.parse(values.get('OSHAL_SANDBOX_DELEGATION_PUBLIC_KEYS')!);
     const signature = crypto.sign(null, Buffer.from('probe'), values.get('OSHAL_SANDBOX_DELEGATION_PRIVATE_KEY')!);
     expect(crypto.verify(null, Buffer.from('probe'), ring['sandbox-spec01'], signature)).toBe(true);
   });
+
+  it('generates secrets the validators the image boots with accept', () => {
+    const built = build({ bots: ['career-bot'] });
+    const values = realSecrets(built);
+    const appUrl = values.get('OSHAL_SANDBOX_DATABASE_URL')!;
+    // As the api boot command calls it: the app password read back out of DATABASE_URL, no bot password given.
+    const asBooted = {
+      bootstrapUrl: values.get('OSHAL_SANDBOX_BOOTSTRAP_DATABASE_URL'), appUrl, botUrl: values.get('OSHAL_SANDBOX_BOT_DATABASE_URL'),
+      appPassword: new URL(appUrl).password as string | undefined, botPassword: undefined,
+    };
+    const accepted = runtimeCredentials(asBooted);
+    expect(accepted.appPassword).toMatch(/^[0-9a-f]{48}$/);
+    expect(accepted.botPassword).toMatch(/^[0-9a-f]{48}$/);
+    const firstCut = `postgresql://oshal_app:${crypto.randomBytes(24).toString('base64url')}@db:5432/oshal`;
+    expect(() => runtimeCredentials({ ...asBooted, appUrl: firstCut, appPassword: undefined })).toThrow(/oshal_app password must be 48-128 hexadecimal characters/);
+    const api = built.compose.services.api.environment;
+    const bot = built.compose.services['career-bot'].environment;
+    const filled = (env: Record<string, string>): Record<string, string> => Object.fromEntries(Object.entries(env).map(([key, value]) => [key, /^\$\{(OSHAL_SANDBOX_[A-Z0-9_]+)\}$/.test(value) ? values.get(value.slice(2, -1))! : value]));
+    expect(() => createDelegationTokenIssuer({ env: filled(api) })).not.toThrow();
+    expect(() => createDelegationTokenVerifier({ env: filled(bot) })).not.toThrow();
+    expect(() => createDelegationTokenVerifier({ env: { ...filled(bot), OSHAL_DELEGATION_PUBLIC_KEYS: '{}' } })).toThrow(/count is invalid/);
+  });
+
+  it('is a document the real docker compose parses, with every reference filled from the process environment', () => {
+    const built = build({ bots: ['career-bot'] });
+    const values = realSecrets(built);
+    const dir = tmp('compose');
+    fs.writeFileSync(path.join(dir, 'compose.json'), JSON.stringify(built.compose));
+    const env = { ...cli.scrubbedEnv(process.env), ...Object.fromEntries(values) };
+    const parsed = spawnSync('docker', ['compose', '-p', built.compose.name, '-f', path.join(dir, 'compose.json'), '--project-directory', dir, 'config', '--format', 'json'], { encoding: 'utf8', env, cwd: dir, timeout: 60_000 });
+    expect(parsed.status, parsed.stderr).toBe(0);
+    const model = JSON.parse(parsed.stdout);
+    expect(Object.keys(model.services).sort()).toEqual(['api', 'career-bot', 'db', 'gateway', 'redis']);
+    expect(model.services.api.ports).toBeUndefined();
+    expect(model.services.gateway.ports).toEqual([expect.objectContaining({ host_ip: '127.0.0.1', published: '35459', target: 5000 })]);
+    expect(model.networks.backend).toMatchObject({ internal: true, name: `${built.compose.name}_backend` });
+    expect(Object.keys(model.services.api.networks)).toEqual(['backend']);
+    expect(model.services.api.environment.DATABASE_URL).toBe(values.get('OSHAL_SANDBOX_DATABASE_URL'));
+    expect(model.services.api.environment.OSHAL_DELEGATION_SIGNING_PRIVATE_KEY).toBe(values.get('OSHAL_SANDBOX_DELEGATION_PRIVATE_KEY'));
+    expect(model.services.gateway.entrypoint).toEqual(['node', '-e', plan.forwarderScript('api', 5000, 5000)]);
+  }, 90_000);
 
   it('lifts a named bot node without its host mounts and forwards operator credentials by name only', () => {
     const built = build({ bots: ['career-bot'], forwardNames: ['FIXTURE_PROVIDER_KEY'] });
@@ -113,9 +178,25 @@ describe('compose generation from the live compose file', () => {
     expect(bot.networks.backend.aliases).toEqual(['career-bot', live.container_name]);
     expect(bot.environment.FIXTURE_PROVIDER_KEY).toBe('${OSHAL_SANDBOX_FWD_FIXTURE_PROVIDER_KEY}');
     expect(built.compose.services.api.environment.FIXTURE_PROVIDER_KEY).toBe('${OSHAL_SANDBOX_FWD_FIXTURE_PROVIDER_KEY}');
-    expect(Object.keys(bot.networks)).toEqual(['backend', 'edge']);
-    expect(Object.keys(build({ bots: ['career-bot'] }).compose.services['career-bot'].networks)).toEqual(['backend']);
+    expect(built.compose.services.gateway.environment).toBeUndefined();
     expect(built.budgetMb).toBe(build().budgetMb + plan.MEMORY_LIMITS_MB.bot);
+    expect(build().budgetMb).toBe(512 + 128 + 1400 + 96);
+  });
+
+  it('gives the api and the bots a host route only when a credential is forwarded, and says so', () => {
+    const forwarded = build({ bots: ['career-bot'], forwardNames: ['FIXTURE_PROVIDER_KEY'] });
+    expect(forwarded.egress).toBe(true);
+    expect(Object.keys(forwarded.compose.networks)).toEqual(['backend', 'edge', 'egress']);
+    expect(forwarded.compose.networks.egress.internal).toBeUndefined();
+    expect(Object.keys(forwarded.compose.services.api.networks)).toEqual(['backend', 'egress']);
+    expect(Object.keys(forwarded.compose.services['career-bot'].networks)).toEqual(['backend', 'egress']);
+    for (const name of ['db', 'redis']) expect(Object.keys(forwarded.compose.services[name].networks), name).toEqual(['backend']);
+    expect(Object.keys(forwarded.compose.services.gateway.networks)).toEqual(['backend', 'edge']);
+    expect(forwarded.probeServices).toEqual(['api', 'career-bot']);
+    const plain = build({ bots: ['career-bot'] });
+    expect(plain.egress).toBe(false);
+    expect(plain.compose.networks.egress).toBeUndefined();
+    expect(Object.keys(plain.compose.services['career-bot'].networks)).toEqual(['backend']);
   });
 
   it('refuses a non-bot service, a live published port and a non-sandbox project', () => {
@@ -136,8 +217,17 @@ describe('network isolation', () => {
   const clone = (): Plan => { const built = build({ bots: ['career-bot'] }); return { ...built, compose: JSON.parse(JSON.stringify(built.compose)) }; };
   const labels = { 'oshal.sandbox': 'installed-sandbox', 'oshal.sandbox.project': 'oshal-sandbox-spec01' };
   const mutations: Array<[string, (c: any) => void, RegExp]> = [
-    ['join the live network', (c) => { c.networks.live = { external: true, name: 'oshal-local_oshal', labels }; c.services.api.networks.live = {}; }, /external networks are refused/],
-    ['database on the egress network', (c) => { c.services.db.networks.edge = {}; }, /internal backend network only/],
+    ['join the live network', (c) => { c.networks.live = { external: true, name: 'oshal-local_oshal', labels }; c.services.api.networks.live = {}; }, /external networks are refused[\s\S]*api: joins "live", which is not a sandbox network/],
+    ['database on the edge network', (c) => { c.services.db.networks.edge = {}; }, /db: only the gateway may join the edge network/],
+    ['api on the edge network', (c) => { c.services.api.networks.edge = {}; }, /api: only the gateway may join the edge network/],
+    ['bot on the edge network', (c) => { c.services['career-bot'].networks.edge = {}; }, /career-bot: only the gateway may join the edge network/],
+    ['api publishes its own port', (c) => { c.services.api.ports = ['127.0.0.1:35460:5000']; }, /api: only the gateway may publish a port/],
+    ['egress network with nothing forwarded', (c) => { c.networks.egress = { labels }; c.services.api.networks.egress = {}; }, /network egress: declared although no credential is forwarded[\s\S]*api: joins the egress network although no credential is forwarded/],
+    ['api off the backend network', (c) => { c.services.api.networks = {}; }, /api: must join the internal backend network/],
+    ['gateway carrying environment', (c) => { c.services.gateway.environment = { REDIS_URL: 'redis://redis:6379' }; }, /gateway: carries environment/],
+    ['gateway mounting the workspace', (c) => { c.services.gateway.volumes = ['oshal_workspace:/app/workspace-shared:rw']; }, /gateway: mounts a volume/],
+    ['gateway running something else', (c) => { c.services.gateway.entrypoint = ['node', 'dist/app/server.js']; }, /gateway: its entrypoint is not the forwarder/],
+    ['no gateway', (c) => { delete c.services.gateway; }, /the sandbox has no gateway/],
     ['backend with egress', (c) => { c.networks.backend.internal = false; }, /must be internal/],
     ['bind mount of the shared tree', (c) => { c.services.api.volumes.push('./any-bot/server:/app/any-bot/server:ro'); }, /bind mounts are refused/],
     ['docker socket', (c) => { c.services.api.volumes.push('/var/run/docker.sock:/var/run/docker.sock'); }, /docker socket/],
@@ -146,8 +236,8 @@ describe('network isolation', () => {
     ['literal secret', (c) => { c.services.api.environment.SESSION_SECRET = 'plain-value'; }, /holds a literal/],
     ['credential in a URL', (c) => { c.services.api.environment.ANALYTICS_URL = 'postgresql://oshal:oshal@db:5432/oshal'; }, /embeds a credential/],
     ['monitoring tier label', (c) => { c.services.api.labels['oshal.tier'] = 'core'; }, /oshal\.tier/],
-    ['non-loopback publish', (c) => { c.services.api.ports = ['0.0.0.0:35459:5000']; }, /not bound to 127\.0\.0\.1/],
-    ['live port', (c) => { c.services.api.ports = ['127.0.0.1:35457:5000']; }, /collides with a live published port/],
+    ['non-loopback publish', (c) => { c.services.gateway.ports = ['0.0.0.0:35459:5000']; }, /not bound to 127\.0\.0\.1/],
+    ['live port', (c) => { c.services.gateway.ports = ['127.0.0.1:35457:5000']; }, /collides with a live published port/],
     ['container name', (c) => { c.services.api.container_name = 'oshal-local-api'; }, /container_name is set/],
     ['host networking', (c) => { c.services.redis.network_mode = 'host'; }, /network_mode/],
     ['compose control variable', (c) => { c.services.api.environment.COMPOSE_PROJECT_NAME = 'oshal-local'; }, /control variable/],
@@ -171,25 +261,199 @@ describe('network isolation', () => {
     expect(plan.isolationProblems(built.compose, built).join('\n')).toMatch(expected);
   });
 
+  it('refuses a database on the egress network even when a credential is forwarded', () => {
+    const built = build({ bots: ['career-bot'], forwardNames: ['FIXTURE_PROVIDER_KEY'] });
+    const compose = JSON.parse(JSON.stringify(built.compose));
+    compose.services.redis.networks.egress = {};
+    compose.services.gateway.networks.egress = {};
+    expect(plan.isolationProblems(compose, built)).toEqual([
+      'redis: only the api and the bots may join the egress network',
+      'gateway: only the api and the bots may join the egress network',
+    ]);
+  });
+
   it('judges the in-container probe', () => {
-    const expectation = { hazards: ['oshal-redis', 'host.docker.internal'], aliases: ['career-bot'], sandboxIps: ['172.30.0.4'] };
-    const clean = { resolved: { 'oshal-redis': null, 'host.docker.internal': ['127.0.0.1'], 'career-bot': ['172.30.0.4'] }, connects: { 'host.docker.internal:56380': 'ECONNREFUSED' } };
+    const expectation = { hazards: ['oshal-redis', 'host.docker.internal'], aliases: ['career-bot'], sandboxIps: ['172.30.0.4'], egress: false };
+    const clean = { resolved: { 'oshal-redis': null, 'host.docker.internal': ['127.0.0.1'], 'career-bot': ['172.30.0.4'] }, connects: { 'host.docker.internal:56380': 'ECONNREFUSED', '172.18.0.5:6379': 'ENETUNREACH' }, defaultRoutes: [] as string[] };
     expect(plan.evaluateIsolationProbe(clean, expectation)).toEqual([]);
     expect(plan.evaluateIsolationProbe({ ...clean, resolved: { ...clean.resolved, 'oshal-redis': ['172.18.0.5'] } }, expectation).join()).toMatch(/live name oshal-redis resolves/);
     expect(plan.evaluateIsolationProbe({ ...clean, resolved: { ...clean.resolved, 'career-bot': ['172.18.0.9'] } }, expectation).join()).toMatch(/resolves outside the sandbox/);
     expect(plan.evaluateIsolationProbe({ ...clean, connects: { 'host.docker.internal:56380': 'open' } }, expectation).join()).toMatch(/accepted a connection/);
-    expect(plan.evaluateIsolationProbe({ resolved: {}, connects: {} }, expectation).join()).toMatch(/did not report oshal-redis/);
+    expect(plan.evaluateIsolationProbe({ resolved: {}, connects: {}, defaultRoutes: [] }, expectation).join()).toMatch(/did not report oshal-redis/);
+  });
+
+  it('judges routes by address: a default route, and a live container answering on its own address', () => {
+    const expectation = { hazards: [] as string[], aliases: [] as string[], sandboxIps: [] as string[], egress: false };
+    const routed = { resolved: {}, connects: { '172.18.0.5:6379': 'ENETUNREACH' }, defaultRoutes: ['172.22.0.1'] };
+    expect(plan.evaluateIsolationProbe(routed, expectation)).toEqual(['has a default route (172.22.0.1) although it must sit on the internal network only']);
+    expect(plan.evaluateIsolationProbe(routed, { ...expectation, egress: true })).toEqual([]);
+    const answered = { ...routed, connects: { '172.18.0.5:6379': 'open', '192.168.65.254:56380': 'open', '172.18.0.9:5000': 'timeout' } };
+    expect(plan.evaluateIsolationProbe(answered, { ...expectation, egress: true })).toEqual([
+      '172.18.0.5:6379 accepted a connection from the sandbox', '192.168.65.254:56380 accepted a connection from the sandbox',
+    ]);
+    expect(plan.evaluateIsolationProbe({ resolved: {}, connects: {} }, expectation)).toEqual(['probe did not report its default routes']);
+  });
+
+  it('turns the running live containers into address targets', () => {
+    const rows = ['172.18.0.5 |6379/tcp ', '172.18.0.9 172.19.0.3 |1455/tcp 5000/tcp 5353/udp ', ' |5000/tcp ', '172.18.0.5 |6379/tcp '];
+    expect(plan.parseLiveAddresses(rows)).toEqual([
+      { host: '172.18.0.5', port: 6379 }, { host: '172.18.0.9', port: 1455 }, { host: '172.18.0.9', port: 5000 },
+      { host: '172.19.0.3', port: 1455 }, { host: '172.19.0.3', port: 5000 },
+    ]);
+    expect(plan.parseLiveAddresses([])).toEqual([]);
   });
 });
 
+/** A loopback port that was free a moment ago. */
+async function freePort(): Promise<number> {
+  const server = net.createServer();
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as net.AddressInfo;
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  return port;
+}
+
+/** fetch, retried while the listener is still starting. An exchange that is never answered fails, so teardown still runs. */
+async function fetchWhenUp(url: string, init: RequestInit, budgetMs = 60_000): Promise<Response> {
+  const deadline = Date.now() + budgetMs;
+  for (;;) {
+    try { return await fetch(url, { ...init, signal: AbortSignal.timeout(5_000) }); } catch (error) {
+      if (Date.now() > deadline) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+}
+
+describe('the gateway forwarder as a real child process', () => {
+  it('relays an HTTP exchange unchanged: the caller\'s Host and Origin in, the session cookie out', async () => {
+    const seen: http.IncomingHttpHeaders[] = [];
+    const upstream = http.createServer((req, res) => {
+      seen.push(req.headers);
+      res.writeHead(201, { 'content-type': 'application/json', 'set-cookie': 'oshal_local=fixture; Path=/; HttpOnly' });
+      res.end('{"ok":true}');
+    });
+    await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+    const listen = await freePort();
+    const script = plan.forwarderScript('127.0.0.1', (upstream.address() as net.AddressInfo).port, listen, '127.0.0.1');
+    const child: ChildProcess = spawn(process.execPath, ['-e', script], { stdio: 'ignore' });
+    try {
+      const origin = `http://127.0.0.1:${listen}`;
+      const res = await fetchWhenUp(`${origin}/api/local-auth/bootstrap`, { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: '{}' }, 20_000);
+      expect(res.status).toBe(201);
+      expect(res.headers.getSetCookie()).toEqual(['oshal_local=fixture; Path=/; HttpOnly']);
+      expect(await res.json()).toEqual({ ok: true });
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toMatchObject({ host: `127.0.0.1:${listen}`, origin });
+    } finally {
+      child.kill();
+      upstream.close();
+    }
+  }, 30_000);
+});
+
+/** The shipped probe script run by a throwaway container of the sandbox image on one network. */
+function probeFrom(image: string, network: string, labels: string[], input: unknown): any {
+  const env = { ...cli.scrubbedEnv(process.env), OSHAL_SANDBOX_PROBE: JSON.stringify(input) };
+  const result = spawnSync('docker', ['run', '--rm', '--network', network, '--memory', '96m', ...labels, '-e', 'OSHAL_SANDBOX_PROBE',
+    '--entrypoint', 'node', image, '-e', cli.PROBE_SCRIPT], { encoding: 'utf8', env, timeout: 120_000 });
+  if (result.status !== 0) throw new Error(`probe on ${network} failed: ${result.stderr}`);
+  return JSON.parse(result.stdout);
+}
+
+describe('the probe on the real Docker engine', () => {
+  it('finds no route from an internal network, and a default route and an answering address from an ordinary one', async () => {
+    const image = plan.resolveComposeDefaults(LIVE.services['oshal-api'].image).value;
+    const have = spawnSync('docker', ['image', 'inspect', '--format', '{{.Id}}', image], { encoding: 'utf8' });
+    if (have.status !== 0) throw new Error(`this guard needs the image the sandbox runs (${image}): ${have.stderr}`);
+    const project = `oshal-sandbox-probe${crypto.randomBytes(3).toString('hex')}`;
+    const labels = ['--label', `com.docker.compose.project=${project}`, '--label', `oshal.sandbox.project=${project}`];
+    const must = (...args: string[]): string => {
+      const result = spawnSync('docker', args, { encoding: 'utf8', timeout: 120_000 });
+      if (result.status !== 0) throw new Error(`docker ${args.slice(0, 3).join(' ')}: ${result.stderr}`);
+      return result.stdout.trim();
+    };
+    const slot = await acquireFixtureSlot('installed-sandbox:probe');
+    const out: string[] = [];
+    let teardown = -1;
+    try {
+      must('network', 'create', '--internal', ...labels, `${project}_backend`);
+      must('network', 'create', ...labels, `${project}_egress`);
+      must('run', '-d', '--name', `${project}-outside`, '--network', `${project}_egress`, '--memory', '96m', ...labels,
+        '--entrypoint', 'node', image, '-e', "require('net').createServer((s)=>s.end()).listen(8080)");
+      const address = must('inspect', '--format', '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}', `${project}-outside`);
+      const input = { names: [`${project}-outside`], connects: [{ host: address, port: 8080 }], hostAliases: [], hostPorts: [] };
+      const expectation = { hazards: [`${project}-outside`], aliases: [], sandboxIps: [], egress: false };
+      const inside = probeFrom(image, `${project}_backend`, labels, input);
+      expect(inside.defaultRoutes).toEqual([]);
+      expect(inside.connects[`${address}:8080`]).not.toBe('open');
+      expect(plan.evaluateIsolationProbe(inside, expectation)).toEqual([]);
+      const routed = probeFrom(image, `${project}_egress`, labels, input);
+      expect(routed.defaultRoutes).toHaveLength(1);
+      expect(plan.evaluateIsolationProbe(routed, expectation).join('\n')).toMatch(new RegExp(
+        `live name ${project}-outside resolves from the sandbox[\\s\\S]*has a default route[\\s\\S]*${address.replace(/\./g, '\\.')}:8080 accepted a connection`));
+    } finally {
+      const deps = { ...cli.realDeps(), out: (line: string) => out.push(line), err: (line: string) => out.push(line) };
+      teardown = await cli.main(['down', '--name', project, '--state-root', tmp('probe-state')], deps);
+      slot.release();
+    }
+    expect(out.join('\n')).toMatch(new RegExp(`CLEAN[\\s\\S]*removed containers: ${project}-outside[\\s\\S]*removed networks: ${project}_`));
+    expect(teardown).toBe(cli.EXIT.ok);
+  }, 240_000);
+});
+
+/** Answers every request with the Host it was sent and the routing table of its own container. */
+const STAND_IN_API = "process.on('SIGTERM',()=>process.exit(0));require('http').createServer((req,res)=>{res.setHeader('content-type','application/json');"
+  + "res.end(JSON.stringify({host:req.headers.host,routes:require('fs').readFileSync('/proc/net/route','utf8')}))}).listen(5000)";
+
+/** The generated gateway, networks and hardening, with a stand-in for the api (no database, no Redis). */
+function standInDocument(built: Plan): Record<string, unknown> {
+  const { command: _command, environment: _environment, volumes: _volumes, depends_on: _dependsOn, ...api } = built.compose.services.api;
+  return {
+    name: built.compose.name, networks: built.compose.networks,
+    services: { api: { ...api, entrypoint: ['node', '-e', STAND_IN_API], mem_limit: '96m' }, gateway: built.compose.services.gateway },
+  };
+}
+
+describe('the gateway on the real Docker engine, through the real docker compose', () => {
+  it('serves a stand-in api that sits on the internal network only, and down removes the whole project', async () => {
+    const project = `oshal-sandbox-gw${crypto.randomBytes(3).toString('hex')}`;
+    const built = build({ project, port: await freePort() });
+    const stateRoot = tmp('gateway-state');
+    const dir = path.join(stateRoot, project);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'compose.json'), JSON.stringify(standInDocument(built)));
+    const slot = await acquireFixtureSlot('installed-sandbox:gateway');
+    const out: string[] = [];
+    let teardown = -1;
+    let answer: { host?: string; routes?: string } = {};
+    try {
+      const up = spawnSync('docker', ['compose', '-p', project, '-f', path.join(dir, 'compose.json'), '--project-directory', dir, 'up', '-d'],
+        { encoding: 'utf8', env: cli.scrubbedEnv(process.env), cwd: dir, timeout: 180_000 });
+      expect(up.status, up.stderr).toBe(0);
+      answer = await (await fetchWhenUp(`${built.origin}/health`, { headers: { accept: 'application/json' } })).json();
+    } finally {
+      const deps = { ...cli.realDeps(), out: (line: string) => out.push(line), err: (line: string) => out.push(line) };
+      teardown = await cli.main(['down', '--name', project, '--state-root', stateRoot], deps);
+      slot.release();
+    }
+    expect(answer.host).toBe(new URL(built.origin).host);
+    const routes = String(answer.routes).split('\n').slice(1).filter(Boolean).map((line) => line.split('\t')[1]);
+    expect(routes.length).toBeGreaterThan(0);
+    expect(routes).not.toContain('00000000');
+    expect(out.join('\n')).toMatch(new RegExp(`CLEAN[\\s\\S]*removed containers: .*${project}-api-1[\\s\\S]*removed networks: .*${project}_backend`));
+    expect(teardown).toBe(cli.EXIT.ok);
+    expect(fs.existsSync(dir)).toBe(false);
+  }, 300_000);
+});
+
 /** Dependency double for the CLI: a recording docker seam, a fixed host free figure, no network. */
-function recordingDeps(respond: (args: string[]) => { status: number; stdout: string; stderr?: string }, freeMb = 8192) {
+function recordingDeps(respond: (args: string[], options?: { env?: Record<string, string> }) => { status: number; stdout: string; stderr?: string }, freeMb = 8192) {
   const calls: string[][] = [];
   const out: string[] = [];
   const err: string[] = [];
   const stateRoot = tmp('state');
   const deps = {
-    spawnSync: (cmd: string, args: string[]) => { calls.push([cmd, ...args]); return { stderr: '', ...respond(args) }; },
+    spawnSync: (cmd: string, args: string[], options?: { env?: Record<string, string> }) => { calls.push([cmd, ...args]); return { stderr: '', ...respond(args, options) }; },
     spawn: () => { throw new Error('spawn is not expected here'); },
     fetch: async () => { throw new Error('fetch is not expected here'); },
     fs, env: { PATH: process.env.PATH ?? '' }, freemem: () => freeMb * 1048576, tmpdir: () => stateRoot, clock: Date.now,
@@ -224,6 +488,61 @@ describe('RAM guard', () => {
     expect(harness.out.join('\n')).toMatch(/RAM now: host free 700 MB.*REFUSE/);
     expect(harness.calls.map((call) => call[1])).toEqual(['info', 'stats']);
     expect(fs.existsSync(path.join(harness.stateRoot, 'oshal-installed-sandbox', 'oshal-sandbox-spec-ram'))).toBe(false);
+  });
+});
+
+/** A docker seam for `status`: a running sandbox with one bot beside one running live container. */
+function statusHarness(probeResult: (container: string) => unknown) {
+  const project = 'oshal-sandbox-spec-status';
+  const probes: Array<{ container: string; input: any }> = [];
+  const harness = recordingDeps((args, options) => {
+    const text = args.join(' ');
+    if (args[0] === 'exec') {
+      probes.push({ container: args[3], input: JSON.parse(options!.env!.OSHAL_SANDBOX_PROBE) });
+      return { status: 0, stdout: JSON.stringify(probeResult(args[3])) };
+    }
+    if (args[0] === 'inspect') return { status: 0, stdout: text.includes('ExposedPorts') ? '172.18.0.5 |6379/tcp \n' : '172.30.0.4 172.30.0.5 \n' };
+    if (text.includes(`project=${LIVE.name}`)) return { status: 0, stdout: 'live-only-container\n' };
+    const service = /com\.docker\.compose\.service=(\S+)/.exec(text);
+    if (service) return { status: 0, stdout: `${project}-${service[1]}-1\n` };
+    if (args[1] === '-a') return { status: 0, stdout: `${project}-api-1|running|Up\n${project}-career-bot-1|running|Up\n` };
+    return { status: 0, stdout: `${project}-api-1\n${project}-career-bot-1\n` };
+  });
+  const built = build({ project, bots: ['career-bot'] });
+  const dir = path.join(harness.stateRoot, project);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'sandbox.json'), JSON.stringify({
+    project, url: built.origin, hazards: built.hazards, aliases: built.aliases, liveProject: LIVE.name, egress: built.egress,
+    probeServices: built.probeServices, publishedLivePorts: built.topology.publishedPorts,
+  }));
+  const health: Array<RequestInit | undefined> = [];
+  const deps = { ...harness.deps, fetch: async (_url: string, init?: RequestInit) => { health.push(init); return { status: 200 }; } };
+  return { harness, probes, health, project, run: () => cli.main(['status', '--name', project, '--state-root', harness.stateRoot], deps) };
+}
+
+describe('status probes by address', () => {
+  const clean = { resolved: {}, connects: { '172.18.0.5:6379': 'ENETUNREACH' }, defaultRoutes: [] };
+
+  it('hands every running live container\'s address and the live published ports to the probe, in the api and in each bot', async () => {
+    const status = statusHarness(() => ({ ...clean, resolved: Object.fromEntries([...build({ bots: ['career-bot'] }).hazards, 'live-only-container'].map((name) => [name, null])) }));
+    expect(await status.run(), status.harness.err.join('\n')).toBe(cli.EXIT.ok);
+    expect(status.probes.map((probe) => probe.container)).toEqual([`${status.project}-api-1`, `${status.project}-career-bot-1`]);
+    expect(status.health.map((init) => init?.signal instanceof AbortSignal)).toEqual([true]);
+    for (const probe of status.probes) {
+      expect(probe.input.connects).toEqual([{ host: '172.18.0.5', port: 6379 }]);
+      expect(probe.input.hostPorts).toEqual(plan.readLiveTopology(LIVE).publishedPorts);
+      expect(probe.input.hostAliases).toEqual(['host.docker.internal', 'gateway.docker.internal']);
+      expect(probe.input.names).toContain('live-only-container');
+    }
+    expect(status.harness.out.join('\n')).toMatch(/isolation probe from api, career-bot: \d+ live names unresolved, 2 knocks refused \(1 live container addresses, the live published ports on the host\), no default route/);
+  });
+
+  it('is red when a live address answers from a bot, and names the bot and the address', async () => {
+    const hazards = Object.fromEntries([...build({ bots: ['career-bot'] }).hazards, 'live-only-container'].map((name) => [name, null]));
+    const status = statusHarness((container) => ({ ...clean, resolved: hazards, connects: { '172.18.0.5:6379': container.includes('career-bot') ? 'open' : 'ENETUNREACH' } }));
+    expect(await status.run()).toBe(cli.EXIT.failed);
+    expect(status.harness.err.join('\n')).toMatch(/career-bot: 172\.18\.0\.5:6379 accepted a connection from the sandbox/);
+    expect(status.harness.err.join('\n')).not.toMatch(/api: 172/);
   });
 });
 
@@ -349,7 +668,11 @@ describe('the dry run as a real child process', () => {
     expect(result.stdout).toMatch(/package fixture-app@1\.2\.3 store [0-9a-f]{12} \(origin\/main\)/);
     expect(result.stdout).toMatch(/FIXTURE_PROVIDER_KEY \(present: yes\)/);
     expect(result.stdout).toMatch(/OSHAL_SANDBOX_ALPHA_PAT/);
-    expect(result.stdout).toMatch(/RAM guard: sandbox budget 2680 MB/);
+    expect(result.stdout).toMatch(/RAM guard: sandbox budget 2776 MB \+ host reserve 1024 MB = floor 3800 MB host free/);
+    expect(result.stdout).toMatch(/network backend \(internal: no egress, no host route\): db, redis, api, gateway, career-bot/);
+    expect(result.stdout).toMatch(/network edge \(the loopback publish; the gateway forwards to api:5000 and holds nothing else\): gateway\n/);
+    expect(result.stdout).toMatch(/network egress \(PROVIDER EGRESS ON - it has a host route; up refuses while any live address answers\): api, career-bot\n/);
+    expect(result.stdout).toMatch(/service gateway: .* publish 127\.0\.0\.1:35459:5000; volumes none; env 0 keys/);
     expect(`${result.stdout}${result.stderr}`.includes(sentinel)).toBe(false);
     expect(fs.readdirSync(stateRoot)).toEqual([]);
     const mismatch = spawnSync(process.execPath, [SCRIPT, 'up', '--dry-run', '--store-repo', store, '--package', 'fixture-app@9.9.9', '--state-root', stateRoot], { encoding: 'utf8', timeout: 90_000 });
@@ -430,6 +753,21 @@ describe('identities through the local-auth and token doors (protocol stub)', ()
     const file = path.join(tmp('creds'), 'credentials.env');
     expect(ids.writeCredentialsFile(file, result.credentials)).toHaveLength(15);
     expect(ids.readCredentialsFile(file).get('OSHAL_SANDBOX_ADMIN_SUB')).toBe(users[0].sub);
+  });
+
+  it('refuses a door that takes the request and never answers, instead of waiting', async () => {
+    const silent = http.createServer(() => undefined);
+    await new Promise<void>((resolve) => silent.listen(0, '127.0.0.1', resolve));
+    const origin = `http://127.0.0.1:${(silent.address() as net.AddressInfo).port}`;
+    try {
+      const call = ids.createClient(origin, fetch, 400)('GET', '/api/auth/user');
+      call.catch(() => undefined);
+      const stillWaiting = new Promise((_, reject) => { setTimeout(() => reject(new Error('the call was still waiting after 3 s')), 3_000); });
+      await expect(Promise.race([call, stillWaiting])).rejects.toThrow(/GET \/api\/auth\/user was not answered within 400 ms/);
+    } finally {
+      silent.closeAllConnections();
+      silent.close();
+    }
   });
 
   it('refuses when a spent invitation is accepted again or a token acts as someone else', async () => {
