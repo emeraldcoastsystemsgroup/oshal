@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the PNG reader and writer the live-acceptance cases compare pixels with (first user: live-acceptance-create-region-edit.js, which must prove that a region edit left every pixel outside the region byte for byte). Node built-ins only (zlib), like every case module, so the api image and the host runner carry it without an image library. It writes 8-bit RGBA and reads 8-bit grey, grey+alpha, RGB and RGBA, non-interlaced, which is what the Create package stores after its own normalization. Anything else is refused by name instead of being compared wrongly: a palette, 16-bit or interlaced file, a chunk whose checksum does not match, a body that inflates to the wrong length, an image above the pixel ceiling.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Refuse tRNS transparency explicitly rather than silently widening RGB/grey samples to opaque RGBA. Check the header first so unsupported palette/depth errors retain their own explanation.
  */
 
 'use strict';
@@ -78,13 +79,14 @@ function encodeRgba(width, height, rgba) {
 /**
  * @description Walk a PNG's chunks, checking each checksum, and return its header and image data.
  * @param {Buffer} png - The file.
- * @returns {{header: Buffer, data: Buffer}} The IHDR body and the concatenated IDAT bodies.
+ * @returns {{header: Buffer, data: Buffer, transparency: boolean}} The IHDR/IDAT bodies and whether tRNS is present.
  * @throws {Error} For a missing signature, a truncated or corrupt chunk, or a file with no header, data or end.
  */
 function readChunks(png) {
   if (!Buffer.isBuffer(png) || png.length < 8 || !png.subarray(0, 8).equals(SIGNATURE)) throw new Error('not a PNG (signature missing)');
   let header = null;
   let ended = false;
+  let transparency = false;
   const data = [];
   for (let at = 8; at < png.length && !ended;) {
     if (at + 12 > png.length) throw new Error('PNG truncated inside a chunk');
@@ -96,10 +98,11 @@ function readChunks(png) {
     if (type === 'IHDR') header = png.subarray(at + 8, end - 4);
     else if (type === 'IDAT') data.push(png.subarray(at + 8, end - 4));
     else if (type === 'IEND') ended = true;
+    else if (type === 'tRNS') transparency = true;
     at = end;
   }
   if (!header || header.length !== 13 || !data.length || !ended) throw new Error('PNG has no header, image data or end chunk');
-  return { header, data: Buffer.concat(data) };
+  return { header, data: Buffer.concat(data), transparency };
 }
 
 /**
@@ -185,6 +188,7 @@ function widenRow(row, channels, out, at) {
 function decodeRgba(png) {
   const chunks = readChunks(png);
   const { width, height, channels } = readHeader(chunks.header);
+  if (chunks.transparency) throw new Error('unsupported PNG (tRNS transparency)');
   const stride = width * channels;
   const expected = height * (stride + 1);
   const rows = zlib.inflateSync(chunks.data, { maxOutputLength: expected });

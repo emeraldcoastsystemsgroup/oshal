@@ -10,6 +10,8 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The registry gains the vids-publish case. The adapter's replies carry the raw body's byte length and sha256, and its `files` port answers a named probe from this process's disk (a real file under a temporary workspace root) and refuses any other probe name.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | The registry gains the token-chase-replay case (explicit-only: it may spend one model turn starting a tagged file-tools run).
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | The registry gains the create-region-edit case. The adapter's replies carry the raw body as `bytes`, and its upload names the file part the case gives (`image` for Create). The card, run as the Lab's principal against a PAID provider, answers a gap naming the host command that carries --allow-paid after the two read-only preconditions and nothing else; against a free provider its upload reaches Create's route with exactly one `image` part carrying a real PNG.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Run the Lab ports against a real loopback Express/multer server: exact PNG bytes, the single image part Create accepts, default file compatibility, session-cookie isolation and anonymous reads. No replacement fetch or installed service.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | The Create provider fixture advertises costConsentVersion 1, matching the required server-enforced cost-cap contract.
  */
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -20,6 +22,7 @@ import { SCENARIOS, scenariosForRun, type ScenarioRunContext } from '@/app/route
 import { LIVE_ACCEPTANCE_SCENARIOS } from '@/app/routes/test-lab-live-acceptance-scenarios';
 import { LIVE_ACCEPTANCE_CASES, labPorts, runLiveAcceptanceCase } from '@/app/routes/test-lab-live-acceptance';
 import type { AppContext } from '@/app/composition/app-context';
+import { assertImageHttpPorts, type ImageHttpPorts } from '../fixtures/live-acceptance-http';
 
 /** Runner-input variables a card names; compose forwards none of them to the api today. */
 const RUNNER_VARIABLE = /\bOSHAL_VERIFY_[A-Z0-9_]*[A-Z0-9]\b/g;
@@ -49,6 +52,12 @@ async function labFileProbe(ports: { files: { state: (n: string, id: string) => 
 }
 
 describe('live-acceptance Test Lab cards', () => {
+  it('carries binary bodies and multipart image fields over real HTTP as the Lab caller', async () => {
+    await assertImageHttpPorts(apiBaseUrl => labPorts('sid=fixture', {
+      ownerSub: 'fixture|lab-owner', issuer: 'https://issuer.example', apiBaseUrl, ctx: {} as AppContext,
+    } as ScenarioRunContext) as unknown as ImageHttpPorts, { cookie: 'sid=fixture' });
+  });
+
   it('registers one explicit-only card per case, with its host command and suites on disk', () => {
     expect(LIVE_ACCEPTANCE_SCENARIOS).toHaveLength(LIVE_ACCEPTANCE_CASES.length);
     expect(LIVE_ACCEPTANCE_CASES.map((c) => c.module.KEY)).toEqual(['response-renderer', 'congress', 'dev-workspace', 'floater', 'linkedin', 'commerce', 'lm-class-material', 'jarvis-cache', 'trading-parity', 'vids-publish', 'token-chase-replay', 'create-region-edit']);
@@ -175,7 +184,7 @@ describe('live-acceptance Test Lab cards', () => {
       const png = file instanceof Blob && Buffer.from(await file.arrayBuffer()).subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
       seen.push({ route, cookie: new Headers(init.headers).get('cookie'), parts: form ? [...form.keys()] : [], png });
       if (route === 'GET /api/create/permissions') return reply(200, { permissions: { view: true, read: true, create: true, change: true, delete: true, export: true, generate: true } });
-      if (route === 'GET /api/create/region-edit-provider') return reply(200, { configured: true, provider: 'fixture-image', costClass, dailyCap: 25 });
+      if (route === 'GET /api/create/region-edit-provider') return reply(200, { configured: true, provider: 'fixture-image', costClass, dailyCap: 25, costConsentVersion: 1 });
       return reply(400, { error: 'invalid_project_upload' });
     }) as typeof fetch;
     const runtime = { ownerSub: 'fixture|lab-owner', issuer: 'https://issuer.example', apiBaseUrl: 'http://127.0.0.1:5000',

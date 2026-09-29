@@ -277,7 +277,7 @@ characters of the worker's stdout.
 
 ### Automated live acceptance sweep
 
-`node scripts/operations/live-acceptance.js <case|all|list> [--record-doc]` runs the automated live
+`node scripts/operations/live-acceptance.js <case|all|list> [--record-doc] [--allow-paid]` runs the automated live
 acceptance cases for merged work that was never proven on an installed box. It runs as the operator
 automation identity (`OSHAL_VERIFY_OPERATOR_PAT`, read by name from the environment or the box's
 `.env`, never printed and never put on a command line), against `OSHAL_VERIFY_BASE_URL` (default
@@ -293,6 +293,7 @@ and removed; a cleanup miss turns the case red.
 
 | Key | Card | What it proves on the installed build |
 |---|---|---|
+| `create-region-edit` | `live-acceptance-create-region-edit` | One API-driven cycle on a tagged project with an image and an editable text layer. Upload a generated 512 x 384 PNG as the single `image` multipart part and read its decoded pixels back unchanged; request a 192 x 192 unfeathered box edit against revision 1; require at least one changed inside pixel and byte-identical RGBA outside the box. The accept response must be revision 2 with only the image replaced and the text layer unchanged; the current project must read back at revision 2 with the same document as the accept response, and revision 1 must still match the saved document. Delete only the tagged project and require both project and edit reads to return 404. Uploaded images are deliberately retained for Create's later cleanup. A provider reported paid at preflight requires the host command's explicit `--allow-paid`; the Lab card reports a gap instead. See the limitations and outstanding verification below. |
 | `response-renderer` | `live-acceptance-response-renderer` | The `shared-response-renderer` card passes all three steps, Mermaid is served same-origin from `/dist/vendor/mermaid` (exact `VERSION`, JavaScript entry, no redirect), and the Little Monsters `tutor-shared-renderer` package case runs through the durable run route and executes tests (a run that declines is not a pass). After an api start the catalog lists browser cases as not runnable with "The playwright runner is unavailable." until the api's lazy runner probe finishes, and the listing that begins the probe still answers that. While that is the Tutor case's reason the case re-reads the catalog every 3 s, for up to 165 s (the probe's own timeout is 150 s), and runs what the last read lists. Any other reason, or that reason still present when the wait ends, is `DEGRADED` with the reason. |
 | `congress` | `live-acceptance-congress` | The `congress-disclosures` readback passes, `GET /api/trading/reports/congress` lists rows that each carry a ReportDate day and `observedAt`, and the watchlist Add step adds a synthetic `ZZT-XXXXX` ticker (symbol only, as the Add button posts it) and deletes it. |
 | `dev-workspace` | `live-acceptance-dev-workspace` | In dev mode, four Jarvis package-tool asks in one tagged Jarvis conversation (which the proposals must belong to) each return a cited `doc_id` of their path family: ADR-077 by number (`docs/adr/077-*`), a `docs/BACKLOG.md` entry title, a runbook (`docs/runbooks/*.md`, not the README) and tonight's handover (`local-notes/*`, from the index's `--notes-dir`). A family result without a `doc_id` fails. With dev mode off all four are refused with no citation; an unauthenticated `GET /api/dev-workspace-index/query?q=ADR-077` answers 401 or 403; dev mode is left as found. The backlog and runbook words have tracked defaults (`OSHAL_VERIFY_DEV_BACKLOG_PROBE` / `OSHAL_VERIFY_DEV_RUNBOOK_PROBE` override them); the handover words have none. They come only from `OSHAL_VERIFY_DEV_NOTES_PROBE` in the host runner's environment: `OSHAL_VERIFY_DEV_NOTES_PROBE="<its words>" node scripts/operations/live-acceptance.js dev-workspace`. Unavailable, never pass, when those words are missing (the gap names that command) or the index holds no `local-notes` documents (the `--notes-dir` build step is named). Compose forwards no `OSHAL_VERIFY_*` variable to the api, so the Lab card has no source for the handover words. It reads the gate and the index sources, puts dev mode back, and reports the handover ask as a host-runner gap before any model turn. It never passes. A closed gate (package, `OSHAL_DEV_WORKSPACE_INDEX_ENABLED`, `OSHAL_DEV_CONSOLE_ENABLED`, `OSHAL_SUPERADMIN_SUBS`, index not built) is reported by name; those need an api restart, so the case never opens them. Spends one model turn (host runner). |
@@ -313,6 +314,81 @@ on the host. The dev-workspace card reports its handover ask as a gap there too.
 cases an empty runner environment instead of the api's. On the host, the owner-scoped statements, ticket reads and ask-workspace removal run
 through `scripts/lib/live-acceptance-container.js`, staged once into the api container per run.
 Suites: `npm run test:live-acceptance`.
+
+#### Create region-edit: prerequisites, consent and evidence
+
+Run `node scripts/operations/live-acceptance.js create-region-edit` only against an operator-approved
+installed target. It needs Create's region-edit routes with `costConsentVersion: 1` in the provider
+report (region editing first appeared in 1.9.0), a configured image provider,
+and the caller's `project.view`, `read`, `create`, `change`, `delete` and `generate` permissions.
+Permission and provider reports are read before any fixture write. Missing installation, grants or
+provider configuration or the exact consent-contract version are unavailable, not a pass; upload quota, an existing in-flight edit and the
+daily edit limit are also named gaps. This case does not start or install any service.
+
+If preflight reports a paid provider, the explicit host command is
+`node scripts/operations/live-acceptance.js create-region-edit --allow-paid`. It can make one real
+image-generation request and incur a charge, including on a failed or cancelled run. The Lab never
+sets `allowPaid`. Every generation body carries `maxCostClass`: `paid` only when both the explicit
+flag and a paid preflight are present, otherwise `free` (even with the flag on a free preflight).
+The server captures this cap per job and checks the actual provider after queueing, immediately
+before generation, refusing an unknown class or paid provider under a free cap with
+`region_edit_cost_cap_exceeded` and zero generation calls. There must be no unchecked fallback.
+This is a cost-class cap, not a dollar cap or a specific-provider pin. Legacy callers may omit the
+optional server field; this driver never does. Servers without the exact advertised contract are
+refused before uploads or project writes; another client-side preflight is not a substitute.
+
+Possible admission is tracked before the generation POST is sent. A rejected connection or a 202
+without a usable edit ID retains the tagged project with a red cleanup receipt; it is not retried
+or treated as proof that no generation started. Only explicit in-flight/daily-limit refusal replies
+establish non-admission. Otherwise deletion requires a matching terminal record with a candidate ID
+when applicable and well-shaped reported spend metadata (a nonnegative finite amount or the
+contract's explicit null, never an inferred zero). This check applies to ordinary ready replies as
+well as cancellation. A malformed candidate does not discard valid spend evidence, nor malformed
+spend a known candidate ID. If cancellation loses to completion, its terminal record is read before
+deletion; a successful cancellation must itself affirm the matching cancelled record. Unresolved
+outcomes retain the project and any known edit as outstanding, with a red receipt. Create has no per-asset delete route: its source and candidate
+uploads remain eligible for owner-scoped cleanup after 24 hours; a late candidate can remain too.
+The case never invokes owner-wide asset cleanup or removes accounting records. Provider, model and
+cost in its evidence come from the edit response, not an independent read of the canonical ledger.
+Acceptance compares original layer order and every document property outside images/layers, not
+just layer IDs. The PNG reader explicitly refuses `tRNS` transparency rather than inventing opaque
+alpha. This is one API cycle proving mask/document preservation, not browser acceptance, two-cycle
+manual-edit/undo coverage, another owner's isolation, or instruction fidelity.
+
+Earlier verification (2026-09-29, before independent-review corrections): the focused region case
+(19), host runner (20) and Lab registration (7) guards passed serially with one worker, including real loopback HTTP/multer transport guards.
+Removing the persisted-document comparison caused three expected failures; removing early
+cancellation tracking caused four. Both fixes were restored and the region guard passed again.
+After the independent-review corrections, the region suite passed **37/37** and the final Lab
+registration suite **7/7**, each alone with 128 MiB runner / 384 MiB worker heap caps. A combined
+targeted mutation produced 16 expected failures (2 transparency, 5 unsupported consent versions,
+1 wrong class cap, 3 cancellation-race/provenance, 5 layer-order/document changes); restoring every
+safeguard returned the region suite to 37/37. The server cost-cap companion is handled separately;
+its compiled-route receipts below are separate from this driver's doubled-body guards.
+
+Current frozen revision (2026-09-29): the coordinating parent reports **73/73 tests across 3 files**
+passed for the region case, host runner and Lab registration, exit 0 in 35.32 s. The run started
+at 12:51:21 America/Chicago with 2084 MiB free at preflight, using one fork worker capped at
+384 MiB and a 128 MiB runner. No provider execution occurred. This run includes the latest
+admission-uncertainty/ordinary-terminal cleanup regressions. Independent source review approved
+the exact frozen implementation and tests with unchanged hashes. Subsequent minimal cleanup
+mutations caused exactly 2 expected failures when pre-POST admission tracking was removed and
+6 when ordinary terminal accounting was marked complete before validation. Each mutation was
+restored to the approved source hash. The nine new cleanup guards passed before and after those
+mutations; the full three-file focused set then passed **73/73** again in 24.04 s, exit 0, with
+no failures or skips, using the same 128 MiB runner / one 384 MiB fork limits. No test was edited.
+The parent also reports both full core typechecks passed: `tsconfig.json` and
+`tsconfig.server.json`, with outer exit 0 via file-redirected stdin. The locked compiler ran in a
+3 GiB container with `--noEmit --preserveSymlinks`, against the exact HEAD source archive plus
+the sole dirty TypeScript overlay for Lab scenarios. Implementation and tests remain unchanged.
+The parent reports actual compiled Create companions passed sequentially: API **7/7** (1.30 s),
+real PostgreSQL **22/22** (9.25 s), and real browser **6/6** (22.61 s), zero failures/skips. These
+use a synthetic provider, not an installed image provider. Each PostgreSQL fixture reported
+`cleanupVerified: true`; separate final fixture-inventory verification remains with the parent.
+Commit/push hooks are separate gates; these receipts do not imply they have run.
+No installed run or canonical accounting proof is claimed. See the
+[Create region-edit boundary audit](governance/real-boundary-regression-audit.md#create-region-edit-live-acceptance-2026-09-29)
+for the fixture boundaries and remaining evidence.
 
 ### Messaging channels
 

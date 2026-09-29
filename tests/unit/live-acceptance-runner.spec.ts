@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The `raw` port sends exact bytes under the one content type it was given, with the token, the way the files browser uploads.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | The `second` port. OSHAL_VERIFY_SECOND_PAT is read by name from the environment or a real .env file on disk (quoted, CRLF), the same read as the operator token, and a name that is not a plain variable name is refused. bindPorts binds `second` only when that token is present: its requests carry the second token and never the operator's, the operator's ports keep the operator's, it carries the subject its own whoami resolved, and a second token that resolves to nobody still binds (the case reports the refusal). Without the token there is no port and no extra request. The runner's own entry, given a .env with both tokens, resolves both callers before the case runs and prints neither token nor either subject. Fetch is a recording double; the real companion is the host run with both tokens on the box.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | For the create-region-edit case: `--allow-paid` parses into the `allowPaid` option every selected case receives, false unless typed; every reply carries its raw body as `bytes` (a binary body with bytes that are not valid UTF-8 comes back exact); the multipart port names its file part `file.field` when given (`image`, which Create's upload route reads) and `file` otherwise.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Run the shipping HTTP ports against a real loopback Express/multer server: exact PNG bytes and digest, the single image part Create accepts, a refused default part there, legacy file-part compatibility, bearer isolation and anonymous reads.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
@@ -17,6 +18,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { assertImageHttpPorts } from '../fixtures/live-acceptance-http';
 
 const requireCjs = createRequire(import.meta.url);
 const common = requireCjs('../../scripts/lib/live-acceptance-common.js');
@@ -170,6 +172,10 @@ describe('the closed statement set and the in-container helper', () => {
 });
 
 describe('the host runner', () => {
+  it('carries binary bodies and multipart image fields over real HTTP with the operator credential', async () => {
+    await assertImageHttpPorts(base => runner.httpPorts(base, TOKEN), { authorization: `Bearer ${TOKEN}` });
+  });
+
   it('sends the token only as the Authorization header of its own requests', async () => {
     const seen: Array<{ url: string; init: RequestInit }> = [];
     const fetchImpl = async (url: string, init: RequestInit) => { seen.push({ url, init }); return new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } }); };

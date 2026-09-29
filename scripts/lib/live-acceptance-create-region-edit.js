@@ -4,6 +4,10 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - live acceptance for "Create visual workspace and integrated editing": one selected-region edit of the installed Create package (1.9.0 or later) through its own routes, as the caller. Before any write it reads GET /api/create/permissions and GET /api/create/region-edit-provider. Each of these is a named gap, never a pass, and nothing is written: a package that is absent or older than 1.9.0, a caller without one of the six project actions the case performs, a provider that did not resolve or is not available, and a PAID provider without the host runner's --allow-paid (a paid edit is a real charge, so it needs the operator's consent). Then it uploads one generated 512 x 384 image, reads it back and requires the stored pixels to be the generated ones, saves a project titled with the run's tag holding that image layer and one text layer, asks for one box region to be regenerated, waits for the candidate, decodes it and requires EVERY pixel outside the box to equal the source byte for byte and at least one inside it to differ, accepts it on revision 1 and requires revision 2 to show the candidate on the image layer with the text layer and revision 1 unchanged. Cleanup cancels an edit still generating, deletes exactly the tagged project and reads the project and the edit back as gone. The two images stay: Create removes an upload only through its owner-wide cleanup route once it is 24 hours old, and that route would also remove uploads the case did not make, so the receipt lists them as kept with that reason, as it lists the cost rows of a paid edit.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Compare the independently read revision-2 document with the accepted response, and treat every admitted edit ID as possibly in flight before validating its metadata so cleanup cancels malformed admissions too. Label reported spend as unverified accounting evidence.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Preserve layer order and every original document property outside images/layers at acceptance. If cancellation loses to completion, read and account for the candidate and reported spend before deletion; retain the project and a red cleanup receipt when that read cannot establish the outcome.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Require costConsentVersion 1 before any fixture write and always send maxCostClass. Only explicit paid opt-in plus a paid preflight permits a paid cap; the server enforces the captured cap against the provider resolved after queueing. This caps a cost class, not a dollar amount.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Mark possible admission before sending, and retain the project when the reply loses its ID or outcome. Require matching terminal status, candidate provenance and well-shaped reported spend before clearing the deletion guard, on ordinary polls as well as cancellation. Unknown or malformed outcomes stay red and recoverable.
  */
 
 'use strict';
@@ -31,7 +35,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /** Why an uploaded image stays after the run (create-project-store.ts cleanupAssets: unreferenced and older than 24 hours, for the whole account). */
 const ASSET_KEPT = 'an unattached upload; Create removes one only through its owner-wide POST /api/create/project-assets/cleanup, once it is 24 hours old';
 const LATE_KEPT = 'cancelled while the provider was working; Create stores an answer that arrives after a cancel as an unattached upload';
-const COST_KEPT = 'oshal_cost_events and chat_tasks record the real spend of this edit';
+const COST_KEPT = 'reported spend; accounting records are not removed or independently verified';
 
 /** @param {string} id - A project. @returns {string} Its route. */
 const projectPath = (id) => `${BASE}/projects/${id}`;
@@ -121,11 +125,14 @@ async function probePermissions(ports) {
 
 /**
  * @description The gap a provider report names, or null when the case may generate.
- * @param {{provider: string, costClass: string, configured: boolean, reason?: string}} report - The 200 body.
+ * @param {{provider: string, costClass: string, configured: boolean, costConsentVersion?: number, reason?: string}} report - The 200 body.
  * @param {boolean} allowPaid - Whether the runner carried the operator's consent to a paid edit.
  * @returns {string|null} The gap.
  */
 function providerGap(report, allowPaid) {
+  if (report.costConsentVersion !== 1) {
+    return 'Create does not advertise costConsentVersion 1; server-enforced region-edit cost consent is required before this case writes fixtures.';
+  }
   if (report.configured !== true) {
     return `The image provider ${report.provider} is not available for region editing (${report.reason || 'configured false'}).`;
   }
@@ -150,7 +157,7 @@ async function probeProvider(ports, allowPaid) {
   if (res.status === 503) return { state: 'unavailable', detail: `Create could not name an image provider for region editing (${route} answered ${answered(res)}).` };
   if (res.status !== 200) return { state: 'fail', detail: `${route} answered ${answered(res)}, not 200.` };
   const report = res.json;
-  const provider = { id: report.provider, costClass: report.costClass, configured: report.configured, dailyCap: report.dailyCap };
+  const provider = { id: report.provider, costClass: report.costClass, configured: report.configured, dailyCap: report.dailyCap, costConsentVersion: report.costConsentVersion };
   if (typeof report.provider !== 'string' || !report.provider || typeof report.configured !== 'boolean' || !COST_CLASSES.includes(report.costClass)) {
     return { state: 'fail', detail: `${route} answered 200 without a provider, a configured flag and a cost class of free or paid.`, provider };
   }
@@ -233,21 +240,25 @@ async function saveProject(ports, fixture, ledger) {
 /**
  * @description Ask for the region to be regenerated from revision 1.
  * @param {object} ports - api.
- * @param {object} fixture - projectId, sourceAsset; gains editId.
+ * @param {object} fixture - projectId, sourceAsset, maxCostClass; marks possible admission before sending and captures any valid edit ID.
  * @param {common.CleanupLedger} ledger - The run's ledger.
  * @returns {Promise<{state: 'ok'|'unavailable'|'fail', detail?: string}>} Whether the request was admitted.
  */
 async function requestEdit(ports, fixture, ledger) {
-  const res = await ports.api('POST', `${projectPath(fixture.projectId)}/region-edits`, { sourceRevision: 1, selection: selection(), instruction: INSTRUCTION });
+  fixture.possiblyAdmitted = true;
+  const res = await ports.api('POST', `${projectPath(fixture.projectId)}/region-edits`, { sourceRevision: 1, selection: selection(), instruction: INSTRUCTION, maxCostClass: fixture.maxCostClass });
   const edit = res.json.edit || null;
   if (res.status === 409 && res.json.error === 'region_edit_in_progress') {
+    fixture.possiblyAdmitted = false;
     return { state: 'unavailable', detail: 'The caller already has a region edit in flight, and Create admits one per person (409 region_edit_in_progress).' };
   }
   if (res.status === 429 && res.json.error === 'region_edit_daily_limit') {
+    fixture.possiblyAdmitted = false;
     return { state: 'unavailable', detail: 'The caller has used the region edits Create allows per 24 hours (429 region_edit_daily_limit).' };
   }
   if (res.status !== 202 || !edit || !UUID_RE.test(String(edit.id))) return { state: 'fail', detail: `The region edit request answered ${answered(res)}, not 202 with an edit.` };
   fixture.editId = edit.id;
+  fixture.generating = true;
   ledger.created('create-region-edit', edit.id);
   const asked = edit.status === 'generating' && edit.sourceRevision === 1 && edit.layerId === 'photo' && edit.sourceAssetId === fixture.sourceAsset.id;
   return asked ? { state: 'ok' } : { state: 'fail', detail: 'The admitted region edit does not name revision 1, the image layer and the uploaded image, or is not generating.' };
@@ -256,7 +267,7 @@ async function requestEdit(ports, fixture, ledger) {
 /**
  * @description Wait for the edit to leave `generating`, within the budget.
  * @param {object} io - api, sleep, now.
- * @param {object} fixture - projectId, editId; gains generating (true while the edit may still be in flight).
+ * @param {object} fixture - projectId, editId; remains unaccounted until its terminal reply has been validated.
  * @param {{editBudgetMs: number, pollMs: number}} budgets - The wait.
  * @returns {Promise<{edit?: object, elapsedMs: number, problem?: string}>} The settled edit, or why not.
  */
@@ -270,7 +281,6 @@ async function awaitEdit(io, fixture, budgets) {
   const { res, edit } = polled.value;
   if (!polled.done) return { elapsedMs: polled.elapsedMs, problem: `the region edit was still generating after ${Math.round(polled.elapsedMs / 1000)} s` };
   if (!edit) return { elapsedMs: polled.elapsedMs, problem: `reading the region edit answered ${answered(res)}, not 200 with an edit` };
-  fixture.generating = false;
   if (edit.status !== 'ready') return { edit, elapsedMs: polled.elapsedMs, problem: `the region edit ended ${edit.status}${edit.error ? ` (${edit.error})` : ''}, not ready` };
   return { edit, elapsedMs: polled.elapsedMs };
 }
@@ -312,8 +322,8 @@ function comparePixels(source, result, region) {
 async function judgeCandidate(ports, fixture, edit, ledger) {
   const asset = edit.resultAsset || null;
   if (!asset || !UUID_RE.test(String(asset.id))) return { problems: ['the ready region edit names no candidate image'] };
+  if (!fixture.resultAsset || fixture.resultAsset.id !== asset.id) ledger.created('create-asset', asset.id);
   fixture.resultAsset = asset;
-  ledger.created('create-asset', asset.id);
   if (asset.id === fixture.sourceAsset.id) return { problems: ['the candidate is the uploaded image itself'] };
   const candidate = await readImage(ports, asset.id, 'the candidate image');
   if (candidate.problem) return { problems: [candidate.problem] };
@@ -331,7 +341,7 @@ async function judgeCandidate(ports, fixture, edit, ledger) {
 
 /**
  * @description What revision 2 must show: the candidate on the image layer and nothing else moved.
- * @param {object} fixture - resultAsset, titleLayer, photoLayer.
+ * @param {object} fixture - resultAsset, titleLayer, photoLayer and the original document.
  * @param {object} document - The accepted revision's document.
  * @returns {string[]} Problems.
  */
@@ -345,11 +355,13 @@ function acceptedDocumentProblems(fixture, document) {
   if (!photo || !sameJson({ ...photo, assetId: null }, { ...fixture.photoLayer, assetId: null })) problems.push('the image layer of revision 2 changed in more than its image');
   if (!title || !sameJson(title, fixture.titleLayer)) problems.push('the text layer did not survive the accept unchanged');
   if (layers.length !== 2) problems.push(`revision 2 holds ${layers.length} layers, not 2`);
+  if (!sameJson(layers.map((layer) => layer.id), fixture.document.layers.map((layer) => layer.id))) problems.push('revision 2 changed the layer order');
+  if (!sameJson({ ...document, layers: null, images: null }, { ...fixture.document, layers: null, images: null })) problems.push('revision 2 changed the original canvas or document properties');
   return problems;
 }
 
 /**
- * @description Accept the candidate on revision 1, then read the edit, the project and revision 1 back.
+ * @description Accept the candidate on revision 1, then read the edit, the persisted document and revision 1 back.
  * @param {object} ports - api.
  * @param {object} fixture - projectId, editId, document, resultAsset, titleLayer, photoLayer.
  * @returns {Promise<string[]>} Problems (empty when the project is at revision 2 with revision 1 kept).
@@ -366,6 +378,7 @@ async function acceptEdit(ports, fixture) {
   const accepted = edit.status === 200 && edit.json.edit && edit.json.edit.status === 'accepted' && edit.json.edit.acceptedRevision === 2;
   if (!accepted) problems.push('the region edit does not read back as accepted into revision 2');
   if (current.status !== 200 || !current.json.project || current.json.project.revision !== 2) problems.push('the project does not read back at revision 2');
+  else if (!sameJson(current.json.project.document, project.document)) problems.push('the persisted revision-2 document differs from the accept response');
   const kept = first.status === 200 && first.json.project && sameJson(first.json.project.document, fixture.document);
   if (!kept) problems.push('revision 1 does not read back as it was saved');
   return problems;
@@ -399,6 +412,12 @@ async function exercise(io, fixture, ledger, budgets) {
   const admitted = await requestEdit(io, fixture, ledger);
   if (admitted.state !== 'ok') return { verdict: { state: admitted.state, detail: admitted.detail }, evidence: {} };
   const settled = await awaitEdit(io, fixture, budgets);
+  if (settled.edit) {
+    const problem = accountEditRecord(fixture, ledger, settled.edit);
+    if (problem) return fail([problem], { elapsedMs: settled.elapsedMs });
+    fixture.accounted = true;
+    fixture.generating = false;
+  }
   const evidence = { elapsedMs: settled.elapsedMs, ...(settled.edit ? spendOf(settled.edit, ledger) : {}) };
   if (settled.problem) return fail([settled.problem], evidence);
   const judged = await judgeCandidate(io, fixture, settled.edit, ledger);
@@ -412,20 +431,75 @@ async function exercise(io, fixture, ledger, budgets) {
 }
 
 /**
- * @description Stop an edit that may still be generating, so the provider's answer is discarded.
- * @param {object} ports - api.
- * @param {object} fixture - projectId, editId, generating.
+ * @description Validate a matching terminal record and retain every known candidate/cost before permitting deletion.
+ * @param {object} fixture - projectId, editId, sourceAsset; may gain resultAsset.
  * @param {common.CleanupLedger} ledger - The run's ledger.
- * @returns {Promise<void>} Resolves when recorded.
+ * @param {object} edit - An ordinary poll or cancellation reply; not trusted until validated.
+ * @returns {string|null} A provenance/accounting error, or null when the terminal record was accounted for.
+ */
+function accountEditRecord(fixture, ledger, edit) {
+  if (!edit || edit.id !== fixture.editId || edit.projectId !== fixture.projectId) return 'the terminal reply does not identify the matching edit; project retained';
+  if (!['ready', 'accepted', 'rejected', 'cancelled', 'failed'].includes(edit.status)) return 'the edit has no affirmative terminal status; project retained';
+  const problems = [];
+  const asset = edit.resultAsset;
+  const candidateExpected = ['ready', 'accepted', 'rejected'].includes(edit.status);
+  const validAsset = asset && UUID_RE.test(String(asset.id)) && asset.id !== fixture.sourceAsset.id;
+  if ((candidateExpected && !validAsset) || (asset !== null && !validAsset)) problems.push('the settled edit has no valid candidate asset to account for');
+  if (validAsset) {
+    if (!fixture.resultAsset || fixture.resultAsset.id !== asset.id) ledger.created('create-asset', asset.id);
+    fixture.resultAsset = asset;
+  }
+  const validCost = edit.costUsd === null || (typeof edit.costUsd === 'number' && Number.isFinite(edit.costUsd) && edit.costUsd >= 0);
+  const named = typeof edit.provider === 'string' && edit.provider.trim() && typeof edit.model === 'string' && edit.model.trim();
+  if (!validCost || ((candidateExpected || edit.costUsd > 0) && !named)) problems.push('the settled edit has malformed reported spend metadata');
+  else spendOf(edit, ledger);
+  return problems.length ? `${problems.join('; ')}; project retained` : null;
+}
+
+/**
+ * @description Read and account for the terminal edit after cancellation lost the race.
+ * @param {object} ports - api.
+ * @param {object} fixture - The run's project/edit IDs and assets.
+ * @param {common.CleanupLedger} ledger - The run's ledger.
+ * @returns {Promise<string|null>} A cleanup error or affirmative accounting evidence.
+ */
+async function accountSettledEdit(ports, fixture, ledger) {
+  const res = await ports.api('GET', editPath(fixture));
+  if (res.status !== 200) return `reading the edit after cancellation lost the race answered ${answered(res)}; project retained`;
+  return accountEditRecord(fixture, ledger, res.json.edit);
+}
+
+/**
+ * @description Stop an edit that may still be generating, or account for the candidate that won the race.
+ * @param {object} ports - api.
+ * @param {object} fixture - projectId, editId, possiblyAdmitted, accounted and known assets.
+ * @param {common.CleanupLedger} ledger - The run's ledger.
+ * @returns {Promise<boolean>} Whether it is safe to delete the project's candidate provenance.
  */
 async function cancelEdit(ports, fixture, ledger) {
-  if (!fixture.editId || !fixture.generating) return;
+  if (!fixture.possiblyAdmitted || fixture.accounted) return true;
+  if (!fixture.editId) {
+    ledger.error('the region-edit admission outcome is unknown (no usable edit ID); project retained');
+    return false;
+  }
+  let accounted = false;
   await ledger.attempt(`region edit ${fixture.editId} cancel`, async () => {
     const res = await ports.api('POST', `${editPath(fixture)}/cancel`, {});
-    if (res.status === 200) ledger.kept('create-late-candidate', fixture.editId, LATE_KEPT);
-    const settled = res.status === 409 && res.json.error === 'region_edit_not_cancellable';
-    return res.status === 200 || settled ? null : `cancelling region edit ${fixture.editId} answered ${answered(res)}`;
+    if (res.status === 200) {
+      if (!res.json.edit || res.json.edit.status !== 'cancelled') return 'cancellation did not affirm that the edit is cancelled; project retained';
+      const problem = accountEditRecord(fixture, ledger, res.json.edit);
+      if (problem) return problem;
+      ledger.kept('create-late-candidate', fixture.editId, LATE_KEPT);
+    } else if (res.status === 409 && res.json.error === 'region_edit_not_cancellable') {
+      const problem = await accountSettledEdit(ports, fixture, ledger);
+      if (problem) return problem;
+    } else return `cancelling region edit ${fixture.editId} answered ${answered(res)}; project retained`;
+    fixture.generating = false;
+    fixture.accounted = true;
+    accounted = true;
+    return null;
   });
+  return accounted;
 }
 
 /**
@@ -463,9 +537,11 @@ async function removeProject(ports, fixture, ledger) {
  * @returns {Promise<void>} Resolves when recorded.
  */
 async function cleanUp(ports, fixture, ledger) {
-  await cancelEdit(ports, fixture, ledger);
-  if (fixture.projectId) await removeProject(ports, fixture, ledger);
-  for (const asset of [fixture.sourceAsset, fixture.resultAsset]) if (asset) ledger.kept('create-asset', asset.id, ASSET_KEPT);
+  const accounted = await cancelEdit(ports, fixture, ledger);
+  if (fixture.projectId && accounted) await removeProject(ports, fixture, ledger);
+  const projectRetained = ledger.outstanding().some((entry) => entry.kind === 'create-project' && entry.id === fixture.projectId);
+  const why = projectRetained ? 'an upload retained with an undeleted fixture project; resolve the red cleanup receipt before any asset cleanup' : ASSET_KEPT;
+  for (const asset of [fixture.sourceAsset, fixture.resultAsset]) if (asset) ledger.kept('create-asset', asset.id, why);
 }
 
 /**
@@ -494,7 +570,9 @@ async function run(ports, options = {}) {
   if (ready.state === 'fail') return common.finish(CASE_ID, { state: 'fail', detail: `${ready.detail} Nothing was written.` }, new common.CleanupLedger(), provider);
   const io = common.withClock(ports);
   const ledger = new common.CleanupLedger();
-  const fixture = { tag: common.mintTag(KEY), pixels: sourcePixels(), sourceAsset: null, resultAsset: null, projectId: null, editId: null, generating: false };
+  const fixture = { tag: common.mintTag(KEY), pixels: sourcePixels(), sourceAsset: null, resultAsset: null, projectId: null, editId: null, generating: false,
+    possiblyAdmitted: false, accounted: false,
+    maxCostClass: options.allowPaid === true && ready.provider.costClass === 'paid' ? 'paid' : 'free' };
   let outcome;
   try {
     outcome = await exercise(io, fixture, ledger, common.budgetsFrom(DEFAULT_BUDGETS, options));
