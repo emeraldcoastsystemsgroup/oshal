@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Source-level lock-ins for gemini-cli harness wiring (ADR-033 Updates section)
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The two ratchet reds in this file asserted states the product retired on purpose. (a) The gemini auth anchor's mount mode became env-driven, ${GEMINI_AUTH_MOUNT_MODE:-ro}, so server installs can write a refreshed token (scripts/oshal-install.sh seq 4, G4; same rationale as the claude mount); the case now pins that mode and that its DEFAULT is still read-only, instead of a literal ':ro'. (b) research-bot is no longer registered against gemini-cli: the operator's 2026-08-12 fleet-default directive moved every LLM-harness bot to codex-cli (swarm-bot-registry-local.ts seq 15). That case described a registration that no longer exists, so it is retired with this reason; the adapter, factory, runtime defaults, Dockerfile and compose wiring the rest of the file pins are unchanged.
  */
 
 import { test, expect } from '@playwright/test';
@@ -66,7 +67,8 @@ test.describe('gemini-cli harness wiring', () => {
 
   test('docker-compose declares a gemini auth volume anchor', async () => {
     const src = read('docker-compose.oshal-local.yml');
-    expect(src).toMatch(/x-gemini-auth-volume:.*GEMINI_CONFIG_HOST_PATH.*~\/\.gemini.*\/root\/\.gemini:ro/s);
+    // Read-only unless a server install opts in to rw (so a CLI there can refresh its token).
+    expect(src).toMatch(/x-gemini-auth-volume:.*GEMINI_CONFIG_HOST_PATH.*~\/\.gemini.*\/root\/\.gemini:\$\{GEMINI_AUTH_MOUNT_MODE:-ro\}/);
     // Mounted on at least 10 services (every bot container that already had claude-auth).
     const mounts = (src.match(/\*gemini-auth-volume/g) ?? []).length;
     expect(mounts).toBeGreaterThanOrEqual(10);
@@ -77,14 +79,9 @@ test.describe('gemini-cli harness wiring', () => {
     expect(src).toMatch(/GEMINI_API_KEY:\s*\$\{GEMINI_API_KEY:-\$\{GOOGLE_API_KEY:-\}\}/);
   });
 
-  test('research-bot is registered against the gemini-cli harness', async () => {
-    const src = read('src/app/extensions/swarm/swarm-bot-registry-local.ts');
-    // The block for research-bot must declare gemini-cli + google-gemini.
-    const block = src.match(/name:\s*'research-bot',[\s\S]{0,400}/);
-    expect(block, 'research-bot block found').toBeTruthy();
-    expect(block![0]).toMatch(/harnessType:\s*'gemini-cli'/);
-    expect(block![0]).toMatch(/apiType:\s*'google-gemini'/);
-  });
+  // RETIRED: 'research-bot is registered against the gemini-cli harness'. The operator's
+  // 2026-08-12 fleet-default directive moved every LLM-harness bot, research-bot included, to
+  // codex-cli (swarm-bot-registry-local.ts change log seq 15); no bot registers gemini-cli now.
 
   test('BaseCliHarnessAdapter exists and is the shared subprocess base', async () => {
     const src = read('src/features/llm-provider/services/base-cli-harness-adapter.ts');

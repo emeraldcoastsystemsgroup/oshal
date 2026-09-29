@@ -1,0 +1,560 @@
+{
+  "$comment": "Every Playwright spec the default config discovers is either in tests/e2e-green-suite.txt or has exactly one row here (guard: tests/unit/e2e-dispositions.spec.ts). unsupported-in-ci rows are excluded from the default config through testIgnore (playwright.config.ts reads this file); set OSHAL_E2E_INCLUDE_UNSUPPORTED=true to run one deliberately with the harness its runWith names. skippedTests records single tests inside green-listed specs that skip under the CI e2e env by design (guard: tests/unit/real-boundary-doctrine.spec.ts).",
+  "classes": {
+    "unsupported-in-ci": "Cannot run in the CI e2e job by design: it needs a signed-in hosted browser, an external identity provider, a real model, a docker stack, or it is not a Playwright spec. runWith says where it can run.",
+    "product-defect": "Fails because the product is wrong. backlog names the docs/BACKLOG.md heading that owns the fix.",
+    "fixture-defect": "Fails because the spec, its fixture, identity or origin setup is wrong; the spec is what needs fixing.",
+    "awaiting-classification": "Outside the green ratchet and not yet run under the zero-retry CI mirror; that run replaces this row with its real class."
+  },
+  "specs": [
+    {
+      "file": "tests/a2a-gateway-e2e.spec.ts",
+      "class": "unsupported-in-ci",
+      "reason": "The A2A gateway is default-OFF; the spec needs the isolated server booted with A2A_GATEWAY_ENABLED=true plus a reachable DATABASE_URL, and skips without them. The CI e2e env does not enable the gateway.",
+      "runWith": "OSHAL_E2E_INCLUDE_UNSUPPORTED=true A2A_GATEWAY_ENABLED=true DATABASE_URL=<disposable Postgres> npx playwright test tests/a2a-gateway-e2e.spec.ts"
+    },
+    {
+      "file": "tests/agent-routing-and-selection.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/api-config-ui.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/api-json-404.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/app-surface-validation.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/apply-runs-ledger-live.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/authentication.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Its Auth-Enabled Server block spawned the no-longer-existing src/api/server.js on localhost:3457 and asserted the superseded ADR-003 API-key contract; that block is retired (see the spec). The remaining middleware, default-server and /ui.html cases have not been run under the zero-retry CI mirror yet."
+    },
+    {
+      "file": "tests/authorization-issuer-tier-live.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/chat-config-modal-module-graph.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/chat-operational-flow.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/chat-real-llm-response.spec.ts",
+      "class": "unsupported-in-ci",
+      "reason": "Asserts a real model completion (not the stub mirror) through the configured provider and its credentials. The CI e2e env forces FORCE_LLM_PROVIDER=noop with OSHAL_NO_AI=true and holds no provider credentials, so the premise cannot hold there.",
+      "runWith": "OSHAL_E2E_INCLUDE_UNSUPPORTED=true FORCE_LLM_PROVIDER=<a configured hosted provider> npx playwright test tests/chat-real-llm-response.spec.ts, on a box with that provider authorized"
+    },
+    {
+      "file": "tests/chat-routing.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/chat-tools-config-modal.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/chat-ui-provider-e2e.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/chat-ui.spec.ts",
+      "class": "unsupported-in-ci",
+      "reason": "Its flows start from the Keycloak login (performLogin waits for the localhost:8080 openid-connect page and signs in as dev-admin) or assert the Keycloak redirect. The CI e2e env runs MOCK_OIDC with no identity provider.",
+      "runWith": "OSHAL_E2E_INCLUDE_UNSUPPORTED=true MOCK_OIDC=false npx playwright test tests/chat-ui.spec.ts, with a Keycloak on localhost:8080 carrying the oshal realm"
+    },
+    {
+      "file": "tests/chat-workspace-popups.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/claude-code-auth-ui.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/cockpit-bot-interaction.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/cockpit-button-audit.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/cockpit-embedded-bot-switch.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/cockpit-embedded-history.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/cockpit-first-run-banner.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/cockpit-header-audit.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/cockpit-layout.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/cockpit-mobile-375-scroll.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/cockpit-mobile-drawer.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/cockpit-modals-interactions.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/cockpit-profile-stickiness.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/cockpit-ticket-type-filter.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/cockpit-ui.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/cockpit-views.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/cockpit-zen-mode.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/debug-ops-view.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/dynamic-agent-live-e2e.spec.ts",
+      "class": "unsupported-in-ci",
+      "reason": "Registers a runtime tool, launches a bot-node container with docker and probes it with docker exec against a running docker-compose.oshal-local.yml stack; opt-in through RUN_DYNAMIC_AGENT_E2E=true. The CI e2e job has no compose stack, so the spec skipped there and passed by skipping while it sat in the green list.",
+      "runWith": "OSHAL_E2E_INCLUDE_UNSUPPORTED=true RUN_DYNAMIC_AGENT_E2E=true PLAYWRIGHT_PORT=35457 PLAYWRIGHT_REUSE_SERVER=true npx playwright test tests/dynamic-agent-live-e2e.spec.ts, against a running local stack"
+    },
+    {
+      "file": "tests/encrypted-storage.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/engineering-button-usability.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/google-workspace-cli.test.js",
+      "class": "unsupported-in-ci",
+      "reason": "Not a Playwright spec: a node:assert script with its own test registry that only runs when executed directly (require.main === module). Playwright matches its file name but finds no tests in it.",
+      "runWith": "node tests/google-workspace-cli.test.js"
+    },
+    {
+      "file": "tests/harness-adapter-behavior.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/jarvis-audio-lifecycle.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/jarvis-response-stage.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/jarvis-rich-response-integration.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/jarvis-rich-response-native-wake.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/jarvis-rich-response-responsive-a11y.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/jarvis-rich-response-visual-trust.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/jarvis-shared-response-renderer.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/jarvis-speakers.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/jarvis-text-legibility.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/join-code-route.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/keycloak-login.spec.ts",
+      "class": "unsupported-in-ci",
+      "reason": "Drives the Keycloak OIDC login (redirect to localhost:8080, realm oshal, dev-admin credentials from realm-export.json). The CI e2e env runs MOCK_OIDC with no identity provider.",
+      "runWith": "OSHAL_E2E_INCLUDE_UNSUPPORTED=true MOCK_OIDC=false npx playwright test tests/keycloak-login.spec.ts, with a Keycloak on localhost:8080 carrying the oshal realm"
+    },
+    {
+      "file": "tests/live-agent-startup-manifest.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/live/authorization-management.live.spec.ts",
+      "class": "unsupported-in-ci",
+      "reason": "Attaches over CDP (tests/live/fixtures.ts or tests/live/_attach-noprune.ts) to an already signed-in Chrome and drives a real deployment; the CI e2e job has no browser session, no deployment and no operator identity.",
+      "runWith": "npx playwright test --config playwright.live.config.ts <file>, with the operator's signed-in Chrome started on --remote-debugging-port (OSHAL_E2E_CDP_URL) and OSHAL_E2E_BASE_URL set to the target deployment"
+    },
+    {
+      "file": "tests/live/build-ticket-terminal-state.live.spec.ts",
+      "class": "unsupported-in-ci",
+      "reason": "Attaches over CDP (tests/live/fixtures.ts or tests/live/_attach-noprune.ts) to an already signed-in Chrome and drives a real deployment; the CI e2e job has no browser session, no deployment and no operator identity.",
+      "runWith": "npx playwright test --config playwright.live.config.ts <file>, with the operator's signed-in Chrome started on --remote-debugging-port (OSHAL_E2E_CDP_URL) and OSHAL_E2E_BASE_URL set to the target deployment"
+    },
+    {
+      "file": "tests/live/cockpit-features.live.spec.ts",
+      "class": "unsupported-in-ci",
+      "reason": "Attaches over CDP (tests/live/fixtures.ts or tests/live/_attach-noprune.ts) to an already signed-in Chrome and drives a real deployment; the CI e2e job has no browser session, no deployment and no operator identity.",
+      "runWith": "npx playwright test --config playwright.live.config.ts <file>, with the operator's signed-in Chrome started on --remote-debugging-port (OSHAL_E2E_CDP_URL) and OSHAL_E2E_BASE_URL set to the target deployment"
+    },
+    {
+      "file": "tests/live/cockpit-performance-and-screenshot-wall.live.spec.ts",
+      "class": "unsupported-in-ci",
+      "reason": "Attaches over CDP (tests/live/fixtures.ts or tests/live/_attach-noprune.ts) to an already signed-in Chrome and drives a real deployment; the CI e2e job has no browser session, no deployment and no operator identity.",
+      "runWith": "npx playwright test --config playwright.live.config.ts <file>, with the operator's signed-in Chrome started on --remote-debugging-port (OSHAL_E2E_CDP_URL) and OSHAL_E2E_BASE_URL set to the target deployment"
+    },
+    {
+      "file": "tests/live/connector-marketplace.live.spec.ts",
+      "class": "unsupported-in-ci",
+      "reason": "Attaches over CDP (tests/live/fixtures.ts or tests/live/_attach-noprune.ts) to an already signed-in Chrome and drives a real deployment; the CI e2e job has no browser session, no deployment and no operator identity.",
+      "runWith": "npx playwright test --config playwright.live.config.ts <file>, with the operator's signed-in Chrome started on --remote-debugging-port (OSHAL_E2E_CDP_URL) and OSHAL_E2E_BASE_URL set to the target deployment"
+    },
+    {
+      "file": "tests/live/deep-features.live.spec.ts",
+      "class": "unsupported-in-ci",
+      "reason": "Attaches over CDP (tests/live/fixtures.ts or tests/live/_attach-noprune.ts) to an already signed-in Chrome and drives a real deployment; the CI e2e job has no browser session, no deployment and no operator identity.",
+      "runWith": "npx playwright test --config playwright.live.config.ts <file>, with the operator's signed-in Chrome started on --remote-debugging-port (OSHAL_E2E_CDP_URL) and OSHAL_E2E_BASE_URL set to the target deployment"
+    },
+    {
+      "file": "tests/live/jarvis-selector-transcript.live.spec.ts",
+      "class": "unsupported-in-ci",
+      "reason": "Attaches over CDP (tests/live/fixtures.ts or tests/live/_attach-noprune.ts) to an already signed-in Chrome and drives a real deployment; the CI e2e job has no browser session, no deployment and no operator identity.",
+      "runWith": "npx playwright test --config playwright.live.config.ts <file>, with the operator's signed-in Chrome started on --remote-debugging-port (OSHAL_E2E_CDP_URL) and OSHAL_E2E_BASE_URL set to the target deployment"
+    },
+    {
+      "file": "tests/live/operations-queue-health.live.spec.ts",
+      "class": "unsupported-in-ci",
+      "reason": "Attaches over CDP (tests/live/fixtures.ts or tests/live/_attach-noprune.ts) to an already signed-in Chrome and drives a real deployment; the CI e2e job has no browser session, no deployment and no operator identity.",
+      "runWith": "npx playwright test --config playwright.live.config.ts <file>, with the operator's signed-in Chrome started on --remote-debugging-port (OSHAL_E2E_CDP_URL) and OSHAL_E2E_BASE_URL set to the target deployment"
+    },
+    {
+      "file": "tests/live/recheck-flagged.live.spec.ts",
+      "class": "unsupported-in-ci",
+      "reason": "Attaches over CDP (tests/live/fixtures.ts or tests/live/_attach-noprune.ts) to an already signed-in Chrome and drives a real deployment; the CI e2e job has no browser session, no deployment and no operator identity.",
+      "runWith": "npx playwright test --config playwright.live.config.ts <file>, with the operator's signed-in Chrome started on --remote-debugging-port (OSHAL_E2E_CDP_URL) and OSHAL_E2E_BASE_URL set to the target deployment"
+    },
+    {
+      "file": "tests/live/walmart-drive-flow.live.spec.ts",
+      "class": "unsupported-in-ci",
+      "reason": "Attaches over CDP (tests/live/fixtures.ts or tests/live/_attach-noprune.ts) to an already signed-in Chrome and drives a real deployment; the CI e2e job has no browser session, no deployment and no operator identity.",
+      "runWith": "npx playwright test --config playwright.live.config.ts <file>, with the operator's signed-in Chrome started on --remote-debugging-port (OSHAL_E2E_CDP_URL) and OSHAL_E2E_BASE_URL set to the target deployment"
+    },
+    {
+      "file": "tests/live/workflow-studio-builder.live.spec.ts",
+      "class": "unsupported-in-ci",
+      "reason": "Attaches over CDP (tests/live/fixtures.ts or tests/live/_attach-noprune.ts) to an already signed-in Chrome and drives a real deployment; the CI e2e job has no browser session, no deployment and no operator identity.",
+      "runWith": "npx playwright test --config playwright.live.config.ts <file>, with the operator's signed-in Chrome started on --remote-debugging-port (OSHAL_E2E_CDP_URL) and OSHAL_E2E_BASE_URL set to the target deployment"
+    },
+    {
+      "file": "tests/live/zzz-actions.live.spec.ts",
+      "class": "unsupported-in-ci",
+      "reason": "Attaches over CDP (tests/live/fixtures.ts or tests/live/_attach-noprune.ts) to an already signed-in Chrome and drives a real deployment; the CI e2e job has no browser session, no deployment and no operator identity.",
+      "runWith": "npx playwright test --config playwright.live.config.ts <file>, with the operator's signed-in Chrome started on --remote-debugging-port (OSHAL_E2E_CDP_URL) and OSHAL_E2E_BASE_URL set to the target deployment"
+    },
+    {
+      "file": "tests/live/zzz-dispatch-proof.live.spec.ts",
+      "class": "unsupported-in-ci",
+      "reason": "Attaches over CDP (tests/live/fixtures.ts or tests/live/_attach-noprune.ts) to an already signed-in Chrome and drives a real deployment; the CI e2e job has no browser session, no deployment and no operator identity.",
+      "runWith": "npx playwright test --config playwright.live.config.ts <file>, with the operator's signed-in Chrome started on --remote-debugging-port (OSHAL_E2E_CDP_URL) and OSHAL_E2E_BASE_URL set to the target deployment"
+    },
+    {
+      "file": "tests/live/zzz-enhanced.live.spec.ts",
+      "class": "unsupported-in-ci",
+      "reason": "Attaches over CDP (tests/live/fixtures.ts or tests/live/_attach-noprune.ts) to an already signed-in Chrome and drives a real deployment; the CI e2e job has no browser session, no deployment and no operator identity.",
+      "runWith": "npx playwright test --config playwright.live.config.ts <file>, with the operator's signed-in Chrome started on --remote-debugging-port (OSHAL_E2E_CDP_URL) and OSHAL_E2E_BASE_URL set to the target deployment"
+    },
+    {
+      "file": "tests/live/zzz-food-route.live.spec.ts",
+      "class": "unsupported-in-ci",
+      "reason": "Attaches over CDP (tests/live/fixtures.ts or tests/live/_attach-noprune.ts) to an already signed-in Chrome and drives a real deployment; the CI e2e job has no browser session, no deployment and no operator identity.",
+      "runWith": "npx playwright test --config playwright.live.config.ts <file>, with the operator's signed-in Chrome started on --remote-debugging-port (OSHAL_E2E_CDP_URL) and OSHAL_E2E_BASE_URL set to the target deployment"
+    },
+    {
+      "file": "tests/live/zzz-full-walkthrough.live.spec.ts",
+      "class": "unsupported-in-ci",
+      "reason": "Attaches over CDP (tests/live/fixtures.ts or tests/live/_attach-noprune.ts) to an already signed-in Chrome and drives a real deployment; the CI e2e job has no browser session, no deployment and no operator identity.",
+      "runWith": "npx playwright test --config playwright.live.config.ts <file>, with the operator's signed-in Chrome started on --remote-debugging-port (OSHAL_E2E_CDP_URL) and OSHAL_E2E_BASE_URL set to the target deployment"
+    },
+    {
+      "file": "tests/live/zzz-fullcatalog.live.spec.ts",
+      "class": "unsupported-in-ci",
+      "reason": "Attaches over CDP (tests/live/fixtures.ts or tests/live/_attach-noprune.ts) to an already signed-in Chrome and drives a real deployment; the CI e2e job has no browser session, no deployment and no operator identity.",
+      "runWith": "npx playwright test --config playwright.live.config.ts <file>, with the operator's signed-in Chrome started on --remote-debugging-port (OSHAL_E2E_CDP_URL) and OSHAL_E2E_BASE_URL set to the target deployment"
+    },
+    {
+      "file": "tests/live/zzz-recheck.live.spec.ts",
+      "class": "unsupported-in-ci",
+      "reason": "Attaches over CDP (tests/live/fixtures.ts or tests/live/_attach-noprune.ts) to an already signed-in Chrome and drives a real deployment; the CI e2e job has no browser session, no deployment and no operator identity.",
+      "runWith": "npx playwright test --config playwright.live.config.ts <file>, with the operator's signed-in Chrome started on --remote-debugging-port (OSHAL_E2E_CDP_URL) and OSHAL_E2E_BASE_URL set to the target deployment"
+    },
+    {
+      "file": "tests/live/zzz-verify-inline.live.spec.ts",
+      "class": "unsupported-in-ci",
+      "reason": "Attaches over CDP (tests/live/fixtures.ts or tests/live/_attach-noprune.ts) to an already signed-in Chrome and drives a real deployment; the CI e2e job has no browser session, no deployment and no operator identity.",
+      "runWith": "npx playwright test --config playwright.live.config.ts <file>, with the operator's signed-in Chrome started on --remote-debugging-port (OSHAL_E2E_CDP_URL) and OSHAL_E2E_BASE_URL set to the target deployment"
+    },
+    {
+      "file": "tests/login-returnto.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/mesh-dashboard-ui.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/mock-oidc.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/node-resource-lease-live.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/non-swarm-memory-layers.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/openai-codex-oauth-callback.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/openai-codex-oauth-ui.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/ops-dashboard-ui.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/plaid-link-connector.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/project-manager-ticket-intake.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/queue-manager-admin-ui.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/rag-center-ui.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/redis-self-scheduling.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/schedule-timezone-and-oneshot.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/security-center-operator-gate.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/session-140-identity-and-state.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/session-140-runtime-usability.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/swarm-app-groups.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/swarm-debug-diagnostics.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/swarm-debug-ui-styling.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/swarm-debug-window.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/swarm-e2e-pipeline.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/swarm-e2e-process-validation.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/swarm-pipeline-integration.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/swarm-subtask-dispatch.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/swarm-verification-and-dedup.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/swarmbot-chat-workspace.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/test-lab-rich-visuals.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/ticket-process-history.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/ticket-project-move.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/tool-management-ui.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/tool-registry.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/tool-verification.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    },
+    {
+      "file": "tests/track-b-infrastructure.spec.ts",
+      "class": "awaiting-classification",
+      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
+    }
+  ],
+  "skippedTests": [
+    {
+      "file": "tests/provider-runtime-selection.spec.ts",
+      "skipMessage": "FORCE_LLM_PROVIDER=noop hard-overrides provider selection; plan-vs-act precedence cannot be exercised under the noop-forced CI env.",
+      "class": "unsupported-in-ci",
+      "reason": "resolveRuntimeProviderName() applies FORCE_LLM_PROVIDER before it reads the plan/act settings, so under the CI env (FORCE_LLM_PROVIDER=noop) the plan-mode selection this case asserts cannot be exercised. The other cases in the file run.",
+      "runWith": "FORCE_LLM_PROVIDER unset, with a real plan-mode provider configured: npx playwright test tests/provider-runtime-selection.spec.ts"
+    }
+  ]
+}

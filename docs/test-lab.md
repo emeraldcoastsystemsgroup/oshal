@@ -253,7 +253,7 @@ and removed; a cleanup miss turns the case red.
 |---|---|---|
 | `response-renderer` | `live-acceptance-response-renderer` | The `shared-response-renderer` card passes all three steps, Mermaid is served same-origin from `/dist/vendor/mermaid` (exact `VERSION`, JavaScript entry, no redirect), and the Little Monsters `tutor-shared-renderer` package case runs through the durable run route and executes tests (a run that declines is not a pass). |
 | `congress` | `live-acceptance-congress` | The `congress-disclosures` readback passes, `GET /api/trading/reports/congress` lists rows that each carry a ReportDate day and `observedAt`, and the watchlist Add step adds a synthetic `ZZT-XXXXX` ticker (symbol only, as the Add button posts it) and deletes it. |
-| `dev-workspace` | `live-acceptance-dev-workspace` | In dev mode, a Jarvis package-tool ask naming ADR-077 (in a tagged Jarvis conversation, which the proposal must belong to) returns that ADR's cited `doc_id`; with dev mode off the same ask is refused with no citation; dev mode is left as found. A closed gate (package, `OSHAL_DEV_WORKSPACE_INDEX_ENABLED`, `OSHAL_DEV_CONSOLE_ENABLED`, `OSHAL_SUPERADMIN_SUBS`, index not built) is reported by name; those need an api restart, so the case never opens them. Spends one model turn. |
+| `dev-workspace` | `live-acceptance-dev-workspace` | In dev mode, four Jarvis package-tool asks in one tagged Jarvis conversation (which the proposals must belong to) each return a cited `doc_id` of their path family: ADR-077 by number (`docs/adr/077-*`), a `docs/BACKLOG.md` entry title, a runbook (`docs/runbooks/*.md`, not the README) and tonight's handover (`local-notes/*`, from the index's `--notes-dir`). A family result without a `doc_id` fails. With dev mode off all four are refused with no citation; an unauthenticated `GET /api/dev-workspace-index/query?q=ADR-077` answers 401 or 403; dev mode is left as found. The backlog and runbook words have tracked defaults (`OSHAL_VERIFY_DEV_BACKLOG_PROBE` / `OSHAL_VERIFY_DEV_RUNBOOK_PROBE` override them); the handover words have none. They come only from `OSHAL_VERIFY_DEV_NOTES_PROBE` in the host runner's environment: `OSHAL_VERIFY_DEV_NOTES_PROBE="<its words>" node scripts/operations/live-acceptance.js dev-workspace`. Unavailable, never pass, when those words are missing (the gap names that command) or the index holds no `local-notes` documents (the `--notes-dir` build step is named). Compose forwards no `OSHAL_VERIFY_*` variable to the api, so the Lab card has no source for the handover words. It reads the gate and the index sources, puts dev mode back, and reports the handover ask as a host-runner gap before any model turn. It never passes. A closed gate (package, `OSHAL_DEV_WORKSPACE_INDEX_ENABLED`, `OSHAL_DEV_CONSOLE_ENABLED`, `OSHAL_SUPERADMIN_SUBS`, index not built) is reported by name; those need an api restart, so the case never opens them. Spends one model turn (host runner). |
 | `floater` | `live-acceptance-floater` | The ADR-160 Floater, seeded through aero-lab's own route, shows evaluation 1's mass budget RED at +274.3 g and the fabricable sentence verbatim. An owner's existing Floater is only read; a Floater the case seeded is deleted (the package has no delete route, so through the closed statement set under the owner's identity) and proven gone. |
 | `linkedin` | `live-acceptance-linkedin` | A tagged synthetic `linkedin-content-post` ticket becomes a graded pending-approval draft that names the ticket and carries its citation, and publishing it without confirmation is refused 428. The case never approves, confirms or publishes; the draft is rejected and deleted and the ticket removed. Spends real model turns. |
 | `commerce` | `live-acceptance-commerce` | Rides, Eats and Shopping at 390 x 844 in headless Chromium: the page fits, its own flow reaches something to confirm, the relayed outward op renders the confirm card, and Cancel hands off nothing. Every hand-off POST is aborted in the browser and `window.open` is stubbed, so a regressed gate is counted and reaches nothing. Only an empty cart is used. Host runner only. |
@@ -264,7 +264,9 @@ and removed; a cleanup miss turns the case red.
 The same case modules (`scripts/lib/live-acceptance-*.js`, listed in `live-acceptance-cases.js`) run
 from the Lab as explicit-only cards (never from "Run live scenarios"), bound to the signed-in caller;
 the commerce and Jarvis-cache cards report a gap there, because Chromium and the call log exist only
-on the host. On the host, the owner-scoped statements, ticket reads and ask-workspace removal run
+on the host. The dev-workspace card reports its handover ask as a gap there too. Its words
+(`OSHAL_VERIFY_DEV_NOTES_PROBE`) exist only in the host runner's environment, and the Lab passes its
+cases an empty runner environment instead of the api's. On the host, the owner-scoped statements, ticket reads and ask-workspace removal run
 through `scripts/lib/live-acceptance-container.js`, staged once into the api container per run.
 Suites: `npm run test:live-acceptance`.
 
@@ -439,6 +441,39 @@ No real person's location is read or written. The linked suites:
 
 Run them with `npm run test:location`. That is local evidence. After a deploy, run the card from the
 Test Lab.
+
+### Location places and devices at places (ADR-169 L4)
+
+**Location — places and devices at places (ADR-169 L4)** (`location-places-devices`, Tools) runs two
+steps on the build that is running:
+
+- `place-routes` runs as the signed-in person. The places and devices lists must carry no coordinate and
+  no address. A camera with no group, a node the person does not own, and a place for a group they do not
+  administer are each refused, and the person's places and devices must not change.
+- `places-lifecycle` runs the place, enrolment and kernel-read services for three uniquely tagged
+  synthetic people on the real database. An admin makes a group with a member, a place of their own and a
+  group place, records a synthetic node binding of their own, enrols that node, a camera (to the group) and
+  a TV with places, and moves the TV. The member must not be able to change the camera or find the node,
+  and the stranger must not find the camera. The member reads the camera's place by reference through
+  `currentPlace`, `distanceBand` and `placeAt`. Everything created is deleted (devices, places, the group
+  and its memberships, the binding) and a zero-row check runs; incomplete cleanup fails the step.
+
+No real person's location is read or written. The linked suites:
+
+- `tests/unit/location-place-reads-postgres.spec.ts`: containment edges, "since", bands and the
+  operation-only address, each read refusing SYSTEM and an identity without an issuer.
+- `tests/unit/location-places-devices-postgres.spec.ts`: places and enrolment over HTTP, who may change
+  what, and migration 176's identity fence at the database.
+- `tests/unit/location-places-browser.spec.ts`: the Settings, Location page in Chromium on localhost with
+  `MOCK_OIDC`. An admin adds places and enrols a node, a camera and a TV at places; a member sees the
+  group camera view-only and cannot change any of the three.
+- `tests/unit/location-fleet-id-shape.spec.ts`: the location slice's copy of the camera and drone fleet id
+  shape stays equal to `CAMERA_ID_RE` and `DRONE_ID_RE`.
+- `tests/unit/test-lab-location-places-registration.spec.ts`: this card on the fixture server, green and
+  red.
+
+Run them with `npm run test:location` (Docker is required for the PostgreSQL suites). That is local
+evidence. After a deploy, run the card from the Test Lab.
 
 ---
 

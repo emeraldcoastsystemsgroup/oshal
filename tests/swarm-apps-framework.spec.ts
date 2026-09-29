@@ -6,9 +6,11 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Framework lifecycle spec — guards the swarm-apps publish contract end-to-end
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 D5: re-fixtured onto PERMANENT apps and pointed at the Playwright-managed server so it actually RUNS (it was pinned to the live docker stack, so in CI it silently skipped). It had been fixtured on gov-contracting — a Wave-1 carve candidate — having ALREADY been re-pointed once off little-monsters; the legacy ops profile was no safer. It now uses oshal-ci-fixture (a test-only app that ships no code and can never carve) and oshal-engineering (kernel-RESIDENT — on the signed-off never-carve six). No future carve can break this spec again.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | API_BASE fallback host pinned to 127.0.0.1 — "localhost" resolves to ::1 where a stale wslrelay squats the port (ECONNREFUSED ::1:3456, 2026-07-23 ci-local --head run); same change as playwright.config.ts BASE_URL. SWARM_APPS_TEST_BASE_URL still wins when set.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The webServer origin comes from the shared baseOrigin() helper (tests/helpers/test-origins.ts), which resolves PLAYWRIGHT_PORT and the MOCK_OIDC default exactly as playwright.config.ts does, instead of a spec-built origin whose fallback diverged from the config (any non-empty MOCK_OIDC, including 'false', picked 4458); SWARM_APPS_TEST_BASE_URL still wins when set.
  */
 
 import { test, expect, request, type APIRequestContext } from '@playwright/test';
+import { baseOrigin } from './helpers';
 
 /**
  * Exercises the swarm-applications framework against a running OSHAL instance.
@@ -28,8 +30,7 @@ import { test, expect, request, type APIRequestContext } from '@playwright/test'
  * Skips with a clear message if no instance is reachable.
  */
 
-const DEFAULT_PORT = process.env.PLAYWRIGHT_PORT || (process.env.MOCK_OIDC ? '4458' : '3456');
-const API_BASE = process.env.SWARM_APPS_TEST_BASE_URL || `http://127.0.0.1:${DEFAULT_PORT}`;
+const API_BASE = process.env.SWARM_APPS_TEST_BASE_URL || baseOrigin();
 
 let api: APIRequestContext;
 let stackReady = false;

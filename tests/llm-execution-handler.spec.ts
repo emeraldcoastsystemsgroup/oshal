@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Added regression coverage for consensus-review prompt assembly with work-intent review focus
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Added regression coverage for deterministic consensus-review output structure instructions
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Added regression ensuring swarm execution returns raw provider output even when MOCK_OIDC is enabled
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 moved the ticket body out of the user turn: llm-execution-handler.ts (seq 34) now sends a fixed instruction as the message and carries the body JSON-encoded in the untrusted section of the contained system prompt. The three prompt-assembly cases still read messages[0] and were the ratchet's recorded llm-execution-handler reds. They now decode the ticket-or-user-body block from the system prompt and assert the same text there, and each also asserts the user turn carries none of the ticket, which is the containment the move exists for.
  */
 
 import { test, expect } from '@playwright/test';
@@ -32,6 +33,24 @@ class RecordingProvider extends LLMService {
       model: options.model || 'test-model',
     };
   }
+}
+
+/**
+ * @description The ticket body the handler assembled, as the model receives it since SEC-05: a
+ * JSON record inside the untrusted section of the system prompt, never the user turn. Fails if the
+ * body is missing, duplicated, or leaks into the user message.
+ * @param request The provider request the handler sent.
+ * @param ticketId The envelope's externalId, which must not appear in the user turn.
+ * @returns The decoded ticket body text.
+ */
+function containedTicketBody(request: SendRequestOptions | null, ticketId: string): string {
+  const system = String(request?.systemPrompt || '');
+  const records = [...system.matchAll(/<UNTRUSTED_CONTENT>([\s\S]*?)<\/UNTRUSTED_CONTENT>/g)]
+    .map((match) => JSON.parse(match[1]) as { source: string; content: string });
+  const bodies = records.filter((record) => record.source === 'ticket-or-user-body');
+  expect(bodies, 'exactly one contained ticket body in the system prompt').toHaveLength(1);
+  expect(String(request?.messages[0]?.content || ''), 'the user turn carries no ticket data').not.toContain(ticketId);
+  return bodies[0].content;
 }
 
 function createProfile(name: string): AgentProfile {
@@ -112,7 +131,7 @@ test.describe('createLLMExecutionHandler', () => {
       ],
     }));
 
-    const prompt = String(provider.lastRequest?.messages[0]?.content || '');
+    const prompt = containedTicketBody(provider.lastRequest, 'verify:ticket-123');
     const systemPrompt = String(provider.lastRequest?.systemPrompt || '');
     expect(prompt).toContain('Verification Ticket: verify:ticket-123');
     expect(prompt).toContain('Original Ticket: ticket-123');
@@ -145,7 +164,7 @@ test.describe('createLLMExecutionHandler', () => {
       ],
     }));
 
-    const prompt = String(provider.lastRequest?.messages[0]?.content || '');
+    const prompt = containedTicketBody(provider.lastRequest, 'ticket-456');
     const systemPrompt = String(provider.lastRequest?.systemPrompt || '');
     expect(prompt).toContain('Ticket: ticket-456');
     expect(prompt).toContain('## Add smoke tests');
@@ -191,7 +210,7 @@ test.describe('createLLMExecutionHandler', () => {
       ],
     }));
 
-    const prompt = String(provider.lastRequest?.messages[0]?.content || '');
+    const prompt = containedTicketBody(provider.lastRequest, 'review:ticket-999:r1');
     expect(prompt).toContain('Consensus Review Ticket: review:ticket-999:r1');
     expect(prompt).toContain('Reviewer Role: qa-gatekeeper');
     expect(prompt).toContain('Review Focus: Review the deliverable with emphasis on testing, documentation.');
