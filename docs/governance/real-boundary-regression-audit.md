@@ -723,3 +723,99 @@ preflight at least 1800 MiB):
 The focused command is documented in [tests/README.md](../../tests/README.md#kernel-manifest-route-auth-inventory).
 Full typechecking/pre-push and final backlog closure are separate coordinated gates, not claimed
 by these unit receipts.
+
+## Pre-push unknown-range verification (2026-09-29)
+
+`tests/unit/pre-push-unknown-range.spec.ts` executes the actual candidate hook in
+owned disposable Git repositories, with real commits, local tracking refs, a
+docs-only merge, `git archive HEAD`, dependency links and the installed TypeScript
+compiler. Earlier committed source errors remain errors even when a final commit
+contains only documentation and the working tree has separately been repaired.
+Unknown/missing push ranges enter verification; known docs-only ranges retain the
+existing optimization. Known-range source errors still fail.
+
+The only replaced collaborator is a named synthetic `scripts/publish-gate.sh`
+that records argv/stdin and returns success or failure to prove ordering. It is
+not a leak-scanner test. No remote push, download, provider, database, browser,
+shared-hook configuration or runtime deployment is used. Clean child environments
+isolate Git/npm configuration and deny npm installation/network access. The actual
+hook/compiler receive a 128 MiB Node heap; owned hook subprocess trees are bounded
+at 30 seconds and awaited before cleanup. A timeout/spawn error is a test failure,
+not an expected type-error refusal. Archive cleanup is asserted and owned fixture
+dependency junctions are removed before recursive fixture cleanup.
+
+Recorded focused results:
+
+- Original production hook baseline: **4 expected failures / 4 passed**,
+  exit 1, 14.23 s, fresh 4322 MiB / minimum 4060 MiB. Failures are unknown-range
+  linear/docs-merge/missing-ref admission and the absent verification-success
+  message for valid unknown-range HEAD; the known-range compiler control passed.
+- Corrected hook: **8/8 passed**, exit 0, 23.31 s, fresh 4268 MiB / minimum 3988 MiB.
+- Actual-hook negative control reinstating only the unsafe last-commit fallback,
+  with the final explicitly sequential/45-second-case guard: **4 expected failures
+  / 4 passed**, exit 1, 13.60 s, fresh 4266 MiB / minimum 2964 MiB.
+- Exact fix restored, plus existing ordering, verification-tree and real compiler
+  symlink guards: **25/25 passed across four files**, zero skips, exit 0, 44.58 s,
+  fresh 4008 MiB / minimum 3461 MiB. No source mutation remains.
+
+All runs used runner 128 MiB / one worker 384 MiB, a fresh 1800 MiB floor, 600 MiB
+reserve and 180-second external deadline. Earlier fixture-development receipts
+containing a subprocess timeout or an unaccounted npm compile-cache directory are
+excluded from these results. Windows child executable lookup was made explicit,
+hook process-tree teardown was added, and the fixture disables Node compile cache
+before the clean original-hook baseline above.
+
+The focused command and standard CI discovery are documented in the indexed
+[verification runbook](../runbooks/pre-push-commit-verification.md). This guard
+changes only unknown-range classification, not other existing hook exits or the
+active primary checkout's hook. Full project compilation, normal publication,
+primary-hook activation and backlog closure remain separate integration gates.
+
+## AI usage rating declaration guard (2026-09-29)
+
+`tests/unit/ai-usage-rating-input-guard.spec.ts` runs the actual standalone
+`scripts/ai-usage-ledger.js` in bounded Node subprocesses, its real YAML parser and
+owned temporary filesystem. The TypeScript `validateAppRating` implementation also
+runs for declaration parity; only its logger is doubled. No CLI, parser, validator
+or filesystem implementation is replaced. Children receive a clean environment;
+timeouts/spawn failures cannot masquerade as validation refusals, and cleanup is
+restricted to the fixture's own temporary directories.
+
+The proven boundary is declaration admission and output safety: unknown fields
+(including handwritten token/model/cost/cadence evidence), malformed values and
+invalid combinations fail before rendering/writing, while valid output and the
+missing-rating rollout remain compatible. Combined `--check`/`--out` cannot rewrite
+a stale checked file and then claim a passing check.
+
+Main-based candidate `2ff4895e` passed 67/67 focused cases with zero skips (42 new
+guard cases and 25 existing `tests/unit/app-rating-validation.spec.ts` cases).
+Removing feature unknown-key rejection produced 8 failures; removing pre-render
+validation produced 4 failures; both changes were restored before the final run.
+The original CLI failed 27 of the initial 32 guard cases. See the
+[scope and local commands](../backlog/ai-usage-rating-input-guard.md).
+
+These are real local CLI/file-boundary results, not model measurements, provider
+acceptance, database proof or a full-suite pass. Generated token ranges, background
+cadence/cost, tested-model compatibility and pause/resume controls remain separate
+ADR-170/A2 acceptance work. No such evidence is inferred from an accepted manifest.
+Both spec files are already selected by `vitest.config.ts`'s
+`tests/unit/**/*.spec.ts` include through `npm run test:unit`, used by the normal
+local CI unit gate and hosted CI unit job; no new runtime Lab card is added.
+
+## Isolated browser cleanup acceptance refresh (2026-09-29)
+
+The [current acceptance record](../testing/isolated-browser-acceptance.md) retains
+five consecutive runs of isolated-browser, jarvis-no-brain-browser and
+budgets-unit-split-browser: 28/28 each, zero skips, while independent build lanes
+continued. The original current-main run was 21/22: an inventory false positive
+required a global setting despite a valid explicit cleanup-hook budget. The guard
+now follows effective per-hook precedence, with four direct regression cases;
+the production fixture and Budgets suite are unchanged.
+
+Real boundaries are Chromium process ownership/exit, shipped browser pages and
+loopback HTTP. Chosen lifecycle timings use fake clocks; Jarvis identity,
+persistence and unavailable-provider resolution, and Budgets API responses, remain
+named fixtures. Missing exit confirmation still raises the named deadline against
+a real BrowserServer. No physical unkillable-browser, installed-provider, database,
+whole-suite or deliberate host-saturation proof is claimed. The record pins source
+and raw-log hashes, resource limits and repeatable commands.
