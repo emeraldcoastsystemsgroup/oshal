@@ -50,3 +50,80 @@ a.action.primary,a.action{display:inline-flex;align-items:center;gap:6px;cursor:
 .live-agenda .agenda-row{margin-top:14px}
 .live-agenda .agenda-row .agenda-detail{border-left-color:var(--accent)}
 .live-agenda .agenda-sources{margin-top:14px}
+/* Full-swarm work panels: an indeterminate bar for Working items (no percentage is recorded), recorded workflow
+   progress and the stage list of a ticket's workflow. Motion stops under reduced motion. */
+.mini-progress.live-indeterminate{position:relative;align-self:center}
+.mini-progress.live-indeterminate i,.live-indeterminate-track i{width:40%;animation:live-slide 1.4s ease-in-out infinite}
+.live-indeterminate-track{position:relative;overflow:hidden}
+.live-indeterminate-track i{display:block;height:100%;background:var(--accent)}
+@keyframes live-slide{0%{transform:translateX(-110%)}100%{transform:translateX(260%)}}
+@media (prefers-reduced-motion:reduce){.mini-progress.live-indeterminate i,.live-indeterminate-track i{animation:none;width:100%;opacity:.45}}
+.running-row .mini-progress{margin-left:8px}
+.work-item .mini-progress{margin-left:10px}
+.live-progress>span strong{margin-left:auto;padding-left:10px}
+.live-stages{list-style:none;margin:12px 0;padding:0;display:grid;gap:8px}
+.live-stages li{display:flex;gap:12px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-radius:8px}
+.live-stages li small{display:block;color:var(--muted);font-size:11px;margin-top:2px}
+.live-stages .stage-mark{flex:0 0 12px;height:12px;margin-top:3px;border-radius:50%;border:2px solid var(--line)}
+.live-stages .stage-done .stage-mark,.live-stages .stage-skipped .stage-mark{background:var(--accent);border-color:var(--accent)}
+.live-stages .stage-waiting .stage-mark,.live-stages .stage-running .stage-mark{border-color:var(--accent);box-shadow:0 0 0 3px var(--soft,transparent)}
+.live-stages .stage-failed .stage-mark{border-color:var(--status-warning,#b45309);background:var(--status-warning,#b45309)}
+.live-stages .stage-pending{opacity:.72}
+.work-flow,.work-state{margin-top:14px}
+.work-actions{margin-top:10px}
+/* Routines panel: one row per schedule with the caller's own switch. */
+.routine-row{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:12px 0;border-bottom:1px solid var(--line)}
+.routine-copy{min-width:0}
+.routine-copy strong{display:block;font-size:13px}
+.routine-copy small{display:block;color:var(--muted);font-size:11px;margin-top:3px;overflow-wrap:anywhere}
+.routine-toggle{display:inline-flex;align-items:center;gap:8px;font-size:12px;white-space:nowrap}
+.routine-toggle input{accent-color:var(--accent);width:18px;height:18px}
+.routine-note:empty{display:none}
+/* Day focus: the picker sits with the skin picker; Orbit rings the focus's suites. */
+.study-caption select.scene-picker{max-width:170px}
+.suite-node.in-focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--soft,transparent),0 10px 24px #0000000f}
+@media (max-width:760px){.study-caption select.scene-picker{max-width:120px}}
+/* Portal sections: the demo gallery's central feature, homebase and concept cards as experience cards, with drawn
+   previews in each experience's palette instead of screenshots of fixture data. */
+.experience-card.central-feature{display:grid;grid-template-columns:.8fr 1.2fr;gap:0;padding:0;margin:26px 0 12px;background:#0c1c24;color:#dceceb;border-color:#36545d}
+.experience-card.central-feature h2{margin:17px 0;font-size:34px}
+.experience-card.central-feature p{margin:0;color:#a9c1c8}
+.central-stage{position:relative;min-height:320px;background:radial-gradient(circle at 50% 50%,#12313a 0,#07131a 70%);border-left:1px solid #36545d;overflow:hidden}
+.central-orb{position:absolute;left:50%;top:50%;width:170px;height:170px;margin:-85px 0 0 -85px;border-radius:50%;background:radial-gradient(circle at 38% 34%,#e9fffa 0,#9bdfd0 26%,#2f7d74 58%,transparent 72%);box-shadow:0 0 80px #9bdfd055,0 0 160px #9bdfd022;animation:live-orb 6s ease-in-out infinite}
+.central-orb::before,.central-orb::after{content:"";position:absolute;inset:-34px;border-radius:50%;border:1px solid #9bdfd033}
+.central-orb::after{inset:-70px;border-color:#9bdfd01a}
+@keyframes live-orb{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}
+@media (prefers-reduced-motion:reduce){.central-orb{animation:none}}
+@media (max-width:900px){.experience-card.central-feature{grid-template-columns:1fr}.central-stage{min-height:220px;border-left:0;border-top:1px solid #36545d}}
+.live-homebases{border-bottom-color:var(--line)}
+.live-homebases .homebase-heading p{color:var(--muted)}
+.experience-card.homebase-card{display:block;padding:0;gap:0;background:var(--surface);border-color:var(--line)}
+.experience-card.homebase-card>div:last-child{padding:22px}
+.experience-card.homebase-card h3{margin:10px 0}
+.experience-card.homebase-card p{color:var(--muted);margin:0}
+.experience-card.homebase-card .card-meta{margin:14px 0 0}
+.concept-grid.experience-cards{grid-template-columns:1fr 1fr;gap:24px}
+@media (max-width:760px){.concept-grid.experience-cards{grid-template-columns:1fr}}
+.experience-card.concept-card{display:block;padding:0;gap:0}
+.experience-card.concept-card p{margin:0}
+.concept-tags .live-fact{color:var(--accent);border-color:var(--accent)}
+.live-mock{position:relative;height:100%;min-height:170px;border-radius:10px 10px 0 0;background:var(--swatch-bg);border:1px solid var(--swatch-line);border-bottom:0;display:grid;gap:8px;padding:12px;box-sizing:border-box;overflow:hidden}
+.live-mock i,.live-mock b{display:block;border-radius:6px;background:var(--swatch-surface);border:1px solid var(--swatch-line)}
+.live-mock b{border:0;height:12px;background:var(--swatch-line)}
+.live-mock .m-accent{background:var(--swatch-accent);width:40%}
+.mock-studio{grid-template-columns:1fr 2.2fr 1fr}
+.mock-studio .m-main,.mock-jarvis .m-main,.mock-commons .m-main,.mock-home .m-main{display:flex;flex-direction:column;gap:8px;padding:10px;justify-content:flex-end}
+.mock-jarvis{grid-template-columns:26px 2.4fr 1fr}
+.mock-jarvis .m-orb{width:44px;height:44px;border-radius:50%;background:var(--swatch-accent);align-self:flex-end;margin-bottom:auto;opacity:.8}
+.mock-orbit{display:block}
+.mock-orbit .m-hub{position:absolute;left:50%;top:50%;width:46px;height:46px;margin:-23px 0 0 -23px;border-radius:50%;background:var(--swatch-accent);opacity:.85;border:0}
+.mock-orbit .m-node{position:absolute;width:64px;height:28px;margin:-14px 0 0 -32px;border-radius:7px;background:var(--swatch-surface);border:1px solid var(--swatch-line)}
+.mock-orbit .n1{left:22%;top:18%}.mock-orbit .n2{left:78%;top:18%}.mock-orbit .n3{left:87%;top:50%}.mock-orbit .n4{left:78%;top:82%}.mock-orbit .n5{left:22%;top:82%}.mock-orbit .n6{left:13%;top:50%}
+.mock-commons{grid-template-columns:22px 2.4fr 1fr;grid-template-rows:22px 1fr}
+.mock-commons .m-top{grid-column:1/-1;background:var(--swatch-accent);opacity:.85;border:0}
+.mock-home{grid-template-columns:2fr 1fr;grid-template-rows:22px 1fr}
+.mock-home .m-top{grid-column:1/-1}
+.mock-home .m-grid{height:auto;flex:1;border:1px solid var(--swatch-line);background:repeating-linear-gradient(90deg,var(--swatch-line) 0 1px,transparent 1px 14.28%),repeating-linear-gradient(0deg,var(--swatch-line) 0 1px,transparent 1px 25%),var(--swatch-surface)}
+.homebase-card .live-mock{height:190px;border-radius:0;border:0;border-bottom:1px solid var(--line)}
+/* With the day focus and skin pickers side by side the study caption wraps on a phone instead of pushing past the edge. */
+@media (max-width:560px){.full-swarm .study-caption{flex-wrap:wrap;row-gap:6px;justify-content:flex-start}.full-swarm .study-caption select.layout-picker{min-width:0}}

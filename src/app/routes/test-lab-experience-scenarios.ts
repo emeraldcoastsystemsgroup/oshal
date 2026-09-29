@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Scenario text names the classroom homebase hosting the Little Monsters tools in place (ribbon profile); the browser suite it references now covers hosted tools and the two-phase paint.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Register the gap-closure specs (full-swarm hosting and declared facts, dependency-tier parity, central assistant, homebase) and the audience-view kit spec as regression tests of the experience scenario
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Register the composed front-pages spec (declared module order per preset, package summary cards from each application's own probe, D10 silence for an application outside the plan) as a regression test of the experience scenario
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Register the full-swarm build specs (pure readers; work panels with workflow, Approve and Cancel, the Routines panel, the day focus, visual cards, package facts, membership and the caller's own place, the portal sections and the six-width layout check) as regression tests of the experience scenario, and name them in its description
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -63,7 +64,7 @@ export async function experienceShellsStep(cookie: string, fetchImpl: typeof fet
 
 export const EXPERIENCE_SCENARIOS: Scenario[] = [{
   id: 'experience-shells', title: 'Experience shells over the live swarm', group: 'tool',
-  description: 'Open the eight experience entry pages (Studio, Jarvis, Orbit, Commons, the Home, Little Monsters and Business homebases, the central assistant) with the initiating session and read the caller-scoped feeds they join. Local suites prove the adapter joins and the Chromium behaviour over an isolated synthetic swarm: catalog and work rendering, pins, the Jarvis ask flow with thread roll and refusal, room threads, homebase modules and honest setup/denial states. The classroom homebase also lists the Little Monsters tools the caller is admitted to (the ribbon profile) and opens them in place.',
+  description: 'Open the eight experience entry pages (Studio, Jarvis, Orbit, Commons, the Home, Little Monsters and Business homebases, the central assistant) with the initiating session and read the caller-scoped feeds they join. Local suites prove the adapter joins and the Chromium behaviour over an isolated synthetic swarm: catalog and work rendering, pins, the Jarvis ask flow with thread roll and refusal, room threads, homebase modules and honest setup/denial states. The classroom homebase also lists the Little Monsters tools the caller is admitted to (the ribbon profile) and opens them in place. The full-swarm layouts add work panels over the ticket routes (recorded workflow, Approve, Cancel), the Routines panel over the caller’s schedules, a device-local day focus, visual cards, package facts, household or team membership with the caller’s own place, and the portal’s gallery sections.',
   regressionTests: [
     { level: 'unit', path: 'tests/unit/experience-live-data.spec.ts' },
     { level: 'unit', path: 'tests/unit/test-lab-experience-scenarios.spec.ts' },
@@ -74,6 +75,8 @@ export const EXPERIENCE_SCENARIOS: Scenario[] = [{
     { level: 'browser', path: 'tests/unit/experience-nexus-gaps.spec.ts' },
     { level: 'browser', path: 'tests/unit/experience-homebase-gaps.spec.ts' },
     { level: 'browser', path: 'tests/unit/experience-front-pages.spec.ts' },
+    { level: 'unit', path: 'tests/unit/experience-portal-data.spec.ts' },
+    { level: 'browser', path: 'tests/unit/experience-portal-build.spec.ts' },
   ],
   steps: [{ id: 'pages', app: 'cockpit', label: 'Experience pages and their joined reads', run: (cookie) => experienceShellsStep(cookie) }],
 }];

@@ -14,7 +14,10 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Phase-4 assemblies: the synthetic app-view page provides a classroom builder (a new-tab tile and list item, a tile handled on the page) and `?provides=` limits the builders it registers, so "requested but not provided" stays provable; the host page frames `?audience=` of its choice; assemblyHostRoutes answers the ribbon profile of an installed application from `state.assembly.ribbons`, and installAssemblyHosts gives the ten hosts the presets gained ribbon items shaped like their manifests' surfaces (several for Intelligent Communication, Social and Marketing Engine), installing the nine the default catalog lacks; the default catalog itself is unchanged.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Composed front pages: installFrontPageHosts installs the card applications the assemblies did not (Calendar, Federal CRM with four of its surfaces, Calling Assistant) through the same installHosts helper installAssemblyHosts now uses; each is a synthetic app with the default probe (`/fixture/probe/<name>`, status `probe:<name>`), so a card's tiles, items, refusal and D10 silence are provable per application.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Home build lane (homebaseBuildRoutes, state in `homeBuild`, read with homeBuildState): ADR-169 location state and device opt-out, the caller's groups and members and household creation, a learner's own dashboard, Little Monsters notices with mark-read, Jarvis briefing sources (PUT needs the route's own header) and the caller's schedules with pause/resume, and the global search, each shaped like its real route with a controllable status. Registered with the other lane routes ahead of the default routes.
- * 12 | maintainer@emeraldcoastsystemsgroup.com | Central-assistant build routes (lane "orb", `state.nexusBuild`, registered by nexusGapRoutes ahead of the defaults): the caller's busy windows through GET /api/experience/availability (or its refusal body), the Google row of GET /api/connect/list, and Travel's GET /config, GET/POST /profile, GET /flights (four synthetic offers, source, price read) and GET/POST /watches, each with a controllable status and a log of what the page sent; installTravelHost admits Travel into a case's catalog (or installs it outside the plan).
+ * 12 | maintainer@emeraldcoastsystemsgroup.com | Full-swarm build routes (portalBuildRoutes, lane "portal", registered first among the lane routes): one ticket's workflow read model shaped like GET /api/v1/tickets/:ticketId/workflow with per-ticket overrides and statuses, and a cancel pre-handler that moves the synthetic ticket to cancelled whenever the existing cancel route will answer 200.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com | portalBuildRoutes gains the schedule and workflow-definition reads (scheduleRoutes): an owner-scoped schedule list, pause/resume with the controller's 404 / managed-manifest 403 / operator 403 refusals, and Workflow Studio definition summaries, each with a controllable status.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com | portalBuildRoutes gains the membership and own-location reads (peopleRoutes): GET /api/tenants with a controllable status, members-only GET /api/tenants/:id/members, and the caller's GET /api/location/state overview (no coordinates) with a controllable status.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com | Central-assistant build routes (lane "orb", `state.nexusBuild`, registered by nexusGapRoutes ahead of the defaults): the caller's busy windows through GET /api/experience/availability (or its refusal body), the Google row of GET /api/connect/list, and Travel's GET /config, GET/POST /profile, GET /flights (four synthetic offers, source, price read) and GET/POST /watches, each with a controllable status and a log of what the page sent; installTravelHost admits Travel into a case's catalog (or installs it outside the plan).
  */
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -201,6 +204,7 @@ export async function startExperienceBrowserFixture(options: { denyAuth?: boolea
   // One request log for every case, then each lane's override routes (they answer only what their case state asks
   // for and fall through otherwise), then the default synthetic routes, whose `/api` 404 catch-all stays last.
   app.use((req, _res, next) => { state.calls.push(`${req.method} ${req.path}`); next(); });
+  portalBuildRoutes(app, state);
   fullSwarmGapRoutes(app, state); nexusGapRoutes(app, state); homebaseGapRoutes(app, state);
   assemblyHostRoutes(app, state);
   homebaseBuildRoutes(app, state);
@@ -550,6 +554,60 @@ function nexusBuildRoutes(app: express.Application, state: ExperienceState) {
     if (travel.watchStatus !== 200) { res.status(travel.watchStatus).json({ error: 'Synthetic watch refused' }); return; }
     const watch = { watch_id: `w${travel.watches.length + 1}`, kind: 'flight', route_key: `flight:${req.body.origin}-${req.body.destination}:${req.body.departDate}`, query: req.body, last_price: req.body.lastPrice, currency: 'USD', status: 'active', last_checked_at: null, created_at: iso(0) };
     travel.watches.unshift(watch); res.json({ watch });
+/** The synthetic state the full-swarm build routes read (lane "portal"): per-ticket workflow read models and statuses. */
+export type PortalFixtureState = {
+  ticketWorkflows: Record<string, Record<string, unknown>>;
+  workflowStatus: Record<string, number>;
+  /** Schedule records as GET /api/v1/agent/schedules returns them; ownerSub decides visibility and the pause/resume refusal. */
+  schedules: Array<Record<string, unknown> & { id: string; taskType: string; status: string; ownerSub?: string | null }>;
+  schedulesStatus: number;
+  /** Workflow Studio definition summaries ({ id, name, description, version, updatedAt, nodeCount, edgeCount }). */
+  workflows: Array<Record<string, unknown>>;
+  workflowsStatus: number;
+  /** The caller's memberships as GET /api/tenants lists them, and each tenant's members (subject and role) for GET /api/tenants/:id/members. */
+  tenants: Array<{ tenant_id: string; kind: string; name: string; role: string }>;
+  tenantsStatus: number;
+  members: Record<string, Array<{ user_sub: string; role: string }>>;
+  /** The caller's location overview (GET /api/location/state) and its status; no coordinates, like the real read. */
+  location: { status: number; body: Record<string, unknown> };
+};
+
+/**
+ * @description The full-swarm build lane's synthetic state on a running fixture.
+ * @param state The case's synthetic state (from the running fixture).
+ * @returns The lane state portalBuildRoutes reads, created when the fixture started.
+ */
+export function portalState(state: ExperienceState): PortalFixtureState { return (state as ExperienceState & { portal: PortalFixtureState }).portal; }
+
+/**
+ * @description Synthetic routes for the full-swarm build (lane "portal"), shaped like the real contracts: one ticket's
+ * workflow read model (GET /api/v1/tickets/:ticketId/workflow, the buildWorkflowPayload shape; 404 for a ticket the
+ * caller does not own, or the status `workflowStatus[id]` names; `ticketWorkflows[id]` overrides the definition, run,
+ * history, gates and children), and a pre-handler on PUT /api/tickets/:ticketId/cancel that moves the ticket to
+ * cancelled when the central-assistant lane's cancel route will answer 200, then falls through to that route, which
+ * answers and records the call. Registered first among the lane routes (see startExperienceBrowserFixture).
+ * @param app The fixture application.
+ * @param state The per-case synthetic state; `state.portal` is created here.
+ * @returns Nothing; the routes are registered on `app`.
+ */
+function portalBuildRoutes(app: express.Application, state: ExperienceState) {
+  const portal: PortalFixtureState = { ticketWorkflows: {}, workflowStatus: {}, schedules: [], schedulesStatus: 200, workflows: [], workflowsStatus: 200,
+    tenants: [], tenantsStatus: 200, members: {}, location: { status: 200, body: { settings: { defaultPrecisionClass: 'place' }, devices: [], current: null, history: { observationCount: 0 }, visibility: { memberShares: [], guardianShares: [], restrictions: [] } } } };
+  Object.assign(state, { portal });
+  const router = express.Router();
+  router.get('/api/v1/tickets/:ticketId/workflow', (req, res) => {
+    const id = req.params.ticketId, ticket = state.tickets.find(t => t.ticketId === id), status = portal.workflowStatus[id] ?? (ticket ? 200 : 404);
+    if (!ticket || status !== 200) { res.status(status).json({ success: false, error: status === 404 ? 'Ticket not found' : 'Failed to load ticket workflow' }); return; }
+    res.json({ success: true, ticket: { ticketId: id, title: ticket.title, ticketType: ticket.ticketType, queueId: '', queueName: '', status: ticket.status, assignedAgentId: '' },
+      definition: null, run: null, runHistoryAvailable: true, otherRunCount: 0, history: [], historyAvailable: true, approvalGates: [], children: [], childrenAvailable: true, ...portal.ticketWorkflows[id] });
+  });
+  scheduleRoutes(router, state, portal);
+  peopleRoutes(router, state, portal);
+  router.put('/api/tickets/:ticketId/cancel', (req, _res, next) => {
+    const lane = (state as ExperienceState & { nexusGap?: { cancelStatus: Record<string, number> } }).nexusGap;
+    const ticket = state.tickets.find(t => t.ticketId === req.params.ticketId);
+    if (ticket && (lane?.cancelStatus[req.params.ticketId] ?? 200) === 200) ticket.status = 'cancelled';
+    next();
   });
   app.use(router);
 }
@@ -565,6 +623,56 @@ function nexusBuildRoutes(app: express.Application, state: ExperienceState) {
 export function installTravelHost(state: ExperienceState, admitted = true): void {
   if (admitted) { installHosts(state, { travel: { suite: 'ai-home', surfaces: [['travel-concierge', 'Travel']] } }); return; }
   if (!state.apps.some(a => a.summary.name === 'travel')) state.apps.push(syntheticApp('travel', 'ai-home', { inPlan: false, navigable: false }));
+ * @description The schedule and workflow-definition reads of portalBuildRoutes, mirroring the real controllers: the list is
+ * owner-scoped (unowned system schedules stay visible), pause/resume answer 404 for a schedule the caller does not own,
+ * 403 for an app: / app-route: schedule (managed by its manifest) and for a workflow: schedule (the synthetic caller is no
+ * operator), and otherwise flip the status and return the schedule.
+ * @param router The lane router.
+ * @param state The per-case synthetic state (for the caller's subject).
+ * @param portal The lane state.
+ * @returns Nothing; the routes are registered on `router`.
+ */
+function scheduleRoutes(router: express.Router, state: ExperienceState, portal: PortalFixtureState) {
+  const visible = (s: PortalFixtureState['schedules'][number]) => !s.ownerSub || s.ownerSub === state.user.sub;
+  router.get('/api/v1/agent/schedules', (_req, res) => {
+    if (portal.schedulesStatus !== 200) { res.status(portal.schedulesStatus).json({ success: false, error: 'Synthetic schedules unavailable' }); return; }
+    res.json({ success: true, schedules: portal.schedules.filter(visible) });
+  });
+  router.post('/api/v1/agent/schedules/:id/:verb', (req, res, next) => {
+    if (!['pause', 'resume'].includes(req.params.verb)) { next(); return; }
+    const schedule = portal.schedules.find(s => s.id === req.params.id);
+    if (!schedule || !visible(schedule)) { res.status(404).json({ success: false, error: 'Schedule not found' }); return; }
+    if (/^app(-route)?:/.test(schedule.taskType)) { res.status(403).json({ success: false, error: 'Schedule is managed by an active app manifest' }); return; }
+    if (/^workflow:/.test(schedule.taskType)) { res.status(403).json({ success: false, error: 'Operator privilege required' }); return; }
+    schedule.status = req.params.verb === 'pause' ? 'paused' : 'active';
+    res.json({ success: true, schedule });
+  });
+  router.get('/api/workflow-studio/definitions', (_req, res) => {
+    if (portal.workflowsStatus !== 200) { res.status(portal.workflowsStatus).json({ success: false, error: 'Synthetic definitions unavailable' }); return; }
+    res.json({ success: true, count: portal.workflows.length, definitions: portal.workflows });
+  });
+}
+
+/**
+ * @description The membership and own-location reads of portalBuildRoutes, mirroring the real routes: GET /api/tenants lists the
+ * caller's memberships (or the status `tenantsStatus` names), GET /api/tenants/:id/members answers members only (403 "not a
+ * member" otherwise) with subject and role, and GET /api/location/state answers the caller's own overview or its status.
+ * @param router The lane router.
+ * @param state The per-case synthetic state (for the caller's subject).
+ * @param portal The lane state.
+ * @returns Nothing; the routes are registered on `router`.
+ */
+function peopleRoutes(router: express.Router, state: ExperienceState, portal: PortalFixtureState) {
+  router.get('/api/tenants', (_req, res) => {
+    if (portal.tenantsStatus !== 200) { res.status(portal.tenantsStatus).json({ error: 'Synthetic tenants unavailable' }); return; }
+    res.json({ tenants: portal.tenants });
+  });
+  router.get('/api/tenants/:id/members', (req, res) => {
+    const members = portal.members[req.params.id] || [];
+    if (!members.some(m => m.user_sub === state.user.sub)) { res.status(403).json({ error: 'not a member' }); return; }
+    res.json({ members });
+  });
+  router.get('/api/location/state', (_req, res) => { res.status(portal.location.status).json(portal.location.status === 200 ? portal.location.body : { error: 'location_session_required' }); });
 }
 /** The ADR-169 location overview as GET /api/location/state answers it for its owner (places by reference, never coordinates). */
 type HomeLocationState = {

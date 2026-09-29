@@ -12,6 +12,8 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Integration review: one same-origin guard, localHref, resolves a server-provided link against the page origin the way the browser will (tab/CR/LF stripped, a backslash read as a slash) and keeps only a path that stays on this origin, so '//host', '/\host' and a tab-split '/<TAB>/host' can never become a link. ask()'s poll-limit result carries code 'poll_limit' so a caller can say the page stopped checking instead of calling the request failed. The roster read keeps the route's refusal code (roster_scope_denied vs roster_administrator_required). markDelivered is removed: the Jarvis page stays the one surface that announces and marks results.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Fix round 1: localHref checks the path it returns as well as the URL it resolved. Dot segments normalise '/..//host', '/.//host' and '/%2e%2e//host' to a pathname that starts with '//', which the guard returned as a protocol-relative link that opens another origin; now a returned path must not start with '//' and must itself resolve to the page origin. The admitted navigation href from GET /api/ui/workspaces goes through the same guard and falls back to the cockpit link when refused, so every catalog Open link stays on this origin.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Acceptance fixes: calendarDay reads a date-only field ('YYYY-MM-DD' or exactly UTC midnight, how a Postgres DATE reaches JSON) as that local calendar day, so a Little Monsters due date no longer prints a day early west of Greenwich (due_date was the only field read through `new Date(iso)`); event and last-active dates were already read as local days and now share the helper, as do the agenda's class events. probeSummary carries the first probe's refusal code as `error`, and littleMonstersRefusal names an application-authorization refusal (403 app_access_* / authorization_*) apart from the package's no-school-profile sentence, so a shell stops telling an unadmitted caller to open Little Monsters.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Every canonical ticket state now folds to a label a shell can place: approved (Approved, waiting for the queue), approval_required (Approval required) and customer_action (Needs you) wait on a person, dead_letter reads Blocked, and every in_process_* phase is Working (they printed as "In process build" and fell off the Commons board, and an approval gate was never counted as needing you). STATUS_GROUPS names the attention / moving / done label sets the shells share for briefings and board columns.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | Adapters for the full-swarm build over existing routes: one ticket's workflow read model (GET /api/v1/tickets/:id/workflow) and its owner-checked cancel, the caller's schedules with pause/resume (GET /api/v1/agent/schedules, POST /:id/pause|resume), Workflow Studio definitions, household/team membership (GET /api/tenants, /:id/members) and the caller's own location overview (GET /api/location/state). The catalog keeps the listing's package status for the package-facts panel.
  */
 (function attach(root, factory) {
   'use strict';
@@ -33,22 +35,37 @@
   };
   var SUITE_ORDER = ['ai-finance', 'ai-engineering', 'ai-creative', 'ai-productivity', 'ai-home', 'ai-knowledge', 'platform'];
 
-  /** Raw ticket / Jarvis task statuses seen on the platform, folded to the vocabulary the shells show. */
+  /**
+   * Raw ticket / Jarvis task statuses seen on the platform, folded to the vocabulary the shells show. The canonical
+   * ticket states (OshalTicketStateSchema) are all named: approved waits for the queue, approval_required and
+   * customer_action wait on a person, dead_letter is parked until an operator requeues it, and every in_process_*
+   * phase is Working (statusOf folds the prefix).
+   */
   var STATUS_LABELS = {
     complete: 'Ready', completed: 'Ready', done: 'Ready', resolved: 'Ready', delivered: 'Ready', closed: 'Closed',
     in_process: 'Working', in_progress: 'Working', running: 'Working', processing: 'Working', summarizing: 'Working', active: 'Working',
     pending: 'Queued', queued: 'Queued', backlog: 'Queued', created: 'Queued', new: 'Queued', open: 'Queued', scheduled: 'Queued',
+    approved: 'Approved', approval_required: 'Approval required', customer_action: 'Needs you', dead_letter: 'Blocked',
     review: 'Review', in_review: 'Review', pending_approval: 'Review', awaiting_approval: 'Review', approval: 'Review',
     escalated: 'Escalated', blocked: 'Blocked', paused: 'Paused',
     error: 'Failed', failed: 'Failed', cancelled: 'Cancelled', canceled: 'Cancelled'
   };
-  var TONE_BY_LABEL = { Ready: 'good', Working: 'neutral', Queued: 'neutral', Review: 'warn', Escalated: 'warn', Blocked: 'warn', Paused: 'neutral', Failed: 'warn', Cancelled: 'neutral', Closed: 'neutral' };
+  var TONE_BY_LABEL = { Ready: 'good', Working: 'neutral', Queued: 'neutral', Approved: 'neutral', Review: 'warn', 'Approval required': 'warn', 'Needs you': 'warn', Escalated: 'warn', Blocked: 'warn', Paused: 'neutral', Failed: 'warn', Cancelled: 'neutral', Closed: 'neutral' };
   var CLOSED_LABELS = { Ready: true, Closed: true, Cancelled: true, Failed: true };
+  /**
+   * The three places a work item belongs on a board or in a briefing: it waits on a person (attention), it is moving
+   * through the swarm (moving), or it is finished (done). Every label statusOf can produce for a known state is in one.
+   */
+  var STATUS_GROUPS = {
+    attention: ['Review', 'Approval required', 'Needs you', 'Escalated', 'Blocked', 'Failed'],
+    moving: ['Working', 'Queued', 'Approved', 'Paused'],
+    done: ['Ready', 'Closed', 'Cancelled']
+  };
 
   /** @description Fold a raw platform status into a display label, tone and open/closed flag. */
   function statusOf(raw) {
     var key = String(raw || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
-    var label = STATUS_LABELS[key] || (key ? key.replace(/_/g, ' ').replace(/^\w/, function (c) { return c.toUpperCase(); }) : 'Unknown');
+    var label = STATUS_LABELS[key] || (/^in_process_/.test(key) ? 'Working' : key ? key.replace(/_/g, ' ').replace(/^\w/, function (c) { return c.toUpperCase(); }) : 'Unknown');
     return { raw: String(raw || ''), label: label, tone: TONE_BY_LABEL[label] || 'neutral', open: !CLOSED_LABELS[label] };
   }
 
@@ -104,6 +121,7 @@
       name: (plan && plan.displayName) || summary.displayName || name,
       description: (plan && plan.description) || summary.description || '',
       version: summary.version || '',
+      status: typeof summary.status === 'string' ? summary.status : '',
       suite: suiteId((plan && plan.suite) || summary.suite),
       icon: (plan && plan.icon) || summary.icon || '',
       kind: plan && plan.kind === 'group' ? 'group' : 'app',
@@ -678,8 +696,42 @@
          * @param {string} status Canonical next state.
          * @returns {Promise<{ok:boolean,status:number,body:any}>} The route's answer, including its refusal.
          */
-        setStatus: function (id, status) { return sendJson('/api/tickets/' + encodeURIComponent(id) + '/status', 'PUT', { status: status }); }
+        setStatus: function (id, status) { return sendJson('/api/tickets/' + encodeURIComponent(id) + '/status', 'PUT', { status: status }); },
+        /**
+         * @description One ticket's owner- and application-scoped workflow read model: the registered definition (not a run snapshot), the latest owner-matched run, status history, approval-gate receipts and child tickets.
+         * @param {string} id Ticket id.
+         * @returns {Promise<{ok:boolean,status:number,body:any}>} The projection, or 404 when the caller may not read the ticket.
+         */
+        workflow: function (id) { return getJson('/api/v1/tickets/' + encodeURIComponent(id) + '/workflow'); },
+        /**
+         * @description Ask the ticket route to cancel work the caller owns; the route checks ownership and refuses otherwise.
+         * @param {string} id Ticket id.
+         * @returns {Promise<{ok:boolean,status:number,body:any}>} The route's answer, including a refusal.
+         */
+        cancel: function (id) { return sendJson('/api/tickets/' + encodeURIComponent(id) + '/cancel', 'PUT'); }
       },
+      routines: {
+        /**
+         * @description The caller's schedules (owner-scoped by the route; unowned system schedules stay visible to everyone).
+         * @returns {Promise<{ok:boolean,status:number,body:any}>} { schedules } or the route's refusal.
+         */
+        list: function () { return getJson('/api/v1/agent/schedules'); },
+        /**
+         * @description Pause or resume one schedule; the route refuses a schedule the caller does not own (404), one an application manifest manages, and a workflow schedule for a non-operator (403).
+         * @param {string} id Schedule id.
+         * @param {boolean} on True resumes, false pauses.
+         * @returns {Promise<{ok:boolean,status:number,body:any}>} { schedule } or the refusal.
+         */
+        setOn: function (id, on) { return sendJson('/api/v1/agent/schedules/' + encodeURIComponent(id) + (on ? '/resume' : '/pause'), 'POST'); }
+      },
+      /** Workflow Studio definitions (name, version, node count); editing, publishing and restoring stay in Workflow Studio. */
+      workflows: function () { return getJson('/api/workflow-studio/definitions'); },
+      /** The households and teams the caller belongs to, with their role (GET /api/tenants). */
+      tenants: function () { return getJson('/api/tenants'); },
+      /** Members of one tenant (subject and role); the route answers members only (403 otherwise). */
+      tenantMembers: function (id) { return getJson('/api/tenants/' + encodeURIComponent(id) + '/members'); },
+      /** The caller's own location overview (ADR-169 L3: settings, devices, current place, who can see them; no coordinates). */
+      locationState: function () { return getJson('/api/location/state'); },
       content: {
         /**
          * @description The caller's saved content drafts (topic, take, draft, created_at), newest first; the route reads only the caller's own rows.
@@ -723,7 +775,7 @@
   }
 
   var api = {
-    SUITE_META: SUITE_META, SUITE_ORDER: SUITE_ORDER, statusOf: statusOf, initials: initials, deriveIdentity: deriveIdentity,
+    SUITE_META: SUITE_META, SUITE_ORDER: SUITE_ORDER, STATUS_GROUPS: STATUS_GROUPS, statusOf: statusOf, initials: initials, deriveIdentity: deriveIdentity,
     mergeApps: mergeApps, buildSuites: buildSuites, mergeWork: mergeWork, normalizeTicket: normalizeTicket, normalizeTask: normalizeTask,
     atPointer: atPointer, normalizeSummary: normalizeSummary, relativeTime: relativeTime, clockTime: clockTime, parseDate: parseDate,
     calendarDay: calendarDay, littleMonstersRefusal: littleMonstersRefusal, dependencyTiers: dependencyTiers, declaredAssistants: declaredAssistants, directoryPeople: directoryPeople, classEvents: classEvents,
