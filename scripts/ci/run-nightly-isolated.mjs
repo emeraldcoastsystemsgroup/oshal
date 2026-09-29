@@ -17,6 +17,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com | The partial-scan proof joins the fixed isolated set beside its two siblings. It denies read on one file of a disposable export and requires the gate to refuse the PASS while the real gitleaks image exits 0 - the 2026-09-10 failure - so it needs Docker and Git Bash, which is exactly what this gate provides. Nightly is also what keeps the FLOATING :latest tag honest: the day the image rewords its skip line, this is where it shows up.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | The two ADR-052 addendum parity guards join the fixed isolated set: the per-position exit-plan table spec and the parity fire spec. Each starts and destroys its own PostgreSQL and reads no database address, the same shape as the trading guards above, so this runner - which blanks every database variable it passes down - is the gate that executes them.
  * 13 | maintainer@emeraldcoastsystemsgroup.com | The ADR-052 addendum P6 yield-sleeve fire spec joins the fixed isolated set beside the parity fire spec. It starts and destroys its own PostgreSQL and reads no database address, the same shape as the trading guards above.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com | Include the real Vitest discovery guard for the default tree-walk serial project; it starts no database or test worker of its own.
  */
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, createWriteStream } from 'node:fs';
@@ -29,6 +30,7 @@ export const NIGHTLY_ISOLATED_SUITES = Object.freeze([
   'tests/unit/alert-incident-cutover.spec.ts',
   'tests/unit/alert-incident-reopen.spec.ts',
   'tests/unit/topology-traversal.spec.ts',
+  'tests/unit/vitest-db-serialization.spec.ts',
   'tests/unit/alert-postgres-isolation.spec.ts',
   'tests/unit/alert-event-replay-idempotency.spec.ts',
   'tests/unit/alert-consolidate-landed-postgres.spec.ts',

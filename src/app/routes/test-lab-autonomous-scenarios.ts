@@ -21,6 +21,7 @@
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | Register the two ADR-052 addendum parity guards on the isolated nightly scenario: the per-position exit-plan table spec (immutable terms at the database, supersede/close/amend paths, (user_sub, book_id) scoping, owner RLS against a NOSUPERUSER NOBYPASSRLS role) and the parity fire spec (real dispatchTradingSchedule fires: the market-gap hold of every entry leg with its counterfactual rows and kept rotation slot, and plans stamped, honored, expired and closed with their doors). Both start and destroy their own PostgreSQL and read no address, so this runner is the gate that executes them.
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | Register the ADR-052 addendum P6 yield-sleeve fire spec on the isolated nightly scenario: real dispatchTradingSchedule fires that sell the armed sleeve before the entries it funds (scan and rotation), keep it out of every exit leg, park idle cash on a quiet fire, idle it while its own order works, and read the Test Lab sleeve ledger back from the same database. It starts and destroys its own PostgreSQL and reads no address, so this runner is the gate that executes it.
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Register the two replay ledger guards on the protected remote application execution scenario: the store's own spec, which was on disk and in no scenario, and its real-Redis companion for the first connect under concurrent callers. The companion starts and removes its own Redis and reads no address, so the scenario's fixed runner is the gate that executes it, and the description names Redis among the fixtures.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com | Register the database-free Vitest discovery guard beside the tree-walk suites whose default scheduling it protects.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -60,6 +61,7 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/alert-incident-cutover.spec.ts' },
     { level: 'integration', path: 'tests/unit/alert-incident-reopen.spec.ts' },
     { level: 'integration', path: 'tests/unit/topology-traversal.spec.ts' },
+    { level: 'unit', path: 'tests/unit/vitest-db-serialization.spec.ts' },
     { level: 'integration', path: 'tests/unit/alert-postgres-isolation.spec.ts' },
     { level: 'integration', path: 'tests/unit/alert-event-replay-idempotency.spec.ts' },
     { level: 'integration', path: 'tests/unit/alert-consolidate-landed-postgres.spec.ts' },
