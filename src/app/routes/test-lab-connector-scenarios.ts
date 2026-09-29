@@ -4,6 +4,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Register the Yahoo Mail connector card: the anonymous credential refusal on /api/connect/yahoo/access-token, with the loopback-IMAP reader suite and the connector schema/card suite attached. No mailbox is contacted; a live Yahoo connect is an operator acceptance step.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Register the ESPN Fantasy league-read card for the fantasy-leagues kernel skill (ADR-146 D2): the anonymous refusal on /api/connect/espn-fantasy/access-token, with the loopback protocol-seam suite and the kernel-skill contract suite attached. No ESPN host is contacted and no real league is read; a real-league read stays an operator acceptance step behind a signed-in session.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Describe same-subject issuer-switch refusal in the linked real-HTTP consent suite; the installed card remains anonymous refusal only.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Register qualified personal grant authentication and scoped HTTP/provider/crypto/storage guards without claiming real consent or PostgreSQL from a refusal card.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -18,6 +19,24 @@ async function refusal(path: string, expected: number, label: string): Promise<S
     detail: `HTTP ${response.status}; expected ${expected}. No provider authorization or token exchange was requested.`,
   };
 }
+
+const QUALIFIED_PERSONAL_CONNECTOR: Scenario = {
+  id: 'qualified-personal-connector', title: 'Qualified personal connector grants', group: 'tool',
+  description: 'Check anonymous metadata and consent refusal. Linked suites cover the real HTTP/browser ceremony, exact issuer/subject, fresh SmartThings location verification, encryption and revision-bound reconnect/revoke. HTTP authentication/storage fixtures and local provider responders are explicit doubles. Real PostgreSQL enforcing-role suites are separate; this card neither authorizes a provider nor enables device actions.',
+  regressionTests: [
+    { level: 'integration', path: 'tests/unit/connector-qualified-http.spec.ts' },
+    { level: 'integration', path: 'tests/unit/connector-qualified-smartthings.spec.ts' },
+    { level: 'unit', path: 'tests/unit/connector-qualified-session.spec.ts' },
+    { level: 'unit', path: 'tests/unit/connector-qualified-grants.spec.ts' },
+    { level: 'unit', path: 'tests/unit/connector-qualified-token-crypto.spec.ts' },
+    { level: 'integration', path: 'tests/unit/connector-qualified-credentials-postgres.spec.ts' },
+    { level: 'integration', path: 'tests/unit/connector-qualified-grants-postgres.spec.ts' },
+  ],
+  steps: [
+    { id: 'private-qualified-metadata', app: 'connectors', label: 'Protect personal grant metadata', run: () => refusal('/api/connect/qualified', 401, 'Qualified metadata requires sign-in') },
+    { id: 'private-qualified-consent', app: 'connectors', label: 'Protect personal grant consent', run: () => refusal('/api/connect/qualified/smartthings/start', 401, 'Qualified consent requires sign-in') },
+  ],
+};
 
 export const CONNECTOR_OAUTH_SCENARIOS: Scenario[] = [{
   id: 'connector-oauth-boundary', title: 'Connector sign-in callback boundary', group: 'tool',
@@ -51,4 +70,4 @@ export const CONNECTOR_OAUTH_SCENARIOS: Scenario[] = [{
   steps: [
     { id: 'private-token', app: 'connectors', label: 'Protect the ESPN Fantasy cookies', run: () => refusal('/api/connect/espn-fantasy/access-token', 401, 'ESPN Fantasy cookies require sign-in') },
   ],
-}];
+}, QUALIFIED_PERSONAL_CONNECTOR];

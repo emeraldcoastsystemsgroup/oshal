@@ -367,6 +367,62 @@ one shared key and every authenticated user benefits without individual connect 
 
 ---
 
+### 3.6 Fresh issuer-qualified personal grants
+
+The separate qualified namespace stores newly authorized personal grants only. It does not
+copy, decrypt, relabel or adopt rows from the legacy connection/key stores. Migration 181 and
+the existing request-bound database pool are prerequisites; absent storage fails closed.
+Its HTTP bridge initially supports SmartThings, with no household, service or administrator
+fallback. An authenticated operator uses the same personal non-operator database context.
+
+The routes are mounted behind the existing connector authentication middleware:
+
+| Route under `/api/connect` | Purpose |
+|---|---|
+| `GET /qualified` | Bounded, issuer-and-subject-owned metadata list; optional `limit` and UUID `afterConnectionId`. |
+| `GET /qualified/:connectionId` | Exact personal SmartThings metadata, with revision ETag. |
+| `GET /qualified/smartthings/start` | Fresh OAuth; optional `reconnect` UUID is resolved to immutable account and revision server-side. |
+| `POST /qualified/smartthings/token` | Fresh PAT, JSON `{"token":"…"}`; never an existing legacy token reference. |
+| `POST /qualified/smartthings/:connectionId/token` | Fresh PAT replacement of the exact grant; requires its quoted revision in `If-Match`. |
+| `DELETE /qualified/:connectionId` | Revision-bound local revocation; requires quoted `If-Match`. Does not revoke at the provider or erase stored ciphertext. |
+
+POST/DELETE require an exact configured same-origin `Origin` header. Provider/account/owner/
+tenant overrides are not accepted in the token body. Metadata includes status, revision,
+expiry and timestamps, never tokens, ciphertext, wrapping keys or owner identity. PAT expiry
+is unknown (`null`), not a claim of a perpetual credential. Reconnect without a fresh refresh
+token explicitly clears the old refresh token.
+
+OAuth reuses the already registered `/api/connect/smartthings/callback`. The public callback
+only relays the code. The original host, browser cookie and verified issuer/subject must match
+before authenticated completion exchanges it. The qualified namespace and reconnect target
+are snapshotted server-side, not selected by callback query parameters. A changed revision
+during consent refuses persistence; no silent overwrite of a revocation.
+
+SmartThings verification uses its fixed read-only `GET /v1/locations`. The account key is
+`smartthings-location:<locationId>`: a verified **location resource**, not a verified person
+or provider-wide account identity. New grants choose the lexically smallest returned location;
+reconnect requires the exact stored location to remain in the response. There is no email
+fallback, legacy-token fallback, pagination-link following or device command. Empty/invalid
+results fail closed. This does not prove permission for any later device action.
+
+The HTTP request lifetime is bounded and checked after provider awaits. Provider I/O occurs
+outside database transactions; short credential operations use the shared qualified session
+with abort disposal. Physical Home/L8 readiness is unchanged. Console enrollment controls,
+Home broker wiring, an installed owner-bound consent and actual device-action acceptance
+remain separate work; these server endpoints alone do not close that feature.
+
+Focused verification:
+
+```sh
+npx vitest run tests/unit/connector-qualified-http.spec.ts tests/unit/connector-qualified-smartthings.spec.ts tests/unit/connector-qualified-session.spec.ts tests/unit/connector-qualified-grants.spec.ts tests/unit/connector-qualified-token-crypto.spec.ts
+```
+
+The HTTP suite uses real Express, consent, crypto and session/store modules with named
+authentication, provider-response and transactional SQL doubles. The provider companion
+uses a loopback protocol responder. Neither proves PostgreSQL RLS or live SmartThings access.
+The separate qualified-credentials and qualified-grants PostgreSQL suites require an owned
+disposable database and enforcing role. The Test Lab card probes anonymous refusal only.
+
 ## 4. Webhooks
 
 Source: `src/app/connectors/webhooks/`, `src/app/routes/connector-webhook-routes.ts`
