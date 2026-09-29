@@ -17,6 +17,115 @@
      matters — without it the surface would have no colors at all. -->
 <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
 <script src="/shared/ui/js/surface-theme.js"></script>
+<!-- ADR-164 D6 audience view kit: loaded right after the theme bootstrap so a shell's ?audience= request is decided before the page paints. -->
+<link rel="stylesheet" href="/shared/ui/css/app-view.css" />
+<script src="/shared/ui/js/app-view.js"></script>
+<script>
+/* Audience view (ADR-164 D6). Framed by a whole-portal shell with ?audience=company (Studio, Orbit, Commons) or
+   ?audience=family (Jarvis), this page paints an at-a-glance card of the signed-in operator's findings instead of
+   the full page. It reads only the two GETs the full page makes on load (/status and /findings?status=open); a
+   refused read is said in the card with no figure in its place. Without an audience, with one this page does not
+   provide, or on a core without the kit, the full page below runs exactly as before. */
+(function () {
+  var A = window.AppView; if (!A) return;
+  var SEVS = ['critical', 'high', 'medium', 'low', 'info'];
+  var SEV_TONE = { critical: 'bad', high: 'warn', medium: 'warn', low: 'info' };
+  var AREA = { secret: 'Secrets', route_auth: 'Routes', dependency: 'Dependencies', threat: 'Threats', ledger: 'Ledger', audit: 'Audit',
+    trivy_vuln: 'Image vulnerabilities', trivy_misconfig: 'Image misconfiguration', trivy_secret: 'Image secrets' };
+  var SCOPE = { posture: 'Posture', runtime: 'Runtime threats', ledger: 'Ledger anomalies', audit: 'Access / audit', image: 'Container image' };
+  var STATES = ['open', 'triaged', 'resolved', 'ignored'];
+  var LEDE = 'Findings from active scans of the swarm itself: committed secrets, unauthenticated routes, vulnerable dependencies, runtime threats, ledger anomalies and the access audit.';
+
+  /** @description The sentence for a refused read: what failed and why, never a figure. */
+  function refusal(status) {
+    if (status === 401) return 'You are not signed in (HTTP 401). Sign in, then open the Security Center again.';
+    if (status === 403) return 'The Security Center refused this account (HTTP 403): it is open to operators only.';
+    if (status === 404) return 'The Security Center did not answer on this core (HTTP 404).';
+    if (status >= 500) return 'The Security Center failed to answer (HTTP ' + status + ').';
+    return 'The Security Center refused the read (HTTP ' + status + ').';
+  }
+
+  /** @description One of the page's own GETs; resolves { ok, body } or { ok: false, why } and never rejects. */
+  function read(path, valid) {
+    return fetch('/api/security' + path, { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' } }).then(function (r) {
+      if (!r.ok) return { ok: false, why: refusal(r.status) };
+      return r.json().then(function (body) {
+        return valid(body) ? { ok: true, body: body } : { ok: false, why: 'The Security Center answered in a shape this view cannot read.' };
+      }, function () { return { ok: false, why: 'The Security Center answered with something that is not JSON.' }; });
+    }, function () { return { ok: false, why: 'The Security Center could not be reached (network failure).' }; });
+  }
+  function isMap(v) { return !!v && typeof v === 'object' && !Array.isArray(v); }
+  function validStatus(b) { return isMap(b) && isMap(b.severity) && isMap(b.category) && isMap(b.status); }
+  function validFindings(b) { return isMap(b) && Array.isArray(b.findings); }
+  /** @description A count from a GROUP BY map: a key the answer omits had no rows, so it is zero. */
+  function count(map, key) { var v = Number(map[key]); return isFinite(v) ? v : 0; }
+  function cap(s) { s = String(s || ''); return s.charAt(0).toUpperCase() + s.slice(1); }
+
+  /** @description The glance figures, all from GET /status: open findings by severity, review states, the last scan. */
+  function stats(s) {
+    var total = SEVS.reduce(function (a, k) { return a + count(s.severity, k); }, 0);
+    var crit = count(s.severity, 'critical'), high = count(s.severity, 'high'), last = isMap(s.lastScan) ? s.lastScan : null;
+    return [
+      { id: 'open', label: 'Open findings', value: A.num(total), tone: crit ? 'bad' : high ? 'warn' : total ? 'info' : 'ok' },
+      { id: 'critical', label: 'Critical', value: A.num(crit), tone: crit ? 'bad' : null },
+      { id: 'high', label: 'High', value: A.num(high), tone: high ? 'warn' : null },
+      { id: 'resolved', label: 'Resolved', value: A.num(count(s.status, 'resolved')), hint: A.num(count(s.status, 'ignored')) + ' ignored' },
+      { id: 'last-scan', label: 'Last scan', value: last ? A.when(last.started_at) : 'Never',
+        hint: last ? A.num(last.finding_count) + ' found, ' + A.num(last.new_count) + ' new · ' + (last.status || 'status unknown') : 'No scan has run yet.' }
+    ];
+  }
+
+  /** @description One open finding as a list row: title, area and source, severity badge, analyst and ticket state. */
+  function findingItem(x) {
+    var a = isMap(x.assessment) ? x.assessment : null, meta = [];
+    if (a) meta.push(a.falsePositive ? 'Likely false positive' : a.isRealThreat ? 'Confirmed' : 'Assessed');
+    if (x.ticket_id) meta.push('Ticket linked');
+    meta.push('Seen ' + A.when(x.last_seen));
+    return { title: String(x.title || 'Untitled finding'), text: [AREA[x.category] || String(x.category || ''), x.source ? String(x.source) : ''].filter(Boolean).join(' · '),
+      badge: String(x.severity || ''), tone: SEV_TONE[x.severity] || null, meta: meta.join(' · ') };
+  }
+
+  /** @description The worst open findings from GET /findings?status=open (already worst first), or the refusal said in their place. */
+  function worst(f, s) {
+    var head = { id: 'worst', kind: 'list', title: 'Worst open findings', wide: true };
+    if (!f.ok) return Object.assign(head, { items: [], empty: 'Open findings could not be read. ' + f.why });
+    return Object.assign(head, { note: 'Worst first, the order the full page lists them.', items: f.body.findings.filter(isMap).slice(0, 6).map(findingItem),
+      empty: isMap(s.lastScan) ? 'No open findings.' : 'No scan has run yet, so there are no findings.' });
+  }
+
+  /** @description Open findings per area and every finding per review state, from GET /status. */
+  function tallies(s) {
+    var areas = Object.keys(s.category).filter(function (k) { return count(s.category, k) > 0; }).sort(function (a, b) { return count(s.category, b) - count(s.category, a); });
+    var states = STATES.concat(Object.keys(s.status).filter(function (k) { return STATES.indexOf(k) < 0; }));
+    return [
+      { id: 'areas', kind: 'table', title: 'Open findings by area', columns: ['Area', { label: 'Open', align: 'right' }],
+        rows: areas.map(function (k) { return [AREA[k] || k, A.num(count(s.category, k))]; }), empty: 'No open findings in any area.' },
+      { id: 'review', kind: 'table', title: 'Every finding by review state', columns: ['State', { label: 'Findings', align: 'right' }],
+        rows: states.map(function (k) { return [cap(k), A.num(count(s.status, k))]; }) }
+    ];
+  }
+
+  /** @description What the last scan covered: each scope, whether it ran (with its own note when it could not), and its count. */
+  function coverage(s) {
+    var last = isMap(s.lastScan) ? s.lastScan : null, rows = last && Array.isArray(last.summary) ? last.summary.filter(isMap) : [];
+    return { id: 'coverage', kind: 'table', title: 'Last scan coverage', columns: ['Scope', 'Result', { label: 'Findings', align: 'right' }],
+      rows: rows.map(function (r) { return [SCOPE[r.kind] || String(r.kind || ''), r.available ? 'Ran' : { text: 'Could not run' + (r.note ? ': ' + r.note : ''), tone: 'warn' }, r.available ? A.num(r.count) : '—']; }),
+      empty: last ? 'The last scan recorded no coverage (' + (last.status || 'status unknown') + ').' : 'No scan has run yet.' };
+  }
+
+  /** @description The card for both shells: figures from the two reads, or the refusal said with no figure. */
+  function card(ctx) {
+    var open = { label: 'Open Security Center', primary: true, onClick: function () { window.location.assign(window.location.pathname); } };
+    return Promise.all([read('/status', validStatus), read('/findings?status=open', validFindings)]).then(function (r) {
+      var s = r[0], f = r[1], head = { kicker: 'Swarm self-security', title: 'Security Center' };
+      if (!s.ok) return Object.assign(head, { lede: s.why, actions: [open, { label: 'Try again', onClick: function () { ctx.refresh(); } }], stats: [], sections: [] });
+      return Object.assign(head, { lede: LEDE, actions: [open], stats: stats(s.body), sections: [worst(f, s.body)].concat(tallies(s.body), [coverage(s.body)]) });
+    });
+  }
+
+  A.boot({ app: 'security-center', escapeLabel: 'Open Security Center in the cockpit', audiences: { company: card, family: card } });
+})();
+</script>
 <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
 <style>
   /* Keep the surface's own short alias names, but DERIVE each from a framework token instead of a
@@ -218,7 +327,11 @@ document.getElementById('scanBtn').onclick = async () => {
   finally { btn.disabled = false; }
 };
 
-(function init(){ render().catch(e => { document.getElementById('findings').innerHTML = '<div class="empty">'+esc(e.message)+'</div>'; }); })();
+// The full page starts only when no audience view is active (ADR-164 D6): without the kit, without ?audience=,
+// or with an audience this page does not provide, it runs exactly as before.
+if (!window.AppView || !AppView.active()) {
+  (function init(){ render().catch(e => { document.getElementById('findings').innerHTML = '<div class="empty">'+esc(e.message)+'</div>'; }); })();
+}
 </script>
 </body>
 </html>
