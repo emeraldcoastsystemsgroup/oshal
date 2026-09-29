@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Membership and the caller's place: Commons' team name, members by role with the caller's place and each source read once; the no-team state; Studio's People panel without a directory read; the tenants and location refusals.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Portal sections: the central assistant feature, the three homebases and the four numbered layouts with their live facts and no screenshot, in the demo's order; the classroom card's listed-only and not-in-catalog states without any Little Monsters request.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | The demo's six-width layout check over the four layouts (home, directory, application panel with its package facts, work panel with its workflow) and the portal at four widths; the provenance panel's on-demand reads before and after they are made; the other games in a game's panel.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Markup the caller types renders as text in the Jarvis thread (the demo's "input remains text" check).
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -645,6 +646,20 @@ describe('six widths, the provenance of on-demand reads, and the other games', (
     expect(await page.locator('#full-dialog').innerText()).toMatch(/Other games on this swarm\s*Synthetic dungeon-crawl/);
     await page.locator('#full-dialog [data-action="open-app"][data-app="dungeon-crawl"]').click();
     expect(await page.locator('#full-dialog-title').innerText()).toBe('Synthetic dungeon-crawl');
+    expect(errors).toEqual([]);
+  });
+});
+
+describe('the conversation keeps what the caller types as text', () => {
+  it('markup sent to Jarvis renders as text in the thread, never as an element', async () => {
+    await open('/studio', '#message-input');
+    await page.fill('#message-input', '<img src=x onerror="window.__owned=1">');
+    await page.press('#message-input', 'Enter');
+    await page.waitForSelector('.conversation-list .message-content p strong');
+    expect(await page.locator('.conversation-list .user-message img').count()).toBe(0);
+    expect(await page.locator('.conversation-list .user-message').last().innerText()).toBe('<img src=x onerror="window.__owned=1">');
+    expect(await page.evaluate(() => (window as unknown as { __owned?: number }).__owned)).toBeUndefined();
+    expect(fixture.state.asks[0].message).toBe('<img src=x onerror="window.__owned=1">');
     expect(errors).toEqual([]);
   });
 });
