@@ -1,8 +1,10 @@
 # Qualified connector credentials: foundation and integration contract
 
 Status: **Foundation and bounded broker/session source; not activated.** Personal
-credentials only. This candidate supplies no qualified HTTP route, fresh-grant API,
-OAuth ceremony or Home integration. Those are separate coordinated slices. Every
+credentials only. The composed candidate includes the separate fresh-grant service,
+authenticated HTTP/OAuth integration and Utilities controls described in the
+[connector architecture](../architecture/connectors-and-graph-architecture.md#36-fresh-issuer-qualified-personal-grants).
+It does not yet integrate Home execution. Every
 L8 physical-readiness hold remains in place. No PostgreSQL or provider acceptance
 is claimed; migration promotion remains blocked on real enforcing-role proof.
 
@@ -33,8 +35,8 @@ Identity columns use deterministic `C` collation. Both tables ENABLE and FORCE R
 matching `oshal.current_issuer` and `oshal.current_sub` with no operator branch.
 PUBLIC gets no table privileges; the migration grants the app role, not the bot.
 The ordinary connection trigger is not SECURITY DEFINER: identity/account fields
-are immutable and every update advances the database-owned revision. A later broker
-must use compare-and-set revisions; a successful encrypt does not persist a token.
+are immutable and every update advances the database-owned revision. The broker
+uses compare-and-set revisions; a successful encrypt does not persist a token.
 Deleting connections before their referenced DEK is a later owner-erasure concern.
 
 No existing table, crypto format, provider behavior, helper allowlist, or default
@@ -71,7 +73,7 @@ The only token format is `qct1:<nonce>:<tag>:<ciphertext>`; the only DEK wrapper
 16-byte GCM tag, 32-byte DEK, and 1–65536-byte UTF-8 token payload. AES-256-GCM AAD is
 the UTF-8 JSON array `["oshal:qualified-connector",1,purpose,issuer,sub]`, with
 different `token`/`dek` purposes. Token AAD binds the principal, not a connection
-UUID or access-versus-refresh field; the future broker must select and validate the
+UUID or access-versus-refresh field; the broker selects and validates the
 exact trusted row/field, not accept an arbitrary supplied ciphertext.
 
 The mandatory `SESSION_SECRET` feeds HKDF-SHA256 with salt
@@ -200,14 +202,15 @@ node --max-old-space-size=128 node_modules/vitest/vitest.mjs run --config vitest
 Actual run receipts/hashes belong to the local handover; gates are tied to their
 exact heads, never inherited by a later broker/session increment. No migration
 execution or deployed acceptance is implied here.
-Docs index and Test Lab registration belong to the separately coordinated
-integration, outside this exact foundation scope.
+The composed integration indexes these contracts and registers the scoped suites
+in Test Lab. Its installed card tests anonymous refusal, not real consent or RLS.
 
 ## Remaining before a physical Home handler may become ready
 
-1. Authenticated fresh-connect/reconnect/token submission binds issuer **and** sub
-   throughout initiation/completion. Explicitly distinguish qualified from legacy
-   status; never coalesce an ambiguous legacy refresh token into a new grant.
+1. Retain installed owner-bound proof for the source-integrated fresh-connect,
+   reconnect, token submission and Utilities panel. The source binds issuer **and**
+   sub throughout initiation/completion and keeps qualified/legacy status separate;
+   it never coalesces a legacy refresh token into a new grant.
 2. Independently review and integrate the bounded broker/session at authenticated
    server operation boundaries, including current permission checks. Supply only
    trusted refresh adapters and exact selections; the source primitive does not
@@ -220,6 +223,7 @@ integration, outside this exact foundation scope.
    protocol tests in coordinated slots. Provider acceptance is separately labelled.
    Shared/household grants require additional issuer-qualified use authority.
 
-This candidate supplies no default-account selector, authenticated endpoint,
-physical operation, live provider implementation or new application permission.
+This foundation supplies no default-account selector, physical operation or new
+application permission. The separate authenticated SmartThings bridge is not a
+live-provider acceptance receipt.
 No full Home/L8 completion.

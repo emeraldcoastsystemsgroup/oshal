@@ -1,9 +1,11 @@
 # Fresh issuer-qualified personal grants
 
-Status: **Production service source, not endpoint or deployed acceptance.** This
+Status: **Service source integrated with HTTP/console; not deployed acceptance.** This
 slice adds a storage lifecycle over the [qualified foundation](qualified-connector-credentials.md).
 It does not change existing connections, schema, crypto, broker, permissions or
-provider behavior. Home/L8 physical readiness remains false.
+provider behavior. The composed candidate's authenticated SmartThings bridge and Utilities
+controls are documented in the [connector architecture](../architecture/connectors-and-graph-architecture.md#36-fresh-issuer-qualified-personal-grants).
+Home/L8 physical readiness remains false.
 
 ## Service contract
 
@@ -132,10 +134,11 @@ provider, HTTP/browser, installed image or Home/L8 acceptance is claimed here.
 
 ## Remaining integration
 
-Parent-owned work: endpoint/authenticated ceremony and fresh provider verification,
-broker consumption/revalidation, reviewed Test Lab and docs index/audit references,
-real enforcing-role companion execution, full types and normal pre-push gate.
-This four-new-file slice does not register routes or widen existing permissions.
+The composed candidate adds authenticated endpoints/ceremony, fresh SmartThings location
+verification, Utilities controls and Test Lab/docs-index/audit references. Remaining:
+Home broker consumption/revalidation, real enforcing-role companion execution,
+installed owner-bound consent/browser proof, full composed types and normal pre-push gate.
+The storage service itself does not register routes or widen existing permissions.
 Shared/household grants, legacy adoption, KEK rotation and credential erasure remain
 separate governed work. Do not expose a physical-ready flag merely because these
 storage functions are present.

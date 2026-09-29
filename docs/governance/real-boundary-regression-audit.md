@@ -18,8 +18,9 @@ provider adapter against a loopback HTTP responder; no real account is contacted
 `qualified-connectors-ui.spec.ts` executes the shipped JavaScript with DOM, fetch,
 confirmation and navigation doubles; native browser acceptance remains open.
 
-`connector-qualified-credentials-postgres.spec.ts` and
-`connector-qualified-grants-postgres.spec.ts` are the required owned PostgreSQL/enforcing-role
+`connector-qualified-credentials-postgres.spec.ts`,
+`connector-qualified-grants-postgres.spec.ts` and
+`connector-qualified-broker-postgres.spec.ts` are the required owned PostgreSQL/enforcing-role
 companions. At this source integration they are **unrun**, not covered by the unit result.
 Migration 181 promotion, installed owner-bound consent and physical-device readiness remain
 open until their distinct real-boundary evidence exists. No legacy credentials are adopted.

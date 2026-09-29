@@ -278,4 +278,3 @@ describe('qualified session installed-pg physical disposal, in-memory transport 
     expect(f.rawRelease).toHaveBeenCalledExactlyOnceWith(true); expect(work).not.toHaveBeenCalled();
   });
 });
-

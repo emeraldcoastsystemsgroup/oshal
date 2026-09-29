@@ -27,11 +27,13 @@ const QUALIFIED_PERSONAL_CONNECTOR: Scenario = {
     { level: 'integration', path: 'tests/unit/connector-qualified-http.spec.ts' },
     { level: 'integration', path: 'tests/unit/connector-qualified-smartthings.spec.ts' },
     { level: 'unit', path: 'tests/unit/connector-qualified-session.spec.ts' },
+    { level: 'unit', path: 'tests/unit/connector-qualified-broker.spec.ts' },
     { level: 'unit', path: 'tests/unit/connector-qualified-grants.spec.ts' },
     { level: 'unit', path: 'tests/unit/connector-qualified-token-crypto.spec.ts' },
     { level: 'unit', path: 'tests/unit/qualified-connectors-ui.spec.ts' },
     { level: 'integration', path: 'tests/unit/connector-qualified-credentials-postgres.spec.ts' },
     { level: 'integration', path: 'tests/unit/connector-qualified-grants-postgres.spec.ts' },
+    { level: 'integration', path: 'tests/unit/connector-qualified-broker-postgres.spec.ts' },
   ],
   steps: [
     { id: 'private-qualified-metadata', app: 'connectors', label: 'Protect personal grant metadata', run: () => refusal('/api/connect/qualified', 401, 'Qualified metadata requires sign-in') },
