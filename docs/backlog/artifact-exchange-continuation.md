@@ -38,7 +38,9 @@ line of its own. **Do not write per-destination handling for the two kinds.**
 - **Amendment D, mint-with-bytes** (D4c): `POST /api/artifacts/handles/upload`, per-handle and
   per-sub byte caps, authorization ahead of the parser. Live-verified end to end; the task-explorer
   Files tab is the proof surface, and it is the 11th tagged source.
-- Twelve destinations, eleven tagged sources. The per-app detail is in the coverage audit.
+- Destination declarations, refreshed 2026-09-29 at store `fec688f4`: 13 packages, 14 manifest
+  actions (Little Monsters has two), plus the four kernel built-ins. This census is not live
+  acceptance evidence; the per-app declarations and dated receipts are in the coverage audit.
 - Documentation for both audiences: `docs/guides/send-to.md` for users, and the
   "Joining the artifact exchange" section of `BUILDING-EXTENSIONS.md` in the store repo for app
   authors — the `artifacts:` block had shipped with no author documentation at all.
@@ -73,8 +75,21 @@ owner-scoped — no endpoint, no auth work:
 3. **`payroll`** — `Content-Disposition: attachment; filename="W2REPORT-<year>.txt"`
 
 Then four packages whose existing import route could back an `accepts:` block with the ~30-line
-redeem adapter: `marketing-engine`, `payroll`, `switchboard`, `video`. One package, `lora`, needs an
-ingest route that does not exist yet — that is a package feature, not an exchange gap.
+redeem adapter: `marketing-engine`, `payroll`, `switchboard`, `video`.
+
+**LoRA ingest is built, not a new route to implement.** LoRA 1.7.3 declares the `dataset-image`
+`image/*` action in `mode: open`; the studio chooses a character and submits the owner-bound
+handle to `POST /api/lora/dataset/import`. The import stages the image for that owner and the GPU
+worker writes it into the character's curated dataset. The recorded 2026-09-28 03:16 UTC PASS
+on LoRA 1.7.1 was **inline mode**, proving the worker's exact image/caption pair and cleanup,
+not the portrait gallery or rendered studio. The 2026-09-29 `--gallery` attempt on 1.7.3 returned
+**UNAVAILABLE** (`portrait_cli_authorization_unavailable`), with nothing written. The outstanding
+receipt is `node scripts/operations/lora-import-live-proof.js --gallery`: a real portrait through
+the installed gallery locator handle, the LoRA studio showing "ready on worker", and the worker
+write with clean cleanup. It requires a usable operator-selected Portrait Studio image provider,
+the installed packages and an online GPU worker; no provider setup or new live run is recorded
+by this documentation reconciliation. See the
+[real-boundary audit](../governance/real-boundary-regression-audit.md).
 
 **Roughly half the store has no artifact to exchange, and that absence is correct.** Do not treat
 the untagged remainder as a backlog.
