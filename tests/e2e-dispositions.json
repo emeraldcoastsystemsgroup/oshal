@@ -213,31 +213,6 @@
       "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
     },
     {
-      "file": "tests/jarvis-rich-response-integration.spec.ts",
-      "class": "awaiting-classification",
-      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
-    },
-    {
-      "file": "tests/jarvis-rich-response-native-wake.spec.ts",
-      "class": "awaiting-classification",
-      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
-    },
-    {
-      "file": "tests/jarvis-rich-response-responsive-a11y.spec.ts",
-      "class": "awaiting-classification",
-      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
-    },
-    {
-      "file": "tests/jarvis-rich-response-visual-trust.spec.ts",
-      "class": "awaiting-classification",
-      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
-    },
-    {
-      "file": "tests/jarvis-shared-response-renderer.spec.ts",
-      "class": "awaiting-classification",
-      "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
-    },
-    {
       "file": "tests/jarvis-speakers.spec.ts",
       "class": "awaiting-classification",
       "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
