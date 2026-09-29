@@ -186,6 +186,23 @@ and re-executes nothing there; a workspace tool re-executed by the tail is prove
 suites only. `tests/unit/live-acceptance-token-chase-replay.spec.ts` drives the live case against the
 real bot-node registry, agentic loop, capture lane and tail executor.
 
+The producing-bot boundary has its own focused guard:
+`npm run test:unit -- tests/unit/token-chase-producing-bot.spec.ts`.
+It drives the real bot-node execution handler through `TaskController.processMessage` and the real
+agentic loop into filesystem/private-git capture, then the real owner-scoped reader, controller tail
+delegation and isolated node executor. The scripted provider, task persistence/allocation and
+controller-to-node transport are explicit doubles; the shared server/batch runtime wiring is also
+source-pinned. Frames must carry the runtime-composed executing bot identity, never a supplied
+envelope target, payload identity or frame. Missing runtime identity stays null and replay remains
+refused; another owner cannot read/replay the run or reuse its workspace. Authorization, issuer and
+owner-store enforcement are not replaced or newly proven by those doubles.
+
+This source correction is not installed acceptance. After coordinated deployment, the existing
+`node scripts/operations/live-acceptance.js token-chase-replay` must pass on a newly captured run.
+The separate run with `TOKEN_CHASE_OWNER_STORE_SNAPSHOT=on` on one bot and `--expect-store-bound`
+must also pass with the store bound and reproduced. Old captures with no producing identity are
+not backfilled from request input, and neither installed run is claimed by this local guard.
+
 ### Market-data stream (ADR-143)
 
 **Market-data stream (ADR-143)** (`market-data-stream`, Tools) runs one credential-free readback of
