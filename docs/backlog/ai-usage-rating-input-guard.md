@@ -67,10 +67,22 @@ node --max-old-space-size=128 --check scripts/ai-usage-ledger.js
 node --max-old-space-size=128 scripts/ai-usage-ledger.js --core . --check docs/apps/ai-usage-ledger.md
 ```
 
-The recorded supervised run started with 2674 MiB free, observed a minimum of
-1819 MiB and finished in 13.92 seconds. Local execution requires a fresh 1800 MiB
-preflight, a 600 MiB reserve and an enforced 180-second deadline. Full compilation,
+The final main-based supervised run at `2ff4895e` started with 2216 MiB free,
+observed a minimum of 1888 MiB and finished in 13.77 seconds. Local execution requires
+a fresh 1800 MiB preflight, a 600 MiB reserve and an enforced 180-second deadline. Full compilation,
 publication and runtime acceptance are separate, unrun gates for this slice.
+
+## Discovery and evidence registration
+
+This document is indexed in [the backlog topic index](./README.md). The real
+CLI/YAML/filesystem/validator scope and logger-only double are recorded in
+[the real-boundary audit](../governance/real-boundary-regression-audit.md#ai-usage-rating-declaration-guard-2026-09-29).
+The two specs match `tests/unit/**/*.spec.ts` in [vitest.config.ts](../../vitest.config.ts),
+with no applicable exclusion. [package.json](../../package.json)'s `test:unit` runs
+`vitest run`; both [the local CI unit gate](../../scripts/ci-local.sh) and
+[the hosted CI unit job](../../.github/workflows/ci.yml) call that command. This is
+source-confirmed discovery, not a claim that the entire CI suite has run. There is
+no existing runtime Lab card for this standalone CLI; no new card is introduced.
 
 ## Remaining acceptance boundary
 
@@ -78,6 +90,7 @@ publication and runtime acceptance are separate, unrun gates for this slice.
 [backlog](../BACKLOG.md) still own feature attribution and generated per-operation
 token ranges, background cadence/cost projections, named-model compatibility
 evidence and pause/resume behavior. This change neither supplies those measurements
-nor claims a feature is affordable or compatible. Shared ADR/backlog/index and
-Test Lab reconciliation belongs to the integration change; no historic ledger or
-shared decision document is rewritten here.
+nor claims a feature is affordable or compatible. Broader ADR/backlog reconciliation
+belongs to the integration change; no historic ledger or shared decision document
+is rewritten here. The guard's topic index and boundary-audit registration are
+included in this change, rather than left pending integration.
