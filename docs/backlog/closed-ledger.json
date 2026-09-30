@@ -1,6 +1,12 @@
 [
   {
     "date": "2026-09-30",
+    "title": "Subscription-driven social signals",
+    "pr": "local",
+    "evidence": "Proven on real boundary with DisposablePostgres (enforcing non-superuser/no-bypass-rls role, real migration 060, production GUC pool under OSHAL_DB_GUC_STRICT=deny) and DisposableRedis in tests/unit/social-signal-subscriptions-postgres.spec.ts (8/8 pass) and social-signal-subscriptions.spec.ts (9/9 pass) across npm run test:social-signals (30/30 pass). Demonstrates caller-scoped keyword subscription, owner-isolated inbox message storage under FORCE RLS, system-wrapped poll publishing auditable matched signal to authenticated owner-lane XADD stream, delivery ledger correlation recording, and cross-user denial over HTTP and direct database queries."
+  },
+  {
+    "date": "2026-09-30",
     "title": "Anonymous package routes: a per-route opt-in under authorization enforce (enhancement, operator 2026-09-29)",
     "pr": "local",
     "evidence": "Commit 44d8dd02 normalized anonymous route comparison to be key-order-agnostic in sameAnonymousPackageRoutes; live acceptance node scripts/operations/live-acceptance.js vids-publish passed on the installed build (vids-publish-live: 401 on unauthenticated jobs/publish, 200 on exact 868 video bytes, 404 on malformed/revoked tokens, cleanup 0 outstanding 0 errors); npm run test:package-anonymous-routes passed 190/190; tests/unit/package-tools.spec.ts passed 15/15."
