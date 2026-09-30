@@ -70,6 +70,9 @@
  * 63 | maintainer@emeraldcoastsystemsgroup.com   | Queue workers now resolve the ticket owner's brain through resolveUserBrain, the same configuration ladder Jarvis uses, instead of bypassing the selected provider through a hosted-only resolver.
  * 64 | maintainer@emeraldcoastsystemsgroup.com   | Treat dead-letter tickets as terminal when stale swarm envelopes are inspected, including immediate deterministic-refusal quarantine.
  * 65 | maintainer@emeraldcoastsystemsgroup.com | Inject exact Futures evidence/result binding into the existing queued worker transport.
+ * 66 | maintainer@emeraldcoastsystemsgroup.com | Expose the already-wired canonical runtime-params resolver on SwarmExtensionBindings so interactive remote execution can honor the explicit `bot-default` user preference with the same per-bot > fleet > agent_config > registry record the queue stamps.
+ * 67 | maintainer@emeraldcoastsystemsgroup.com | Give protected queued `bot-default` degradation an explicit hosted-only ladder mode so an unavailable or SEC-05-ineligible canonical CLI record can fall through without resolving the same marker again.
+ * 68 | maintainer@emeraldcoastsystemsgroup.com | Gate the canonical runtime-params resolver on the first persisted provider-switch snapshot settlement so startup cannot stamp a registry fallback before the saved per-bot row loads.
  */
 
 import type { Pool } from 'pg';
@@ -114,6 +117,7 @@ import {
   BotNodeClient,
   createRegistryEndpointResolver,
   isControllerInlineContainer,
+  type RuntimeParamsResolver,
 } from '@/features/agent-management';
 import { resolveBotNodeEndpoint } from './resolve-bot-node-endpoint';
 import { RagService } from '@/features/rag';
@@ -186,12 +190,17 @@ import { createBotRegistryRoutes } from './routes/bot-registry-routes';
 import { createConfigPropagationRoutes } from './routes/config-propagation-routes';
 import { SwarmBotRegistry, validatePersonaIdentities, getActiveRegistry, isBotAccessibleTo, registryDeclaredProvider, registryHarnessEntry, type SwarmRuntimeIdentity } from './swarm-bot-registry';
 import { resolveHarnessForAgent } from '@/app/composition/provider-runtime';
-import { resolveInstalledProviderSwitch } from '@/app/composition/provider-switch-runtime';
+import {
+  gateRuntimeParamsResolverOnProviderSwitchSnapshot,
+  resolveInstalledProviderFallbackOrder,
+  resolveInstalledProviderSwitch,
+} from '@/app/composition/provider-switch-runtime';
 import { mountAgentProviderRoutes } from './routes/agent-provider-mount';
 import { waitForBootstrapComplete } from '@/app/composition/app-runtime-factory';
 import { registerShutdownHook } from '@/shared/services/shutdown-hooks';
 import { resolveServerOperationCreds } from '@/app/routes/connector-token-broker';
 import { resolveUserBrain } from '@/app/routes/user-brain-resolution';
+import { resolveUserLlmConnection } from '@/app/routes/free-tier-rotation';
 import { buildQueueDlqOperatorNotifier } from '@/app/routes/queue-dlq-routes';
 import {
   canUseRuntimeRegistry,
@@ -332,6 +341,8 @@ export interface SwarmExtensionBindings {
   swarmTicketProcessingService?: SwarmTicketProcessingService;
   queueManagerService?: QueueManagerService;
   swarmMetricsCollector?: SwarmMetricsCollector;
+  /** Canonical ADR-034 provider/model record used by both queued and interactive bot dispatch. */
+  runtimeParamsResolver?: RuntimeParamsResolver;
 }
 
 /**
@@ -653,14 +664,20 @@ export function createSwarmExtensionBindings(
   // provider/model/configVersion. Consumed by the queue manager's manifest-worker + incident
   // dispatch paths. OSHAL_PUSH_ON_DISPATCH defaults on; without this DB-backed resolver the
   // request carries an unavailable-authority marker and the remote bot refuses before execution.
-  const runtimeParamsResolver = agentConfigService
+  const baseRuntimeParamsResolver = agentConfigService
     ? createAgentConfigRuntimeParamsResolver(
       agentConfigService,
       registryDeclaredProvider,
       // Tier 1: the switch rows, read from the SAME installed snapshot resolveHarnessForAgent
       // reads, so what the api runs inline and what it stamps on a bot-node dispatch agree.
       (agentId) => resolveInstalledProviderSwitch(agentId, registryHarnessEntry(agentId)),
+      // Fallback precedence is independent of the provider-winning row: a bot row with a null
+      // chain inherits fleet/environment, while [] means explicitly no failover.
+      resolveInstalledProviderFallbackOrder,
     )
+    : undefined;
+  const runtimeParamsResolver = baseRuntimeParamsResolver
+    ? gateRuntimeParamsResolverOnProviderSwitchSnapshot(baseRuntimeParamsResolver)
     : undefined;
   const toolRepository = pool ? new ToolRepository(pool) : undefined;
   const agentToolRepository = pool ? new AgentToolRepository(pool) : undefined;
@@ -824,7 +841,15 @@ export function createSwarmExtensionBindings(
         // same configured user-brain ladder as Jarvis. The protected boundary still requires a
         // direct, non-agentic request and verifies either endpoint or provider authority exactly.
         resolveBrain: pool
-          ? async (ownerSub: string) => resolveUserBrain(pool, ownerSub)
+          ? async (ownerSub: string, mode = 'configured') => {
+            if (mode === 'hosted-only') {
+              const connection = await resolveUserLlmConnection(pool, ownerSub);
+              return connection
+                ? { kind: 'hosted' as const, connection }
+                : { kind: 'none' as const };
+            }
+            return resolveUserBrain(pool, ownerSub);
+          }
           : undefined,
         workflowRunRecorder,
         bindWorker: pool ? async (...args) => {
@@ -958,6 +983,7 @@ export function createSwarmExtensionBindings(
     swarmTicketProcessingService: swarmProcessingService,
     queueManagerService,
     swarmMetricsCollector,
+    runtimeParamsResolver,
   };
 }
 

@@ -6,12 +6,17 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extract the unattended CLI denial into a dependency-free policy module so controller-side preflight callers do not import the bot-node harness runtime.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127 inline hosted brain: export isUnbrokeredAutonomousProvider so the chat entry points can test "would this registry harness be refused?" against the ONE policy set instead of duplicating it. The refusal itself is unchanged.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | antigravity-cli joins the refused set. It was added to the HarnessType union and HARNESS_FACTORIES but not here, so assertAuditedAutonomousHarness('antigravity-cli') returned without throwing - the only local CLI in the inventory the guard did not refuse - while three separate comments claimed it was gated like every other one. The blast radius was wider than spawn: agentRequiresHostedBrain is built on the same predicate, so an inline bot on this harness would have skipped the ADR-127 hosted-brain ladder and spawned a controller-local CLI.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Make this the exact shared SEC-05 classifier used by bot-node preflight and controller-side `bot-default` validation, including every accepted alias (`openai-codex`, `codex`, `claude`, `cline-cli`) and the same trim/lowercase normalization.
  */
 
 const UNBROKERED_AUTONOMOUS_PROVIDERS: ReadonlySet<string> = new Set([
   'cline',
+  'cline-cli',
+  'claude',
   'codex-cli',
+  'codex',
   'claude-code',
+  'openai-codex',
   'gemini-cli',
   'antigravity-cli',
 ]);
@@ -25,7 +30,7 @@ const UNBROKERED_AUTONOMOUS_PROVIDERS: ReadonlySet<string> = new Set([
  * @returns True when the id is one of the refused local CLI harnesses.
  */
 export function isUnbrokeredAutonomousProvider(providerType: string): boolean {
-  return UNBROKERED_AUTONOMOUS_PROVIDERS.has(providerType);
+  return UNBROKERED_AUTONOMOUS_PROVIDERS.has(providerType.trim().toLowerCase());
 }
 
 /**

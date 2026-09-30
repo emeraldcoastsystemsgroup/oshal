@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Guard the measurement plumbing behind the invariant prompt cache: the OpenAI-compatible adapter folds the endpoint-reported cached-token count into usage and prints input/output/cached tokens plus the cache state on its call log line; the extracted direct-path metrics fold carries the split into apiMetrics (and never NaN); the bot-node handler bills and relays that split through recordCost and the HTTP usage block while a total-only result keeps the legacy mapping.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Guard central bot-node cost resolution: a real nonzero provider total wins unchanged, a zero-cost Cline/Gemini result is estimated from the shared registry with its input/output split, and an unknown model remains zero. Runtime attribution remains cline-cli even when Gemini supplies the pricing identity.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -78,16 +79,23 @@ describe('direct-path metrics fold', () => {
 });
 
 describe('bot-node handler: the split is billed and relayed', () => {
-  function handlerWith(apiMetrics: Record<string, unknown>) {
+  function handlerWith(
+    apiMetrics: Record<string, unknown>,
+    executionIdentity: { provider?: string; apiProvider?: string; model?: string } = {},
+  ) {
     const recordCost = vi.fn(async () => undefined);
     const handler = createBotNodeExecutionHandler({
       anyBotTaskController: {
         getTask: vi.fn(async () => ({ id: 'ticket-usage' })),
         createTask: vi.fn(async () => ({ id: 'ticket-usage' })),
-        processMessage: vi.fn(async () => ({ messages: [{ say: 'completion_result', text: 'Done.' }], apiMetrics })),
+        processMessage: vi.fn(async () => ({
+          messages: [{ say: 'completion_result', text: 'Done.' }],
+          apiMetrics,
+          ...executionIdentity,
+        })),
       },
       providerName: 'byo-llm',
-      modelName: 'gemini-2.5-flash',
+      modelName: 'fixture-unpriced-model',
       recordCost,
     });
     const envelope = {
@@ -107,8 +115,47 @@ describe('bot-node handler: the split is billed and relayed', () => {
   it('keeps the legacy total-as-input mapping when the runtime reports only a total', async () => {
     const { handler, recordCost, envelope } = handlerWith({ totalTokens: 42, totalCost: 0.01 });
     const result = await handler(envelope);
-    expect(recordCost).toHaveBeenCalledWith(expect.objectContaining({ inputTokens: 42, outputTokens: 0 }));
-    expect(result).toMatchObject({ output: { usage: { inputTokens: 42, outputTokens: 0, totalTokens: 42, cacheReadTokens: 0, cacheWriteTokens: 0 } } });
+    expect(recordCost).toHaveBeenCalledWith(expect.objectContaining({
+      inputTokens: 42,
+      outputTokens: 0,
+      inputCost: 0,
+      outputCost: 0,
+      totalCost: 0.01,
+    }));
+    expect(result).toMatchObject({ output: {
+      cost: 0.01,
+      usage: { inputTokens: 42, outputTokens: 0, totalTokens: 42, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    } });
+  });
+
+  it('estimates zero-cost Cline-backed Gemini usage from the shared catalog', async () => {
+    const { handler, recordCost, envelope } = handlerWith(
+      { totalTokens: 25, inputTokens: 20, outputTokens: 5, totalCost: 0 },
+      { provider: 'cline-cli', apiProvider: 'gemini', model: 'gemini-3.8-flash' },
+    );
+    const result = await handler(envelope);
+    const event = recordCost.mock.calls[0]?.[0];
+    expect(event).toMatchObject({ providerId: 'cline-cli', modelId: 'gemini-3.8-flash' });
+    expect(event?.inputCost).toBeCloseTo(0.000015, 12);
+    expect(event?.outputCost).toBeCloseTo(0.00001875, 12);
+    expect(event?.totalCost).toBeCloseTo(0.00003375, 12);
+    expect((result.output as { cost: number }).cost).toBeCloseTo(0.00003375, 12);
+  });
+
+  it('keeps zero cost for an unknown Gemini model instead of inventing a rate', async () => {
+    const { handler, recordCost, envelope } = handlerWith(
+      { totalTokens: 25, inputTokens: 20, outputTokens: 5, totalCost: 0 },
+      { provider: 'cline-cli', apiProvider: 'gemini', model: 'gemini-future-unpriced' },
+    );
+    const result = await handler(envelope);
+    expect(recordCost).toHaveBeenCalledWith(expect.objectContaining({
+      providerId: 'cline-cli',
+      modelId: 'gemini-future-unpriced',
+      inputCost: 0,
+      outputCost: 0,
+      totalCost: 0,
+    }));
+    expect(result).toMatchObject({ output: { cost: 0 } });
   });
 
   it('resolveExecutionUsage derives a total from the split when none was reported', () => {

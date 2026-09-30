@@ -6,6 +6,8 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: deny constrained execution before autonomous Cline CLI can bypass server tool authorization.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The model Cline drives is the BACKING provider's model, resolved per call, not the fleet default it was constructed with. startup-core-services hands this provider `config.llm.defaultModel` - the PRIMARY harness's model (LLM_MODEL=gpt-5.5 on the Codex fleet) - and generateResponse passed it straight to `-m`. On 2026-09-17, with the Cline binary fixed and global-config.json naming gemini/gemini-3.8-flash on every container, the first failed-over ticket still died: `models/gpt-5.5 is not found for API version v1beta` (provider gemini, -m gpt-5.5, measured in the general-bot log at 23:16:33Z). The wrapper already resolves the backing provider AND model through one precedence chain (CLINE_API_* -> global-config.json -> env file); this file now asks it before gating and before spawning, so the model gate, the -m flag and the cost row all name the model that actually ran. A deployment whose chain names no model keeps today's constructor default.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Protected zero-tool direct reasoning now bypasses Cline's autonomous CLI loop without bypassing the bot's configured provider authority. A trusted internal marker selects one Gemini OpenAI-compatible request with no declared tools, an in-memory persona and fail-closed tool/empty-response handling; unsupported backing providers or absent hosted credentials never fall back to the CLI. Ordinary Cline calls retain the existing context-file and agent-loop path.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Make "single shot" true at the transport boundary: the Gemini adapter disables OpenAI SDK retries, caps its request timeout at the existing 300-second Cline ceiling, and reports zero/unknown cost instead of applying GPT prices. The normalized Cline result also keeps cost zero defensively.
  */
 
 /**
@@ -26,9 +28,42 @@
  */
 
 const ClineCLIWrapper = require('../codebase/ClineCLIWrapper');
+const OpenAIProvider = require('./OpenAIProvider');
 const logger = require('../../utils/logger');
 const { formatProviderFailure, isProviderRecoverableRuntimeFailure, isProviderRuntimeBanner } = require('./providerFailureClassifier');
 const { assertCliToolBoundary } = require('./assert-cli-tool-boundary');
+
+const GEMINI_OPENAI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/openai';
+const MAX_SINGLE_SHOT_TIMEOUT_MS = 300_000;
+const MIN_SINGLE_SHOT_TIMEOUT_MS = 1_000;
+
+/** @returns {string} First non-empty secret/config value without logging it. */
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return '';
+}
+
+/** @returns {number} A finite non-negative metric value, otherwise zero. */
+function nonNegativeNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+/** @returns {number} Cline's seconds timeout as a positive SDK timeout, capped at five minutes. */
+function boundedSingleShotTimeoutMs(timeoutSeconds) {
+  const milliseconds = Math.trunc(Number(timeoutSeconds) * 1000);
+  if (!Number.isFinite(milliseconds) || milliseconds <= 0) return MAX_SINGLE_SHOT_TIMEOUT_MS;
+  return Math.min(MAX_SINGLE_SHOT_TIMEOUT_MS, Math.max(MIN_SINGLE_SHOT_TIMEOUT_MS, milliseconds));
+}
+
+/** @returns {Error & {code:string}} A stable fail-closed error for the protected direct lane. */
+function directReasoningError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
 
 /**
  * @description LLM provider that fronts the Cline CLI so the rest of the
@@ -83,7 +118,7 @@ class ClineProvider {
   /**
    * Generate response using Cline CLI
    * Implements same interface as BedrockProvider.generateResponse()
-   * 
+   *
    * @param {Array} messages - Conversation history [{role, content}]
    * @param {Object} options - Generation options
    * @param {string} options.systemPrompt - System prompt (injected into task description)
@@ -94,7 +129,9 @@ class ClineProvider {
    * @returns {Promise<Object>} Response object matching BedrockProvider format
    */
   async generateResponse(messages, options = {}) {
-    assertCliToolBoundary(options, 'cline-cli');
+    const singleShotToolless = options.singleShotToolless === true;
+    if (singleShotToolless) this._assertSingleShotToollessBoundary(options);
+    else assertCliToolBoundary(options, 'cline-cli');
     const startTime = Date.now();
 
     // Model-gateway pre-flight (budgets/quotas/cost-aware routing). One gate for
@@ -108,6 +145,14 @@ class ClineProvider {
       throw new Error(`LLM call denied by model gateway (${gate.reason})`);
     }
     const gatedModel = gate.model || callModel;
+
+    // This branch deliberately sits OUTSIDE the legacy catch below. Missing hosted credentials,
+    // an unsupported backing provider, an attempted tool call or an empty answer is a hard
+    // protected-execution failure; converting any of those into assistant text would make the
+    // package believe its CRM operation succeeded. It must never fall through to Cline CLI.
+    if (singleShotToolless) {
+      return this._generateSingleShotToolless(messages, options, gatedModel, startTime);
+    }
 
     try {
       // ⭐ PHASE_58: Extract dynamic agentId for persona loading
@@ -283,6 +328,161 @@ class ClineProvider {
   }
 
   /**
+   * @description Require the exact deny-all provider boundary established by TaskController before
+   * honoring the internal protected single-shot marker. The marker chooses a transport; it is not
+   * itself tool authority, so a malformed/inconsistent call fails before any hosted request.
+   * @param {Object} options - Direct-provider options from TaskController.
+   * @private
+   */
+  _assertSingleShotToollessBoundary(options) {
+    if (options.protectedSingleShotVerified !== true
+      || options.source !== 'swarm-dispatch'
+      || typeof options.agentId !== 'string'
+      || !options.agentId.trim()
+      || options.enforceToolBoundary !== true
+      || !Array.isArray(options.tools)
+      || options.tools.length !== 0) {
+      throw directReasoningError(
+        'DIRECT_REASONING_BOUNDARY_INVALID',
+        'Protected single-shot reasoning requires verified protected provenance, trusted runtime identity, and an enforced empty tool boundary.',
+      );
+    }
+  }
+
+  /**
+   * @description Execute one hosted completion against the API provider that the configured Cline
+   * runtime fronts. This is deliberately not OpenAIProvider.generateResponse(): that method may
+   * add a recovery leg after an unsolicited tool call, while this contract permits exactly one
+   * provider request and rejects every tool-call shape.
+   * @param {Array} messages - Direct-path messages; only the current message is used, matching the
+   * ordinary Cline context-file path's stateless behavior.
+   * @param {Object} options - Trusted direct-provider options.
+   * @param {string} gatedModel - Exact configured model after the model-gateway decision.
+   * @param {number} startTime - Request start timestamp for latency reporting.
+   * @returns {Promise<Object>} Standard provider result with Cline runtime identity.
+   * @private
+   */
+  async _generateSingleShotToolless(messages, options, gatedModel, startTime) {
+    let backing;
+    try {
+      backing = this.wrapper._resolveBackingProvider();
+    } catch (error) {
+      throw directReasoningError(
+        'DIRECT_REASONING_UNAVAILABLE',
+        `Configured Cline backing provider could not be resolved for protected direct reasoning: ${error.message}`,
+      );
+    }
+
+    const backingProvider = typeof backing?.provider === 'string'
+      ? backing.provider.trim().toLowerCase()
+      : '';
+    if (backingProvider !== 'gemini') {
+      throw directReasoningError(
+        'DIRECT_REASONING_UNAVAILABLE',
+        `Configured Cline backing provider '${backingProvider || 'unknown'}' has no protected single-shot adapter.`,
+      );
+    }
+
+    const apiKey = firstNonEmpty(process.env.GEMINI_API_KEY, process.env.GOOGLE_API_KEY);
+    if (!apiKey) {
+      throw directReasoningError(
+        'DIRECT_REASONING_UNAVAILABLE',
+        'Configured Gemini backing provider has no GEMINI_API_KEY or GOOGLE_API_KEY for protected direct reasoning.',
+      );
+    }
+
+    const currentMessage = Array.isArray(messages) ? messages[messages.length - 1] : null;
+    const currentContent = typeof currentMessage?.content === 'string'
+      ? currentMessage.content
+      : currentMessage?.content === undefined ? '' : JSON.stringify(currentMessage.content);
+    if (typeof currentContent !== 'string' || !currentContent.trim()) {
+      throw directReasoningError('DIRECT_REASONING_UNAVAILABLE', 'Protected direct reasoning received no current task text.');
+    }
+
+    const { personaContent } = this._loadPersonaContent(options, options.agentId || null);
+    const systemPrompt = [
+      personaContent,
+      '## PROTECTED DIRECT REASONING MODE',
+      'Return exactly one final textual answer using only the facts in the Current Task.',
+      'No tools are available. Do not request, name, invoke, or simulate file, command, browser, MCP, or other tools.',
+    ].join('\n\n');
+    const directProvider = this._createSingleShotProvider({
+      apiKey,
+      model: gatedModel,
+      maxTokens: options.maxTokens,
+      temperature: options.temperature,
+      requestTimeoutMs: boundedSingleShotTimeoutMs(this.config.timeout),
+    });
+    const result = await directProvider.sendRequest({
+      // OpenAIProvider.sendRequest consumes the legacy any-bot message shape, not { role, content }.
+      messages: [{ type: 'user', text: currentContent }],
+      systemPrompt,
+      tools: [],
+      stream: false,
+    });
+    const blocks = Array.isArray(result?.content) ? result.content : [];
+    if (blocks.some((block) => block?.type === 'tool_use')) {
+      throw directReasoningError(
+        'DIRECT_REASONING_UNSAFE_RESPONSE',
+        'Protected direct reasoning attempted a tool call; the response was rejected without a continuation.',
+      );
+    }
+    const responseText = blocks
+      .filter((block) => block?.type === 'text' && typeof block.text === 'string')
+      .map((block) => block.text)
+      .join('\n')
+      .trim();
+    if (!responseText) {
+      throw directReasoningError(
+        'EMPTY_FINAL_ANSWER',
+        'Protected direct reasoning returned no final text; no retry or CLI fallback was attempted.',
+      );
+    }
+
+    const inputTokens = nonNegativeNumber(result?.usage?.inputTokens);
+    const outputTokens = nonNegativeNumber(result?.usage?.outputTokens);
+    return {
+      content: responseText,
+      contentBlocks: [{ type: 'text', text: responseText }],
+      stopReason: result.stopReason || 'end_turn',
+      usage: {
+        inputTokens,
+        outputTokens,
+        totalTokens: inputTokens + outputTokens,
+        cacheCreationTokens: 0,
+        cacheReads: nonNegativeNumber(result?.usage?.cacheReads),
+      },
+      // Gemini pricing is not OpenAI pricing. Until a Gemini price table owns this lane, zero is
+      // the downstream contract for unknown cost rather than a fabricated GPT estimate.
+      cost: 0,
+      latency: Date.now() - startTime,
+      model: gatedModel,
+      provider: 'cline-cli',
+      apiProvider: backingProvider,
+      clineMetadata: { turns: 1, toolsUsed: 0, protectedSingleShot: true, costEstimated: false },
+    };
+  }
+
+  /**
+   * @description Construct the one hosted adapter supported by the protected Cline direct lane.
+   * Kept behind a narrow method so unit coverage can replace the transport without network access.
+   * @param {{apiKey:string,model:string,maxTokens?:number,temperature?:number,requestTimeoutMs:number}} config - Request config.
+   * @returns {OpenAIProvider} Gemini's OpenAI-compatible adapter.
+   * @private
+   */
+  _createSingleShotProvider(config) {
+    return new OpenAIProvider({
+      ...config,
+      baseUrl: GEMINI_OPENAI_BASE_URL,
+      maxRetries: 0,
+      costMode: 'unknown',
+      // sendRequest never consults this seam, and protected one-shot inference must not create a
+      // provider-side preamble resource as a hidden second request.
+      invariantPromptCache: null,
+    });
+  }
+
+  /**
    * @description The model Cline actually drives on THIS call. This provider is constructed with
    * the fleet default (`config.llm.defaultModel`, i.e. the PRIMARY harness's LLM_MODEL), but the
    * Cline CLI runs against its own backing provider, which the wrapper resolves per call from
@@ -310,21 +510,87 @@ class ClineProvider {
   }
 
   /**
+   * @description Resolve the full configured bot persona in memory. Both the autonomous CLI path
+   * and protected hosted path consume this one loader; only the former writes the result into a
+   * workspace context file.
+   * @param {Object} options - Provider options, including the existing systemPrompt fallback.
+   * @param {string|null} agentId - Trusted runtime agent identity when supplied.
+   * @returns {{personaContent:string,effectiveAgentId:string}} Persona text and resolved identity.
+   * @private
+   */
+  _loadPersonaContent(options = {}, agentId = null) {
+    const fs = require('fs');
+    const effectiveAgentId = agentId || process.env.AGENT_ID || 'project-manager';
+
+    if (agentId && agentId !== process.env.AGENT_ID) {
+      logger.info(`[ClineProvider] 🎭 Loading persona for dynamic agent: ${agentId} (container default: ${process.env.AGENT_ID})`);
+    }
+
+    // Always prefer the full YAML perspective. The generic AgenticController system prompt does
+    // not contain the bot's complete role, capabilities or operating perspective.
+    let personaContent = '';
+    try {
+      const yaml = require('js-yaml');
+      const fallbackPaths = [
+        process.env.BOT_PERSONA_FILE,
+        `/app/bot-configs/${effectiveAgentId}.yaml`,
+        `/app/ai-lab/bot-personas/${effectiveAgentId}.yaml`,
+      ].filter(Boolean);
+
+      for (const personaPath of fallbackPaths) {
+        if (personaPath && fs.existsSync(personaPath)) {
+          const parsed = yaml.load(fs.readFileSync(personaPath, 'utf8'));
+          if (parsed && parsed.perspective) {
+            const parts = [
+              '# YOUR IDENTITY AND ROLE',
+              `You are **${parsed.name || effectiveAgentId}** — ${parsed.role || 'AI assistant'}.`,
+              '',
+              parsed.perspective,
+              '',
+            ];
+            if (parsed.capabilities && parsed.capabilities.length > 0) {
+              parts.push('## YOUR CAPABILITIES');
+              parsed.capabilities.forEach((capability) => parts.push(`- ${capability}`));
+              parts.push('');
+            }
+            parts.push('---', '');
+            personaContent = parts.join('\n');
+            logger.info(`[ClineProvider] ✅ Loaded FULL persona for ${effectiveAgentId} from: ${personaPath} (${personaContent.length} chars)`);
+            break;
+          }
+        }
+      }
+    } catch (yamlErr) {
+      logger.warn(`[ClineProvider] Failed to load persona YAML for ${effectiveAgentId}: ${yamlErr.message}`);
+    }
+
+    if (!personaContent && options.systemPrompt) {
+      personaContent = options.systemPrompt;
+      logger.warn('[ClineProvider] No persona YAML found — using systemPrompt from AgenticController');
+    }
+    if (!personaContent) {
+      personaContent = 'You are a helpful AI assistant. Respond clearly and concisely.';
+      logger.warn('[ClineProvider] No persona found — using generic identity');
+    }
+    return { personaContent, effectiveAgentId };
+  }
+
+  /**
    * Convert Anthropic message format to Cline CLI task description
-   * 
+   *
    * ⭐ PHASE_56 FIX: Workspace README approach
    * Instead of passing persona + conversation history as CLI text (which causes
    * Cline CLI's ink React renderer to crash with key collisions), we:
    * 1. Write persona + current message to {workspaceDir}/README.md
    * 2. Return a minimal task instruction (~60 chars) that tells Cline to read the file
-   * 
+   *
    * This solves ALL three problems:
    * - No React key collision (tiny prompt, no history)
    * - Persona injected via file (Cline reads it naturally)
    * - Stateless calls (no conversation history passed)
-   * 
+   *
    * ⭐ PHASE_58: Accept agentId parameter for dynamic persona loading
-   * 
+   *
    * @param {Array} messages - Message history (only last message used)
    * @param {Object} options - Options including systemPrompt, workspaceDir
    * @param {string} agentId - Dynamic agent ID for persona loading (overrides process.env.AGENT_ID)
@@ -344,70 +610,7 @@ class ClineProvider {
       ? currentMessage.content
       : JSON.stringify(currentMessage.content);
 
-    // ⭐ PHASE_58: Use dynamic agentId if provided, otherwise fall back to container default
-    const effectiveAgentId = agentId || process.env.AGENT_ID || 'project-manager';
-    
-    if (agentId && agentId !== process.env.AGENT_ID) {
-      logger.info(`[ClineProvider] 🎭 Loading persona for dynamic agent: ${agentId} (container default: ${process.env.AGENT_ID})`);
-    }
-
-    // ⭐ PHASE_56 FIX: Always load FULL persona from YAML file first.
-    // The systemPrompt passed from AgenticController is the minimal/generic ClineSystemPrompt
-    // which does NOT contain the full job description, team roster, Plane system knowledge, etc.
-    // We MUST use the full persona YAML perspective field for the bot to know its actual job.
-    let personaContent = '';
-    
-    // Step 1: Try to load FULL persona from YAML file (preferred — has complete job description)
-    try {
-      const yaml = require('js-yaml');
-      const personaFile = process.env.BOT_PERSONA_FILE;
-      
-      // ⭐ PHASE_58: Build fallback paths using effectiveAgentId (not just process.env.AGENT_ID)
-      const fallbackPaths = [
-        personaFile,
-        `/app/bot-configs/${effectiveAgentId}.yaml`,
-        `/app/ai-lab/bot-personas/${effectiveAgentId}.yaml`,
-      ].filter(Boolean);
-
-      for (const p of fallbackPaths) {
-        if (p && fs.existsSync(p)) {
-          const parsed = yaml.load(fs.readFileSync(p, 'utf8'));
-          if (parsed && parsed.perspective) {
-            // Build FULL persona content with complete job description
-            const parts = [];
-            parts.push(`# YOUR IDENTITY AND ROLE`);
-            parts.push(`You are **${parsed.name || effectiveAgentId}** — ${parsed.role || 'AI assistant'}.`);
-            parts.push('');
-            parts.push(parsed.perspective);
-            parts.push('');
-            if (parsed.capabilities && parsed.capabilities.length > 0) {
-              parts.push('## YOUR CAPABILITIES');
-              parsed.capabilities.forEach(cap => parts.push(`- ${cap}`));
-              parts.push('');
-            }
-            parts.push('---');
-            parts.push('');
-            personaContent = parts.join('\n');
-            logger.info(`[ClineProvider] ✅ Loaded FULL persona for ${effectiveAgentId} from: ${p} (${personaContent.length} chars)`);
-            break;
-          }
-        }
-      }
-    } catch (yamlErr) {
-      logger.warn(`[ClineProvider] Failed to load persona YAML for ${effectiveAgentId}: ${yamlErr.message}`);
-    }
-
-    // Step 2: If no YAML found, fall back to systemPrompt from AgenticController
-    if (!personaContent && options.systemPrompt) {
-      personaContent = options.systemPrompt;
-      logger.warn('[ClineProvider] No persona YAML found — using systemPrompt from AgenticController');
-    }
-
-    // Step 3: Last resort generic identity
-    if (!personaContent) {
-      personaContent = 'You are a helpful AI assistant. Respond clearly and concisely.';
-      logger.warn('[ClineProvider] No persona found — using generic identity');
-    }
+    const { personaContent, effectiveAgentId } = this._loadPersonaContent(options, agentId);
 
     // ⭐ PHASE_63 FIX: Write persona + task to agent-specific context file
     // Previously wrote to README.md — but all bots share the same workspace folder

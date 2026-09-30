@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from server.ts (BACKLOG #1788): post-bootstrap installs (provider-switch snapshot, swarm-app auto-load with retry, wiring audit, demo seeding, and package routes settled state tracking) behind waitForBootstrapComplete().
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Register the provider-switch installation promise synchronously before detaching it so canonical dispatch waits for persisted rows instead of racing onto the registry literal.
  * -----------------------------------------------------------------------------
  */
 
@@ -12,7 +13,10 @@ import { createChildLogger } from '@/shared/logger';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
 import { waitForBootstrapComplete } from './app-runtime-factory';
 import { ProviderSwitchStore } from '@/features/agent-management';
-import { installProviderSwitchSnapshot } from './provider-switch-runtime';
+import {
+  installProviderSwitchSnapshot,
+  trackProviderSwitchSnapshotInstallation,
+} from './provider-switch-runtime';
 import { HARNESS_FACTORIES } from './provider-runtime';
 import { auditSwarmBotWiring } from '@/app/extensions/swarm/validate-swarm-wiring';
 import { seedDemoData, shouldSeedDemoData } from '@/features/demo-mode';
@@ -42,14 +46,17 @@ export function runServerBootstrapTasks(options: ServerBootstrapTasksOptions): S
   const bootWindowDeadline = Date.now() + Number(process.env.OSHAL_API_BOOT_WINDOW_MS ?? 180_000);
 
   // The LLM provider switch rows (migration 147): per-bot row > fleet default > registry literal.
-  // Read once after the bootstrap so the table exists, then refreshed on a timer. Until the first
-  // read lands every bot resolves from the registry literal — the no-row case, unchanged.
+  // Read once after the bootstrap so the table exists, then refresh on a timer. Register the
+  // pending read before detaching it: canonical dispatch must not mistake "not loaded yet" for
+  // "no row" and execute a divergent registry provider during the boot window.
   if (options.pool) {
     const switchPool = options.pool;
-    void runWithSystemIdentity(() => waitForBootstrapComplete().then(() => installProviderSwitchSnapshot(
+    const installation = runWithSystemIdentity(() => waitForBootstrapComplete().then(() => installProviderSwitchSnapshot(
       new ProviderSwitchStore(switchPool), Object.keys(HARNESS_FACTORIES),
-    ))).catch((err: unknown) => {
-      logger.error({ err }, 'Provider switch snapshot could not be installed — bots resolve from the registry literal');
+    )));
+    trackProviderSwitchSnapshotInstallation(installation);
+    void installation.catch((err: unknown) => {
+      logger.error({ err }, 'Provider switch snapshot first read failed — canonical dispatch remains unavailable until the periodic refresh succeeds');
     });
   }
 

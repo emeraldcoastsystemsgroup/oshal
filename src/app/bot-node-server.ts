@@ -34,6 +34,7 @@
  * 29 | maintainer@emeraldcoastsystemsgroup.com | Token Chase owner-store binding (BACKLOG "Workspace-bound checkpoint and tail replay", ADR-046 three-part checkpoint): after the shared runtime is built, install the encrypted owner-store snapshotter (createOwnerStoreSnapshotter over readOwnerStoreConfig — PI_STORE_ROOT / TOKEN_CHASE_STORE_ROOT) on the any-bot capture lane through tokenChase.configureOwnerStore, so every captured frame and final.json records the accountable owner's store version from ciphertext only. A node with no store root stays unbound and records null, never a fabricated version.
  * 30 | maintainer@emeraldcoastsystemsgroup.com | Mount POST /api/token-chase/replay-tail (bot-node-token-chase-tail-route.ts) behind authorizeBotNodeCall with the ownership pool and the owner-store snapshotter: the hermetic no-edit tail (BACKLOG "Workspace-bound checkpoint and tail replay") runs on this accountable node, never on the controller.
  * 31 | maintainer@emeraldcoastsystemsgroup.com | The owner-store binding comment now states the opt-in: readOwnerStoreConfig binds the snapshotter only when TOKEN_CHASE_OWNER_STORE_SNAPSHOT is on, so a node holding a vault (PI_STORE_ROOT / JOBHUNTER_STORE_ROOT) no longer copies it on every captured turn by default. Wiring unchanged.
+ * 32 | maintainer@emeraldcoastsystemsgroup.com | Validate and forward fallbackOrder with the rest of the signed provider authority on /api/swarm-execute so configured fallback chains survive the HTTP hop intact.
  */
 
 /**
@@ -95,6 +96,7 @@ import {
 } from './bot-node-delegation';
 import { runBotNodeExecutionWithSystemIdentity } from './bot-node-request-identity';
 import { createProtectedBotDispatchContext } from './bot-node-protected-context';
+import { parseBotNodeProviderAuthority, type BotNodeProviderAuthority } from './bot-node-provider-authority';
 import { assertBotNodeApplicationTransport } from './bot-node-application-authorization';
 import { createOwnerStoreSnapshotter, readOwnerStoreConfig } from '@/features/token-chase';
 
@@ -363,6 +365,7 @@ async function start(): Promise<void> {
       model?: unknown;
       configVersion?: unknown;
       providerConfigRequired?: unknown;
+      fallbackOrder?: unknown;
       // Trusted prompt configuration carried by BotNodeRequest. These are validated before
       // promotion into the envelope; pattern is executable prompt authority, not user content.
       app?: unknown;
@@ -389,6 +392,14 @@ async function start(): Promise<void> {
     } catch (error) {
       logger.warn({ err: error }, 'Rejected invalid swarm-execute identity, workspace scope, or prompt carrier');
       res.status(400).json({ success: false, error: 'invalid_execution_scope' });
+      return;
+    }
+    let providerAuthority: BotNodeProviderAuthority;
+    try {
+      providerAuthority = parseBotNodeProviderAuthority(body as Record<string, unknown>);
+    } catch (error) {
+      logger.warn({ err: error }, 'Rejected invalid swarm-execute provider authority');
+      res.status(400).json({ success: false, error: 'invalid_provider_authority' });
       return;
     }
     const brokeredCreds = sanitizeBotNodeCreds(body.creds);
@@ -428,10 +439,7 @@ async function start(): Promise<void> {
         // ADR-034 gap-b: forward the carried authoritative config plus its explicit required
         // marker. A required request with a blank/malformed providerId is refused as unavailable;
         // only a request without both marker and record is the intentional legacy path.
-        ...(typeof body.providerId === 'string' ? { providerId: body.providerId } : {}),
-        ...(typeof body.model === 'string' ? { model: body.model } : {}),
-        ...(typeof body.configVersion === 'number' ? { configVersion: body.configVersion } : {}),
-        ...(body.providerConfigRequired === true ? { providerConfigRequired: true } : {}),
+        ...providerAuthority,
         // Bring-Your-Own-LLM: caller's own OpenAI-compatible endpoint+key+model.
         // When present, the execution handler routes inference to it (cost tracked
         // under provider 'byo-llm') instead of the bot's configured provider.

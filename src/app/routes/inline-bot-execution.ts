@@ -19,11 +19,22 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com  | Bounded SAME-endpoint retry for an explicitly chosen BYO turn (operator decision 2026-09-22). The inline branch previously had exactly two outcomes for a provider wall: rotate to another lane, or surface the error - and rotation is permanently refused for an explicit BYO endpoint, so those turns got NO retry at all and an intermittently tripping provider spend cap cost the whole turn. isExplicitByoTurn names the two shapes of explicit choice (caller-threaded connection, or a ladder resolution whose top rung was the user own BYO row) and the first attempt is wrapped in runWithSameEndpointRetry, which replays the SAME URL/key/account under an attempt, backoff and wall-clock bound. The rotation legs below are untouched, resolver-owned lanes are not wrapped (rotating beats waiting out a backoff on a known-walled lane), and the wrapper reads swallowedTurnFailure so it sees the resolved-failure shape the agentic loop produces.
  * 15 | maintainer@emeraldcoastsystemsgroup.com  | Reworked after review refuted seq 14 on two counts, and extended with the operator's hot fallback (2026-09-22). (a) "caller-threaded means explicit" was FALSE: jarvis-orchestrator threads free-tier/platform/operator-key lanes as byoLlmConnection too, so every Jarvis hosted turn — free-tier users included — took 3 attempts before Jarvis's own rotation. isExplicitByoTurn now keys on resolutionSource === 'explicit' ONLY, carried on the request as byoLlmResolutionSource by the caller that resolved it; a threaded connection with no source gets one attempt. (b) Wrapping processMessage replayed the WHOLE turn — three saved user messages, three error broadcasts. The retry now rides options.byoLlmRetry into the orchestrator, which wraps the provider call. (c) runInlineTurnWithRecovery is the ONE inline turn body both entry points share: first attempt → rotation for resolver-owned lanes → the operator-only, readiness-gated hot fallback (byo-hot-fallback.ts) for an exhausted explicit endpoint; the remote branch recovers the same way by re-dispatching once per ready rung with the rung stamped as the authoritative provider. A fallback turn returns the brainFallback marker.
  * 16 | maintainer@emeraldcoastsystemsgroup.com  | Mark a resolved CLI brain as required provider authority so protected direct bot execution can verify the controller's stamp instead of rejecting a present provider as unconfigured.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com  | Honor the explicit `bot-default` user choice on remote turns by stamping the SAME canonical runtime record queued dispatch uses (per-bot switch > fleet switch > agent_config > registry), with required authority. Existing explicit provider/BYO choices and the `auto` user ladder are unchanged.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com  | Replace, rather than merge, the authoritative config slice for `bot-default`: a model-only incoming request could otherwise retain stale model/version/fallback fields when the canonical bot record omitted them.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com  | Resolve explicit `bot-default` strictly and enforce the same SEC-05 autonomous-CLI boundary as the node: a safe hosted canonical record is stamped, an unavailable or guest-ineligible CLI record degrades to the caller's hosted ladder, and resolver outages remain retryable instead of becoming a deterministic no-brain refusal.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com  | Treat every dedicated bot-node default as an autonomous-runtime choice, not the raw provider spelling: catalog API ids such as Gemini reconcile to Cline on the worker. A non-carved caller (including a user whose old saved choice outlives the carve) now falls to hosted before canonical resolution; the demo operator retains the per-bot record.
  */
 
 import type { AppContext } from '@/app/composition/app-context';
 import { canonicalBotWorkspaceId } from '@/app/bot-node-request-scope';
-import type { BotNodeClient, BotNodeRequest, BotNodeResponse, BrainFallbackMarker } from '@/features/agent-management';
+import {
+  resolveRequiredDispatchConfigFields,
+  type BotNodeClient,
+  type BotNodeRequest,
+  type BotNodeResponse,
+  type BrainFallbackMarker,
+  type RuntimeParamsResolver,
+} from '@/features/agent-management';
 import type { ProcessResult, TaskUsageSummary } from '@/shared/types';
 import { createChildLogger } from '@/shared/logger';
 import { BudgetService, type BudgetDecision } from '@/features/cost-governance';
@@ -33,7 +44,7 @@ import { assertExecuteEntitlement } from '@/app/bot-node-execute-entitlement';
 import { reportResolvedLlmFailure, resolveUserLlmConnection, type ResolvedUserLlmConnection } from './free-tier-rotation';
 import { explainInlineFallbackMiss, planInlineHotFallback, recoverExplicitByoWall } from './byo-hot-fallback';
 import type { ByoHostedFallbackRung } from '@/features/llm-provider';
-import { resolveUserBrain, type ResolvedBrain } from './user-brain-resolution';
+import { cliBrainAvailable, resolveUserBrain, type ResolvedBrain } from './user-brain-resolution';
 import type { ByoLlmConnection } from './byo-llm-routes';
 import { getSpecialistContextRegistry, SpecialistContextError } from '@/shared/specialist-context';
 
@@ -83,6 +94,8 @@ export interface HostedBrainResolutionOverrides {
   reportFailure?: (pool: AppContext['pool'], connection: ResolvedUserLlmConnection, error: unknown) => Promise<boolean>;
   /** Full-ladder override for remote-stamp tests; production always walks resolveUserBrain. */
   resolveBrain?: (pool: AppContext['pool'], userSub: string) => Promise<ResolvedBrain>;
+  /** Canonical per-bot > fleet > agent_config > registry resolver for `bot-default`. */
+  runtimeParamsResolver?: RuntimeParamsResolver;
 }
 
 /**
@@ -278,6 +291,65 @@ export async function stampRemoteBrain(
     if (brain.model) request.model = brain.model;
     request.providerConfigRequired = true;
     logger.info({ agentId, providerId: brain.providerId }, 'remote-brain stamp: CLI brain stamped as the authoritative dispatch provider');
+    return;
+  }
+  if (brain.kind === 'bot-default') {
+    const callerMayUseBotDefault = cliBrainAvailable(request.userSub);
+    if (!callerMayUseBotDefault) {
+      for (const field of ['providerId', 'model', 'configVersion', 'fallbackOrder', 'providerConfigRequired'] as const) {
+        delete request[field];
+      }
+      const connection = overrides?.resolveConnection
+        ? await overrides.resolveConnection(pool, request.userSub)
+        : await resolveUserLlmConnection(pool, request.userSub);
+      if (!connection) {
+        logger.warn({ agentId }, 'remote-brain stamp: bot-default is unavailable to this caller and the hosted ladder is empty');
+        throw new NoHostedBrainError();
+      }
+      request.byoLlmConnection = hostedBrainWire(connection);
+      logger.info(
+        { agentId, hostedModel: connection.model },
+        'remote-brain stamp: bot-default is unavailable to this caller — using the hosted ladder',
+      );
+      return;
+    }
+    // A named preference is not the legacy push-on-dispatch best-effort path. Preserve an
+    // operational resolver failure so the caller can retry it, and distinguish it from an
+    // honest absent record, which can safely degrade to the user's hosted ladder.
+    const configFields = await resolveRequiredDispatchConfigFields(overrides?.runtimeParamsResolver, agentId);
+    for (const field of ['providerId', 'model', 'configVersion', 'fallbackOrder', 'providerConfigRequired'] as const) {
+      delete request[field];
+    }
+    const canonicalProvider = configFields?.providerId?.trim();
+    if (!canonicalProvider) {
+      const connection = overrides?.resolveConnection
+        ? await overrides.resolveConnection(pool, request.userSub)
+        : await resolveUserLlmConnection(pool, request.userSub);
+      if (!connection) {
+        logger.warn(
+          { agentId, providerId: canonicalProvider ?? null },
+          'remote-brain stamp: bot-default is absent or unavailable to this caller and the hosted ladder is empty',
+        );
+        throw new NoHostedBrainError();
+      }
+      request.byoLlmConnection = hostedBrainWire(connection);
+      logger.info(
+        { agentId, providerId: canonicalProvider ?? null, hostedModel: connection.model },
+        'remote-brain stamp: bot-default is absent or unavailable to this caller — using the hosted ladder',
+      );
+      return;
+    }
+    Object.assign(request, configFields);
+    request.providerConfigRequired = true;
+    logger.info(
+      {
+        agentId,
+        providerId: request.providerId ?? null,
+        model: request.model ?? null,
+        configVersion: request.configVersion ?? null,
+      },
+      'remote-brain stamp: bot-default resolved as the authoritative admin/runtime record',
+    );
     return;
   }
   if (brain.kind === 'hosted') {
@@ -612,7 +684,9 @@ export async function executeBotOrInline(
     // ADR-127 remote brain: stamp the caller's resolved brain on a CLI-harness node dispatch —
     // cli as the authoritative provider (the demo operator's mounted login), hosted riding as
     // byoLlmConnection. See stampRemoteBrain; explicit caller choices pass through untouched.
-    await stampRemoteBrain(ctx.pool, agentId, request);
+    await stampRemoteBrain(ctx.pool, agentId, request, {
+      runtimeParamsResolver: ctx.swarm?.runtimeParamsResolver,
+    });
     const remote = await executeRemoteWithRecovery(botClient, agentId, request);
     await settleBotNodeCostTask(ctx, agentId, request, remote);
     return remote;

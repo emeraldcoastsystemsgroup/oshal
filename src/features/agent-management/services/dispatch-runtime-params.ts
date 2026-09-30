@@ -8,6 +8,8 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Resolve ADR-034 §1a tier 3 (registry apiType) when the per-agent agent_config record carries no providerId. The resolver read ONLY agent_config, but that table is written when something CHANGES a bot's provider — a bot that has always run its registry-declared provider has no row, so the resolver reported "no actionable record" while the registry declared one. Combined with the unconditional providerConfigRequired marker the bot refused before task creation and the ticket escalated: 33 tickets on the operator box carry that message, including a nightly oshal-dev schedule that failed for two weeks, and 13 registry bots with a dedicated bot-node had no row at all. Tier 3 applies ONLY when tier 2 yields nothing, so every bot that resolves today is stamped byte-identically, and an agent neither store declares still resolves to null and keeps the fail-closed refusal.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The switch rows (migration 147, "a bot's LLM provider is a row in a table") are tier 1 of the carried record: an injected resolver answers the bot's own switch row, else the fleet default for a registry LLM bot; only then do tier 2 (agent_config providerId) and tier 3 (registry apiType) apply, byte-identically. A REFUSED switch (an id this build cannot run) is carried as written and logged at ERROR here, so the bot's own switch seam refuses the dispatch with the id in its reason rather than silently running the registry provider.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Retain completed work from configured failover (BACKLOG #1660): carry fallbackOrder from ProviderSwitchRow in DispatchRuntimeParams and resolveDispatchConfigFields.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Add a strict resolver for explicit `bot-default`: unlike legacy push-on-dispatch, it preserves resolver failure versus an honest null record so callers can retry outages and degrade an unusable named preference to the hosted ladder.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Resolve fallback order independently from the provider-winning row. A bot row whose chain is null inherits the fleet/environment chain, while an explicit empty array is carried as `[]` all the way to the node (never collapsed into absent/inherit).
  */
 
 /**
@@ -84,6 +86,44 @@ export type RegistryProviderDeclarationReader = (agentId: string) => string | nu
 export type ProviderSwitchResolver = (agentId: string) => BotProviderSwitchResolution | null;
 
 /**
+ * @description The independently resolved ADR-162 fallback order for one bot. Null/undefined
+ * means no row/environment rung expressed an opinion; an empty array is an explicit "no failover"
+ * answer and must be retained on the dispatch.
+ */
+export type ProviderFallbackOrderResolver = (
+  agentId: string,
+  primaryProviderId: string | null,
+) => readonly string[] | null | undefined;
+
+/**
+ * @description Resolve one canonical bot record without collapsing absence or failure. This is
+ * the path for an explicit `bot-default` user choice: a thrown store/snapshot error must remain
+ * operational and retryable, while null means the named preference is currently unusable and may
+ * fall through to the caller's hosted ladder.
+ * @param resolver - Injected canonical resolver; absence is an honest unavailable record.
+ * @param agentId - Target bot.
+ * @returns Spreadable authoritative fields, or null when no actionable record exists.
+ * @throws The resolver's original error unchanged.
+ */
+export async function resolveRequiredDispatchConfigFields(
+  resolver: RuntimeParamsResolver | undefined,
+  agentId: string,
+): Promise<DispatchConfigFields | null> {
+  if (!resolver) return null;
+  const params = await resolver(agentId);
+  const providerId = params?.providerId?.trim();
+  if (!params || !providerId) return null;
+  return {
+    providerId,
+    ...(params.model ? { model: params.model } : {}),
+    ...(params.configVersion !== undefined ? { configVersion: params.configVersion } : {}),
+    ...(params.fallbackOrder !== null && params.fallbackOrder !== undefined
+      ? { fallbackOrder: params.fallbackOrder }
+      : {}),
+  };
+}
+
+/**
  * @description Builds a RuntimeParamsResolver over the authoritative agent_config store —
  * the SAME record ConfigSyncService versions and GET /api/agents/:agentId/runtime serves,
  * so dispatch stamping can never disagree with the push-down/broadcast-up machinery.
@@ -108,6 +148,7 @@ export function createAgentConfigRuntimeParamsResolver(
   agentConfig: Pick<AgentConfigService, 'getConfig'>,
   readRegistryProvider?: RegistryProviderDeclarationReader,
   resolveSwitch?: ProviderSwitchResolver,
+  resolveFallbackOrder?: ProviderFallbackOrderResolver,
 ): RuntimeParamsResolver {
   return async (agentId: string): Promise<DispatchRuntimeParams | null> => {
     const config = await agentConfig.getConfig(agentId);
@@ -118,11 +159,12 @@ export function createAgentConfigRuntimeParamsResolver(
     // rides along so the bot's drift log names the version it reconciled against.
     const switched = readSwitchRow(resolveSwitch, agentId);
     if (switched) {
+      const fallbackOrder = resolveFallbackOrder?.(agentId, switched.providerId);
       return {
         providerId: switched.providerId,
         ...(switched.model ? { model: switched.model } : {}),
         ...(configVersion !== undefined ? { configVersion } : {}),
-        ...(switched.fallbackOrder && switched.fallbackOrder.length > 0 ? { fallbackOrder: switched.fallbackOrder } : {}),
+        ...(fallbackOrder !== null && fallbackOrder !== undefined ? { fallbackOrder } : {}),
       };
     }
     const recordProviderId = values ? readNonEmptyString(values.providerId) : null;
@@ -130,10 +172,12 @@ export function createAgentConfigRuntimeParamsResolver(
     const providerId = recordProviderId ?? readRegistryDeclaredProvider(readRegistryProvider, agentId);
     if (!providerId) return null;
     const model = values ? readNonEmptyString(values.modelId) : null;
+    const fallbackOrder = resolveFallbackOrder?.(agentId, providerId);
     return {
       providerId,
       ...(model ? { model } : {}),
       ...(configVersion !== undefined ? { configVersion } : {}),
+      ...(fallbackOrder !== null && fallbackOrder !== undefined ? { fallbackOrder } : {}),
     };
   };
 }
@@ -149,11 +193,10 @@ export function createAgentConfigRuntimeParamsResolver(
 function readSwitchRow(
   resolver: ProviderSwitchResolver | undefined,
   agentId: string,
-): { providerId: string; model: string | null; fallbackOrder?: readonly string[] | null } | null {
+): { providerId: string; model: string | null } | null {
   if (!resolver) return null;
   const switched = resolver(agentId);
   if (!switched || switched.source === 'registry') return null;
-  const fallbackOrder = switched.row?.fallbackOrder;
   if (!switched.ok) {
     logger.error(
       { agentId, source: switched.source, providerId: switched.providerId, reason: switched.reason },
@@ -162,13 +205,11 @@ function readSwitchRow(
     return {
       providerId: switched.providerId,
       model: readNonEmptyString(switched.row.modelId),
-      fallbackOrder,
     };
   }
   return {
     providerId: switched.providerId as string,
     model: switched.modelId,
-    fallbackOrder,
   };
 }
 
@@ -212,16 +253,8 @@ export async function resolveDispatchConfigFields(
   resolver: RuntimeParamsResolver | undefined,
   agentId: string,
 ): Promise<DispatchConfigFields> {
-  if (!resolver) return {};
   try {
-    const params = await resolver(agentId);
-    if (!params) return {};
-    return {
-      providerId: params.providerId,
-      ...(params.model ? { model: params.model } : {}),
-      ...(params.configVersion !== undefined ? { configVersion: params.configVersion } : {}),
-      ...(params.fallbackOrder && params.fallbackOrder.length > 0 ? { fallbackOrder: params.fallbackOrder } : {}),
-    };
+    return await resolveRequiredDispatchConfigFields(resolver, agentId) ?? {};
   } catch (err) {
     logger.warn(
       { err, agentId },

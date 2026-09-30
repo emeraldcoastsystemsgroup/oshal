@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Admit protected hosted reasoning through one-time current-policy permits and recheck before releasing output.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Admit either branch of the controller-resolved user brain: a hosted endpoint or a signed authoritative provider/model stamp. The boundary remains vendor-neutral; CLI eligibility is still enforced by the existing demo/operator preflight and final spawn guard, while every protected turn stays direct, non-agentic, native-registry-tool-less and current-permit checked.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Carry the already-verified original dispatch token in the runtime-only protected context for controller-revalidated, per-call application tools.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Bind the validated fallbackOrder into protected provider authority and the signed-body/envelope continuity digest so an HTTP hop cannot omit or rewrite a configured fallback chain.
  */
 import type { Pool } from 'pg';
 import type { MeshEnvelope } from '@/features/agent-management';
@@ -79,7 +80,7 @@ function assertFresh(permit: RemoteExecutionPermit): void {
 function assertConfiguredReasoningRequest(dispatch: VerifiedRemoteDispatch, envelope: MeshEnvelope): void {
   const body = dispatch.body, payload = envelope.payload as Record<string, unknown>;
   const hosted = body.byoLlmConnection as Record<string, unknown> | undefined;
-  const carriesProviderAuthority = ['providerId', 'model', 'configVersion', 'providerConfigRequired']
+  const carriesProviderAuthority = ['providerId', 'model', 'configVersion', 'providerConfigRequired', 'fallbackOrder']
     .some(key => Object.hasOwn(body, key));
   const hostedShape = Boolean(hosted && typeof hosted === 'object'
     && !carriesProviderAuthority
@@ -88,9 +89,14 @@ function assertConfiguredReasoningRequest(dispatch: VerifiedRemoteDispatch, enve
     || (typeof body.model === 'string' && body.model.trim().length > 0);
   const providerVersionValid = !Object.hasOwn(body, 'configVersion')
     || (typeof body.configVersion === 'number' && Number.isFinite(body.configVersion));
+  const providerFallbackValid = !Object.hasOwn(body, 'fallbackOrder')
+    || body.fallbackOrder === null
+    || (Array.isArray(body.fallbackOrder)
+      && body.fallbackOrder.every((provider) => typeof provider === 'string' && provider.trim().length > 0));
   const providerShape = !Object.hasOwn(body, 'byoLlmConnection')
     && typeof body.providerId === 'string' && body.providerId.trim().length > 0
-    && body.providerConfigRequired === true && providerModelValid && providerVersionValid;
+    && body.providerConfigRequired === true && providerModelValid && providerVersionValid
+    && providerFallbackValid;
   if (body.direct !== true || body.agenticMode !== false || (hostedShape === providerShape)
     || Object.hasOwn(body, 'creds') || Object.hasOwn(body, 'providerIntent')) deny('authorization_remote_hosted_reasoning_required');
   if (payload?.userSub !== dispatch.claims.sub || payload?.principalIssuer !== dispatch.claims.principal_iss
@@ -106,5 +112,6 @@ function delegationHostedDigest(value: unknown): string { return JSON.stringify(
 /** Bind the provider authority fields across the signed HTTP body and internal envelope. */
 function delegationProviderDigest(value: Record<string, unknown>): string {
   return JSON.stringify({ providerId: value.providerId, model: value.model,
-    configVersion: value.configVersion, providerConfigRequired: value.providerConfigRequired });
+    configVersion: value.configVersion, providerConfigRequired: value.providerConfigRequired,
+    fallbackOrder: value.fallbackOrder });
 }

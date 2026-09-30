@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Regression guard for tier-1 dispatch stamping (dispatch-runtime-params.ts readSwitchRow): the ONLY path by which a fleet-default or per-bot switch row reaches a DEDICATED bot node. Review of PR #633 proved the gap by mutation — replacing `const switched = resolver(agentId)` with `null` left every related spec green, so a silent regression would have inline bots following a fleet write while every bot-node dispatch kept carrying the agent_config/registry provider. This spec builds the resolver WITH its third argument wired exactly as the composition root wires it (the installed ProviderSwitchSnapshot over the real switch rule and the real catalog, the real registry for general-bot) and pins: the fleet row above a no-opinion agent_config record and above the registry; the per-bot row above the fleet row, answered by the switch rule; no rows byte-identical to the two-argument resolver; a refused id carried as written into the node's fail-closed seam. The fleet-row and refused-id cases are the ones the reviewer's mutation turns red.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The per-bot switch row is an operator-written row of oshal_bot_provider_switch, never the agent_config record: ADR-162 §7 failed for all 70 records on the operator box because the store projected each machinery-written record as a bot-row above the fleet default. The listAll double now mirrors the FIXED store (the fleet row plus explicit per-bot rows; agent_config is never projected) and the per-bot cases write that row explicitly. New REGRESSION cases seed the box's three record shapes — manifest-seeded claude-code with blank configUpdatedBy and configVersion 1, gemini 'bot-local', anthropic 'oshal-push' — beside an 'openrouter' fleet row no record names, and pin the fleet row as the stamped record for each, the record's version riding along. Red on the pre-fix projection (each record answered its own provider as 'bot-row'), green after.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Pin independent fallback-chain precedence in the dispatch record: a bot provider row with null chain inherits the fleet chain, and an explicit empty bot chain survives shaping as `[]` rather than becoming absent/inherit.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -24,6 +25,7 @@ import {
 // built from HARNESS_FACTORIES + provider-definitions — nothing here stubs the switch rule.
 import {
   buildProviderSwitchCatalog,
+  resolveInstalledProviderFallbackOrder,
   resolveInstalledProviderSwitch,
   setInstalledProviderSwitchSnapshot,
 } from '../../src/app/composition/provider-switch-runtime';
@@ -70,13 +72,24 @@ function agentConfigStore(table: AgentConfigTable) {
 }
 
 /** A fleet-default row of oshal_bot_provider_switch. */
-function fleetRow(providerId: string, modelId: string | null = null): ProviderSwitchRow {
-  return { scopeId: FLEET_DEFAULT_SWITCH_ID, providerId, modelId, updatedBy: 'operator', updatedAt: null };
+function fleetRow(
+  providerId: string,
+  modelId: string | null = null,
+  fallbackOrder?: string[] | null,
+): ProviderSwitchRow {
+  return { scopeId: FLEET_DEFAULT_SWITCH_ID, providerId, modelId, updatedBy: 'operator', updatedAt: null,
+    ...(fallbackOrder !== undefined ? { fallbackOrder } : {}) };
 }
 
 /** A bot's own row of oshal_bot_provider_switch — written by an operator through PUT /runtime, never by machinery. */
-function botRow(agentId: string, providerId: string, modelId: string | null = null): ProviderSwitchRow {
-  return { scopeId: agentId, providerId, modelId, updatedBy: 'operator-sub', updatedAt: null };
+function botRow(
+  agentId: string,
+  providerId: string,
+  modelId: string | null = null,
+  fallbackOrder?: string[] | null,
+): ProviderSwitchRow {
+  return { scopeId: agentId, providerId, modelId, updatedBy: 'operator-sub', updatedAt: null,
+    ...(fallbackOrder !== undefined ? { fallbackOrder } : {}) };
 }
 
 /**
@@ -100,7 +113,12 @@ async function installSwitch(fleet: ProviderSwitchRow | null, perBot: readonly P
 /** The resolver as the composition root builds it: agent_config + registry + the switch rows. */
 async function resolverWithRows(fleet: ProviderSwitchRow | null, table: AgentConfigTable, perBot: readonly ProviderSwitchRow[] = []) {
   const resolveSwitch = await installSwitch(fleet, perBot);
-  return createAgentConfigRuntimeParamsResolver(agentConfigStore(table), registryDeclaredProvider, resolveSwitch);
+  return createAgentConfigRuntimeParamsResolver(
+    agentConfigStore(table),
+    registryDeclaredProvider,
+    resolveSwitch,
+    resolveInstalledProviderFallbackOrder,
+  );
 }
 
 /** Today's two-argument resolver — the tier-2/tier-3 result the no-row case must equal byte for byte. */
@@ -236,6 +254,37 @@ describe("tier 1: a bot's own switch row — an operator's write — is carried 
       [botRow(UNDECLARED_AGENT_ID, 'anthropic')],
     );
     expect(await resolver(GENERAL_BOT_AGENT_ID)).toEqual({ providerId: 'claude-code', model: 'claude-sonnet-4-6' });
+  });
+
+  it('inherits the fleet fallback chain when the provider-winning bot row has a null chain', async () => {
+    const resolver = await resolverWithRows(
+      fleetRow('openai-codex', 'gpt-5.5', ['anthropic', 'claude-code']),
+      {},
+      [botRow(GENERAL_BOT_AGENT_ID, 'gemini', 'gemini-3.8-flash', null)],
+    );
+    expect(await resolveDispatchConfigFields(resolver, GENERAL_BOT_AGENT_ID)).toEqual({
+      providerId: 'gemini',
+      model: 'gemini-3.8-flash',
+      fallbackOrder: ['anthropic', 'claude-code'],
+    });
+  });
+
+  it('retains an explicit empty bot chain as no failover instead of inheriting or omitting it', async () => {
+    const resolver = await resolverWithRows(
+      fleetRow('openai-codex', 'gpt-5.5', ['anthropic', 'claude-code']),
+      {},
+      [botRow(GENERAL_BOT_AGENT_ID, 'gemini', 'gemini-3.8-flash', [])],
+    );
+    expect(await resolveDispatchConfigFields(resolver, GENERAL_BOT_AGENT_ID)).toEqual({
+      providerId: 'gemini',
+      model: 'gemini-3.8-flash',
+      fallbackOrder: [],
+    });
+    expect(await pushOnDispatchFields(resolver, GENERAL_BOT_AGENT_ID)).toMatchObject({
+      providerId: 'gemini',
+      fallbackOrder: [],
+      providerConfigRequired: true,
+    });
   });
 });
 
