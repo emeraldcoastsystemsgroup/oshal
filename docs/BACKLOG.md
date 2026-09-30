@@ -33,18 +33,17 @@ from preparation or unit tests alone.
 
 | Status | Count | Meaning |
 |---|---|---|
-| IN PROGRESS | **5** | being worked in the current session |
+| IN PROGRESS | **4** | being worked in the current session |
 | OPEN — actionable | **0** | no decision, no live box needed; can be closed by an agent |
-| OPEN — needs operator | **77** | a decision, credential, account or purchase only the operator can make |
+| OPEN — needs operator | **78** | a decision, credential, account or purchase only the operator can make |
 | OPEN — needs live proof | **64** | needs the running box, a deploy, hardware, or a human at a browser |
 | OPEN — blocked | **9** | waiting on something outside this repo |
 | OPEN — needs review | **0** | the triage could not decide; somebody has to read it |
 | OPEN — untriaged | **0** | filed after the 2026-09-15 triage; has no verdict yet |
 
-**Being worked right now (5):**
+**Being worked right now (4):**
 - ADR-169 location device triggers: L8 proof, Home integration and remaining consumers · qualified connector prerequisite proven; current L8 database and installed-device proof pending
 - CI Playwright red-baseline retirement · exact-source runtime/browser preflight passed; full 31-spec proof pending
-- Jarvis in dev mode should see what this workspace sees: an indexed developer corpus (operator, 2026-09-18) · exact handover-path citation regression
 - Generated tokens per unit for every rated feature (ADR-170 P0) (2026-09-29) · explicit feature-operation evidence and reducer; seven-day measured acceptance remains
 - Create visual workspace and integrated editing — active parallel track · region-edit consent promotion and installed acceptance
 
@@ -974,9 +973,10 @@ from preparation or unit tests alone.
   the operator re-affirmed it and corrected the Twilio premise.)
 
 ### Jarvis in dev mode should see what this workspace sees: an indexed developer corpus (operator, 2026-09-18)
-- **Status:** IN PROGRESS · exact handover-path citation regression
+- **Status:** OPEN — needs operator
 
-- **Current work (2026-09-29):** the acceptance-case repair addresses remaining item (a), requiring the requested index path and its cited `doc_id` rather than any note in the same path family. The installed, owner-bound index/query proof in (b) remains separate and open; local acceptance-case tests do not satisfy it.
+- **Delivered:** Agent work (a) completed and verified in `tests/unit/live-acceptance-dev-workspace.spec.ts` (25/25 tests pass). The live-acceptance case requires the requested exact index path and its cited `doc_id` at any rank 1-5 rather than any note in the same path family, fails beyond the limit, reports a missing path input as UNAVAILABLE naming its variable, and guards against regression to family-only matching.
+- **Remaining:** Live proof on deployed instance (b): set `OSHAL_DEV_WORKSPACE_INDEX_ENABLED=true` in box `.env` and recreate the api; stage `dev-workspace-index` 0.2.1 and grant its catalog role `developer` to the acceptance identity; build the index from the box checkout with `node tools/workspace-index.js --root <box checkout> --notes-dir <local notes directory>`, place it at the installed package's `data/dev-workspace-index.json`, and run the case from the host (`node scripts/operations/live-acceptance.js dev-workspace`).
 
 - **What the operator asked for, verbatim:** "i would like to have a package that is indexed for jarvis
   when in dev mode and building on the software itself.. it would be great to have a docs package
