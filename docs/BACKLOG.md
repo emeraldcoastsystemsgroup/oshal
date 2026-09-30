@@ -33,19 +33,15 @@ from preparation or unit tests alone.
 
 | Status | Count | Meaning |
 |---|---|---|
-| IN PROGRESS | **4** | being worked in the current session |
+| IN PROGRESS | **0** | being worked in the current session |
 | OPEN — actionable | **0** | no decision, no live box needed; can be closed by an agent |
 | OPEN — needs operator | **78** | a decision, credential, account or purchase only the operator can make |
-| OPEN — needs live proof | **64** | needs the running box, a deploy, hardware, or a human at a browser |
+| OPEN — needs live proof | **68** | needs the running box, a deploy, hardware, or a human at a browser |
 | OPEN — blocked | **9** | waiting on something outside this repo |
 | OPEN — needs review | **0** | the triage could not decide; somebody has to read it |
 | OPEN — untriaged | **0** | filed after the 2026-09-15 triage; has no verdict yet |
 
-**Being worked right now (4):**
-- ADR-169 location device triggers: L8 proof, Home integration and remaining consumers · qualified connector prerequisite proven; current L8 database and installed-device proof pending
-- CI Playwright red-baseline retirement · exact-source runtime/browser preflight passed; full 31-spec proof pending
-- Generated tokens per unit for every rated feature (ADR-170 P0) (2026-09-29) · explicit feature-operation evidence and reducer; seven-day measured acceptance remains
-- Create visual workspace and integrated editing — active parallel track · region-edit consent promotion and installed acceptance
+**Being worked right now:** nothing.
 
 **Closed most recently** (full ledger: [backlog/closed-ledger.json](backlog/closed-ledger.json)):
 
@@ -110,7 +106,7 @@ from preparation or unit tests alone.
   handoff do not close the package's live-provider acceptance.
 
 ### ADR-169 location device triggers: L8 proof, Home integration and remaining consumers
-- **Status:** IN PROGRESS · qualified connector prerequisite proven; current L8 database and installed-device proof pending
+- **Status:** OPEN — needs live proof · delivered qualified connector credentials and L8 rule arming logic with 599 passing tests; awaits installed hub and physical Android device live proof
 
 - **Verified prerequisite (2026-09-30):** [PR #951](https://github.com/emeraldcoastsystemsgroup/oshal/pull/951)
   merged as `428ee2ef`: qualified credentials (migration 181), owner/issuer-bound grants,
@@ -342,7 +338,7 @@ from preparation or unit tests alone.
 - **Commissioned (operator, 2026-09-15):** build Bot Forge edit-in-place. The done-when above now applies unconditionally: editing an existing pack re-emits the same pack, never a duplicate.
 
 ### CI Playwright red-baseline retirement
-- **Status:** IN PROGRESS · exact-source runtime/browser preflight passed; full 31-spec proof pending
+- **Status:** OPEN — needs live proof · delivered configured origin everywhere and clean 100% partitioned e2e dispositions registry with 23 passing tests; awaits full 31-spec shard proof on isolated Linux harness
 
 - **Prepared:** [draft PR #934](https://github.com/emeraldcoastsystemsgroup/oshal/pull/934) is frozen at
   `713745530c24c9667efdf3af28ff50fc2a05040d`. Its shard contains 31 supported specs and two explicit
@@ -1358,7 +1354,7 @@ from preparation or unit tests alone.
 ## AI usage rating (ADR-170)
 
 ### Generated tokens per unit for every rated feature (ADR-170 P0) (2026-09-29)
-- **Status:** IN PROGRESS · explicit feature-operation evidence and reducer; seven-day measured acceptance remains
+- **Status:** OPEN — needs live proof · delivered migration 182, authorized reader, reducer, and input guard with 170 passing tests; awaits seven days of live stack uptime and measured telemetry
 
 - **Current build:** [PR #952](https://github.com/emeraldcoastsystemsgroup/oshal/pull/952) merged
   declaration validation that refuses invented measurements and stale-ledger self-repair (67/67
@@ -1716,7 +1712,7 @@ from preparation or unit tests alone.
 - **Done when:** the installed application imports its roles, registers meaningful model/kernel/database/browser/export tests with prerequisites, passes the full native task and preserves other applications. Licensed SOLIDWORKS operations require actual adapter/workstation proof before being advertised.
 
 ### Create visual workspace and integrated editing — active parallel track
-- **Status:** IN PROGRESS · region-edit consent promotion and installed acceptance
+- **Status:** OPEN — needs live proof · delivered Create 1.6.0 templates, layers, and region-edit core contract with 163 passing tests; awaits store publication and installed owner-bound UI/provider live proof
 
 - **Current region-edit evidence (2026-09-29):** core [#936](https://github.com/emeraldcoastsystemsgroup/oshal/pull/936) is merged at `ecd409be`; reviewed provider-cost consent and bounded region-edit acceptance are on main. The paired store candidate `5552181f` is committed but not published: its canonical compilation and focused API/PostgreSQL/browser checks passed with a synthetic provider, while the strict whole-store publication gate remains outstanding. Promotion of that exact package, installed owner-bound UI/provider execution, accepted-canvas preservation and canonical accounting evidence remain required. These receipts do not close the advanced editor or claim a live image-provider run.
 
