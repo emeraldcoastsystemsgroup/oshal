@@ -32,6 +32,7 @@
  * 27 | maintainer@emeraldcoastsystemsgroup.com | Mark a direct (interactive) dispatch hostToolsOnly. Such a turn is conversation plus the tools the agentic loop brokers itself (Jarvis's conversation_query/conversation_fetch); it never needs the CLI's own file or command tools. On the Antigravity brain those native tools were what a recall ask spent 10 min 45 s on before a headless read_file denial killed it. Protected work keeps its own path (toolLess + the controller MCP bridge) and is never marked.
  * 28 | maintainer@emeraldcoastsystemsgroup.com | Read a message text by its type instead of assuming a string. The any-bot layer is untyped JavaScript, and its parser hands back a Number or Boolean for a bare numeric or true/false value; the response extraction called m.text.trim() on it and threw "m.text.trim is not a function", so a Jarvis answer of 5 was reported as a failed execution with no answer (live case jarvis-cache, 2026-09-29, 3 of 3). The source is fixed in AgenticController; this is the guard on the reading side: a finite number or a boolean is delivered as its text, any other non-string value is passed over, and the declared message type says text is unknown so the compiler requires the check.
  * 29 | maintainer@emeraldcoastsystemsgroup.com | Reuse the shared SEC-05 autonomous-provider classifier so controller `bot-default` validation and node preflight cannot disagree about aliases such as `openai-codex`.
+ * 30 | maintainer@emeraldcoastsystemsgroup.com | Mark a protected direct request as single-shot/tool-less only when its server-resolved application tool set is empty. The autonomous-CLI preflight is deferred only for that candidate, then re-run after authorization resolution with a dedicated hosted-single-shot proof; nonempty brokered tools retain the existing refusal/bridge path. This lets a Cline-backed bot use its configured backing model for one hosted reasoning call without treating the request as BYO or entering Cline's native tool loop.
  */
 
 /**
@@ -113,16 +114,20 @@ function demoOperatorCliUnlock(providerName: string, userSub: unknown): boolean 
  * @description Refuse autonomous CLI harnesses before a task/workspace is accepted. These
  * providers own an internal tool loop, can read their credential home, and cannot revalidate
  * OSHAL's exact handler generation/scopes. A deterministic provider intent and a caller's BYO
- * hosted endpoint bypass the local CLI entirely and are therefore admissible; so, on a DEMO
- * deployment, is the operator's own request (ADR-127 — off by default, audited, operator-only).
+ * hosted endpoint bypass the local CLI entirely and are therefore admissible. So is a protected
+ * request whose exact server-resolved tool set proved empty and which will use the configured
+ * provider's hosted single-shot adapter. On a DEMO deployment, the operator's own request is also
+ * admitted (ADR-127 — off by default, audited, operator-only).
  */
 export function assertUnattendedProviderPreflight(input: {
   providerName: unknown;
   deterministicIntent?: boolean;
   byoHostedInference?: boolean;
+  protectedHostedSingleShot?: boolean;
   userSub?: unknown;
 }): void {
-  if (input.deterministicIntent === true || input.byoHostedInference === true) return;
+  if (input.deterministicIntent === true || input.byoHostedInference === true
+    || input.protectedHostedSingleShot === true) return;
   const providerName = typeof input.providerName === 'string'
     ? input.providerName.trim().toLowerCase() : '';
   if (!isUnbrokeredAutonomousProvider(providerName)) return;
@@ -152,6 +157,8 @@ let activeExecutions = 0;
  * cost attribution, and prompt assembly decisions.
  */
 export interface BotNodeExecutionDeps {
+  /** Actual executing bot from runtime composition; absent stays unbound, never inferred from a request. */
+  runtimeAgentId?: string;
   /** Trusted runtime wrapper; raw payloads cannot install protected execution authority. */
   runApplicationExecution?: (envelope: MeshEnvelope, operation: () => Promise<EnvelopeExecutionResult>) => Promise<EnvelopeExecutionResult>;
   /** Runtime-owned guard over local and requested bot identities, shared by HTTP/mesh/batch. */
@@ -221,6 +228,8 @@ export function createBotNodeExecutionHandler(
     // orchestration layers (handover / awareness / swarm-memory). A lean reasoner
     // persona correctly treats that ticket scaffolding as out-of-place noise.
     const direct = payload?.direct === true;
+    const agenticMode = payload?.agenticMode !== undefined ? Boolean(payload.agenticMode) : true;
+    const runtimeAgentId = normalizeRuntimeIdentity(deps.runtimeAgentId, 256);
     // Exact authenticated owner identity. This binds memory, workspaces, and audited
     // server operations; it is not authority to place connector secrets in a CLI.
     const userSub = normalizeBotNodeUserSub(payload?.userSub);
@@ -237,6 +246,12 @@ export function createBotNodeExecutionHandler(
     // an OpenAIProvider) instead of the bot's configured provider.
     const byoLlmConnection = (payload?.byoLlmConnection && typeof payload.byoLlmConnection === 'object')
       ? (payload.byoLlmConnection as { baseUrl: string; apiKey: string; model: string }) : undefined;
+    // The candidate is not admitted yet. Its autonomous-provider preflight is deferred only until
+    // the server resolves the final application tool set below; a nonempty set re-enters the
+    // ordinary refusal path, while an empty set proves this request can avoid the CLI entirely.
+    const protectedDirectCandidate = Boolean(
+      protectedExecution && direct && agenticMode === false && !providerIntent && !byoLlmConnection,
+    );
     const workspaceTaskId = readOptionalWorkspaceSource(payload, 'workspaceTaskId');
     const originalTicket = typeof payload?.originalTicket === 'object' && payload?.originalTicket !== null
       ? payload.originalTicket as Record<string, unknown> : undefined;
@@ -317,14 +332,20 @@ export function createBotNodeExecutionHandler(
       }
       const selectedProvider = deps.dispatchConfigRuntime?.getActiveProvider().provider
         ?? deps.providerName;
-      assertUnattendedProviderPreflight({
-        providerName: selectedProvider,
-        deterministicIntent: Boolean(providerIntent),
-        byoHostedInference: Boolean(byoLlmConnection),
-        // ADR-127: the demo CLI carve is scoped to the deployment operator, so the preflight needs
-        // the request's exact owner. Absent identity keeps the refusal.
-        userSub,
-      });
+      const normalizedSelectedProvider = typeof selectedProvider === 'string'
+        ? selectedProvider.trim().toLowerCase() : '';
+      const protectedSingleShotCandidate = protectedDirectCandidate
+        && (normalizedSelectedProvider === 'cline' || normalizedSelectedProvider === 'cline-cli');
+      if (!protectedSingleShotCandidate) {
+        assertUnattendedProviderPreflight({
+          providerName: selectedProvider,
+          deterministicIntent: Boolean(providerIntent),
+          byoHostedInference: Boolean(byoLlmConnection),
+          // ADR-127: the demo CLI carve is scoped to the deployment operator, so the preflight needs
+          // the request's exact owner. Absent identity keeps the refusal.
+          userSub,
+        });
+      }
       if (providerIntent) {
         // Deterministic provider reads bypass persona/memory/prompt/task construction entirely.
         // This is both a credential boundary and a no-hidden-side-effect completion boundary.
@@ -397,6 +418,19 @@ export function createBotNodeExecutionHandler(
         layers: personaLayers,
         resolver: protectedExecution ? deps.resolveBrokeredPromptAuthorization : deps.resolvePromptAuthorization,
       });
+      const singleShotToolless = Boolean(
+        protectedSingleShotCandidate
+        && promptAuthority.allowedTools.length === 0
+        && runtimeAgentId
+        && runtimeAgentId === agentId,
+      );
+      if (protectedSingleShotCandidate) {
+        assertUnattendedProviderPreflight({
+          providerName: selectedProvider,
+          protectedHostedSingleShot: singleShotToolless,
+          userSub,
+        });
+      }
       const skillProfilePattern = typeof payload?.pattern === 'string' ? payload.pattern.trim() : '';
       const assembledPrompt = assemblePromptForAnyBot(
         personaLayers,
@@ -444,11 +478,13 @@ export function createBotNodeExecutionHandler(
       // Honor the requested mode (was hardcoded true). A direct reasoning request
       // (e.g. summarize/draft) passes agenticMode:false to skip the tool loop —
       // which otherwise non-deterministically emits an unparseable tool call.
-      const agenticMode = payload?.agenticMode !== undefined ? Boolean(payload.agenticMode) : true;
       const result = await deps.anyBotTaskController.processMessage(task.id, { text: assembledPrompt }, {
           agenticMode,
+          // Capture and protected persona selection must point to this executor, never a caller-selected target.
+          agentId: runtimeAgentId ?? undefined,
           autoApprove: protectedExecution ? {} : { 'use_mcp_tool': true },
           ...(protectedExecution ? { toolLess: true, assertCurrentAuthorization: () => protectedExecution.check() } : {}),
+          ...(singleShotToolless ? { singleShotToolless: true } : {}),
           // An interactive turn's tools are brokered by the agentic loop itself; a CLI brain gets none
           // of its own (AntigravityProvider runs agy tool-less). Protected work keeps its bridge path.
           ...(direct && !protectedExecution ? { hostToolsOnly: true } : {}),

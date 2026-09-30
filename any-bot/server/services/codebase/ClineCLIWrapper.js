@@ -7,6 +7,8 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: default-deny unbrokered autonomous CLI execution before credential setup or process spawn.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: keep live version probes credential-free and guard internal execution helpers against direct invocation.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Operator directive 2026-08-13 — nothing hardcoded: configuration decides and the swarm env file is the fallback. _ensureModelConfig baked in provider 'claude-code' + model 'claude-sonnet-4-5-20250929' and THREW if the write-verify read back anything else, so a deployment could not move Cline off a cancelled subscription without editing source. New _resolveBackingProvider resolves CLINE_API_PROVIDER/CLINE_API_MODEL -> the persisted global-config.json the cockpit writes (same file the TS cline-runtime-config-sync reads, so the two runtimes cannot disagree) -> FORCE_LLM_PROVIDER/LLM_PROVIDER + FORCE_LLM_MODEL/LLM_MODEL. No vendor literal terminates the chain: an unconfigured deployment is told so. The OAuth-presence check and the write-verify now follow the RESOLVED provider.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Terminate the complete shell-backed Cline process tree on timeout, with POSIX process-group escalation and Windows taskkill tree enforcement.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Disable Cline self-updates in its persisted settings so the image-pinned CLI version cannot drift at runtime.
  */
 
 /**
@@ -32,6 +34,9 @@ const fs = require('fs');
 const path = require('path');
 const logger = require('../../utils/logger');
 const FrontDoorClient = require('../FrontDoorClient');
+
+const PROCESS_TREE_KILL_GRACE_MS = 5000;
+const WINDOWS_TREE_KILL_TIMEOUT_MS = 5000;
 
 /**
  * Resolve the access token Cline should pass to Claude.
@@ -139,6 +144,172 @@ class ClineCLIWrapper {
    */
   getEnhancedPath() {
     return `${this.localBinPath}:${this.nodePath}:${process.env.PATH}`;
+  }
+
+  /**
+   * Spawn a shell-backed Cline process in its own POSIX process group. Cline's
+   * executable is commonly a shell wrapper which starts another Node process;
+   * killing only the ChildProcess returned by spawn() therefore leaves the real
+   * CLI alive with its inherited stdout/stderr pipes still open.
+   *
+   * Windows does not support signalling a negative process-group id. Its tree
+   * termination path uses taskkill /T instead, so detached must remain disabled.
+   *
+   * @param {string} command
+   * @param {string[]} args
+   * @param {object} options
+   * @returns {import('child_process').ChildProcess}
+   * @private
+   */
+  _spawnManagedProcess(command, args, options = {}) {
+    return spawn(command, args, {
+      ...options,
+      detached: this._processPlatform() !== 'win32',
+    });
+  }
+
+  /** @private */
+  _processPlatform() {
+    return process.platform;
+  }
+
+  /** @private */
+  _processTreeKillGraceMs() {
+    return PROCESS_TREE_KILL_GRACE_MS;
+  }
+
+  /** @private */
+  _windowsTreeKillTimeoutMs() {
+    return WINDOWS_TREE_KILL_TIMEOUT_MS;
+  }
+
+  /**
+   * Start Windows' native process-tree killer. Kept as a method so the
+   * cross-platform contract can be exercised without launching taskkill in tests.
+   *
+   * @param {string[]} args
+   * @returns {import('child_process').ChildProcess}
+   * @private
+   */
+  _spawnWindowsTreeKiller(args) {
+    return spawn('taskkill.exe', args, {
+      shell: false,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+  }
+
+  /**
+   * Send one signal to the complete process tree rooted at child.
+   *
+   * On POSIX, managed children are process-group leaders, so a negative pid
+   * targets the shell and every descendant. On Windows, taskkill /T supplies the
+   * equivalent behavior. Windows tree termination is forced on the first pass:
+   * a graceful root-first taskkill can let the root disappear before a later /F
+   * pass has a tree to enumerate, stranding descendants.
+   *
+   * @param {import('child_process').ChildProcess} child
+   * @param {'SIGTERM'|'SIGKILL'} signal
+   * @param {string} reason
+   * @returns {boolean} Whether a tree-termination request was issued
+   * @private
+   */
+  _signalProcessTree(child, signal, reason) {
+    if (!child || !Number.isInteger(child.pid) || child.pid <= 0) {
+      logger.warn(`[ClineCLI] Cannot terminate process tree (${reason}): child pid is unavailable`);
+      return false;
+    }
+
+    if (this._processPlatform() === 'win32') {
+      const taskkillArgs = ['/PID', String(child.pid), '/T', '/F'];
+
+      try {
+        const killer = this._spawnWindowsTreeKiller(taskkillArgs);
+        let taskkillSettled = false;
+        let taskkillTimer = null;
+        const finishTaskkill = (kind, detail) => {
+          if (taskkillSettled) return;
+          taskkillSettled = true;
+          if (taskkillTimer) clearTimeout(taskkillTimer);
+
+          if (kind === 'error') {
+            logger.warn(`[ClineCLI] taskkill failed during ${reason}: ${detail.message}`);
+            try { child.kill('SIGKILL'); } catch (_error) { /* best effort */ }
+          } else if (detail !== 0 && child.exitCode === null && child.signalCode === null) {
+            logger.warn(`[ClineCLI] taskkill exited ${detail} during ${reason}; falling back to the root process`);
+            try { child.kill('SIGKILL'); } catch (_error) { /* best effort */ }
+          }
+        };
+
+        // A missing taskkill binary is unusual, but falling back to ChildProcess.kill
+        // is still better than leaving the shell untouched.
+        if (killer && typeof killer.once === 'function') {
+          killer.once('error', (error) => finishTaskkill('error', error));
+          killer.once('close', (code) => finishTaskkill('close', code));
+        }
+        taskkillTimer = setTimeout(() => {
+          if (taskkillSettled) return;
+          taskkillSettled = true;
+          logger.warn(`[ClineCLI] taskkill timed out during ${reason}; terminating taskkill and the root process`);
+          try { killer.kill('SIGKILL'); } catch (_error) { /* best effort */ }
+          try { child.kill('SIGKILL'); } catch (_error) { /* best effort */ }
+        }, this._windowsTreeKillTimeoutMs());
+        if (typeof taskkillTimer.unref === 'function') taskkillTimer.unref();
+        if (killer && typeof killer.unref === 'function') killer.unref();
+        return true;
+      } catch (error) {
+        logger.warn(`[ClineCLI] Could not start taskkill during ${reason}: ${error.message}`);
+        try { return child.kill('SIGKILL'); } catch (_fallbackError) { return false; }
+      }
+    }
+
+    try {
+      process.kill(-child.pid, signal);
+      return true;
+    } catch (error) {
+      // The group may already be gone, or a platform may reject group signalling.
+      // Fall back to the direct child without turning timeout cleanup into a crash.
+      if (error && error.code !== 'ESRCH') {
+        logger.warn(`[ClineCLI] Process-group ${signal} failed during ${reason}: ${error.message}`);
+      }
+      try { return child.kill(signal); } catch (_fallbackError) { return false; }
+    }
+  }
+
+  /**
+   * Request one graceful tree shutdown and one forced escalation. A WeakMap makes
+   * repeated inactivity checks and the hard timer idempotent for the same child.
+   * Importantly, escalation is not gated on child.killed: Node sets that flag when
+   * kill() is called, not when the process (or its descendants) has exited.
+   *
+   * @param {import('child_process').ChildProcess} child
+   * @param {string} reason
+   * @returns {{reason: string, escalationTimer: NodeJS.Timeout}|null}
+   * @private
+   */
+  _terminateProcessTree(child, reason) {
+    if (!this._processTreeTerminations) this._processTreeTerminations = new WeakMap();
+    const existing = child && this._processTreeTerminations.get(child);
+    if (existing) return existing;
+    if (!child) return null;
+
+    const termination = { reason, escalationTimer: null };
+    this._processTreeTerminations.set(child, termination);
+    this._signalProcessTree(child, 'SIGTERM', reason);
+
+    termination.escalationTimer = setTimeout(() => {
+      // On POSIX, the group may outlive its shell leader, so always probe/signal
+      // the group. On Windows a completed root pid can be reused; skip the forced
+      // taskkill when Node has already observed that root exit.
+      const rootExited = child.exitCode !== null || child.signalCode !== null;
+      if (this._processPlatform() !== 'win32' || !rootExited) {
+        this._signalProcessTree(child, 'SIGKILL', `${reason} escalation`);
+      }
+    }, this._processTreeKillGraceMs());
+    if (typeof termination.escalationTimer.unref === 'function') {
+      termination.escalationTimer.unref();
+    }
+    return termination;
   }
 
   /**
@@ -414,7 +585,7 @@ class ClineCLIWrapper {
       logger.info(`[ClineCLI] Streaming spawn with HOME=${spawnEnv.HOME}`);
       logger.info(`[ClineCLI] Streaming spawn with CLAUDE_CODE_SESSION_ACCESS_TOKEN: ${spawnEnv.CLAUDE_CODE_SESSION_ACCESS_TOKEN ? 'SET' : 'NOT SET'}`);
 
-      const proc = spawn(this.clineCommand, args, {
+      const proc = this._spawnManagedProcess(this.clineCommand, args, {
         cwd: workspaceDir,
         env: spawnEnv,
         shell: true,
@@ -425,10 +596,7 @@ class ClineCLIWrapper {
         timedOut = true;
         const stats = activity.getStats();
         logger.warn(`ClineCLI: HARD TIMEOUT after ${hardTimeoutSec}s. Stats: messages=${stats.totalMessages}, tools=${stats.toolUseCount}, silence=${stats.silenceFormatted}`);
-        proc.kill('SIGTERM');
-        setTimeout(() => {
-          if (!proc.killed) proc.kill('SIGKILL');
-        }, 5000);
+        this._terminateProcessTree(proc, 'streaming hard timeout');
       }, hardTimeoutMs);
 
       // === INACTIVITY MONITOR: checks every 10 seconds for silence ===
@@ -456,10 +624,7 @@ class ClineCLIWrapper {
           }
           stalledOut = true;
           logger.error(`ClineCLI: INACTIVITY CIRCUIT BREAKER — no output for ${stats.silenceFormatted}. Killing process. Total messages: ${stats.totalMessages}, tools: ${stats.toolUseCount}, elapsed: ${stats.elapsedFormatted}`);
-          proc.kill('SIGTERM');
-          setTimeout(() => {
-            if (!proc.killed) proc.kill('SIGKILL');
-          }, 5000);
+          this._terminateProcessTree(proc, 'streaming inactivity timeout');
         }
       }, 10000); // Check every 10 seconds
 
@@ -861,7 +1026,7 @@ class ClineCLIWrapper {
       }
       logger.info(`[ClineCLI] ═══ END SPAWN DIAGNOSTICS ═══`);
 
-      const cline = spawn(this.clineCommand, args, {
+      const cline = this._spawnManagedProcess(this.clineCommand, args, {
         cwd: workspaceDir,
         env: spawnEnv,
         shell: true, // Use shell for better compatibility
@@ -892,10 +1057,7 @@ class ClineCLIWrapper {
         timedOut = true;
         const stats = activity.getStats();
         logger.warn(`ClineCLI: HARD TIMEOUT (batch) after ${hardTimeoutSec}s. Messages: ${stats.totalMessages}, silence: ${stats.silenceFormatted}`);
-        cline.kill('SIGTERM');
-        setTimeout(() => {
-          if (!cline.killed) cline.kill('SIGKILL');
-        }, 5000);
+        this._terminateProcessTree(cline, 'batch hard timeout');
       }, hardTimeoutMs);
 
       // === INACTIVITY MONITOR ===
@@ -916,10 +1078,7 @@ class ClineCLIWrapper {
           }
           stalledOut = true;
           logger.error(`ClineCLI: INACTIVITY CIRCUIT BREAKER (batch) — no output for ${stats.silenceFormatted}. Killing. Messages: ${stats.totalMessages}, elapsed: ${stats.elapsedFormatted}`);
-          cline.kill('SIGTERM');
-          setTimeout(() => {
-            if (!cline.killed) cline.kill('SIGKILL');
-          }, 5000);
+          this._terminateProcessTree(cline, 'batch inactivity timeout');
         }
       }, 10000);
 
@@ -1055,7 +1214,8 @@ class ClineCLIWrapper {
   }
 
   /**
-   * Ensure Cline CLI globalState.json AND config.json have the correct model configuration.
+   * Ensure Cline CLI globalState.json and config.json have the correct model configuration,
+   * and keep the image-pinned CLI version stable through global-settings.json.
    * Uses Anthropic API (Claude Code) via ANTHROPIC_API_KEY environment variable.
    * The CLI may overwrite these files during execution, so we re-inject our config
    * before each spawn to prevent model drift.
@@ -1063,6 +1223,7 @@ class ClineCLIWrapper {
    * ⭐ PHASE_54 FIX: Write BOTH config files
    * - globalState.json: Full Cline state with Anthropic provider
    * - config.json: Simple config with provider, model, apiKey
+   * - global-settings.json: Preserve user settings while forcing autoUpdateEnabled=false
    * - Force filesystem sync after write
    * - Verify write succeeded by reading back
    * 
@@ -1133,8 +1294,62 @@ class ClineCLIWrapper {
     return { provider, model };
   }
 
+  /**
+   * Keep the Dockerfile-pinned Cline version stable before any CLI invocation.
+   * Cline can self-update even for `--version`, so this guard is intentionally
+   * independent of model configuration and preserves every unrelated setting.
+   *
+   * @private
+   */
+  _ensureAutoUpdateDisabled() {
+    const globalSettingsPath = `${this.homeDir}/.cline/data/settings/global-settings.json`;
+    const globalSettingsDir = path.dirname(globalSettingsPath);
+    if (!fs.existsSync(globalSettingsDir)) {
+      fs.mkdirSync(globalSettingsDir, { recursive: true });
+      logger.info(`[ClineCLI] Created settings dir: ${globalSettingsDir}`);
+    }
+
+    let globalSettings = {};
+    let globalSettingsChanged = !fs.existsSync(globalSettingsPath);
+    if (!globalSettingsChanged) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(globalSettingsPath, 'utf8'));
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          globalSettings = parsed;
+        } else {
+          globalSettingsChanged = true;
+          logger.warn('[ClineCLI] Existing global-settings.json is not an object; replacing it with safe settings');
+        }
+      } catch (error) {
+        globalSettingsChanged = true;
+        logger.warn(`[ClineCLI] Failed to parse existing global-settings.json, starting fresh: ${error.message}`);
+      }
+    }
+    if (globalSettings.autoUpdateEnabled !== false) {
+      globalSettings.autoUpdateEnabled = false;
+      globalSettingsChanged = true;
+    }
+
+    if (globalSettingsChanged) {
+      const settingsFd = fs.openSync(globalSettingsPath, 'w');
+      fs.writeSync(settingsFd, JSON.stringify(globalSettings, null, 2));
+      fs.fsyncSync(settingsFd);
+      fs.closeSync(settingsFd);
+    }
+
+    const verifyGlobalSettings = JSON.parse(fs.readFileSync(globalSettingsPath, 'utf8'));
+    if (verifyGlobalSettings.autoUpdateEnabled !== false) {
+      throw new Error('global-settings.json write verification failed: autoUpdateEnabled must be false');
+    }
+    logger.info('[ClineCLI] Cline auto-update disabled; image-pinned CLI version preserved');
+  }
+
   _ensureModelConfig() {
     try {
+      // This must run independently of provider/model resolution: even a local
+      // `cline --version` may self-update the installed CLI.
+      this._ensureAutoUpdateDisabled();
+
       // ⭐ PHASE_54 SESSION_11: Write to REAL ~/.cline/ (not isolated dir).
       // _ensureModelConfig() runs before every spawn to counteract any VSCode extension drift.
       const gsPath = `${this.homeDir}/.cline/data/globalState.json`;
@@ -1269,6 +1484,7 @@ class ClineCLIWrapper {
       }
 
       logger.info(`[ClineCLI] Updated config.json: provider=${provider}, model=${model}`);
+
     } catch (err) {
       logger.error(`[ClineCLI] Failed to ensure model config: ${err.message}`);
       throw err;
@@ -1290,7 +1506,8 @@ class ClineCLIWrapper {
       const result = await new Promise((resolve) => {
         // ⭐ PHASE_61: Use --version (local flag, no network) instead of 'version' subcommand
         // Hard 8s timeout — if cline doesn't respond in 8s, it's not usable
-        const cline = spawn(this.clineCommand, ['--version'], {
+        this._ensureAutoUpdateDisabled();
+        const cline = this._spawnManagedProcess(this.clineCommand, ['--version'], {
           env: buildCliDiagnosticEnv({ path: this.getEnhancedPath() }),
           shell: true,
         });
@@ -1302,7 +1519,7 @@ class ClineCLIWrapper {
           if (!resolved) {
             resolved = true;
             logger.warn('[ClineCLI] isAvailable() timed out after 8s — cline may be trying to reach network');
-            try { cline.kill('SIGTERM'); } catch (e) { /* ignore */ }
+            this._terminateProcessTree(cline, 'availability probe timeout');
             resolve(false);
           }
         }, 8000);
@@ -1347,7 +1564,8 @@ class ClineCLIWrapper {
     try {
       const result = await new Promise((resolve) => {
         // ⭐ PHASE_61: Use --version (local flag, no network)
-        const cline = spawn(this.clineCommand, ['--version'], {
+        this._ensureAutoUpdateDisabled();
+        const cline = this._spawnManagedProcess(this.clineCommand, ['--version'], {
           env: buildCliDiagnosticEnv({ path: this.getEnhancedPath() }),
           shell: true,
         });
@@ -1358,7 +1576,7 @@ class ClineCLIWrapper {
         const hardTimeout = setTimeout(() => {
           if (!resolved) {
             resolved = true;
-            try { cline.kill('SIGTERM'); } catch (e) { /* ignore */ }
+            this._terminateProcessTree(cline, 'version probe timeout');
             resolve(null);
           }
         }, 8000);

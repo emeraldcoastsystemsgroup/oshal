@@ -235,7 +235,7 @@ export async function startProtectedWorkerFixture(
     await state.duringOwnership?.();
     return { rows: state.owner ? [{ app: state.owner, protected: true }] : [] };
   } } as unknown as Pick<Pool, 'query'>;
-  const handler = createBotNodeExecutionHandler({ anyBotTaskController: sqlite.controller,
+  const handler = createBotNodeExecutionHandler({ runtimeAgentId: REMOTE_AGENT, anyBotTaskController: sqlite.controller,
     providerName: options.directProvider?.provider ?? 'claude-code', modelName: options.directProvider?.model ?? 'unused-cli',
     dispatchConfigRuntime: options.dispatchConfigRuntime,
     resolveBrokeredPromptAuthorization: async () => ({ allowedTools: options.brokeredTools ?? [],

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for ADR-127's SEC-05 carve. The carve is the one place an autonomous CLI harness may run at a bot node, so the guard's real job is the NEGATIVE space: every provider in the refused set stays refused off-demo, for a non-operator, and for an identity-less request, and the demo flag reads DEMO_MODE alone (never MOCK_OIDC — mock auth must not unlock a real subscription). Exercises the exported preflight directly, which is the function the handler calls before any task or workspace is created.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | gemini-cli and antigravity-cli join CLI_PROVIDERS, so every negative this guard already enumerated - off demo, non-operator, identity-less, MOCK_OIDC, and the case/whitespace lookalikes - now covers the two Google terminal agents as well. 'google-gemini' is added to the hosted list beside 'gemini' to pin the other half: the apiType names an HTTP endpoint and must never be swept into the refused set along with the harness ids.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Admit an explicitly proven protected hosted single-shot independently of BYO while leaving the autonomous-provider refusal unchanged when that proof is absent or false.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -96,6 +97,8 @@ describe('SEC-05 preflight — what it must allow', () => {
     for (const providerName of CLI_PROVIDERS) {
       expect(() => assertUnattendedProviderPreflight({ providerName, deterministicIntent: true })).not.toThrow();
       expect(() => assertUnattendedProviderPreflight({ providerName, byoHostedInference: true })).not.toThrow();
+      expect(() => assertUnattendedProviderPreflight({ providerName, protectedHostedSingleShot: true })).not.toThrow();
+      expectRefusal({ providerName, protectedHostedSingleShot: false });
     }
   });
 

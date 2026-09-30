@@ -24,6 +24,7 @@
  * 19 | maintainer@emeraldcoastsystemsgroup.com  | Thread the trusted per-invocation framework-tool bridge binding to direct providers. Native registry capabilities and their executeTool callback stay unchanged; CLI providers that support the bridge may now discover server-side app tools without global preload.
  * 20 | maintainer@emeraldcoastsystemsgroup.com  | Pass the task's already-validated workspace_dir through the common direct-provider call. CLI wrappers had task-scoping flags but this path omitted the directory, making Antigravity fall back to its shared default workspace instead of the task folder.
  * 21 | maintainer@emeraldcoastsystemsgroup.com  | The direct path's metrics fold moved to utils/direct-response-metrics.js (this file is over the code-line cap and must not grow). It recorded only totalTokens, so the invariant-preamble cache's saving - fewer input tokens, a cached-token count, and whether a handle served the turn - had nowhere to land in apiMetrics and therefore in chat_tasks; the fold now records inputTokens, outputTokens, cacheReads, cacheHits and promptCache beside the totals. No change to the agentic path's processLLMResponse fold.
+ * 22 | maintainer@emeraldcoastsystemsgroup.com  | Forward the trusted protected single-shot marker, provider-routing source and runtime-supplied agent identity through the direct provider facade. ClineProvider can now distinguish a true zero-tool protected reasoning call from an ordinary direct or brokered-tool turn without deriving security posture from BYO status or prompt text.
  */
 
 /**
@@ -52,6 +53,7 @@ const {
 } = require('../utils/dispatch-capabilities');
 const { createDispatchToolExecutor } = require('./dispatch-tool-executor');
 const { mergeDirectResponseMetrics } = require('../utils/direct-response-metrics');
+const { assertProtectedSingleShotBoundary } = require('../utils/protected-single-shot-boundary');
 const {
   UnsafeWorkspacePathError,
   ensureTaskWorkspace,
@@ -425,6 +427,7 @@ class TaskController {
       // empty list is kept deliberately: it states the intent at the call site rather than
       // relying on the primitive's default. (That default is now deny-all - an absent option no
       // longer means unrestricted - but a boundary should not be silent about what it intends.)
+      const protectedSingleShotVerified = assertProtectedSingleShotBoundary(options);
       const allowedTools = normalizeAllowedTools(toolsSuppressed ? [] : options.allowedTools);
       const authorizedScopes = normalizeAuthorizedScopes(options.authorizedScopes);
       const dispatchCapabilities = captureDispatchCapabilities(
@@ -453,6 +456,12 @@ class TaskController {
         maxTokens: 4096,
         temperature: 0.7,
         tools: availableTools,
+        source: options.source,
+        agentId: options.agentId,
+        ...(protectedSingleShotVerified ? {
+          singleShotToolless: true,
+          protectedSingleShotVerified: true,
+        } : {}),
         extraEnv: options.extraEnv,
         enforceToolBoundary: true,
         // The exact Set the capabilities above were captured with, not a re-read of caller input:
