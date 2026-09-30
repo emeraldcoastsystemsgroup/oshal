@@ -34,8 +34,8 @@ from preparation or unit tests alone.
 | Status | Count | Meaning |
 |---|---|---|
 | IN PROGRESS | **5** | being worked in the current session |
-| OPEN — actionable | **11** | no decision, no live box needed; can be closed by an agent |
-| OPEN — needs operator | **68** | a decision, credential, account or purchase only the operator can make |
+| OPEN — actionable | **10** | no decision, no live box needed; can be closed by an agent |
+| OPEN — needs operator | **69** | a decision, credential, account or purchase only the operator can make |
 | OPEN — needs live proof | **62** | needs the running box, a deploy, hardware, or a human at a browser |
 | OPEN — blocked | **9** | waiting on something outside this repo |
 | OPEN — needs review | **0** | the triage could not decide; somebody has to read it |
@@ -197,19 +197,17 @@ from preparation or unit tests alone.
 - **Done when:** one installed business package proves differing user/group function and record rights across UI, API and delegated AI; explicit deny and revocation work; installer root has one authorized winner; test cases register with installation and isolated/live evidence is accurately distinguished.
 
 ### Production core-deploy pipeline + version strategy (operator, 2026-09-05)
-- **Status:** OPEN — actionable · drift check and rollback scripts delivered; registry/tag promotion pending
+- **Status:** OPEN — needs operator
 
-- **Delivered (2026-09-30):** `scripts/oshal-deploy-drift.sh` reports release-dir SHA vs running image vs origin/main with human and `--json` parity verdicts (tests in `tests/unit/deploy-drift-and-rollback.spec.ts`). `scripts/oshal-rollback.sh` implements automated pre-rollback DB state snapshot, verified image tagging, API-first recreate, batched bot recreation, parity verification, and exit-3 degraded recovery sequence.
-- **Remaining:** deploying core to the customer production box (the gsquared CRM landscape) is a
-  proven but fully MANUAL procedure: merge to main, then on-box `git reset --hard <sha>` of the
-  release dir, an on-box `docker build` tagged `oshal-bot:sha-<sha>`, repoint `OSHAL_BOT_IMAGE`
-  in the root-owned env file, and `managed-postgres-compose.sh up` through the fail-closed
-  migration/RLS gate. Version identity today is the commit SHA on the image tag + label + the
-  release-dir checkout + per-run bootstrap evidence logs - honest, but there is no release
-  numbering for core, no image registry (every box builds its own bytes), no staging-to-production
-  promotion of a BUILT artifact, and rollback is a manual tag repoint. The 2026-09-05 launcher-gate
-  failure (migration 124 on a trading-less box) and the merged-but-never-deployed #164 both belong
-  to this gap: nothing tracks "what is main ahead of production" or promotes one tested artifact.
+- **Delivered (2026-09-27/30):** Full core release identity and promotion pipeline implemented per [ADR-167](adr/167-core-release-identity-and-promotion.md):
+  1. Named release identity `core-YYYY.MM.DD[.N]` with `GET /api/version` returning `{name, version, commit, release}` (`tests/unit/dockerfile-release-identity.spec.ts` 4/4).
+  2. Single built artifact cut once from `git archive` and verified by dev deploy probes (`scripts/core-promote/cut-release.sh`, `tests/unit/core-cut-release.spec.ts` 12/12).
+  3. Image byte promotion (`scripts/core-promote/promote.sh`, `tests/unit/core-promote.spec.ts` 18/18) streaming docker save over SSH or pulling by repo digest, enforcing that production refuses an image without a staging receipt.
+  4. On-box atomic transaction helper (`scripts/managed-core-release.sh`, `tests/unit/managed-core-release.spec.ts` 18/18) with pre-deploy `pg_dump` capture, append-only history, atomic pin repoint, `/api/version` verification, and one-command rollback.
+  5. Parity and drift checking (`scripts/core-promote/core-drift-check.sh`, `scripts/oshal-deploy-drift.sh`, `tests/unit/deploy-drift-and-rollback.spec.ts` 9/9).
+  6. Documented operator runbook in `docs/runbooks/core-release-promotion.md` and updated in customer setup guide (`SETTING-UP-A-CUSTOMER.md:160-200`).
+  All 61 suite tests passing.
+- **Remaining:** Operator performs the first live staging-to-production promotion and rollback drill on the managed customer box using remote SSH credentials.
 - **Done when:** core has a named release identity (tag or channel) that a production box can be
   AT, shown by a version endpoint/cockpit footer; the deploy promotes the SAME image artifact that
   staging validated (registry pull or verified digest transfer - never a second on-box build of
