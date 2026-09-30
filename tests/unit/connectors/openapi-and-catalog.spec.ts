@@ -10,6 +10,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Prove source-catalog categories survive OpenAPI import and generated documentation as evidence distinct from operation tags.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Prove credProvider mapping, rateLimit, and retry policies survive specFromOpenApi import.
  * -----------------------------------------------------------------------------
  *
  * @module tests/unit/connectors/openapi-and-catalog
@@ -86,6 +87,17 @@ describe('specFromOpenApi', () => {
     });
     expect(spec.metadata?.sourceCategories).toEqual(['cloud']);
     expect(warnings).toContain('x-apisguru-categories contains invalid values — invalid source categories omitted');
+  });
+
+  it('honors credProvider, rateLimit and retry options when provided', () => {
+    const { spec } = specFromOpenApi('custom-broker', OPENAPI_FIXTURE, {
+      credProvider: 'google',
+      rateLimit: { burst: 25, perSecond: 50 },
+      retry: { maxRetries: 5, honorRetryAfter: true, backoffMs: 500 },
+    });
+    expect(spec.credProvider).toBe('google');
+    expect(spec.rateLimit).toEqual({ burst: 25, perSecond: 50 });
+    expect(spec.retry).toEqual({ maxRetries: 5, honorRetryAfter: true, backoffMs: 500 });
   });
 });
 

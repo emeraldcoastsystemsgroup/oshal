@@ -15,6 +15,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-065 Phase 3. Additive.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Preserve validated x-apisguru-categories as source-category evidence distinct from operation tags.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Support credProvider mapping, rateLimit overrides, and retry/backoff policies in specFromOpenApi.
  * -----------------------------------------------------------------------------
  * @module connectors/runtime/openapi-import
  */
@@ -96,8 +97,18 @@ function authFromSchemes(schemes: OpenApiDoc['components'], warnings: string[]):
   return { type: 'none' };
 }
 
+export interface ImportOptions {
+  displayName?: string;
+  icon?: string;
+  sourceUrl?: string;
+  sourceCatalog?: string;
+  credProvider?: string;
+  rateLimit?: { burst: number; perSecond: number };
+  retry?: { maxRetries: number; honorRetryAfter?: boolean; backoffMs?: number };
+}
+
 /** Build a draft ConnectorSpec from an OpenAPI 3 document. */
-export function specFromOpenApi(provider: string, doc: OpenApiDoc, opts?: { displayName?: string; icon?: string; sourceUrl?: string; sourceCatalog?: string }): ImportResult {
+export function specFromOpenApi(provider: string, doc: OpenApiDoc, opts?: ImportOptions): ImportResult {
   const warnings: string[] = [];
   const baseUrl = doc.servers?.[0]?.url || '';
   if (!baseUrl) warnings.push('no servers[].url — baseUrl is empty, set it manually');
@@ -140,6 +151,7 @@ export function specFromOpenApi(provider: string, doc: OpenApiDoc, opts?: { disp
 
   const spec: ConnectorSpec = {
     provider,
+    credProvider: opts?.credProvider,
     displayName: opts?.displayName || doc.info?.title || provider,
     version: doc.info?.version,
     metadata: {
@@ -155,8 +167,8 @@ export function specFromOpenApi(provider: string, doc: OpenApiDoc, opts?: { disp
     },
     baseUrl,
     auth: authFromSchemes(doc.components, warnings),
-    rateLimit: { burst: 10, perSecond: 10 }, // conservative default — tune to the provider's real limits
-    retry: { maxRetries: 3, honorRetryAfter: true },
+    rateLimit: opts?.rateLimit || { burst: 10, perSecond: 10 }, // conservative default — tune to the provider's real limits
+    retry: opts?.retry || { maxRetries: 3, honorRetryAfter: true },
     resources,
   };
   return { spec, warnings };
