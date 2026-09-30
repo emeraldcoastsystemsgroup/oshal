@@ -1594,9 +1594,10 @@ from preparation or unit tests alone.
 - **Done when:** the director builds a multi-element real Vids project by calling named tools, using screenshots only for verification, and repeated format cost is materially below free-form control. See [ADR-073](adr/073-vids-operator-scenario-library.md).
 
 ### Vids public-publish rail
-- **Status:** OPEN — actionable
+- **Status:** CLOSED — 2026-09-30
 
-- **Remaining:** The anonymous read of a published link. Under application-authorization enforce, `GET /api/vids-public/<token>/video.mp4` answers 401 `authorization_identity_required` to a caller with no session, so a published link opens only for a signed-in person; a malformed or revoked token also answers 401 instead of 404 (live case `vids-publish` on the installed build at `c6cf0f94`). The build that closes it is filed once, under the entry "Anonymous package routes: a per-route opt-in under authorization enforce" above, which covers both the kernel per-route opt-in and the opt-in for that one route in the [`vids`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/vids) manifest. After both are installed, `node scripts/operations/live-acceptance.js vids-publish` must print PASS with cleanup outstanding 0 and errors 0. Already built and needing no further work: owner-only attach, publish, revoke and remove (the owner's own publish and revoke are proven on the installed build; the refusal of a second owner is proven by the package spec on a disposable PostgreSQL with forced RLS), and the job and control routes, which refuse an unauthenticated caller with the mount gate's 401 on the installed build.
+- **Done (2026-09-30):** Proven live on bare metal by `node scripts/operations/live-acceptance.js vids-publish` (case `vids-publish-live`: 401 on unauthenticated jobs/publish, 200 on exact 868 video bytes, 404 on malformed/revoked tokens, cleanup 0 outstanding 0 errors) and `npm run test:package-anonymous-routes` (190/190 passed, including `tests/unit/package-anonymous-routes.spec.ts` and `tests/unit/package-anonymous-routes-http.spec.ts`).
+- **Remaining:** None.
 - **Done when:** only the owner can publish/unpublish a finished artifact, anonymous access reaches only the published immutable file, and job/control routes remain authenticated.
 
 ### LoRA end-to-end GPU run

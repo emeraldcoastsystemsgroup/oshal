@@ -1,5 +1,11 @@
 [
   {
+    "date": "2026-09-30",
+    "title": "Vids public-publish rail",
+    "pr": "local",
+    "evidence": "node scripts/operations/live-acceptance.js vids-publish passes (vids-publish-live); unauthenticated access refused 401 on jobs/control, published immutable MP4 served anonymously at 200, malformed and revoked tokens answer 404, cleanup outstanding 0; package-anonymous-routes and package-anonymous-routes-http tests pass 81/81."
+  },
+  {
     "date": "2026-09-24",
     "title": "Jarvis /ask answers 404 session_not_found in two guards (2026-09-16)",
     "pr": "d8635e9c",

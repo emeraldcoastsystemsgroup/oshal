@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com | AUTH-07: prepare now classifies a changed catalog instead of refusing every change. A non-widening revision passes and start() re-stamps the existing assignments atomically; a widening or breaking one refuses with the review id an administrator approves through /api/authorization/catalog-migrations.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Bind exact anonymous reads to detached active catalog-less route declarations.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Refuse signed callback dispatch when awaited resource authorization outlives its owner or policy grants.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com | Use key-order-agnostic sameAnonymousPackageRoutes equality to admit anonymous package reads across YAML parsed declarations.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -29,7 +30,7 @@ import { createChildLogger } from '@/shared/logger';
 import type { RemoteApplicationSnapshot } from '@/shared/application-remote-execution';
 import { assertPackageToolInvocation, validatePackageTools, type PackageToolDeclaration } from '@/shared/package-tools';
 import { authorizeApplicationNavigation, navigationWorkspace, sendApplicationNavigationDenied } from './application-navigation-authorization';
-import { readAnonymousPackageMounts, matchesAnonymousPackageRoute, type AnonymousPackageMount } from '@/shared/package-anonymous-routes';
+import { readAnonymousPackageMounts, matchesAnonymousPackageRoute, sameAnonymousPackageRoutes, type AnonymousPackageMount } from '@/shared/package-anonymous-routes';
 
 const logger = createChildLogger({ module: 'application-authorization-runtime' });
 interface RuntimeRegistration { registration: AuthorizationAppRegistration; displayName: string; generation: string; available: boolean; agents: string[]; tools: string[]; packageTools: PackageToolDeclaration[]; anonymousMounts: AnonymousPackageMount[] }
@@ -127,7 +128,7 @@ export class ApplicationAuthorizationRuntime implements ManifestAuthorizationReg
     const state = this.registrations.get(appName);
     if (!state?.available || state.registration.catalog) return false;
     return state.anonymousMounts.some(mount => mount.module === route.module && mount.factory === route.factory
-      && mount.mountPath === route.mountPath && JSON.stringify(mount.anonymousRoutes) === JSON.stringify(route.anonymousRoutes)
+      && mount.mountPath === route.mountPath && sameAnonymousPackageRoutes(mount.anonymousRoutes, route.anonymousRoutes)
       && matchesAnonymousPackageRoute(mount, req.method, req.path));
   }
   /** @description Return validated declarations for one activation-scoped tool registry.

@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import yaml from 'js-yaml';
 import { readManifest } from '@/features/swarm-apps/services/swarm-app-loader';
-import { matchesAnonymousPackageRoute, readAnonymousPackageMounts } from '@/shared/package-anonymous-routes';
+import { matchesAnonymousPackageRoute, readAnonymousPackageMounts, sameAnonymousPackageRoutes } from '@/shared/package-anonymous-routes';
 import { AUTHORIZATION_SCENARIOS } from '@/app/routes/test-lab-authorization-scenarios';
 import { readFileSync, existsSync } from 'node:fs';
 
@@ -90,5 +90,12 @@ describe('anonymous package manifest contract', () => {
       '/abc/video.mp4?x=y', '/./video.mp4', '/../video.mp4', '//video.mp4']) {
       expect(matchesAnonymousPackageRoute(mount, 'GET', '/api/public-fixture' + suffix)).toBe(false);
     }
+  });
+  it('compares anonymous routes irrespective of key ordering in declaration objects', () => {
+    const canonical = [{ method: 'GET' as const, path: '/:token/video.mp4' }];
+    const reversedKeys = [{ path: '/:token/video.mp4', method: 'GET' as const }];
+    expect(sameAnonymousPackageRoutes(canonical, reversedKeys)).toBe(true);
+    expect(sameAnonymousPackageRoutes(canonical, [{ method: 'HEAD', path: '/:token/video.mp4' }])).toBe(false);
+    expect(sameAnonymousPackageRoutes(canonical, null)).toBe(false);
   });
 });

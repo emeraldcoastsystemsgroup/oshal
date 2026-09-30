@@ -2,6 +2,7 @@
  * CHANGE LOG
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Validate exact opt-in anonymous reads without widening a public mount or manufacturing a principal.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Reject ambiguous same-mount anonymous owners without bypassing intervening private guards.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Add key-order-agnostic sameAnonymousPackageRoutes equality helper.
  */
 
 /** A mount-relative, explicitly named read operation; GET does not imply HEAD. */
@@ -84,4 +85,15 @@ export function matchesAnonymousPackageRoute(mount: AnonymousPackageMount, metho
     return route.method === method && expected.length === actual.length
       && expected.every((segment, index) => PARAMETER.test(segment) ? LITERAL.test(actual[index]) : segment === actual[index]);
   });
+}
+
+/**
+ * @description Compare declared anonymous route sets item-by-item without key-order sensitivity.
+ */
+export function sameAnonymousPackageRoutes(
+  a?: readonly AnonymousPackageRoute[] | null,
+  b?: readonly AnonymousPackageRoute[] | null,
+): boolean {
+  if (!a || !b || a.length !== b.length) return false;
+  return a.every((route, index) => route.method === b[index]?.method && route.path === b[index]?.path);
 }

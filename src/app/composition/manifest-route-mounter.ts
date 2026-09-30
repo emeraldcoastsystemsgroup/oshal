@@ -18,6 +18,7 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com | Admit only explicitly declared anonymous reads without inherited principal authority or sibling bypass.
  * 14 | maintainer@emeraldcoastsystemsgroup.com | Fence retired anonymous-declaring entries captured before an asynchronous predecessor yields to reload or unmount.
  * 15 | maintainer@emeraldcoastsystemsgroup.com | Restore pre-callback authority on signed handler fallthrough without changing anonymous route admission.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com | Normalize anonymous route declarations { method, path } when staging entries.
  */
 
 import type { Express, Request, Response, NextFunction, RequestHandler } from 'express';
@@ -251,7 +252,7 @@ export class ManifestRouteMounterImpl implements ManifestRouteMounter {
           requiresAi: decl.requiresAi === true,
           callbackVerifier,
           declaration: { module: decl.module, factory: decl.factory, mountPath: decl.mountPath,
-            anonymousRoutes: decl.anonymousRoutes?.map(route => ({ ...route })) },
+            anonymousRoutes: decl.anonymousRoutes?.map(route => ({ method: route.method, path: route.path })) },
         });
         logger.info({ appName, mountPath: decl.mountPath, module: decl.module, auth: mode }, 'Mounted package route');
       } catch (err) {
