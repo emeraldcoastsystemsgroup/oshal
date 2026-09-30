@@ -353,6 +353,18 @@
       "runWith": "npx playwright test --config playwright.live.config.ts <file>, with the operator's signed-in Chrome started on --remote-debugging-port (OSHAL_E2E_CDP_URL) and OSHAL_E2E_BASE_URL set to the target deployment"
     },
     {
+      "file": "tests/logging/javascript-logging-guard.test.cjs",
+      "class": "unsupported-in-ci",
+      "reason": "Not a Playwright spec: a node:test suite that guards the cross-runtime structured logging standard and is executed as a dedicated local gate step in scripts/ci-local.sh.",
+      "runWith": "node --test tests/logging/javascript-logging-guard.test.cjs"
+    },
+    {
+      "file": "tests/logging/javascript-structured-logging.test.cjs",
+      "class": "unsupported-in-ci",
+      "reason": "Not a Playwright spec: a node:test suite that verifies structured Pino JSON serialization and error handling, executed as a dedicated local gate step in scripts/ci-local.sh.",
+      "runWith": "node --test tests/logging/javascript-structured-logging.test.cjs"
+    },
+    {
       "file": "tests/login-returnto.spec.ts",
       "class": "awaiting-classification",
       "reason": "Outside the green ratchet and not yet run under the zero-retry CI mirror; the classification run (--retries=0 --workers=1, ephemeral Postgres and Redis) assigns its real class."
