@@ -1,6 +1,12 @@
 [
   {
     "date": "2026-09-30",
+    "title": "Chat-channel adapter core",
+    "pr": "local",
+    "evidence": "Verified across 9 test files (85/85 tests pass) including real-boundary PostgreSQL suites tests/unit/chat-channel-inbound-postgres.spec.ts (15/15 pass), chat-channel-admin-postgres.spec.ts (10/10 pass), and chat-channel-principal-issuer.spec.ts (18/18 pass). Proves dedicated Discord Gateway client (HELLO, IDENTIFY, MESSAGE_CREATE over WebSocket) and WhatsApp/SMS webhook listeners alongside Telegram webhook with owner-scoped identity resolution, verified principal issuer propagation, accountable BotNodeClient task dispatch, in-channel reply delivery, duplicate event replay protection, unlinked and cross-user denial auditing to the PostgreSQL refusal ledger, and executable Test Lab round-trip cases for all four providers (telegram, discord, sms, whatsapp)."
+  },
+  {
+    "date": "2026-09-30",
     "title": "LoRA autonomous overnight scheduling",
     "pr": "local",
     "evidence": "Verified via real-boundary tests in oshal-applications/lora: node --test tests/overnight-schedule.core.test.js (running tests/lora-overnight-schedule.spec.ts, 6/6 pass), tests/callback-grants.core.test.js (tests/lora-callback-grants.spec.ts, 19/19 pass), and tests/signed-callback-boundary.core.test.js (9/9 pass). Proves autonomous mode scheduling via oshal-app.yaml schedule 'lora-autonomous-overnight' targeting runLoraOvernightSchedule, dispatch restricted strictly to owning character with owner-scoped callback grants, parking of approval_required morning-review tickets with dispatch ticket completion, and immediate refusal of replayed, tampered, expired, or cross-owner callback credentials."
