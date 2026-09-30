@@ -7,6 +7,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The AI usage and requirements ledger (ADR-170 D10): one generated markdown table per repo from every manifest's `rating:` block (container memory low/high, per-feature unit/tier/generation/degrade), with the token and model columns reserved and reading "not yet measured" until the P0/P1 generators exist. `--check` fails on a stale ledger or an unrated manifest, so the label is never typed by hand and no application ships without one.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Drop the Version column: a version bump by any lane made the ledger stale and failed that lane's push, and the rating does not depend on version. Complete the declared-memory rule for the store: bot containers count per application (not additive), off-box services are not counted, and a package engine container with a declared mem_limit counts it as high and a quarter as low.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Accept T0 with a generation backend, refuse it without one, and say so in the ledger header.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Match the loader's declaration boundary and refuse unknown measurement fields or invalid values before rendering or writing a ledger; keep unmeasured evidence explicit.
  */
 /**
  * @description Generate or check the ledger for a core checkout (`swarm-apps/*.yaml`) or a store
@@ -31,6 +32,12 @@ const NONE_RECORDED = 'none recorded';
 const TIERS = new Set(['T0', 'T1', 'T2', 'T3', 'T4']);
 const GENERATIONS = new Set(['none', 'local', 'hosted']);
 const DEGRADES = new Set(['template', 'hosted', 'disable', 'reduced']);
+const MEMORY_BASES = new Set(['declared', 'observed']);
+const RATING_KEYS = new Set(['memoryMb', 'features']);
+const MEMORY_KEYS = new Set(['low', 'high', 'basis']);
+const FEATURE_KEYS = new Set(['id', 'unit', 'tier', 'generation', 'degrade', 'contextFloor', 'reducedEdition']);
+const FEATURE_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const MEMORY_MAX_MB = 1_048_576;
 
 /** @description Parse `--flag value` pairs and bare flags. */
 function parseArgs(argv) {
@@ -61,24 +68,62 @@ function listManifests(opts) {
     .map((name) => ({ file: path.join(opts.store, name, 'oshal-app.yaml'), label: `${name}/oshal-app.yaml` }));
 }
 
-/** @description Light shape check; the loader (swarm-app-rating.ts) is the authority, this only names what the ledger cannot render. */
-function ratingProblems(rating, label) {
-  const problems = [];
-  if (rating === undefined) return problems;
-  if (typeof rating !== 'object' || rating === null || Array.isArray(rating)) return [`${label}: rating must be a mapping`];
-  const mem = rating.memoryMb;
-  if (typeof mem !== 'object' || mem === null || !Number.isInteger(mem.low) || !Number.isInteger(mem.high) || mem.low > mem.high) {
-    problems.push(`${label}: rating.memoryMb needs integer low <= high`);
+/** @description YAML mappings only, matching the authoritative loader's declaration contract. */
+function isRecord(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isPositiveInteger(value) {
+  return Number.isInteger(value) && value > 0;
+}
+
+/** @description Generated measurements have no manifest field; never silently discard invented evidence. */
+function unknownFields(record, allowed, at) {
+  const unknown = Object.keys(record).filter((key) => !allowed.has(key));
+  return unknown.length ? [`${at} has unknown field(s): ${unknown.join(', ')}`] : [];
+}
+
+/** @description Match loader memory validation without loading a TypeScript runtime into this standalone CLI. */
+function memoryProblems(value, at) {
+  if (!isRecord(value)) return [`${at} must be a mapping`];
+  const problems = unknownFields(value, MEMORY_KEYS, at);
+  if (!isPositiveInteger(value.low) || !isPositiveInteger(value.high) || value.low > value.high) {
+    problems.push(`${at} needs positive integer low <= high (MiB)`);
   }
+  if (value.high > MEMORY_MAX_MB) problems.push(`${at}.high exceeds ${MEMORY_MAX_MB} MiB`);
+  if (value.basis !== undefined && !MEMORY_BASES.has(value.basis)) problems.push(`${at}.basis must be declared or observed`);
+  return problems;
+}
+
+/** @description Refuse malformed or invented feature declarations; parity is exercised against swarm-app-rating.ts. */
+function featureProblems(value, at, seen) {
+  if (!isRecord(value)) return [`${at} must be a mapping`];
+  const problems = unknownFields(value, FEATURE_KEYS, at);
+  if (typeof value.id !== 'string' || !FEATURE_ID.test(value.id)) problems.push(`${at}.id must be a kebab-case string`);
+  else if (seen.has(value.id)) problems.push(`${at}.id is declared twice: ${value.id}`);
+  else seen.add(value.id);
+  if (typeof value.unit !== 'string' || !value.unit.trim()) problems.push(`${at}.unit must be non-empty text`);
+  if (!TIERS.has(value.tier) || !GENERATIONS.has(value.generation) || !DEGRADES.has(value.degrade)) {
+    problems.push(`${at} has an unknown tier, generation or degrade`);
+  }
+  if (value.tier === 'T0' && value.generation === 'none') problems.push(`${at} declares T0 with no generation backend`);
+  if (value.contextFloor !== undefined && !isPositiveInteger(value.contextFloor)) problems.push(`${at}.contextFloor must be a positive integer`);
+  if (value.reducedEdition !== undefined && (typeof value.reducedEdition !== 'string' || !value.reducedEdition.trim())) {
+    problems.push(`${at}.reducedEdition must be non-empty text`);
+  }
+  if (value.degrade === 'reduced' && value.reducedEdition === undefined) problems.push(`${at} requires reducedEdition for degrade: reduced`);
+  return problems;
+}
+
+/** @description Validate the declared rating before rendering; missing ratings remain a separate rollout check. */
+function ratingProblems(rating, label) {
+  if (rating === undefined) return [];
+  if (!isRecord(rating)) return [`${label}: rating must be a mapping`];
+  const problems = unknownFields(rating, RATING_KEYS, `${label}: rating`);
+  problems.push(...memoryProblems(rating.memoryMb, `${label}: rating.memoryMb`));
+  const seen = new Set();
   if (!Array.isArray(rating.features)) problems.push(`${label}: rating.features must be a list`);
-  else rating.features.forEach((f, i) => {
-    if (!f || typeof f.id !== 'string' || typeof f.unit !== 'string') problems.push(`${label}: rating.features[${i}] needs id and unit`);
-    else if (!TIERS.has(f.tier) || !GENERATIONS.has(f.generation) || !DEGRADES.has(f.degrade)) {
-      problems.push(`${label}: rating.features[${i}] (${f.id}) has an unknown tier, generation or degrade`);
-    } else if (f.tier === 'T0' && f.generation === 'none') {
-      problems.push(`${label}: rating.features[${i}] (${f.id}) declares T0 with no generation backend`);
-    }
-  });
+  else rating.features.forEach((f, i) => problems.push(...featureProblems(f, `${label}: rating.features[${i}]`, seen)));
   return problems;
 }
 
@@ -159,15 +204,19 @@ function normalise(text) {
   return text.replace(/\r\n/g, '\n').replace(/[ \t]+$/gm, '').trimEnd();
 }
 
+/** @description Failed declarations/checks never authorize rendering or replacing output files. */
+function refuseProblems(problems) {
+  if (problems.length === 0) return;
+  for (const p of problems) console.error(`ai-usage-ledger: ${p}`);
+  process.exit(1);
+}
+
 function main() {
   const opts = parseArgs(process.argv.slice(2));
   const { entries, problems } = collect(opts);
+  refuseProblems(problems);
   const unrated = entries.filter((e) => !e.rating).map((e) => e.label);
   const output = render(entries, opts);
-  if (opts.out) {
-    fs.writeFileSync(opts.out, output, 'utf8');
-    console.log(`ai-usage-ledger: wrote ${opts.out} (${entries.length} manifests, ${unrated.length} unrated)`);
-  }
   if (opts.check) {
     const committed = fs.existsSync(opts.check) ? fs.readFileSync(opts.check, 'utf8') : '';
     if (normalise(committed) !== normalise(output)) {
@@ -175,9 +224,10 @@ function main() {
     }
     if (unrated.length > 0 && !opts.allowUnrated) problems.push(`unrated manifest(s): ${unrated.join(', ')}`);
   }
-  if (problems.length > 0) {
-    for (const p of problems) console.error(`ai-usage-ledger: ${p}`);
-    process.exit(1);
+  refuseProblems(problems);
+  if (opts.out) {
+    fs.writeFileSync(opts.out, output, 'utf8');
+    console.log(`ai-usage-ledger: wrote ${opts.out} (${entries.length} manifests, ${unrated.length} unrated)`);
   }
   if (!opts.out && !opts.check) process.stdout.write(output);
   if (opts.check) console.log(`ai-usage-ledger: ${opts.check} is current (${entries.length} manifests, ${unrated.length} unrated)`);

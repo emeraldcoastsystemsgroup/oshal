@@ -47,7 +47,8 @@ keeps `allowed_tools: []`, so it grants nothing: the per-bot grant below is stil
 
 The real-PostgreSQL two-owner guard passed 24/24 over both the application and bot roles,
 including the case where only database RLS can refuse the other caller's rows. The signed-in
-live Jarvis check is still **red**. One owner thread recorded a fictional codeword, then a
+live Jarvis check was **red** on this date; it passed on 2026-09-27 (see "Live receipt" below).
+One owner thread recorded a fictional codeword, then a
 separate thread requested it without repeating it. Jarvis dispatched a work item, but its
 completed result said no conversation search tools or scopes were authorized. The bot-node's
 auto-executable view contained zero tools and its workspace listed
@@ -100,8 +101,8 @@ none and said that none was available.
 AgenticController loop, provider and wrapper against a real child process, over a real registry, and
 completes the two-tool recall for the caller. `tests/unit/antigravity-bot-runtime.spec.ts` pins the
 permission scope of every mode as a closed set. Both are attached to `jarvis-routing` and
-`jarvis-cross-thread-recall`. **Not yet live-proven:** the deployed bot node answering the case.
-Run `node scripts/operations/jarvis-recall-live-proof.js` after the next deploy.
+`jarvis-cross-thread-recall`. **Live-proven 2026-09-27:** the deployed bot node answered the case on
+build `424dfcf0`; see "Live receipt (2026-09-27)" below.
 
 ## Late answers, honest errors and where a turn's time goes (as built, 2026-09-27)
 
@@ -170,6 +171,27 @@ answered in 79s" was that acknowledgement, not an answer.
 No change was made to the turn's latency here. Nearly all of it is the Token Chase checkpoint writer
 (ADR-046), and bounding or moving that changes the capture and replay contract. That is outside this
 route.
+
+## Live receipt (2026-09-27)
+
+`node scripts/operations/jarvis-recall-live-proof.js`, run against the box as the operator automation
+identity at 21:51 UTC on build `424dfcf0`, printed:
+
+```text
+jarvis-cross-thread-recall PASS: Jarvis delivered the other thread's codeword into thread B in 24s; recall tools: conversation_query x1, conversation_fetch x1 over 3 captured frame(s), all stamped for this caller. Both threads, their messages, the chat ticket and the ask workspace were removed.
+```
+
+Its evidence record reads `answerSeconds: 24`, `deliveredSeconds: 24`, `strayInThreadA: 0`,
+`askStatus: done`, `botFinish: final`, `frames: 3`, `query: 1`, `fetch: 1`, `failedRecall: 0`,
+`foreignFrames: 0`, `codewordInFrames: true` and `cleanupErrors: []`, and the command exited 0.
+Build `424dfcf0` contains the recall tools and the persona rule (#834), the automated case (#860),
+the host-tools-only turn (#861), late answers landing in their thread (#865) and the Token Chase
+owner-store snapshot made opt-in and bounded (#866, #867).
+
+The case has not been re-run on a later build. The recall tools, the adapters, the persona and the
+acceptance case are unchanged between `424dfcf0` and main `342089fe`. To repeat the receipt on the
+current build, run the same command from a core checkout with the stack up; it spends one model turn
+and removes its own two threads.
 
 ## Invariant preamble cache (as built, 2026-09-27)
 

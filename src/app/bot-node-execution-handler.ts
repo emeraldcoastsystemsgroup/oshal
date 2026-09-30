@@ -32,7 +32,9 @@
  * 27 | maintainer@emeraldcoastsystemsgroup.com | Mark a direct (interactive) dispatch hostToolsOnly. Such a turn is conversation plus the tools the agentic loop brokers itself (Jarvis's conversation_query/conversation_fetch); it never needs the CLI's own file or command tools. On the Antigravity brain those native tools were what a recall ask spent 10 min 45 s on before a headless read_file denial killed it. Protected work keeps its own path (toolLess + the controller MCP bridge) and is never marked.
  * 28 | maintainer@emeraldcoastsystemsgroup.com | Read a message text by its type instead of assuming a string. The any-bot layer is untyped JavaScript, and its parser hands back a Number or Boolean for a bare numeric or true/false value; the response extraction called m.text.trim() on it and threw "m.text.trim is not a function", so a Jarvis answer of 5 was reported as a failed execution with no answer (live case jarvis-cache, 2026-09-29, 3 of 3). The source is fixed in AgenticController; this is the guard on the reading side: a finite number or a boolean is delivered as its text, any other non-string value is passed over, and the declared message type says text is unknown so the compiler requires the check.
  * 29 | maintainer@emeraldcoastsystemsgroup.com | Reuse the shared SEC-05 autonomous-provider classifier so controller `bot-default` validation and node preflight cannot disagree about aliases such as `openai-codex`.
- * 30 | maintainer@emeraldcoastsystemsgroup.com | Mark a protected direct request as single-shot/tool-less only when its server-resolved application tool set is empty. The autonomous-CLI preflight is deferred only for that candidate, then re-run after authorization resolution with a dedicated hosted-single-shot proof; nonempty brokered tools retain the existing refusal/bridge path. This lets a Cline-backed bot use its configured backing model for one hosted reasoning call without treating the request as BYO or entering Cline's native tool loop.
+ * 30 | maintainer@emeraldcoastsystemsgroup.com | Bind agentic capture to the producing bot identity supplied by runtime composition, never an envelope target or payload/frame field. Without that trusted identity capture remains unbound and tail replay keeps failing closed.
+ * 31 | maintainer@emeraldcoastsystemsgroup.com | Mark a protected direct request as single-shot/tool-less only when its server-resolved application tool set is empty. The autonomous-CLI preflight is deferred only for that candidate, then re-run after authorization resolution with a dedicated hosted-single-shot proof; nonempty brokered tools retain the existing refusal/bridge path. This lets a Cline-backed bot use its configured backing model for one hosted reasoning call without treating the request as BYO or entering Cline's native tool loop.
+ * 32 | maintainer@emeraldcoastsystemsgroup.com | Resolve zero-cost runtime usage through the shared provider/model pricing registry before recording or relaying it. Protected Gemini single-shot usage now reaches the ledger as a catalog estimate with an input/output split, while an actual nonzero provider total still wins and an unknown model remains zero instead of receiving an invented rate; execution attribution stays on the actual runtime provider.
  */
 
 /**
@@ -88,7 +90,7 @@ import {
   type DispatchConfigRuntime,
 } from './bot-node-dispatch-config';
 import { demoModeEnabled, isDeploymentOperatorSub } from '@/shared/deployment-mode';
-import { isUnbrokeredAutonomousProvider } from '@/features/llm-provider';
+import { isUnbrokeredAutonomousProvider, resolveUsageCost } from '@/features/llm-provider';
 import { getProtectedBotExecution } from './bot-node-protected-context';
 
 const logger = createChildLogger({ module: 'bot-node-execution-handler' });
@@ -177,6 +179,8 @@ export interface BotNodeExecutionDeps {
       /** Actual provider/model reported by the provider response for the final turn. */
       provider?: string | null;
       model?: string | null;
+      /** Backing API provider reported out of band when a harness fronts hosted inference. */
+      apiProvider?: string | null;
       /** Post-model provider evidence captured from trusted runtime command events. */
       providerRecords?: Array<Record<string, unknown>>;
     }>;
@@ -480,7 +484,7 @@ export function createBotNodeExecutionHandler(
       // which otherwise non-deterministically emits an unparseable tool call.
       const result = await deps.anyBotTaskController.processMessage(task.id, { text: assembledPrompt }, {
           agenticMode,
-          // Capture and protected persona selection must point to this executor, never a caller-selected target.
+          // Capture and protected persona selection must point to this executor, never a caller-selected target or supplied frame.
           agentId: runtimeAgentId ?? undefined,
           autoApprove: protectedExecution ? {} : { 'use_mcp_tool': true },
           ...(protectedExecution ? { toolLess: true, assertCurrentAuthorization: () => protectedExecution.check() } : {}),
@@ -511,7 +515,7 @@ export function createBotNodeExecutionHandler(
       const durationMs = Date.now() - execStart;
       // Runtime accountability is structured out-of-band data from TaskController.
       // Request payload fields and assistant text never participate in this choice.
-      const runtimeIdentity = result as { provider?: unknown; model?: unknown };
+      const runtimeIdentity = result;
       const enforcedRuntimeIdentity = configReconciliation.active
         ?? deps.dispatchConfigRuntime?.getActiveProvider();
       const actualProvider = normalizeRuntimeIdentity(runtimeIdentity.provider, 128)
@@ -520,7 +524,7 @@ export function createBotNodeExecutionHandler(
       const actualModel = normalizeRuntimeIdentity(runtimeIdentity.model, 256)
         ?? enforcedRuntimeIdentity?.model
         ?? deps.modelName;
-      const actualApiProvider = normalizeRuntimeIdentity((runtimeIdentity as any).apiProvider, 128)
+      const actualApiProvider = normalizeRuntimeIdentity(runtimeIdentity.apiProvider, 128)
         ?? enforcedRuntimeIdentity?.apiProvider
         ?? null;
       if (carriedConfig && !byoLlmConnection
@@ -571,6 +575,20 @@ export function createBotNodeExecutionHandler(
       // Record cost — the bot owns cost capture (HTTP callers must NOT double-record).
       const apiMetrics = result.apiMetrics || {};
       const usage = resolveExecutionUsage(apiMetrics);
+      const reportedTotalCost = Number(apiMetrics.totalCost);
+      const cost = resolveUsageCost({
+        providerCost: {
+          inputCost: 0,
+          outputCost: 0,
+          totalCost: Number.isFinite(reportedTotalCost) && reportedTotalCost > 0 ? reportedTotalCost : 0,
+          currency: 'USD',
+        },
+        usage,
+        // The ledger remains attributed to the actual runtime provider below, while pricing uses
+        // the hosted API identity when a harness (for example Cline) fronts Gemini.
+        providerId: actualApiProvider ?? actualProvider,
+        modelId: actualModel,
+      });
       if (deps.recordCost) {
         try {
           await deps.recordCost({
@@ -578,8 +596,8 @@ export function createBotNodeExecutionHandler(
             providerId: actualProvider,
             modelId: actualModel,
             inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
-            inputCost: 0, outputCost: 0, totalCost: apiMetrics.totalCost || 0,
-            currency: 'USD', ticketExternalId,
+            inputCost: cost.inputCost, outputCost: cost.outputCost, totalCost: cost.totalCost,
+            currency: cost.currency, ticketExternalId,
             ownerSub: userSub, // per-owner budget attribution (Phase 2)
             durationMs, // measured above — lands per-call latency on the 090 ledger columns
           });
@@ -614,7 +632,7 @@ export function createBotNodeExecutionHandler(
         providerRecords: Array.isArray(result.providerRecords)
           ? result.providerRecords.filter((record) => record && typeof record === 'object').slice(0, 8)
           : [],
-        cost: apiMetrics.totalCost || 0,
+        cost: cost.totalCost,
         usage,
         model: actualModel,
         provider: actualProvider,

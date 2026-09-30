@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Gave the real-parser case an explicit 120s vitest timeout. It inherited the 5s default while costing ~4.6s under full-suite load, so it flapped red on `vitest run tests/unit` and green in isolation — a guard that cries wolf is a guard nobody reads.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The wizard-open case stops pinning port 35457. It matched a regex hardcoding that port and went red the moment oshal-install.sh built its URL from $COCKPIT_PORT - no defect, just a port that became configurable, which is the same shape as the pool-ceiling guard that pinned a file path. It now asserts the LINK that actually matters: a variable is assigned a .../welcome destination, and a browser-open line uses that variable. A dropped /welcome or an open that stops using it still fails.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Added the standalone-product-name guard. Every string a Windows installer showed a person — the GUI window title, the join-code refusal, the busy-port advice, the "look for the … window" line, the Desktop/Startup shortcut, the firewall rule, the launcher's console title — still read the retired standalone name, and nothing would have gone red if the next one did too. The guard scans installer code for the space-separated display form, permitting it only where a `$legacy…` assignment feeds the one-time upgrade removal, and a second case asserts that the upgrade actually removes the old firewall rule and the old shortcut instead of leaving an upgraded box carrying both names.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Execute the shipped upgrade decisions with isolated Windows boundary doubles; failed or ineffective legacy cleanup cannot report success or create duplicates.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -312,6 +313,67 @@ describe('installer strings name the product as it is called today', () => {
 // found on the same remote install (2026-09-16) and neither was visible from the installer's
 // own output: Docker was blamed for a Windows feature being off, and a 52-day-old image was
 // reported as missing features. These hold the wiring, not the wording.
+describe('installer naming migration handles actual cleanup outcomes', () => {
+  it('executes the shipped migration functions and shortcut flow under PowerShell', () => {
+    const shell = findPowerShell();
+    if (!shell) {
+      // Like the parser guard above, hosts without PowerShell retain source guards only.
+      // This branch is not evidence that Windows upgrade behavior executed.
+      expect(process.platform, 'Windows must execute its upgrade guard').not.toBe('win32');
+      const node = fs.readFileSync(path.join(REPO_ROOT, 'installer/lib/install-node.ps1'), 'utf8');
+      const swarm = fs.readFileSync(path.join(REPO_ROOT, 'installer/lib/install-swarm.ps1'), 'utf8');
+      expect(node).toContain('Legacy launcher shortcut still exists after removal');
+      expect(swarm).toContain('Legacy cockpit firewall rule still exists after removal');
+      expect(swarm).not.toContain('Remove-NetFirewallRule -DisplayName $legacyRuleName -ErrorAction SilentlyContinue');
+      return;
+    }
+    const output = execFileSync(shell, [
+      '-NoProfile', '-NonInteractive', '-File',
+      path.join(REPO_ROOT, 'tests/fixtures/installer-upgrade-naming.ps1'),
+    ], {
+      encoding: 'utf8', timeout: 120_000, windowsHide: true,
+      env: { ...process.env, OSHAL_UPGRADE_REPO: REPO_ROOT },
+    });
+    const rows = JSON.parse(output.trim()) as Array<{
+      name: string; error: string | null; events: string[]; remaining: string[];
+    }>;
+    expect(rows).toHaveLength(15);
+    expect(new Set(rows.map(row => row.name)).size).toBe(15);
+    const rowFor = (name: string) => {
+      const row = rows.find(candidate => candidate.name === name);
+      expect(row, `missing actual PowerShell result: ${name}`).toBeDefined();
+      return row!;
+    };
+    for (const prefix of ['shortcuts', 'firewall']) {
+      for (const posture of ['old-only', 'both', 'new-only', 'missing']) {
+        const row = rowFor(`${prefix}-${posture}`);
+        expect(row.error, row.name).toBeNull();
+        expect(row.remaining.filter(value => /Open Swarm (Node|cockpit)/i.test(value)), row.name).toEqual([]);
+        const current = row.remaining.filter(value => prefix === 'shortcuts'
+          ? /oshal Node\.lnk$/i.test(value) : /^oshal cockpit \(/i.test(value));
+        expect(current, row.name).toHaveLength(prefix === 'shortcuts' ? 2 : 1);
+        expect(row.remaining, row.name).toContain('unrelated-sentinel');
+      }
+    }
+    for (const name of ['shortcuts-delete-fails', 'shortcuts-delete-noop', 'shortcuts-startup-fails',
+      'firewall-delete-fails', 'firewall-delete-noop', 'firewall-query-fails']) {
+      const row = rowFor(name);
+      expect(row.error, name).toBeTruthy();
+      expect(row.events.filter(event => event.startsWith('create:')), name).toEqual([]);
+      expect(row.remaining.some(value => /Open Swarm (Node|cockpit)/i.test(value)), name).toBe(true);
+      expect(row.remaining, name).toContain('unrelated-sentinel');
+      if (name !== 'shortcuts-startup-fails') {
+        expect(row.events.filter(event => event.startsWith('removed:') || event.startsWith('success:')), name).toEqual([]);
+      }
+    }
+    const noAdmin = rowFor('firewall-no-admin');
+    expect(noAdmin.error).toBeNull();
+    expect(noAdmin.events.filter(event => /^(create|removed|success):/.test(event))).toEqual([]);
+    expect(noAdmin.remaining.some(value => /Open Swarm cockpit/i.test(value))).toBe(true);
+    expect(noAdmin.remaining).toContain('unrelated-sentinel');
+  }, 120_000);
+});
+
 describe('installers survive a fresh Windows box', () => {
   const read = (rel: string) => codeOnly(fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8'));
 

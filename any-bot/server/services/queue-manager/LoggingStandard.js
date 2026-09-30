@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Route existing diagnostics through structured Pino metadata and err without changing execution behavior.
  */
 
 /**
@@ -51,6 +52,7 @@ const logger = require('../../utils/logger');
  * @returns {Object} Logger instance with start/complete/error/event/debug methods
  */
 function createLogger(serviceName) {
+  const log = logger.child({ module: serviceName });
   return {
     /**
      * Log function entry — call at the START of every function
@@ -58,7 +60,7 @@ function createLogger(serviceName) {
      * @param {Object} [params] - Input parameters (sanitize sensitive data)
      */
     start(methodName, params = {}) {
-      logger.debug(`[${serviceName}.${methodName}] START`, params);
+      log.debug(`[${serviceName}.${methodName}] START`, params);
     },
 
     /**
@@ -67,7 +69,7 @@ function createLogger(serviceName) {
      * @param {Object} [result] - Result summary (not full data)
      */
     complete(methodName, result = {}) {
-      logger.debug(`[${serviceName}.${methodName}] COMPLETE`, result);
+      log.debug(`[${serviceName}.${methodName}] COMPLETE`, result);
     },
 
     /**
@@ -77,10 +79,9 @@ function createLogger(serviceName) {
      * @param {Object} [context] - Additional context (ticketId, agentId, etc.)
      */
     error(methodName, err, context = {}) {
-      logger.error(`[${serviceName}.${methodName}] ERROR`, {
-        error: err.message,
-        stack: err.stack,
+      log.error(`[${serviceName}.${methodName}] ERROR`, {
         ...context,
+        err,
       });
     },
 
@@ -91,7 +92,7 @@ function createLogger(serviceName) {
      * @param {Object} [details] - Event details (ticketId, agentId, phase, etc.)
      */
     event(methodName, eventName, details = {}) {
-      logger.info(`[${serviceName}.${methodName}] ${eventName}`, details);
+      log.info(`[${serviceName}.${methodName}] ${eventName}`, details);
     },
 
     /**
@@ -101,7 +102,7 @@ function createLogger(serviceName) {
      * @param {Object} [context] - Additional context
      */
     info(methodName, message, context = {}) {
-      logger.info(`[${serviceName}.${methodName}] ${message}`, context);
+      log.info(`[${serviceName}.${methodName}] ${message}`, context);
     },
 
     /**
@@ -111,7 +112,7 @@ function createLogger(serviceName) {
      * @param {Object} [context] - Additional context
      */
     warn(methodName, message, context = {}) {
-      logger.warn(`[${serviceName}.${methodName}] ${message}`, context);
+      log.warn(`[${serviceName}.${methodName}] ${message}`, context);
     },
 
     /**
@@ -121,7 +122,7 @@ function createLogger(serviceName) {
      * @param {Object} [context] - Additional context
      */
     debug(methodName, message, context = {}) {
-      logger.debug(`[${serviceName}.${methodName}] ${message}`, context);
+      log.debug(`[${serviceName}.${methodName}] ${message}`, context);
     },
 
     /**
@@ -142,7 +143,7 @@ function createLogger(serviceName) {
       this.start(methodName, params);
       try {
         const result = await fn();
-        this.complete(methodName, { success: true });
+        this.complete(methodName, { ...params, success: true });
         return result;
       } catch (err) {
         this.error(methodName, err, params);
@@ -163,7 +164,7 @@ function createLogger(serviceName) {
  * @param {Object} [details] - Additional details
  */
 function logTicketEvent(serviceName, methodName, ticketId, event, details = {}) {
-  logger.info(`[${serviceName}.${methodName}] TICKET_EVENT: ${event}`, {
+  logger.child({ module: serviceName }).info(`[${serviceName}.${methodName}] TICKET_EVENT: ${event}`, {
     ticketId,
     ...details,
     timestamp: new Date().toISOString(),
@@ -181,7 +182,7 @@ function logTicketEvent(serviceName, methodName, ticketId, event, details = {}) 
  * @param {Object} [details] - Additional details
  */
 function logAgentEvent(serviceName, methodName, agentId, ticketId, event, details = {}) {
-  logger.info(`[${serviceName}.${methodName}] AGENT_EVENT: ${event}`, {
+  logger.child({ module: serviceName }).info(`[${serviceName}.${methodName}] AGENT_EVENT: ${event}`, {
     agentId,
     ticketId,
     ...details,
@@ -201,7 +202,7 @@ function logAgentEvent(serviceName, methodName, agentId, ticketId, event, detail
  */
 function logPhaseTransition(serviceName, methodName, ticketId, fromPhase, toPhase, agentId = null) {
   const phaseNames = { 1: 'INTAKE', 2: 'PLANNING', 3: 'SPECIALIST_INPUT', 4: 'EXECUTION', 5: 'TESTING', 6: 'REVIEW', 7: 'DELIVERY' };
-  logger.info(`[${serviceName}.${methodName}] PHASE_TRANSITION`, {
+  logger.child({ module: serviceName }).info(`[${serviceName}.${methodName}] PHASE_TRANSITION`, {
     ticketId,
     from: `${fromPhase}:${phaseNames[fromPhase] || 'UNKNOWN'}`,
     to: `${toPhase}:${phaseNames[toPhase] || 'UNKNOWN'}`,

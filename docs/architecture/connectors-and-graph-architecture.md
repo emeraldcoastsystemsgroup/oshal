@@ -251,20 +251,38 @@ The `PROVIDERS` registry in `connector-provider-registry.ts` defines every OAuth
 entry declares `authUrl`, `tokenUrl`, `scopes`, `scopeSep`, `redirectPath`, `flavor`, and optional
 flags:
 
-- `pkce: true` — X/Twitter requires PKCE (S256). The verifier is generated at `/start`, encrypted
-  with AES-256-GCM under `SESSION_SECRET`, and stored in a short-lived HttpOnly cookie
-  (`oshalpkce_<provider>`, 10 min) — not in the `state` param (which was bloating X's authorize
-  URL). The verifier is recovered at callback via `readPkceVerifier()`, then the cookie is cleared.
+- `pkce: true` — X/Twitter requires PKCE (S256). The verifier is generated at `/start` and
+  retained in the controller's ten-minute ceremony, not sent in the signed state or a cookie.
+  It is used only after authenticated completion on the initiating origin.
 - `tokenAuth: 'basic'` — Twitter, Spotify, Schwab, SmartThings, PayPal, and RingCentral require
   HTTP Basic on the token endpoint (client_id:client_secret base64), not a form body.
 - `allowTokenFallback: true` — SmartThings accepts a pasted Personal Access Token when the OAuth
   app (`SMARTTHINGS_CLIENT_ID`) is not configured, so the connector is immediately usable without
   partner app registration.
 
-The CSRF `state` is an HMAC-signed, time-boxed (10-minute) token — no server-side store needed.
-`signState` encodes `{ provider, sub, ts }` (plus optional `tenant` for a shared/household
-connect and `label` for a nicknamed account, ADR-042/ADR-113) as a base64url JSON body signed
-with `HMAC-SHA256(SESSION_SECRET)`. `verifyState` rejects bad signatures and expired states.
+The CSRF `state` contains an HMAC-signed nonce and timestamp. The controller stores the
+provider, original configured origin, verified issuer **and** subject, reconnect label,
+optional household, PKCE verifier and a hash of a separate HttpOnly browser secret.
+`connector-oauth-state.ts` owns this bounded, one-time ceremony. A sessionless fixed provider
+callback only relays to that original origin; it never exchanges or persists tokens. If a
+session is present at the relay, its issuer and subject must both match. Completion requires
+the original browser secret, origin and the same verified issuer/subject before any provider
+request. An absent verified issuer is refused rather than inferred from email, a request
+parameter or deployment settings. Protocol claims take precedence over the OIDC display user.
+
+Pending consent limits are eight per issuer/subject and 1000 per controller; the ten-minute
+deadline is not renewed by the relay. A restart discards outstanding ceremonies. Multiple
+controllers need routing affinity across the configured origins or a shared atomic ceremony
+store; the current process-local store is not a distributed completion guarantee.
+
+Validation on 2026-09-29: the callback, reconnect and decomposition suites pass 29/29, using
+real loopback HTTP with explicit session/provider/SQL fixtures. Removing the production
+issuer comparison from completion and from signed-in relay independently produces 28 passes
+and one expected refusal failure; the restored source passes again. The existing source
+registration guard follows the extracted `server-auxiliary-routes.ts` mount and its server
+call site. This is not real provider consent, database RLS, deployed browser acceptance or
+issuer-qualified ownership of legacy stored credentials. Those storage/broker and installed
+proof requirements remain separate.
 
 Access and refresh tokens are stored in `oshal_connections` (Postgres), AES-256-GCM encrypted
 at rest under **per-user envelope encryption** (`connector-token-crypto.ts`, default ON since
@@ -348,6 +366,90 @@ The broker token always wins over the env fallback. The env fallback means an op
 one shared key and every authenticated user benefits without individual connect flows.
 
 ---
+
+### 3.6 Fresh issuer-qualified personal grants
+
+The separate qualified namespace stores newly authorized personal grants only. It does not
+copy, decrypt, relabel or adopt rows from the legacy connection/key stores. Migration 181 and
+the existing request-bound database pool are prerequisites; absent storage fails closed.
+Its HTTP bridge initially supports SmartThings, with no household, service or administrator
+fallback. An authenticated operator uses the same personal non-operator database context.
+
+The routes are mounted behind the existing connector authentication middleware:
+
+| Route under `/api/connect` | Purpose |
+|---|---|
+| `GET /qualified` | Bounded, issuer-and-subject-owned metadata list; optional `limit` and UUID `afterConnectionId`. |
+| `GET /qualified/:connectionId` | Exact personal SmartThings metadata, with revision ETag. |
+| `GET /qualified/smartthings/start` | Fresh OAuth; optional `reconnect` UUID is resolved to immutable account and revision server-side. |
+| `POST /qualified/smartthings/token` | Fresh PAT, JSON `{"token":"…"}`; never an existing legacy token reference. |
+| `POST /qualified/smartthings/:connectionId/token` | Fresh PAT replacement of the exact grant; requires its quoted revision in `If-Match`. |
+| `DELETE /qualified/:connectionId` | Revision-bound local revocation; requires quoted `If-Match`. Does not revoke at the provider or erase stored ciphertext. |
+
+POST/DELETE require an exact configured same-origin `Origin` header. Provider/account/owner/
+tenant overrides are not accepted in the token body. Metadata includes status, revision,
+expiry and timestamps, never tokens, ciphertext, wrapping keys or owner identity. PAT expiry
+is unknown (`null`), not a claim of a perpetual credential. Reconnect without a fresh refresh
+token explicitly clears the old refresh token.
+
+OAuth reuses the already registered `/api/connect/smartthings/callback`. The public callback
+only relays the code. The original host, browser cookie and verified issuer/subject must match
+before authenticated completion exchanges it. The qualified namespace and reconnect target
+are snapshotted server-side, not selected by callback query parameters. A changed revision
+during consent refuses persistence; no silent overwrite of a revocation.
+
+The HTTP identity and consumed consent deadline are rechecked after database checkout and
+after credential work, inside the transaction before commit. Identity substitution or expired
+consent rolls back that work. They are checked again after commit before responding; if
+invalidation occurs during an acknowledged commit, the response is refused without pretending
+the already committed write was rolled back. Restart the consent flow if its deadline expires.
+
+SmartThings verification uses its fixed read-only `GET /v1/locations`. The account key is
+`smartthings-location:<locationId>`: a verified **location resource**, not a verified person
+or provider-wide account identity. New grants choose the lexically smallest returned location;
+reconnect requires the exact stored location to remain in the response. There is no email
+fallback, legacy-token fallback, pagination-link following or device command. Empty/invalid
+results fail closed. This does not prove permission for any later device action.
+
+The HTTP request lifetime is bounded and checked after provider awaits. Provider I/O occurs
+outside database transactions; short credential operations use the shared qualified session
+with abort disposal. Utilities has a separate **Personal SmartThings qualified grants** panel
+for fresh PAT/OAuth consent, bounded metadata pages, revision-bound reconnect and confirmed
+local revocation. Password fields clear on submission, failures and navigation; tokens are not
+logged or stored in browser storage. A stale write refreshes metadata without retrying it.
+Unknown expiry is displayed honestly. Unavailable qualified storage disables cached controls,
+with no legacy fallback. OAuth requires the existing registered client; its navigation can
+return a server 503, in which case return to Utilities and refresh after configuration is fixed.
+OAuth links target the top-level browser even when Utilities is embedded in Settings; they
+never redirect the authorization provider inside the Settings iframe.
+
+Physical Home/L8 readiness is unchanged. Home broker wiring, an installed owner-bound consent,
+deployed browser acceptance and actual device-action acceptance remain separate work; the panel
+and server endpoints alone do not close that feature.
+
+Focused verification:
+
+```sh
+npx vitest run tests/unit/connector-qualified-http.spec.ts tests/unit/connector-qualified-smartthings.spec.ts tests/unit/connector-qualified-session.spec.ts tests/unit/connector-qualified-grants.spec.ts tests/unit/connector-qualified-token-crypto.spec.ts tests/unit/qualified-connectors-ui.spec.ts
+```
+
+The HTTP suite uses real Express, consent, crypto and session/store modules with named
+authentication, provider-response and transactional SQL doubles. The provider companion
+uses a loopback protocol responder. Neither proves PostgreSQL RLS or live SmartThings access.
+The UI suite executes the shipped JavaScript with named DOM/fetch/confirmation/navigation
+doubles; it is not an installed browser receipt.
+`qualified-connectors-browser.spec.ts` additionally runs the shipped Utilities HTML/JavaScript
+in Chromium under the real `frame-src 'self'` directive. Its six local cases cover top-level
+navigation, a blocked cross-origin iframe control, immediate PAT clearing, exact revisions,
+stale-write refusal and actual confirmation dialogs. Auth, APIs and the separate-loopback
+authorization responder are fixtures; this is not deployed OIDC/provider/database evidence.
+Restoring the old child-frame navigation failed both navigation cases; restoration passed
+all six browser and 34 JavaScript cases on 2026-09-29.
+The separate qualified-credentials, qualified-grants and qualified-broker PostgreSQL
+suites passed 35/35 on 2026-09-30 against owned disposable databases and enforcing roles.
+The [source-pinned receipt](../backlog/qualified-connector-postgres-proof.md) records the
+test-transport overlay, images, real boundary and remaining provider/installed proof.
+The Test Lab card probes anonymous refusal only.
 
 ## 4. Webhooks
 

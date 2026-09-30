@@ -8,6 +8,36 @@ provider claim still needs a separate live acceptance run.
 
 ## Dispositions
 
+### Fresh personal qualified connector grants (2026-09-29)
+
+`connector-qualified-http.spec.ts` executes real Express routes, OAuth ceremony, crypto,
+session and grant-store code; authentication, provider responses and transactional SQL are
+explicit doubles. Held checkout/work/commit cases prove the HTTP identity/consent fencing
+logic, not PostgreSQL rollback or RLS. `connector-qualified-smartthings.spec.ts` executes the
+provider adapter against a loopback HTTP responder; no real account is contacted.
+`qualified-connectors-ui.spec.ts` executes the shipped JavaScript with DOM, fetch,
+confirmation and navigation doubles. Its real companion `qualified-connectors-browser.spec.ts`
+serves shipped Utilities HTML/JavaScript into Chromium: actual iframe/CSP top-navigation,
+browser Origin, exact revision writes, field clearing and confirmation dialogs. Auth, APIs,
+parent shell and separate-loopback authorization responder are named fixtures. All six browser
+cases passed on 2026-09-29; changing only navigation back to the child frame caused both
+top-navigation cases to time out, while four other cases passed. The exact restored source
+passed six browser plus 34 doubled-JavaScript cases. This is not deployed OIDC/provider proof.
+
+`connector-qualified-credentials-postgres.spec.ts`,
+`connector-qualified-grants-postgres.spec.ts` and
+`connector-qualified-broker-postgres.spec.ts` are the required owned PostgreSQL/enforcing-role
+companions. On 2026-09-30 they passed **8/8, 18/18 and 9/9**, respectively, against
+real owned PostgreSQL under NOSUPERUSER/NOBYPASSRLS table-owner FORCE RLS. Actual
+migrations, locks, rollback, issuer isolation, grant lifecycle and microsecond broker
+CAS execute; only the broker's refresh provider is doubled. See the
+[source/transport/image and receipt record](../backlog/qualified-connector-postgres-proof.md).
+This supplies migration 181's database-boundary evidence, not a deployment or
+installed owner-bound consent/physical-device readiness result. No legacy credentials
+are adopted; those distinct installed/provider outcomes remain open.
+
+### Boundary inventory
+
 | Boundary audited | Mock/stub disposition | Required real companion | Status |
 |---|---|---|---|
 | Ticket-store writes under RLS | Unit router/gateway doubles stay for transition and error-branch coverage; they cannot prove PostgreSQL accepts or owns a row. | `tests/alert-intake-rls-live.spec.ts` and `tests/connector-webhook-rls-live.spec.ts` drive the real routers, `PostgresTicketStore`, GUC wrapper, NOBYPASSRLS role, policies, and rows. Both are mandatory in `tests/e2e-green-suite.txt`. | Real companion present. |
@@ -479,8 +509,8 @@ provider/nightly evidence and paper acceptance remain owed. No deployment or bac
 |---|---|---|---|
 | The recall case's seed, residue read and cleanup over the chat tables' row policies (`tests/unit/jarvis-recall-acceptance-postgres.spec.ts`) | None at the boundary: the seed goes through the real `InMemoryTaskStore`/`InMemoryMessageStore` as the NOSUPERUSER app role on a disposable PostgreSQL with the shipped migrations and FORCE row-level security, the real `conversation_query`/`conversation_fetch` tools read it as the bot role, and the case's residue SQL runs under the owner's identity. The Jarvis model turn is replaced by a server stand-in that calls those same real tools. | The model turn itself is the live proof (`scripts/operations/jarvis-recall-live-proof.js`). | Real companion present. |
 | Capture evidence (`tests/unit/jarvis-recall-acceptance.spec.ts`, "capture evidence through the REAL Token Chase routes") | The real `createTokenChaseRoutes` router on a loopback Express server reads frames the test writes in the capture lane's file format. Other cases in the file double the routes and stores to cover verdict branches only. | The first live run exposed the `{ frame }` envelope a doubled route had hidden; the real-route case now pins it. | Real companion present. |
-| The LoRA gallery import (`tests/unit/lora-import-live-proof.spec.ts`) | The server routes, the worker rail and the character table are in-memory doubles; the suite covers command construction, verdicts and cleanup ordering. Real at the shell boundary since 2026-09-28: the exact `buildBoxProbeCommand` and `buildBoxRemoveCommand` output runs through `powershell.exe` (win32; one PLATFORM SKIP line elsewhere) against a temp home at the default `$env:USERPROFILE/lora-characters` root, pinning one JSON line of plain values that the verdict passes on. The in-memory worker had answered the probe with the JSON the script hoped for, so it never caught Windows PowerShell 5.1's provider-decorated `Get-Content` string. | `scripts/operations/lora-import-live-proof.js` against the box, which drives the installed package, core artifact exchange and the remote-client rail on the GPU worker. | Live receipt owed: the 2026-09-28 run on LoRA 1.7.1 wrote the pair to the GPU box in 3 s and the probe found it, but the probe's caption serialized as a 25 KB decorated object the script could not read; re-run pending after the plain-value probe. |
-| The LoRA gallery import, gallery mode (`tests/unit/lora-import-gallery-proof.spec.ts`) | The bearer routes (portrait create/title/list/delete, the locator mint, the receipt list, the worker rail) are in-memory doubles that pin the exact mint body the gallery's Send to… posts and refuse the upload mint; the engine is a scripted row. Real at the browser boundary: the shipped surface port (`scripts/lib/lora-gallery-source.js` `createSurfacePort`) runs in headless Chromium against a loopback stand-in of the studio page carrying lora.html's ids, buttons and receipt labels - the token is on every same-origin request; the page's off-origin beacon to a second loopback listener (127.0.0.1, another port) is refused in the browser, so that listener receives zero requests and no request on either listener carries the token off-origin, while a control session whose origin is that listener proves Chromium reaches it and delivers the token there; and a page that keeps rendering "queued for worker" after the receipt route flipped to ready fails by name. The stand-in stands in for the installed `lora.html` only; the store's own `lora-dataset-relay.spec.ts` proves the real page. | `node scripts/operations/lora-import-live-proof.js --gallery` against the box: a real portrait through the installed Portrait Studio, the installed LoRA studio page in Chromium, and the GPU worker. | Live receipt owed: no gallery-mode run yet (the stack was down when the mode landed); run it after deploy with the LoRA and Portrait Studio packages staged and a GPU worker online. |
+| The LoRA dataset import, inline mode (`tests/unit/lora-import-live-proof.spec.ts`) | The server routes, the worker rail and the character table are in-memory doubles; the suite covers command construction, verdicts and cleanup ordering. Real at the shell boundary since 2026-09-28: the exact `buildBoxProbeCommand` and `buildBoxRemoveCommand` output runs through `powershell.exe` (win32; one PLATFORM SKIP line elsewhere) against a temp home at the default `$env:USERPROFILE/lora-characters` root, pinning one JSON line of plain values that the verdict passes on. The in-memory worker had answered the probe with the JSON the script hoped for, so it never caught Windows PowerShell 5.1's provider-decorated `Get-Content` string. | `scripts/operations/lora-import-live-proof.js` against the box, which drives the installed package, core artifact exchange and the remote-client rail on the GPU worker. | Recorded inline-mode PASS, 2026-09-28 03:16 UTC, LoRA 1.7.1 and host script `7f6ff07d`: the exact image/caption pair reached the worker in 3 seconds, and the case confirmed cleanup. This supersedes the earlier unreadable PowerShell probe result. Inline mode uses an upload-minted handle and a bearer import; it does not prove the portrait gallery or rendered studio. No new live run in this documentation change. |
+| The LoRA gallery import, gallery mode (`tests/unit/lora-import-gallery-proof.spec.ts`) | The bearer routes (portrait create/title/list/delete, the locator mint, the receipt list, the worker rail) are in-memory doubles that pin the exact mint body the gallery's Send to… posts and refuse the upload mint; the engine is a scripted row. Real at the browser boundary: the shipped surface port (`scripts/lib/lora-gallery-source.js` `createSurfacePort`) runs in headless Chromium against a loopback stand-in of the studio page carrying lora.html's ids, buttons and receipt labels - the token is on every same-origin request; the page's off-origin beacon to a second loopback listener (127.0.0.1, another port) is refused in the browser, so that listener receives zero requests and no request on either listener carries the token off-origin, while a control session whose origin is that listener proves Chromium reaches it and delivers the token there; and a page that keeps rendering "queued for worker" after the receipt route flipped to ready fails by name. The stand-in stands in for the installed `lora.html` only; the store's own `lora-dataset-relay.spec.ts` proves the real page. | `node scripts/operations/lora-import-live-proof.js --gallery` against the box: a real portrait through the installed Portrait Studio, the installed LoRA studio page in Chromium, and the GPU worker. | Gallery-mode PASS still owed. The retained 2026-09-29 attempt on LoRA 1.7.3 returned `lora-gallery-dataset-import UNAVAILABLE: Portrait Studio's image provider is not configured (portrait_cli_authorization_unavailable); nothing was written.` The next authorized run needs a usable operator-selected image provider, installed LoRA and Portrait Studio, and an online GPU worker. Neither the earlier inline PASS nor this UNAVAILABLE result is gallery-mode success; no provider setup or live run in this documentation change. |
 | The Antigravity brain inside the agentic host loop (`tests/unit/antigravity-host-tool-loop.spec.ts`, fixture `tests/fixtures/fake-agy-host-loop.cjs`) | Two scoped doubles OUTSIDE the boundary: the vendor model (a stand-in agy executable that answers the way the live model answered the same prompt in the 2026-09-27 local repro and never contacts a model) and the two recall tool handlers (fixture results; their database boundary is `tests/unit/bot-node-read-only-tools-owner-scope-postgres.spec.ts`). Real: the bot-node handler's direct marker, the `AgenticController` XML loop, a `ToolRegistry` with request-scoped capabilities, `AntigravityProvider`, `AntigravityCLIWrapper`, and a child process spawned with the wrapper's own argv, cwd and env, which records the private HOME's settings, custom agent and MCP config from inside the process. | `scripts/operations/jarvis-recall-live-proof.js` against a deployed bot node running agy 1.2.8 on the operator's Antigravity login. | Live receipt owed. The fix is not deployed. Run the live proof after the next deploy. |
 | The /ask session gate and /ask/result when the task store cannot answer (`tests/unit/jarvis-ask-session-gate-postgres.spec.ts`) | Scoped doubles OUTSIDE the boundary: the model (`executeBotOrInline`), the credential broker, the hosted-brain resolver, Haven, the route's own `jarvis_tasks` pool, the message store and the ticket service. | None at the boundary: the real `InMemoryTaskStore` on a disposable PostgreSQL with the shipped chat migrations. The timeout is pg-pool's own acquire timeout, reached by holding the store's two clients on statements that wait on a real `ACCESS EXCLUSIVE` lock; the foreign-owner refusal reads a row the same real store wrote for another owner. `tests/unit/jarvis-ask-session-ownership.spec.ts` keeps the typed refusal doubles for the other gate shapes. | Real companion present. |
 | A Jarvis turn that outlives the decision window (`tests/unit/jarvis-late-answer.spec.ts`, plus the still-working case in `tests/unit/jarvis-dashboard-browser.spec.ts`) | Scoped doubles OUTSIDE the boundary: the model (`executeBotOrInline`, a turn the case finishes by hand), the credential broker, the hosted-brain resolver and Haven; the task and message stores are the real classes in memory mode, and the page case serves the real `jarvis.html` in Chromium against a synthetic `/ask/result`. | The route, its job store, `persistJarvisTurn` and `/history` are real. The live companion is `jarvis-cross-thread-recall`, which now passes only on delivery into thread B: `node scripts/operations/jarvis-recall-live-proof.js` after the next deploy. | Locally proven; live proof pending a deploy. |
@@ -517,6 +547,7 @@ provider/nightly evidence and paper acceptance remain owed. No deployment or bac
 | The commerce driver in a real browser (`tests/unit/live-acceptance-commerce.spec.ts`, Chromium half) | Real headless Chromium through the runner's own browser port against a loopback stand-in page that speaks the bridge envelope. It proves the driver: the token only on same-origin requests, off-origin requests aborted, and a hand-off POST aborted before it leaves the browser. The Shopping cases use a second stand-in, a page and its three cart routes (read, add, remove by line id) over an in-memory cart, reached through the runner's own HTTP port as well as its browser port. With five lines already in the cart they prove the driver owns only its line: the add arrives carrying the run's tag, one removal is sent and it names the case's line, and the five lines read back identical. Neither stand-in proves the installed pages. | The live run. Before landing, the driver was also run against the store's own surface fixtures, which serve the actual Rides, Eats and Shopping pages over their compiled routers (their in-memory pools were given the two statements they lack, the Eats cart clear and the Shopping line removal): all three reached the confirm card, cancelled it, handed nothing off and restored the cart. That run is what showed the Shopping page answers a relayed checkout with a toast until it has re-read its cart, which is why the driver relays the op again. The cart-in-use walk was run the same way before landing, against the store's Shopping fixture with five lines seeded into its in-memory pool: the case passed over a confirm card for six items, the add reached the compiled route carrying the run's tag, the only removal named the case's line, the five seeded lines were unchanged and no checkout POST or purchase history row was written. | Live receipt owed. |
 | The host runner and the in-container helper (`tests/unit/live-acceptance-runner.spec.ts`) | `docker` is a recording seam and `fetch` a double. Real: fixture workspaces on disk, the closed statement set's text, and the helper's identity scoping over a recording pool. | The live run, which stages the helper into the api container and runs the named statements as the owner on the box's PostgreSQL. | Live receipt owed. |
 | The Lab adapter (`tests/unit/test-lab-live-acceptance-registration.spec.ts`) | `fetch` and the pool are doubles. The spec proves the cookie binding, the statement binding, and that the host-only cards make no call. | An explicit card run from the signed-in Lab after a deploy that carries this change. | Live receipt owed. |
+| The Vids publication acceptance driver (`tests/unit/live-acceptance-vids-publish.spec.ts`, core #896) | Owner and anonymous HTTP routes, multipart upload, the named SQL statements and the export-file probe are in-memory doubles. The real case builds its tagged MP4 and checks exact bytes/digest, mount refusals even for a confirmed publish request, malformed/revoked 404s, and row/file cleanup; these are driver/verdict guards, not a real database, package-loader or filesystem proof. | `node scripts/operations/live-acceptance.js vids-publish` drives the installed package through the real loader, owner-scoped PostgreSQL statements and the container file probe. Separately, store [`vids/tests/vids-publication.spec.ts`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/blob/fec688f4e70c080efebd17ab00eb599160b34191/vids/tests/vids-publication.spec.ts) exercises the actual package routers, forced-RLS PostgreSQL, filesystem and Chromium; its authentication mount is a fixture header middleware, not the kernel enforce mount. | Merged in #896 (`a5826495`). Retained installed sweep, 2026-09-29 on `c6cf0f94`: FAIL, because published, malformed and revoked anonymous reads all answered 401 rather than 200/404/404. Owner attach/publish/revoke completed; anonymous jobs/control calls were refused; cleanup outstanding 0, errors 0. A successful live receipt remains blocked on the separately tracked per-route anonymous opt-in enhancement (#925), not implemented here. No new proof is claimed. |
 
 ## Location browser ingest, consent and the step-up (ADR-169 L3, 2026-09-28)
 
@@ -590,3 +621,206 @@ provider/nightly evidence and paper acceptance remain owed. No deployment or bac
 |---|---|---|---|
 | The replay store and its Redis client on the first connect (`tests/unit/delegation-replay-store-redis.spec.ts`) | None at the boundary: the store is built from a Redis address alone, as a bot node builds it, so the client and its options (`lazyConnect`, `maxRetriesPerRequest: 1`, `enableOfflineQueue: false`) are the store's own, against a `redis:7-alpine` server the spec starts and removes (`tests/helpers/disposable-redis.ts`; no address is read from the environment). Two concurrent first `consume()` calls with different `jti` values are both accepted, the two receipts are read back from the server, and the server's client list shows one connection that issued `SET`. A replay of either receipt is refused, and two concurrent uses of one `jti` yield one acceptance and one key. The failed connect runs against a loopback listener that accepts and hangs up: every waiter and a later caller get `DelegationReplayStoreUnavailableError`. | This is the real companion. Live: `node scripts/operations/career-rail-live-proof.js --complete` as the first delegations a career bot receives after it starts, on a deploy that carries this change. | Guard green 2026-09-29. On `c6cf0f94` the first three cases are red: one of the two calls rejects and the store logs `Stream isn't writeable and enableOfflineQueue options is false`. Live receipt owed. |
 | The same race and the fail-closed paths over a stand-in client (`tests/unit/delegation-replay-store.spec.ts`, the first-connect cases) | The client is a stand-in that holds the status the way the real one does at this boundary: `connect()` moves it to `connecting` before returning and settles when the test says, a second `connect()` is refused, and `SET` is refused until the status is `ready`. It lets the spec place the second caller at `connecting` and at `connect`, fail the connect with both callers waiting, and bring the client back to `ready` afterwards. It proves nothing about what the real client does. | The first row above. | Scoped double |
+
+## Create region-edit live acceptance (2026-09-29)
+
+The existing `create-region-edit` host case and explicit-only Lab card are one API-driven
+generate/accept cycle. Review is against the shipped Create region routes, project/region stores,
+asset normalization and compositor in the applications repository, not only the case's own doubles.
+After the first independent-review corrections, the core region guard passed 37/37 and final
+Lab registration guard 7/7. A combined targeted mutation caused 16 expected failures; restoring all safeguards
+returned the region suite to 37/37. None of these guards is an installed-provider pass.
+
+A subsequent correction tracks possible admission before sending the POST. Lost or
+malformed admission replies preserve the tagged project; ordinary ready replies now require the
+same terminal/candidate/reported-spend accounting as cancellation before deletion is permitted.
+Regressions preserve an actually admitted doubled job after connection rejection or a missing ID,
+retain malformed ordinary ready candidates/spend while recording valid partial evidence, and refuse
+an HTTP 200 cancellation without the matching terminal record.
+
+The coordinating parent's fresh run covers this exact frozen revision: **73/73 tests across 3 files**
+(region case, host runner and Lab registration), exit 0 in 35.32 s, started 2026-09-29 at 12:51:21
+America/Chicago. Preflight free memory was 2084 MiB; one fork worker used a 384 MiB heap cap with
+a 128 MiB runner. No provider execution occurred. The parent also reports independent source
+review approval with unchanged implementation/test hashes. Two subsequent minimal cleanup mutations
+caused exactly 2 expected failures without pre-POST admission tracking and 6 with premature ordinary
+terminal accounting. Each was restored to the approved case-module hash; the nine new cleanup guards
+passed before and after, then the full three-file set passed **73/73** in 24.04 s, exit 0, with no
+failures or skips. Tests remained unchanged. Only proof documentation changes after restoration.
+
+The parent subsequently reports both full core typechecks passed: `tsconfig.json` and
+`tsconfig.server.json`, with outer exit 0 through file-redirected stdin. The locked compiler ran
+in a 3 GiB container with `--noEmit --preserveSymlinks`; inputs were the exact HEAD source archive
+plus the sole dirty TypeScript Lab-scenarios overlay. No implementation or test changes followed.
+These are core typecheck receipts, not compiled-store or installed-service proof.
+
+Separate parent-reported actual compiled Create results: API **7/7** (1.30 s), real PostgreSQL
+**22/22** (9.25 s), real browser **6/6** (22.61 s), zero failures/skips, run sequentially with a
+synthetic provider only. Each PostgreSQL fixture reported `cleanupVerified: true`; the parent still
+owns separate final empty-inventory verification. These are not installed-provider or canonical
+accounting receipts.
+
+| Boundary audited | Mock/stub disposition | Required real companion | Status |
+|---|---|---|---|
+| PNG generation, decoding and per-pixel comparison (`tests/unit/live-acceptance-create-region-edit.spec.ts`) | Real zlib/CRC code and real `sharp` generate independent PNG encodings and expected RGBA. New RGB/grey fixtures require sharp to observe a transparent pixel while this reader explicitly refuses `tRNS`. The case tests synthesize candidate pixels themselves; they do not call Create's shipping compositor. | Applications repository `create/tests/region-edit-composite.test.mjs` runs that compositor with real `sharp`, including masks, feathering and crop geometry. | Current PNG guards green. Ignoring tRNS reds both transparency cases in the combined mutation. Store companion unrun here. |
+| Admission, acceptance verdict and cleanup (same spec) | `live-acceptance-fake-api.ts` and in-memory project, revision, permission, provider and accounting replies are doubles. Cases change layer order/canvas in both accepted and stored documents, and complete a candidate during cancellation. Additional cases cover uncertain admission and malformed ordinary terminal replies; unresolved provenance must retain the project. | Applications repository `create/tests/region-edit-api.test.mjs` exercises compiled routes over loopback HTTP with a strict non-writing database double. `create/tests/region-edit-postgres.test.mjs` adds actual migrations, owner policies and revision transactions on disposable PostgreSQL. The named fixture provider and cost recorder remain doubles in both. | Current core three-file set 73/73 after exact restoration; independent source review approved. New cleanup mutations caused 2/6 expected failures. Bypassing original-document checks and post-cancel accounting caused 5/3 failures in the prior combined mutation; earlier persisted-readback and early-cancellation mutations caused 3/4 separately. Parent reports compiled API 7/7 and PostgreSQL 22/22 green. |
+| Server-enforced cost-class consent | Core fixtures advertise `costConsentVersion: 1`; unsupported/missing versions must cause zero uploads/project writes. Every body carries `maxCostClass: free`, except explicit paid opt-in plus paid preflight permits `paid`. These doubled-body assertions do not prove the server enforces a queued job's cap. | The separately implemented server companion must resolve the actual provider after queueing, validate the captured cap immediately before generation, reject unknown classes or paid-under-free with `region_edit_cost_cap_exceeded`, and record zero generation calls on refusal. No unchecked fallback. Omitted caps preserve legacy semantics; the new core driver never omits one. | Core guards green; disabling version checking and widening a free preflight to paid reds 5 and 1 guards in the combined mutation. Parent reports actual compiled API 7/7 and PostgreSQL 22/22 with a synthetic provider; no installed-provider enforcement receipt is claimed. This caps a class, not dollars or provider identity. |
+| Host and Lab binary reply/multipart wiring (`tests/unit/live-acceptance-runner.spec.ts`, `tests/unit/test-lab-live-acceptance-registration.spec.ts`) | Existing fetch recorders remain for branch and option-isolation coverage. The new `tests/fixtures/live-acceptance-http.ts` companion uses real fetch, an ephemeral loopback Express server and real multer with Create's single-image/zero-field upload contract. Synthetic credentials only; no database or installed route. | Both shipping adapters cross HTTP with exact PNG bytes and digests, the `image` part succeeds, the default part is refused there but remains compatible with the legacy `file` route, and anonymous reads omit credentials. Installed acceptance still owes the actual Create route/store boundary. | Both specs passed again within the parent's current 73/73 three-file run, including both real transport guards. Earlier separate results were host runner 20/20 and Lab registration 7/7. |
+| Editor workflow, installed provider and accounting | The core case proves mask/document preservation only: it does not open the editor, perform two manual-edit/regenerate cycles, grade instruction fidelity, test another owner, or independently query canonical spend records. Reported cost metadata and a retained-ledger receipt are not accounting verification. | Applications repository `create/tests/browser/create-region-edit-proof.mjs` covers the editor in real Chromium with disposable PostgreSQL and the named fixture provider. Separately, an authorized installed run and independent canonical accounting evidence are required for real provider/spend claims. | Parent reports real browser companion 6/6 green with a synthetic provider. Installed acceptance and canonical accounting evidence remain pending. |
+
+Earlier focused runs and the combined mutation used one fork worker, 128 MiB runner / 384 MiB worker
+heap caps and UV threadpool 1, without Docker or an installed service. Each preflight had at least
+1400 MiB free and allowed 250 MiB overhead while retaining at least 600 MiB reserve. The latest
+cleanup runs used the same bounds; the final three-file run had 5188 MiB free at preflight.
+Commit/push hooks remain separate gates. Do not substitute focused verdicts, source review or
+synthetic-provider companions for installed acceptance.
+
+The store companions require the applications checkout's compiled `create/routes` matching its
+source and `OSHAL_CORE_ROOT` pointing to the intended core checkout with its dependencies. The
+compositor and HTTP-admission specs are offline; the latter uses only ephemeral loopback listeners
+and temporary asset storage. The PostgreSQL and browser companions require an operator-ready
+Docker engine and the already-local `postgres:16-alpine` image (`--pull=never`): one uniquely named,
+labelled fixture container, 512 MiB/one CPU, a 256 MiB temporary database, a random loopback port,
+migrations 001-005 and a non-bypass application role. No installed connection string is used.
+The browser companion additionally needs Playwright Chromium and core shared theme assets.
+These fixtures remain parent-coordinated; this lane does not start them independently.
+
+Once separately authorized, the installed command is
+`node scripts/operations/live-acceptance.js create-region-edit` (add `--allow-paid` only with explicit
+spend consent). It needs a region API advertising the enforced `costConsentVersion: 1` contract, the caller's project
+view/read/create/change/delete/generate grants and a configured provider; its fixture uploads are
+reported as retained for later cleanup rather than falsely reported deleted. No such command was
+run for this review, and no service start, deployment or accounting read was attempted.
+
+## Kernel manifest route-auth inventory (2026-09-29)
+
+`tests/unit/manifest-route-auth.spec.ts` reproduced the main `ecd409be` failure: the top-level
+kernel/build-variant YAML scan found only Security's route, while the historical anti-empty floor
+required more than three. The repository separation allowlist in `scripts/check-repo-separation.js`
+and actual YAML files agree on the kernel manifest set. Both Engineering variants explicitly use
+`routes: []`: assigning their framework-owned routes to the app previously caused inactive-app
+503s. No production declaration is missing for this count failure.
+
+The guard now requires the exact declaration identity: `swarm-apps/security.yaml`, module
+`src/app/routes/security-routes.ts`, factory `createSecurityRoutes`, mount `/api/security`, auth
+`operator`. This matches the actual `requiresAuth, requiresOperator` mount in `src/app/server.ts`.
+Removing or substituting this declaration fails even when a numeric floor would pass. Additional
+declarations also require an explicit inventory review. Existing explicit-auth and mounted-mode
+checks remain unchanged; no manifest or production source change ships with this repair.
+
+Boundary: real filesystem reads and YAML parsing of the shipped manifests, plus a source-text
+comparison with the server mount. Resolver/validation cases call the real route-auth registry and
+`readManifest` against temporary YAML files. The negative controls temporarily altered the actual
+Security manifest in the isolated lane, then restored its exact original Git blob
+`90a957d388813bebd4a7708be38b96cb45c672d8`. No HTTP server, installed package, database, Docker,
+provider, browser or live authorization boundary was exercised. This is not a full-suite pass.
+
+Focused receipts (one fork worker, worker heap 384 MiB / runner 128 MiB, immediate host memory
+preflight at least 1800 MiB):
+
+- Original spec: 16 passed / 1 failed (`expected 1 to be greater than 3`), exit 1, 7.83 s.
+- Repaired inventory: 17/17 passed, exit 0, 5.75 s.
+- Remove the required route: 16 passed / 1 expected failure, exit 1, 5.04 s.
+- Substitute its mount path while keeping one declaration: 16 passed / 1 expected failure,
+  exit 1, 7.30 s.
+- Exact manifest restoration: 17/17 passed, exit 0, 5.51 s; no failures/skips or mutation remains.
+
+The focused command is documented in [tests/README.md](../../tests/README.md#kernel-manifest-route-auth-inventory).
+Full typechecking/pre-push and final backlog closure are separate coordinated gates, not claimed
+by these unit receipts.
+
+## Pre-push unknown-range verification (2026-09-29)
+
+`tests/unit/pre-push-unknown-range.spec.ts` executes the actual candidate hook in
+owned disposable Git repositories, with real commits, local tracking refs, a
+docs-only merge, `git archive HEAD`, dependency links and the installed TypeScript
+compiler. Earlier committed source errors remain errors even when a final commit
+contains only documentation and the working tree has separately been repaired.
+Unknown/missing push ranges enter verification; known docs-only ranges retain the
+existing optimization. Known-range source errors still fail.
+
+The only replaced collaborator is a named synthetic `scripts/publish-gate.sh`
+that records argv/stdin and returns success or failure to prove ordering. It is
+not a leak-scanner test. No remote push, download, provider, database, browser,
+shared-hook configuration or runtime deployment is used. Clean child environments
+isolate Git/npm configuration and deny npm installation/network access. The actual
+hook/compiler receive a 128 MiB Node heap; owned hook subprocess trees are bounded
+at 30 seconds and awaited before cleanup. A timeout/spawn error is a test failure,
+not an expected type-error refusal. Archive cleanup is asserted and owned fixture
+dependency junctions are removed before recursive fixture cleanup.
+
+Recorded focused results:
+
+- Original production hook baseline: **4 expected failures / 4 passed**,
+  exit 1, 14.23 s, fresh 4322 MiB / minimum 4060 MiB. Failures are unknown-range
+  linear/docs-merge/missing-ref admission and the absent verification-success
+  message for valid unknown-range HEAD; the known-range compiler control passed.
+- Corrected hook: **8/8 passed**, exit 0, 23.31 s, fresh 4268 MiB / minimum 3988 MiB.
+- Actual-hook negative control reinstating only the unsafe last-commit fallback,
+  with the final explicitly sequential/45-second-case guard: **4 expected failures
+  / 4 passed**, exit 1, 13.60 s, fresh 4266 MiB / minimum 2964 MiB.
+- Exact fix restored, plus existing ordering, verification-tree and real compiler
+  symlink guards: **25/25 passed across four files**, zero skips, exit 0, 44.58 s,
+  fresh 4008 MiB / minimum 3461 MiB. No source mutation remains.
+
+All runs used runner 128 MiB / one worker 384 MiB, a fresh 1800 MiB floor, 600 MiB
+reserve and 180-second external deadline. Earlier fixture-development receipts
+containing a subprocess timeout or an unaccounted npm compile-cache directory are
+excluded from these results. Windows child executable lookup was made explicit,
+hook process-tree teardown was added, and the fixture disables Node compile cache
+before the clean original-hook baseline above.
+
+The focused command and standard CI discovery are documented in the indexed
+[verification runbook](../runbooks/pre-push-commit-verification.md). This guard
+changes only unknown-range classification, not other existing hook exits or the
+active primary checkout's hook. Full project compilation, normal publication,
+primary-hook activation and backlog closure remain separate integration gates.
+
+## AI usage rating declaration guard (2026-09-29)
+
+`tests/unit/ai-usage-rating-input-guard.spec.ts` runs the actual standalone
+`scripts/ai-usage-ledger.js` in bounded Node subprocesses, its real YAML parser and
+owned temporary filesystem. The TypeScript `validateAppRating` implementation also
+runs for declaration parity; only its logger is doubled. No CLI, parser, validator
+or filesystem implementation is replaced. Children receive a clean environment;
+timeouts/spawn failures cannot masquerade as validation refusals, and cleanup is
+restricted to the fixture's own temporary directories.
+
+The proven boundary is declaration admission and output safety: unknown fields
+(including handwritten token/model/cost/cadence evidence), malformed values and
+invalid combinations fail before rendering/writing, while valid output and the
+missing-rating rollout remain compatible. Combined `--check`/`--out` cannot rewrite
+a stale checked file and then claim a passing check.
+
+Main-based candidate `2ff4895e` passed 67/67 focused cases with zero skips (42 new
+guard cases and 25 existing `tests/unit/app-rating-validation.spec.ts` cases).
+Removing feature unknown-key rejection produced 8 failures; removing pre-render
+validation produced 4 failures; both changes were restored before the final run.
+The original CLI failed 27 of the initial 32 guard cases. See the
+[scope and local commands](../backlog/ai-usage-rating-input-guard.md).
+
+These are real local CLI/file-boundary results, not model measurements, provider
+acceptance, database proof or a full-suite pass. Generated token ranges, background
+cadence/cost, tested-model compatibility and pause/resume controls remain separate
+ADR-170/A2 acceptance work. No such evidence is inferred from an accepted manifest.
+Both spec files are already selected by `vitest.config.ts`'s
+`tests/unit/**/*.spec.ts` include through `npm run test:unit`, used by the normal
+local CI unit gate and hosted CI unit job; no new runtime Lab card is added.
+
+## Isolated browser cleanup acceptance refresh (2026-09-29)
+
+The [current acceptance record](../testing/isolated-browser-acceptance.md) retains
+five consecutive runs of isolated-browser, jarvis-no-brain-browser and
+budgets-unit-split-browser: 28/28 each, zero skips, while independent build lanes
+continued. The original current-main run was 21/22: an inventory false positive
+required a global setting despite a valid explicit cleanup-hook budget. The guard
+now follows effective per-hook precedence, with four direct regression cases;
+the production fixture and Budgets suite are unchanged.
+
+Real boundaries are Chromium process ownership/exit, shipped browser pages and
+loopback HTTP. Chosen lifecycle timings use fake clocks; Jarvis identity,
+persistence and unavailable-provider resolution, and Budgets API responses, remain
+named fixtures. Missing exit confirmation still raises the named deadline against
+a real BrowserServer. No physical unkillable-browser, installed-provider, database,
+whole-suite or deliberate host-saturation proof is claimed. The record pins source
+and raw-log hashes, resource limits and repeatable commands.

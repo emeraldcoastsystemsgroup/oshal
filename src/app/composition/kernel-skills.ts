@@ -16,6 +16,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Pin the World package's barrel and four deep world-data imports as the ADR-045 kernel-skill contract.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | ADR-146 D2: pin @/features/fantasy-leagues, the ESPN fantasy read client moved out of sports-edge. No core module imports it, so this re-export is the only thing carrying it into dist for the packages that resolve it at mount.
  * 13 | maintainer@emeraldcoastsystemsgroup.com | ADR-169 L2: pin @/features/location, the location kernel skill. Core routes import it too (the two account-erasure routes), but the package-facing contract must not depend on that: this re-export keeps it in dist for every package that declares uses: location.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com | Pin the anonymous-route validation contract into the runtime build.
  */
 
 /**
@@ -119,6 +120,7 @@ export * as applicationAuthorization from '@/shared/application-authorization';
 export * as authenticatedArtifacts from '@/app/routes/artifact-authenticated-relay';
 export * as packageTools from '@/shared/package-tools';
 export * as packageCallbacks from '@/shared/package-callbacks';
+export * as packageAnonymousRoutes from '@/shared/package-anonymous-routes';
 export * as packageTesting from '@/shared/package-testing';
 export * as appDependencies from '@/shared/app-dependencies';
 export * as specialistContext from '@/shared/specialist-context';

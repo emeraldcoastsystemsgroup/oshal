@@ -4,6 +4,8 @@ Documentation for individual OSHAL applications (the `?app=` bundles) and app mi
 
 ## Building app packages (the app store)
 
+- [package-anonymous-routes.md](./package-anonymous-routes.md) — exact GET/HEAD opt-ins on public
+  mounts under authorization enforce; catalogs and signed callbacks remain protected.
 - [reusable-components.md](./reusable-components.md) — existing tools, renderers,
   themes and integration contracts to compose before writing another implementation.
 - [authoring-app-packages.md](./authoring-app-packages.md) — how to author, validate, and

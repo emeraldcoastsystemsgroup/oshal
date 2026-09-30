@@ -40,6 +40,9 @@ OSHAL pipelines and surfaces. One file per procedure.
 
 ## Build / release / CI
 
+- [pre-push-commit-verification.md](./pre-push-commit-verification.md) — unknown push ranges require committed-HEAD verification; known docs-only optimization, real disposable-Git/compiler guards and shared-hook activation boundary.
+- [javascript-structured-logging.md](./javascript-structured-logging.md) — ADR-171 D1 shared Pino contract, compatibility, bounded source checks and separate exact-image stdout acceptance.
+
 - [pre-deploy-checklist.md](./pre-deploy-checklist.md) — what to check **before and after**
   `scripts/oshal-deploy.sh`: the unpushed/stray checks, the migration traps (filename-keyed ledger;
   a migration that catches its own privilege error is recorded applied and never retries), the

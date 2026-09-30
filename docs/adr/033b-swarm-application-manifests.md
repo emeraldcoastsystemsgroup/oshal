@@ -366,3 +366,10 @@ for (const appManifest of activeApps) {
 - `src/app/server.ts` — conditional route loading
 - `src/features/swarm-orchestration/services/queue-manager-service.ts` — dynamic pipeline registry
 - `src/app/composition/app-context.ts` — add SwarmAppService (optional)
+
+## Current route schema extension
+
+The installed-package schema also supports `routes[].anonymousRoutes`: explicit GET/HEAD
+method/path entries on an already public mount. It is not a mount-wide authentication switch.
+See [the current contract](../apps/package-anonymous-routes.md) and
+[ADR-149's operator amendment](149-enterprise-application-authorization.md).

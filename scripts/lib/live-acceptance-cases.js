@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Register the trading-parity case (live-acceptance-trading-parity.js) for "Queued paper-to-live parity features": read-only, no model turn.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Register the vids-publish case (live-acceptance-vids-publish.js) for "Vids public-publish rail": writes one tagged job, export and publication and removes them, no model turn.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Register the token-chase-replay case (live-acceptance-token-chase-replay.js) for "Workspace-bound checkpoint and tail replay": it starts one tagged file-tools turn on a bot only when no file-tools-only run is captured (a model turn) and removes it, so the card is explicit-only.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Register the create-region-edit case (live-acceptance-create-region-edit.js) for "Create visual workspace and integrated editing": one tagged Create project, one image-provider call (paid only with the host runner's --allow-paid) and one accepted revision, the project removed, so the card is explicit-only.
  */
 
 'use strict';
@@ -27,6 +28,7 @@ const CASES = Object.freeze([
   { module: require('./live-acceptance-trading-parity.js'), backlog: 'Queued paper-to-live parity features', spendsModel: false, writes: false },
   { module: require('./live-acceptance-vids-publish.js'), backlog: 'Vids public-publish rail', spendsModel: false, writes: true },
   { module: require('./live-acceptance-token-chase-replay.js'), backlog: 'Workspace-bound checkpoint and tail replay', spendsModel: true, writes: true },
+  { module: require('./live-acceptance-create-region-edit.js'), backlog: 'Create visual workspace and integrated editing', spendsModel: true, writes: true },
 ]);
 
 /**
