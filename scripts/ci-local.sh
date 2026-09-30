@@ -40,6 +40,7 @@
 # 32 | maintainer@emeraldcoastsystemsgroup.com   | Timeout-bounded export step. The `git archive | tar` export that follows the purge in prepare_head_src and gate_secrets had no timeout of its own, so a hang there held ci-local.lock indefinitely without writing an outcome line. Both now export through export_tree (scripts/ci/ci-export.sh), which runs under a watchdog and logs an export: OK|FAIL line, failing the gate and letting the run reach its outcome line on timeout.
 # 34 | maintainer@emeraldcoastsystemsgroup.com   | gate_ai_usage_ledger (ADR-170 D10) beside repo-separation, against $GATE_SRC: a stale docs/apps/ai-usage-ledger.md or an unrated kernel manifest fails the run.
 # 35 | maintainer@emeraldcoastsystemsgroup.com   | Gate the JavaScript runtime against console/Winston regressions and run the real structured-logging proofs against selected source.
+# 36 | maintainer@emeraldcoastsystemsgroup.com   | Integrate init_run_log and finish_run_log from scripts/ci/ci-run-log.sh to retain per-run logs in ci-runs/<ts>-XXXXXX/full.log.
 # =============================================================================
 #
 # Usage:  bash scripts/ci-local.sh [--scheduled] [--head] [--skip-e2e] [--skip-image] [--install]
@@ -128,7 +129,8 @@ if [ "$K8S_ONLY" = "1" ]; then
   exit $?
 fi
 
-if [ "$SCHEDULED" = "1" ]; then exec >"$RUN_LOG" 2>&1; else : >"$RUN_LOG"; fi
+. "$REPO_DIR/scripts/ci/ci-run-log.sh"
+init_run_log
 
 log() { printf '[%s] %s\n' "$(date +%FT%T)" "$*" | tee -a "$LOG"; }
 
@@ -189,6 +191,7 @@ CLEANED=0
 on_exit() {
   [ "$CLEANED" = "1" ] && return 0
   CLEANED=1
+  finish_run_log
   docker rm -f "$SMOKE" oshal-ci-trivy >/dev/null 2>&1 || true
   [ "$DS_UP" = "1" ] && docker rm -f "$E2E_PG" "$E2E_REDIS" >/dev/null 2>&1
   docker network rm "$CI_NET" >/dev/null 2>&1 || true
