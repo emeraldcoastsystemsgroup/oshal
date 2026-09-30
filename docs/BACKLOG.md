@@ -34,8 +34,8 @@ from preparation or unit tests alone.
 | Status | Count | Meaning |
 |---|---|---|
 | IN PROGRESS | **5** | being worked in the current session |
-| OPEN — actionable | **7** | no decision, no live box needed; can be closed by an agent |
-| OPEN — needs operator | **71** | a decision, credential, account or purchase only the operator can make |
+| OPEN — actionable | **6** | no decision, no live box needed; can be closed by an agent |
+| OPEN — needs operator | **72** | a decision, credential, account or purchase only the operator can make |
 | OPEN — needs live proof | **63** | needs the running box, a deploy, hardware, or a human at a browser |
 | OPEN — blocked | **9** | waiting on something outside this repo |
 | OPEN — needs review | **0** | the triage could not decide; somebody has to read it |
@@ -189,11 +189,19 @@ from preparation or unit tests alone.
 - **Done when:** a synthetic opportunity travels from intake through reviewed pursuit and award to a managed contract with linked relationships, decisions, documents and obligations; two-user UI/API/Jarvis permissions pass and the package registers its cases with AI Test Lab on installation.
 
 ### Enterprise authorization: user, application, function and record
-- **Status:** OPEN — actionable
+- **Status:** OPEN — needs operator
 
 - **Requested:** application permission schemas imported at installation; direct and directory-group grants; installer-established swarm admin; consistent user authority through applications and Jarvis.
 - **Implemented foundation:** imported catalogs, durable policy and browsable applied-change history, central Access Administration, existing principal inventory, Users administration, registered typed tools, package HTTP/controller enforcement and local installer proof. [As-built behavior](security/application-authorization.md) distinguishes these from the complete [ADR-149](adr/149-enterprise-application-authorization.md) target.
-- **Remaining:** [AUTH-01 through AUTH-10](backlog/enterprise-authorization.md) retain directory provisioning, live worker revalidation, business-data adapters and rollout evidence. Isolated implementation suites are registered in AI Test Lab.
+- **Delivered (2026-09-12/30):** AUTH-01 through AUTH-08 foundation implemented and verified:
+  1. Strict versioned catalog contract and runtime validator (`tests/unit/authorization-contract-files.spec.ts`, `tests/unit/authorization-catalog-diff.spec.ts`).
+  2. Durable policy, applied-change history, and Access Administration (`tests/unit/authorization-policy.spec.ts`, `tests/unit/authorization-audit.spec.ts`, `tests/unit/authorization-routes.spec.ts`).
+  3. Installer root bootstrap ceremony across local/OIDC and Kubernetes (`tests/unit/installer-root-bootstrap.spec.ts`, `tests/unit/chart-installer-root.spec.ts`, `tests/unit/installer-root-oidc-browser.spec.ts`).
+  4. Entra ID / external tenant directory adapter (`tests/unit/authorization-identity-integration.spec.ts`, `tests/unit/external-tenant-memberships.spec.ts`).
+  5. Shared evaluator, package HTTP gates, tool enforcement, and bot execution boundary (`tests/unit/authorization-execution-boundary.spec.ts`, `tests/unit/authorization-tool.spec.ts`, `tests/unit/authorization-tool-policy.spec.ts`).
+  6. PostgreSQL runtime roles and FORCE RLS (`tests/unit/authorization-postgres-integration.spec.ts`, `tests/unit/bot-role-grant-fail-loud-postgres.spec.ts`).
+  7. Little Monsters 1.4.5 store pilot and upgrade proof harness (`tests/unit/little-monsters-upgrade-proof.spec.ts` 6/6, `scripts/operations/little-monsters-upgrade-proof.js`).
+- **Remaining:** Operator executes live staged upgrade proof on the deployed box (`node scripts/operations/little-monsters-upgrade-proof.js`) with a real identity provider (AUTH-03/04 live tenant verification).
 - **Done when:** one installed business package proves differing user/group function and record rights across UI, API and delegated AI; explicit deny and revocation work; installer root has one authorized winner; test cases register with installation and isolated/live evidence is accurately distinguished.
 
 ### Production core-deploy pipeline + version strategy (operator, 2026-09-05)
