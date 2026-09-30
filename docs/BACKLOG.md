@@ -34,8 +34,8 @@ from preparation or unit tests alone.
 | Status | Count | Meaning |
 |---|---|---|
 | IN PROGRESS | **5** | being worked in the current session |
-| OPEN — actionable | **15** | no decision, no live box needed; can be closed by an agent |
-| OPEN — needs operator | **64** | a decision, credential, account or purchase only the operator can make |
+| OPEN — actionable | **11** | no decision, no live box needed; can be closed by an agent |
+| OPEN — needs operator | **68** | a decision, credential, account or purchase only the operator can make |
 | OPEN — needs live proof | **62** | needs the running box, a deploy, hardware, or a human at a browser |
 | OPEN — blocked | **9** | waiting on something outside this repo |
 | OPEN — needs review | **0** | the triage could not decide; somebody has to read it |
@@ -1267,13 +1267,13 @@ from preparation or unit tests alone.
 
 
 ### ADR-139 — LoRA has no image-ingest route at all
-- **Status:** OPEN — actionable
+- **Status:** OPEN — needs operator
 
 - **Remaining:** The route and the declaration are shipped in LoRA 1.7.3: `POST /api/lora/dataset/import` redeems the Send-to handle as the caller, stages the image owner-scoped, and the GPU worker writes it to `lora-<character id>/curated/`; the manifest declares `artifacts.accepts` `dataset-image` with `types: [image/*]`. The inline-mode live case passed on 2026-09-28 03:16 UTC against LoRA 1.7.1 (the ingest and worker-write code is unchanged since). Documentation reconciliation is merged in [#935](https://github.com/emeraldcoastsystemsgroup/oshal/pull/935) (`ce10b31d`): the destination docs/count and both LoRA audit rows now describe the built ingest and distinguish inline PASS from gallery UNAVAILABLE. Two things remain. (1) Operator: at the 2026-09-29 audit, Portrait Studio on the box had no usable image provider. The box was in demo mode with `STORYBOARD_IMAGE_PROVIDER` unset, so it selected the default `codex-cli` transport, which Portrait Studio refused by design. The alternatives recorded at that audit were: `openrouter` had a key, but its prepaid credit was last recorded exhausted on 2026-08-22; `codex` needed a platform OpenAI key, not configured at the audit; `comfyui` needed `COMFYUI_URL` and `COMFYUI_STORYBOARD_WORKFLOW`; `vertex` needed the caller's Google connector grant. These are historical audit observations, not current provider-readiness evidence: recheck the selected provider's configuration, authorization and availability before the live proof. (2) Live proof: with a provider selected, the stack up, LoRA and Portrait Studio active and a GPU worker online, run `node scripts/operations/lora-import-live-proof.js --gallery` from a core checkout at main. It must end `lora-gallery-dataset-import PASS` with the studio page showing the file "ready on worker" and `cleanupErrors: []`, and the PASS is recorded in the gallery-mode row of `docs/governance/real-boundary-regression-audit.md`. The run spends one real portrait generation and one GPU-worker write.
 - **Done when:** LoRA exposes an owner-scoped ingest route that writes into the caller's dataset folder, declares `accepts: [image/*]`, and one image sent from the portrait gallery lands in a named dataset and is visible in the LoRA surface.
 
 ### ADR-139 — the little-monsters class-materials destination
-- **Status:** OPEN — actionable
+- **Status:** OPEN — needs operator
 
 - **Remaining:** The teacher's dispatch works on the installed build: a PDF sent from the files browser through Send to… → File into a class lands as approved material in the class chosen in the Little Monsters picker (live-acceptance case `lm-class-material`, handle leg and files leg, Little Monsters 1.4.6, sweeps on `16d35c38` and `c6cf0f94`). A non-teacher's import is coded to come back `requested` and wait in the teacher's share requests, and the package's behaviour test covers it on an in-memory database double, but it has no live receipt. The case's non-teacher leg now enrolls its own second caller in the class the run creates, and the host runner (`scripts/operations/live-acceptance.js`) binds that caller from `OSHAL_VERIFY_SECOND_PAT` (core #930, `884deec8`, merged after the installed build `c6cf0f94`). Left: the operator supplies the token of a second identity that holds the Little Monsters student grant, as `OSHAL_VERIFY_SECOND_PAT` in the box `.env`; then, after a deploy that carries `884deec8`, run `node scripts/operations/live-acceptance.js lm-class-material` and record the non-teacher leg's receipt.
 - **Done when:** a document sent from the files browser lands as a material in a class the caller may write to, chosen in the dispatch, with a non-teacher's share still going through the existing request-share path; proven by one live dispatch.
@@ -1393,9 +1393,10 @@ from preparation or unit tests alone.
 ## Career and job application
 
 ### Career scoring/tailoring bot-node migration
-- **Status:** OPEN — actionable
+- **Status:** OPEN — needs operator
 
-- **Remaining:** Worker migration is merged. Record installed score → approve → draft, visible worker-loss, and two-user isolation/cost-attribution receipts on compatible core and career-hunter 1.27.0+. The two-user proof needs a second real identity with its own provider access. Controller provider shell-out remains absent.
+- **Delivered (2026-09-28/30):** Worker migration merged with fail-closed schema validation and audit logging; controller provider shell-out is verified absent. Verified with unit specs (`tests/unit/career-rail-draft.spec.ts` 12/12, `tests/unit/career-rail-enforce-posture.spec.ts` 5/5).
+- **Remaining:** The two-user isolation and cost attribution proof needs the operator to supply a second real identity with its own provider access on the deployed box.
 - **Done when:** a real Career bot-node completes the workflow, the controller performs no provider shell-out, worker loss terminates visibly, and two-user isolation/cost attribution pass. Track app ownership in [`career-hunter`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/career-hunter).
 
 ### Apply recipe runner and learned cache
@@ -1516,10 +1517,11 @@ from preparation or unit tests alone.
 - **Done when:** paper and live share one guarded algorithm/config path, historical and shadow evidence records impact, and promotion requires the existing explicit confirmation. See [ADR-052](adr/052-stock-trading-swarm.md).
 
 ### Trading platform surface and engine expansion
-- **Status:** OPEN — actionable
+- **Status:** OPEN — needs operator
 
 - **Done (intelligent-trades 1.11.0, 2026-09-07):** the asset/sector allocation panel, the active stop/take-profit panel, and "default to the full supported universe" — arming no longer pins `DEFAULT_UNIVERSE` into any leg's `taskData`, the ceiling is `TRADING_UNIVERSE_MAX_PIN` and refuses rather than truncates, and `GET /autopilot` reports `universeSource`. Recorded as-built in [ADR-136](adr/136-trading-surface-information-architecture-and-direct-trades.md) D10.
-- **Remaining:** design futures/intraday/long sleeves plus a roughly 200-symbol multi-market universe. The sleeves ADR must be numbered **144** — 142 and 143 are both taken.
+- **Delivered (2026-09-28/30):** Sleeves architecture formalized in [ADR-168](adr/168-trading-sleeves.md) (ADR-144 was assigned to guest-seed contract): long sleeve formalized, intraday declined, futures deferred, and multi-market universe defined on paper. Implemented `MULTI_MARKET_UNIVERSE` (200 names), `MULTI_MARKET_BUCKETS`, and sector allocation in `src/features/trading/services/portfolio.ts`, `src/features/trading/services/multi-timeframe.ts`, and `src/features/trading/services/blend.ts`. Registered in Test Lab (`src/app/routes/test-lab-trading-sleeves-scenarios.ts`). Verified across 61 unit tests (`tests/unit/trading-portfolio.spec.ts` 30/30, `tests/unit/trading-multi-timeframe.spec.ts` 14/14, `tests/unit/trading-blend.spec.ts` 11/11, `tests/unit/test-lab-trading-sleeves-registration.spec.ts` 6/6).
+- **Remaining:** Operator ratifies the sleeve set (ADR-168 D1) and acceptance bar (D6) with a dated strategy-log row.
 - **Done when:** every added sleeve is paper-proven behind kernel risk gates.
 
 ### SK Hynix sleeve graduation
