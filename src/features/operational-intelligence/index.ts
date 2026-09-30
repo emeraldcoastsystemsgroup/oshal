@@ -11,9 +11,15 @@
 export * from './services';
 export {
   aggregateFeatureTokenEvidence,
+  readOwnFeatureTokenEvidence,
+  MAX_FEATURE_TOKEN_EVIDENCE_ROWS,
+  FeatureTokenEvidenceOverflowError,
+  FeatureTokenEvidenceInputError,
   type FeatureTokenEvidence, type StoredFeatureTokenEvidence, type FeatureTokenEvidenceRow,
   type FeatureTokenEvidenceScope, type FeatureTokenProfile, type FeatureTokenReport,
-} from './services/feature-token-evidence';
+  type ReadFeatureTokenEvidenceInput, type FeatureTokenEvidenceReadResult,
+  type FeatureTokenEvidenceQueryable,
+} from './services';
 export {
   queryEvalRuns,
   computeGreenWall,

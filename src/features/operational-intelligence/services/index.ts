@@ -58,5 +58,23 @@ export {
   type RemediationAction,
   type HealingResult,
 } from './self-healing-pipeline';
+export {
+  aggregateFeatureTokenEvidence,
+  type FeatureTokenEvidence,
+  type StoredFeatureTokenEvidence,
+  type FeatureTokenEvidenceRow,
+  type FeatureTokenEvidenceScope,
+  type FeatureTokenProfile,
+  type FeatureTokenReport,
+} from './feature-token-evidence';
+export {
+  readOwnFeatureTokenEvidence,
+  MAX_FEATURE_TOKEN_EVIDENCE_ROWS,
+  FeatureTokenEvidenceOverflowError,
+  FeatureTokenEvidenceInputError,
+  type ReadFeatureTokenEvidenceInput,
+  type FeatureTokenEvidenceReadResult,
+  type FeatureTokenEvidenceQueryable,
+} from './feature-token-evidence-reader';
 // The legacy monitoring-platform funnel snapshotter was archived —
 // that product integration is retired and not in use.
