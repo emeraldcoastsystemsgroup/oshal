@@ -20,10 +20,14 @@ const ROWS = [
 
 function world(options: { rows?: unknown[]; preexisting?: string[]; deleteWorks?: boolean; over?: Record<string, FakeHandler> } = {}) {
   const watchlist = new Set(options.preexisting ?? []);
+  const rows = (options.rows ?? ROWS) as Array<{ symbol: string; disclosureDate: string; observedAt: string; source: string }>;
   return fakeApi({
     'POST /api/test-lab/run': () => ({ status: 200, json: { results: [{ id: 'congress-disclosures', steps: [{ state: 'pass', detail: 'Live: 2 name(s)' }] }] } }),
-    'GET /api/trading/reports/congress': () => ({ status: 200, json: { status: 'ok', source: 'quiver-congress', windowDays: 90, rows: options.rows ?? ROWS } }),
-    'GET /api/trading/watchlist': () => ({ status: 200, json: { items: [...watchlist].map((symbol) => ({ symbol, congress: null })) } }),
+    'GET /api/trading/reports/congress': () => ({ status: 200, json: { status: 'ok', source: 'quiver-congress', windowDays: 90, rows } }),
+    'GET /api/trading/watchlist': () => ({ status: 200, json: { items: [...watchlist].map((symbol) => {
+      const feed = rows.find((r) => r && r.symbol === symbol && r.source === 'quiver-congress' && r.observedAt);
+      return { symbol, congress: feed ? { disclosureDate: feed.disclosureDate, observedAt: feed.observedAt, source: feed.source } : null };
+    }) } }),
     'POST /api/trading/watchlist': ({ body }) => { const symbol = (body as { symbol: string }).symbol; watchlist.add(symbol); return { status: 201, json: { item: { symbol } } }; },
     'DELETE /api/trading/watchlist/:symbol': ({ params }) => {
       const had = watchlist.has(params.symbol);
@@ -40,9 +44,10 @@ describe('congressional disclosures live acceptance', () => {
     const result = await congress.run({ api: api.api }, { symbol: SYMBOL });
     expect(result.state).toBe('pass');
     expect(result.detail).toContain('2 dated disclosure row(s); newest disclosure 2026-09-25, last observed 2026-09-28T12:00:04.000Z');
-    const add = api.calls.find((c) => c.method === 'POST' && c.path === '/api/trading/watchlist')!;
-    expect(add.body).toEqual({ symbol: SYMBOL });
-    expect(result.cleanup.removed).toEqual([`watchlist-symbol ${SYMBOL}`]);
+    expect(result.detail).toContain('Feed symbol NVDA added; watchlist row carries disclosure day 2026-09-25; deleted cleanly');
+    const adds = api.calls.filter((c) => c.method === 'POST' && c.path === '/api/trading/watchlist');
+    expect(adds.map((c) => c.body)).toEqual([{ symbol: SYMBOL }, { symbol: 'NVDA' }]);
+    expect(result.cleanup.removed).toEqual([`watchlist-symbol ${SYMBOL}`, 'watchlist-symbol NVDA']);
     expect(result.cleanup.outstanding).toEqual([]);
   });
 
@@ -78,10 +83,49 @@ describe('congressional disclosures live acceptance', () => {
     expect(api.calls.some((c) => c.path.startsWith('/api/trading/watchlist'))).toBe(false);
   });
 
-  it('only ever writes a ZZT-XXXXX synthetic ticker', async () => {
+  it('only ever writes a ZZT-XXXXX synthetic ticker in watchlistStep', async () => {
     for (let i = 0; i < 50; i += 1) expect(congress.syntheticSymbol()).toMatch(/^ZZT-[A-Z]{5}$/);
     const api = world();
     await expect(congress.watchlistStep({ api: api.api }, 'NVDA', { created() {}, removed() {}, error() {} })).rejects.toThrow('non-synthetic');
     expect(api.calls).toEqual([]);
+  });
+
+  it('skips adding a feed symbol if all disclosure candidates are already on the watchlist', async () => {
+    const api = world({ preexisting: ['NVDA', 'MSFT'] });
+    const result = await congress.run({ api: api.api }, { symbol: SYMBOL });
+    expect(result.state).toBe('pass');
+    expect(result.detail).toContain('every feed disclosure symbol is already on the watchlist; existing entries kept untouched');
+    const adds = api.calls.filter((c) => c.method === 'POST' && c.path === '/api/trading/watchlist');
+    expect(adds.map((c) => c.body)).toEqual([{ symbol: SYMBOL }]);
+    expect(result.cleanup.removed).toEqual([`watchlist-symbol ${SYMBOL}`]);
+  });
+
+  it('fails if feed symbol on watchlist does not carry matching disclosure day', async () => {
+    const watchlist = new Set<string>();
+    const api = world({
+      over: {
+        'GET /api/trading/watchlist': () => ({
+          status: 200,
+          json: {
+            items: [...watchlist].map((symbol) => ({
+              symbol,
+              congress: symbol === 'NVDA' ? { disclosureDate: '2026-01-01', observedAt: '2026-09-28T12:00:04.000Z', source: 'quiver-congress' } : null,
+            })),
+          },
+        }),
+        'POST /api/trading/watchlist': ({ body }) => {
+          const symbol = (body as { symbol: string }).symbol;
+          watchlist.add(symbol);
+          return { status: 201, json: { item: { symbol } } };
+        },
+        'DELETE /api/trading/watchlist/:symbol': ({ params }) => {
+          watchlist.delete(params.symbol);
+          return { status: 200, json: { deleted: true, symbol: params.symbol } };
+        },
+      },
+    });
+    const result = await congress.run({ api: api.api }, { symbol: SYMBOL });
+    expect(result.state).toBe('fail');
+    expect(result.detail).toContain('observed congress disclosure day: 2026-01-01');
   });
 });

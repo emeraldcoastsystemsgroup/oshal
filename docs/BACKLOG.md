@@ -34,8 +34,8 @@ from preparation or unit tests alone.
 | Status | Count | Meaning |
 |---|---|---|
 | IN PROGRESS | **5** | being worked in the current session |
-| OPEN — actionable | **24** | no decision, no live box needed; can be closed by an agent |
-| OPEN — needs operator | **58** | a decision, credential, account or purchase only the operator can make |
+| OPEN — actionable | **23** | no decision, no live box needed; can be closed by an agent |
+| OPEN — needs operator | **59** | a decision, credential, account or purchase only the operator can make |
 | OPEN — needs live proof | **62** | needs the running box, a deploy, hardware, or a human at a browser |
 | OPEN — blocked | **9** | waiting on something outside this repo |
 | OPEN — needs review | **0** | the triage could not decide; somebody has to read it |
@@ -1511,12 +1511,12 @@ from preparation or unit tests alone.
 ## Trading and market systems
 
 ### Political-trades (STOCK Act) signal has never run on this box
-- **Status:** OPEN — actionable
+- **Status:** OPEN — needs operator · live acceptance extended with feed-symbol verification; awaits operator Quiver token and live depth fire
 
 - **Found 2026-09-09:** [`political-trades.ts`](../src/features/world-data/political-trades.ts) is built - it pulls live congressional disclosures and aggregates `congress_buys/sells/net/sentiment/notional` per ticker into `world_metrics` - but **no `world_*` table exists in this database**, so the collector has never executed here and there is no disclosure data to read. The operator explicitly wants congressional holdings in the watchlist, and inventing that list from model memory instead of the feed is exactly the fabrication this repo forbids on money-adjacent surfaces.
 - **Remaining:** The collector, the recorded `observed_at`, the feed-only `congress_*` namespace guard, the Trading disclosure list (`GET /api/trading/reports/congress`) and the watchlist Congress column are merged and installed. The depth fire reaches the collector, but the default feed (Quiver `beta/live/congresstrading`) answers HTTP 401 without a credential and `WORLD_POLITICAL_TOKEN` is empty on the box. No `congress_*` row carries `observed_at`, and the disclosure list is empty.
   - **Operator:** put a Quiver Quantitative API token, from an account registered under the business email, in the box `.env` as `WORLD_POLITICAL_TOKEN`.
-  - **Agent:** extend the live acceptance case `congress` (`scripts/lib/live-acceptance-congress.js`) so it proves that the watchlist row of a name the feed reported carries that name's disclosure day. Its Add step writes only a synthetic `ZZT-` ticker, which can never have a feed signal, and no step reads `congress.disclosureDate` from `GET /api/trading/watchlist`. The only non-synthetic name the case may add or remove is one the disclosure list returned in the same run and that was absent from the watchlist before it.
+  - **Agent (completed 2026-09-30):** extended the live acceptance case `congress` (`scripts/lib/live-acceptance-congress.js`) and unit suite (`tests/unit/live-acceptance-congress.spec.ts`) so it proves that the watchlist row of a name the feed reported carries that name's disclosure day. The only non-synthetic name the case may add or remove is one the disclosure list returned in the same run and that was absent from the watchlist before it.
   - **Live proof, after the token is set:** recreate the api so the setting reaches it (`scripts/oshal-deploy.sh` on a running stack, `scripts/oshal-up.sh` from a stopped one), wait for the next depth fire (00:00, 06:00, 12:00 or 18:00 UTC; `app:` schedules cannot be fired by hand), confirm "political trades collected" with `feed: "ok"` and `tickers > 0`, confirm the five `congress_*` metrics carry `max(observed_at)` after the fire, then `node scripts/operations/live-acceptance.js congress` passes. A "congress trades feed refused" or "congress trades fetch failed" line means nothing was written and is a failure of this entry.
   - The STOCK Act carries a disclosure lag of about 45 days, so this is a slow positioning signal, not a next-day catalyst.
 - **Done when:** `world_metrics` carries `congress_*` rows with a recorded `observed_at`, the watchlist can be populated from that feed with the disclosure date shown beside each name, and no congressional holding is ever written from anything but the feed.
