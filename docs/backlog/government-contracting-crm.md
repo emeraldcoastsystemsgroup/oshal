@@ -85,8 +85,12 @@ lineage are retained; general rescheduling and deletion/undo are not part of thi
   Intake and no-bid histories without canonical linkage remain visibly unavailable for task
   conversion; their broader linkage and conversion workflow remains open. No historical date
   becomes a current task automatically.
-- Add the unified view of upcoming decisions, deadlines and contract obligations; the linked
-  tasks in Activities and Calendar do not complete that dashboard.
+- The unified view of upcoming decisions, deadlines and contract obligations is implemented
+  in source (`capture-crm` 3.2.6, commit `5f9c256` in `oshal-app-private`). It exposes
+  authorized upcoming decisions, upcoming/overdue deadlines, active contract obligations
+  (deliverables, milestones, compliance), and missing evidence gates over `/dashboard/obligations`,
+  `/dashboard/unified`, and enriched `/summary`, proven by unit suite `tests/dashboard-obligations.test.js`
+  (Test Lab case `federal-dashboard-obligations`).
 - Enable background email filing only with exact workspace and principal scheduling; it remains
   disabled for this application.
 - Scope additional source adapters and mappings separately. Financial posting, external

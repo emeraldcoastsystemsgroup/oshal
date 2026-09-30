@@ -54,6 +54,10 @@ packaged as {connectors + provider CLIs + bot(s) + a cockpit surface}.
   single key can decrypt every user's data.
 - **Process → product in minutes.** The packer turns a whole business process into one
   self-contained, governed bot with its own approval-gated ticket queue.
+- **Declarative connectors as instant bot tools.** Adding an external integration is a
+  document specification, not hand-coded client software. A single `connector.yaml` generates
+  a hardened client (rate-limiting, retries, 401 refresh) and immediately exposes safe,
+  schema-validated tools for AI swarm agents without baking secrets into manifests.
 - **Human-in-the-loop where it matters.** Nothing posts, sends, or changes production
   without an explicit human approval click.
 

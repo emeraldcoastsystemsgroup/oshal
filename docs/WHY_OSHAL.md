@@ -46,6 +46,7 @@ census with an n on every row is in
 | **Type-checked harness extension** | Yes — `Record<HarnessType, …>`, missing factory = TS error | n/a | n/a | n/a |
 | **Working real-world incident RCA out of the box** | Yes — the `incident` ticket type ships with persona + corpus + tests | No — bring your own | No — bring your own | No — bring your own |
 | **Per-call cost tracking with vendor attribution** | Yes — `chat_tasks.total_cost` keyed by `agent_id` | partial — through callbacks | No — operator builds it | No — operator builds it |
+| **Declarative connector-to-agent tooling** | Yes — YAML spec auto-generates client + safety-gated bot tools (ADR-065/067) | No — hand-coded tools | No — hand-coded Python tools | No — hand-coded Python tools |
 | **Live cockpit UI** | Yes — ticket workbench, RCA tab, queue dashboard | No | No | No |
 | **OSS license** | **AGPL-3.0-or-later** (copyleft) | MIT | MIT | CC-BY-4.0 (docs) + MIT (code) |
 | **Stack** | TypeScript + Docker | Python | Python | Python |
@@ -117,6 +118,22 @@ against different LLMs and read/write the same workspace.
 **What that means:** an operator can submit a ticket about a container or database OOM and get back a real RCA with corpus citations, an executable diagnose.sh / remediate.sh / rollback.sh, and a copy-paste-ready escalation packet. Today.
 
 **Why this matters:** most frameworks are a toolkit — you build the vertical yourself. OSHAL ships with a production-shaped incident vertical, and the pattern (persona + manifest + corpus seeder) is reusable for any other vertical.
+
+---
+
+## Differentiator #4 — Declarative connector spec & dynamic agent tooling
+
+**Claim:** Adding an integration is a throughput problem, not an architecture problem: a declarative YAML spec automatically generates a hardened client and safe, schema-validated bot tools without writing custom networking code.
+
+**Code-level proof:**
+
+- [`buildClientFromSpec`](../src/app/connectors/runtime/spec.ts) — turns declarative `connector.yaml` into a working client with per-resource call delegates and AI bot tools at startup.
+- [`ConnectorClient`](../src/app/connectors/runtime/connector-client.ts) — shared runtime handling token-bucket rate-limiting, exponential backoff with jitter, refresh-on-401, error normalization (`ConnectorError`), and multi-strategy pagination (cursor, offset, Link-header).
+- [`spec-tools.ts`](../src/app/connectors/runtime/spec-tools.ts) — registers spec resources directly as scoped runtime bot tools with action safety hints (`read`, `write`, `destructive`) and confirmation gates.
+- **Zero secrets in specs**: auth shapes are declared in YAML, while credentials are dynamically injected at runtime via the ticketed data-access broker ([ADR-056](adr/056-ticketed-data-access-broker.md)) backed by Postgres RLS.
+- [`openapi-import.ts`](../src/app/connectors/runtime/openapi-import.ts) — automated bulk conversion from public OpenAPI/Swagger specs to `connector.yaml`, turning integration catalog expansion into a pure ingestion pipeline.
+
+**Why nobody else has this:** General agent frameworks (LangGraph, CrewAI, AutoGen) require developers to hand-code tool functions in Python and manage their own HTTP retry/rate-limit logic. Traditional workflow platforms (Zapier, n8n) have connector libraries, but they run in hosted or separate graph environments rather than serving as broker-authenticated, safety-gated function tools natively executable by local swarms.
 
 ---
 
