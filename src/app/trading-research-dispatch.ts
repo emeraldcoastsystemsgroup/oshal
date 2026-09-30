@@ -25,6 +25,8 @@
  *
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 reaches the research/fast brain. This dispatcher closes any `held` quantity the analyst calls a sell and honoured NEITHER the unmanaged mark NOR TRADING_CORE_SYMBOLS, so it sat outside the closure PR #486 drove through dispatchTradingSchedule/runAutopilot — a separate ScheduleService branch reading the same book. Two gates, both of which can only REMOVE a decision: (a) positions run through withEngineCostBasis once per fire and the sell branch of analyzeSymbol withholds for a long the ledger cannot account for; (b) the universe drops TRADING_CORE_SYMBOLS names before news is even fetched, which matters concretely because SKHY — ring-fenced as SKHY:0 — is in DEFAULT_UNIVERSE and this leg was free to trade it on a headline. The withhold is in the sell branch and NOT on `held`: `held` is also the buy branch's "already holding" guard, so clearing a withheld name from it would invert a refusal-to-sell into a buy.
  *
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Volatility-normalized entry sizing (trading-advisor.md item 3): compute and pass recentVolPct into sizeEntry so research/news-driven entries are downsized for high-volatility names rather than entering at full scale (volScale = 1).
+ *
  * @module trading-research-dispatch
  */
 
@@ -32,7 +34,7 @@ import type { AppContext } from './composition-root';
 import type { ScheduleRecord, ScheduleDispatchResult } from '@/features/scheduling';
 import {
   getBrokerAdapter, marketDataConfigured, tradableSession, recentNews, fundamentalsSummary,
-  latestPrice, riskPolicy, sizeEntry, DEFAULT_UNIVERSE, unmanagedSymbols,
+  latestPrice, recentVolPct, riskPolicy, sizeEntry, DEFAULT_UNIVERSE, unmanagedSymbols,
   type Position, type BrokerAccount, type TradingMode, type NewsItem,
 } from '@/features/trading';
 import { analyzeAndRecordDecision, placeDecisionOrder, ensureTradingSchema, type SignalRow } from './trading-engine';
@@ -126,7 +128,8 @@ async function analyzeSymbol(
     // (every 2 min) can't pyramid the same name across fires until they all fill at the open.
     if (inFlight.has(decision.symbol.toUpperCase())) return { symbol, action: 'buy', placed: false, note: 'working order in flight' };
     const price = (await latestPrice(decision.symbol)) ?? 0;
-    const sized = sizeEntry(decision.symbol, price, decision.confidence, account, positions, policy);
+    const volPct = await recentVolPct(decision.symbol);
+    const sized = sizeEntry(decision.symbol, price, decision.confidence, account, positions, policy, volPct);
     // Extended-hours size-down — news trades fire in thin pre/post; halve so a gap can't outsize the book.
     const extMult = extHours ? Number(process.env.TRADING_EXT_SIZE_MULT || 0.5) : 1;
     const qty = Math.floor(sized.qty * extMult);

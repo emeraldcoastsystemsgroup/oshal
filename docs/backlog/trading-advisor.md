@@ -51,6 +51,12 @@ Source of truth for the signal/money layers:
    the downside-risk normalization. **Fix:** compute and pass `volPct` in the research/fast path too
    (extract the vol calc into a shared helper).
 
+   **CLOSED 2026-09-30 — extracted shared `calculateRealizedVol` and `recentVolPct` in `@/features/trading` and wired into `trading-research-dispatch.ts`.**
+   - *Shared helpers:* `calculateRealizedVol(closes)` and `recentVolPct(symbol)` implemented in [`market-data.ts`](../../src/features/trading/services/market-data.ts) and exported from `@/features/trading`.
+   - *Autopilot:* [`trading-dispatch-exits-entries.ts`](../../src/app/trading-dispatch-exits-entries.ts) now imports the shared helper.
+   - *Research leg:* [`trading-research-dispatch.ts:131`](../../src/app/trading-research-dispatch.ts#L131) now fetches `await recentVolPct(decision.symbol)` and passes `volPct` to `sizeEntry`, ensuring news entries scale down proportionally for high-volatility names rather than entering at full scale.
+   - *Unit tests:* [`tests/unit/trading-vol-sizing.spec.ts`](../../tests/unit/trading-vol-sizing.spec.ts) (11/11 PASS) verifies calculation accuracy, fail-soft behavior, downscaling proportions, and the 25% floor.
+
 4. **The deployed posture is the worst performer in the only backtest we have.** Per
    [apps/trading/advisor.md](../apps/trading/advisor.md), the recent-window backtest: balanced +10.5%, aggressive
    +19.7%, **`active` (the deployed default) +5.6%** vs SPY +8.2% — i.e. the live posture *underperforms
