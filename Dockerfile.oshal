@@ -87,7 +87,7 @@
 # =============================================================================
 
 FROM debian:bookworm-slim AS antigravity-cli
-ARG TARGETARCH
+ARG TARGETARCH=amd64
 ARG AGY_VERSION=1.2.8
 ARG AGY_AMD64_URL=https://storage.googleapis.com/antigravity-public/antigravity-cli/1.2.8-4907747922280448/linux-x64/cli_linux_x64.tar.gz
 ARG AGY_AMD64_SHA512=28d0f8661316850d1e1ff541dc5f7727e5df6ea9f2d28a0c9b5567aa638a778b21d9229123c65ee5b5c646d4390b589245b1fdc0004e98f0cd1774aa38147762
@@ -96,10 +96,11 @@ ARG AGY_ARM64_SHA512=4a26e6cb40f68995d3a556a5141eb66b1de23fa1a8a6476e0a2e6976ab1
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates curl libgcc-s1 libstdc++6 && \
     rm -rf /var/lib/apt/lists/* && \
-    case "$TARGETARCH" in \
+    arch="${TARGETARCH:-amd64}" && \
+    case "$arch" in \
       amd64) agy_url="$AGY_AMD64_URL"; agy_sha="$AGY_AMD64_SHA512"; triplet=x86_64-linux-gnu; loader=/lib64/ld-linux-x86-64.so.2 ;; \
       arm64) agy_url="$AGY_ARM64_URL"; agy_sha="$AGY_ARM64_SHA512"; triplet=aarch64-linux-gnu; loader=/lib/ld-linux-aarch64.so.1 ;; \
-      *) echo "Unsupported Antigravity target architecture: $TARGETARCH" >&2; exit 1 ;; \
+      *) echo "Unsupported Antigravity target architecture: $arch" >&2; exit 1 ;; \
     esac && \
     curl -fsSL "$agy_url" -o /tmp/agy.tar.gz && \
     echo "$agy_sha  /tmp/agy.tar.gz" | sha512sum -c - && \
