@@ -855,8 +855,9 @@ provider-response and transactional SQL doubles. The SmartThings companion exerc
 loopback provider protocol, not a real account. Held checkout/query/commit regressions cover
 HTTP identity changes and consent expiry: pre-commit invalidation rolls back; post-commit
 invalidation suppresses metadata without claiming to undo the commit. The dedicated
-PostgreSQL companions prove the
-storage boundary only when executed with a real owned enforcing-role fixture. The card does
+PostgreSQL companions passed 35/35 in real owned enforcing-role fixtures on 2026-09-30;
+their [exact-source record](backlog/qualified-connector-postgres-proof.md) does not
+turn the installed card into a storage-boundary acceptance test. The card does
 not create a grant, arm a location rule or enable device actions. Utilities' separate qualified
 panel has actual-JavaScript tests with named DOM/fetch doubles and a real Chromium companion
 serving the shipped page over loopback. The latter proves frame-policy/top-navigation and

@@ -22,6 +22,7 @@ relevant ADR or feature documentation, release notes, and git history.
 - [hardening.md](./hardening.md) — security hardening backlog.
 - [qualified-connector-credentials.md](./qualified-connector-credentials.md) — fresh issuer-and-subject-bound credential namespace, exact-owner broker and the required real PostgreSQL upgrade/RLS evidence; never adopts legacy grants.
 - [qualified-connector-grants.md](./qualified-connector-grants.md) — fresh personal grant lifecycle, revision-bound reconnect/revoke and remaining installed consent/console proof.
+- [qualified-connector-postgres-proof.md](./qualified-connector-postgres-proof.md) — actual credential, grant and broker PostgreSQL results, exact source/transport provenance and remaining installed-provider boundaries.
 - [artifact-exchange-continuation.md](./artifact-exchange-continuation.md) — ADR-139 "Send to…": what
   shipped, what was half-landed at handover (both halves since merged and deployed), how to continue
   the rollout, and three recurrence risks the rollout exposed (hardcoded codex model default, no

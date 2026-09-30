@@ -94,7 +94,7 @@ foreign/missing refusal, revoked/expired metadata, snapshotting and safe errors.
 Authorized focused command (one 384 MiB worker, 128 MiB runner):
 
 ```sh
-node --max-old-space-size=128 node_modules/vitest/vitest.mjs run --config vitest.config.ts --pool=forks --maxWorkers=1 --no-file-parallelism --execArgv=--max-old-space-size=384 --testTimeout=15000 --hookTimeout=15000 tests/unit/connector-qualified-grants.spec.ts
+NODE_OPTIONS=--max-old-space-size=384 node --max-old-space-size=128 node_modules/vitest/vitest.mjs run --config vitest.config.ts --pool=forks --maxWorkers=1 --no-file-parallelism --execArgv=--max-old-space-size=384 --testTimeout=15000 --hookTimeout=15000 tests/unit/connector-qualified-grants.spec.ts
 ```
 
 Each run requires fresh host RAM >=1800 MiB, a monitored >=600 MiB reserve and
@@ -117,8 +117,10 @@ the production SELECT itself still requests metadata only. Existing four lifecyc
 function bodies are unchanged by this additive lookup.
 
 [PostgreSQL companion](../../tests/unit/connector-qualified-grants-postgres.spec.ts)
-is **SOURCE ONLY / UNRUN**. When explicitly scheduled, its actual
-`DisposablePostgres` owns a 256 MiB temporary server, minted fixture credentials,
+passed **18/18 on 2026-09-30** in the
+[owned PostgreSQL sequence](qualified-connector-postgres-proof.md). The ordinary
+`DisposablePostgres` default requests a 256 MiB temporary server; that coordinated
+host-owned run supplied a separately bounded 512 MiB server. Both use minted fixture credentials,
 migrations 060/100/181 and NOSUPERUSER/NOBYPASSRLS runtime-role pools. The runtime
 role owns FORCE-RLS tables. It never reads an inherited DSN or deployment secret.
 Tests target actual create/list/reconnect/revoke, same-sub issuer isolation,
@@ -127,17 +129,19 @@ reconnect, rollback of both key and grant, metadata pagination and legacy rows
 unchanged. Teardown closes fixture-owned pools and removes its owned server even
 after startup failure. No skip switch substitutes for a missing runtime.
 
-The coordinated runtime command is the same bounded runner selecting
+The coordinated runtime command selects
 `tests/unit/connector-qualified-grants-postgres.spec.ts` instead, with runtime
-startup/teardown budget explicitly assigned before execution. No PostgreSQL,
-provider, HTTP/browser, installed image or Home/L8 acceptance is claimed here.
+startup/teardown budget explicitly assigned before execution. Actual PostgreSQL
+is now proven for the pinned source; live provider, installed image and Home/L8
+acceptance are not. HTTP and local browser evidence has its own separate scope.
 
 ## Remaining integration
 
 The composed candidate adds authenticated endpoints/ceremony, fresh SmartThings location
 verification, Utilities controls and Test Lab/docs-index/audit references. Remaining:
-Home broker consumption/revalidation, real enforcing-role companion execution,
-installed owner-bound consent/browser proof, full composed types and normal pre-push gate.
+Home broker consumption/revalidation and installed owner-bound consent/browser proof.
+The real enforcing-role companion and full composed source/server types passed;
+normal archived-HEAD verification remains mandatory on each source-bearing push.
 The storage service itself does not register routes or widen existing permissions.
 Shared/household grants, legacy adoption, KEK rotation and credential erasure remain
 separate governed work. Do not expose a physical-ready flag merely because these

@@ -445,8 +445,11 @@ stale-write refusal and actual confirmation dialogs. Auth, APIs and the separate
 authorization responder are fixtures; this is not deployed OIDC/provider/database evidence.
 Restoring the old child-frame navigation failed both navigation cases; restoration passed
 all six browser and 34 JavaScript cases on 2026-09-29.
-The separate qualified-credentials and qualified-grants PostgreSQL suites require an owned
-disposable database and enforcing role. The Test Lab card probes anonymous refusal only.
+The separate qualified-credentials, qualified-grants and qualified-broker PostgreSQL
+suites passed 35/35 on 2026-09-30 against owned disposable databases and enforcing roles.
+The [source-pinned receipt](../backlog/qualified-connector-postgres-proof.md) records the
+test-transport overlay, images, real boundary and remaining provider/installed proof.
+The Test Lab card probes anonymous refusal only.
 
 ## 4. Webhooks
 

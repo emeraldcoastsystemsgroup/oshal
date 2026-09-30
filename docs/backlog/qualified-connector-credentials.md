@@ -5,8 +5,10 @@ credentials only. The composed candidate includes the separate fresh-grant servi
 authenticated HTTP/OAuth integration and Utilities controls described in the
 [connector architecture](../architecture/connectors-and-graph-architecture.md#36-fresh-issuer-qualified-personal-grants).
 It does not yet integrate Home execution. Every
-L8 physical-readiness hold remains in place. No PostgreSQL or provider acceptance
-is claimed; migration promotion remains blocked on real enforcing-role proof.
+L8 physical-readiness hold remains in place. The three real enforcing-role
+PostgreSQL companions passed 35/35 on 2026-09-30; see the
+[exact-source proof](qualified-connector-postgres-proof.md). Installed-provider
+acceptance remains separate and unclaimed.
 
 ## Why an additive namespace
 
@@ -165,8 +167,8 @@ after additional caller awaits: Home must retain its own final authorization che
   malformed/corrupt/legacy formats, absent secrets/keys and storage-failure refusal.
   Its migration assertions are source checks, not RLS proof.
 - [PostgreSQL companion](../../tests/unit/connector-qualified-credentials-postgres.spec.ts):
-  **prepared, not executed**. Uses the existing disposable server, migrations and
-  NOSUPERUSER/NOBYPASSRLS runtime role owning FORCE-RLS tables. Intended evidence:
+  **8/8 passed, 2026-09-30**. Uses the existing disposable fixture, actual migrations and
+  NOSUPERUSER/NOBYPASSRLS runtime role owning FORCE-RLS tables. Observed evidence:
   same-sub issuers coexist without cross-reads/writes, operator flag cannot widen,
   revisions/immutability, races/rollback and mixed legacy rows unchanged/readable
   through their original codec. It never targets an inherited DSN.
@@ -177,7 +179,7 @@ after additional caller awaits: Home must retain its own final authorization che
   controls remove access-decrypt, refresh-admission and post-commit revalidation;
   each must fail its intended assertion before byte-identical restoration.
 - [Broker PostgreSQL companion](../../tests/unit/connector-qualified-broker-postgres.spec.ts):
-  **prepared, not executed**. Runs the actual migration, enforcing table-owner role,
+  **9/9 passed, 2026-09-30**. Runs the actual migration, enforcing table-owner role,
   `pg` timestamp decoder, GUC/session wrappers, crypto and broker. Only the refresh
   provider is doubled. Explicit six-digit creation/expiry rows demonstrate the old
   Date equality failure, successful persisted refresh/rotation, same-millisecond
@@ -196,12 +198,17 @@ one 384 MiB worker. The handover supervisor requires fresh free RAM of at least
 1800 MiB, monitors a 600 MiB reserve and imposes a 180-second process deadline:
 
 ```sh
-node --max-old-space-size=128 node_modules/vitest/vitest.mjs run --config vitest.config.ts --pool=forks --maxWorkers=1 --no-file-parallelism --execArgv=--max-old-space-size=384 --testTimeout=15000 --hookTimeout=15000 tests/unit/connector-qualified-token-crypto.spec.ts tests/unit/connector-qualified-broker.spec.ts tests/unit/connector-qualified-session.spec.ts
+NODE_OPTIONS=--max-old-space-size=384 node --max-old-space-size=128 node_modules/vitest/vitest.mjs run --config vitest.config.ts --pool=forks --maxWorkers=1 --no-file-parallelism --execArgv=--max-old-space-size=384 --testTimeout=15000 --hookTimeout=15000 tests/unit/connector-qualified-token-crypto.spec.ts tests/unit/connector-qualified-broker.spec.ts tests/unit/connector-qualified-session.spec.ts
 ```
 
-Actual run receipts/hashes belong to the local handover; gates are tied to their
-exact heads, never inherited by a later broker/session increment. No migration
-execution or deployed acceptance is implied here.
+Set the inherited `NODE_OPTIONS` as well as the worker flag: project-specific Vitest
+configuration does not inherit every root CLI option. The runner's explicit Node
+flag keeps its own heap at 128 MiB while workers inherit 384 MiB.
+
+Actual run receipts/hashes are indexed by the
+[PostgreSQL proof](qualified-connector-postgres-proof.md); gates are tied to their
+exact source, never inherited by a later broker/session increment. Migrations ran
+only in owned disposable fixtures, not on a deployment.
 The composed integration indexes these contracts and registers the scoped suites
 in Test Lab. Its installed card tests anonymous refusal, not real consent or RLS.
 
@@ -219,8 +226,9 @@ in Test Lab. Its installed card tests anonymous refusal, not real consent or RLS
 3. Home consumes that broker and retains fire authorization, deadline/abort,
    connection-replacement/refusal guards and no-retry behavior. Only then may
    independently reviewed server-owned readiness change for the supported scope.
-4. Run the real enforcing-role migration/upgrade regressions and fresh-grant/broker
-   protocol tests in coordinated slots. Provider acceptance is separately labelled.
+4. Preserve the passing real enforcing-role migration/upgrade and grant/broker
+   evidence when integrating later changes; rerun affected companions if their
+   source changes. Provider acceptance is separately labelled.
    Shared/household grants require additional issuer-qualified use authority.
 
 This foundation supplies no default-account selector, physical operation or new

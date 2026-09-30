@@ -27,9 +27,14 @@ passed six browser plus 34 doubled-JavaScript cases. This is not deployed OIDC/p
 `connector-qualified-credentials-postgres.spec.ts`,
 `connector-qualified-grants-postgres.spec.ts` and
 `connector-qualified-broker-postgres.spec.ts` are the required owned PostgreSQL/enforcing-role
-companions. At this source integration they are **unrun**, not covered by the unit result.
-Migration 181 promotion, installed owner-bound consent and physical-device readiness remain
-open until their distinct real-boundary evidence exists. No legacy credentials are adopted.
+companions. On 2026-09-30 they passed **8/8, 18/18 and 9/9**, respectively, against
+real owned PostgreSQL under NOSUPERUSER/NOBYPASSRLS table-owner FORCE RLS. Actual
+migrations, locks, rollback, issuer isolation, grant lifecycle and microsecond broker
+CAS execute; only the broker's refresh provider is doubled. See the
+[source/transport/image and receipt record](../backlog/qualified-connector-postgres-proof.md).
+This supplies migration 181's database-boundary evidence, not a deployment or
+installed owner-bound consent/physical-device readiness result. No legacy credentials
+are adopted; those distinct installed/provider outcomes remain open.
 
 ### Boundary inventory
 

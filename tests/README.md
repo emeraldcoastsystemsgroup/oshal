@@ -217,7 +217,7 @@ The database-free guard exercises the actual transport and fixture control flow 
 named filesystem, PostgreSQL-client and Docker collaborators:
 
 ```sh
-node --max-old-space-size=128 node_modules/vitest/vitest.mjs run tests/unit/owned-postgres-transport.spec.ts --pool=forks --maxWorkers=1 --no-file-parallelism --execArgv=--max-old-space-size=384
+NODE_OPTIONS=--max-old-space-size=384 node --max-old-space-size=128 node_modules/vitest/vitest.mjs run tests/unit/owned-postgres-transport.spec.ts --pool=forks --maxWorkers=1 --no-file-parallelism --execArgv=--max-old-space-size=384
 ```
 
 It is discovered by the normal unit gate. Its results do not establish real database/RLS proof.
