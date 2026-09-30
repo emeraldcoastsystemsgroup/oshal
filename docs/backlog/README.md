@@ -5,6 +5,8 @@ queue is [../BACKLOG.md](../BACKLOG.md). Active entries state only reproducible 
 its done-when evidence; resolved history is preserved in the [archive](./archive/README.md), the
 relevant ADR or feature documentation, release notes, and git history.
 
+- [session-handover-2026-09-30.md](./session-handover-2026-09-30.md) — current build state, lane order,
+  proof boundaries, Futures continuation and closure rules; read this before resuming the backlog.
 - [ai-usage-rating-input-guard.md](./ai-usage-rating-input-guard.md) — ADR-170 declaration-only ledger validation, fail-before-write regression evidence, and the separate measured-usage/model-compatibility acceptance still outstanding.
 - [feature-token-evidence.md](./feature-token-evidence.md) — ADR-170 P0 explicit cost-event evidence and scoped operation-token reduction; producer adoption, real PostgreSQL acceptance and production sampling remain separate gates.
 - [n8n-import-forward-plan.md](./n8n-import-forward-plan.md) — ADR-165 delivery queue: review rollout, versioned adapters, item/port execution, durable ticket assignments and approvals, native process packing, comparison fixtures and searchable proven workflows.
