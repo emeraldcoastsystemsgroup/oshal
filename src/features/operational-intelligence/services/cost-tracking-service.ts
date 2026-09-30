@@ -14,11 +14,13 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | recordLedgerEvent(event): the oshal_cost_events append alone, for a producer that already owns its chat_tasks rollup (the inline orchestrator's taskStore.recordUsage). Routing inline turns through recordCost would add every turn to chat_tasks twice; skipping the ledger left windowed budget caps blind to inline spend.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Per-bot provider aggregation widens to 'mixed' instead of keeping whichever row was folded in last. (Entry 10 originally said "came first"; see entry 11 - it was last-wins.) This is the summary the cockpit ticket Cost tab PREFERS, and that surface now renders the provider per bot and derives an ADR-127 cost-unit label from it - so a bot spanning claude-code and cline-cli would have shown one provider and one confident unit label for spend that is two different units. It was harmless while nothing displayed it and became a quiet lie the moment something did.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | mergeAgentProviderId treats the UNKNOWN_PROVIDER sentinel as absent, and its doc stops describing the old behaviour wrongly. Both arguments arrive through normalizeIdentifier, so a NULL provider_id is the literal 'unknown', not '' - so a bot with one claude-code row and one NULL row reported 'mixed', and the cockpit then declined to name a unit for spend whose unit was perfectly well known. The doc also said the aggregation this replaced was first-wins. It was LAST-wins: `providerId || existing || ''` with providerId always truthy, so the incoming row always won. The sentinel is exported and named, because it looks like a provider - truthy, reaches the cockpit, and classifyCostUnit answers 'billed' for it.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | Snapshot optional feature token evidence before awaits and append it with the same cost event; migration-182 absence remains explicitly unmeasured without breaking existing accounting or atomic outbox settlement.
  */
 
 import type { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import type { ModelUsageStats } from '@/shared/types';
+import { prepareFeatureTokenEvidence, type FeatureTokenEvidence } from './feature-token-evidence';
 
 const logger = createChildLogger({ module: 'cost-tracking-service' });
 
@@ -66,6 +68,8 @@ export interface CostEvent {
    *  producer measured one. Undefined when no call was timed (e.g. marker rows) —
    *  the ledger stores NULL, never a fabricated 0. */
   durationMs?: number;
+  /** Explicit trusted producer binding; never inferred from task/agent or accepted as read authority. */
+  featureEvidence?: FeatureTokenEvidence | null;
 }
 
 /**
@@ -133,6 +137,7 @@ export class CostTrackingService {
    * Persists to chat_tasks if pool is available, always tracks in memory.
    */
   async recordCost(event: CostEvent): Promise<void> {
+    event = snapshotCostEvent(event);
     this.trackInMemory(event);
 
     if (this.pool) {
@@ -160,6 +165,7 @@ export class CostTrackingService {
    * @throws Error when the service has no pool — a memory-only deployment has no ledger to append to.
    */
   async recordLedgerEvent(event: CostEvent): Promise<void> {
+    event = snapshotCostEvent(event);
     await this.appendCostLedgerRow(event, event.ownerSub ?? null, this.requirePool(), false);
   }
 
@@ -172,6 +178,7 @@ export class CostTrackingService {
    * @returns True when this call recorded cost, false when the receipt already existed.
    */
   async recordCostOnce(outboxId: string, event: CostEvent): Promise<boolean> {
+    event = snapshotCostEvent(event);
     if (!this.pool) throw new Error('recordCostOnce requires a PostgreSQL pool');
     const client = await this.pool.connect();
     try {
@@ -591,6 +598,7 @@ export class CostTrackingService {
     strict: boolean,
   ): Promise<void> {
     try {
+      if (event.featureEvidence && await this.appendFeatureEvidenceRow(event, ownerSub, database, strict)) return;
       await database.query(
         `INSERT INTO oshal_cost_events
            (task_id, owner_sub, agent_id, provider_id, model_id, cost_usd, input_tokens, output_tokens, duration_ms)
@@ -619,6 +627,30 @@ export class CostTrackingService {
         { err, taskId: event.taskId },
         'Failed to append oshal_cost_events ledger row — windowed budget spend will not see this event',
       );
+    }
+  }
+
+  /** @description One atomic ledger insert; a missing optional column downgrades to an unmeasured legacy row. */
+  private async appendFeatureEvidenceRow(event: CostEvent, ownerSub: string | null, database: CostQueryable, strict: boolean): Promise<boolean> {
+    if (strict) await database.query('SAVEPOINT feature_token_evidence');
+    try {
+      await database.query(
+        `INSERT INTO oshal_cost_events
+           (task_id, owner_sub, agent_id, provider_id, model_id, cost_usd, input_tokens, output_tokens, duration_ms, feature_evidence)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)`,
+        [event.taskId, ownerSub, event.agentId || null, event.providerId, event.modelId, event.totalCost,
+          normalizeCount(event.inputTokens), normalizeCount(event.outputTokens), normalizeDurationMs(event.durationMs), JSON.stringify(event.featureEvidence)],
+      );
+      if (strict) await database.query('RELEASE SAVEPOINT feature_token_evidence');
+      return true;
+    } catch (err) {
+      if (strict) {
+        await database.query('ROLLBACK TO SAVEPOINT feature_token_evidence');
+        await database.query('RELEASE SAVEPOINT feature_token_evidence');
+      }
+      if ((err as { code?: string }).code !== '42703') throw err;
+      logger.warn({ taskId: event.taskId }, 'Feature token evidence unavailable: schema predates migration 182; recording cost without measured attribution');
+      return false;
     }
   }
 
@@ -731,6 +763,16 @@ function buildTaskCostUpdateValues(
     JSON.stringify(usageByModel),
     event.ownerSub ?? null,
   ];
+}
+
+/** @description Copy all cost fields and deeply freeze validated evidence before any database/checkout await. */
+function snapshotCostEvent(event: CostEvent): CostEvent {
+  const copy = { ...event };
+  const featureEvidence = prepareFeatureTokenEvidence(copy.featureEvidence, copy);
+  if (copy.featureEvidence != null && featureEvidence === null) {
+    logger.warn('Invalid feature token evidence ignored; ordinary accounting retained without measured attribution');
+  }
+  return Object.freeze({ ...copy, featureEvidence });
 }
 
 function buildUsageByModel(event: CostEvent): Record<string, ModelUsageStats> {
