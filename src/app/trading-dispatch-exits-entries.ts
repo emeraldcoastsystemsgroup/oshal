@@ -17,13 +17,14 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 — the cost-basis attachment moves UP to runAutopilot, which now marks the book ONCE (right after the protected-lot overlay) and hands the same marked positions to the core leg, this one and the rotation leg. Attaching it here reached only the stop/take-profit rule, so trailing and cap trims could not see an unmanaged position and the entry legs ran before it existed. computeExits therefore requires positions that already carry the mark; all three exit rules now read that same array, which is what makes `unmanaged` withhold every exit rather than only the stop. A covered position's plan is unchanged: the marked array differs from the raw one only by the two optional fields.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-052 addendum (paper-to-live parity) — all three functions take the fire's optional ParityControls as a trailing argument; null/absent (every fire while both features are off) takes exactly the pre-existing path. computeExits: with a plan ledger, positions that carry an open plan are judged by splitExitsByPlan on their OWN stored terms (plan-stop / plan-tp / plan-trail / plan-expiry, first in priority) and only unplanned positions reach exitsToRun/trailingExits; the cap trim stays a book-level rule over every position; a failed plan read runs the global rules over the whole book. placeEntries and placePopCatches: a blocked market-wide gap verdict holds the leg before any order and records the would-be buys as 'market-gap' counterfactuals (the scan's are the same wouldBuy set the earnings instrumentation uses, minus the blackout); the scan leg re-underwrites a HELD name's open plan on a fresh buy signal; every buy is placed with the ledger so it stamps its plan.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-052 addendum P6 (idle-cash yield sleeve) — placeEntries, when the fire's armed sleeve has spendable value, sizes each entry as if that value were cash and DEFERS the buys to placeSleeveFunded (trading-dispatch-yield-sleeve.ts), which sells the sleeve first for the shortfall, waits, re-reads the real cash and places the entries in order, clipped to it. No spendable sleeve (every unarmed fire) = the pre-existing placement, statement for statement. The 14-day volatility read moves unchanged into recentVolPct so placeEntries does not grow.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Import shared recentVolPct from @/features/trading instead of local definition.
  *
  * @module trading-dispatch-exits-entries
  */
 
 import type { AppContext } from './composition-root';
 import {
-  dailyCloses, latestPrice, exitsToRun, trailingExits, nextPeaks, isShortTermBreakdown, isShortTermPop, sizeEntry, rebalanceTrims, dipExits, symbolBlocklist, barsBatch,
+  dailyCloses, recentVolPct, latestPrice, exitsToRun, trailingExits, nextPeaks, isShortTermBreakdown, isShortTermPop, sizeEntry, rebalanceTrims, dipExits, symbolBlocklist, barsBatch,
   type MtfDecision, type Position, type TradingMode, type TradingBook, type BrokerAccount, type RiskPolicy, type ExitOrder,
 } from '@/features/trading';
 import { legacyBook } from './trading-books-store';
@@ -217,26 +218,6 @@ export async function placeEntries(
     entries += 1;
   }
   if (sleeve && deferred?.length) await placeSleeveFunded(ctx, sub, book, account, deferred, sleeve, orders, errors, parity?.plans);
-}
-
-/**
- * @description Recent daily volatility (14-day close-to-close return stdev, percent) for
- * volatility-normalized entry sizing. Optional by design: fewer than six closes, or a failed read,
- * answers undefined and the entry falls back to flat sizing (moved verbatim out of placeEntries).
- * @param symbol - The entry candidate.
- * @returns The volatility in percent, or undefined.
- */
-async function recentVolPct(symbol: string): Promise<number | undefined> {
-  let volPct: number | undefined;
-  try {
-    const closes = await dailyCloses(symbol, 15);
-    if (closes.length > 5) {
-      const rets: number[] = []; for (let i = 1; i < closes.length; i++) rets.push((closes[i] - closes[i - 1]) / closes[i - 1]);
-      const mean = rets.reduce((a, b) => a + b, 0) / rets.length;
-      volPct = Math.sqrt(rets.reduce((a, b) => a + (b - mean) ** 2, 0) / rets.length) * 100;
-    }
-  } catch { /* vol optional — fall back to flat sizing */ }
-  return volPct;
 }
 
 /**

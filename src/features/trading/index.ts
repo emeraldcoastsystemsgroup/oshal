@@ -23,6 +23,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com | ADR-168: export MULTI_MARKET_UNIVERSE and MULTI_MARKET_EXTENSION (multi-timeframe) and MULTI_MARKET_BUCKETS (portfolio), so the Strategy Lab, the Test Lab card and the store package name the multi-market universe through the barrel instead of a second hand-typed list.
  * 13 | maintainer@emeraldcoastsystemsgroup.com | ADR-052 addendum (paper-to-live parity): export the market-wide gap-down filter's pure half from entry-guards (marketGapBlock, marketGapFilterPct, modeArmed, DEFAULT_MARKET_GAP_PCT, MarketGapVerdict) and the per-position exit-plan math from the new position-plan module (exitPlanSessions, planTermsFor, addSessions, planExits, DEFAULT_EXIT_PLAN_SESSIONS, PlanTerms, PlanDials, PositionPlan), plus the PlanExitDoor type beside ExitOrder.
  * 14 | maintainer@emeraldcoastsystemsgroup.com | ADR-052 addendum P6 (paper-to-live parity): export the idle-cash yield sleeve's pure half from the new yield-sleeve module (yieldSleeveFloatPct, yieldSleeveSymbol, sleeveRebalancePlan, sleeveFundingQty, DEFAULT_YIELD_SLEEVE_SYMBOL, DEFAULT_YIELD_SLEEVE_FLOAT_PCT, YIELD_SLEEVE_BAND_PCT, SleeveRebalance, SleeveBook).
+ * 15 | maintainer@emeraldcoastsystemsgroup.com | Export calculateRealizedVol and recentVolPct (market-data): shared 14-day return volatility helpers for vol-normalized entry sizing across autopilot and research legs.
  *
  * @module trading
  */
@@ -44,7 +45,7 @@ export { scoreSymbol, ensemble, deriveMasses, displacement, algoNames, gravity2S
 export type { WorldSnapshot, Gravity2Config, SourceConfig } from './services/gravity-world';
 export { deriveWorldMasses, defaultGravity2Config, GRAVITY2_METRICS } from './services/gravity-world';
 export type { Timeframe, NewsItem, Session, TradeTick, DatedClose, OhlcvBar, DatedOhlcvBar, SessionBlockReason, TradableSessionResult } from './services/market-data';
-export { dailyCloses, latestPrice, latestTrade, isTickStale, maxTickAgeSec, marketDataConfigured, closesForTimeframe, barsBatch, barsBatchSince, barsBatchOhlcv, barsBatchSinceOhlcv, isMarketOpen, recentNews, tradingSession, tradableSession, tradableSessionDetailed, searchSymbols, assetDirectory } from './services/market-data';
+export { dailyCloses, calculateRealizedVol, recentVolPct, latestPrice, latestTrade, isTickStale, maxTickAgeSec, marketDataConfigured, closesForTimeframe, barsBatch, barsBatchSince, barsBatchOhlcv, barsBatchSinceOhlcv, isMarketOpen, recentNews, tradingSession, tradableSession, tradableSessionDetailed, searchSymbols, assetDirectory } from './services/market-data';
 export type { AssetHit } from './services/market-data';
 // Whole-market movers over the owned key's REST screener (ADR-143 D5) — fail-soft: null, never a throw.
 export type { ScreenerBoard, ScreenerRow, ScreenerFilter, ScreenerSide, ActivesBy } from './services/alpaca-screener';

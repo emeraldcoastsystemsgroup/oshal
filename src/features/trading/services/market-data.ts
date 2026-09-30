@@ -23,6 +23,8 @@
  *
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | adata() honours the vendor's documented rate-limit contract (market-data-rate-limit.ts): every response's X-RateLimit-* headers feed a process-shared quota window, a documented 429 becomes AlpacaRateLimitError and is retried with the vendor-indicated wait, and every other status still raises on the first response. Before this, one 429 anywhere in barsBatch's 8-page loop threw and took its caller's whole run with it — on 2026-09-15 the 00:01Z trading-assess run lost its entire per-algo record that way.
  *
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | Add calculateRealizedVol() and recentVolPct(): extract the 14-day return volatility calculation into a shared, tested helper so both autopilot and research/news legs can vol-normalize entry sizing.
+ *
  * @module market-data
  */
 
@@ -178,6 +180,42 @@ export async function closesForTimeframe(symbol: string, timeframe: Timeframe, n
  */
 export async function dailyCloses(symbol: string, n = 60): Promise<number[]> {
   return closesForTimeframe(symbol, '1Day', n);
+}
+
+/**
+ * @description Compute realized daily volatility (sample standard deviation of daily returns in %)
+ * from an ascending series of daily closes. Returns undefined if fewer than 6 closes are provided.
+ * @param closes - Array of daily closing prices in ascending order.
+ * @returns Standard deviation of returns in percent, or undefined if insufficient closes.
+ */
+export function calculateRealizedVol(closes: number[]): number | undefined {
+  if (closes.length <= 5) return undefined;
+  const rets: number[] = [];
+  for (let i = 1; i < closes.length; i++) {
+    rets.push((closes[i] - closes[i - 1]) / closes[i - 1]);
+  }
+  const mean = rets.reduce((a, b) => a + b, 0) / rets.length;
+  return Math.sqrt(rets.reduce((a, b) => a + (b - mean) ** 2, 0) / rets.length) * 100;
+}
+
+/**
+ * @description Recent daily volatility (14-day return standard deviation in %) for
+ * volatility-normalized entry sizing. Optional by design: fewer than six closes, or a failed read,
+ * answers undefined and the entry falls back to flat sizing.
+ * @param symbol - Ticker symbol.
+ * @returns The volatility in percent, or undefined.
+ */
+export async function recentVolPct(
+  symbol: string,
+  fetchCloses: (sym: string, n: number) => Promise<number[]> = dailyCloses,
+): Promise<number | undefined> {
+  try {
+    const closes = await fetchCloses(symbol, 15);
+    return calculateRealizedVol(closes);
+  } catch {
+    /* vol optional — fall back to flat sizing */
+    return undefined;
+  }
 }
 
 /**
