@@ -34,8 +34,8 @@ from preparation or unit tests alone.
 | Status | Count | Meaning |
 |---|---|---|
 | IN PROGRESS | **5** | being worked in the current session |
-| OPEN — actionable | **20** | no decision, no live box needed; can be closed by an agent |
-| OPEN — needs operator | **59** | a decision, credential, account or purchase only the operator can make |
+| OPEN — actionable | **17** | no decision, no live box needed; can be closed by an agent |
+| OPEN — needs operator | **62** | a decision, credential, account or purchase only the operator can make |
 | OPEN — needs live proof | **62** | needs the running box, a deploy, hardware, or a human at a browser |
 | OPEN — blocked | **9** | waiting on something outside this repo |
 | OPEN — needs review | **0** | the triage could not decide; somebody has to read it |
@@ -1141,9 +1141,10 @@ from preparation or unit tests alone.
   as though the connector were unbuilt.
 
 ### Email providers beyond Gmail
-- **Status:** OPEN — actionable
+- **Status:** OPEN — needs operator
 
-- **Remaining:** live-test Outlook/Microsoft 365 and Yahoo/IMAP through caller-owned connections and finish any provider-specific auth or pagination repair.
+- **Delivered (2026-09-30):** Yahoo Mail token connector in Utilities (two-field `address:app-password` input, connect-time validation via `probeYahooLogin` to `imap.mail.yahoo.com:993`, fail-closed malformed check, Test Lab scenario in `tests/unit/connector-yahoo.spec.ts`), fixed read-only IMAP reader (`src/app/routes/imap-mail-reader.ts`, `tests/unit/imap-mail-reader.spec.ts`), and Microsoft Graph / Outlook integration in `email-summarizer` (`tests/outlook-mailbox.test.mjs`, `tests/session-crypto.test.mjs`, `tests/surface-provider.test.mjs`). Real-boundary cross-user denial is verified in `email-summarizer/tests/email-mailbox-isolation.spec.ts` (16/16 pass) across forced-RLS PostgreSQL with `email_mailbox_runtime` role, production GUC pool, per-user envelope crypto, proving owner A (Google + Outlook + Yahoo) and owner B (Google only) are completely isolated, B's Outlook and Yahoo requests are 409, A's tokens never leave, the communications bot summarizes each user's mail without crossing rows, and stranger callers receive 409 `no_mail_connection`.
+- **Remaining:** live-test Outlook/Microsoft 365 and Yahoo/IMAP through operator-owned connections in Utilities.
 - **Done when:** a user connects each supported provider in Utilities and the email bot lists and summarizes that user's mail with cross-user denial proof. See [ADR-037](adr/037-communications-swarm.md).
 
 ### Reading a user's own Drive content — the `drive.file` scope wall
@@ -1529,10 +1530,11 @@ from preparation or unit tests alone.
 - **Deferred to the operator (2026-09-21), not decided.** Whether SKHY is still held on the live Schwab book is a fact about the broker account and nothing on this box records it: the engine reads venue positions at runtime and does not persist them, and the only position-shaped table, `oshal_trading_pinned_lots`, holds five lots, all MSFT/NVDA on the **paper** book, no SKHY. The question is on the operator's errand list (item 9) with the three answers it can take. `TRADING_CORE_SYMBOLS=SKHYV:0,SKHY:0,USO:0` stays as is until he has looked; removing the exemption without an engine basis makes the lot unmanaged rather than graduated, and an adopted lot with a wrong basis is the phantom-stop-loss shape this book has already paid for once.
 
 ### Market-data stream decision — DECIDED (ADR-143), build pending
-- **Status:** OPEN — actionable
+- **Status:** OPEN — needs operator
 
 - **Decided 2026-09-06:** [ADR-143](adr/143-market-data-stream.md) names the v1 source per book (Alpaca IEX v2 websocket for Alpaca-backed books, terminated in the kernel; Schwab books keep the 5 s REST poll), the entitlement/staleness guards and their env names, the payload allowlist and the specs, quantifies the IEX gap from the 2026-07-12 strategy-log measurements, cites the two intraday studies with their exact feed (neither ran on a stream), and decides no feed purchase for v1 with named purchase triggers.
-- **Remaining:** ADR-143 D9 Phase 1 (kernel `market-data-stream.ts` + barrel + compose/env passthrough + `tests/unit/trading-market-data-stream.spec.ts` + `compose-trading-stream-gate.spec.ts`) and Phase 2 (store `trading-quote-stream-routes.ts`, `tools/ui/quote-stream.js`, `tests/trading-quote-stream.spec.ts`); the operator arms `TRADING_STREAM_ENABLED` after confirming nothing else streams with the paper key.
+- **Delivered (2026-09-27/30):** Phase 1 (kernel `market-data-stream.ts`, compose passthrough, local protocol guards) landed in core `525df7af` with 20/20 tests passing in `tests/unit/trading-market-data-stream.spec.ts`, `compose-trading-stream-gate.spec.ts`, and `test-lab-market-stream-registration.spec.ts`. Phase 2 landed in store `82d1757` (Trading 1.29.0 → 1.31.0) with quote stream routes, UI controls, and SSE relay.
+- **Remaining:** Phase 3: the operator arms `TRADING_STREAM_ENABLED` after confirming nothing else streams with the paper key, and records a dated regular-hours observation of prints on the deployed paper ticket.
 - **Done when:** the ADR's Phase 1 and Phase 2 guard specs are green, a dated regular-hours observation of prints on the deployed paper ticket is recorded in the real-boundary audit row, and the ADR Status reads "shipped".
 
 ### Kalshi calibration and demo paper fill
@@ -1972,7 +1974,7 @@ is not started; the operator asked for a brand kit, not for a renderer change.
 ## Animatronics and the maker labs
 
 ### Compare our simulators against PteroSim (2026-09-15)
-- **Status:** OPEN — actionable
+- **Status:** OPEN — needs operator
 
 **Context:** operator ask — carry PteroSim as the outside comparison point for our own simulators.
 [PteroSim](https://pterolabs.ai/) ([GitHub](https://github.com/PteroLabsAI/PteroSim-UAV-Simulator),
@@ -1987,6 +1989,8 @@ already flies real PX4 SITL (SIH) over MAVLink but with no scene and no aerodyna
 engine reconstructs rather than flies. The gap is an independent 6-DOF result to check ours against, and
 a rendered world for camera-in-the-loop work. This entry is evaluation, not adoption.
 
+- **Delivered (2026-09-28/30):** Five-axis written comparison of our simulators against PteroSim completed in [docs/research/pterosim-comparison/README.md](research/pterosim-comparison/README.md) with per-simulator verdicts (aero-lab, embodied MuJoCo lab, embodied PX4 SIH node, drone package / `SimDroneProvider`, drone-relay, Spaces Sim engine) and licence analysis covering Free vs Edu vs Pro and the proprietary EULA. Cross-check harness built in `embodied` 0.17.0 (`engine/crosscheck/`, 14/14 tests passing) with the PX4 SIH leg run and recorded twice (trajectories and repeatability published).
+- **Remaining:** The PteroSim leg requires proprietary EULA acceptance (`PTEROSIM_ACCEPT_EULA=Y` or `-AcceptEula`), which cannot be automated by agents or committed to git. Operator must decide: (a) accept Free tier EULA locally and run the PteroSim leg; (b) purchase Edu/Pro; or (c) decline (in which case the verdict becomes *neither: licence* and the entry closes).
 **Done when:**
 - A written comparison covers each of our simulators against PteroSim on: what physics it solves, what it
   renders, which flight stack it drives, how a bot or node would call it, and what it costs to run — and
