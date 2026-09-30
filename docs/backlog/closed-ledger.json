@@ -892,5 +892,11 @@
     "title": "Rate the nine store packages that were under other lanes' claims (2026-09-29)",
     "pr": "12eb8014 (store)",
     "evidence": "Commit 12eb8014 in oshal-applications added valid rating blocks to all 9 unrated apps (animatronics, calendar, dnd, drone, embodied, little-monsters, lora, pumpkin, spaces), ran node scripts/ai-usage-ledger.mjs --write to generate AI-USAGE-LEDGER.md and package READMEs, and removed --allow-unrated from .github/workflows/store-ci.yml and scripts/store-ci-local.mjs. All 22 mutation tests pass in scripts/ai-usage-ledger.test.mjs, and node scripts/ai-usage-ledger.mjs --check passes with 0 unrated packages across all 67 packages."
+  },
+  {
+    "date": "2026-09-30",
+    "title": "A catalog-less protected app cannot have a working system service (2026-09-16)",
+    "pr": "957",
+    "evidence": "Activation-time refusal authorization_service_catalog_required merged in PR #957 (1835d800); 14/14 tests in tests/unit/application-service-activation-postgres.spec.ts pass on disposable PostgreSQL proving no-write and existing-row preservation."
   }
 ]
