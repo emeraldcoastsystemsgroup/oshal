@@ -2,6 +2,7 @@
  * CHANGE LOG
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Bound connector consent to its initiating browser and identity across callback cookie domains.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Bind initiation, signed-in relay, completion and quota to the verified issuer plus subject; a same-subject identity from another issuer cannot redeem consent.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Retain an immutable server-selected qualified personal grant target through the existing browser-bound ceremony.
  *
  * Ceremonies live in the controller process for at most ten minutes. A restart discards them,
  * so an interrupted consent must be started again. Multiple controllers need routing affinity
@@ -16,6 +17,12 @@ import { appUrl, signState, verifyState } from './connector-oauth-ceremony';
 
 export const CONNECTOR_CEREMONY_TTL = 10 * 60 * 1000;
 
+/** Server-selected qualified namespace and optional exact reconnect target; never accepted at callback. */
+export interface QualifiedConnectorConsent {
+  readonly scope: 'personal';
+  readonly reconnect?: { readonly connectionId: string; readonly accountKey: string; readonly expectedRevision: string };
+}
+
 export interface ConnectorConsent {
   provider: string;
   caller: ConnectorCaller;
@@ -24,6 +31,7 @@ export interface ConnectorConsent {
   tenant?: string;
   label?: string;
   verifier?: string;
+  qualified?: QualifiedConnectorConsent;
 }
 
 interface Ceremony extends ConnectorConsent {
@@ -79,6 +87,8 @@ export class ConnectorOAuthCeremonies {
     const state = signState({ nonce });
     this.pending.set(state, {
       ...consent, caller: { ...consent.caller }, cookieName,
+      qualified: consent.qualified ? Object.freeze({ scope: consent.qualified.scope,
+        reconnect: consent.qualified.reconnect ? Object.freeze({ ...consent.qualified.reconnect }) : undefined }) : undefined,
       cookieHash: createHash('sha256').update(cookieSecret).digest(),
       expiresAt: Date.now() + CONNECTOR_CEREMONY_TTL, phase: 'authorize',
     });

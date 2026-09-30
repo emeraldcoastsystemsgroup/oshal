@@ -8,6 +8,36 @@ provider claim still needs a separate live acceptance run.
 
 ## Dispositions
 
+### Fresh personal qualified connector grants (2026-09-29)
+
+`connector-qualified-http.spec.ts` executes real Express routes, OAuth ceremony, crypto,
+session and grant-store code; authentication, provider responses and transactional SQL are
+explicit doubles. Held checkout/work/commit cases prove the HTTP identity/consent fencing
+logic, not PostgreSQL rollback or RLS. `connector-qualified-smartthings.spec.ts` executes the
+provider adapter against a loopback HTTP responder; no real account is contacted.
+`qualified-connectors-ui.spec.ts` executes the shipped JavaScript with DOM, fetch,
+confirmation and navigation doubles. Its real companion `qualified-connectors-browser.spec.ts`
+serves shipped Utilities HTML/JavaScript into Chromium: actual iframe/CSP top-navigation,
+browser Origin, exact revision writes, field clearing and confirmation dialogs. Auth, APIs,
+parent shell and separate-loopback authorization responder are named fixtures. All six browser
+cases passed on 2026-09-29; changing only navigation back to the child frame caused both
+top-navigation cases to time out, while four other cases passed. The exact restored source
+passed six browser plus 34 doubled-JavaScript cases. This is not deployed OIDC/provider proof.
+
+`connector-qualified-credentials-postgres.spec.ts`,
+`connector-qualified-grants-postgres.spec.ts` and
+`connector-qualified-broker-postgres.spec.ts` are the required owned PostgreSQL/enforcing-role
+companions. On 2026-09-30 they passed **8/8, 18/18 and 9/9**, respectively, against
+real owned PostgreSQL under NOSUPERUSER/NOBYPASSRLS table-owner FORCE RLS. Actual
+migrations, locks, rollback, issuer isolation, grant lifecycle and microsecond broker
+CAS execute; only the broker's refresh provider is doubled. See the
+[source/transport/image and receipt record](../backlog/qualified-connector-postgres-proof.md).
+This supplies migration 181's database-boundary evidence, not a deployment or
+installed owner-bound consent/physical-device readiness result. No legacy credentials
+are adopted; those distinct installed/provider outcomes remain open.
+
+### Boundary inventory
+
 | Boundary audited | Mock/stub disposition | Required real companion | Status |
 |---|---|---|---|
 | Ticket-store writes under RLS | Unit router/gateway doubles stay for transition and error-branch coverage; they cannot prove PostgreSQL accepts or owns a row. | `tests/alert-intake-rls-live.spec.ts` and `tests/connector-webhook-rls-live.spec.ts` drive the real routers, `PostgresTicketStore`, GUC wrapper, NOBYPASSRLS role, policies, and rows. Both are mandatory in `tests/e2e-green-suite.txt`. | Real companion present. |
