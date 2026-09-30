@@ -34,8 +34,8 @@ from preparation or unit tests alone.
 | Status | Count | Meaning |
 |---|---|---|
 | IN PROGRESS | **5** | being worked in the current session |
-| OPEN — actionable | **6** | no decision, no live box needed; can be closed by an agent |
-| OPEN — needs operator | **72** | a decision, credential, account or purchase only the operator can make |
+| OPEN — actionable | **5** | no decision, no live box needed; can be closed by an agent |
+| OPEN — needs operator | **73** | a decision, credential, account or purchase only the operator can make |
 | OPEN — needs live proof | **63** | needs the running box, a deploy, hardware, or a human at a browser |
 | OPEN — blocked | **9** | waiting on something outside this repo |
 | OPEN — needs review | **0** | the triage could not decide; somebody has to read it |
@@ -1743,7 +1743,7 @@ from preparation or unit tests alone.
 - **Done when:** an installed schedule calls the tick under service identity; disabled and either dry-run gate produce no run or `chat_tasks`; one opted-in owner produces exactly one rebaseline run per UTC slot; a second owner remains isolated; stored integer-micro cost evidence stops every later call after exhaustion, overshoot, or capture failure; and dated live PostgreSQL/provider evidence records the result.
 
 ### Aero Lab real-drive and physical certification
-- **Status:** OPEN — actionable
+- **Status:** OPEN — needs operator
 
 - **Remaining:** Run the pinned 30k real-chain sweep to completion and record it; [`aero-lab/BACKLOG.md`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/blob/main/aero-lab/BACKLOG.md) section D stays authoritative. `aero-lab/engine/sweep_real.py --n 30000 --seed 20260927` on the 1.4.0 engine tree (engine fingerprint `7cb4ddce5d711136`, tree fingerprint `0acac627b6a8e616...`) is incomplete: 423 of 30000 designs were scored at 2026-09-29 15:15 UTC (398 fail, 25 error, 0 pass; 419 stopped at build, 4 in flight), held outside the repository, and `aero-lab/engine/TEST_STATUS.md` still reads "The 30k run has not been launched". Flight-stage records depend on the BLAS thread setting: design 138 scored under default threading and under `OPENBLAS_NUM_THREADS=1` differs in `metrics.usable` (the ranking key), `max_unmet_thrust_N` and `unmet_Wh`, while build-stage records are identical. Nothing in the package pins or records that setting, and the determinism gate's 20-design subset holds only build-refused designs. First fix the thread setting in the driver and add a flight-stage determinism case (the edit is outside `aerosim/`, so both fingerprints hold), then score all 30000 designs under that setting, re-scoring the flight-stage designs recorded under default threading (77, 138, 20006). After completion run the same command with `--resume --verify-top 10 --report` and record the outcome counts, stage counts, reason-code histogram, the count of uncoded `ReferenceTrimError` errors, top-N verify records, header `treeFingerprint`, thread setting and wall time in `TEST_STATUS.md`, with section D and the package version rows updated in the same store PR. Physical build evidence (vent or ballonet design, a sourced barrier film, a helium purity certificate, weighed parts) stays in package backlog section C; the gate that refuses certification without it is built, and that evidence needs hardware and purchases.
 - **Done when:** all four reference designs pass or fail for an explicit structured validity reason on the fingerprinted real engine; the f=0.2–0.8 trim sweep, cold-night thermal/heater ledger, four anchors, browser parity, mesh, and deterministic sweep gates pass; and no build is certified until the physical pressure/material/purity/mass evidence reconciles to the exported design.
