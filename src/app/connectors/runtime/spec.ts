@@ -104,6 +104,10 @@ export interface ConnectorSpec {
     sourceUrl?: string;
     /** Category tokens declared by the source catalog, not inferred from operation names. */
     sourceCategories?: string[];
+    credentialOwner?: 'deployment' | 'user' | 'none' | 'hybrid';
+    executionActor?: 'user' | 'service-principal' | 'any';
+    provisioningOwner?: 'operator' | 'user' | 'none';
+    fallbackPolicy?: 'fail-closed' | 'prompt' | 'none';
   };
   baseUrl: string;
   auth: SpecAuth;

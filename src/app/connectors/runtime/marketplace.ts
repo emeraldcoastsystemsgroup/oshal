@@ -35,7 +35,7 @@ const UNCATEGORIZED = 'Uncategorized';
 
 export type ConnectorInstallState = 'available' | 'enabled' | 'disabled' | 'removed' | 'blocked';
 export type ConnectorRiskLevel = 'low' | 'medium' | 'high';
-export type ConnectorOnboardingMode = 'user-key' | 'oauth-app' | 'basic-auth' | 'no-auth';
+export type ConnectorOnboardingMode = 'user-key' | 'oauth-app' | 'basic-auth' | 'no-auth' | 'operator-token' | 'hybrid';
 
 export interface ConnectorMarketplaceState {
   version: 1;
@@ -83,8 +83,12 @@ export interface ConnectorMarketplaceEntry {
     mode: ConnectorOnboardingMode;
     label: string;
     description: string;
-    credentialScope: 'per-user' | 'operator' | 'none';
+    credentialScope: 'per-user' | 'operator' | 'none' | 'deployment' | 'hybrid';
     setupLevel: 'self-serve' | 'operator-assisted' | 'none';
+    credentialOwner?: 'deployment' | 'user' | 'none' | 'hybrid';
+    executionActor?: 'user' | 'service-principal' | 'any';
+    provisioningOwner?: 'operator' | 'user' | 'none';
+    fallbackPolicy?: 'fail-closed' | 'prompt' | 'none';
   };
   source: {
     type: 'local-spec';
@@ -731,42 +735,92 @@ function scopesFor(spec: ConnectorSpec): string[] {
 }
 
 function onboardingFor(spec: ConnectorSpec): ConnectorMarketplaceEntry['onboarding'] {
-  switch (spec.auth.type) {
-    case 'apiKeyHeader':
-    case 'apiKeyQuery':
-      return {
-        mode: 'user-key',
-        label: 'User-owned API key',
-        description: 'Enable the definition, then each signed-in user stores their own key through the brokered connection store.',
-        credentialScope: 'per-user',
-        setupLevel: 'self-serve',
-      };
-    case 'oauth2':
-      return {
-        mode: 'oauth-app',
-        label: 'OAuth app + user consent',
-        description: 'Operator registers the provider app once; users connect their own account through the OAuth callback.',
-        credentialScope: 'per-user',
-        setupLevel: 'operator-assisted',
-      };
-    case 'basic':
-      return {
-        mode: 'basic-auth',
-        label: 'User-owned username/password',
-        description: 'Each user stores a brokered username/password secret; runtime resolves it only for that caller.',
-        credentialScope: 'per-user',
-        setupLevel: 'self-serve',
-      };
-    case 'none':
-    default:
-      return {
-        mode: 'no-auth',
-        label: 'No credential required',
-        description: 'This connector can run without a stored user credential.',
-        credentialScope: 'none',
-        setupLevel: 'none',
-      };
+  const meta = spec.metadata;
+  const credentialOwner = meta?.credentialOwner;
+  const executionActor = meta?.executionActor;
+  const provisioningOwner = meta?.provisioningOwner;
+  const fallbackPolicy = meta?.fallbackPolicy;
+
+  let base: {
+    mode: ConnectorOnboardingMode;
+    label: string;
+    description: string;
+    credentialScope: 'per-user' | 'operator' | 'none' | 'deployment' | 'hybrid';
+    setupLevel: 'self-serve' | 'operator-assisted' | 'none';
+  };
+
+  if (credentialOwner === 'deployment') {
+    base = {
+      mode: 'operator-token',
+      label: 'Operator-managed deployment credential',
+      description: 'Shared platform credential provisioned by operator; callers use it under policy without personal BYO.',
+      credentialScope: 'deployment',
+      setupLevel: 'operator-assisted',
+    };
+  } else if (credentialOwner === 'hybrid') {
+    base = {
+      mode: 'hybrid',
+      label: 'Shared default with user BYO option',
+      description: 'Operator provisions deployment baseline; users may optionally connect their own BYO account under consent.',
+      credentialScope: 'hybrid',
+      setupLevel: 'self-serve',
+    };
+  } else if (credentialOwner === 'none' || spec.auth.type === 'none') {
+    base = {
+      mode: 'no-auth',
+      label: 'No credential required',
+      description: 'This connector can run without a stored user credential.',
+      credentialScope: 'none',
+      setupLevel: 'none',
+    };
+  } else {
+    switch (spec.auth.type) {
+      case 'apiKeyHeader':
+      case 'apiKeyQuery':
+        base = {
+          mode: 'user-key',
+          label: 'User-owned API key',
+          description: 'Enable the definition, then each signed-in user stores their own key through the brokered connection store.',
+          credentialScope: 'per-user',
+          setupLevel: 'self-serve',
+        };
+        break;
+      case 'oauth2':
+        base = {
+          mode: 'oauth-app',
+          label: 'OAuth app + user consent',
+          description: 'Operator registers the provider app once; users connect their own account through the OAuth callback.',
+          credentialScope: 'per-user',
+          setupLevel: 'operator-assisted',
+        };
+        break;
+      case 'basic':
+        base = {
+          mode: 'basic-auth',
+          label: 'User-owned username/password',
+          description: 'Each user stores a brokered username/password secret; runtime resolves it only for that caller.',
+          credentialScope: 'per-user',
+          setupLevel: 'self-serve',
+        };
+        break;
+      default:
+        base = {
+          mode: 'no-auth',
+          label: 'No credential required',
+          description: 'This connector can run without a stored user credential.',
+          credentialScope: 'none',
+          setupLevel: 'none',
+        };
+    }
   }
+
+  return {
+    ...base,
+    ...(credentialOwner ? { credentialOwner } : {}),
+    ...(executionActor ? { executionActor } : {}),
+    ...(provisioningOwner ? { provisioningOwner } : {}),
+    ...(fallbackPolicy ? { fallbackPolicy } : {}),
+  };
 }
 
 function tagsFor(spec: ConnectorSpec, actions: ConnectorActionProfile[]): string[] {

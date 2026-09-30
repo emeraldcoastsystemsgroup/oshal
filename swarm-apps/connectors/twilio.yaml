@@ -38,3 +38,7 @@ metadata:
   iconTitle: Twilio
   iconSource: simple-icons
   iconVerified: true
+  credentialOwner: hybrid
+  executionActor: user
+  provisioningOwner: operator
+  fallbackPolicy: prompt
