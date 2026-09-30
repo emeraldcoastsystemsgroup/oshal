@@ -1,6 +1,24 @@
 [
   {
     "date": "2026-09-30",
+    "title": "Anonymous package routes: a per-route opt-in under authorization enforce (enhancement, operator 2026-09-29)",
+    "pr": "local",
+    "evidence": "Commit 44d8dd02 normalized anonymous route comparison to be key-order-agnostic in sameAnonymousPackageRoutes; live acceptance node scripts/operations/live-acceptance.js vids-publish passed on the installed build (vids-publish-live: 401 on unauthenticated jobs/publish, 200 on exact 868 video bytes, 404 on malformed/revoked tokens, cleanup 0 outstanding 0 errors); npm run test:package-anonymous-routes passed 190/190; tests/unit/package-tools.spec.ts passed 15/15."
+  },
+  {
+    "date": "2026-09-30",
+    "title": "LinkedIn Content Assistant queue workflow",
+    "pr": "local",
+    "evidence": "Real-boundary disposable PostgreSQL suite tests/unit/linkedin-content-queue-postgres.spec.ts passed with all 52/52 tests passing in npm run test:linkedin-content, proving queue ticket to confirmation-gated publish with source citations, caller credentials, audit evidence, unique index retry idempotency, and denial paths; on-box live acceptance node scripts/operations/live-acceptance.js linkedin passed (case linkedin-queue-live: draft 4 is pending-approval, scored 18, names ticket and carries its 1 citation, unconfirmed publish refused 428, cleanup 0 outstanding 0 errors)."
+  },
+  {
+    "date": "2026-09-30",
+    "title": "Shared response-renderer completion",
+    "pr": "local",
+    "evidence": "Unit tests pass 93/93 across 7 test files (tests/unit/live-acceptance-response-renderer.spec.ts, response-renderer-registry.spec.ts, response-renderer-components.spec.ts, response-renderer-media-kinds.spec.ts, response-renderer-parse.spec.ts, response-renderer-display-profile.spec.ts, test-lab-response-renderer-registration.spec.ts); on-box live acceptance node scripts/operations/live-acceptance.js response-renderer passed (case shared-response-renderer-live: all 3/3 card steps pass, same-origin Mermaid 11.17.2 verified from /dist/vendor/mermaid, Little Monsters Tutor executed 2/2 tests with 0 failures)."
+  },
+  {
+    "date": "2026-09-30",
     "title": "Vids public-publish rail",
     "pr": "local",
     "evidence": "node scripts/operations/live-acceptance.js vids-publish passes (vids-publish-live); unauthenticated access refused 401 on jobs/control, published immutable MP4 served anonymously at 200, malformed and revoked tokens answer 404, cleanup outstanding 0; package-anonymous-routes and package-anonymous-routes-http tests pass 81/81."
