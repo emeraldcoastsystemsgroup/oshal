@@ -29,7 +29,13 @@ import { readWorldCoverage } from './world-coverage-read';
 import { createGraphConnector, type GraphConnector, type GraphNode, type GraphEdge } from '@/features/graph';
 import { createChildLogger } from '@/shared/logger';
 import { ownPoolConnectionErrors } from '@/shared/services/database';
-import { isReservedCongressMetric, isReservedCongressSource, type WorldContribution } from './world-types';
+import {
+  CongressTradeQueryFilter,
+  CongressTradeRecord,
+  isReservedCongressMetric,
+  isReservedCongressSource,
+  type WorldContribution,
+} from './world-types';
 import { computeSentimentBreakdown, type SentimentRow } from './sentiment-math';
 import {
   METRICS_DAILY_VIEW,
@@ -153,6 +159,7 @@ export class WorldIntelligenceService {
   private seriesReady = false;
   private archiveReady = false;
   private eventsReady = false;
+  private congressTradesReady = false;
 
   constructor(private readonly connector: GraphConnector, private readonly tsdb: Pool) {}
 
@@ -687,6 +694,150 @@ export class WorldIntelligenceService {
     return (r.rows as Array<Parameters<typeof toLatestPoint>[0]>)
       .map(toLatestPoint)
       .filter((row) => Number.isFinite(row.value) && !Number.isNaN(Date.parse(row.ts)));
+  }
+
+  /** Lazily ensure the world_congress_trades table and indexes exist. */
+  private async ensureCongressTrades(): Promise<void> {
+    if (this.congressTradesReady) return;
+    await this.tsdb.query(
+      `CREATE TABLE IF NOT EXISTS world_congress_trades (
+         trade_id TEXT PRIMARY KEY,
+         representative TEXT NOT NULL,
+         bio_guide_id TEXT,
+         party TEXT,
+         chamber TEXT,
+         state TEXT,
+         district TEXT,
+         ticker TEXT NOT NULL,
+         asset_description TEXT,
+         transaction_type TEXT NOT NULL,
+         direction TEXT NOT NULL,
+         transaction_date DATE,
+         disclosure_date DATE NOT NULL,
+         amount TEXT,
+         amount_range_low DOUBLE PRECISION,
+         amount_range_high DOUBLE PRECISION,
+         ptr_link TEXT,
+         source TEXT NOT NULL,
+         observed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+       )`,
+    );
+    try {
+      await this.tsdb.query(`CREATE INDEX IF NOT EXISTS world_congress_trades_rep_idx ON world_congress_trades (representative, disclosure_date DESC)`);
+      await this.tsdb.query(`CREATE INDEX IF NOT EXISTS world_congress_trades_ticker_idx ON world_congress_trades (ticker, disclosure_date DESC)`);
+      await this.tsdb.query(`CREATE INDEX IF NOT EXISTS world_congress_trades_disclosure_idx ON world_congress_trades (disclosure_date DESC)`);
+    } catch (err) {
+      logger.warn({ err }, 'world_congress_trades index creation warning — reads may be slower');
+    }
+    this.congressTradesReady = true;
+  }
+
+  /**
+   * @description Record granular congressional trade disclosures idempotently by deterministic trade_id.
+   * Skipped when a trade with the same trade_id is already stored.
+   * @param trades - Array of normalized congressional trade records.
+   * @returns Total processed and how many new records were inserted.
+   */
+  async recordCongressTrades(trades: CongressTradeRecord[]): Promise<{ inserted: number; total: number }> {
+    if (!trades.length) return { inserted: 0, total: 0 };
+    await this.ensureCongressTrades();
+    let inserted = 0;
+    for (const t of trades) {
+      try {
+        const res = await this.tsdb.query(
+          `INSERT INTO world_congress_trades
+             (trade_id, representative, bio_guide_id, party, chamber, state, district,
+              ticker, asset_description, transaction_type, direction,
+              transaction_date, disclosure_date, amount, amount_range_low, amount_range_high,
+              ptr_link, source, observed_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+           ON CONFLICT (trade_id) DO NOTHING`,
+          [
+            t.tradeId, t.representative, t.bioGuideId ?? null, t.party ?? null, t.chamber ?? null,
+            t.state ?? null, t.district ?? null, t.ticker, t.assetDescription ?? null,
+            t.transactionType, t.direction, t.transactionDate ? t.transactionDate.slice(0, 10) : null,
+            t.disclosureDate.slice(0, 10), t.amount ?? null, t.amountRangeLow ?? null,
+            t.amountRangeHigh ?? null, t.ptrLink ?? null, t.source, t.observedAt,
+          ],
+        );
+        if ((res.rowCount ?? 0) > 0) inserted += 1;
+      } catch (err) {
+        logger.error({ err, tradeId: t.tradeId, ticker: t.ticker }, 'failed to insert congress trade record');
+      }
+    }
+    return { inserted, total: trades.length };
+  }
+
+  /**
+   * @description Query granular congressional trades with optional filtering by politician, ticker, party, chamber, etc.
+   * @param filter - Search criteria and pagination limits.
+   * @returns Array of matched congressional trades, newest disclosure first.
+   */
+  async queryCongressTrades(filter: CongressTradeQueryFilter = {}): Promise<CongressTradeRecord[]> {
+    await this.ensureCongressTrades();
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+    let p = 1;
+
+    if (filter.ticker) {
+      clauses.push(`ticker = $${p++}`);
+      params.push(filter.ticker.toUpperCase().trim());
+    }
+    if (filter.representative) {
+      clauses.push(`representative ILIKE $${p++}`);
+      params.push(`%${filter.representative.trim()}%`);
+    }
+    if (filter.party) {
+      clauses.push(`party ILIKE $${p++}`);
+      params.push(`%${filter.party.trim()}%`);
+    }
+    if (filter.chamber) {
+      clauses.push(`chamber ILIKE $${p++}`);
+      params.push(`%${filter.chamber.trim()}%`);
+    }
+    if (filter.direction) {
+      clauses.push(`direction = $${p++}`);
+      params.push(filter.direction.toLowerCase());
+    }
+    const days = Math.min(365, Math.max(1, Math.floor(Number(filter.sinceDays) || 90)));
+    clauses.push(`disclosure_date >= (CURRENT_DATE - INTERVAL '${days} days')`);
+
+    const limit = Math.min(200, Math.max(1, Math.floor(Number(filter.limit) || 50)));
+    const offset = Math.max(0, Math.floor(Number(filter.offset) || 0));
+
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    const sql = `SELECT trade_id, representative, bio_guide_id, party, chamber, state, district,
+                        ticker, asset_description, transaction_type, direction,
+                        transaction_date, disclosure_date, amount, amount_range_low, amount_range_high,
+                        ptr_link, source, observed_at
+                   FROM world_congress_trades
+                  ${where}
+                  ORDER BY disclosure_date DESC, representative ASC, ticker ASC
+                  LIMIT $${p++} OFFSET $${p++}`;
+    params.push(limit, offset);
+
+    const r = await this.tsdb.query(sql, params);
+    return (r.rows as Array<Record<string, unknown>>).map((row) => ({
+      tradeId: String(row.trade_id),
+      representative: String(row.representative),
+      bioGuideId: row.bio_guide_id == null ? null : String(row.bio_guide_id),
+      party: row.party == null ? null : String(row.party),
+      chamber: row.chamber == null ? null : String(row.chamber),
+      state: row.state == null ? null : String(row.state),
+      district: row.district == null ? null : String(row.district),
+      ticker: String(row.ticker),
+      assetDescription: row.asset_description == null ? null : String(row.asset_description),
+      transactionType: String(row.transaction_type),
+      direction: row.direction === 'buy' ? 'buy' : 'sell',
+      transactionDate: row.transaction_date ? String(row.transaction_date).slice(0, 10) : null,
+      disclosureDate: `${String(row.disclosure_date).slice(0, 10)}T00:00:00.000Z`,
+      amount: row.amount == null ? null : String(row.amount),
+      amountRangeLow: row.amount_range_low == null ? null : Number(row.amount_range_low),
+      amountRangeHigh: row.amount_range_high == null ? null : Number(row.amount_range_high),
+      ptrLink: row.ptr_link == null ? null : String(row.ptr_link),
+      source: String(row.source),
+      observedAt: new Date(row.observed_at as string).toISOString(),
+    }));
   }
 
   /**

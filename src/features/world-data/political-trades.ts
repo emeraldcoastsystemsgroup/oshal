@@ -31,8 +31,9 @@
  * federal contracts" — the same idea from the spending side.
  */
 
+import { createHash } from 'node:crypto';
 import { createWorldIntelligenceService, type WorldIntelligenceService } from './world-intelligence-service';
-import { CONGRESS_FEED_SOURCE } from './world-types';
+import { CONGRESS_FEED_SOURCE, type CongressTradeRecord } from './world-types';
 import { createChildLogger } from '@/shared/logger';
 
 const logger = createChildLogger({ module: 'political-trades' });
@@ -68,6 +69,33 @@ export interface CongressTrade {
   Amount?: string | number;
   amount?: string | number;
   amount_range_low?: number;
+  amount_range_high?: number;
+  representative?: string;
+  Representative?: string;
+  senator?: string;
+  Senator?: string;
+  name?: string;
+  Member?: string;
+  party?: string;
+  Party?: string;
+  chamber?: string;
+  Chamber?: string;
+  state?: string;
+  State?: string;
+  district?: string;
+  District?: string;
+  office?: string;
+  Office?: string;
+  asset_description?: string;
+  description?: string;
+  Asset?: string;
+  bio_guide_id?: string;
+  bioguide_id?: string;
+  ptr_link?: string;
+  ptr_url?: string;
+  link?: string;
+  url?: string;
+  PtrLink?: string;
 }
 
 export interface PoliticalTradeObservation {
@@ -162,6 +190,100 @@ export function aggregatePoliticalTrades(
   const observations = [...agg.values()]
     .sort((a, b) => a.ticker.localeCompare(b.ticker) || a.disclosureDate.localeCompare(b.disclosureDate));
   return { observations, trades };
+}
+
+/**
+ * @description Extract granular, individual congressional trade records from the feed.
+ * Normalizes politicians, chambers, parties, amounts, filing links, and generates a deterministic
+ * trade_id hash so persistence is completely idempotent.
+ * @param raw - Untrusted feed rows.
+ * @param now - Clock used for lookback/future filtering.
+ * @param lookbackDays - Inclusive lookback window in days.
+ * @param observedAt - When this run read the feed.
+ * @param source - Feed source provenance.
+ * @returns Array of normalized individual congressional trade records.
+ */
+export function extractCongressTradeRecords(
+  raw: CongressTrade[],
+  now = new Date(),
+  lookbackDays = POLITICAL_DAYS,
+  observedAt = now.toISOString(),
+  source = CONGRESS_FEED_SOURCE,
+): CongressTradeRecord[] {
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const cutoff = today - Math.max(1, lookbackDays) * DAY_MS;
+  const out: CongressTradeRecord[] = [];
+
+  for (const t of raw) {
+    const rawTicker = t?.Ticker ?? t?.ticker ?? t?.symbol ?? t?.Symbol;
+    const sym = String(rawTicker || '').toUpperCase().trim();
+    if (!sym || !/^[A-Z][A-Z.]{0,5}$/.test(sym)) continue;
+
+    const rawReportDate = t?.ReportDate ?? t?.reportDate ?? t?.filing_date ?? t?.disclosure_date;
+    const disclosed = disclosureDay(rawReportDate);
+    if (!disclosed || disclosed.epoch < cutoff || disclosed.epoch > today) continue;
+
+    const rawTransaction = t?.Transaction ?? t?.transaction ?? t?.transaction_type ?? t?.type;
+    const direction = tradeDirection(rawTransaction);
+    if (!direction) continue;
+
+    const disclosureDate = `${disclosed.day}T00:00:00.000Z`;
+    const representative = String(
+      t?.representative ?? t?.Representative ?? t?.senator ?? t?.Senator ?? t?.name ?? t?.Member ?? 'Unknown',
+    ).trim();
+
+    const rawTxDate = t?.TransactionDate ?? t?.transaction_date;
+    const txDisclosed = disclosureDay(rawTxDate);
+    const transactionDate = txDisclosed ? txDisclosed.day : null;
+
+    const party = t?.party ?? t?.Party ?? null;
+    const chamber = t?.chamber ?? t?.Chamber ?? null;
+    const state = t?.state ?? t?.State ?? null;
+    const district = t?.district ?? t?.District ?? t?.office ?? t?.Office ?? null;
+    const assetDescription = t?.asset_description ?? t?.description ?? t?.Asset ?? null;
+    const bioGuideId = t?.bio_guide_id ?? t?.bioguide_id ?? null;
+    const ptrLink = t?.ptr_link ?? t?.ptr_url ?? t?.link ?? t?.url ?? t?.PtrLink ?? null;
+    const rawAmount = t?.Amount ?? t?.amount ?? t?.amount_range_low;
+    const amountStr = rawAmount == null ? null : String(rawAmount);
+
+    let amountLow: number | null = t?.amount_range_low != null ? Number(t.amount_range_low) : null;
+    let amountHigh: number | null = t?.amount_range_high != null ? Number(t.amount_range_high) : null;
+    if (amountLow == null && amountStr) {
+      const nums = amountStr.replace(/[,$]/g, '').match(/\d+/g);
+      if (nums && nums.length > 0) {
+        amountLow = Number(nums[0]);
+        if (nums.length > 1) amountHigh = Number(nums[1]);
+      }
+    }
+
+    const transactionType = String(rawTransaction).trim();
+    const hashPayload = `${representative}|${sym}|${transactionDate || ''}|${disclosed.day}|${transactionType}|${amountStr || ''}|${ptrLink || ''}`;
+    const tradeId = createHash('sha256').update(hashPayload).digest('hex').slice(0, 32);
+
+    out.push({
+      tradeId,
+      representative: representative || 'Unknown',
+      bioGuideId: bioGuideId ? String(bioGuideId).trim() : null,
+      party: party ? String(party).trim() : null,
+      chamber: chamber ? String(chamber).trim() : null,
+      state: state ? String(state).trim() : null,
+      district: district ? String(district).trim() : null,
+      ticker: sym,
+      assetDescription: assetDescription ? String(assetDescription).trim() : null,
+      transactionType,
+      direction,
+      transactionDate,
+      disclosureDate,
+      amount: amountStr,
+      amountRangeLow: amountLow,
+      amountRangeHigh: amountHigh,
+      ptrLink: ptrLink ? String(ptrLink).trim() : null,
+      source,
+      observedAt,
+    });
+  }
+
+  return out;
 }
 
 /** One feed read: the rows, or why there are none. */
@@ -266,6 +388,16 @@ export async function collectPoliticalTrades(svcInput?: WorldIntelligenceService
   const { observations, trades } = aggregatePoliticalTrades(read.rows, now);
   const { written, unchanged } = await writeObservations(svc, observations, now.toISOString());
   const tickers = new Set(observations.map((e) => e.ticker)).size;
+
+  if (typeof (svc as unknown as { recordCongressTrades?: unknown }).recordCongressTrades === 'function') {
+    try {
+      const records = extractCongressTradeRecords(read.rows, now, POLITICAL_DAYS, now.toISOString(), CONGRESS_FEED_SOURCE);
+      await (svc as unknown as { recordCongressTrades: (r: unknown[]) => Promise<unknown> }).recordCongressTrades(records);
+    } catch (err) {
+      logger.error({ err }, 'failed to record granular congress trades');
+    }
+  }
+
   logger.info({ feed: 'ok', tickers, trades, observations: observations.length, written, unchanged }, 'political trades collected');
   return { feed: 'ok', tickers, trades, written, unchanged };
 }

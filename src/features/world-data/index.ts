@@ -19,6 +19,10 @@ export {
   type WorldIntelligenceService,
 } from './world-intelligence-service';
 export {
+  type CongressTradeRecord,
+  type CongressTradeQueryFilter,
+} from './world-types';
+export {
   runSeriesRead,
   seriesReadKey,
   seriesReadConcurrency,
@@ -28,7 +32,7 @@ export {
 } from './world-series-gate';
 export { ingestFeeds, speedReadFirehose, deepDiveFirehose, classifyBudgetSnapshot } from './news-fetcher';
 export { collectMarketEvents } from './market-events';
-export { collectPoliticalTrades } from './political-trades';
+export { collectPoliticalTrades, extractCongressTradeRecords } from './political-trades';
 export { collectInsiderTrades } from './insider-trades';
 export { collectShortInterest } from './short-interest';
 export { collectGovContracts } from './gov-contracts';

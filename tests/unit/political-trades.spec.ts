@@ -26,7 +26,12 @@ vi.mock('@/shared/logger', async (importOriginal) => {
   return { ...actual, createChildLogger: () => logger, logger };
 });
 
-import { aggregatePoliticalTrades, collectPoliticalTrades, disclosureDay } from '@/features/world-data/political-trades';
+import {
+  aggregatePoliticalTrades,
+  collectPoliticalTrades,
+  disclosureDay,
+  extractCongressTradeRecords,
+} from '@/features/world-data/political-trades';
 
 const NOW = new Date('2026-09-25T12:00:00Z');
 
@@ -207,5 +212,97 @@ describe('collectPoliticalTrades — feed source, disclosure day and run clock r
     expect(feed.auth).toEqual([`Bearer ${TOKEN}`]);
     expect(h.logs.filter((l) => l.msg === REFUSED)).toEqual([]);
     expect(JSON.stringify(h.logs)).not.toContain(TOKEN);
+  });
+
+  it('records granular congress trade rows when the world service supports it', async () => {
+    feed.status = 200;
+    const today = new Date().toISOString().slice(0, 10);
+    feed.body = JSON.stringify([
+      {
+        representative: 'Hon. Nancy Pelosi', party: 'Democrat', chamber: 'House', state: 'CA', district: 'CA-11',
+        ticker: 'NVDA', asset_description: 'NVIDIA Corp', transaction_type: 'Purchase',
+        transaction_date: '2026-09-20', filing_date: today, amount: '$1,000,001 - $5,000,000',
+        ptr_link: 'https://disclosures.house.gov/ptr/12345.pdf',
+      },
+    ]);
+    const granularRecorded: unknown[][] = [];
+    const { writes, svc } = recorder(new Set());
+    (svc as unknown as Record<string, unknown>).recordCongressTrades = async (records: unknown[]) => {
+      granularRecorded.push(records);
+      return { inserted: records.length, total: records.length };
+    };
+
+    const result = await collectPoliticalTrades(svc);
+    expect(result.feed).toBe('ok');
+    expect(granularRecorded).toHaveLength(1);
+    const first = granularRecorded[0][0] as Record<string, unknown>;
+    expect(first).toMatchObject({
+      representative: 'Hon. Nancy Pelosi',
+      party: 'Democrat',
+      chamber: 'House',
+      state: 'CA',
+      district: 'CA-11',
+      ticker: 'NVDA',
+      assetDescription: 'NVIDIA Corp',
+      transactionType: 'Purchase',
+      direction: 'buy',
+      transactionDate: '2026-09-20',
+      disclosureDate: `${today}T00:00:00.000Z`,
+      amountRangeLow: 1000001,
+      amountRangeHigh: 5000000,
+      ptrLink: 'https://disclosures.house.gov/ptr/12345.pdf',
+    });
+    expect(first.tradeId).toBeDefined();
+    expect(typeof first.tradeId).toBe('string');
+  });
+});
+
+describe('extractCongressTradeRecords — granular politician trade parsing', () => {
+  it('extracts full politician metadata and computes deterministic tradeId', () => {
+    const records = extractCongressTradeRecords([
+      {
+        Representative: 'Tommy Tuberville', Party: 'Republican', Chamber: 'Senate', State: 'AL',
+        Ticker: 'AAPL', Asset: 'Apple Inc.', Transaction: 'Sale (Full)',
+        TransactionDate: '2026-09-10', ReportDate: '2026-09-24', Amount: '$15,001 - $50,000',
+        PtrLink: 'https://efdsearch.senate.gov/reports/ptr1.pdf',
+      },
+      {
+        name: 'Ro Khanna', party: 'Democrat', chamber: 'House', state: 'CA', district: 'CA-17',
+        ticker: 'MSFT', description: 'Microsoft Corporation', transaction_type: 'Buy',
+        transaction_date: '2026-09-15', filing_date: '2026-09-24', amount_range_low: 50001,
+      },
+    ], NOW, 30);
+
+    expect(records).toHaveLength(2);
+    expect(records[0]).toMatchObject({
+      representative: 'Tommy Tuberville',
+      party: 'Republican',
+      chamber: 'Senate',
+      state: 'AL',
+      ticker: 'AAPL',
+      assetDescription: 'Apple Inc.',
+      transactionType: 'Sale (Full)',
+      direction: 'sell',
+      transactionDate: '2026-09-10',
+      disclosureDate: '2026-09-24T00:00:00.000Z',
+      amountRangeLow: 15001,
+      amountRangeHigh: 50000,
+      ptrLink: 'https://efdsearch.senate.gov/reports/ptr1.pdf',
+    });
+    expect(records[1]).toMatchObject({
+      representative: 'Ro Khanna',
+      party: 'Democrat',
+      chamber: 'House',
+      state: 'CA',
+      district: 'CA-17',
+      ticker: 'MSFT',
+      assetDescription: 'Microsoft Corporation',
+      transactionType: 'Buy',
+      direction: 'buy',
+      transactionDate: '2026-09-15',
+      disclosureDate: '2026-09-24T00:00:00.000Z',
+      amountRangeLow: 50001,
+    });
+    expect(records[0].tradeId).not.toEqual(records[1].tradeId);
   });
 });
