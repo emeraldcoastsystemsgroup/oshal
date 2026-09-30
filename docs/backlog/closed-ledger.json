@@ -886,5 +886,11 @@
     "title": "Credential ownership and execution actor are explicit in connector and Jarvis metadata",
     "pr": "5f2a2257",
     "evidence": "Commit 7e1430e4 added credentialOwner, executionActor, provisioningOwner, and fallbackPolicy to ConnectorSpec metadata in src/app/connectors/runtime/spec.ts, swarm-apps/connector.schema.json, and updated onboarding derivations in src/app/connectors/marketplace-service.ts with twilio.yaml annotated and tested (4/4 connector marketplace specs PASS). Commit 5f2a2257 extended parseToolCatalog in src/app/routes/jarvis-tool-catalog.ts to enforce and validate the four ADR-065 dimensions and simulationOnly flag on tool entries, annotated oshal-voice-sim.js in src/app/routes/jarvis-tools.yaml with simulationOnly: true and none/user/none/none dimensions, and added unit tests in tests/unit/jarvis-tool-catalog.spec.ts (25/25 PASS). npm run typecheck passed with exit code 0 across tsconfig.json and tsconfig.server.json."
+  },
+  {
+    "date": "2026-09-30",
+    "title": "Rate the nine store packages that were under other lanes' claims (2026-09-29)",
+    "pr": "12eb8014 (store)",
+    "evidence": "Commit 12eb8014 in oshal-applications added valid rating blocks to all 9 unrated apps (animatronics, calendar, dnd, drone, embodied, little-monsters, lora, pumpkin, spaces), ran node scripts/ai-usage-ledger.mjs --write to generate AI-USAGE-LEDGER.md and package READMEs, and removed --allow-unrated from .github/workflows/store-ci.yml and scripts/store-ci-local.mjs. All 22 mutation tests pass in scripts/ai-usage-ledger.test.mjs, and node scripts/ai-usage-ledger.mjs --check passes with 0 unrated packages across all 67 packages."
   }
 ]
