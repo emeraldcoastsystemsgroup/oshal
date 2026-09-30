@@ -823,13 +823,28 @@ Accounting regression specs retain the original rollup, ledger-only and durable
 receipt contracts. This is an additive payload on one cost row, not another stream
 to add to Token Chase totals.
 
-`tests/unit/feature-token-evidence-postgres.spec.ts` is companion **source only**,
-not a passing runtime receipt. It prepares real migration replay, non-bypass
-table-owner FORCE RLS, immutable evidence, settlement rollback/replay and actual
-missing-column recovery against an owned disposable PostgreSQL fixture. No
-production database, provider, hardware, installed secret, browser, or migration
-activation has been used for this slice. Both specs are selected by the existing
-unit-test include; full CI remains separate.
+`tests/unit/feature-token-evidence-postgres.spec.ts` passed **10/10, zero skips**
+on 2026-09-30, 00:19:42–00:20:02 UTC, exit0/9748ms, in one real owned PostgreSQL
+fixture. Actual migration replay (including182 twice), non-bypass table-owner
+FORCE RLS, immutable evidence, settlement rollback/replay and real missing-column
+savepoint recovery executed; SQL/transactions/RLS were not doubled. The product
+snapshot was `7ee4d48fa1ff6335eeae12c6a3cc92ffbf76f496`, unchanged PG spec blob
+`ed5415dfb3ea3f0a7e7f4896f43f999b5a3ad6f2`, with explicit TEST transport overlays
+`9b7fe56d38c6981571ce58f9a9ad9375b3b62f6f` / `8eb48217f57a00d09717c86c6c4b09339c332eec`
+and separate non-PG guard `4e0063f022d2a3d6aff7aea244108f9771aa0d25`.
+Exact dependency image9e9d0fb2/PG1d533553, full image IDs, package-script-only
+compatibility, source/plan and raw receipt hashes are recorded in
+[the acceptance record](../backlog/feature-token-evidence.md#verification-and-remaining-acceptance).
+The real Vitest receipt SHA256 is
+`91394551373a130ab76c516942476ab2afbfc1dd271a0d59b1d8a416dcf870fa`.
+Fresh endpoint proof attested one claim/release; owned containers/networks/private
+files were gone after exit and all ten pre-existing container identities remained
+unchanged. Independent source and actual-proof review accepted this database
+evidence. The seven unselected inventory suites were not rerun. No production
+database, provider, hardware, installed secret or browser was used; only the fresh
+fixture was migrated. Both specs remain in the existing unit-test include.
+Full composed-head compilation/publication gates remain distinct from this
+executed snapshot, and full CI remains separate.
 
 See [the contract, commands and residual acceptance](../backlog/feature-token-evidence.md).
 Sample fixture percentiles are not seven-day production evidence, cost/cadence

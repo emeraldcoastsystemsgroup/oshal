@@ -94,26 +94,81 @@ finished in 9.79 seconds, starting at 2827 MiB free and observing a minimum of
 that is explicitly not a project typecheck.
 
 [The PostgreSQL companion](../../tests/unit/feature-token-evidence-postgres.spec.ts)
-is prepared but **not executed**. It uses the existing owned disposable fixture,
-minted credentials and a non-bypass table-owning role under FORCE RLS. It applies
-actual migrations through 115 plus 182 twice, calls the production writer and
-reducer, checks wrong-owner refusal and immutable evidence, and exercises actual
-rollback/replay and pre-182 savepoint recovery. Its destructive schema control is
-restricted to that fixture database. No deployment DSN or installed secret is read.
+passed **10/10, zero skips**, in one owned-fixture run on 2026-09-30, 00:19:42–00:20:02
+UTC. The suite exited 0 in 9748 ms. It executed actual migrations 005, 055, 078,
+090, 112, 115 and 182 (182 twice), the production writer/reducer, a non-bypass
+table-owning role under FORCE RLS, wrong-owner refusal and immutable evidence,
+real settlement rollback/replay and actual pre-182 savepoint recovery. SQL,
+transactions and RLS were not doubled. Destructive schema controls were confined
+to the fresh fixture database; no existing database or installed secret was used.
+
+The executed product snapshot was `7ee4d48fa1ff6335eeae12c6a3cc92ffbf76f496`;
+the unchanged PG spec Git blob was `ed5415dfb3ea3f0a7e7f4896f43f999b5a3ad6f2`.
+The explicit reviewed TEST transport overlay was:
+
+- `tests/helpers/disposable-postgres.ts`: `9b7fe56d38c6981571ce58f9a9ad9375b3b62f6f`.
+- `tests/helpers/owned-postgres-transport.ts`: `8eb48217f57a00d09717c86c6c4b09339c332eec`.
+- `tests/unit/owned-postgres-transport.spec.ts`: `4e0063f022d2a3d6aff7aea244108f9771aa0d25`
+  (provenance/separate unit guard, not another executed PG suite).
+
+All selected source bytes and the source manifest were checked before execution.
+The runtime used cached Linux images with exact IDs:
+
+- Dependencies: `sha256:9e9d0fb26b579f9db9acf723ad7d4208814f465e40b1145a1e819b4a5e2e5c9e`.
+- PostgreSQL: `sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb`.
+
+The source package SHA256 `7353483c617f1b5ee63b9bec38c50e5389de3eabfde9a454226695435a832529`
+differs from builder package `60cb532e5fda1cd123264b9867fe7fd773649b94d01b90da95dff3a355d6cdf0`
+only by the exact unused `test:package-anonymous-routes` script; all other parsed
+package fields match. Both use lock SHA256
+`53e3cefe27d2aa9bcc264cae928b175061246cebf6415eaa1145d022658bd783`.
+This checked compatibility is not a claim of byte-identical package files.
+
+Actual receipt SHA256s (retained in the separate local acceptance evidence):
+
+| Receipt | SHA256 |
+| --- | --- |
+| Source manifest | `e86aa8fd4fbc1391a3649ca92a3a5e7ae97b80e6c792bbb30c63ba3561e45a35` |
+| Bound execution plan | `4af937bcb9b6c7361be2094a47ca13b1082a43c4431c498c610f70c319753299` |
+| Vitest assertions | `91394551373a130ab76c516942476ab2afbfc1dd271a0d59b1d8a416dcf870fa` |
+| Actual result | `37886bea584d1bf21519ad6c1e972efc825e5e3e1d9cb06b1a3cba7bd3d8078d` |
+| Fresh owned endpoint | `e8ba66d9e153efa7028d5821bf6f00c62d7aa595c1288a91e2d48bc6a4734957` |
+
+The endpoint attested one fresh claim and release. Exact run-label container and
+network inventories were empty after exit, private fixture files were absent,
+and all ten pre-existing container identities were unchanged. Independent
+source and actual-receipt reviews passed. This clears the slice's real database
+evidence requirement; it does not claim the later composed main archive was the
+executed snapshot, nor deployed behavior or seven-day measurements.
 
 The bounded focused command is:
 
 ```powershell
-node --max-old-space-size=128 node_modules/vitest/vitest.mjs run --config vitest.config.ts --pool=forks --maxWorkers=1 --no-file-parallelism --execArgv=--max-old-space-size=384 --testTimeout=15000 --hookTimeout=15000 tests/unit/feature-token-evidence.spec.ts tests/unit/cost-ledger-observability-write.spec.ts tests/unit/cost-ledger-rls-refusal.spec.ts tests/unit/remote-task-cost-once.spec.ts tests/unit/inline-turn-cost-ledger.spec.ts
+$priorNodeOptions = $env:NODE_OPTIONS
+try {
+  $env:NODE_OPTIONS = '--max-old-space-size=384'
+  node --max-old-space-size=128 node_modules/vitest/vitest.mjs run --config vitest.config.ts --pool=forks --maxWorkers=1 --no-file-parallelism --testTimeout=15000 --hookTimeout=15000 tests/unit/feature-token-evidence.spec.ts tests/unit/cost-ledger-observability-write.spec.ts tests/unit/cost-ledger-rls-refusal.spec.ts tests/unit/remote-task-cost-once.spec.ts tests/unit/inline-turn-cost-ledger.spec.ts
+} finally {
+  $env:NODE_OPTIONS = $priorNodeOptions
+}
 ```
 
 Use a supervisor with fresh free memory at least 1800 MiB, minimum reserve 600 MiB
-and a 180-second process-tree deadline. The PG companion requires a separately
-scheduled runtime window, cached `postgres:16-alpine`, one owned 256 MiB fixture,
-and its normal cleanup; it is deliberately omitted from this offline command.
+and a 180-second process-tree deadline. Inherited `NODE_OPTIONS` bounds the fork;
+the direct Node argument separately bounds the runner. The PG companion requires
+a separately scheduled runtime window and is omitted from this offline command.
+Its ordinary disposable fixture requests 256 MiB; the actual owned-transport
+acceptance instead used a 512 MiB PG container and 1024 MiB runner, heap384,
+one CPU each/no extra swap, fresh3584 MiB/reserve2048 MiB, one worker/no retries,
+suite600s/whole3300s/cleanup90s. Observed fresh6151.60 MiB and post-exit6148.11 MiB
+are samples, not a recorded minimum. All owned resources were cleaned and the
+remote slot released before collecting the reports.
 Both new specs match the existing `tests/unit/**/*.spec.ts` CI selection.
 
-Full typechecking, normal publication gates and real PG acceptance remain pending.
+Source/server types and the normal archived-HEAD/publish gate passed on the earlier
+exact `7ee4d48f` candidate. The newly composed publication head still requires its
+own finite source/server and intact push gates; the PostgreSQL result above is
+already accepted and is not held for the separate seven-day outcome.
 Producer adoption, completeness-preserving authorized reads, genuine seven-day
 sampling, ledger generation, model/workload measurements, cadence/cost projection,
 and pause/resume controls remain separate P0/A2 work. Synthetic fixtures are not
