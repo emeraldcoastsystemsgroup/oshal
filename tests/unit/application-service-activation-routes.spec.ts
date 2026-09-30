@@ -5,24 +5,44 @@
  * -----------------------------------------------------------------------------
  * 1   | maintainer@emeraldcoastsystemsgroup.com     | ADR-157 S1: prove the kernel services routes over a real loopback HTTP server and the real activation service — a non-administrator asking for a system service gets 403, an administrator gets it, a person activates only for themselves, and a second person can neither deactivate someone else's activation nor make it disappear.
  * 2   | maintainer@emeraldcoastsystemsgroup.com     | Deactivation over the wire: a person who holds no activation reads 200 {deactivated:false} and a person who reaches for the system service reads 403 — the two answers a caller must be able to tell apart — while an unknown or contradictory principal class is a 400 and the system activation survives every one of them.
+ * 3   | maintainer@emeraldcoastsystemsgroup.com     | Exercise catalog-less protected activation refusal through real HTTP, activation and authorization policy with memory stores; preserve legacy/user paths and prove catalog-backed system grants remain exact.
  */
 
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import express, { type Request } from 'express';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { registerApplicationServiceActivationRoutes } from '@/app/routes/application-service-activation-routes';
 import { setApplicationServiceActivations } from '@/app/application-service-activation-wiring';
 import {
-  ApplicationServiceActivationService, MemoryApplicationServiceActivationStore, MemoryAuthorizationStore,
+  ApplicationServiceActivationService, ApplicationAuthorizationService,
+  APPLICATION_SERVICE_PRINCIPAL_ISSUER, applicationServicePrincipalSub,
+  MemoryApplicationServiceActivationStore, MemoryAuthorizationStore,
 } from '@/features/application-authorization';
 import type { ApplicationServiceDeclaration } from '@/features/application-authorization';
-import type { AuthorizationActor } from '@/shared/application-authorization';
+import type { AuthorizationActor, AuthorizationCatalog } from '@/shared/application-authorization';
 
 const APP = 'metrics-app';
 const LOCAL_ID = 'daily-ingest';
 const SCHEDULE_ID = `${APP}-${LOCAL_ID}`;
 const ISSUER = 'https://identity.fixture.test';
+const CATALOG: AuthorizationCatalog = {
+  version: 1, resources: { metrics: { scopes: ['own'] } },
+  permissions: {
+    'metrics.write': { resource: 'metrics', effect: 'write', minimumTier: 'editor' },
+    'metrics.review': { resource: 'metrics', effect: 'administer', minimumTier: 'admin' },
+  },
+  roles: { contributor: { tier: 'editor', grants: [{ permission: 'metrics.write', scope: 'own' }] } },
+  bindings: { jobs: [
+    { id: SCHEDULE_ID, allOf: ['metrics.write'] },
+    { id: `${APP}-review`, allOf: ['metrics.review'] },
+  ] },
+};
+const servicePrincipal: AuthorizationActor = {
+  sub: applicationServicePrincipalSub(APP), issuer: APPLICATION_SERVICE_PRINCIPAL_ISSUER,
+  isActive: true, isSwarmAdmin: false,
+};
 
 const actors: Record<string, AuthorizationActor> = {
   admin: { sub: 'admin', issuer: ISSUER, isActive: true, isSwarmAdmin: true },
@@ -35,6 +55,16 @@ let base: string;
 let activations: MemoryApplicationServiceActivationStore;
 let registered: string[];
 let declarations: ApplicationServiceDeclaration[];
+let policy: MemoryAuthorizationStore;
+let authorization: ApplicationAuthorizationService;
+
+/** @description Install fixture posture through the real policy registration path, never HTTP input. */
+async function registerPosture(catalog: AuthorizationCatalog | null, mode: 'legacy' | 'enforce'): Promise<void> {
+  await authorization.registerApp({
+    app: APP, source: 'fixture-store', version: '1.0.0', catalog, mode,
+    adapters: { metrics: { authorize: async () => true } },
+  });
+}
 
 /** @description Call the routes as one fixture identity; an unknown one is refused at the mount. */
 async function call(method: string, path: string, user: string, body?: unknown): Promise<{ status: number; body: any }> {
@@ -66,18 +96,21 @@ afterAll(async () => {
   await new Promise<void>(done => server.close(() => done()));
 });
 
-beforeEach(() => {
+beforeEach(async () => {
   registered = [];
   declarations = [{
     app: APP, id: LOCAL_ID, scheduleId: SCHEDULE_ID, cron: '15 6 * * *',
     description: 'Pull yesterday\'s channel metrics into the scorecard.', requires: [], queue: APP,
   }];
   activations = new MemoryApplicationServiceActivationStore();
+  policy = new MemoryAuthorizationStore();
+  authorization = new ApplicationAuthorizationService(policy);
+  await registerPosture(CATALOG, 'enforce');
   const service = new ApplicationServiceActivationService({
-    activations, policy: new MemoryAuthorizationStore(),
-    describeApp: () => ({ source: 'fixture-store', catalogRevision: 'rev-1', catalog: null }),
+    activations, policy,
+    describeApp: app => authorization.getApp(app),
     declaredServices: async () => declarations,
-    authorize: async () => ({ allowed: true, reason: 'authorization_allowed', decisionId: 'fixture', revision: 1, app: APP, grants: [] }),
+    authorize: (actor, operation) => authorization.authorize(actor, operation),
     registerUserInstance: async input => { registered.push(input.userSub); },
     removeUserInstance: async input => { registered = registered.filter(sub => sub !== input.userSub); },
   });
@@ -89,9 +122,89 @@ beforeEach(() => {
 
 afterEach(() => {
   setApplicationServiceActivations(undefined);
+  vi.restoreAllMocks();
 });
 
 describe('ADR-157 scheduled services routes', () => {
+  it('refuses a protected catalog-less system activation before any activation or grant is written', async () => {
+    await registerPosture(null, 'enforce');
+    const before = await policy.read();
+    const find = vi.spyOn(activations, 'findLive');
+    const insert = vi.spyOn(activations, 'insert');
+    const revoke = vi.spyOn(activations, 'revoke');
+    const transaction = vi.spyOn(policy, 'transaction');
+    const refused = await call('POST', `/${APP}/services/${SCHEDULE_ID}/activate`, 'admin',
+      { runsAs: 'system', mode: 'legacy', catalog: CATALOG });
+    expect(refused).toEqual({ status: 409, body: { error: 'authorization_service_catalog_required' } });
+    expect(await activations.listByApp(APP)).toEqual([]);
+    expect(await policy.read()).toEqual(before);
+    expect(registered).toEqual([]);
+    for (const untouched of [find, insert, revoke, transaction]) expect(untouched).not.toHaveBeenCalled();
+    expect(await authorization.authorize(servicePrincipal, { app: APP, kind: 'jobs', operation: SCHEDULE_ID }))
+      .toMatchObject({ allowed: false, reason: 'authorization_app_admin_required' });
+  });
+
+  it('retains the administrator refusal before disclosing the missing catalog', async () => {
+    await registerPosture(null, 'enforce');
+    const refused = await call('POST', `/${APP}/services/${SCHEDULE_ID}/activate`, 'alice', { runsAs: 'system' });
+    expect(refused).toEqual({ status: 403, body: { error: 'authorization_service_admin_required' } });
+    expect(await activations.listByApp(APP)).toEqual([]);
+  });
+
+  it('does not reuse or revoke an old system activation after catalog-less posture becomes enforce', async () => {
+    await registerPosture(null, 'legacy');
+    expect((await call('POST', `/${APP}/services/${SCHEDULE_ID}/activate`, 'admin', { runsAs: 'system' })).status).toBe(200);
+    const existing = await activations.listByApp(APP);
+    await registerPosture(null, 'enforce');
+    const before = await policy.read();
+    const refused = await call('POST', `/${APP}/services/${SCHEDULE_ID}/activate`, 'admin', { runsAs: 'system' });
+    expect(refused).toEqual({ status: 409, body: { error: 'authorization_service_catalog_required' } });
+    expect(await activations.listByApp(APP)).toEqual(existing);
+    expect(await policy.read()).toEqual(before);
+  });
+
+  it.each([
+    { mode: 'legacy' as const, catalog: null, expected: 200 },
+    { mode: 'enforce' as const, catalog: null, expected: 409 },
+    { mode: 'legacy' as const, catalog: CATALOG, expected: 200 },
+    { mode: 'enforce' as const, catalog: CATALOG, expected: 200 },
+  ])('uses registered posture for mode=$mode catalog=$catalog', async ({ mode, catalog, expected }) => {
+    await registerPosture(catalog, mode);
+    const before = await policy.read();
+    const response = await call('POST', `/${APP}/services/${SCHEDULE_ID}/activate`, 'admin', { runsAs: 'system' });
+    expect(response.status).toBe(expected);
+    expect(authorization.getApp(APP)?.mode).toBe(catalog ? 'enforce' : mode);
+    expect(await policy.read()).toEqual(before);
+    if (expected === 409) expect(response.body).toEqual({ error: 'authorization_service_catalog_required' });
+    if (!catalog && mode === 'legacy') {
+      expect(await authorization.authorize(servicePrincipal, { app: APP, kind: 'jobs', operation: SCHEDULE_ID }))
+        .toMatchObject({ allowed: true, reason: 'authorization_legacy' });
+    }
+  });
+
+  it('grants a catalog-backed system principal exactly its declared job permission', async () => {
+    declarations[0].requires = ['metrics.write'];
+    expect((await call('POST', `/${APP}/services/${SCHEDULE_ID}/activate`, 'admin', { runsAs: 'system' })).status).toBe(200);
+    expect(await authorization.authorize(servicePrincipal, { app: APP, kind: 'jobs', operation: SCHEDULE_ID }))
+      .toMatchObject({ allowed: true, grants: [{ permission: 'metrics.write', scope: 'own' }] });
+    expect((await authorization.authorize(servicePrincipal, { app: APP, kind: 'jobs', operation: `${APP}-review` })).allowed).toBe(false);
+    expect((await policy.read()).assignments).toMatchObject([{ permission: 'metrics.write', targetSub: servicePrincipal.sub }]);
+    expect(registered).toEqual([]);
+  });
+
+  it('preserves a catalog-less user activation under that user\'s explicit app-admin grant', async () => {
+    await registerPosture(null, 'enforce');
+    const preview = await authorization.previewChange(actors.admin, {
+      action: 'grant', app: APP, targetSub: actors.alice.sub, targetIssuer: ISSUER, role: '@app-admin',
+      reason: 'Fixture user service authorization', expectedRevision: (await policy.read()).revision,
+    });
+    await authorization.applyChange(actors.admin, { previewId: preview.previewId, idempotencyKey: randomUUID() });
+    expect((await call('POST', `/${APP}/services/${SCHEDULE_ID}/activate`, 'alice', { runsAs: 'user' })).status).toBe(200);
+    expect(registered).toEqual(['alice']);
+    expect(await authorization.authorize(actors.alice, { app: APP, kind: 'jobs', operation: SCHEDULE_ID }))
+      .toMatchObject({ allowed: true, reason: 'authorization_app_admin' });
+  });
+
   it('refuses an anonymous caller at the mount', async () => {
     const response = await fetch(`${base}/api/swarm/apps/${APP}/services`);
     expect(response.status).toBe(401);
