@@ -807,6 +807,60 @@ Both spec files are already selected by `vitest.config.ts`'s
 `tests/unit/**/*.spec.ts` include through `npm run test:unit`, used by the normal
 local CI unit gate and hosted CI unit job; no new runtime Lab card is added.
 
+## Feature token evidence P0 (2026-09-29)
+
+`tests/unit/feature-token-evidence.spec.ts` invokes the actual producer-evidence
+validator, immutable snapshot, pure scoped reducer and `CostTrackingService`.
+Only the logger and a named recording SQL transport are doubled. The transport
+checks issued statements, parameters and asynchronous mutation races; its
+savepoint-error simulation is not proof of database rollback or RLS.
+
+The guarded boundary is explicit evidence admission and operation aggregation:
+no feature-from-agent/task mapping, request-count inference,
+partial membership, duplicate counting, estimated-token promotion,
+cross-owner blending, out-of-window measurements or model-compatibility inference.
+Accounting regression specs retain the original rollup, ledger-only and durable
+receipt contracts. This is an additive payload on one cost row, not another stream
+to add to Token Chase totals.
+
+`tests/unit/feature-token-evidence-postgres.spec.ts` passed **10/10, zero skips**
+on 2026-09-30, 00:19:42–00:20:02 UTC, exit0/9748ms, in one real owned PostgreSQL
+fixture. Actual migration replay (including182 twice), non-bypass table-owner
+FORCE RLS, immutable evidence, settlement rollback/replay and real missing-column
+savepoint recovery executed; SQL/transactions/RLS were not doubled. The product
+snapshot was `7ee4d48fa1ff6335eeae12c6a3cc92ffbf76f496`, unchanged PG spec blob
+`ed5415dfb3ea3f0a7e7f4896f43f999b5a3ad6f2`, with explicit TEST transport overlays
+`9b7fe56d38c6981571ce58f9a9ad9375b3b62f6f` / `8eb48217f57a00d09717c86c6c4b09339c332eec`
+and separate non-PG guard `4e0063f022d2a3d6aff7aea244108f9771aa0d25`.
+Exact dependency image9e9d0fb2/PG1d533553, full image IDs, package-script-only
+compatibility, source/plan and raw receipt hashes are recorded in
+[the acceptance record](../backlog/feature-token-evidence.md#verification-and-remaining-acceptance).
+The real Vitest receipt SHA256 is
+`91394551373a130ab76c516942476ab2afbfc1dd271a0d59b1d8a416dcf870fa`.
+Fresh endpoint proof attested one claim/release; owned containers/networks/private
+files were gone after exit and all ten pre-existing container identities remained
+unchanged. Independent source and actual-proof review accepted this database
+evidence. The seven unselected inventory suites were not rerun. No production
+database, provider, hardware, installed secret or browser was used; only the fresh
+fixture was migrated. Both specs remain in the existing unit-test include.
+Full composed-head compilation/publication gates remain distinct from this
+executed snapshot, and full CI remains separate.
+
+See [the contract, commands and residual acceptance](../backlog/feature-token-evidence.md).
+Sample fixture percentiles are not seven-day production evidence, cost/cadence
+projections or tested-model compatibility. No public read endpoint or new
+aggregation authority is added.
+
+Final focused receipt: 103/103, zero skips, across five files (69 new evidence
+cases and 34 existing accounting regressions); 9.79 seconds, fresh 2827 MiB,
+minimum 1828 MiB, runner128/one384/reserve600/deadline180. Four independent
+actual-source mutations each produced one expected failure: missing count
+inferred as one, incomplete membership admitted, savepoint recovery omitted, and
+`recordCostOnce` snapshot omitted. All were restored. A separately reproduced
+large-count mean rounding bug also has a passing regression after exact integer
+accumulation. Syntax-only transpilation passed for all five touched TS files;
+neither this nor SQL-transport tests are a full project compile or database proof.
+
 ## Isolated browser cleanup acceptance refresh (2026-09-29)
 
 The [current acceptance record](../testing/isolated-browser-acceptance.md) retains

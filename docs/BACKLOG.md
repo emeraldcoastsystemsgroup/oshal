@@ -20,17 +20,18 @@ carries the evidence that survived an adversarial re-derivation and the correcti
 
 | Status | Count | Meaning |
 |---|---|---|
-| IN PROGRESS | **5** | being worked in the current session |
+| IN PROGRESS | **6** | being worked in the current session |
 | OPEN — actionable | **30** | no decision, no live box needed; can be closed by an agent |
-| OPEN — needs operator | **59** | a decision, credential, account or purchase only the operator can make |
+| OPEN — needs operator | **58** | a decision, credential, account or purchase only the operator can make |
 | OPEN — needs live proof | **62** | needs the running box, a deploy, hardware, or a human at a browser |
 | OPEN — blocked | **9** | waiting on something outside this repo |
 | OPEN — needs review | **0** | the triage could not decide; somebody has to read it |
 | OPEN — untriaged | **0** | filed after the 2026-09-15 triage; has no verdict yet |
 
-**Being worked right now (5):**
-- ADR-169 location device triggers: L8 proof, Home integration and remaining consumers · qualified Home target binding; real PostgreSQL and installed-device proof pending
-- CI Playwright red-baseline retirement · exact 31-spec fixture prepared; isolated execution pending
+**Being worked right now (6):**
+- ADR-169 location device triggers: L8 proof, Home integration and remaining consumers · qualified connector prerequisite proven; current L8 database and installed-device proof pending
+- A catalog-less protected app cannot have a working system service (2026-09-16) · activation-time refusal merged; real PostgreSQL guard pending
+- CI Playwright red-baseline retirement · exact-source runtime/browser preflight passed; full 31-spec proof pending
 - Jarvis in dev mode should see what this workspace sees: an indexed developer corpus (operator, 2026-09-18) · exact handover-path citation regression
 - Generated tokens per unit for every rated feature (ADR-170 P0) (2026-09-29) · explicit feature-operation evidence and reducer; seven-day measured acceptance remains
 - Create visual workspace and integrated editing — active parallel track · region-edit consent promotion and installed acceptance
@@ -98,16 +99,22 @@ carries the evidence that survived an adversarial re-derivation and the correcti
   handoff do not close the package's live-provider acceptance.
 
 ### ADR-169 location device triggers: L8 proof, Home integration and remaining consumers
-- **Status:** IN PROGRESS · qualified Home target binding; real PostgreSQL and installed-device proof pending
+- **Status:** IN PROGRESS · qualified connector prerequisite proven; current L8 database and installed-device proof pending
 
-- **Prepared, not live-proven:** [draft PR #951](https://github.com/emeraldcoastsystemsgroup/oshal/pull/951)
-  composes qualified credentials (migration 181), owner/issuer-bound grants, broker/session
-  boundaries, consent-bound HTTP and personal Utilities UI. Its 339 focused and 40 browser/UI
-  checks are local proof only; real enforcing-role PostgreSQL gates remain unrun and block merge.
-  The L8/Home lane is implementing binding of the selected personal connection, exact revision and
-  provider-location resource into the armed rule. This work is in progress, not installed.
-  Existing frozen PostgreSQL bundles are retained unchanged; revised L8 source needs fresh proof.
-- **Remaining:** finish and review those dependencies; retain real PostgreSQL/RLS/provisioner
+- **Verified prerequisite (2026-09-30):** [PR #951](https://github.com/emeraldcoastsystemsgroup/oshal/pull/951)
+  merged as `428ee2ef`: qualified credentials (migration 181), owner/issuer-bound grants,
+  broker/session boundaries, consent-bound HTTP and personal Utilities UI. Final integrated
+  regressions passed 436/436, and the separate real enforcing-role PostgreSQL companions passed
+  35/35; [the exact-source record](backlog/qualified-connector-postgres-proof.md) states their
+  transport overlay and remaining provider/installed boundaries. Source/server and actual
+  archived-HEAD publish gates passed. No physical readiness was enabled.
+- **Current L8 source:** `7456b3c3` binds the selected personal connection, exact revision and
+  provider-location resource into the armed rule. Independent review resolved mutable-identity
+  and final-authorization races; the restored focused set passed 163/163 and integrated
+  source/server types passed. Its five current PostgreSQL companions (79 expected cases),
+  compiled Home and installed-device acceptance remain unrun. Original fixture snapshots stay
+  unchanged; refreshed inputs include the real provisioner policy SQL, not substitutes.
+- **Remaining:** retain fresh real PostgreSQL/RLS/provisioner
   evidence for L8 ownership, arming, revocation, race and replay boundaries. Wire the Home
   package's deterministic backend handler to the qualified connection, closed device/operation
   allowlist and current armed-rule authority, then retain actual hub/device acceptance. Complete
@@ -162,36 +169,23 @@ carries the evidence that survived an adversarial re-derivation and the correcti
 - **Done when:** every moved task runs as a platform schedule with its outcome visible where the others are, no launcher in `scripts/` exists solely to hide a console window, and the host task list contains only entries that genuinely cannot run inside the stack, with the reason for each written next to it.
 
 ### A catalog-less protected app cannot have a working system service (2026-09-16)
-- **Status:** OPEN — needs operator
+- **Status:** IN PROGRESS · activation-time refusal merged; real PostgreSQL guard pending
 
-- **Measured 2026-09-16, twice independently**, while building ADR-157 slice S3 and again while
-  amending the ADR. Against the real `ApplicationAuthorizationService` with a `MemoryAuthorizationStore`,
-  an app registered `mode: 'enforce', catalog: null`:
-  `service:venture-plan => { allowed: false, reason: 'authorization_app_admin_required', tier: 'deny' }`.
-  `authorize()` takes the `!app.catalog` branch
-  ([service.ts:159-163](../src/features/application-authorization/service.ts)) and demands `@app-admin`
-  at tier `admin`.
-- **Why that breaks the slice as designed.** A system activation grants the service principal exactly
-  the permissions the manifest declares in `requires` — and **none of these packages can declare any**,
-  because the loader refuses a `requires` that names a permission the app's own imported catalog does
-  not define, and refuses the WHOLE manifest when it does. All five schedule-owning packages import no
-  catalog (`catalog=NONE`, confirmed by running core's real `loadApplicationAuthorization` over each
-  manifest). So the activation grants nothing, the first tick is denied, and the runner **suspends the
-  activation** with the denial reason. ADR-157's first Consequence says these schedules "skip until
-  activated, then run"; for a catalog-less app the second half is false.
-- **This is the gate on five dead schedules.** `intelligent-sales-email-auto-log`,
-  `daily-trade-recap-recorded-reports`, `venture-plan-rebaseline-policy-tick`,
-  `marketing-engine-daily-metrics-ingest` and `marketing-engine-weekly-campaign-review` have not run
-  since 2026-09-10. S3 (declarations) landed; S2 (the activation panel) and an activation still stand
-  between here and a job firing — and this gap stands behind both.
-- **Two shapes were sketched and NEITHER is chosen — this is an operator/architecture decision.**
-  (a) a kernel rule giving a protected app with no ADR-149 catalog a defined system-service path
-  instead of the `@app-admin` fallback — one core change, covers all six schedule owners including
-  `calendar`, and any future package that never imports a catalog; (b) each package imports a catalog
-  and declares real `requires` — truer to ADR-149's intent and per-permission granular, but five
-  package changes plus catalog design, and nothing runs until every one lands. The operator's own
-  framing was that the installer should provision a portal admin and install apps under it, so that
-  "there is always a user" — which is a third shape and may subsume (a); it has not been costed.
+- **Decision settled:** the operator's declared-catalog and explicit-service-authorization direction
+  is recorded in [ADR-157](adr/157-scheduled-application-services-run-under-an-activated-principal.md).
+  No installer-user impersonation or automatic application-administrator grant is introduced.
+- **Merged source:** [PR #957](https://github.com/emeraldcoastsystemsgroup/oshal/pull/957),
+  `1835d800`, refuses a system activation for registered `enforce` plus no catalog with
+  `authorization_service_catalog_required` before activation lookup/reuse or writes. Non-admin
+  refusal stays first; user/legacy semantics and explicit deactivation remain unchanged.
+  Independent review, 25/25 focused checks, actual old-source and write-before-refusal negative
+  controls, source/server types and the actual archived-HEAD publish gate passed.
+- **Remaining:** run the 14-case disposable PostgreSQL companion and retain actual no-write and
+  existing-row preservation evidence. Its fixture-admin pool proves real statements/stores,
+  not RLS. The existing host-owned test transport needs a narrowly tested binding for this
+  exact alert fixture; do not rename the fixture or substitute a deployment DSN. Package catalog
+  migrations and installed scheduler acceptance are separate backlog outcomes, not extra
+  done-when requirements for this admission defect. No further operator decision is pending here.
 - **Done when:** a decision is recorded in ADR-157 or ADR-149; a system activation on a catalog-less
   protected app either authorizes its declared scope or is refused at ACTIVATION time with a reason
   naming the missing catalog, rather than being accepted and then suspended on its first tick; and a
@@ -362,17 +356,22 @@ carries the evidence that survived an adversarial re-derivation and the correcti
 - **Commissioned (operator, 2026-09-15):** build Bot Forge edit-in-place. The done-when above now applies unconditionally: editing an existing pack re-emits the same pack, never a duplicate.
 
 ### CI Playwright red-baseline retirement
-- **Status:** IN PROGRESS · exact 31-spec fixture prepared; isolated execution pending
+- **Status:** IN PROGRESS · exact-source runtime/browser preflight passed; full 31-spec proof pending
 
 - **Prepared:** [draft PR #934](https://github.com/emeraldcoastsystemsgroup/oshal/pull/934) is frozen at
   `713745530c24c9667efdf3af28ff50fc2a05040d`. Its shard contains 31 supported specs and two explicit
   unsupported dispositions. Exact-source build artifacts and the isolated Linux server/browser,
   PostgreSQL and Redis harness are prepared, with one worker, zero retries, synthetic-only
-  configuration and an internal fixture network. This is not an executed or green shard receipt.
-- **Remaining:** the verified cached Linux runtime base lacks required test development
-  dependencies; supply a lock-matching dependency environment and a coordinated resource window
-  before running all 31 supported specs on that exact source. No remote E2E execution receipt
-  exists yet. Classify the ten still-unclassified results from actual reports, separating product
+  configuration and an internal fixture network. Actual Linux preflight passed with Node 20.20.2,
+  Playwright 1.59.1 and Chromium 149.0.7827.53; declared production dependencies and native imports
+  loaded. Missing Vitest development packages in that base are not a blocker for this compiled
+  Playwright path. The image is a dependency base, not the application source being tested.
+- **Initial execution (2026-09-30):** the isolated sequence encountered repeated web-server
+  startup failures before assertions in its first three files. These are fixture/startup
+  results, not product assertion failures or passes. The full supported shard is not proven.
+- **Remaining:** diagnose the startup failure, then retain a complete exact-source/build run,
+  raw reports, artifacts and owned cleanup. A passed preflight is not a green shard. Classify the ten
+  still-unclassified results from actual reports, separating product
   defects, fixture/auth defects and unsupported cases; retain the two explicit dispositions
   without adding skips or retry-dependent success. The draft is not ready for promotion or closure.
 - **Done when:** every spec uses the configured origin, each unsupported case has an explicit disposition, and the complete CI Playwright job is green without retry-dependent success.
@@ -1410,11 +1409,16 @@ carries the evidence that survived an adversarial re-derivation and the correcti
 
 - **Current build:** [PR #952](https://github.com/emeraldcoastsystemsgroup/oshal/pull/952) merged
   declaration validation that refuses invented measurements and stale-ledger self-repair (67/67
-  local CLI/validator checks). An additive event-evidence contract and reducer are now being built:
-  trusted explicit app/feature/completed-operation identity, request counts and token provenance
-  must precede measured samples. Legacy, estimated, incomplete and marker rows cannot become
-  measured values by guessing from task or agent identity. Producer propagation, both generated
-  ledgers and the seven-day evidence requirement below remain unfinished.
+  local CLI/validator checks). [PR #956](https://github.com/emeraldcoastsystemsgroup/oshal/pull/956)
+  implements additive migration 182, explicit feature-operation event evidence and a scoped reducer:
+  trusted app/feature/completed-operation identity, request counts and token provenance precede
+  measured samples. Exact source `7ee4d48f` passed 103 focused cases, negative controls,
+  source/server types and archived-HEAD publication checks. Its separate owned PostgreSQL companion
+  passed 10/10 on 2026-09-30, with actual enforcing-role persistence, rollback/replay and repeated
+  migration; the reviewed test-helper overlay is explicit, not a whole-archive run. Independent
+  raw-receipt review passed; final integrated source promotion remains pending. Legacy, estimated,
+  incomplete and marker rows cannot become measurements by guessing task/agent identity.
+  Producer propagation, both generated ledgers and seven-day measured acceptance remain unfinished.
 - **Remaining:** propagate explicit manifest-feature and completed-operation identity through
   the trusted producers, persist per-event request counts and token provenance, and generate
   p50/p95 tokens and calls per unit from complete measured operations. `chat_tasks` lifetime
