@@ -34,8 +34,8 @@ from preparation or unit tests alone.
 | Status | Count | Meaning |
 |---|---|---|
 | IN PROGRESS | **5** | being worked in the current session |
-| OPEN — actionable | **17** | no decision, no live box needed; can be closed by an agent |
-| OPEN — needs operator | **62** | a decision, credential, account or purchase only the operator can make |
+| OPEN — actionable | **15** | no decision, no live box needed; can be closed by an agent |
+| OPEN — needs operator | **64** | a decision, credential, account or purchase only the operator can make |
 | OPEN — needs live proof | **62** | needs the running box, a deploy, hardware, or a human at a browser |
 | OPEN — blocked | **9** | waiting on something outside this repo |
 | OPEN — needs review | **0** | the triage could not decide; somebody has to read it |
@@ -232,7 +232,7 @@ from preparation or unit tests alone.
 - **Done when:** the operator asks for it (or a book-less row actually appears, or a third live book is about to be enabled); the three plan defects above are fixed; the legacy-shaped book-less INSERT is REJECTED on the live schema; `git grep SCHWAB_ACCOUNT_NUMBER` hits only history; and the deploy refuses auto-rollback to any image predating the hardening, proven by a case whose anchor is computed from git.
 
 ### Jarvis starts cold on every conversation — prime the invariant context once
-- **Status:** OPEN — actionable
+- **Status:** OPEN — needs operator
 
 - **Commissioned (operator, 2026-09-22).** Every Jarvis conversation re-sends the same invariant
   preamble — the persona/system prompt and the tool definitions — before the model sees a single word
@@ -253,9 +253,8 @@ from preparation or unit tests alone.
   2.5 and newer (so the box gets some saving already, now that the connection runs `gemini-3.8-flash`).
   Nothing in this repository does either on this path: the only prompt-caching code is in
   `any-bot/server/services/llm/BedrockProvider.js` and the fail-closed Gemini CLI harness adapter.
-- **Sequencing.** This lands AFTER the conversational path actually declares its tools. Until then the
-  expensive half of the preamble is computed and discarded, so a cache would hold a system prompt and
-  little else.
+- **Delivered (2026-09-28/30):** Invariant preamble caching with SHA-256 keying over system prompt + tools, negative caching, handle invalidation, `extra_body.google.cached_content`, and tool omission on cache hit landed in `any-bot/server/services/llm/invariant-prompt-cache.js` and `any-bot/server/services/llm/OpenAIProvider.js`. Completion text preserving bare numeric/boolean answers landed in `any-bot/server/controllers/completion-result-text.js` and `AgenticController.js`. Verified across 51 unit and protocol seam tests (`tests/unit/invariant-prompt-cache.spec.ts` 8/8, `tests/unit/invariant-prompt-cache-protocol-seam.spec.ts` 5/5, `tests/unit/completion-result-text.spec.ts` 31/31, `tests/unit/live-acceptance-jarvis-cache.spec.ts` 7/7). Live measurement case `jarvis-cache` registered and run (`node scripts/operations/live-acceptance.js jarvis-cache --record-doc`, 2026-09-30 07:25 UTC; reported in `docs/architecture/jarvis-own-task-recall.md`).
+- **Remaining:** On the deployed box, Jarvis is currently set to `antigravity-cli/gemini-3.8-flash-low` (which bypasses the OpenAI-compatible rail). The operator must select an OpenAI-compatible brain on the box to record live token and latency savings in `chat_tasks`.
 - **Done when:** a new Jarvis conversation reaches its first token without re-sending the invariant
   preamble; the cached handle is keyed to that preamble's content so a persona or tool-set change
   produces a new handle rather than a stale one; a conversation whose cache handle has expired or been
@@ -1510,9 +1509,10 @@ from preparation or unit tests alone.
 - **Done when:** `world_metrics` carries `congress_*` rows with a recorded `observed_at`, the watchlist can be populated from that feed with the disclosure date shown beside each name, and no congressional holding is ever written from anything but the feed.
 
 ### Queued paper-to-live parity features
-- **Status:** OPEN — actionable
+- **Status:** OPEN — needs operator
 
-- **Remaining:** implement and soak the market-wide gap-down entry filter, immutable per-position exit plan, and idle-cash yield sleeve in paper before any live promotion.
+- **Delivered (2026-09-28/30):** Implemented market-wide gap-down entry filter (`src/features/trading/services/entry-guards.ts`, `src/app/trading-dispatch-market-gate.ts`), immutable per-position exit plans (`src/features/trading/services/position-plan.ts`), and idle-cash yield sleeve (`src/features/trading/services/yield-sleeve.ts`), with shared algorithm/config paths across paper and live books. Registered Test Lab card in `src/app/routes/test-lab-trading-parity-scenarios.ts` and automated live-acceptance case `trading-parity` in `scripts/lib/live-acceptance-trading-parity.js`. Verified across 78 unit/integration tests with real PostgreSQL store fixtures (`tests/unit/trading-parity-fire.spec.ts` 8/8, `tests/unit/trading-entry-guards.spec.ts` 38/38, `tests/unit/test-lab-trading-parity-registration.spec.ts` 8/8, `tests/unit/trading-position-plans-postgres.spec.ts` 13/13, `tests/unit/trading-dispatch-yield-sleeve-fire.spec.ts` 6/6, `tests/unit/live-acceptance-trading-parity.spec.ts` 5/5 proving unconfirmed promotions fail-closed with 428).
+- **Remaining:** Operator soaks the features on the paper book on the deployed box before confirming any live promotion.
 - **Done when:** paper and live share one guarded algorithm/config path, historical and shadow evidence records impact, and promotion requires the existing explicit confirmation. See [ADR-052](adr/052-stock-trading-swarm.md).
 
 ### Trading platform surface and engine expansion
