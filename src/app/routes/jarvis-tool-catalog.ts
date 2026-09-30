@@ -18,6 +18,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | The typed access tools list their exact operations and targets only when the ask is about access (or when there is no ask to judge). That JSON was 39,185 of the 71,817 characters in a live Jarvis prompt and rode every turn, pushing the app catalog, the tool proposals and the user's own question out of the node's untrusted-content window.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | assembleJarvisBotMessage: the turn's prompt leads with the user's words, then the tool guardrails, then the screen/attachment framing, so neither the ask nor the guardrails can be truncated away by a large attachment.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Review fixes: the access gate matches whole words, so "remember that I…" is no longer read as a membership question and does not re-spend the window on the operations/targets JSON; and a single surviving section is returned rather than discarded.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Support and validate explicit ADR-065 metadata dimensions (credentialOwner, executionActor, provisioningOwner, fallbackPolicy, simulationOnly) in tool catalog.
  *
  * @module jarvis-tool-catalog
  */
@@ -30,10 +31,23 @@ import type { HandoffDirective } from './jarvis-directives';
 import { AUTHORIZATION_TOOL, AUTHORIZATION_READ_TOOL, type AuthorizationToolDiscovery } from '@/shared/security/authorization-tool-contract';
 import type { JarvisPackageToolDiscovery } from './jarvis-package-tool-service';
 
+export type ToolCredentialOwner = 'deployment' | 'user' | 'none' | 'hybrid';
+export type ToolExecutionActor = 'user' | 'service-principal' | 'any';
+export type ToolProvisioningOwner = 'operator' | 'user' | 'none';
+export type ToolFallbackPolicy = 'fail-closed' | 'prompt' | 'none';
+
 /** Semantic metadata helps selection; it grants no execution authority. */
 interface SemanticMetadata { keywords: string[]; useWhen: string; context: string }
 interface ToolCatalogEntry extends Partial<SemanticMetadata> {
-  kind: 'shell'; script: string; usage: string; accessRoles?: SwarmAccessRole[];
+  kind: 'shell';
+  script: string;
+  usage: string;
+  accessRoles?: SwarmAccessRole[];
+  credentialOwner?: ToolCredentialOwner;
+  executionActor?: ToolExecutionActor;
+  provisioningOwner?: ToolProvisioningOwner;
+  fallbackPolicy?: ToolFallbackPolicy;
+  simulationOnly?: boolean;
 }
 interface TypedCatalogEntry extends SemanticMetadata { kind: 'typed'; name: typeof AUTHORIZATION_TOOL }
 interface ToolCatalog {
@@ -98,8 +112,16 @@ export function parseToolCatalog(source: string): ToolCatalog {
   if (!record(value) || !exactKeys(value, ['version', 'tools', 'typedTools', 'artifactHandoff']) || value.version !== 1
     || !Array.isArray(value.tools) || !value.tools.length || value.tools.length > 128) return fail();
   const seen = new Set<string>();
+  const CREDENTIAL_OWNERS = new Set(['deployment', 'user', 'none', 'hybrid']);
+  const EXECUTION_ACTORS = new Set(['user', 'service-principal', 'any']);
+  const PROVISIONING_OWNERS = new Set(['operator', 'user', 'none']);
+  const FALLBACK_POLICIES = new Set(['fail-closed', 'prompt', 'none']);
+
   for (const tool of value.tools) {
-    if (!record(tool) || !exactKeys(tool, ['kind', 'script', 'usage', 'accessRoles', 'keywords', 'useWhen', 'context'])
+    if (!record(tool) || !exactKeys(tool, [
+      'kind', 'script', 'usage', 'accessRoles', 'keywords', 'useWhen', 'context',
+      'credentialOwner', 'executionActor', 'provisioningOwner', 'fallbackPolicy', 'simulationOnly'
+    ])
       || tool.kind !== 'shell' || typeof tool.script !== 'string' || !/^oshal-[a-z0-9-]+\.js$/.test(tool.script)
       || seen.has(tool.script) || !text(tool.usage, 2000)) return fail();
     seen.add(tool.script);
@@ -109,6 +131,11 @@ export function parseToolCatalog(source: string): ToolCatalog {
       || tool.accessRoles.some((role) => role !== 'operator' && role !== 'swarm'))) return fail();
     if (roleCanAccess(tool.accessRoles as SwarmAccessRole[] | undefined, 'jarvis') && !semantic(tool)) return fail();
     if (['keywords', 'useWhen', 'context'].some((key) => key in tool) && !semantic(tool)) return fail();
+    if (tool.credentialOwner !== undefined && (!text(tool.credentialOwner, 32) || !CREDENTIAL_OWNERS.has(tool.credentialOwner))) return fail();
+    if (tool.executionActor !== undefined && (!text(tool.executionActor, 32) || !EXECUTION_ACTORS.has(tool.executionActor))) return fail();
+    if (tool.provisioningOwner !== undefined && (!text(tool.provisioningOwner, 32) || !PROVISIONING_OWNERS.has(tool.provisioningOwner))) return fail();
+    if (tool.fallbackPolicy !== undefined && (!text(tool.fallbackPolicy, 32) || !FALLBACK_POLICIES.has(tool.fallbackPolicy))) return fail();
+    if (tool.simulationOnly !== undefined && typeof tool.simulationOnly !== 'boolean') return fail();
   }
   if (value.typedTools !== undefined && (!Array.isArray(value.typedTools) || value.typedTools.length !== 1
     || !value.typedTools.every((tool) => record(tool) && exactKeys(tool, ['kind', 'name', 'keywords', 'useWhen', 'context'])

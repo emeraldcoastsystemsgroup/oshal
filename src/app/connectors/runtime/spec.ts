@@ -25,6 +25,7 @@
  *            | paramsSchema + riskLevel, validated at load time. Additive — the 306 GET-only
  *            | connectors are untouched; execution lives in action-executor.ts, never here.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Preserve source-catalog category vocabulary separately from operation tags so category derivation can retain provenance without treating arbitrary tag text as a reviewed taxonomy.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Add credentialOwner, executionActor, provisioningOwner, and fallbackPolicy to ConnectorSpec metadata (ADR-065).
  * -----------------------------------------------------------------------------
  * @module connectors/runtime/spec
  */

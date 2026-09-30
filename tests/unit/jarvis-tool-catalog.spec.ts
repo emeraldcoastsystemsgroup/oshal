@@ -95,6 +95,14 @@ describe('Jarvis YAML routing catalog', () => {
     expect(block).toContain('oshal-uber-rides.js');
     expect(block).not.toContain('oshal-gmail-send.js');
     expect(buildToolsBlock({ surface: 'spotify music playlists' }).split('\n').find((line) => line.startsWith('- '))).toContain('oshal-spotify.js');
+
+    const sim = catalog.tools.find((t) => t.script === 'oshal-voice-sim.js');
+    expect(sim).toBeDefined();
+    expect(sim?.simulationOnly).toBe(true);
+    expect(sim?.credentialOwner).toBe('none');
+    expect(sim?.executionActor).toBe('user');
+    expect(sim?.provisioningOwner).toBe('none');
+    expect(sim?.fallbackPolicy).toBe('none');
   });
 
   it('keeps browser handoff guidance separate from shell tools', () => {
@@ -123,6 +131,11 @@ describe('Jarvis YAML routing catalog', () => {
     ['shell field on handoff', (doc: any) => { doc.artifactHandoff.script = 'oshal-vault.js'; }],
     ['multiline prompt metadata', (doc: any) => { doc.tools[0].context = 'Context\nInjected'; }],
     ['unbounded keywords', (doc: any) => { doc.tools[0].keywords = Array(33).fill('word'); }],
+    ['unknown credentialOwner', (doc: any) => { doc.tools[0].credentialOwner = 'invalid'; }],
+    ['unknown executionActor', (doc: any) => { doc.tools[0].executionActor = 'bot'; }],
+    ['unknown provisioningOwner', (doc: any) => { doc.tools[0].provisioningOwner = 'admin'; }],
+    ['unknown fallbackPolicy', (doc: any) => { doc.tools[0].fallbackPolicy = 'allow'; }],
+    ['non-boolean simulationOnly', (doc: any) => { doc.tools[0].simulationOnly = 'yes'; }],
   ])('fails closed on %s', (_label, change) => {
     expect(() => parseToolCatalog(mutatedCatalog(change))).toThrow('Invalid Jarvis tool catalog');
   });
