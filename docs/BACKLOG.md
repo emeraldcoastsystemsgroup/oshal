@@ -34,8 +34,8 @@ from preparation or unit tests alone.
 | Status | Count | Meaning |
 |---|---|---|
 | IN PROGRESS | **5** | being worked in the current session |
-| OPEN — actionable | **10** | no decision, no live box needed; can be closed by an agent |
-| OPEN — needs operator | **69** | a decision, credential, account or purchase only the operator can make |
+| OPEN — actionable | **9** | no decision, no live box needed; can be closed by an agent |
+| OPEN — needs operator | **70** | a decision, credential, account or purchase only the operator can make |
 | OPEN — needs live proof | **62** | needs the running box, a deploy, hardware, or a human at a browser |
 | OPEN — blocked | **9** | waiting on something outside this repo |
 | OPEN — needs review | **0** | the triage could not decide; somebody has to read it |
@@ -1544,10 +1544,15 @@ from preparation or unit tests alone.
 - **Done when:** the published calibration passes those gates and one caller-attributed paper trade records quote-at-signal, fill, settlement, and P&L. Track UI/package work in [`kalshi`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/kalshi).
 
 ### Futures extension layer (ADR-116)
-- **Status:** OPEN — actionable
+- **Status:** OPEN — needs operator
 
 - **Phase 2 evidence (2026-09-24):** the six-stage locked-winner optimizer now runs on real Kibot ES/CL hourly archives and its dated OOS artifact is published in [futures-backtester.md](apps/trading/futures-backtester.md) and [ADR-116](adr/116-futures-extension-layer.md). Both roots were negative, so live promotion remains gated; this is a research result, not closure of the Futures program.
-- **Remaining:** ingest archives into `market_bars`; expose roots, timeframes, date windows, grid permutations, minimum-trade gates, source/data paths, cadence, and enable/disable state in the Trading console; add a futures research bot that can inspect runs, explain winners/losers, and propose the next bounded study; run the configured nightly permutation/tuning loop; persist prediction outcomes and review summaries; then separately evaluate the durable paper book and cockpit phases. Live execution and contract-risk semantics remain behind explicit operator approval and a positive evidence threshold.
+- **Delivered (2026-09-25/30):** Full research scheduling and analysis pipeline implemented:
+  1. Six-stage locked-winner optimizer and continuous archive backtesting verified (`tests/unit/futures-backtester.spec.ts` 36/36, `tests/unit/futures-optimizer.spec.ts` 2/2, `tests/unit/futures-archive-source.spec.ts` 7/7).
+  2. Trading console tuning panel exposes owner-scoped research schedule, roots (ES, CL), timeframes, source selection (archives or private Schwab captured bars), date windows, walk-forward splits, stage grids, cadence, and pause/resume/delete controls (`src/app/trading-futures-research-dispatch.ts`, `tests/unit/futures-research-config.spec.ts` 6/6, `tests/unit/futures-research-test-lab.spec.ts` 1/1).
+  3. Durable PostgreSQL storage with FORCE RLS across migrations `159-futures-research-runs.sql`, `160-futures-research-review.sql`, `161-futures-predictions.sql`.
+  4. Research review bot-node workflow, forward prediction receipts, pre-optimizer duplicate reuse, and quality gates (`tests/unit/futures-research-review.spec.ts`, `tests/unit/futures-research-reuse.spec.ts`, `tests/unit/futures-research-quality.spec.ts`, `tests/unit/futures-prediction-evidence.spec.ts` 10/10). Documented in `docs/apps/trading/futures-research-loop.md`.
+- **Remaining:** Operator chooses and supplies the historical contract backfill source on the deployed box and configures the research schedule in the Trading console to record nightly matured runs. Paper/live promotions remain deferred behind operator approval per ADR-168 D1.
 - **Done when:** the Trading console can create, inspect, pause, and resume the futures research schedule without environment edits; a research bot can launch only bounded, approval-gated studies and read their owner-scoped results; nightly permutations and predictions are durable, reproducible, and visible in the console; the paper/UI phases have their own acceptance evidence; and any live decision is a separate named operator approval backed by the research record.
 
 ### Video Series conductor live acceptance
