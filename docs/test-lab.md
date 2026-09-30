@@ -847,6 +847,24 @@ Its linked callback suite separately exercises the real HTTP ceremony with fixtu
 provider responses and SQL: missing issuer and same-subject/different-issuer relay/completion
 are refused before token exchange. A green anonymous card alone does not prove that consent
 flow, real provider access or legacy credential ownership.
+
+**Qualified personal connector grants** (`qualified-personal-connector`, Tools) checks
+anonymous refusal on metadata and SmartThings consent initiation. Its linked HTTP suite uses
+the actual routes, browser ceremony, crypto and session/store code with explicit session,
+provider-response and transactional SQL doubles. The SmartThings companion exercises a
+loopback provider protocol, not a real account. Held checkout/query/commit regressions cover
+HTTP identity changes and consent expiry: pre-commit invalidation rolls back; post-commit
+invalidation suppresses metadata without claiming to undo the commit. The dedicated
+PostgreSQL companions passed 35/35 in real owned enforcing-role fixtures on 2026-09-30;
+their [exact-source record](backlog/qualified-connector-postgres-proof.md) does not
+turn the installed card into a storage-boundary acceptance test. The card does
+not create a grant, arm a location rule or enable device actions. Utilities' separate qualified
+panel has actual-JavaScript tests with named DOM/fetch doubles and a real Chromium companion
+serving the shipped page over loopback. The latter proves frame-policy/top-navigation and
+native form/dialog behavior with explicit API/auth/provider responders, not installed consent.
+The endpoint contract and
+focused test command are in [the connector architecture](architecture/connectors-and-graph-architecture.md#36-fresh-issuer-qualified-personal-grants).
+
 **Multi-store discovery** (`multi-store-discovery`) reads registry status and qualified package
 identities without installing packages or changing trust. Their linked local suites run using
 `npm run test:platform-readiness`.

@@ -270,6 +270,14 @@
        configuration, and the operator could not find the thing he came for. Guarded by
        utilities-is-connections-not-bot-config in tests/unit/bot-provider-precedence.spec.ts. -->
 
+  <section class="card col" aria-labelledby="qualifiedConnectorsHeading" style="margin-top:22px;">
+    <h2 id="qualifiedConnectorsHeading" style="font-size:16px;margin:0;">Personal SmartThings — qualified grants</h2>
+    <p class="meta" style="margin:0;">Separate, issuer-qualified personal credentials. A verified location key identifies a SmartThings location, not a person account. These grants are not converted from the accounts below, cannot be shared with a household here, and do not enable device actions.</p>
+    <p class="meta" style="margin:0;">OAuth requires a registered server-side client; a server 503 means that option is unavailable. Return here if authorization cannot start. A fresh personal access token is an alternative only when the qualified service is available.</p>
+    <div id="qualifiedConnectorsPanel"><p class="meta">Qualified connection status is not loaded.</p></div>
+    <noscript><p class="meta">JavaScript is required to manage qualified grants. No connection has been changed.</p></noscript>
+  </section>
+
   <h2 style="font-size:14px;color:var(--muted);margin:22px 0 10px;">Your accounts</h2>
   <!-- Connect personally or on behalf of a household everyone in it can share (ADR-042). -->
   <div id="tenantBar" class="tbar">
@@ -1363,5 +1371,6 @@ loadFreeTier();
 loadLlmProviders();
 loadDefaultBrain();
 </script>
+<script src="/shared/ui/js/qualified-connectors.js" defer></script>
 </body>
 </html>

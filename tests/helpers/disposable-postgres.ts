@@ -16,6 +16,9 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Pool } from 'pg';
 import { acquireFixtureSlot, type FixtureSlot } from './fixture-slots';
+import { claimOwnedPostgres, type OwnedPostgresLease } from './owned-postgres-transport';
+
+// CHANGE LOG 7 | maintainer@emeraldcoastsystemsgroup.com | Opt into a readonly host-owned fixture contract only after real first-read marker verification. No invalid-contract Docker fallback; roles/migrations remain real and host alone destroys the server.
 
 /**
  * An extra LOGIN role the fixture creates for itself, for a spec whose subject is what a
@@ -122,6 +125,7 @@ export class DisposablePostgres {
   private readonly minted: string[] = [];
   /** The machine-wide slot this fixture holds while its container exists. */
   private slot?: FixtureSlot;
+  private ownedLease?: OwnedPostgresLease;
 
   constructor(options: DisposablePostgresOptions) {
     const purpose = options.purpose.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -229,6 +233,7 @@ export class DisposablePostgres {
     // each, vitest runs their files in parallel processes, and without a ceiling the fleet
     // OOM-killed the engine and the operator's own 50 containers with it.
     this.slot = await acquireFixtureSlot(`postgres:${this.opts.purpose}`);
+    if (process.env.OSHAL_OWNED_PG_CONTRACT !== undefined) return this.startOwned();
     const password = randomUUID();
     this.minted.push(password);
     try {
@@ -282,18 +287,47 @@ export class DisposablePostgres {
    */
   private async createRoles(): Promise<void> {
     for (const role of this.opts.roles) {
+      this.ownedLease?.assertActive();
       const password = randomUUID();
       this.minted.push(password);
       // NOSUPERUSER/NOBYPASSRLS are the whole point: a role that kept either would make every
       // row-level-security assertion made over it pass without the policy ever being consulted.
       await this.pool.query(`CREATE ROLE ${role.name} LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB `
         + `NOCREATEROLE NOREPLICATION PASSWORD ${quoteLiteral(password)}`);
+      this.ownedLease?.assertActive();
       await this.pool.query(`GRANT CONNECT ON DATABASE ${quoteIdent(this.opts.database)} TO ${role.name}`);
+      this.ownedLease?.assertActive();
       await this.pool.query(`GRANT USAGE, CREATE ON SCHEMA public TO ${role.name}`);
       this.roleConnections.set(role.name, {
         host: this.connection.host, port: this.connection.port,
         user: role.name, password, database: this.opts.database,
       });
+    }
+  }
+
+  /** Host-created transport: no Docker or SQL cleanup, including every failed startup path. */
+  private async startOwned(): Promise<Pool> {
+    try {
+      const owned = await claimOwnedPostgres({ purpose: this.opts.purpose,
+        database: this.opts.database, requestedImage: this.opts.image });
+      if (!owned) throw new Error('Owned fixture opt-in disappeared');
+      this.ownedLease = owned; owned.assertActive();
+      this.connectionValue = owned.connection;
+      this.minted.push(owned.connection.password);
+      this.poolValue = new Pool({ ...owned.connection, max: this.opts.max,
+        connectionTimeoutMillis: this.opts.connectionTimeoutMillis,
+        statement_timeout: this.opts.statementTimeoutMs, ...(this.opts.options ? { options: this.opts.options } : {}) });
+      this.started = true;
+      await this.createRoles();
+      for (const migration of this.opts.migrations) {
+        owned.assertActive();
+        await this.poolValue.query(readFileSync(resolve(__dirname, '../../scripts/migrations', migration), 'utf8'));
+      }
+      owned.assertActive();
+      return this.poolValue;
+    } catch {
+      await this.stop().catch(() => undefined);
+      throw new Error('Owned PostgreSQL fixture setup refused; no Docker fallback or database cleanup.');
     }
   }
 
@@ -317,12 +351,18 @@ export class DisposablePostgres {
     finally {
       this.connectionValue = undefined;
       this.roleConnections.clear();
-      if (this.started) {
-        try { docker(['rm', '--force', '--volumes', this.containerName], 60_000); } catch { /* an --rm container may already be gone */ }
+      try {
+        if (this.ownedLease) {
+          const owned = this.ownedLease; this.ownedLease = undefined;
+          await owned.release();
+        } else if (this.started) {
+          try { docker(['rm', '--force', '--volumes', this.containerName], 60_000); } catch { /* an --rm container may already be gone */ }
+        }
+      } finally {
         this.started = false;
+        this.slot?.release();
+        this.slot = undefined;
       }
-      this.slot?.release();
-      this.slot = undefined;
     }
   }
 }
