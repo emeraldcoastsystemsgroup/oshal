@@ -38,9 +38,11 @@ import { createChildLogger } from '@/shared/logger';
 const logger = createChildLogger({ module: 'political-trades' });
 
 const DEFAULT_CONGRESS_URL = 'https://api.quiverquant.com/beta/live/congresstrading';
+/** Free public community-maintained feed derived from official STOCK Act disclosures. */
+const DEFAULT_FREE_CONGRESS_URL = 'https://raw.githubusercontent.com/kadoa-org/congress-trading-monitor/main/public/data/trades.json';
 /** The setting that carries the feed credential; named in every refusal log. */
 const TOKEN_SETTING = 'WORLD_POLITICAL_TOKEN';
-/** Quiver serves this to a browser UA. Override via WORLD_POLITICAL_UA. */
+/** Quiver / web feeds serve this to a browser UA. Override via WORLD_POLITICAL_UA. */
 const DEFAULT_POLITICAL_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
 /** Lookback window (days) over the disclosure ReportDate (default 90 — covers the ~45d lag + a tail). */
 const POLITICAL_DAYS = Math.max(7, Number(process.env.WORLD_POLITICAL_DAYS) || 90);
@@ -48,7 +50,25 @@ const FETCH_TIMEOUT_MS = 15_000;
 const DAY_MS = 86_400_000;
 const CALENDAR_DAY = /^(\d{4})-(\d{2})-(\d{2})/;
 
-export interface CongressTrade { Ticker?: string; Transaction?: string; ReportDate?: string; TransactionDate?: string; Amount?: string | number; }
+export interface CongressTrade {
+  Ticker?: string;
+  ticker?: string;
+  symbol?: string;
+  Symbol?: string;
+  Transaction?: string;
+  transaction?: string;
+  transaction_type?: string;
+  type?: string;
+  ReportDate?: string;
+  reportDate?: string;
+  disclosure_date?: string;
+  filing_date?: string;
+  TransactionDate?: string;
+  transaction_date?: string;
+  Amount?: string | number;
+  amount?: string | number;
+  amount_range_low?: number;
+}
 
 export interface PoliticalTradeObservation {
   ticker: string;
@@ -97,8 +117,8 @@ export function disclosureDay(raw: unknown): { day: string; epoch: number } | nu
 /** Purchase / sale classification; anything else (exchange, dividend, blank) is not a directional trade. */
 function tradeDirection(transaction: unknown): 'buy' | 'sell' | null {
   const tx = String(transaction || '').toLowerCase();
-  if (tx.includes('purchase')) return 'buy';
-  if (tx.includes('sale') || tx.includes('sold')) return 'sell';
+  if (tx.includes('purchase') || tx.includes('buy')) return 'buy';
+  if (tx.includes('sale') || tx.includes('sold') || tx.includes('sell')) return 'sell';
   return null;
 }
 
@@ -120,17 +140,22 @@ export function aggregatePoliticalTrades(
   const agg = new Map<string, PoliticalTradeObservation>();
   let trades = 0;
   for (const t of raw) {
-    const sym = String(t?.Ticker || '').toUpperCase().trim();
+    const rawTicker = t?.Ticker ?? t?.ticker ?? t?.symbol ?? t?.Symbol;
+    const sym = String(rawTicker || '').toUpperCase().trim();
     if (!sym || !/^[A-Z][A-Z.]{0,5}$/.test(sym)) continue;
-    const disclosed = disclosureDay(t?.ReportDate);
+    const rawReportDate = t?.ReportDate ?? t?.reportDate ?? t?.filing_date ?? t?.disclosure_date;
+    const disclosed = disclosureDay(rawReportDate);
     if (!disclosed || disclosed.epoch < cutoff || disclosed.epoch > today) continue;
-    const direction = tradeDirection(t?.Transaction);
+    const rawTransaction = t?.Transaction ?? t?.transaction ?? t?.transaction_type ?? t?.type;
+    const direction = tradeDirection(rawTransaction);
     if (!direction) continue;
     const disclosureDate = `${disclosed.day}T00:00:00.000Z`;
     const key = `${sym}\0${disclosureDate}`;
     const e = agg.get(key) || { ticker: sym, disclosureDate, buys: 0, sells: 0, notional: 0 };
     if (direction === 'buy') e.buys += 1; else e.sells += 1;
-    e.notional += Number(String(t?.Amount ?? '').replace(/[,$]/g, '')) || 0;
+    const rawAmount = t?.Amount ?? t?.amount ?? t?.amount_range_low;
+    const notionalMatch = String(rawAmount ?? '').replace(/[,$]/g, '').match(/\d+/);
+    e.notional += notionalMatch ? Number(notionalMatch[0]) : 0;
     agg.set(key, e);
     trades += 1;
   }
@@ -165,7 +190,7 @@ function feedHeaders(token: string): Record<string, string> {
  * @returns The rows (`ok`), or `refused` / `failed` with nothing to write.
  */
 async function fetchCongressTrades(): Promise<FeedRead> {
-  const url = process.env.WORLD_POLITICAL_URL || DEFAULT_CONGRESS_URL;
+  const url = process.env.WORLD_POLITICAL_URL || (process.env[TOKEN_SETTING] ? DEFAULT_CONGRESS_URL : DEFAULT_FREE_CONGRESS_URL);
   const token = (process.env[TOKEN_SETTING] || '').trim();
   try {
     const res = await fetch(url, { headers: feedHeaders(token), signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });

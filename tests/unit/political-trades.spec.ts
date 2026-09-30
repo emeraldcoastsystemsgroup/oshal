@@ -77,6 +77,20 @@ describe('political trade feed aggregation — keyed on the disclosure day', () 
     expect(disclosureDay(undefined)).toBeNull();
     expect(disclosureDay(20260920)).toBeNull();
   });
+
+  it('normalizes free public feed schemas with lowercase fields, ranges, and aliases', () => {
+    const result = aggregatePoliticalTrades([
+      { ticker: 'TSLA', transaction_type: 'Purchase', filing_date: '2026-09-24', amount_range_low: 1001 },
+      { symbol: 'msft', type: 'Buy', reportDate: '2026-09-24', amount: '$5,001 - $15,000' },
+      { ticker: 'GOOGL', transaction: 'Sale (Full)', disclosure_date: '2026-09-24', amount: '$50,001+' },
+    ], NOW, 30);
+    expect(result.trades).toBe(3);
+    expect(result.observations).toEqual([
+      { ticker: 'GOOGL', disclosureDate: '2026-09-24T00:00:00.000Z', buys: 0, sells: 1, notional: 50001 },
+      { ticker: 'MSFT', disclosureDate: '2026-09-24T00:00:00.000Z', buys: 1, sells: 0, notional: 5001 },
+      { ticker: 'TSLA', disclosureDate: '2026-09-24T00:00:00.000Z', buys: 1, sells: 0, notional: 1001 },
+    ]);
+  });
 });
 
 describe('collectPoliticalTrades — feed source, disclosure day and run clock reach the write', () => {
