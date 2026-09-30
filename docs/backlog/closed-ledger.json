@@ -1,6 +1,12 @@
 [
   {
     "date": "2026-09-30",
+    "title": "LoRA autonomous overnight scheduling",
+    "pr": "local",
+    "evidence": "Verified via real-boundary tests in oshal-applications/lora: node --test tests/overnight-schedule.core.test.js (running tests/lora-overnight-schedule.spec.ts, 6/6 pass), tests/callback-grants.core.test.js (tests/lora-callback-grants.spec.ts, 19/19 pass), and tests/signed-callback-boundary.core.test.js (9/9 pass). Proves autonomous mode scheduling via oshal-app.yaml schedule 'lora-autonomous-overnight' targeting runLoraOvernightSchedule, dispatch restricted strictly to owning character with owner-scoped callback grants, parking of approval_required morning-review tickets with dispatch ticket completion, and immediate refusal of replayed, tampered, expired, or cross-owner callback credentials."
+  },
+  {
+    "date": "2026-09-30",
     "title": "Subscription-driven social signals",
     "pr": "local",
     "evidence": "Proven on real boundary with DisposablePostgres (enforcing non-superuser/no-bypass-rls role, real migration 060, production GUC pool under OSHAL_DB_GUC_STRICT=deny) and DisposableRedis in tests/unit/social-signal-subscriptions-postgres.spec.ts (8/8 pass) and social-signal-subscriptions.spec.ts (9/9 pass) across npm run test:social-signals (30/30 pass). Demonstrates caller-scoped keyword subscription, owner-isolated inbox message storage under FORCE RLS, system-wrapped poll publishing auditable matched signal to authenticated owner-lane XADD stream, delivery ledger correlation recording, and cross-user denial over HTTP and direct database queries."
