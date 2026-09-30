@@ -229,8 +229,9 @@ from preparation or unit tests alone.
 - **Done when:** with enforce on, an anonymous GET of a published Vids link returns the published bytes; a malformed or revoked token returns 404; every other route on that mount, and every mount that did not opt in, still answers 401 to an anonymous caller; `tests/unit/package-tools.spec.ts` stays green; the regression guard crosses the real loader, mounter and authorization runtime over a real listener and goes red when the opt-in check is removed; and `node scripts/operations/live-acceptance.js vids-publish` passes on the installed build.
 
 ### Production core-deploy pipeline + version strategy (operator, 2026-09-05)
-- **Status:** OPEN — actionable
+- **Status:** OPEN — actionable · drift check and rollback scripts delivered; registry/tag promotion pending
 
+- **Delivered (2026-09-30):** `scripts/oshal-deploy-drift.sh` reports release-dir SHA vs running image vs origin/main with human and `--json` parity verdicts (tests in `tests/unit/deploy-drift-and-rollback.spec.ts`). `scripts/oshal-rollback.sh` implements automated pre-rollback DB state snapshot, verified image tagging, API-first recreate, batched bot recreation, parity verification, and exit-3 degraded recovery sequence.
 - **Remaining:** deploying core to the customer production box (the gsquared CRM landscape) is a
   proven but fully MANUAL procedure: merge to main, then on-box `git reset --hard <sha>` of the
   release dir, an on-box `docker build` tagged `oshal-bot:sha-<sha>`, repoint `OSHAL_BOT_IMAGE`
