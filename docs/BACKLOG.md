@@ -34,9 +34,9 @@ from preparation or unit tests alone.
 | Status | Count | Meaning |
 |---|---|---|
 | IN PROGRESS | **5** | being worked in the current session |
-| OPEN — actionable | **8** | no decision, no live box needed; can be closed by an agent |
+| OPEN — actionable | **7** | no decision, no live box needed; can be closed by an agent |
 | OPEN — needs operator | **71** | a decision, credential, account or purchase only the operator can make |
-| OPEN — needs live proof | **62** | needs the running box, a deploy, hardware, or a human at a browser |
+| OPEN — needs live proof | **63** | needs the running box, a deploy, hardware, or a human at a browser |
 | OPEN — blocked | **9** | waiting on something outside this repo |
 | OPEN — needs review | **0** | the triage could not decide; somebody has to read it |
 | OPEN — untriaged | **0** | filed after the 2026-09-15 triage; has no verdict yet |
@@ -182,10 +182,10 @@ from preparation or unit tests alone.
 
 
 ### Government contracting CRM and contract management
-- **Status:** OPEN — actionable
+- **Status:** OPEN — needs live proof
 
-- **Delivered:** connected CRM pages, reviewed source import, proposal/award and post-award lifecycle with scoped UI/API/tools and registered tests. Installed import acceptance preserves source records, ownership and documents. Unified upcoming decisions, deadlines and contract obligations dashboard delivered in capture-crm 3.2.6 (5f9c256) with Test Lab case federal-dashboard-obligations. See [the scoped backlog](backlog/government-contracting-crm.md); detailed package work stays private.
-- **Remaining:** prove website-origin intake and the source-implemented reviewed deadline tasks through the installed workflow; extend conversion to unlinked intake/no-bid history. External financial and submission operations retain their separate approval scopes.
+- **Delivered:** Connected CRM pages, reviewed source import, proposal/award and post-award lifecycle with scoped UI/API/tools and registered tests. Installed import acceptance preserves source records, ownership and documents. Unified upcoming decisions, deadlines and contract obligations dashboard delivered in `capture-crm` 3.2.6 (`5f9c256`) with Test Lab case `federal-dashboard-obligations` (`tests/dashboard-obligations.test.js` 3/3). Website-origin intake continuity delivered in `capture-crm` 3.2.2 with Test Lab case `federal-website-intake` (`tests/federal-website-intake.test.js`). Reviewed deadline tasks and contract bridge verified across 25 tests on disposable PostgreSQL (`tests/federal-deadlines.test.js`, `tests/federal-contract-bridge.test.js` 25/25).
+- **Remaining:** Complete installed signed-in native acceptance on the running box (proving website-origin intake and the source-implemented reviewed deadline tasks through the installed workflow; two-user UI/API/Jarvis permissions). External financial and submission operations retain their separate approval scopes.
 - **Done when:** a synthetic opportunity travels from intake through reviewed pursuit and award to a managed contract with linked relationships, decisions, documents and obligations; two-user UI/API/Jarvis permissions pass and the package registers its cases with AI Test Lab on installation.
 
 ### Enterprise authorization: user, application, function and record
