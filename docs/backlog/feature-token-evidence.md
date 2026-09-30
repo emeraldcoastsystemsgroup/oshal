@@ -169,7 +169,18 @@ Source/server types and the normal archived-HEAD/publish gate passed on the earl
 exact `7ee4d48f` candidate. The newly composed publication head still requires its
 own finite source/server and intact push gates; the PostgreSQL result above is
 already accepted and is not held for the separate seven-day outcome.
-Producer adoption, completeness-preserving authorized reads, genuine seven-day
-sampling, ledger generation, model/workload measurements, cadence/cost projection,
-and pause/resume controls remain separate P0/A2 work. Synthetic fixtures are not
-production measurements. See the [boundary audit](../governance/real-boundary-regression-audit.md#feature-token-evidence-p0-2026-09-29).
+## Authorized reader and real PostgreSQL verification
+
+`readOwnFeatureTokenEvidence(database, input)` implements the authorized complete read slice:
+
+- Accepts non-system authenticated owner and half-open UTC window `[from, until)`.
+- Synchronous validation snapshots inputs before awaiting. Rejects system and invalid owners.
+- Parameterized query enforces owner isolation under FORCE RLS, ordered by ID ascending with a 100,001 row sentinel limit.
+- Refuses overflows exceeding 100,000 rows with `FeatureTokenEvidenceOverflowError` without returning partial profiles.
+- Catches SQLSTATE 42P01 and 42703 when schema predates migration 182, returning `{ status: 'unavailable', reason: 'schema_unavailable' }` without throwing.
+- Passes un-truncated owner rows to `aggregateFeatureTokenEvidence` to ensure complete operation verification.
+- Unit suite `tests/unit/feature-token-evidence-reader.spec.ts` passes **12/12**.
+- Real PostgreSQL companion `tests/unit/feature-token-evidence-reader-postgres.spec.ts` passes **3/3** on disposable PostgreSQL under active FORCE RLS.
+
+Producer adoption, genuine seven-day sampling, ledger generation, model/workload measurements, cadence/cost projection, and pause/resume controls remain separate P0/A2 work. Synthetic fixtures are not production measurements. See the [boundary audit](../governance/real-boundary-regression-audit.md#feature-token-evidence-p0-2026-09-29).
+
