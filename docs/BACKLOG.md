@@ -34,8 +34,8 @@ from preparation or unit tests alone.
 | Status | Count | Meaning |
 |---|---|---|
 | IN PROGRESS | **5** | being worked in the current session |
-| OPEN — actionable | **9** | no decision, no live box needed; can be closed by an agent |
-| OPEN — needs operator | **70** | a decision, credential, account or purchase only the operator can make |
+| OPEN — actionable | **8** | no decision, no live box needed; can be closed by an agent |
+| OPEN — needs operator | **71** | a decision, credential, account or purchase only the operator can make |
 | OPEN — needs live proof | **62** | needs the running box, a deploy, hardware, or a human at a browser |
 | OPEN — blocked | **9** | waiting on something outside this repo |
 | OPEN — needs review | **0** | the triage could not decide; somebody has to read it |
@@ -1447,9 +1447,15 @@ from preparation or unit tests alone.
 - **Done when:** the bounded reaper releases the historical raw claims, all 164 historical rows have explicit provenance with the 28 evidence-free rows still `unverified`, worker/state transitions are visible, and only retained confirmation-backed submission renders verified.
 
 ### Career Hunter PostgreSQL backend cutover
-- **Status:** OPEN — actionable
+- **Status:** OPEN — needs operator
 
-- **Remaining:** the package now has exact engine/driver pins, fail-closed store selection, shared SQLite/PostgreSQL contracts, idempotent loaders, stable interview source identity, a bounded convergence reporter, and a staged cutover runbook. Keep SQLite authoritative until the protected-branch disposable-PostgreSQL job actually runs, the reverse projector is implemented, and a real backup/final sync/read-only smoke/write cutover/rollback drill succeeds. The complete provider/title/enqueue nightly chain also remains a kernel/provider integration proof, not a package-contract result.
+- **Delivered (2026-09-28/30):** Full reverse synchronization, convergence reporter, and cutover tooling implemented in Career Hunter (1.25.0+):
+  1. Ordered PostgreSQL outbox via migration `106-career-store-change-log.sql` and transaction horizon checkpointing.
+  2. Idempotent reverse projector `engine/sync/reverse_sync.py` with `--until-caught-up`, `--follow`, metrics, and rollback readiness gates (`--check-rollback-ready`).
+  3. Convergence reporting in `engine/sync/report_convergence.py` with exact count, checksum, and unmapped interview detection.
+  4. Seven-day observation framework in `engine/sync/observe_cutover.py` and operator status route `GET /api/career-hunter/cutover/status`.
+  5. Synthetic end-to-end rehearsal suites passing in `tests/career-storage-contract.test.mjs`, `tests/career-convergence-contract.test.mjs`, `tests/career-reverse-sync.test.mjs`, and `tests/career-cutover-drill.test.mjs`. Documented in `BACKEND-CUTOVER.md`.
+- **Remaining:** Operator executes the live cutover drill on the deployed production instance (quiesce writes, backup stores, run double-load convergence, enable read-only smoke, activate reverse sync, enable canary writes, and monitor 7-day observation window) per `BACKEND-CUTOVER.md`.
 - **Done when:** the PostgreSQL half proves posting/company upserts, refresh/deactivation, types, sequences, application lifecycle, ATS ingest, RLS, counts, checksums, and key-query convergence; reverse synchronization prevents stale rollback; the live cutover and rollback are rehearsed; then seven days of freshness, latency, RLS, count, and nightly-marker telemetry remain inside stated bounds. See the package's `BACKEND-CUTOVER.md` and `JOBHUNTER-CONFUSION.md` records.
 
 ## Finance
