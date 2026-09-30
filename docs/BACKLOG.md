@@ -15,8 +15,9 @@ carries the evidence that survived an adversarial re-derivation and the correcti
 
 ## Current handover — 2026-09-30
 
-Resume from [the current session handover](backlog/session-handover-2026-09-30.md). Main is at
-e02be693813ad0400ea7aa4d7981ecf4eddbc3ef: **164 open / 147 ledger / 6 in progress**.
+Resume from [the current session handover](backlog/session-handover-2026-09-30.md). The handover
+snapshot was `e02be693813ad0400ea7aa4d7981ecf4eddbc3ef`; this note is now merged on `main` as
+`c29d5ebd`. The queue remains **164 open / 147 ledger / 6 in progress**.
 Recently merged work includes qualified connectors, catalog-less service-activation refusal,
 and the ADR-170 feature-token evidence foundation. The next gates are the B02 disposable
 PostgreSQL proof, the corrected L8 79-case run, the Playwright startup diagnostic followed by
