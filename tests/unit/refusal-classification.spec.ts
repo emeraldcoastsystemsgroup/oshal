@@ -7,6 +7,7 @@
  * 2   | maintainer@emeraldcoastsystemsgroup.com   | Cover every tracked executable production JS/TS-family source and inline HTML script, including JSX/template literals while excluding in-tree test files and inventory self-seeding.
  * 3   | maintainer@emeraldcoastsystemsgroup.com   | Inventory literal RefusalError constructor codes independently of the suffix heuristic so a new typed refusal cannot evade disposition review by naming shape.
  * 4   | maintainer@emeraldcoastsystemsgroup.com   | Count the three reviewed chat-channel refusal codes (channel_identity_rebind_denied, channel_link_code_refused, channel_link_required): 154 unique tokens.
+ * 5   | maintainer@emeraldcoastsystemsgroup.com   | Expand census to include 50 newly reviewed production tokens across connectors, n8n import, calling config, and location: 204 unique tokens.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -111,21 +112,21 @@ describe('source-derived refusal disposition inventory', () => {
     expect(Object.fromEntries(dispositions.map(disposition => [
       disposition, REFUSAL_CODES_BY_DISPOSITION[disposition].length,
     ]))).toEqual({
-      'hard-security': 54,
-      'infrastructure-undetermined': 48,
+      'hard-security': 73,
+      'infrastructure-undetermined': 61,
       'non-refusal': 4,
       'operator-remediable': 8,
-      'validation-or-user-action': 22,
-      'workflow-or-domain': 18,
+      'validation-or-user-action': 31,
+      'workflow-or-domain': 27,
     });
-    expect(classifiedCodes).toHaveLength(154);
-    expect(classified.size, 'a code may have only one disposition').toBe(154);
-    expect(Object.keys(REFUSAL_CODE_CLASSIFICATION)).toHaveLength(154);
+    expect(classifiedCodes).toHaveLength(204);
+    expect(classified.size, 'a code may have only one disposition').toBe(204);
+    expect(Object.keys(REFUSAL_CODE_CLASSIFICATION)).toHaveLength(204);
   });
 
   it('finds the complete AST-derived executable production census, including inline scripts and template prefixes', () => {
     expect(parseDiagnostics).toEqual([]);
-    expect(census.size).toBe(154);
+    expect(census.size).toBe(204);
     expect([...census]).toEqual(expect.arrayContaining([
       'authorization_recorded_delegation_required',
       'book_delete_refused',
