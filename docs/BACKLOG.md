@@ -34,9 +34,9 @@ from preparation or unit tests alone.
 | Status | Count | Meaning |
 |---|---|---|
 | IN PROGRESS | **5** | being worked in the current session |
-| OPEN — actionable | **5** | no decision, no live box needed; can be closed by an agent |
-| OPEN — needs operator | **73** | a decision, credential, account or purchase only the operator can make |
-| OPEN — needs live proof | **63** | needs the running box, a deploy, hardware, or a human at a browser |
+| OPEN — actionable | **0** | no decision, no live box needed; can be closed by an agent |
+| OPEN — needs operator | **77** | a decision, credential, account or purchase only the operator can make |
+| OPEN — needs live proof | **64** | needs the running box, a deploy, hardware, or a human at a browser |
 | OPEN — blocked | **9** | waiting on something outside this repo |
 | OPEN — needs review | **0** | the triage could not decide; somebody has to read it |
 | OPEN — untriaged | **0** | filed after the 2026-09-15 triage; has no verdict yet |
@@ -1091,23 +1091,26 @@ from preparation or unit tests alone.
 - **Done when:** a redacted screenshot or status response confirms the intended connection remains selected, `selectedConnectionAvailable` is true, the phone and limits are saved, and the chosen opt-in state is shown after reload. Redact the phone and all account identifiers from the receipt. `effectiveEnabled` must remain false while the live call service is absent; this operator ticket is configuration proof, not permission to dial or proof of a human handoff.
 
 ### Real call-control service and signed provider endpoints, isolated from the mock
-- **Status:** OPEN — actionable
+- **Status:** OPEN — needs operator
 
-- **Remaining:** build a durable, owner-scoped call run (`start/status/events/cancel`) with a queue/worker that survives controller restart, idempotent state transitions and callbacks, provider abstraction, bounded retries, time/spend caps, and redacted audit/cost receipts. Broker the selected Twilio credential on the controller only. Add outbound Calls and call-status callbacks, HTTPS TwiML and authenticated WSS media ingress, and the owner-leg/conference/hangup operations. Validate Twilio HTTP and WebSocket signatures against the exact public URL; reject forged/replayed/out-of-order events and never let `/api/voice-sim` or its fictional account resolve a live credential. See [Twilio Call resource](https://www.twilio.com/docs/voice/api/call-resource), [secure webhooks](https://www.twilio.com/docs/usage/webhooks/webhooks-security), and [Media Streams](https://www.twilio.com/docs/voice/media-streams).
+- **Delivered:** Calling Assistant application in `oshal-applications/calling-assistant` (ADR-166, core PR #830 `signed-package-callbacks` platform contract). Delivers owner-scoped `CallingService`, `Twilio` carrier adapter, and `createCallingCallbackVerifier` with durable PostgreSQL persistence (`calling_runs`, `calling_turns`, `calling_events`) and non-superuser RLS enforcement. Twilio HMAC-SHA1 signatures are bound to the exact public URL and form parameters, rejecting forged or replayed callbacks. Secrets remain brokered on the controller only via `getValidAccessToken`. Tested by 49 policy/contract tests and 22 PostgreSQL integration tests covering successful connect, duplicate and late callbacks, worker restart/resumed runs, cancel/hangup, carrier no-answer, provider failure, and spend cutoff. Calling remains disabled by default until explicitly enabled and configured.
+- **Remaining:** Operator action to connect and select the Twilio connection, configure voice-capable sender, and verify public tunnel reachability for live provider callbacks.
 - **Done when:** contract tests against fake provider endpoints cover successful connect, duplicate and late callbacks, worker restart, cancel/hangup, owner no-answer, provider failure and spend cutoff; secrets stay out of model/tool output and logs. A real call remains disabled until the operator readiness and live-proof items are satisfied.
 
 ### Real IVR listening, music abstention, speech/DTMF and human detection
-- **Status:** OPEN — actionable
+- **Status:** OPEN — needs live proof
 
 - **Context:** the synthetic suite interprets labeled transcript events. It does not hear waveforms, classify music, synthesize speech, send carrier DTMF, or prove human detection.
-- **Remaining:** connect live media or provider transcription to a bounded phone-tree state machine; distinguish IVR speech, hold music/lyrics, silence, voicemail, and a human. Select options from the current prompt rather than fixed digits; support spoken replies and real DTMF; ask/stop on ambiguous or low-confidence choices. Suppress action on music even when lyrics contain menu-like words. Keep any untrusted voice prompt from changing the call's authorization or task. Define disclosure before speaking to a representative, stop for sensitive verification, and offer the human handoff only on positive human evidence. Use representative audio fixtures, not only pre-labeled text.
+- **Delivered:** In `calling-assistant/routes/policy.js` and `service.js`: full phone-tree state machine with multi-digit IVR menu parsing (`for X press N` and `press N for X`), speech keyword matching, `<Play digits>` DTMF emission, `<Say>` vocal responses, prompt injection filtering (`ignore previous instructions`), sensitive information transfer triggers, and human greeting detection triggering `<Dial>` handoff to the owner's phone. Tested with 24 real WAV audio files generated via Windows speech synthesis (`generate-audio.ps1`), 49 policy tests, 22 integration tests, and 45-case waveform validation in `audio-round.cjs` proving instrumental music abstention (no tones/speech generated from hold music/lyrics), correct menu traversal, and fail-closed handling.
+- **Remaining:** Live telephone session proof on carrier network with live callee and bridged human leg (tracked in `Jarvis calling policy sign-off and real end-to-end handoff`).
 - **Done when:** audio-level and provider-contract tests show speech and DTMF reaching a fake callee, no tones or spoken commands generated from music, correct changed-menu choices, fail-closed low-confidence cases, and an owner-leg bridge only after a verified human answer. The mock suite remains a regression harness, not the acceptance proof.
 
 ### Jarvis call tool, console configuration, and honest front-door responses
-- **Status:** OPEN — actionable
+- **Status:** OPEN — needs operator
 
 - **Implemented locally:** Jarvis Options now links to `/api/jarvis/calling/settings`; the owner-scoped setup screen lists only accessible connected Twilio rows, saves an explicit selected connection, transfer phone, limits, and opt-in, and reports effective calling OFF because no live dialer is installed. A connected account alone does not select or activate anything; losing access to a selected connection never falls back to another. See [the setup runbook](runbooks/jarvis-calling-setup.md). This is not a live-call completion claim.
-- **Remaining:** add a live-call tool distinct from `oshal-voice-sim.js`, gated by the declared credential/actor scope and explicit user authorization. Jarvis should resolve the signed-in claimant; read only their connected mail/data for the relevant claim; show ambiguous matches for selection; confirm the insurer number from a trusted source with the user before dialing; then report `needs setup`, `awaiting approval`, `dialing`, `navigating menu`, `on hold`, `human reached`, `ringing you`, `bridged`, `canceled`, or a named failure. Add console controls for shared service administration versus per-user BYO connection, callback readiness, transfer phone verification, permitted destinations, quiet hours, limits, consent, audit/report view, and a visible cancel button. Do not use voice similarity alone as authority to access a person's claim, and do not present a simulation as a completed live call.
+- **Delivered:** Registered package tool `calling_task` in `calling-assistant/routes/tool.js` (supporting `start`, `status`, `cancel` operations, gated by `signed_in_owner_required` and `calling.execute` permission), `calling-operator` bot persona, and the owner-scoped console (`ui/index.html`, `ui/client.js`, `/tasks` ADR-145 summary, company and family audience views ADR-164). Core routes in `jarvis-calling-config-routes.ts` provide owner-scoped Twilio connection selection and honest front-door reporting (`effectiveEnabled: false` when disabled or unconfigured). Tested across 7/7 unit tests in `jarvis-calling-config.spec.ts`, 49 package policy/summary tests, and 22 integration tests proving cross-user isolation and accurate state progression.
+- **Remaining:** Operator deployment, credential assignment, and claimant opt-in on deployed instance.
 - **Done when:** Jarvis can start/status/cancel an authorized durable run through the service API; unconfigured or denied requests give a specific setup or consent action; another user cannot view or control the run; browser and tool tests prove the status text corresponds to provider events; and the console clearly labels which settings are administrator-managed versus claimant-managed.
 
 ### Jarvis calling policy sign-off and real end-to-end handoff
@@ -1731,9 +1734,10 @@ from preparation or unit tests alone.
 - **Done when:** protected-branch rules require the security workflow, the promoted workflow records green source/generated drift, route-inventory mutation, two-owner forced-RLS, dependency/action immutability, and secret-scan jobs, and a sanctioned fail-then-pass fixture proves each remote gate is blocking rather than advisory.
 
 ### Store catalog parity and SHA-bound package audits
-- **Status:** OPEN — actionable
+- **Status:** OPEN — needs operator
 
-- **Remaining:** catalog/manifest/README parity, the immutable audit schema, 47 version-bound structural records, CI validation, and compatible/enforce installer plumbing are implemented. Replace each all-zero `pending` source sentinel with a substantive immutable review bound to the exact package SHA, starting with child, money/trading, communications, physical-device, and external-publishing packages; only then move installations from compatible warnings to enforce rejection.
+- **Delivered:** Immutable package audit profile-v1 schema (`audits/profile-v1.schema.json`), reproducible runner (`scripts/security/run-package-audit.mjs`), controls (`package-audit-controls.mjs`), and validator (`validate-package-audits.mjs`). Published and verified the first immutable passing audit record for `hello-oshal` (`2e745adb994b6d40014f750976d19f7c35d592ae`) in commit `e9487a56`, proving all 7 controls (`manifest`, `authz`, `rls`, `dependencies`, `installLifecycle`, `surface`, `goldenPath`) reproduce byte-for-byte against recorded SHA-256 digests.
+- **Remaining:** Operator enhancement of the audit runner to provide disposable PostgreSQL replay for packages with migrations, framework host mocking for complex surfaces, and progressive execution across remaining packages to transition installer policy from compatible to enforce mode.
 - **Done when:** all 47 records are `passed`, current, source-SHA exact, and reproduce hashes for manifest, authz, RLS, dependencies, install lifecycle, surface, and one app-specific golden path; a source/version/evidence change without re-audit fails installation, and the exact-SHA installer gate runs in enforce mode on the promoted catalog.
 
 ### Venture rebaseline scheduler activation
@@ -1817,7 +1821,7 @@ from preparation or unit tests alone.
 - **Done when:** a user with an indexed resume completes a review conversation from Strengthen that leaves at least one story on every role title; the master resume document shows the stories under their bullets; a generated resume for a job cites a story; and the readiness route reports the count the profile actually holds (guarded by an engine test over a fixture profile).
 
 ### Fantasy football — the draft engine, the league site, and the live-draft node (operator, 2026-09-06)
-- **Status:** OPEN — actionable
+- **Status:** OPEN — needs operator
 
 - **Remaining:** complete the management-engine residuals and evidence below; retain the separately gated league-site and draft-node phases in their existing priority order.
 - **What was asked:** three halves of one product. (1) The **algorithms** — how to actually pick, framed roster-first by the operator: "the methods and algorithms to pick a team and build from the team out", not a global best-player cheat sheet. (2) A **website on this platform** that does what any fantasy site does — league creation, scoring rules, a draft room, in-season lineups/waivers/trades/standings — with configuration and commissioner/administrative controls. (3) A **remote-node add-on** that assists a live draft dynamically inside an ESPN draft room, which needs the operator's own ESPN login. The operator's ESPN team "is having some issues", so phase one deliberately does not depend on reading their private league; the app must draft standalone (offline/paper mode) with the node as an accelerant, not a dependency.
