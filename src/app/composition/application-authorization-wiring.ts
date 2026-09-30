@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Resolve a legacy explicit tier on the full principal while retaining the canonical-local meaning of issuer-less assignments.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Forward the AUTH-07 catalog snapshot and migration review reads through the schema-readiness wrapper. Without them the service could never read the catalog an installed package's assignments were granted under, so every catalog change would classify as unrecorded and refuse.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Wire the sole-operator self-approval verifier into both approval hooks. Neither hook had a verifier, so a change touching the approver's own sensitive grants was refused for everyone, including the only administrator of the install.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com | Forward the actual registered mode to service activation so catalog-less enforce admission cannot be confused with legacy behavior.
  */
 /** Assemble the control plane without granting it authority over business records. */
 import type { Request } from 'express';
@@ -182,7 +183,7 @@ export function createApplicationAuthorizationWiring(ctx: AppContext, appAccess:
     pool: ctx.pool, ready, policy: store, getApps,
     describeApp: app => {
       const summary = service.getApp(app);
-      return summary ? { source: summary.source, catalogRevision: summary.catalogRevision, catalog: summary.catalog } : null;
+      return summary ? { source: summary.source, catalogRevision: summary.catalogRevision, catalog: summary.catalog, mode: summary.mode } : null;
     },
     authorize: (actor, operation) => runtime.authorize(actor, operation),
     resolveActor: (req: Request) => resolveActor(req),

@@ -5,7 +5,9 @@ Status: **Accepted by the operator (2026-09-14); implementation in progress — 
 is built. Amended 2026-09-16 — implementing S3 measured two claims in "Consequences" to be wrong (the service
 class of three of the five schedules, and the RLS guarantee), and found that a protected application with no
 imported permission catalog cannot run a system service at all. All three are recorded under "Amendment"; the
-catalog-less finding is an open question for the operator, not a decision this ADR makes.**
+catalog-less finding was subsequently decided on 2026-09-29: explicit package catalogs and service
+permissions, with missing-catalog refusal at activation. See the admission addendum below; implementation
+and real PostgreSQL acceptance remain distinct.**
 
 Related: [ADR-149](149-enterprise-application-authorization.md) (application authorization — its §7 already
 states the rule this ADR builds the mechanism for), [ADR-148](148-swarm-root.md) (swarm roles),
@@ -318,8 +320,52 @@ this ADR bought — but it means "they skip until activated, then run" in the fi
 hold for a catalog-less application, and the five schedules on the box do not start running on activation
 alone.
 
-**This is recorded as a known gap, not resolved.** It is an open decision for the operator; no resolution is
-proposed or chosen here.
+**The original finding above is historical; the policy choice is now settled.** The operator's
+2026-09-29 direction is declared package catalogs and explicit service authorizations, not an
+installer-user impersonation or automatic application-administrator grant.
+
+#### Catalog admission addendum (2026-09-29)
+
+A system activation for a registered `mode: enforce` application with `catalog: null` is refused
+with HTTP 409 / `authorization_service_catalog_required`. The existing swarm-administrator check
+remains first. This admission happens before looking up/reusing an activation, revoking an older one,
+writing grants, or registering a schedule. HTTP body fields cannot supply a catalog or downgrade the
+registered mode. Existing rows are not backfilled or revoked by a refused activation; explicit
+deactivation remains available.
+
+The registered mode is exactly `legacy | enforce`. A catalog forces enforce during registration.
+Catalog-less legacy applications and user-activation semantics are unchanged. A valid catalog still
+requires its package's declared permissions and job bindings: this addendum grants no blanket service
+authority, changes no role bundle, and does not establish the row-level isolation missing in Amendment B.
+Package catalog migrations and actual schedule activation remain separate work.
+
+The HTTP regression uses the real Express routes, activation service and authorization
+evaluator, with explicit fixture identities, memory stores, scheduler callbacks and a resource adapter.
+It covers the catalog/mode matrix, non-administrator precedence, forged request posture, existing-row
+preservation, exact catalog-backed service grants and an explicitly granted user's unchanged path.
+Its database-free command, within a coordinated local test slot:
+
+```sh
+NODE_OPTIONS=--max-old-space-size=384 node --max-old-space-size=128 node_modules/vitest/vitest.mjs run tests/unit/application-service-activation-routes.spec.ts tests/unit/manifest-service-route-activation.spec.ts --pool=forks --maxWorkers=1 --no-file-parallelism --execArgv=--max-old-space-size=384
+```
+
+The inherited heap setting is for the worker; the direct Node argument keeps the runner at 128 MiB.
+On 2026-09-30 UTC the complete pair passed 25/25 (20 HTTP, 5 manifest-runner), without skips.
+The unchanged new tests against the actual old activation service produced three expected failures:
+new activation, existing-row reuse after an enforce transition, and the enforce/catalog-null case
+returned 200 instead of 409. A separate real-source mutation called `openActivation` before the refusal;
+two tests failed on the unexpected stored row and the duplicate-insert response. Restoring the exact
+approved service then passed 25/25 again. The manifest runner retains its explicit execution-policy
+double; these passes are not PostgreSQL or installed-runtime acceptance.
+
+The separate `tests/unit/application-service-activation-postgres.spec.ts` companion uses the real
+policy store, migration 144 and activation table in disposable PostgreSQL. Both suites are listed on
+the existing Access Administration Test Lab card. **The PostgreSQL additions remain source-prepared
+and unrun:** no PostgreSQL/RLS, installed schedule or full-backlog closure is claimed. Lab/package
+command parity was checked statically; the separate full authorization-route catalog suite did not
+complete in this local session and is not counted as passing.
+After explicit runtime coordination, run `npx vitest run tests/unit/application-service-activation-postgres.spec.ts --maxWorkers=1 --no-file-parallelism`;
+do not substitute a deployment database.
 
 ## Implementation
 

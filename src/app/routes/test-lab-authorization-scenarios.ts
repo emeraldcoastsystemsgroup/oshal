@@ -23,6 +23,7 @@
  * 18 | maintainer@emeraldcoastsystemsgroup.com | Register the career-hunter worker-rail posture proofs: the enforce-mode boundary spec (a manifest route declared auth: service answers the package's own engine child - valid secret, X-Oshal-User-Sub-B64 of a subject holding the app grant, run token - with 401 authorization_identity_required before package code; the legacy rollout admits it) and the guard for scripts/operations/career-rail-live-proof.js, the on-box acceptance that starts one real owner-scoped score run, requires the Career bot's chat_tasks/oshal_cost_events attribution for the owner, and fails naming the kernel refusal. Both belong to this card because the refusal is application authorization's, not the package's.
  * 19 | maintainer@emeraldcoastsystemsgroup.com | Register the approve -> draft half of the Career rail live acceptance (tests/unit/career-rail-draft.spec.ts, the `--complete` mode's second half over career-hunter 1.27.0's Test Lab application seam) beside the live-proof spec it extends.
  * 20 | maintainer@emeraldcoastsystemsgroup.com | Register exact anonymous package reads with loader and real HTTP enforcement proofs.
+ * 21 | maintainer@emeraldcoastsystemsgroup.com | Register scheduled-service activation HTTP/policy and separate disposable PostgreSQL companions, including missing-catalog admission refusal.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -106,6 +107,8 @@ export const AUTHORIZATION_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/authorization-readiness-consumers.spec.ts' },
     { level: 'integration', path: 'tests/unit/authorization-runtime.spec.ts' },
     { level: 'integration', path: 'tests/unit/swarm-app-access-routes.spec.ts' },
+    { level: 'integration', path: 'tests/unit/application-service-activation-routes.spec.ts' },
+    { level: 'integration', path: 'tests/unit/application-service-activation-postgres.spec.ts' },
     { level: 'integration', path: 'tests/unit/swarm-app-lifecycle-authorization.spec.ts' },
     { level: 'unit', path: 'tests/unit/guc-pool.spec.ts' },
     { level: 'unit', path: 'tests/unit/guc-pool-strict-identity.spec.ts' },

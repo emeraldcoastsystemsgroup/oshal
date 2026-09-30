@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1   | maintainer@emeraldcoastsystemsgroup.com     | ADR-157 S1: the closure proof over a real, disposable PostgreSQL — migration 144 as shipped, the real ADR-149 policy store, and the real evaluator. Activating a system service makes the application's service principal pass authorize() for EXACTLY the declared permission and fail a second job binding it was never granted; deactivating revokes precisely the assignments that activation created.
  * 2   | maintainer@emeraldcoastsystemsgroup.com     | Deactivation authority, against the same real table where the system row's target_sub really is NULL and an untargeted lookup really does match it: a person who holds no activation is answered with not-found, a non-administrator cannot close the system service, an administrator closes one named person's activation without touching it, and only an administrator closes the system one. Naming the class is what decides, so nothing infers "system" from a lookup that missed.
+ * 3   | maintainer@emeraldcoastsystemsgroup.com     | Add catalog-less enforce admission and pre-existing-activation preservation companions over the real activation and policy tables; source preparation is not PostgreSQL execution evidence.
  */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -105,10 +106,9 @@ beforeAll(async () => {
     adapters: { scorecard: { authorize: async () => true } },
   });
   activations = new PostgresApplicationServiceActivationStore(database.pool);
-  const summary = authorization.getApp(APP)!;
   service = new ApplicationServiceActivationService({
     activations, policy,
-    describeApp: () => ({ source: summary.source, catalogRevision: summary.catalogRevision, catalog: CATALOG }),
+    describeApp: app => authorization.getApp(app),
     declaredServices: async () => [
       { app: APP, id: 'daily-ingest', scheduleId: INGEST, cron: '15 6 * * *', runsAs: 'system', requires: ['metrics.write'], queue: APP },
       { app: APP, id: 'weekly-review', scheduleId: REVIEW, cron: '0 7 * * 1', runsAs: 'system', requires: ['scorecard.administer'], queue: APP },
@@ -126,6 +126,35 @@ afterAll(async () => {
 });
 
 describe('ADR-157 system activation over real PostgreSQL', () => {
+  it('refuses a catalog-less protected system service without writing an activation or policy change', async () => {
+    const app = 'catalogless-denied';
+    await authorization.registerApp({ app, source: SOURCE, version: '1.0.0', catalog: null, mode: 'enforce' });
+    const catalogless = cataloglessService(app);
+    const before = await policy.read();
+    await expect(catalogless.activate(admin, { app, scheduleId: `${app}-tick`, runsAs: 'system' }))
+      .rejects.toMatchObject({ status: 409, code: 'authorization_service_catalog_required' });
+    expect((await database.pool.query('SELECT id FROM oshal_application_service_activations WHERE app=$1', [app])).rows).toEqual([]);
+    expect(await policy.read()).toEqual(before);
+    expect(instances).toEqual([]);
+  });
+
+  it('refuses reuse after legacy-to-enforce change without revoking the existing database row', async () => {
+    const app = 'catalogless-existing';
+    await authorization.registerApp({ app, source: SOURCE, version: '1.0.0', catalog: null, mode: 'legacy' });
+    const catalogless = cataloglessService(app);
+    const input = { app, scheduleId: `${app}-tick`, runsAs: 'system' as const };
+    const existing = await catalogless.activate(admin, input);
+    await authorization.registerApp({ app, source: SOURCE, version: '1.0.0', catalog: null, mode: 'enforce' });
+    const before = await policy.read();
+    await expect(catalogless.activate(admin, input))
+      .rejects.toMatchObject({ status: 409, code: 'authorization_service_catalog_required' });
+    const rows = await database.pool.query('SELECT id, revoked_at FROM oshal_application_service_activations WHERE app=$1', [app]);
+    expect(rows.rows).toEqual([{ id: existing.id, revoked_at: null }]);
+    expect(await policy.read()).toEqual(before);
+    // Admission refusal creates no authority but does not prevent explicit cleanup/deactivation.
+    expect(await catalogless.deactivate(admin, { ...input })).toBe(true);
+  });
+
   it('refuses the tick before anything is activated', async () => {
     const decision = await authorization.authorize(servicePrincipal, { app: APP, kind: 'jobs', operation: INGEST });
     expect(decision.allowed).toBe(false);
@@ -179,6 +208,20 @@ describe('ADR-157 system activation over real PostgreSQL', () => {
     expect(await grantedRows(reactivated.id)).toHaveLength(1);
   });
 });
+
+/** @description Use the same durable stores and real evaluator for a separate catalog-less fixture app. */
+function cataloglessService(app: string): ApplicationServiceActivationService {
+  return new ApplicationServiceActivationService({
+    activations, policy, describeApp: name => authorization.getApp(name),
+    declaredServices: async () => [{
+      app, id: 'tick', scheduleId: `${app}-tick`, cron: '0 * * * *',
+      runsAs: 'system', requires: [], queue: app,
+    }],
+    authorize: (actor, operation) => authorization.authorize(actor, operation),
+    registerUserInstance: async input => { instances.push(input.userSub); },
+    removeUserInstance: async input => { instances = instances.filter(sub => sub !== input.userSub); },
+  });
+}
 
 describe('ADR-157 deactivation authority over real PostgreSQL', () => {
   let systemActivation: string;

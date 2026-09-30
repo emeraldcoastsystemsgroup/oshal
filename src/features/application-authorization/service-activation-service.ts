@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | ADR-157: activate, deactivate and resolve scheduled application services. A system service is classified and turned on by a swarm administrator and runs as the application's own principal; a user service is turned on by a person, for themselves, and only after they are authorized for what it needs RIGHT NOW. Nothing here bypasses authorize(); it records what a person did.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | ADR-157: the services view carries the ADR-145 to-do descriptor for itself — a path and RFC 6901 pointers a setup dashboard probes in the viewer's own session — so "N scheduled services awaiting activation" is a readiness fact the kernel states, not a string a surface invents.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Fix: a deactivation names its principal class instead of inferring it. Asking for a principal that held no activation fell through to an untargeted lookup, and the row that matches COALESCE(target_sub,'')='' is the application's OWN system activation — so a stale or mistyped target switched off a service for everyone, and a person with nothing to turn off was told they needed administration. The class now decides: `system` takes the same swarm-administration check activation takes, through one shared assertion, and everything else resolves exactly one named person's activation or answers not-found.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Refuse catalog-less protected system-service activation before reading/reusing or writing an activation; legacy and user activation semantics remain unchanged.
  *
  * @module service-activation-service
  */
@@ -102,7 +103,7 @@ export interface ApplicationServiceActivationOptions {
   activations: ApplicationServiceActivationStore;
   policy: AuthorizationStore;
   /** Registered posture of the installed application; null when it is not registered. */
-  describeApp(app: string): { source: string; catalogRevision: string; catalog: AuthorizationCatalog | null } | null;
+  describeApp(app: string): { source: string; catalogRevision: string; catalog: AuthorizationCatalog | null; mode: 'legacy' | 'enforce' } | null;
   /** The service-route schedules the app's ACTIVE manifest declares. */
   declaredServices(app: string): Promise<ApplicationServiceDeclaration[]>;
   authorize(actor: AuthorizationActor, operation: AuthorizationOperation): Promise<AuthorizationDecision>;
@@ -159,6 +160,9 @@ export class ApplicationServiceActivationService {
     const posture = this.requirePosture(input.app);
     this.assertClass(declaration, input.runsAs);
     this.assertSystemAuthority(actor, input.runsAs);
+    if (input.runsAs === 'system' && posture.mode === 'enforce' && !posture.catalog) {
+      throw new ApplicationAuthorizationError(409, 'authorization_service_catalog_required');
+    }
     const principal = input.runsAs === 'system'
       ? { sub: applicationServicePrincipalSub(input.app), issuer: APPLICATION_SERVICE_PRINCIPAL_ISSUER }
       : { sub: actor.sub, issuer: actor.issuer };
@@ -364,7 +368,7 @@ export class ApplicationServiceActivationService {
   }
 
   /** @description Resolve the registered application posture an activation binds its grants to. */
-  private requirePosture(app: string): { source: string; catalogRevision: string; catalog: AuthorizationCatalog | null } {
+  private requirePosture(app: string): NonNullable<ReturnType<ApplicationServiceActivationOptions['describeApp']>> {
     const posture = this.options.describeApp(app);
     if (!posture) throw new ApplicationAuthorizationError(404, 'authorization_app_unavailable');
     return posture;
