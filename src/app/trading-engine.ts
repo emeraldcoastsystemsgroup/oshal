@@ -18,11 +18,13 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Submission reservation: placeDecisionOrder claims the clientOrderId in the ledger (INSERT ... ON CONFLICT DO NOTHING) BEFORE the venue call, refusing the loser of a race with 409 duplicate_submission; any throw before recordOrder releases the still-'submitting' claim. Fixes the 2026-08-18 live twin orders (two same-fire paths shared a minute-bucketed clientOrderId; Alpaca rejects a reused client-order-id server-side but Schwab HAS no client-order-id, so the duplicate placed for real and the recordOrder upsert overwrote the filled row with the rejected twin — three fills vanished from the ledger). recordOrder's conflict branch now also completes qty/order_type/prices/tif/submitted_at, since with a reservation row it is the branch every normal fill takes.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-134 book re-key (PR1): placeDecisionOrder/recordOrder/analyzeAndRecordDecision accept a TradingBook or the legacy mode (normalizing to the legacy book — byte-identical under the flag-off bijection, keeping deployed store twins working). The decision lookup, feed-loop dedup, reservation arbiter, release DELETE, and order upsert all key (user_sub, book_id); mode is still written on every row; the live_blocked gate condition and string are byte-unchanged. rebindOrder preserves a row's own book identity through re-record. bindingOf threads a bound account to the factory, which ignores it while the flag is off.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Cash-account settlement backstop (ADR-134 D8): placeDecisionOrder calls assertSettledFunding for every BUY AFTER the guardrail check + broker construction and BEFORE the submission reservation, so operator, pinned-lot, event-playbook and autonomous buys on a cash-type book all meet the same wall (422 settlement_blocked / 503 settlement_unknown under 'refuse'; a logged warning under 'warn'). SELLs perform zero extra I/O (protective exits untouched); margin/paper books are byte-identical. The guard only refuses or warns — it never places, cancels or resizes. Nothing else in the order path moved.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | A signal's fetched text (headline, summary, tweet, author) reaches the analyst only through the shared fetched-web-text filter (operator decision 2026-09-22: oshal takes no instruction from outside websites). Three filter calls in buildDecisionPrompt's signal map, and buildDecisionPrompt is exported for its guard. Ordinary text comes back byte for byte, so the prompt is unchanged unless a signal carried invisible characters, hidden markup, role markers, prompt-format tokens or a model-directed clause. The bot-node already wraps the whole prompt in the containment delimiter. Nothing in the order path moved. Guard: tests/unit/trading-analyst-fetched-text.spec.ts.
  *
  * @module trading-engine
  */
 
 import { createChildLogger } from '@/shared/logger';
+import { neutralizeFetchedText } from '@/shared/security/fetched-web-text';
 import type { AppContext } from '@/app/composition/app-context';
 import { BotNodeClient, createRegistryEndpointResolver } from '@/features/agent-management';
 import {
@@ -67,15 +69,20 @@ interface AnalystDecision {
   indicators: Record<string, unknown>;
 }
 
+/** A signal's fetched text through the shared filter; null stays null so the JSON is unchanged. */
+const fetchedText = (v: string | null): string | null => (v == null ? v : neutralizeFetchedText(v).text);
+
 /**
  * @description Builds the self-contained trading-analyst prompt (the full output contract
  * lives here, not in a loaded persona, so behavior is deterministic — the kid-lens pattern).
  * The signals + account context are embedded. The bot must answer with ONE fenced ```json block.
+ * A signal's fetched text (author, title, body) passes through the shared fetched-web-text filter;
+ * ordinary text is unchanged.
  * @param signals - The captured signal snapshots to reason over.
  * @param context - Account + guardrail context so the bot proposes a sized, in-bounds trade.
  * @returns The prompt string handed to the trading-analyst bot.
  */
-function buildDecisionPrompt(signals: SignalRow[], context: { cash: number; maxQty: number; maxNotionalUsd: number; allowList: string[]; mode: TradingMode }): string {
+export function buildDecisionPrompt(signals: SignalRow[], context: { cash: number; maxQty: number; maxNotionalUsd: number; allowList: string[]; mode: TradingMode }): string {
   return [
     'You are a disciplined equities trading analyst. You are handed one or more market SIGNALS',
     '(a tweet, a news headline, etc.) captured from a live data stream, plus the current account',
@@ -119,8 +126,8 @@ function buildDecisionPrompt(signals: SignalRow[], context: { cash: number; maxQ
     '',
     'SIGNALS (JSON):',
     JSON.stringify(signals.map((s) => ({
-      signal_id: s.signal_id, source: s.source, author: s.author, title: s.title,
-      body: s.body, url: s.url, symbols: s.symbols, indicators: s.indicators, observed_at: s.observed_at,
+      signal_id: s.signal_id, source: s.source, author: fetchedText(s.author), title: fetchedText(s.title),
+      body: fetchedText(s.body), url: s.url, symbols: s.symbols, indicators: s.indicators, observed_at: s.observed_at,
     }))),
   ].join('\n');
 }
