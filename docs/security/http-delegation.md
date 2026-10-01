@@ -105,7 +105,7 @@ by a kernel-resident manifest in `swarm-apps/`:
 
 | Ticket type | Declared in | Pipeline | Worker (reviewer) | Routing under signing |
 | --- | --- | --- | --- | --- |
-| `build` | `WORKFLOW_PIPELINES`, `swarm-apps/oshal-engineering.yaml` | `swarm` | system-architect | Dedicated node `oshal-local-system-architect`. See the mesh note below - the HTTP decision is fixed, the swarm pipeline's own transport is not. |
+| `build` | `WORKFLOW_PIPELINES`, `swarm-apps/oshal-engineering.yaml` | `swarm` | system-architect | Planning runs in-process (see [Build-lane planning runs in-process](#build-lane-planning-runs-in-process)); execution crosses the signed hop to a [build-lane target](#build-lane-execution-targets). |
 | `incident` | `WORKFLOW_PIPELINES`, `swarm-apps/intelligent-operations.yaml` | `incident-rca` | rca-specialist (queue-bot) | Dedicated nodes `oshal-local-rca-specialist` / `oshal-local-queue-bot`. |
 | `intelligent-processing` | `swarm-apps/intelligent-processing.yaml` | `incident-rca` | rca-specialist (queue-bot) | Same two nodes. |
 | `oshal-dev` | `swarm-apps/oshal-dev.yaml` | manifest-worker | oshal-developer | Dedicated node `oshal-developer` (already `requiresOwnNode`). |
@@ -130,6 +130,28 @@ which that function already logs as a declaration bug
 their own bot-node services in `docker-compose.oshal-local.yml`; for security-analyst that also
 takes untrusted scanner text out of the control-plane container, which is the blast radius
 `src/features/llm-provider/services/controller-inline-scope.ts` describes.
+
+### Build-lane execution targets
+
+While signing is configured, the build pipeline's execution (a child ticket's work, or a root that
+skips planning) crosses this hop through `signed-child-dispatch.ts`, never the mesh. Every node
+refuses unsigned mesh execution then.
+
+- **Who runs.** The request names the ticket's owner and the verified issuer persisted with it, as
+  the incident path does. An ownerless ticket is explicit system work. The body's
+  `workspaceFolderId` is the root ticket's folder.
+- **Where it can go.** The target must be one of nine build-lane bots: code-developer,
+  code-reviewer, documentation-writer, test-engineer, devops-bot, research-bot and tester-bot (each
+  `requiresOwnNode`), plus system-architect and general-bot. Planning text can name any active agent.
+  A target outside the nine is refused with `child_target_not_allowlisted` before a token is issued,
+  and that ticket's execution fails.
+- **While the node works.** The unit work item is refreshed so the routing watchdog does not read a
+  long run as a dropped dispatch. Refreshing stops when the call returns or the ticket is cancelled
+  or escalated. The node's result is recorded on the unit.
+
+documentation-writer also gains `accessRoles: ['operator', 'swarm']`, because with an endpoint and no
+roles it would become a Jarvis task call-out candidate. Guard:
+`tests/unit/signed-swarm-child-dispatch.spec.ts`.
 
 `tests/unit/signed-delegation-core-ticket-types.spec.ts` enumerates these types from the tree on
 every run and dispatches one ticket per manifest-worker type through the real dispatcher, the real

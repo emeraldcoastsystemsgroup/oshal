@@ -75,6 +75,7 @@
  * 68 | maintainer@emeraldcoastsystemsgroup.com | Gate the canonical runtime-params resolver on the first persisted provider-switch snapshot settlement so startup cannot stamp a registry fallback before the saved per-bot row loads.
  * 69 | maintainer@emeraldcoastsystemsgroup.com | The controller's own swarm worker wiring (execution handler deps, cost-linking ticket service, worker channels, ticket-terminal check, bid responder, SwarmAgentWorker) moved to ./controller-swarm-worker.ts because this file crossed 800 code lines. Pure move; behaviour unchanged.
  * 70 | maintainer@emeraldcoastsystemsgroup.com | Build-lane planning runs in-process: MultiRoundDispatchService gets isDelegationEnforced (the controller signing configuration) and, once the controller worker's handler deps exist, the project-manager round executor (controller-pm-round-executor.ts).
+ * 71 | maintainer@emeraldcoastsystemsgroup.com | Wired the signed build-execution dispatcher (createSignedChildDispatcher) into the swarm processing service, so build execution crosses the signed bot-node hop as the ticket's owner while delegation signing is configured.
  */
 
 import type { Pool } from 'pg';
@@ -162,6 +163,7 @@ import {
   PhaseRoutingService,
   buildTaskCallOutResolver,
   PostgresSubtaskLifecycleStore,
+  createSignedChildDispatcher,
 } from '@/features/swarm-orchestration';
 import { ConfigSyncService } from '@/features/config-sync';
 import { TicketService, PostgresTicketStore, WorkspaceService, PostgresWorkspaceStore } from '@/features/ticketing';
@@ -732,6 +734,16 @@ export function createSwarmExtensionBindings(
     }
   };
   const botNodeClient = new BotNodeClient(codexResolveEndpoint);
+  // While signing is configured, build execution crosses the signed bot-node hop as the ticket's
+  // owner, only to the build-lane allowlist (docs/security/http-delegation.md, "Worker routing").
+  if (ticketService) {
+    swarmProcessingService.setSignedChildDispatch(createSignedChildDispatcher({
+      botNodeClient,
+      workItemRepository,
+      runtimeParamsResolver,
+      readTicketStatus: async (ticketId) => (await ticketService.getTicket(ticketId))?.status ?? null,
+    }));
+  }
 
   // Run-history recorder for the 'graph' dispatch path (studio Runs panel). Telemetry only —
   // every recorder method is non-throwing, so it can never gate or break a dispatch.

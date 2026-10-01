@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Feedback-carrying build retry: dispatchExecution callback now threads the policy runner's optional retryFeedback into the mesh envelope payload so the executing bot's prompt names the previous attempt's verification miss (blind re-roll fix, docs/backlog/test-lab.md #2)
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: carry the durable TicketService authority into lifecycle memory ownership resolution.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | While delegation signing is configured, build execution crosses the signed bot-node hop through the injected SignedChildDispatcher and never falls back to the mesh, which every node refuses then. The mesh dispatch moved, unchanged, into dispatchExecutionOverMesh.
  */
 
 import fs from 'node:fs';
@@ -37,6 +38,7 @@ import { type SwarmTicketCycle, TicketCycleStateMachine } from './ticket-cycle-s
 import type { SwarmProcessedTicketResult } from './swarm-run-store';
 import type { SwarmRoutingHandler } from './swarm-routing-handler';
 import type { SwarmSubtaskHandler } from './swarm-subtask-handler';
+import type { SignedChildDispatcher } from './signed-child-dispatch';
 import {
   buildExecutionEnvelope,
   buildVerificationFailureMessage,
@@ -104,6 +106,8 @@ export interface SwarmExecutionLifecycleServiceDeps {
   recordDeliveryMetrics?: DeliveryMetricsRecorder;
   getRegressionService: () => PhaseRegressionService | undefined;
   getGovernanceService: () => QueueGovernanceService | undefined;
+  /** The signed build-execution dispatcher, when wired; used only while delegation signing is configured. */
+  getSignedChildDispatch?: () => SignedChildDispatcher | undefined;
   handoverManager?: RALFHandoverManager;
   selectAgent: (
     item: Pick<ExternalWorkItem, 'externalId' | 'title' | 'body'>,
@@ -178,24 +182,13 @@ export class SwarmExecutionLifecycleService {
       policy,
       {
         dispatchExecution: async (nextRouting, nextWorkUnits, retryFeedback) => {
-          const envelope = buildExecutionEnvelope(runId, nextRouting.winner.agentId, item.externalId, nextWorkUnits, workspaceTaskId);
-          const payload = envelope.payload as Record<string, unknown>;
-          payload.phase = 4;
-          payload.round = 1;
-          if (retryFeedback) {
-            // Build-retry attempt: surface the previous attempt's verification
-            // findings to the bot so the retry is corrective, not a blind re-roll.
-            payload.retryFeedback = retryFeedback;
+          // While signing is configured every node refuses unsigned mesh execution, so build
+          // execution crosses the signed hop and never falls back to the mesh.
+          const signed = this.deps.getSignedChildDispatch?.();
+          if (signed?.isEnforced()) {
+            return signed.dispatch({ item, agentId: nextRouting.winner.agentId, workUnits: nextWorkUnits, workspaceTaskId, retryFeedback });
           }
-          const itemRaw = (item as Record<string, unknown>).rawPayload as Record<string, unknown> | undefined;
-          const itemRawMeta = itemRaw?.metadata as Record<string, unknown> | undefined;
-          payload.ticketDepth = Number(itemRawMeta?.depth ?? 0);
-          payload.agentId = nextRouting.winner.agentId;
-          if (Array.isArray(itemRawMeta?.siblingTitles)) {
-            payload.siblingTitles = itemRawMeta.siblingTitles;
-          }
-          await this.deps.meshService.send(envelope);
-          return this.awaitExecutionOutput(item.externalId, policy);
+          return this.dispatchExecutionOverMesh(item, nextRouting, nextWorkUnits, { runId, policy, workspaceTaskId, retryFeedback });
         },
         reroute: (nextItem, nextInput, nextWorkUnits) => {
           const hasSpecialistCaps = Boolean(nextInput.requiredCapabilities?.length)
@@ -231,6 +224,40 @@ export class SwarmExecutionLifecycleService {
         guardrailTriggered: outcome.guardrailTriggered ?? null,
       },
     };
+  }
+
+  /**
+   * @description Sends one execution over the Redis mesh and waits for the worker's stored output.
+   * @param item - Ticket being processed.
+   * @param nextRouting - The routing winner.
+   * @param nextWorkUnits - Work units to execute.
+   * @param context - Run id, policy, workspace folder and any retry feedback.
+   * @returns The stored execution output, or undefined on timeout.
+   */
+  private async dispatchExecutionOverMesh(
+    item: ExternalWorkItem,
+    nextRouting: RouteDecision,
+    nextWorkUnits: DecomposedWorkUnit[],
+    context: { runId: string; policy: SwarmCyclePolicy; workspaceTaskId: string; retryFeedback?: string },
+  ): Promise<unknown> {
+    const envelope = buildExecutionEnvelope(context.runId, nextRouting.winner.agentId, item.externalId, nextWorkUnits, context.workspaceTaskId);
+    const payload = envelope.payload as Record<string, unknown>;
+    payload.phase = 4;
+    payload.round = 1;
+    if (context.retryFeedback) {
+      // Build-retry attempt: surface the previous attempt's verification
+      // findings to the bot so the retry is corrective, not a blind re-roll.
+      payload.retryFeedback = context.retryFeedback;
+    }
+    const itemRaw = (item as Record<string, unknown>).rawPayload as Record<string, unknown> | undefined;
+    const itemRawMeta = itemRaw?.metadata as Record<string, unknown> | undefined;
+    payload.ticketDepth = Number(itemRawMeta?.depth ?? 0);
+    payload.agentId = nextRouting.winner.agentId;
+    if (Array.isArray(itemRawMeta?.siblingTitles)) {
+      payload.siblingTitles = itemRawMeta.siblingTitles;
+    }
+    await this.deps.meshService.send(envelope);
+    return this.awaitExecutionOutput(item.externalId, context.policy);
   }
 
   /**

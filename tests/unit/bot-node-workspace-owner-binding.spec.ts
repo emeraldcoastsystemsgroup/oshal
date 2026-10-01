@@ -30,6 +30,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — regression guard for the bot-node workspace owner binding left unpinned when ADR-060's per-user path layout was reverted: cross-owner reuse rejection (fail-closed across owned/ownerless/anonymous), no execution or task creation on mismatch, owner stamping on creation, workspace-folder-id derivation precedence and per-ticket distinctness, and TS/JS owner-normalization parity.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pin exact-subject parity and canonical workspace ID propagation: valid padding/whitespace remain distinct while empty, control, malformed, and oversized assertions fail closed.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Tree case for build-lane execution over the signed hop: sibling children dispatched with the root as their workspace share its node-side task for the same owner, and a foreign subject in that tree is refused.
  */
 import { createRequire } from 'node:module';
 import { describe, expect, it, vi } from 'vitest';
@@ -146,6 +147,28 @@ describe('bot-node workspace owner binding (ADR-060 enforcement point)', () => {
       expect(createTask).not.toHaveBeenCalled();
       expect(processMessage).toHaveBeenCalledTimes(1);
       expect(processMessage.mock.calls[0][0]).toBe(workspaceTaskId);
+    });
+
+    it('lets sibling children of one root share its task for the same owner, and refuses a foreign subject in that tree', async () => {
+      // Build-lane children dispatch with the ROOT as their workspace folder, so siblings land on
+      // one node-side task keyed by the root id, each with its own ticket id.
+      const rootId = '99999999-8888-4777-8666-555555555555';
+      const first = harness({ existing: null });
+      const firstResult = await first.handler(envelope({ workspaceTaskId: rootId, externalId: 'child-1', userSub: OWNER_A }));
+      expect(firstResult).toMatchObject({ success: true });
+      expect(first.createTask).toHaveBeenCalledTimes(1);
+      expect(first.createTask.mock.calls[0][2]).toMatchObject({ forceTaskId: rootId, userSub: OWNER_A });
+
+      const second = harness({ existing: { id: rootId, userSub: OWNER_A } });
+      const secondResult = await second.handler(envelope({ workspaceTaskId: rootId, externalId: 'child-2', userSub: OWNER_A }));
+      expect(secondResult).toMatchObject({ success: true });
+      expect(second.createTask).not.toHaveBeenCalled();
+      expect(second.processMessage.mock.calls[0][0]).toBe(rootId);
+
+      const foreign = harness({ existing: { id: rootId, userSub: OWNER_A } });
+      const foreignResult = await foreign.handler(envelope({ workspaceTaskId: rootId, externalId: 'child-3', userSub: OWNER_B }));
+      expect(foreignResult).toMatchObject({ success: false, error: 'Task owner mismatch' });
+      expect(foreign.processMessage).not.toHaveBeenCalled();
     });
   });
 

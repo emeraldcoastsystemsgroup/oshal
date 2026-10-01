@@ -212,3 +212,26 @@ nothing.
 - **Open-source deployments get the options without inheriting the risk.** Defaults ship closed:
   no `DEMO_MODE`, no key lending, no CLI. A deployment turns on exactly what its threat model
   allows.
+
+## Amendment — 2026-10-01: build-lane children of operator-owned roots reach the carve
+
+The carve's two conditions are unchanged. What changes is which work reaches it.
+
+- Child tickets created from project-manager's plan carry their root's owner and verified issuer
+  (ADR-031, amendment of 2026-10-01).
+- While signing is configured, their execution crosses the signed bot-node hop as that owner
+  (docs/security/http-delegation.md, "Worker routing").
+- On a demo box, the children of an operator-owned root therefore satisfy the carve and run an
+  unattended command-line engine as the operator, the same as the operator's own interactive turns.
+
+Scope:
+
+- Only the build-lane execution targets can be reached this way: the seven build specialists,
+  system-architect and general-bot. Any other target is refused before a delegation token is issued.
+- A child whose owner differs from its root's owner is cancelled before it is dispatched.
+- Planning itself never uses a command-line engine. It runs in the controller on the owner's hosted
+  ladder (docs/security/http-delegation.md, "Build-lane planning runs in-process").
+
+Accepted exposure (operator decision, 2026-10-01): the engine runs inside the bot container's
+environment, which holds provider keys, the service secret and the database URL. Scrubbing that
+environment is tracked in the backlog entry "Command-line engine runs: scrub the bot environment".

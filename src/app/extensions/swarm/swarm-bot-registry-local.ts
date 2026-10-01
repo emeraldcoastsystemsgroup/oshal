@@ -20,6 +20,7 @@
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | Fleet default -> codex (operator directive 2026-08-12): every LLM-harness bot flipped to harnessType codex-cli / apiType openai-codex (was a mix of claude-code and gemini). a2a untouched - an external-agent boundary, not an LLM harness. Model rides CODEX_MODEL (floor gpt-5.5, the ChatGPT-login model verified live; gpt-5.4 is the documented $20-plan self-install economy pick; gpt-5.6-sol stays interactive-only). claude-code remains a per-bot override and the runtime-failover secondary. Mirrored in swarm-bot-registry.ts.
  * 16 | maintainer@emeraldcoastsystemsgroup.com  | ADR-128 Amendment 1 (operator directive 2026-08-13): claude-code removed as a DEFAULT — the subscription is being cancelled, so an automatic degrade onto it turns a codex outage into silent spend on a dying account. Doc-only here: the inline-bot comments said '(claude-code)' while the fleet has run codex since 2026-08-12 — corrected to '(codex)'. No registry entry changed.
  * 17 | maintainer@emeraldcoastsystemsgroup.com  | Signed delegation, core queued ticket types (BACKLOG "Signed delegation refuses every ticket whose worker bot runs inline"): with controller signing on, a worker with no dedicated bot-node endpoint is refused - dispatch-manifest-worker throws 'Signed HTTP delegation requires a dedicated bot-node endpoint' and the incident path rethrows 'No endpoint found for agent ...' for the same missing endpoint (the first appears five times in this box's api log in the 24h to 2026-09-16). rca-specialist, system-architect and queue-bot already NAME a running compose node and were forced inline only by the codex rule, so they take requiresOwnNode (the remedy resolve-bot-node-endpoint.ts already logs). security-analyst and workflow-assistant own queued ticket types ('security-finding', 'workflow-build') and move off container oshal-api onto their own nodes - a queued type must cross the signed hop, and triaging untrusted scanner output inside the control-plane container was the blast radius controller-inline-scope.ts names. Guard: tests/unit/signed-delegation-core-ticket-types.spec.ts.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com  | Build-lane child execution crosses the signed bot-node hop: code-developer, code-reviewer, documentation-writer, test-engineer, devops-bot, research-bot and tester-bot take requiresOwnNode (each names a running compose node; the codex rule sent them inline, where signed delegation refuses them). documentation-writer gains accessRoles ['operator','swarm'] so owning a node does not make it a Jarvis call-out target. Guard: tests/unit/signed-swarm-child-dispatch.spec.ts.
  */
 
 import type { SwarmBotDefinition } from './swarm-bot-registry';
@@ -137,6 +138,9 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     name: 'code-developer',
     port: 3041,
     container: 'oshal-local-code-developer',
+    // Build-lane child execution crosses the signed bot-node hop (docs/security/http-delegation.md,
+    // "Worker routing"); without this flag the codex rule sends it inline and signing refuses it.
+    requiresOwnNode: true,
     role: 'localhost/worker',
     capabilities: ['coding', 'implementation', 'debugging', 'refactoring', 'feature-development', 'bug-fixing', 'api-design'],
     harnessType: 'codex-cli',
@@ -148,6 +152,9 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     name: 'devops-bot',
     port: 3042,
     container: 'oshal-local-devops',
+    // Build-lane child execution crosses the signed bot-node hop (docs/security/http-delegation.md,
+    // "Worker routing"); without this flag the codex rule sends it inline and signing refuses it.
+    requiresOwnNode: true,
     role: 'localhost/worker',
     capabilities: ['infrastructure', 'cicd', 'kubernetes', 'docker', 'monitoring', 'scripting', 'bash', 'deployment'],
     harnessType: 'codex-cli',
@@ -160,6 +167,9 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     name: 'code-reviewer',
     port: 3043,
     container: 'oshal-local-code-reviewer',
+    // Build-lane child execution crosses the signed bot-node hop (docs/security/http-delegation.md,
+    // "Worker routing"); without this flag the codex rule sends it inline and signing refuses it.
+    requiresOwnNode: true,
     role: 'localhost/worker',
     capabilities: ['code-review', 'security', 'quality', 'best-practices', 'architecture-review'],
     harnessType: 'codex-cli',
@@ -171,10 +181,14 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     name: 'documentation-writer',
     port: 3044,
     container: 'oshal-local-documentation-writer',
+    // Build-lane child execution crosses the signed bot-node hop (docs/security/http-delegation.md,
+    // "Worker routing"); without this flag the codex rule sends it inline and signing refuses it.
+    requiresOwnNode: true,
     role: 'localhost/worker',
     capabilities: ['documentation', 'readme', 'adr', 'jsdoc', 'technical-writing', 'handover'],
     harnessType: 'codex-cli',
     apiType: 'openai-codex',
+    accessRoles: ['operator', 'swarm'],   // build-pipeline machinery with the shared workspace rw — not a Jarvis call-out target once it owns a node (ADR-087)
   },
   // ── Incident & Analysis ───────────────────────────────────────────────────
   {
@@ -754,6 +768,9 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     name: 'research-bot',
     port: 3049,
     container: 'oshal-local-research-bot',
+    // Build-lane child execution crosses the signed bot-node hop (docs/security/http-delegation.md,
+    // "Worker routing"); without this flag the codex rule sends it inline and signing refuses it.
+    requiresOwnNode: true,
     role: 'localhost/worker',
     capabilities: ['research', 'analysis', 'documentation', 'investigation', 'web-search', 'competitive-analysis'],
     harnessType: 'codex-cli',
@@ -766,6 +783,9 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     name: 'test-engineer',
     port: 3048,
     container: 'oshal-local-test-engineer',
+    // Build-lane child execution crosses the signed bot-node hop (docs/security/http-delegation.md,
+    // "Worker routing"); without this flag the codex rule sends it inline and signing refuses it.
+    requiresOwnNode: true,
     role: 'localhost/worker',
     capabilities: ['testing', 'validation', 'verification', 'test-automation', 'qa', 'acceptance-criteria'],
     harnessType: 'codex-cli',
@@ -778,6 +798,9 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     name: 'tester-bot',
     port: 3050,
     container: 'oshal-local-tester-bot',
+    // Build-lane child execution crosses the signed bot-node hop (docs/security/http-delegation.md,
+    // "Worker routing"); without this flag the codex rule sends it inline and signing refuses it.
+    requiresOwnNode: true,
     role: 'localhost/worker',
     capabilities: ['testing', 'qa', 'test-standards', 'acceptance-criteria', 'test-automation'],
     harnessType: 'codex-cli',

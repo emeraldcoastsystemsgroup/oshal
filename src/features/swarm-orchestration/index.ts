@@ -19,6 +19,7 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Exported SEC-05 prompt containment and authority-binding contracts.
  * 15 | maintainer@emeraldcoastsystemsgroup.com | Export the queued evidence/result contract through the feature boundary.
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | Exported RoundOwner and LocalRoundExecutor so the app layer can install the in-process build-lane planning executor on MultiRoundDispatchService.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com   | Exported createSignedChildDispatcher, BUILD_EXECUTION_TARGETS and their types for the composition root.
  */
 
 export { SwarmOrchestrationController } from './controllers';
@@ -105,6 +106,11 @@ export {
   type RoundExecutionResult,
   type RoundOwner,
   type LocalRoundExecutor,
+  createSignedChildDispatcher,
+  BUILD_EXECUTION_TARGETS,
+  type SignedChildDispatcher,
+  type SignedChildDispatchDeps,
+  type SignedChildDispatchInput,
   ensureInternalTicketForWorkItem,
 } from './services';
 

@@ -28,6 +28,7 @@
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | Exported SEC-05 prompt containment and authority-binding contracts.
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | Exported assertRunScopedEscalation so the ADR-163 run-scope refusal is reachable through the slice barrel rather than only from the store module
  * 25 | maintainer@emeraldcoastsystemsgroup.com   | Exported RoundOwner and LocalRoundExecutor so the app layer can install the in-process build-lane planning executor on MultiRoundDispatchService.
+ * 26 | maintainer@emeraldcoastsystemsgroup.com   | Exported createSignedChildDispatcher, BUILD_EXECUTION_TARGETS and their types for the composition root.
  */
 
 export {
@@ -206,6 +207,13 @@ export {
   type RoundOwner,
   type LocalRoundExecutor,
 } from './multi-round-dispatch-service';
+export {
+  createSignedChildDispatcher,
+  BUILD_EXECUTION_TARGETS,
+  type SignedChildDispatcher,
+  type SignedChildDispatchDeps,
+  type SignedChildDispatchInput,
+} from './signed-child-dispatch';
 
 // Queue governance
 export {

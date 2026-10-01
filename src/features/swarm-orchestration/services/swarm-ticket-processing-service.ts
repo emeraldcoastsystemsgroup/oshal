@@ -37,6 +37,7 @@
  * 32 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed retired legacy product references (provider name is noop; narration removed)
  * 33 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: propagate the durable TicketService authority to lifecycle memory persistence.
  * 34 | maintainer@emeraldcoastsystemsgroup.com   | Deleted the unused enforceHandoverGate import (CKR-18 / R0.12). It was imported and never called, and entry 31 claimed importing it made gate checks available on multi-round phase transitions - it made nothing available. Entry 31 is corrected in place rather than rewritten, since it is a record of what was believed at the time.
+ * 35 | maintainer@emeraldcoastsystemsgroup.com   | setSignedChildDispatch: the execution lifecycle sends build execution over the signed bot-node hop while delegation signing is configured.
  */
 
 import { randomUUID } from 'crypto';
@@ -101,6 +102,7 @@ import type { PhaseRegressionService } from './phase-regression-service';
 import type { QueueGovernanceService } from '../services/queue-governance-service';
 import type { SwarmMetricsCollector, TicketProcessingMetrics } from './swarm-metrics-collector';
 import { PlanningRoundOrchestrator } from './planning-round-orchestrator';
+import type { SignedChildDispatcher } from './signed-child-dispatch';
 import { SwarmExecutionLifecycleService } from './swarm-execution-lifecycle-service';
 import { RALFHandoverManager } from './ralf-handover-manager';
 import {
@@ -235,6 +237,7 @@ export class SwarmTicketProcessingService {
       recordDeliveryMetrics: this.recordDeliveryMetrics,
       getRegressionService: () => this.regressionService,
       getGovernanceService: () => this.governanceService,
+      getSignedChildDispatch: () => this.signedChildDispatch,
       selectAgent: (item, input, workUnits, phaseContext) => this.selectAgent(item, input, workUnits, phaseContext),
       handoverManager: new RALFHandoverManager(),
     });
@@ -245,6 +248,9 @@ export class SwarmTicketProcessingService {
 
   /** @description Optional MultiRoundDispatchService — enables multi-agent dispatch per phase (legacy parity). */
   private multiRoundDispatch?: MultiRoundDispatchService;
+
+  /** @description Optional signed build-execution dispatcher, used while delegation signing is configured. */
+  private signedChildDispatch?: SignedChildDispatcher;
 
   /** @description Optional PhaseRegressionService — enables regression loops on testing/review failure. */
   private regressionService?: PhaseRegressionService;
@@ -300,6 +306,17 @@ export class SwarmTicketProcessingService {
   setMultiRoundDispatch(service: MultiRoundDispatchService): void {
     this.multiRoundDispatch = service;
     logger.info('MultiRoundDispatchService wired into SwarmTicketProcessingService');
+  }
+
+  /**
+   * @description Sets the dispatcher that sends build execution over the signed bot-node hop while
+   * delegation signing is configured (docs/security/http-delegation.md, "Worker routing").
+   * @param dispatcher - The signed build-execution dispatcher from the composition root.
+   * @returns Nothing.
+   */
+  setSignedChildDispatch(dispatcher: SignedChildDispatcher): void {
+    this.signedChildDispatch = dispatcher;
+    logger.info('Signed build-execution dispatcher wired into SwarmTicketProcessingService');
   }
 
   /** @description Sets the runtime online-agent resolver used to keep routing pinned to live workers. */
