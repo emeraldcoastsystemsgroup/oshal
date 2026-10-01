@@ -142,3 +142,30 @@ Validation coverage:
 **Open item (unresolved, flagged for separate investigation).** In the same run the parent ticket reached `complete` while 2 of its 4 children were still executing. Parent-assembly / terminal-state gating looks looser than intended — a parent should not report `complete` before its children terminate and assemble. This amendment documents the child-dispatch reality only; it does not change or bless the parent-completion behavior.
 
 **Decision status.** The Phase-0 discovery/planning split (`in_process_discovery`, planning as its own phase) **stands**. The *human build gate* portion of the original decision is **superseded** by autonomous auto-release. If a true operator approval checkpoint between planning and build is still wanted (e.g. cost control on large decompositions), it must be re-introduced as a **new** decision with an explicit blocking state — it is not in effect today, and the prose above should be read as historical intent, not current behavior.
+
+## Amendment — 2026-10-01: siblings run one at a time in planning order; a child belongs to its root's owner
+
+The 2026-07-18 amendment records that children of a planned root dispatch independently once the root
+reaches `approval_required`. That still holds for when children start. What changes is how siblings
+are released and who a child belongs to.
+
+- **Owner.** A child created from PM planning carries its root's owner, and through the metadata, the
+  root's verified issuer (`createChildTicketsFromPlanningOutput`). It also records its planning order:
+  `subtaskIndex` (1-based), `subtaskCount`, and the other subtasks' titles.
+- **Order.** `isDispatchBlockedByParentState` holds a child whose `subtaskIndex` is above 1 while any
+  earlier sibling is unfinished (not `complete`, `customer_action` or `cancelled`) or still in the
+  queue's active set. Siblings share their root's folder and one node-side task, and a later subtask
+  can build on an earlier one's output. Children without a `subtaskIndex` are not held. Running
+  siblings in parallel is deferred: see the backlog entry "Sub-tickets that run in parallel or sync".
+- **Owner continuity.** A child whose owner differs from its parent's is moved to `cancelled` with
+  reason `child_owner_mismatch` and is never dispatched. It is cancelled rather than escalated
+  because parent assembly escalates a parent with an escalated child, and `POST /api/tickets`
+  accepts any `parentTicketId`.
+
+Build-lane planning now runs in-process (docs/security/http-delegation.md, "Build-lane planning runs
+in-process"). A mesh worker that records a round result for a ticket also writes that ticket's
+terminal state (`updateTicketTerminalState` in `swarm-agent-worker.ts`); an in-process planning
+round is not recorded by a worker, so it does not write the root's status.
+
+Guards: `tests/unit/build-child-dispatch-gate.spec.ts` and
+`tests/unit/child-ticket-owner-inheritance-postgres.spec.ts`.
