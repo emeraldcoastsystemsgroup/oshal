@@ -940,5 +940,47 @@
     "title": "A catalog-less protected app cannot have a working system service (2026-09-16)",
     "pr": "957",
     "evidence": "Activation-time refusal authorization_service_catalog_required merged in PR #957 (1835d800); 14/14 tests in tests/unit/application-service-activation-postgres.spec.ts pass on disposable PostgreSQL proving no-write and existing-row preservation."
+  },
+  {
+    "date": "2026-10-01",
+    "title": "GitHub-side residue of the 2026-09-12 attribution scrub",
+    "pr": "705",
+    "evidence": "Closed on the Done-when's second alternative: the operator accepted the GitHub-side residue on 2026-09-21 and no Support request is filed, recorded in docs/BACKLOG.md by PR #705 (d5bfb7c8, \"operator decision 13 of 75\"). The residue is reachable only by SHA or refs/pull/*/head; main's last 400 commits carry no attribution line (re-measured on 7bf94478)."
+  },
+  {
+    "date": "2026-10-01",
+    "title": "Versioned platform-credential distribution if redistribution returns",
+    "pr": "741",
+    "evidence": "Not commissioned, not built: the operator ruled on 2026-09-21 that a node gets oshal platform credentials, if it ever needs them, by enrolment plus a fetch from the custody broker, never by broadcast. The ruling is recorded in the entry by PR #741 (8be6e4d5). The retired Redis credential pub/sub rail stays disabled (src/app/extensions/swarm/index.ts:1052-1054 on main 7bf94478)."
+  },
+  {
+    "date": "2026-10-01",
+    "title": "ADR-045 graph-tier residuals",
+    "pr": "0681d5a9 (core), 4cd6c3b3 (store)",
+    "evidence": "All three ADR-045 residuals are closed. The RCA/capture persona graph recipes were done on 2026-07-29, subgraph() was rejected (WON'T BUILD), and world-data was promoted to a kernel skill under the operator's 2026-09-21 Option A (PR #744), in core 0681d5a9 and store 4cd6c3b3. The loader refuses unknown uses ids, and check-kernel-skills Phase 3 makes every store package declare the kernel skills its compiled js imports (kernel-uses-declaration.spec.ts world-data case). The deployed 7bf94478 image carries world-data in its registry."
+  },
+  {
+    "date": "2026-10-01",
+    "title": "ADR-139 Stage 4a — the source direction: a generic \"pick an artifact\" picker",
+    "pr": "431",
+    "evidence": "Signed-in installed acceptance on 2026-09-26 (COLLABORATE.md 06:09 UTC, repeated independently at 10:00 UTC): Portrait Studio's shared picker listed the registered sources, and an authorized OSHAL Storage PNG reached the crop stage through its owner-bound handle. Core 21ad8902 shipped in PR #431. Re-checked on deployed 7bf94478 (2026-10-01): /api/artifacts/sources and /api/artifacts/picker.js answer 200, and portrait-studio 1.15.3 is active."
+  },
+  {
+    "date": "2026-10-01",
+    "title": "Combined home workspace",
+    "pr": "fd5d3957 (store), 81e77fcd (store)",
+    "evidence": "Store group workspace 1.0.0 (fd5d3957, 81e77fcd) binds exactly home, social, career-hunter, storage, switchboard and video, per the operator's fixed-member decision (PR #765). On 2026-09-26, signed-in /cockpit/?app=workspace opened each member's own page (COLLABORATE.md 11:00 UTC), and the deployed 7bf94478 profile still borrows 13 member surfaces and owns no bot. The activation refusal names the missing member (swarm-app-group.ts, swarm-app-groups.spec.ts), and the group is listed in marketplace.json and the store README catalog."
+  },
+  {
+    "date": "2026-10-01",
+    "title": "Data-model explorer: deployed — prove it on the box",
+    "pr": "431",
+    "evidence": "Installed acceptance on 2026-09-26 (COLLABORATE.md 06:02 UTC, repeated at 11:01 UTC): a signed-in operator walked all four /data-model views against live stores. The installed Data model explorer Test Lab card reported pass with the posted counts (429 tables, 16 views, 89 apps, 133 links, 1 unowned), which are also recorded in architecture/data-model/explorer.md. The explorer (18edcbf4) shipped in PR #431. On deployed 7bf94478 the operator route answers 200 and an anonymous request gets 401."
+  },
+  {
+    "date": "2026-10-01",
+    "title": "Session cleanup left on the operator's box (2026-09-06)",
+    "pr": "776",
+    "evidence": "The operator decided on 2026-09-21 to turn the node print service off (PR #776). printServiceEnabled is false in this machine's node config, and nothing listens on 631-633 (re-checked 2026-10-01). The orphaned operator PAT f17a2172 was revoked on 2026-09-14, and the box's token list still reports revoked: true."
   }
 ]

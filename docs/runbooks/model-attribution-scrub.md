@@ -40,8 +40,9 @@ only (no checkout, index, or file touched); every local branch showed zero diver
 - GitHub keeps hidden `refs/pull/N/head` refs for closed PRs. They still point at the old commits
   (verified on `oshal` PRs #426 and #430 after the push), and an old SHA stays viewable at
   `/commit/<sha>` until GitHub garbage-collects. Only GitHub Support can purge unreachable objects.
-  None of it is on a branch; the contributors graph is computed from `main`. The decision whether
-  to file that request is a BACKLOG item.
+  None of it is on a branch; the contributors graph is computed from `main`. The operator accepted
+  this residue on 2026-09-21 (PR #705), and no GitHub Support request is filed. If that changes, a
+  Support request is the only path.
 
 ## Preconditions
 
@@ -162,5 +163,5 @@ rewriting the shared checkout.
   (see "Guards in place"); the entry records the red and green evidence.
 - *Store and private repos have no attribution guard* — `oshal-applications` and
   `oshal-app-private` were scrubbed but nothing stops a recurrence there.
-- *GitHub-side residue of the 2026-09-12 attribution scrub* — decide whether to ask GitHub Support
-  to purge the unreachable objects and closed-PR refs, and record the decision.
+- *GitHub-side residue of the 2026-09-12 attribution scrub* — decided 2026-09-21: residue accepted,
+  no Support request (PR #705); closed.

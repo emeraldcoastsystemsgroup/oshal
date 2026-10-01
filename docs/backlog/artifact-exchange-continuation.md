@@ -5,7 +5,7 @@ Handover for [ADR-139](../adr/139-artifact-exchange-send-to-registry.md), the sw
 person starts from what is true rather than from the ADR's design intent.
 
 The per-application inventory lives in
-[artifact-exchange-coverage.md](../apps/artifact-exchange-coverage.md); the five tracked work items
+[artifact-exchange-coverage.md](../apps/artifact-exchange-coverage.md); the remaining tracked work items
 live in [BACKLOG.md](../BACKLOG.md) under `### ADR-139`. This page is the connective tissue: what
 shipped, what is half-landed, and the three recurrence risks the rollout exposed that are *not*
 artifact-exchange bugs.
@@ -62,8 +62,8 @@ rebuild them** (checked 2026-09-14 against `origin/main`):
 Stage 4a deployed acceptance was completed 2026-09-26: the signed-in Portrait Studio picker listed
 registered sources, and an authorized PNG from OSHAL Storage > artifacts loaded into the crop stage
 through the owner-bound handle. The receipt is in [ADR-139](../adr/139-artifact-exchange-send-to-registry.md).
-Only the separate Stage 4b live Jarvis turn remains to be accepted; the audit lane owns the Stage 4a
-BACKLOG/ledger transition.
+Only the separate Stage 4b live Jarvis turn remains to be accepted; Stage 4a is closed in
+[backlog/closed-ledger.json](closed-ledger.json).
 
 ## Continuing the rollout
 
