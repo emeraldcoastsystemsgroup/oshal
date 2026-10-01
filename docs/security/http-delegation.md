@@ -146,8 +146,11 @@ refuses unsigned mesh execution then.
   A target outside the nine is refused with `child_target_not_allowlisted` before a token is issued,
   and that ticket's execution fails.
 - **While the node works.** The unit work item is refreshed so the routing watchdog does not read a
-  long run as a dropped dispatch. Refreshing stops when the call returns or the ticket is cancelled
-  or escalated. The node's result is recorded on the unit.
+  long run as a dropped dispatch. Refreshing stops only when the call returns: a node call cannot be
+  aborted, so `assigned` means a call is in flight whatever the ticket's state. A ticket that has
+  already ended (cancelled, escalated or dead-lettered) is never sent to a node
+  (`child_ticket_stopped`), which keeps a retry after a cancel from reaching one. The node's result is
+  recorded on the unit.
 
 documentation-writer also gains `accessRoles: ['operator', 'swarm']`, because with an endpoint and no
 roles it would become a Jarvis task call-out candidate. Guard:

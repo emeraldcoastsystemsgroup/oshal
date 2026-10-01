@@ -11,8 +11,10 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | A `forge` port for the Bot Forge edit-in-place card, the same closed fixture-pack set the host runner reaches through its container helper (live-acceptance-common.js forgePackWrite/State/Remove): the tagged pack is written into the signed-in caller's own packs directory under this server's workspace root, and the personas the deploy writes are read and removed under this process's working directory.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | The Lab's `files` port gains `dir`: a named directory probe's listing under this server's shared workspace root, for the tickets-in-tickets case.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | LiveAcceptanceCaseModule gains the optional REGRESSION_TESTS list a case module may export.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | The Lab's named statements run as the owner WITHOUT operator rights, the way the host runner's container helper runs them, so row-level security scopes them the same from both entry points. The Lab caller is an operator, and the request identity it ran under stamped is_operator on, which admitted every row to the statements' own predicates.
  */
 import { createHash } from 'node:crypto';
+import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
 import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 import { createChildLogger } from '@/shared/logger';
 import type { ScenarioRunContext, State, StepResult } from './test-lab-scenarios';
@@ -139,8 +141,12 @@ export function labPorts(cookie: string, runtime: ScenarioRunContext): Record<st
       form.append(file.field || 'file', new Blob([new Uint8Array(file.bytes)], { type: file.type }), file.name);
       return send(base, cookie, 'POST', route, { body: form });
     },
-    // The Lab step runs inside the caller's own request, whose identity the pool already stamps.
-    sql: ctx.pool ? (name: string, params: unknown[]) => ctx.pool.query(statements.statementText(name), params) : undefined,
+    // Named statements run as the owner without operator rights (the container helper's identity),
+    // so row-level security scopes them the same as on the host, whoever started the Lab run.
+    sql: ctx.pool
+      ? (name: string, params: unknown[]) => runWithRequestIdentity({ sub: runtime.ownerSub, isOperator: false },
+        () => ctx.pool.query(statements.statementText(name), params))
+      : undefined,
     tickets: ctx.ticketService ? {
       get: async (id: string) => ctx.ticketService.getTicket(id),
       delete: async (id: string) => { await ctx.ticketService.deleteTicket(id); },

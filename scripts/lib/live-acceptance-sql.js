@@ -70,6 +70,9 @@ const STATEMENTS = Object.freeze({
       AND EXISTS (SELECT 1 FROM tickets r WHERE r.ticket_id = $2::uuid AND r.owner_sub = $1
         AND r.title LIKE 'testlab-live-tickets-in-tickets-%')
     ORDER BY t.created_at`,
+  // A root whose filing reply was lost: the exact title only one run mints, owned by the caller.
+  'tickets-in-tickets.find-root': `SELECT t.ticket_id::text AS ticket_id FROM tickets t
+    WHERE t.owner_sub = $1 AND t.title = $2 AND t.title LIKE 'testlab-live-tickets-in-tickets-%' AND t.parent_ticket_id IS NULL`,
   'tickets-in-tickets.history': `SELECT h.ticket_id::text AS ticket_id, h.from_status, h.to_status, h.metadata->>'reason' AS reason,
       h.metadata->>'message' AS message, h.created_at
     FROM ticket_status_history h JOIN tickets t ON t.ticket_id = h.ticket_id
@@ -99,7 +102,9 @@ const STATEMENTS = Object.freeze({
         OR w.external_id IN (SELECT 'verify:' || id FROM tree)
         OR w.external_id LIKE ANY (SELECT 'review:' || id || ':%' FROM tree)
       RETURNING w.swarm_run_id),
-    runs AS (DELETE FROM swarm_runs WHERE run_id IN (SELECT swarm_run_id FROM items) RETURNING run_id),
+    runs AS (DELETE FROM swarm_runs r WHERE r.run_id IN (SELECT swarm_run_id FROM items)
+      OR (jsonb_typeof(r.processed) = 'array' AND EXISTS (SELECT 1 FROM jsonb_array_elements(r.processed) e
+        WHERE e->>'externalId' IN (SELECT id FROM tree))) RETURNING run_id),
     governance AS (DELETE FROM ticket_governance WHERE ticket_id IN (SELECT id FROM tree) RETURNING ticket_id),
     dlq AS (DELETE FROM oshal_queue_dlq WHERE ticket_id IN (SELECT id FROM tree) RETURNING ticket_id),
     escalations AS (DELETE FROM swarm_escalations WHERE ticket_external_id IN (SELECT id FROM tree) RETURNING id)
@@ -115,7 +120,9 @@ const STATEMENTS = Object.freeze({
       OR external_id LIKE ANY (SELECT 'review:' || x || ':%' FROM unnest($2::text[]) AS x))::int AS work_items,
     (SELECT count(*) FROM ticket_governance WHERE ticket_id = ANY($2::text[]))::int AS governance,
     (SELECT count(*) FROM oshal_queue_dlq WHERE ticket_id = ANY($2::text[]))::int AS dlq,
-    (SELECT count(*) FROM swarm_escalations WHERE ticket_external_id = ANY($2::text[]))::int AS escalations`,
+    (SELECT count(*) FROM swarm_escalations WHERE ticket_external_id = ANY($2::text[]))::int AS escalations,
+    (SELECT count(*) FROM swarm_runs r WHERE jsonb_typeof(r.processed) = 'array' AND EXISTS (
+      SELECT 1 FROM jsonb_array_elements(r.processed) e WHERE e->>'externalId' = ANY($2::text[])))::int AS swarm_runs`,
 });
 
 /**

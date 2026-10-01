@@ -3,14 +3,17 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The review fixes: the wait also covers the root's planning round; a cleanup call that throws is recorded while the rest of the cleanup still runs; the root is kept when a child could not be removed; an in-process build ticket defers the run; a filing whose reply was lost is found by its tag and cleaned up; the interrupt hook cancels the tree and names the cleanup command; a cleanup-only run removes an earlier root and refuses a root that is not this case's; a shadow left after the deletes is reported.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Unit spec for the tickets-in-tickets live case over a scripted box double (api, named SQL, directory probe, virtual clock). Pins the PASS sequence and each named failure signature (one child titled like the root, a root complete before any child, an escalated child, too many children, children out of order, a missing handover), and the cleanup rules: children before the root, a foreign workspace never cascaded, the wait for in-flight node calls, everything kept in place when that wait runs out, and an unavailable preflight that writes nothing.
  */
 
 import { describe, expect, it } from 'vitest';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
+type CaseResult = { state: string; detail: string; evidence: Record<string, unknown>; cleanup: { outstanding: string[]; errors: string[]; removed: string[] } };
 const tit = require('../../scripts/lib/live-acceptance-tickets-in-tickets.js') as {
-  run(ports: Record<string, unknown>, options?: Record<string, unknown>): Promise<{ state: string; detail: string; evidence: Record<string, unknown>; cleanup: { outstanding: string[]; errors: string[]; removed: string[] } }>;
+  run(ports: Record<string, unknown>, options?: Record<string, unknown>): Promise<CaseResult>;
+  cleanupRoot(ports: Record<string, unknown>, rootId: string, options?: Record<string, unknown>): Promise<CaseResult>;
 };
 
 const OWNER = 'tit-owner-sub';
@@ -37,7 +40,12 @@ class Box {
   files = new Set<string>();
   shadows = new Set<string>();
   deleted: string[] = [];
+  cancelled: string[] = [];
   posts = 0;
+  /** DELETE answers for named ids, when a delete must fail. */
+  deleteStatus = new Map<string, number>();
+  /** A build-ticket state the box reports busy, for the preflight. */
+  busy: string | null = null;
   workspaceName = `workspace-${`${TAG}: two-module build`.slice(0, 50).replace(/[^a-zA-Z0-9-_]/g, '-')}`;
   workspaceCreatedAt = 10;
   constructor(readonly script: Array<(box: Box) => void>, readonly whoami = { operator: true }, readonly queued = 0) {}
@@ -107,9 +115,15 @@ function api(box: Box, method: string, route: string): { status: number; json: R
   if (route === '/api/cli-tokens/whoami') return { status: 200, json: box.whoami };
   if (method === 'GET' && route.startsWith('/api/tickets?status=approved')) return { status: 200, json: { tickets: Array.from({ length: box.queued }, () => ({})) } };
   if (method === 'GET' && route.startsWith('/api/tickets?status=backlog')) {
-    return { status: 200, json: { tickets: [...box.shadows].map((externalId) => ({ ticketId: `shadow-${externalId}`, externalProvider: 'direct', externalId, ownerSub: null })) } };
+    const offset = Number(url.searchParams.get('offset') || 0);
+    const tickets = offset > 0 ? [] : [...box.shadows].map((externalId) => ({ ticketId: `shadow-${externalId}`, externalProvider: 'direct', externalId, ownerSub: null }));
+    return { status: 200, json: { tickets } };
+  }
+  if (method === 'GET' && route.startsWith('/api/tickets?status=')) {
+    return { status: 200, json: { tickets: url.searchParams.get('status') === box.busy ? [{}] : [] } };
   }
   if (method === 'POST' && route === '/api/tickets') return post(box);
+  if (method === 'PUT' && id && box.tickets.has(id)) { box.cancelled.push(id); box.move(id, 'cancelled'); return { status: 200, json: {} }; }
   if (method === 'PUT') return { status: 400, json: {} };
   if (method === 'DELETE' && id) return del(box, id);
   if (method === 'GET' && route.startsWith('/api/workspaces/')) return { status: 200, json: { name: box.workspaceName, createdAt: new Date(box.workspaceCreatedAt + 20).toISOString() } };
@@ -129,6 +143,8 @@ function post(box: Box) {
 }
 
 function del(box: Box, id: string) {
+  const refused = box.deleteStatus.get(id);
+  if (refused) return { status: refused, json: {} };
   box.deleted.push(id);
   if (id.startsWith('shadow-')) box.shadows.delete(id.slice(7));
   else box.tickets.delete(id);
@@ -142,7 +158,8 @@ function sql(box: Box, name: string): unknown[] {
   if (name === 'tickets-in-tickets.history') return box.history;
   if (name === 'tickets-in-tickets.work-items') return box.items;
   if (name === 'tickets-in-tickets.delete-leftovers') { const count = box.items.length; box.items = []; return [{ work_items: count }]; }
-  if (name === 'tickets-in-tickets.residue') return [{ tickets: tree.length, work_items: box.items.length }];
+  if (name === 'tickets-in-tickets.residue') return [{ tickets: tree.length, work_items: box.items.length, swarm_runs: 0 }];
+  if (name === 'tickets-in-tickets.find-root') return box.tickets.has(ROOT) ? [{ ticket_id: ROOT }] : [];
   throw new Error(`unexpected statement ${name}`);
 }
 
@@ -234,5 +251,140 @@ describe('tickets-in-tickets live case', () => {
     expect(result.state).toBe('unavailable');
     expect(result.detail).toContain(gap);
     expect(box.posts).toBe(0);
+  });
+
+  it('defers the run while a build ticket is in flight, and writes nothing', async () => {
+    const box = new Box(PASS_SCRIPT);
+    box.busy = 'in_process_build';
+    const result = await runBox(box);
+    expect(result.state).toBe('unavailable');
+    expect(result.detail).toContain('a build ticket is in_process_build');
+    expect(box.posts).toBe(0);
+  });
+
+  it('waits for the root planning round to return before removing anything', async () => {
+    const box = new Box([CLAIM, (b: Box) => { b.items.push({ external_id: ROOT, unit_id: `${ROOT}-phase-2-round-1`, status: 'assigned', assigned_agent_id: PM, provider: null, model: null }); }]);
+    const p = ports(box);
+    let cancels = 0;
+    let readsAfterCancel = 0;
+    let deletedBeforeReturn = -1;
+    const api0 = p.api;
+    p.api = async (method: string, route: string) => { if (method === 'PUT') cancels += 1; return api0(method, route); };
+    const sql0 = p.sql;
+    p.sql = async (name: string) => {
+      if (name === 'tickets-in-tickets.work-items' && cancels > 0 && ++readsAfterCancel === 3) {
+        deletedBeforeReturn = box.deleted.length;
+        box.items[0].status = 'completed';
+      }
+      return sql0(name);
+    };
+    const result = await tit.run(p, { ...BUDGETS, planningBudgetMs: 3_000, tag: TAG });
+    expect(result.state).toBe('fail');
+    expect(readsAfterCancel).toBeGreaterThanOrEqual(3);
+    expect(deletedBeforeReturn).toBe(0);
+    expect(box.deleted).toContain(ROOT);
+  });
+
+  it('records a cleanup call that throws and still removes the rest', async () => {
+    const box = new Box(PASS_SCRIPT);
+    const p = ports(box);
+    const sql0 = p.sql;
+    p.sql = async (name: string) => { if (name === 'tickets-in-tickets.delete-leftovers') throw new Error('helper exec timed out'); return sql0(name); };
+    const result = await tit.run(p, { ...BUDGETS, tag: TAG });
+    expect(result.state).toBe('fail');
+    expect(result.cleanup.errors).toEqual(expect.arrayContaining([expect.stringContaining('leftover rows delete failed: helper exec timed out')]));
+    expect(box.deleted).toEqual(expect.arrayContaining([...KIDS.slice(0, 2), ROOT]));
+    expect(box.tickets.size).toBe(0);
+  });
+
+  it('keeps the root and its folder when a child could not be removed', async () => {
+    const box = new Box(PASS_SCRIPT);
+    box.deleteStatus.set(KIDS[1], 500);
+    const result = await runBox(box);
+    expect(result.state).toBe('fail');
+    expect(result.detail).toContain(`deleting ticket ${KIDS[1]} answered HTTP 500`);
+    expect(result.detail).toContain('the root and its folder were kept');
+    expect(box.deleted).not.toContain(ROOT);
+    expect(box.tickets.has(ROOT)).toBe(true);
+    expect(result.cleanup.outstanding).toEqual(expect.arrayContaining([`ticket ${ROOT}`, `ticket ${KIDS[1]}`]));
+  });
+
+  it('finds a root whose filing reply was lost by its tag, and cleans it up', async () => {
+    const box = new Box(PASS_SCRIPT);
+    const p = ports(box);
+    const api0 = p.api;
+    p.api = async (method: string, route: string) => {
+      if (method === 'POST' && route === '/api/tickets') { post(box); throw new Error('The operation was aborted due to timeout'); }
+      return api0(method, route);
+    };
+    const result = await tit.run(p, { ...BUDGETS, tag: TAG });
+    expect(result.state).toBe('fail');
+    expect(result.detail).toContain('POST /api/tickets failed: The operation was aborted due to timeout');
+    expect(result.evidence.rootId).toBe(ROOT);
+    expect(box.deleted).toContain(ROOT);
+    expect(result.cleanup.outstanding).toEqual([]);
+  });
+
+  it('reports the root id as soon as it is filed, and an interrupt cancels the tree and names the cleanup command', async () => {
+    const box = new Box([CLAIM, PLAN(2), ...RUN_CHILD(1), ...RUN_CHILD(2, TEST_ENGINEER), ASSEMBLE]);
+    const notes: string[] = [];
+    let interrupt: (() => Promise<void>) | null = null;
+    let released = false;
+    const p = { ...ports(box), note: (line: string) => notes.push(line), onInterrupt: (fn: () => Promise<void>) => { interrupt = fn; return () => { released = true; }; } };
+    const sql0 = p.sql;
+    p.sql = async (name: string) => {
+      const rows = await sql0(name);
+      if (name === 'tickets-in-tickets.tree' && box.step === 2 && interrupt) { await interrupt(); interrupt = null; }
+      return rows;
+    };
+    const result = await tit.run(p, { ...BUDGETS, tag: TAG });
+    expect(notes[0]).toContain(`root ${ROOT} filed as`);
+    expect(notes[0]).toContain(`--cleanup-root=${ROOT}`);
+    expect(box.cancelled).toEqual(expect.arrayContaining([KIDS[0], KIDS[1], ROOT]));
+    expect(notes.some((line) => line.includes('run interrupted') && line.includes(`--cleanup-root=${ROOT}`))).toBe(true);
+    expect(released).toBe(true);
+    expect(result.state).toBe('fail');
+    expect(box.tickets.size).toBe(0);
+  });
+
+  it('a cleanup-only run removes an earlier root with everything under it', async () => {
+    const box = new Box([CLAIM, PLAN(2), ...RUN_CHILD(1)]);
+    post(box);
+    for (let i = 0; i < 4; i += 1) box.advance();
+    const result = await tit.cleanupRoot(ports(box), ROOT, BUDGETS);
+    expect(result.state, result.detail).toBe('pass');
+    expect(result.cleanup.outstanding).toEqual([]);
+    expect(box.tickets.size).toBe(0);
+    expect(box.shadows.size).toBe(0);
+    expect(box.deleted.indexOf(ROOT)).toBe(box.deleted.length - 1);
+  });
+
+  it('a cleanup-only run touches nothing for a root that is not this case\'s, and refuses a bad id', async () => {
+    const box = new Box([]);
+    box.tickets.set(ROOT, { ticket_id: ROOT, parent_ticket_id: null, title: 'Somebody else\'s build', status: 'approved', ticket_type: 'build', owner_sub: 'other', metadata: {} });
+    const p = ports(box);
+    p.sql = async (name: string) => (name === 'tickets-in-tickets.tree' ? { rows: [] } : { rows: [] });
+    const result = await tit.cleanupRoot(p, ROOT, BUDGETS);
+    expect(result.state).toBe('fail');
+    expect(result.detail).toContain(`ticket ${ROOT} is not a root this case filed for this caller (HTTP 200); nothing was touched`);
+    expect(box.deleted).toEqual([]);
+    expect(box.cancelled).toEqual([]);
+    const refused = await tit.cleanupRoot(ports(box), 'NOT-A-UUID', BUDGETS);
+    expect(refused.state).toBe('fail');
+    expect(refused.detail).toContain('is not a lower-case ticket UUID');
+  });
+
+  it('reports a shadow ticket that remains after the deletes', async () => {
+    const box = new Box(PASS_SCRIPT);
+    const p = ports(box);
+    const api0 = p.api;
+    let listings = 0;
+    p.api = async (method: string, route: string) => {
+      if (method === 'GET' && route.startsWith('/api/tickets?status=backlog') && ++listings === 2) box.shadows.add(KIDS[0]);
+      return api0(method, route);
+    };
+    const result = await tit.run(p, { ...BUDGETS, tag: TAG });
+    expect(result.state).toBe('fail');
+    expect(result.detail).toContain("1 shadow ticket(s) remain for the run's ids after the settle wait");
   });
 });

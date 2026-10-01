@@ -15,6 +15,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Require the handover words and exact index path in the host command, and prove the Lab ignores both api-environment inputs before any model turn.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | The registry gains the forge-edit case (explicit-only: it writes a tagged pack, deploys and edits it, and removes it).
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | The tickets-in-tickets card: its key in the registered order, its REGRESSION_TESTS on the card, and the Lab's new `files.dir` port listing a build root folder by name only, refusing an unknown probe and a non-UUID id.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | The Lab's named statements run under the owner's identity without operator rights, as the host runner's container helper runs them.
  */
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -24,6 +25,7 @@ import { describe, expect, it } from 'vitest';
 import { SCENARIOS, scenariosForRun, type ScenarioRunContext } from '@/app/routes/test-lab-scenarios';
 import { LIVE_ACCEPTANCE_SCENARIOS } from '@/app/routes/test-lab-live-acceptance-scenarios';
 import { LIVE_ACCEPTANCE_CASES, labPorts, runLiveAcceptanceCase } from '@/app/routes/test-lab-live-acceptance';
+import { getRequestIdentity, runWithRequestIdentity } from '@/shared/services/database/request-identity';
 import type { AppContext } from '@/app/composition/app-context';
 import { assertImageHttpPorts, type ImageHttpPorts } from '../fixtures/live-acceptance-http';
 
@@ -186,12 +188,15 @@ describe('live-acceptance Test Lab cards', () => {
       return new Response('{}', { status: 404, headers: { 'content-type': 'application/json' } });
     }) as typeof fetch;
     const queries: string[] = [];
+    const identities: Array<{ sub: string | null; isOperator: boolean } | undefined> = [];
     const runtime = { ownerSub: 'fixture|lab-owner', issuer: 'https://issuer.example', apiBaseUrl: 'http://127.0.0.1:5000',
-      ctx: { pool: { query: async (text: string) => { queries.push(text); return { rows: [] }; } }, ticketService: { getTicket: async () => null, deleteTicket: async () => undefined } } as unknown as AppContext } as ScenarioRunContext;
+      ctx: { pool: { query: async (text: string) => { queries.push(text); identities.push(getRequestIdentity()); return { rows: [] }; } }, ticketService: { getTicket: async () => null, deleteTicket: async () => undefined } } as unknown as AppContext } as ScenarioRunContext;
     try {
       const ports = labPorts('sid=abc', runtime) as { sql: (n: string, p: unknown[]) => Promise<unknown>; browser?: unknown; logs?: unknown };
-      await ports.sql('linkedin.draft-residue', ['fixture|lab-owner', 't']);
+      // The Lab caller is an operator; the statements still run as the owner without operator rights.
+      await runWithRequestIdentity({ sub: 'fixture|lab-owner', isOperator: true }, () => ports.sql('linkedin.draft-residue', ['fixture|lab-owner', 't']));
       expect(queries[0]).toContain('FROM social_content_drafts WHERE user_sub = $1');
+      expect(identities[0]).toMatchObject({ sub: 'fixture|lab-owner', isOperator: false });
       expect(ports.browser).toBeUndefined();
       expect(ports.logs).toBeUndefined();
       const step = await runLiveAcceptanceCase('floater', 'sid=abc', runtime);

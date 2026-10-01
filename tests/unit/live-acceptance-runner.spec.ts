@@ -331,13 +331,32 @@ describe('the host runner', () => {
   });
 
   it('parses --expect-store-bound and --allow-paid into the options every case receives', () => {
-    expect(runner.parseArgs(['token-chase-replay', '--expect-store-bound'])).toEqual({ selector: 'token-chase-replay', recordDoc: false, expectStoreBound: true, allowPaid: false });
-    expect(runner.parseArgs(['all', '--record-doc'])).toEqual({ selector: 'all', recordDoc: true, expectStoreBound: false, allowPaid: false });
-    expect(runner.parseArgs(['create-region-edit', '--allow-paid'])).toEqual({ selector: 'create-region-edit', recordDoc: false, expectStoreBound: false, allowPaid: true });
+    expect(runner.parseArgs(['token-chase-replay', '--expect-store-bound'])).toEqual({ selector: 'token-chase-replay', recordDoc: false, expectStoreBound: true, allowPaid: false, cleanupRoot: null });
+    expect(runner.parseArgs(['all', '--record-doc'])).toEqual({ selector: 'all', recordDoc: true, expectStoreBound: false, allowPaid: false, cleanupRoot: null });
+    expect(runner.parseArgs(['create-region-edit', '--allow-paid'])).toEqual({ selector: 'create-region-edit', recordDoc: false, expectStoreBound: false, allowPaid: true, cleanupRoot: null });
+    expect(runner.parseArgs(['tickets-in-tickets', '--cleanup-root=10000000-0000-4000-8000-000000000001'])).toMatchObject({ selector: 'tickets-in-tickets', cleanupRoot: '10000000-0000-4000-8000-000000000001' });
+    expect(runner.parseArgs(['tickets-in-tickets', '--cleanup-root=']).cleanupRoot).toBeNull();
     expect(runner.caseOptions(runner.parseArgs(['all', '--expect-store-bound']))).toEqual({ expectStoreBound: true, allowPaid: false });
     expect(runner.caseOptions(runner.parseArgs(['all']))).toEqual({ expectStoreBound: false, allowPaid: false });
     expect(runner.caseOptions(runner.parseArgs(['create-region-edit', '--allow-paid']))).toEqual({ expectStoreBound: false, allowPaid: true });
     expect(runner.caseOptions(runner.parseArgs(['create-region-edit', '--allow-paid=yes'])).allowPaid).toBe(false);
+  });
+
+  it('prints NO RECEIPT for a crashed case instead of a receipt of zeros, and binds the interrupt ports', () => {
+    const lines: string[] = [];
+    runner.printResult((l: string) => lines.push(l), 'tickets-in-tickets', { state: 'fail', caseId: 'tickets-in-tickets-live', detail: 'The case crashed: boom', evidence: {}, cleanup: null });
+    expect(lines[1]).toContain('cleanup: NO RECEIPT - the case crashed before cleanup could report');
+    expect(lines[1]).not.toContain('outstanding 0');
+    const bound = { ports: {} as { note?: (line: string) => void; onInterrupt?: (fn: () => Promise<void>) => () => void }, dispose: () => undefined };
+    const listenersBefore = process.listenerCount('SIGINT');
+    const release = runner.installInterrupts(bound, (l: string) => lines.push(l));
+    expect(process.listenerCount('SIGINT')).toBe(listenersBefore + 1);
+    bound.ports.note!('root 1 filed');
+    expect(lines[lines.length - 1]).toBe('  note: root 1 filed');
+    const unregister = bound.ports.onInterrupt!(async () => undefined);
+    unregister();
+    release();
+    expect(process.listenerCount('SIGINT')).toBe(listenersBefore);
   });
 
   it('exits 0 only when every case passed, and refuses without a token', async () => {

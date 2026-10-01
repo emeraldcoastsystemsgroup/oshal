@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The refresher keeps the unit assigned until the node returns even after the child is cancelled (the node keeps working), and a child that has already ended is never sent to the node.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for build execution crossing the signed bot-node hop (signed-child-dispatch.ts). Drives the real SwarmExecutionLifecycleService.runExecutionPolicy with the signed dispatcher wired, a real BotNodeClient holding a locally generated Ed25519 key, the real endpoint resolver over the real registry, and a real loopback node that verifies every token against the public half and writes into the root folder it is handed. Only the execution policy runner (it just calls dispatchExecution) and the work-item store are doubled. Covers the seven endpoints, the token's owner binding, the allowlist refusal before any token, a throwing client with no mesh fallback, ownerless system work, the work-item refresher, and the unchanged mesh path without signing.
  */
 
@@ -261,12 +262,13 @@ describe('build execution crosses the signed bot-node hop while signing is confi
     expect(sent.claims?.sub).toBe(CONTROLLER_SYSTEM_SUBJECT);
   });
 
-  it('keeps the unit work item fresh while a slow node works, and stops once the child is cancelled', async () => {
+  it('keeps the unit work item assigned until a slow node returns, even after the child is cancelled', async () => {
     const workItems = new WorkItems();
     const childId = '33333333-4444-4555-8666-777777777776';
     let status = 'in_process_build';
     node.delayMs = 900;
-    setTimeout(() => { status = 'cancelled'; }, 450);
+    const before = node.received.length;
+    setTimeout(() => { status = 'cancelled'; }, 300);
     try {
       await runChild({ childId, agentId: CODE_DEVELOPER, ownerSub: OWNER, workItems, meshSends: [],
         dispatcher: createSignedChildDispatcher({
@@ -276,11 +278,29 @@ describe('build execution crosses the signed bot-node hop while signing is confi
     } finally {
       node.delayMs = 0;
     }
+    expect(node.received.length).toBe(before + 1);
     const assigned = workItems.statusWrites.filter((w) => w.status === 'assigned');
-    expect(assigned.length).toBeGreaterThanOrEqual(3);
-    const cancelledAt = assigned[0].at + 450;
-    const afterCancel = assigned.filter((w) => w.at > cancelledAt + 150);
-    expect(afterCancel).toHaveLength(0);
+    // The node keeps working after the cancel, so the refreshes keep coming until it returns.
+    const afterCancel = assigned.filter((w) => w.at > assigned[0].at + 300 + 150);
+    expect(afterCancel.length).toBeGreaterThanOrEqual(3);
+    const unit = workItems.items.get(`${childId}-unit-1`)!;
+    expect(unit.status).toBe('completed');
+    expect(workItems.statusWrites[workItems.statusWrites.length - 1].status).toBe('completed');
+  });
+
+  it('never sends a child that has already ended to the node', async () => {
+    const workItems = new WorkItems();
+    const childId = '33333333-4444-4555-8666-777777777775';
+    const before = node.received.length;
+    const output = await runChild({ childId, agentId: CODE_DEVELOPER, ownerSub: OWNER, workItems, meshSends: [],
+      dispatcher: createSignedChildDispatcher({
+        botNodeClient: clientFor(SIGNING_ENV), workItemRepository: workItems as never, readTicketStatus: async () => 'cancelled',
+      }) });
+    expect(node.received).toHaveLength(before);
+    expect(output).toMatchObject({ status: 'failed', error: expect.stringContaining('child_ticket_stopped') });
+    const unit = workItems.items.get(`${childId}-unit-1`)!;
+    expect(unit.status).toBe('failed');
+    expect(workItems.statusWrites.some((w) => w.status === 'assigned')).toBe(false);
   });
 
   it('without signing the lifecycle sends execution over the mesh exactly as before', async () => {

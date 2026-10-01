@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Build-lane execution crosses the signed bot-node hop while delegation signing is configured (docs/security/http-delegation.md, "Worker routing"). Every node refuses unsigned mesh execution then, so a child sent over the mesh could never run. The target must be on the build-lane allowlist before any token is issued; the request carries the ticket's owner and persisted verified issuer, the same shape the incident path uses live; the unit work item is kept fresh for the routing watchdog while the node works and records the result.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The unit work item stays assigned until the node call returns, whatever the ticket's state. It used to stop being refreshed once the ticket was cancelled, so the routing watchdog flipped it to routing_failed while the node was still writing, and anything waiting for the node to return (the live case's cleanup) read that as returned. A ticket that has already ended (cancelled, escalated, dead-lettered) is never sent to a node: the execution policy runner retries a failed attempt without reading the ticket, and this is what keeps a cancelled child from reaching a node again.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -35,7 +36,7 @@ export const BUILD_EXECUTION_TARGETS: ReadonlyMap<string, string> = new Map([
   ['a0000000-0000-0000-0000-000000000099', 'general-bot'],
 ]);
 
-/** Ticket states that end a dispatch's work-item refresher. */
+/** Ticket states in which no node call is started. */
 const STOPPED_TICKET_STATES = new Set(['cancelled', 'escalated', 'dead_letter']);
 
 /** The routing watchdog's default threshold in minutes, mirrored from work-item-routing-watchdog-service. */
@@ -46,7 +47,7 @@ export interface SignedChildDispatchDeps {
   botNodeClient: Pick<BotNodeClient, 'execute' | 'isDelegationEnforced'>;
   workItemRepository?: WorkItemRepository;
   runtimeParamsResolver?: RuntimeParamsResolver;
-  /** Reads a ticket's current status, so the refresher stops once the ticket is cancelled or escalated. */
+  /** Reads a ticket's current status, so a ticket that has already ended is never sent to a node. */
   readTicketStatus?: (ticketId: string) => Promise<string | null>;
   /** How often the unit work item is refreshed; default a third of the routing watchdog threshold. */
   refreshIntervalMs?: number;
@@ -97,6 +98,13 @@ async function dispatchOverSignedHop(deps: SignedChildDispatchDeps, input: Signe
   if (!BUILD_EXECUTION_TARGETS.has(input.agentId)) {
     logger.warn({ ticketId, agentId: input.agentId }, 'Build execution target is not on the build-lane allowlist - refused before any token');
     const refused = { status: 'failed', error: `child_target_not_allowlisted: ${input.agentId} is not a build-lane execution target` };
+    await recordUnitResult(deps, workItemId, refused, false, input.agentId);
+    return refused;
+  }
+  const stopped = await stoppedTicketState(deps, ticketId);
+  if (stopped) {
+    logger.info({ ticketId, agentId: input.agentId, status: stopped }, 'Build execution not started - the ticket has already ended');
+    const refused = { status: 'failed', error: `child_ticket_stopped: ticket ${ticketId} is ${stopped}; no node call was made` };
     await recordUnitResult(deps, workItemId, refused, false, input.agentId);
     return refused;
   }
@@ -207,38 +215,39 @@ async function markUnitAssigned(deps: SignedChildDispatchDeps, workItemId: strin
 }
 
 /**
+ * @description The ticket's state when it has already ended (cancelled, escalated or dead-lettered),
+ * or null. The execution policy runner retries a failed attempt without reading the ticket, so this
+ * check is what keeps a cancelled child from reaching a node again.
+ * @param deps - Dispatcher deps.
+ * @param ticketId - The ticket.
+ * @returns The ended state, or null when the ticket is live or unreadable.
+ */
+async function stoppedTicketState(deps: SignedChildDispatchDeps, ticketId: string): Promise<string | null> {
+  if (!deps.readTicketStatus) return null;
+  const status = await deps.readTicketStatus(ticketId).catch(() => null);
+  return status && STOPPED_TICKET_STATES.has(status) ? status : null;
+}
+
+/**
  * @description Keeps the unit work item fresh while the node works, so the routing watchdog does not
- * read a long run as a dropped dispatch. Stops when the call returns or the ticket is cancelled or
- * escalated. A node call cannot be aborted, so the refresher is what tracks the ticket's state.
+ * read a long run as a dropped dispatch. A node call cannot be aborted, so the item stays assigned
+ * until the call returns, whatever the ticket's state: `assigned` means a call is in flight, which
+ * is what anything waiting for the node to return relies on.
  * @param deps - Dispatcher deps.
  * @param ticketId - The ticket.
  * @param workItemId - The unit work item, when one exists.
  * @param agentId - The node's agent.
- * @returns A stop function.
+ * @returns A stop function, called once the call has returned.
  */
 function startUnitRefresher(deps: SignedChildDispatchDeps, ticketId: string, workItemId: string | undefined, agentId: string): () => void {
   if (!workItemId || !deps.workItemRepository) return () => undefined;
   const repository = deps.workItemRepository;
-  const intervalMs = deps.refreshIntervalMs ?? defaultRefreshIntervalMs();
-  let stopped = false;
   const timer = setInterval(() => {
-    void (async () => {
-      const status = deps.readTicketStatus ? await deps.readTicketStatus(ticketId).catch(() => null) : null;
-      if (stopped) return;
-      if (status && STOPPED_TICKET_STATES.has(status)) {
-        logger.info({ ticketId, status }, 'Ticket ended while its node was working - the unit work item is no longer refreshed');
-        stopped = true;
-        clearInterval(timer);
-        return;
-      }
-      await repository.updateStatus(workItemId, 'assigned', agentId);
-    })().catch((err) => logger.error({ err, ticketId, workItemId }, 'Failed to refresh the unit work item'));
-  }, intervalMs);
+    repository.updateStatus(workItemId, 'assigned', agentId)
+      .catch((err) => logger.error({ err, ticketId, workItemId }, 'Failed to refresh the unit work item'));
+  }, deps.refreshIntervalMs ?? defaultRefreshIntervalMs());
   timer.unref?.();
-  return () => {
-    stopped = true;
-    clearInterval(timer);
-  };
+  return () => clearInterval(timer);
 }
 
 /**

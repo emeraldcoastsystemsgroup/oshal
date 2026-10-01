@@ -3,13 +3,14 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review fixes before the first live run. The preflight also refuses while any build ticket is in an in-process state, not only when one is queued. A filing whose reply was lost (a timeout after the insert) is found by the title only this run minted, so it is still cleaned up. The root id and the cleanup-only command are reported as soon as the root is filed, and an interrupted run cancels its tickets through the runner's interrupt hook. A cleanup-only entry point (`cleanupRoot`) finishes an interrupted run by its root id. A cleanup that throws is recorded, not lost.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The tickets-in-tickets live case: files one tagged build root as the operator and requires it to be planned in-process (in_process_discovery, then approval_required with planning_complete, IMPLEMENTATION-PLAN.md in its folder), decomposed into 2-5 owned children in planning order, each child run to completion one at a time by a build-lane bot over the signed hop, and the root assembled to customer_action, with no plan-reviewer or Phase-8 round. Cleanup cancels, waits for in-flight node calls, removes the work items and other leftovers anchored to the root, the children, the shadow tickets and the root with its folder, and proves each gone.
  */
 
 'use strict';
 
 const common = require('./live-acceptance-common.js');
-const { cleanup } = require('./live-acceptance-tickets-in-tickets-cleanup.js');
+const { cleanup, readTree, cancelUnfinished } = require('./live-acceptance-tickets-in-tickets-cleanup.js');
 
 const CASE_ID = 'tickets-in-tickets-live';
 const KEY = 'tickets-in-tickets';
@@ -37,6 +38,29 @@ const ROOT_FAILED = new Set(['escalated', 'dead_letter', 'cancelled']);
 const CHILD_DONE = new Set(['complete', 'customer_action']);
 const RELEASES_NEXT = new Set(['complete', 'customer_action', 'cancelled']);
 const KEPT_ROWS = 'cost rows (the <ticket>::<agent> rollups and oshal_cost_events), Arango ticket nodes, queued-principal rows and mesh stream entries have no removal route';
+/** Build-ticket states that share the build lane and its nodes with this run; any of them defers the run. */
+const BUSY_STATES = Object.freeze(['approved', 'in_process_discovery', 'in_process_design', 'in_process_build', 'in_process_deploy', 'in_process_test', 'in_process_release']);
+/** A lower-case ticket UUID, the only root id a cleanup-only run accepts. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * @description The command that finishes an interrupted run's cleanup by its root id.
+ * @param {string} rootId - The root.
+ * @returns {string} The host command.
+ */
+function cleanupCommand(rootId) {
+  return `node scripts/operations/live-acceptance.js ${KEY} --cleanup-root=${rootId}`;
+}
+
+/**
+ * @description Report a line through the runner's note port, where one is bound.
+ * @param {object} io - Ports.
+ * @param {string} line - The line.
+ * @returns {void}
+ */
+function note(io, line) {
+  if (typeof io.note === 'function') io.note(line);
+}
 
 /**
  * @description The build the root asks for: two dependent steps and suggested roles, under 500 characters.
@@ -60,10 +84,17 @@ async function preflight(io) {
   if (!who.json || who.json.operator !== true) {
     return 'the caller is not an operator, and the shadow tickets a build leaves can only be removed through operator routes';
   }
-  const queued = await io.api('GET', '/api/tickets?status=approved&ticketType=build&scope=all');
-  if (queued.status !== 200) return `listing queued build tickets answered HTTP ${queued.status}`;
-  const count = Array.isArray(queued.json && queued.json.tickets) ? queued.json.tickets.length : 0;
-  return count > 0 ? `${count} approved build ticket(s) are already queued, and this run would share the build lane with them` : null;
+  for (const status of BUSY_STATES) {
+    const limit = status === 'approved' ? '' : '&limit=1';
+    const res = await io.api('GET', `/api/tickets?status=${status}&ticketType=build&scope=all${limit}`);
+    if (res.status !== 200) return `listing ${status} build tickets answered HTTP ${res.status}`;
+    const count = Array.isArray(res.json && res.json.tickets) ? res.json.tickets.length : 0;
+    if (count === 0) continue;
+    return status === 'approved'
+      ? `${count} approved build ticket(s) are already queued, and this run would share the build lane with them`
+      : `a build ticket is ${status}, and this run would share the build lane and its nodes with it`;
+  }
+  return null;
 }
 
 /**
@@ -75,9 +106,19 @@ async function preflight(io) {
  */
 async function fileRoot(io, tag, ledger) {
   const title = `${tag}: two-module build`;
-  const res = await io.api('POST', '/api/tickets', {
-    title, description: describeBuild(tag), ticketType: 'build', status: 'approved', priority: 'low', metadata: { liveAcceptance: true },
-  });
+  let res;
+  try {
+    res = await io.api('POST', '/api/tickets', {
+      title, description: describeBuild(tag), ticketType: 'build', status: 'approved', priority: 'low', metadata: { liveAcceptance: true },
+    });
+  } catch (error) {
+    // The reply was lost (a timeout after the insert committed is the usual shape): the root may
+    // exist, and it is found by the title only this run minted.
+    const found = await io.sql('tickets-in-tickets.find-root', [io.ownerSub, title]).catch(() => ({ rows: [] }));
+    const id = found.rows[0] && found.rows[0].ticket_id;
+    if (id) ledger.created('ticket', id, 'the build root (its POST failed on the way back)');
+    return { title, ...(id ? { id } : {}), error: `POST /api/tickets failed: ${common.errorText(error)}` };
+  }
   const id = res.json && res.json.ticketId;
   if (!id) return { title, error: `POST /api/tickets answered HTTP ${res.status}${res.json && res.json.error ? `: ${res.json.error}` : ''}` };
   ledger.created('ticket', id, 'the build root');
@@ -360,8 +401,40 @@ async function exercise(io, plan, ledger) {
 }
 
 /**
+ * @description What a signal handler can do in the seconds before the process exits: cancel the
+ * run's tickets so the queue stops dispatching them, and say how to finish the cleanup. A node call
+ * already in flight cannot be stopped from here.
+ * @param {object} io - Ports.
+ * @param {string} rootId - The root.
+ * @returns {Promise<void>} Resolves once the cancels were sent.
+ */
+async function abandon(io, rootId) {
+  const tree = await readTree(io, rootId).catch(() => []);
+  await cancelUnfinished(io, [...tree.filter((t) => t.parent_ticket_id === rootId), ...tree.filter((t) => t.ticket_id === rootId)], new common.CleanupLedger());
+  note(io, `run interrupted; root ${rootId} and its children were cancelled. Finish the cleanup with: ${cleanupCommand(rootId)}`);
+}
+
+/**
+ * @description The run's cleanup, with a throw recorded as a cleanup error instead of lost.
+ * @param {object} io - Ports.
+ * @param {string} rootId - The root.
+ * @param {object|null} snap - The last snapshot.
+ * @param {common.CleanupLedger} ledger - The run's ledger.
+ * @returns {Promise<object>} Counts of leftover rows removed.
+ */
+async function cleanupRecorded(io, rootId, snap, ledger) {
+  try {
+    return await cleanup(io, { rootId, snap }, ledger);
+  } catch (error) {
+    ledger.error(`cleanup stopped early: ${common.errorText(error)}`);
+    return {};
+  }
+}
+
+/**
  * @description Run the case once.
- * @param {object} ports - api, sql, ownerSub, files (and the clock in tests).
+ * @param {object} ports - api, sql, ownerSub, files (and the clock in tests; `note` and
+ *   `onInterrupt` when the runner binds them).
  * @param {object} [options] - Budget overrides (`claimBudgetMs`, `planningBudgetMs`, `childBudgetMs`,
  *   `settleBudgetMs`, `residueWaitMs`, `pollMs`) and `tag` (tests only).
  * @returns {Promise<object>} The result with its cleanup receipt.
@@ -374,20 +447,43 @@ async function run(ports, options = {}) {
   if (gap) return common.unavailable(CASE_ID, `${gap}.`);
   const ledger = new common.CleanupLedger();
   const filed = await fileRoot(io, options.tag || common.mintTag(KEY), ledger);
-  if (filed.error) return common.finish(CASE_ID, { state: 'fail', detail: `${filed.error}.` }, ledger, {});
-  let outcome;
-  try {
-    outcome = await exercise(io, { rootId: filed.id, rootTitle: filed.title }, ledger);
-  } catch (error) {
-    outcome = { verdict: { state: 'fail', detail: `The case crashed: ${common.errorText(error)}`, evidence: {} }, snap: null };
-  }
-  const removed = await cleanup(io, { rootId: filed.id, snap: outcome.snap }, ledger);
+  if (!filed.id) return common.finish(CASE_ID, { state: 'fail', detail: `${filed.error}.` }, ledger, {});
+  note(io, `root ${filed.id} filed as "${filed.title}"; if this run is interrupted, finish with: ${cleanupCommand(filed.id)}`);
+  const release = typeof io.onInterrupt === 'function' ? io.onInterrupt(() => abandon(io, filed.id)) : null;
+  const outcome = filed.error
+    ? { verdict: { state: 'fail', detail: filed.error, evidence: {} }, snap: null }
+    : await exercise(io, { rootId: filed.id, rootTitle: filed.title }, ledger)
+      .catch((error) => ({ verdict: { state: 'fail', detail: `The case crashed: ${common.errorText(error)}`, evidence: {} }, snap: null }));
+  const removed = await cleanupRecorded(io, filed.id, outcome.snap, ledger);
+  if (release) release();
   ledger.kept('cost-rows', filed.id, KEPT_ROWS);
   const verdict = { ...outcome.verdict, detail: `${outcome.verdict.detail}.` };
   return common.finish(CASE_ID, verdict, ledger, { rootId: filed.id, ...outcome.verdict.evidence, removedRows: removed });
 }
 
+/**
+ * @description Finish an interrupted run by its root id: the same cleanup under the same anchors,
+ * so only a root this caller filed under this case's tag can be touched.
+ * @param {object} ports - api, sql, ownerSub, files.
+ * @param {string} rootId - The root ticket id.
+ * @param {object} [options] - Budget overrides.
+ * @returns {Promise<object>} A result whose receipt is the cleanup's.
+ */
+async function cleanupRoot(ports, rootId, options = {}) {
+  const missing = common.missingPorts(ports, NEEDS);
+  if (missing.length) return common.unavailable(CASE_ID, `This runner has no ${missing.join('/')} port.`);
+  if (typeof rootId !== 'string' || !UUID_RE.test(rootId)) {
+    return common.finish(CASE_ID, { state: 'fail', detail: `${String(rootId).slice(0, 60)} is not a lower-case ticket UUID.` }, new common.CleanupLedger(), {});
+  }
+  const io = { ...common.withClock(ports), budgets: common.budgetsFrom(DEFAULT_BUDGETS, options) };
+  const ledger = new common.CleanupLedger();
+  ledger.created('ticket', rootId, 'the build root of an earlier run');
+  const removed = await cleanupRecorded(io, rootId, null, ledger);
+  ledger.kept('cost-rows', rootId, KEPT_ROWS);
+  return common.finish(CASE_ID, { state: 'pass', detail: `Cleanup-only run for root ${rootId}.` }, ledger, { rootId, removedRows: removed });
+}
+
 module.exports = {
-  CASE_ID, KEY, TITLE, NEEDS, REGRESSION_TESTS, BUILD_TARGETS, DEFAULT_BUDGETS,
-  describeBuild, preflight, earlyFailure, judgePlanning, judgeChildrenRun, judgeRounds, judgeFolder, exercise, run,
+  CASE_ID, KEY, TITLE, NEEDS, REGRESSION_TESTS, BUILD_TARGETS, DEFAULT_BUDGETS, BUSY_STATES,
+  describeBuild, preflight, earlyFailure, judgePlanning, judgeChildrenRun, judgeRounds, judgeFolder, exercise, run, cleanupRoot,
 };
