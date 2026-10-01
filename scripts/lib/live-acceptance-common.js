@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | SECOND_PAT_ENV, the one name of the environment value that carries a second caller's token. The host runner reads it by name and binds it as the `second` port, and a case that acts as someone other than the operator names it in its verdict; both take the name from here so they cannot drift.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The Bot Forge edit-in-place case's fixture pack as a closed set (forgePackWrite, forgePackState, forgePackRemove): a port names a `testlab-live-forge-edit-<8 hex>` tag and revision 1 or 2, never a path or content. The pack is written where the packer leaves one and the deploy route reads it (packs/<sha256(sub), 32 hex>/<tag>/), revision 2 is the operator's edit (new briefs, a drifted descriptor ticketType), and removal takes the pack, every deployed-apps entry and every persona file named for the tag, plus the parents the first write created when they are empty. Built-ins only, so the host runner can still stage this file into the api container.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | forgePackRemove removes a pack folder only when its pack.json carries this run's marker. It refused only a folder marked for ANOTHER run, so a folder with no marker or an unreadable pack.json (which reads as no marker) was deleted although nothing showed it was the run's own; now any of those refuses and nothing under the tag is touched.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | A closed set of directory probes beside the file probes: `build.root` lists a build root's folder in the shared workspace (its resolved path, whether it exists, and its files' relative names, bounded, links never followed) for the tickets-in-tickets case. A case names the probe and a ticket UUID, never a path.
  */
 
 'use strict';
@@ -371,6 +372,76 @@ function fileProbeState(name, id, env = process.env) {
 }
 
 /**
+ * The closed set of directories a case may list, by name. A listing returns the directory's resolved
+ * path and its files' relative names, never content; links are listed, never followed. Like the file
+ * probes, a case names a probe and an id the probe validates, and never sends a path.
+ */
+const DIR_PROBES = Object.freeze({
+  // A build root's folder in the shared workspace: <workspace root>/<root ticket id>, the folder
+  // every child of the tree writes into (createTicketWorkspace's PHASE_45 rule).
+  'build.root': Object.freeze({ idPattern: LOWER_UUID_RE }),
+});
+/** Bounds on one listing, so a runaway tree cannot flood a receipt. */
+const DIR_LIST_MAX_ENTRIES = 400;
+const DIR_LIST_MAX_DEPTH = 4;
+
+/**
+ * @description The directory a named probe lists, after validating the id.
+ * @param {unknown} name - The probe a case asked for.
+ * @param {unknown} id - The id the probe resolves.
+ * @param {string} root - The serving process's shared workspace root.
+ * @returns {string} The one directory the product uses for that id.
+ * @throws {Error} For a name outside the closed set, an id the probe does not accept, or no root.
+ */
+function dirProbePath(name, id, root) {
+  if (typeof name !== 'string' || !Object.prototype.hasOwnProperty.call(DIR_PROBES, name)) {
+    throw new Error(`unknown live-acceptance directory probe: ${String(name).slice(0, 60)}`);
+  }
+  if (typeof id !== 'string' || !DIR_PROBES[name].idPattern.test(id)) throw new Error(`invalid id for directory probe ${name}`);
+  if (typeof root !== 'string' || !root) throw new Error('no shared workspace root to list under');
+  return path.join(path.resolve(root), id);
+}
+
+/**
+ * @description Collect relative file names under a directory, depth-first, within the listing bounds.
+ * @param {string} dir - The directory being walked.
+ * @param {string} prefix - Its path relative to the listing root.
+ * @param {number} depth - Its depth below the listing root.
+ * @param {{files: string[], truncated: boolean}} out - The accumulating listing.
+ * @returns {void}
+ */
+function collectFileNames(dir, prefix, depth, out) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (out.files.length >= DIR_LIST_MAX_ENTRIES) { out.truncated = true; return; }
+    const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory() && depth < DIR_LIST_MAX_DEPTH) collectFileNames(path.join(dir, entry.name), relative, depth + 1, out);
+    else if (!entry.isDirectory()) out.files.push(relative);
+  }
+}
+
+/**
+ * @description List a named probe's directory: whether it exists and its files' relative names.
+ * @param {unknown} name - The probe.
+ * @param {unknown} id - The id.
+ * @param {string} root - The serving process's shared workspace root.
+ * @returns {{path: string, exists: boolean, files: string[], truncated: boolean}} What is on disk.
+ * @throws {Error} For an invalid probe or id, or any error other than a missing directory.
+ */
+function dirProbeListing(name, id, root) {
+  const dir = dirProbePath(name, id, root);
+  let stat;
+  try {
+    stat = fs.lstatSync(dir);
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return { path: dir, exists: false, files: [], truncated: false };
+    throw error;
+  }
+  const out = { files: [], truncated: false };
+  if (stat.isDirectory()) collectFileNames(dir, '', 0, out);
+  return { path: dir, exists: true, files: out.files.sort(), truncated: out.truncated };
+}
+
+/**
  * The Bot Forge edit-in-place case's fixture pack, a closed set like the file probes: a port names a
  * forge-edit tag and a revision, never a path or pack content. The pack lives where the Forge's
  * packer writes it and the deploy route reads it (src/app/routes/swarm-pack-routes.ts): the shared
@@ -581,6 +652,9 @@ module.exports = {
   FILE_PROBES,
   fileProbePath,
   fileProbeState,
+  DIR_PROBES,
+  dirProbePath,
+  dirProbeListing,
   FORGE_TAG_RE,
   FORGE_BOTS,
   FORGE_MARKER,

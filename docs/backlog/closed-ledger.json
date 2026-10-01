@@ -816,12 +816,6 @@
     "evidence": "IPO event play execution monitors SEC EDGAR filings, cancels entries on ring-fenced tickers, manages post-fill exit fences, and places bracket orders; guarded by trading-event-plans.spec.ts (15/15 pass)."
   },
   {
-    "title": "The build/swarm pipeline has no signed transport - every work unit rides the Redis mesh",
-    "date": "2026-09-24",
-    "pr": "main",
-    "evidence": "Signed HTTP delegation dispatches all core manifest-worker ticket types over signed bot node endpoints with replay-bounded tokens, refusing unauthenticated inline paths; guarded by signed-delegation-core-ticket-types.spec.ts (22/22 pass)."
-  },
-  {
     "title": "Connector marketplace live brokered reads",
     "date": "2026-09-24",
     "pr": "main",

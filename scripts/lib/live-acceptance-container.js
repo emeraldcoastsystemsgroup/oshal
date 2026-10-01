@@ -7,6 +7,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the in-container half of the host live-acceptance runner. scripts/operations/live-acceptance.js stages this file (with live-acceptance-common.js and live-acceptance-sql.js) into the api container once per run and executes one operation per call, the request forwarded BY NAME in OSHAL_LIVE_ACCEPTANCE_REQUEST. Every operation runs under the owner's own request identity through the image's compiled pool, ticket service and workspace root: a NAMED statement from the closed set (never SQL text), a ticket read or delete, and the ask-workspace state or removal for a fixture-tagged id. It prints one RESULT line.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | A `file-state` op: whether the file a NAMED probe from the closed set (live-acceptance-common.js FILE_PROBES) resolves exists in this container, for an id the probe validates. It needs no pool and never takes a path. The vids-publish case uses it to prove the attached MP4 is on disk after attach and gone after cleanup.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Three pool-free ops for the Bot Forge edit-in-place case: `forge-pack-write` (revision 1 or 2 of the fixture pack, for the request's owner), `forge-pack-state` and `forge-pack-remove` (the pack, the deployed-apps entries and the persona files named for the tag). Each takes a forge-edit fixture tag, never a path or content, and runs against this container's workspace root and its working directory (/app, where the api writes personas).
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | A pool-free `dir-list` op: a named directory probe's listing (resolved path, existence, relative file names) under this container's shared workspace root, for the tickets-in-tickets case.
  */
 
 'use strict';
@@ -19,9 +20,9 @@ const REQUEST_ENV = 'OSHAL_LIVE_ACCEPTANCE_REQUEST';
 const RESULT_PREFIX = 'RESULT ';
 /** The Bot Forge fixture-pack operations: a forge-edit tag in, never a path or pack content. */
 const FORGE_OPS = Object.freeze(['forge-pack-write', 'forge-pack-state', 'forge-pack-remove']);
-const OPS = Object.freeze(['sql', 'ticket-get', 'ticket-delete', 'workspace-state', 'workspace-remove', 'file-state', ...FORGE_OPS]);
+const OPS = Object.freeze(['sql', 'ticket-get', 'ticket-delete', 'workspace-state', 'workspace-remove', 'file-state', 'dir-list', ...FORGE_OPS]);
 /** Operations that read the container's filesystem only, so they open no database pool. */
-const POOL_FREE_OPS = Object.freeze(['workspace-state', 'workspace-remove', 'file-state', ...FORGE_OPS]);
+const POOL_FREE_OPS = Object.freeze(['workspace-state', 'workspace-remove', 'file-state', 'dir-list', ...FORGE_OPS]);
 
 /**
  * @description Validate the fields of a forge op: the tag, the revision of a write, and the prune
@@ -55,6 +56,8 @@ function parseRequest(raw) {
     if (!Array.isArray(request.params)) throw new Error('params must be an array');
   } else if (request.op === 'file-state') {
     common.fileProbePath(request.name, request.id);
+  } else if (request.op === 'dir-list') {
+    common.dirProbePath(request.name, request.id, '/');
   } else if (FORGE_OPS.includes(request.op)) {
     validateForgeRequest(request);
   } else if (typeof request.id !== 'string' || !request.id) throw new Error('an id is required');
@@ -110,6 +113,7 @@ function ticketView(ticket) {
 async function execute(request, deps) {
   if (FORGE_OPS.includes(request.op)) return executeForge(request, deps);
   if (request.op === 'file-state') return { state: common.fileProbeState(request.name, request.id) };
+  if (request.op === 'dir-list') return { listing: common.dirProbeListing(request.name, request.id, deps.workspaceRoot) };
   if (request.op === 'workspace-state') return { state: common.fixtureWorkspaceState(deps.workspaceRoot, request.id) };
   if (request.op === 'workspace-remove') return { error: common.removeFixtureWorkspace(deps.workspaceRoot, request.id, request.sub) };
   return deps.runWithRequestIdentity({ sub: request.sub, isOperator: false }, async () => {

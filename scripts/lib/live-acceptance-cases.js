@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Register the token-chase-replay case (live-acceptance-token-chase-replay.js) for "Workspace-bound checkpoint and tail replay": it starts one tagged file-tools turn on a bot only when no file-tools-only run is captured (a model turn) and removes it, so the card is explicit-only.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Register the create-region-edit case (live-acceptance-create-region-edit.js) for "Create visual workspace and integrated editing": one tagged Create project, one image-provider call (paid only with the host runner's --allow-paid) and one accepted revision, the project removed, so the card is explicit-only.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Register the forge-edit case (live-acceptance-forge-edit.js) for "Strategy Studio and Bot Forge conversational parity" (the Forge half): one tagged two-bot pack written, deployed, edited and deployed again through the Packs panel, then the pack, manifest, personas, app and both agents removed. No model turn; it writes, so the card is explicit-only.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | The tickets-in-tickets case: one tagged build root planned in-process, its children run one at a time over the signed hop, and the root assembled; spends model turns and writes tickets, so its Lab card is explicit-only.
  */
 
 'use strict';
@@ -31,6 +32,7 @@ const CASES = Object.freeze([
   { module: require('./live-acceptance-token-chase-replay.js'), backlog: 'Workspace-bound checkpoint and tail replay', spendsModel: true, writes: true },
   { module: require('./live-acceptance-create-region-edit.js'), backlog: 'Create visual workspace and integrated editing', spendsModel: true, writes: true },
   { module: require('./live-acceptance-forge-edit.js'), backlog: 'Strategy Studio and Bot Forge conversational parity', spendsModel: false, writes: true },
+  { module: require('./live-acceptance-tickets-in-tickets.js'), backlog: 'The build/swarm pipeline has no signed transport - every work unit rides the Redis mesh', spendsModel: true, writes: true },
 ]);
 
 /**

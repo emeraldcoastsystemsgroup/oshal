@@ -9,6 +9,8 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Every loopback reply also carries `byteLength` and `sha256` of its raw body (text decoded from the same bytes), so a case can prove a binary route served exact bytes, and a `files` port answers whether a NAMED probe's file (live-acceptance-common.js FILE_PROBES, never a path) exists in this server's process. Both serve the vids-publish case: the anonymous public read must equal the uploaded MP4, and cleanup must leave no MP4 on disk.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The same two additions as the host runner, for the create-region-edit card: every reply carries its raw body as `bytes` (the case decodes the PNGs Create serves), and `upload` names its file part `file.field` when the case gives one (Create's upload route reads exactly one part, `image`), `file` otherwise. The card never receives the host runner's `--allow-paid` consent, so on a paid image provider it answers a gap naming that command.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | A `forge` port for the Bot Forge edit-in-place card, the same closed fixture-pack set the host runner reaches through its container helper (live-acceptance-common.js forgePackWrite/State/Remove): the tagged pack is written into the signed-in caller's own packs directory under this server's workspace root, and the personas the deploy writes are read and removed under this process's working directory.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | The Lab's `files` port gains `dir`: a named directory probe's listing under this server's shared workspace root, for the tickets-in-tickets case.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | LiveAcceptanceCaseModule gains the optional REGRESSION_TESTS list a case module may export.
  */
 import { createHash } from 'node:crypto';
 import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
@@ -37,6 +39,8 @@ export interface LiveAcceptanceCaseModule {
   KEY: string;
   TITLE: string;
   NEEDS: readonly string[];
+  /** Specs that guard the seams the case crosses live; its Lab card lists them as regression tests. */
+  REGRESSION_TESTS?: ReadonlyArray<{ level: 'unit' | 'integration' | 'browser'; path: string }>;
   run(ports: Record<string, unknown>, options?: Record<string, unknown>): Promise<LiveAcceptanceResult>;
 }
 
@@ -55,6 +59,7 @@ interface CommonModule {
   fixtureWorkspaceState(root: string, id: string): string;
   removeFixtureWorkspace(root: string, id: string, ownerSub: string): string | null;
   fileProbeState(name: string, id: string): 'present' | 'absent';
+  dirProbeListing(name: string, id: string, root: string): { path: string; exists: boolean; files: string[]; truncated: boolean };
   receiptLine(receipt: LiveAcceptanceResult['cleanup']): string;
   forgePackWrite(root: string, sub: string, tag: string, revision: number): { files: string[]; createdOwnerDir: boolean; createdPacksRoot: boolean };
   forgePackState(root: string, appRoot: string, sub: string, tag: string): Record<string, unknown>;
@@ -147,6 +152,7 @@ export function labPorts(cookie: string, runtime: ScenarioRunContext): Record<st
     // Named probes only: the case sends a probe name and an id the probe validates, never a path.
     files: {
       state: async (name: string, id: string) => common.fileProbeState(name, id),
+      dir: async (name: string, id: string) => common.dirProbeListing(name, id, root),
     },
     // The Bot Forge fixture pack, for the signed-in caller: this server's workspace root and its
     // working directory, where the deploy route writes personas. A tag and a revision, never a path.
