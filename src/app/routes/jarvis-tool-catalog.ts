@@ -19,6 +19,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | assembleJarvisBotMessage: the turn's prompt leads with the user's words, then the tool guardrails, then the screen/attachment framing, so neither the ask nor the guardrails can be truncated away by a large attachment.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Review fixes: the access gate matches whole words, so "remember that I…" is no longer read as a membership question and does not re-spend the window on the operations/targets JSON; and a single surviving section is returned rather than discarded.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Support and validate explicit ADR-065 metadata dimensions (credentialOwner, executionActor, provisioningOwner, fallbackPolicy, simulationOnly) in tool catalog.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com  | Application tool proposals carry their full JSON (input schema, usage, tenant) only when the ask names the tool's app or one of its own keywords, most relevant first and within PACKAGE_DETAIL_BUDGET_CHARS; every other proposal is one compact line. Six proposals were 10,862 of the 37,816 characters in every live Jarvis prompt on 2026-10-01, and with the catalog and open work they pushed the multi-app plan guidance out of the node's 24,000-character window on every turn, so Jarvis could not plan a multi-step request.
  *
  * @module jarvis-tool-catalog
  */
@@ -176,14 +177,14 @@ export function buildToolsBlock(context: { message?: string; surface?: string; a
     'Ask which tool or account the user intends when context leaves multiple plausible choices. Preserve existing confirmation requirements.',
     ...lines,
     ...typedAuthorizationLines(catalog, context.authorizationTools, input),
-    ...packageProposalLines(context.packageTools),
+    ...packageProposalLines(context.packageTools, input),
   ].join('\n');
 }
 
 /**
  * @description Assemble what Jarvis sends the bot node for one turn, in the order that survives the
- * node's containment: the user's words, then the tool guardrails and catalog, then the screen and
- * attachment framing, then the words again.
+ * node's containment: the user's words, then the context blocks (the route orders them catalog, plan
+ * guidance, tools, artifacts, open work), then the screen and attachment framing, then the words again.
  *
  * The node keeps only the first MAX_UNTRUSTED_BLOCK_CHARS of a direct prompt (prompt-containment).
  * On 2026-09-15 the context blocks alone reached 71,817 characters with the operator's question in
@@ -203,14 +204,73 @@ export function assembleJarvisBotMessage(ctxBlocks: string, framing: string, mes
   return `${sections.join('\n\n---\n\n')}\n\n---\n\nThe user's message again (answer THIS):\n\n${message}`;
 }
 
-function packageProposalLines(tools: JarvisPackageToolDiscovery[] = []): string[] {
+/** Total characters of full proposal JSON one turn may spend; the most relevant proposals go first. */
+const PACKAGE_DETAIL_BUDGET_CHARS = 6_000;
+/** Registry tags every package tool carries; they say nothing about what a request is for. */
+const GENERIC_PACKAGE_KEYWORD = /^(?:swarm-app|runtime-registered$)/;
+
+/** Distinct words of a phrase list, lowercased, hyphens read as spaces. */
+function phraseSet(values: string[]): Set<string> {
+  return new Set(values.map((value) => value.toLowerCase().replace(/-/g, ' ').trim()).filter(Boolean));
+}
+
+/**
+ * @description How strongly an ask points at one application tool. The gate is its app key or one of
+ * its own keywords (hyphens read as spaces, matched by stem as the access gate does; registry tags
+ * skipped). Label words only rank tools that passed it, so "update my federal CRM" puts the
+ * "Update Federal CRM" tool ahead of "Read Federal CRM" without a bare "read" pulling tools in.
+ * @param ask - The lowercased request plus surface.
+ * @param tool - One discovered proposal.
+ * @returns 0 when the ask is not about this tool; otherwise a ranking score.
+ */
+function packageToolRelevance(ask: string, tool: JarvisPackageToolDiscovery): number {
+  const keywords = phraseSet([tool.app, ...(tool.keywords ?? []).filter((word) => !GENERIC_PACKAGE_KEYWORD.test(word))]);
+  const gate = [...keywords].filter((word) => matchesAccessStem(ask, word)).length;
+  if (!gate) return 0;
+  const label = [...phraseSet(String(tool.label ?? '').split(/\s+/))].filter((word) => word.length > 2 && matchesAccessStem(ask, word));
+  return gate + label.length;
+}
+
+/**
+ * @description The proposals that get their full JSON this turn: every one when there is no ask to
+ * judge (a bare catalog render), otherwise the relevant ones, most relevant first, within the budget.
+ * @param tools - The discovered proposals.
+ * @param ask - The lowercased request plus surface.
+ * @returns The proposals to render in full.
+ */
+function detailedPackageTools(tools: JarvisPackageToolDiscovery[], ask: string): Set<JarvisPackageToolDiscovery> {
+  if (!ask) return new Set(tools);
+  const ranked = tools.map((tool) => ({ tool, score: packageToolRelevance(ask, tool) }))
+    .filter(({ score }) => score > 0).sort((a, b) => b.score - a.score);
+  const detailed = new Set<JarvisPackageToolDiscovery>();
+  let spent = 0;
+  for (const { tool } of ranked) {
+    const size = JSON.stringify(tool).length;
+    if (spent + size > PACKAGE_DETAIL_BUDGET_CHARS) continue;
+    detailed.add(tool);
+    spent += size;
+  }
+  return detailed;
+}
+
+function packageProposalLines(tools: JarvisPackageToolDiscovery[] = [], input = ''): string[] {
   if (!tools.length) return [];
+  // The full JSON (input schema, usage, tenant) of every installed proposal rode every turn: 10,862
+  // of 37,816 characters on 2026-10-01, which kept the plan guidance and the open work outside the
+  // node's window on every Jarvis turn. A proposal the ask is not about is named in one line, so the
+  // model still knows it exists and can say so; its schema arrives on the turn that asks for it.
+  const detailed = detailedPackageTools(tools, input.trim());
+  const line = (tool: JarvisPackageToolDiscovery): string => (detailed.has(tool)
+    ? '- ' + JSON.stringify(tool)
+    : `- ${tool.app}/${tool.name} (${tool.label}, mode ${tool.mode}): ${tool.description.slice(0, 120)}`
+      + ' (the input schema is given when the request names this app or its keywords)');
   return ['APPLICATION TOOL PROPOSALS: these execute only through the signed-in application panel, never a shell or remote MCP call.',
     'Select one exact listed tool and workspace. Emit one ```oshal:package-tool fenced JSON object with exactly {"toolName":"listed_name","input":{...}}.',
     'Input must follow its schema. Include the exact tenantId for a listed business workspace; omit it for personal scope.',
+    'Only a tool listed with its full JSON can be proposed this turn; for a one-line tool, tell the user which app it belongs to.',
     'ASK actions require the user to review the exact input and click Approve. Model approval or confirmation is never authority.',
     'Do not claim success or invent records. Current results appear only in a temporary panel after the real operation; they are not supplied to your model context.',
-    ...tools.map(tool => '- ' + JSON.stringify(tool))];
+    ...tools.map(line)];
 }
 
 /** Access wording the typed-tool keywords miss on their own; kept next to the gate that uses it. */
