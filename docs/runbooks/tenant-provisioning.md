@@ -83,7 +83,8 @@ The objects follow the ADR-078 per-tenant layout
   task results.
 - `ConfigMap` `oshal-tenant-db`. It binds the namespace to its own database with the keys
   `OSHAL_TENANT`, `OSHAL_TENANCY`, `TENANT_DB_HOST`, `TENANT_DB_PORT`, `TENANT_DB_NAME` and
-  `TENANT_DB_USER`. It holds no password.
+  `TENANT_DB_USER`. It holds no password, and no password Secret is rendered or created:
+  nothing in a tenant namespace uses the tenant database yet (see [Not built](#not-built)).
 
 ## Apply
 
@@ -95,6 +96,37 @@ kubectl apply -f ./tenant-acme/namespace.yaml
 
 `database.sql` needs psql 15 or newer, for `\getenv`. The proof applies it with the psql 16
 inside `postgres:16-alpine`, as the superuser `postgres`.
+
+## Accept on a cluster
+
+`scripts/governance/accept-tenant-isolation.sh` is the automated cluster acceptance for the
+namespace half. Run it on a cluster whose CNI enforces NetworkPolicy:
+
+```bash
+bash scripts/governance/accept-tenant-isolation.sh --context <kube-context>   --apiserver-cidr "$(kubectl --context <kube-context> get endpoints kubernetes -o jsonpath='{.subsets[0].addresses[0].ip}')/32"   --db-host oshal-db.oshal.svc.cluster.local --image nginx:alpine
+```
+
+Every kubectl call carries `--context`. The script:
+
+1. Refuses, creating nothing, unless kubectl is present, an API server answers at the context, and
+   both namespaces it is about to create answer `NotFound`.
+2. Renders tenants `acc-<run>-a` and `acc-<run>-b` with `provision-tenant.sh`, where `<run>` is
+   8 random hex digits.
+3. Applies each `namespace.yaml` and starts pod `web` (label `app=web`, port 80) in each.
+4. Waits for both pods to be Ready, then runs
+   `verify-tenant-isolation.sh --namespaces oshal-tenant-acc-<run>-a,oshal-tenant-acc-<run>-b`:
+   same-namespace traffic must flow, cross-namespace traffic must be refused both ways, and both
+   policies and the dependency grants must be present.
+5. Deletes exactly the two namespaces it created and confirms each answers `NotFound`.
+
+Exit 0 means isolation was proven and both namespaces are gone. Exit 1 means isolation was not
+proven, a pod never became Ready, or cleanup was incomplete. An incomplete cleanup is red even
+when isolation passed, and the output names the namespaces still present. Exit 2 means it refused
+before creating anything. `--image` must serve HTTP on port 80 and carry `timeout` and `wget`;
+`--timeout` (default 180 seconds) bounds each pod wait and each deletion.
+
+`verify-tenant-isolation.sh` takes the two namespaces as `--namespaces <a>,<b>`. Without it, it
+judges `tenant-a` and `tenant-b`, as `scripts/ci/check-cluster-gates.sh` expects.
 
 ## What is proven, and where
 
@@ -121,19 +153,34 @@ tenant's own role and checks the following:
   only in their names. A tenant name that YAML would read as another type, such as `no`, stays a
   string.
 
-The tests were mutation-checked. Removing any one statement from the rendered policy turns the
-case for that statement red. The statements checked were: the `PUBLIC` connect revoke, the
-schema revoke, either membership revoke, and the other-grantee revoke. Collapsing the role name
-so it no longer comes from the tenant name, or accepting `shared`, also turns cases red. The
-suite runs in the isolated nightly runner (`npm run test:nightly-isolated`). It is registered in
-the AI Test Lab under **Isolated nightly regressions**.
+- The rendering governs only the databases it creates. The server's other databases keep
+  PostgreSQL's default `PUBLIC` `CONNECT`, so the tenant's role can open them: the case connects
+  to `postgres` and to the fixture's own database. See [Not built](#not-built).
 
-Not proven by this suite:
+These statements are mutation-checked: removing any one of them turns at least one case red.
 
-- That a cluster admits the rendered `namespace.yaml`.
-- That NetworkPolicy blocks traffic between two rendered `oshal-tenant-<name>` namespaces.
-  `verify-tenant-isolation.sh` checks the `tenant-a` and `tenant-b` namespaces from
-  `ops/deployment/argo/tenant-network-policies.yaml`.
+- the missing-password guard and the 16-character minimum
+- `NOINHERIT` and `CONNECTION LIMIT` on the role
+- both membership revokes
+- the `PUBLIC` connect revoke and the other-grantee connect revoke
+- the `public` schema revoke
+
+Collapsing the role name so it no longer comes from the tenant name, or accepting `shared`, also
+turns cases red. No other statement is claimed as guarded. In particular, removing
+`GRANT CONNECT, TEMPORARY ON DATABASE ... TO <role>` leaves every case green, because the
+database owner already holds those rights.
+
+`tests/unit/accept-tenant-isolation.spec.ts` proves the acceptance script's logic against a
+stateful kubectl stand-in, with `provision-tenant.sh` and `verify-tenant-isolation.sh` running for
+real. It covers the accepting run, which deletes exactly the two namespaces it created, and the
+cases that must not accept: cross-namespace traffic flowing, a pod that cannot reach itself, a pod
+that never becomes Ready, and an incomplete cleanup. It also covers the refusals that create
+nothing. It reaches no cluster, so it is not cluster evidence.
+
+Both suites run in the isolated nightly runner (`npm run test:nightly-isolated`). Both are
+registered in the AI Test Lab under **Isolated nightly regressions**.
+
+Not proven yet: a run of `accept-tenant-isolation.sh` on a real NetworkPolicy-enforcing cluster.
 
 ## Not built
 
@@ -142,5 +189,10 @@ Not proven by this suite:
   provisioner `scripts/governance/provision-app-role.mjs` requires the exact cluster-wide role
   names `oshal_app` and `oshal_bot` (lines 253-257), and PostgreSQL roles span the whole server.
   As built, two tenants' stacks on one server would share those two roles.
+- **Isolation from the server's other databases.** The rendering closes only the tenant's own
+  database. Any other database on the same server that keeps the default `PUBLIC` `CONNECT`
+  (`postgres`, or the control-plane `oshal` database if it shares the server) can be opened by a
+  tenant's role. Closing that means revoking `PUBLIC` `CONNECT` on those databases and granting
+  it to the roles that need it, which changes the control plane's database. It is not done here.
 - **Tenant root entity, realm per tenant and seat licensing.** These are ADR-035 pillars 2-4 and
   remain unbuilt.

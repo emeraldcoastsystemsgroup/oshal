@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The two-tenant proof for the isolated tier (ADR-035 as amended 2026-09-21; BACKLOG "Two-tier tenant provisioning"). scripts/governance/verify-tenant-isolation.sh checks only Kubernetes NetworkPolicy, so nothing attempted a cross-tenant DATABASE connection or a cross-tenant ROW read. Here the shipped provision-tenant.sh renders two tenants in a real Git Bash, the real psql inside a PostgreSQL 16 server this file starts and destroys applies each rendered database.sql, and each tenant's own LOGIN role is then driven over TCP: its own database and rows answer; the other tenant's database refuses the connection in both directions (42501, no CONNECT); a cross-database reference from its own session is refused (0A000); with the connection layer deliberately drifted open the other tenant's rows are still refused at the schema (42501), even rows that tenant granted to PUBLIC; and re-applying the rendered file closes the drift and removes a membership that would let one tenant SET ROLE into the other. No collaborator is doubled: the boundary is the database's own privilege checks against the roles the rendering creates. The shared tier is refused and renders nothing. Never touches the running stack: the server's address is minted at start(). Mutation-checked against the script: dropping the PUBLIC connect revoke reds 3 cases, the schema revoke 1, either membership revoke 1, the other-grantee connect revoke 1, a role name not derived from the tenant 2, and accepting --tenancy=shared 1.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Mutation coverage extended and stated exactly: the missing-password guard, the 16-character minimum, NOINHERIT and CONNECTION LIMIT each red 1 case when removed. Removing the owner's own GRANT CONNECT, TEMPORARY leaves every case green (the owner already holds those rights), so it is not claimed as guarded. New case pinning an as-built limit: the rendering governs only the databases it creates, and the tenant's role still opens the server's other databases ('postgres' and the fixture's own) through PUBLIC's default CONNECT.
  */
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -373,6 +374,18 @@ describe('two isolated tenants on one disposable PostgreSQL', () => {
       WHERE m.member IN ('oshal_tenant_alpha'::regrole, 'oshal_tenant_bravo'::regrole)`);
     expect(memberships.rowCount).toBe(0);
     expect(await ownNotes('alpha')).toEqual(['alpha-only']);
+  });
+
+  it('governs only the databases it creates: PUBLIC keeps CONNECT on the server\'s other databases', async () => {
+    // As built, not a goal: the rendering closes the tenant's own database and changes no other
+    // database on the server. Both databases below keep PostgreSQL's default PUBLIC CONNECT, so the
+    // tenant's role opens them. The runbook records this limit; if a change closes it, this case
+    // goes red and the runbook must change with it.
+    for (const database of ['postgres', SERVER.connection.database]) {
+      const reached = await asTenant('alpha', database, async (client) =>
+        (await client.query<{ db: string }>('SELECT current_database() AS db')).rows[0].db);
+      expect(reached).toBe(database);
+    }
   });
 
   it('refuses to provision without a password, or with a short one, and creates nothing', async () => {

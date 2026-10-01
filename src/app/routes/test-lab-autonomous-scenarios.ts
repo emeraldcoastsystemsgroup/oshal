@@ -23,6 +23,7 @@
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Register the two replay ledger guards on the protected remote application execution scenario: the store's own spec, which was on disk and in no scenario, and its real-Redis companion for the first connect under concurrent callers. The companion starts and removes its own Redis and reads no address, so the scenario's fixed runner is the gate that executes it, and the description names Redis among the fixtures.
  * 18 | maintainer@emeraldcoastsystemsgroup.com | Register the database-free Vitest discovery guard beside the tree-walk suites whose default scheduling it protects.
  * 19 | maintainer@emeraldcoastsystemsgroup.com | Register the two-tenant isolation proof for provision-tenant.sh (isolated tier, ADR-035 amendment) on the isolated nightly scenario: it renders two tenants with the shipped script, applies each rendering with the real psql on a PostgreSQL it starts and destroys, and requires a cross-tenant database connection and a cross-tenant row read to be refused. It reads no database address, so the scenario's fixed local runner is the gate that executes it.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com | Register the logic spec of the tenant-isolation cluster acceptance (accept-tenant-isolation.sh over a stateful kubectl stand-in: accepts only proven isolation with both created namespaces confirmed deleted, refuses before creating anything) on the same isolated nightly scenario. It needs Git Bash and reaches no cluster.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -85,6 +86,7 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/trading-parity-fire.spec.ts' },
     { level: 'integration', path: 'tests/unit/trading-dispatch-yield-sleeve-fire.spec.ts' },
     { level: 'integration', path: 'tests/unit/provision-tenant-isolation-postgres.spec.ts' },
+    { level: 'unit', path: 'tests/unit/accept-tenant-isolation.spec.ts' },
   ],
   steps: [{ id: 'runner', app: 'test-lab', label: 'Local isolated runner', run: async () => ({
     app: 'test-lab', label: 'Local isolated runner', state: 'degraded',

@@ -149,10 +149,17 @@ namespace with a ConfigMap that binds the namespace to its own database. `--tena
 refused as not commissioned. `tests/unit/provision-tenant-isolation-postgres.spec.ts` applies two
 renderings with the real psql on a disposable PostgreSQL 16. A cross-tenant connection is refused
 in both directions. A cross-tenant row read is refused, from the tenant's own session and with
-the connection layer deliberately drifted open. Re-applying repairs the drift. What is not built:
-running oshal's migrations and runtime roles inside a tenant database (the runtime-role
-provisioner names the cluster-wide roles `oshal_app` and `oshal_bot`), and pillars 2 to 4. See the
-[runbook](../runbooks/tenant-provisioning.md).
+the connection layer deliberately drifted open. Re-applying repairs the drift.
+`scripts/governance/accept-tenant-isolation.sh` is the automated cluster acceptance for the
+namespace half; its logic is proven against a kubectl stand-in, and it has not yet run on a real
+cluster. What is not built:
+- running oshal's migrations and runtime roles inside a tenant database (the runtime-role
+  provisioner names the cluster-wide roles `oshal_app` and `oshal_bot`);
+- isolation from the server's other databases, which keep PostgreSQL's default `PUBLIC`
+  `CONNECT`;
+- pillars 2 to 4.
+
+See the [runbook](../runbooks/tenant-provisioning.md).
 
 The decision does not address pillars 2 to 5, the async/workflow section or the phased plan. It
 also records that this ADR's context, "the schools/SaaS path", is one "the operator's 2026-08-01

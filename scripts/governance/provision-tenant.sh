@@ -5,6 +5,7 @@
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — render one tenant's database and namespace policy for the ISOLATED tier only (ADR-035 as amended 2026-09-21: a database per tenant). The database half gives the tenant its own LOGIN role (no superuser, no RLS bypass, no role/database creation, inherits nothing, belongs to no other role and held by none) and its own database owned by that role, with CONNECT and TEMPORARY revoked from PUBLIC and from every other grantee, and USAGE/CREATE on the public schema revoked from PUBLIC inside it - so another tenant's role can neither open the database nor, if that layer ever drifted open, name a table in it. The password is read at apply time (psql variable or OSHAL_TENANT_DB_PASSWORD via \getenv) and never written to disk. Re-applying converges drift. The namespace half is the ADR-078 per-tenant shape (quota, limits, default-deny plus same-tenant NetworkPolicy under the names verify-tenant-isolation.sh asserts, workflow ServiceAccount/RBAC) and a ConfigMap binding the namespace to its own database. --tenancy=shared is refused: that tier is not commissioned. Proven by tests/unit/provision-tenant-isolation-postgres.spec.ts on a disposable PostgreSQL.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Split the network and access renderers so every function stays under 50 lines (default-deny, allow-same-tenant with its egress block, workflow RBAC, and the database-binding ConfigMap each render alone; the output is byte-identical). The ConfigMap's comment now says plainly that no password Secret is rendered or created, because nothing in a tenant namespace uses the tenant database yet - it used to promise a runbook step that does not exist.
 #
 # Usage:
 #   bash scripts/governance/provision-tenant.sh <name> --tenancy=isolated \
@@ -251,11 +252,9 @@ spec:
 YAML
 }
 
-# @description Default-deny, then the same-tenant re-grant: same namespace, DNS, the shared control
-# plane (which serves the tenant's database), the model namespace, and the apiserver. No peer in
-# another tenant namespace.
-# @returns YAML documents on stdout.
-render_network_yaml() {
+# @description Deny all ingress and egress in the namespace unless a policy below allows it.
+# @returns One YAML document on stdout.
+render_default_deny_yaml() {
   cat <<YAML
 ---
 apiVersion: networking.k8s.io/v1
@@ -266,6 +265,14 @@ metadata:
 spec:
   podSelector: {}
   policyTypes: [Ingress, Egress]
+YAML
+}
+
+# @description The same-tenant re-grant: ingress only from this tenant's namespace, then the egress
+# rules below. No peer in another tenant namespace.
+# @returns One YAML document on stdout.
+render_allow_same_tenant_yaml() {
+  cat <<YAML
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -280,6 +287,16 @@ spec:
         - namespaceSelector:
             matchLabels:
               oshal.io/tenant: "${NAME}"
+YAML
+  render_same_tenant_egress_yaml
+}
+
+# @description The egress half of allow-same-tenant: this tenant's namespace, DNS, the shared control
+# plane (which serves the tenant's database in the ADR-078 layout), the model namespace, and the
+# apiserver.
+# @returns The egress block on stdout.
+render_same_tenant_egress_yaml() {
+  cat <<YAML
   egress:
     - to:
         - namespaceSelector:
@@ -314,11 +331,9 @@ spec:
 YAML
 }
 
-# @description The workflow ServiceAccount with rights over its own pods only, and the ConfigMap
-# that binds this namespace to its own database. The password is not in it: the runbook creates
-# that Secret at deploy time from the same value psql was given.
+# @description The workflow ServiceAccount, with rights over its own pods and Argo task results only.
 # @returns YAML documents on stdout.
-render_access_yaml() {
+render_workflow_access_yaml() {
   cat <<YAML
 ---
 apiVersion: v1
@@ -353,6 +368,15 @@ roleRef:
   kind: Role
   name: oshal-workflow
   apiGroup: rbac.authorization.k8s.io
+YAML
+}
+
+# @description The ConfigMap that binds this namespace to its own database. No password Secret is
+# rendered or created anywhere: nothing in a tenant namespace uses the tenant database yet (see
+# "Not built" in docs/runbooks/tenant-provisioning.md).
+# @returns One YAML document on stdout.
+render_database_binding_yaml() {
+  cat <<YAML
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -382,8 +406,10 @@ render_namespace_file() {
 # =============================================================================
 YAML
   render_namespace_yaml
-  render_network_yaml
-  render_access_yaml
+  render_default_deny_yaml
+  render_allow_same_tenant_yaml
+  render_workflow_access_yaml
+  render_database_binding_yaml
 }
 
 # @description Render both files into a staging directory beside the output, then move them into
