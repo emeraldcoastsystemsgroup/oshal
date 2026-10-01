@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | A closed set of named file probes (FILE_PROBES, fileProbeState), the file counterpart of the closed statement set: a case names a probe and an id, never a path, and the probe resolves the one path the product uses in the process that serves it. The first probe, `vids.export`, is the attached MP4 of a vids finished job, so the vids-publish case can prove its cleanup removed the media and not only the rows. A case probes the file present before it trusts an absent answer.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | SECOND_PAT_ENV, the one name of the environment value that carries a second caller's token. The host runner reads it by name and binds it as the `second` port, and a case that acts as someone other than the operator names it in its verdict; both take the name from here so they cannot drift.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The Bot Forge edit-in-place case's fixture pack as a closed set (forgePackWrite, forgePackState, forgePackRemove): a port names a `testlab-live-forge-edit-<8 hex>` tag and revision 1 or 2, never a path or content. The pack is written where the packer leaves one and the deploy route reads it (packs/<sha256(sub), 32 hex>/<tag>/), revision 2 is the operator's edit (new briefs, a drifted descriptor ticketType), and removal takes the pack, every deployed-apps entry and every persona file named for the tag, plus the parents the first write created when they are empty. Built-ins only, so the host runner can still stage this file into the api container.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | forgePackRemove removes a pack folder only when its pack.json carries this run's marker. It refused only a folder marked for ANOTHER run, so a folder with no marker or an unreadable pack.json (which reads as no marker) was deleted although nothing showed it was the run's own; now any of those refuses and nothing under the tag is touched.
  */
 
 'use strict';
@@ -529,7 +530,8 @@ function removeIfEmpty(dir) {
 
 /**
  * @description Remove everything a fixture tag left on disk (pack, deployed-apps entries, personas)
- * and the parents the first write created, when empty. Refuses a pack carrying another marker.
+ * and the parents the first write created, when empty. Refuses, touching nothing, when the pack folder
+ * exists without this run's marker (none, an unreadable pack.json, or another run's).
  * @param {string} root - The shared workspace root.
  * @param {string} appRoot - The api's working directory.
  * @param {string} sub - The owner subject.
@@ -539,8 +541,9 @@ function removeIfEmpty(dir) {
  */
 function forgePackRemove(root, appRoot, sub, tag, prune = {}) {
   const { packsRoot, ownerDir, dir } = forgePackPaths(root, sub, tag);
-  const marker = fs.existsSync(dir) ? forgeMarker(dir) : null;
-  if (marker !== null && marker !== tag) return `pack ${tag} carries another fixture marker; not removed`;
+  // Only a folder that proves it is this run's fixture is removed: no marker, an unreadable pack.json
+  // or another run's marker all mean it is somebody else's, and then nothing under the tag is touched.
+  if (fs.existsSync(dir) && forgeMarker(dir) !== tag) return `pack ${tag} does not carry this run's fixture marker; nothing was removed`;
   fs.rmSync(dir, { recursive: true, force: true });
   const deployed = path.join(path.resolve(root), 'deployed-apps');
   for (const name of forgeEntries(deployed, tag)) fs.rmSync(path.join(deployed, name), { recursive: true, force: true });

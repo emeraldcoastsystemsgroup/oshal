@@ -78,14 +78,19 @@ automation identity (`OSHAL_VERIFY_OPERATOR_PAT`, read by name, never printed). 
 
 1. checks, before it writes anything, that the caller is an operator (the cleanup routes are
    operator-only) and that `GET /api/swarm/packs` answers;
-2. writes a two-bot pack tagged `testlab-live-forge-edit-<8 hex>` into the caller's own packs
-   directory, through the in-container helper. The tag is the bots' only routing keyword;
-3. deploys it through `POST /api/swarm/packs/<tag>/deploy`;
-4. edits the pack: new briefs, a new description, and a descriptor ticketType changed to
+2. mints a tag `testlab-live-forge-edit-<8 hex>` and requires it to be unused: no pack,
+   `deployed-apps` entry or persona under it, and `GET /api/swarm/apps/<tag>` answering 404. If
+   anything is already there it is not this run's, so the case reports unavailable and writes,
+   deploys and deletes nothing;
+3. writes a two-bot pack under that tag into the caller's own packs directory, through the
+   in-container helper. The pack's `pack.json` carries the tag as its fixture marker, and the tag
+   is the bots' only routing keyword;
+4. deploys it through `POST /api/swarm/packs/<tag>/deploy`;
+5. edits the pack: new briefs, a new description, and a descriptor ticketType changed to
    `<tag>-drift`;
-5. opens the Packs panel in headless Chromium, presses the tagged pack's "Deploy to swarm" and
+6. opens the Packs panel in headless Chromium, presses the tagged pack's "Deploy to swarm" and
    accepts its confirm;
-6. requires that:
+7. requires that:
    - both agentIds are unchanged, in the response and in the loaded app;
    - the ticketType is still `<tag>`;
    - the version moved exactly one patch, and the response says `edited: true`;
@@ -93,10 +98,12 @@ automation identity (`OSHAL_VERIFY_OPERATOR_PAT`, read by name, never printed). 
      from the path it loaded first, it lists one app for the tag, and that app carries the edited
      description;
    - the panel says "Updated in place";
-7. cleans up. It removes the pack, the manifest and the personas first, so nothing on disk can load
+8. cleans up. It removes the pack, the manifest and the personas first, so nothing on disk can load
    the app again. Then it unloads the app (`DELETE /api/swarm/apps/<tag>`) and deletes both agents
    (`DELETE /api/swarm/agents/<id>`; their config rows cascade). It proves each one gone by a 404.
-   Anything left is a red result.
+   The pack folder is removed only when its `pack.json` carries the run's marker. A folder with no
+   marker, an unreadable `pack.json` or another run's marker is refused, and then nothing under the
+   tag is removed. Anything left is a red result.
 
 The receipt lists two things as **kept**. App registration writes an `oshal_authorization_applications`
 row and one or more `oshal_authorization_catalogs` snapshots for the tag
@@ -110,8 +117,9 @@ gap naming the host command. From the Lab the card is degraded, never pass.
 [tests/unit/live-acceptance-forge-edit.spec.ts](../../tests/unit/live-acceptance-forge-edit.spec.ts)
 proves the case's logic. In one half, a doubled route, swarm and panel make each broken fact fail by
 name. In the other, the fixture port writes real files that the real pack router deploys over
-loopback HTTP; the case holds there, and goes red when the edit loses its prior emission. Each of
-thirteen mutations to the case, the fixture port and the runner's port turns that spec red.
+loopback HTTP; the case holds there, and goes red when the edit loses its prior emission. A tag that
+already holds a pack, a manifest, a persona and an app is refused, and every one of them survives.
+Each of sixteen mutations to the case, the fixture port and the runner's port turns that spec red.
 
 ## Still owed
 

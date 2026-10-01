@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - live acceptance for Bot Forge edit-in-place (backlog "Strategy Studio and Bot Forge conversational parity", the Forge half). As the operator it writes a uniquely tagged two-bot pack into its own packs directory, deploys it through POST /api/swarm/packs/<tag>/deploy, edits the pack (new briefs and description, a drifted descriptor ticketType) and deploys it again through the Packs panel's own "Deploy to swarm" button in headless Chromium. It requires the edit to keep every agentId and the ticketType, to move the version exactly one patch, to leave one manifest (deployed-apps/<tag>.yaml, the path the swarm loaded both times, one app for the tag) and the panel to say "Updated in place". Cleanup removes the pack, the manifest and the personas, unloads the app (DELETE /api/swarm/apps/<tag>) and deletes both agents (DELETE /api/swarm/agents/<id>), each proven gone; the authorization control plane's posture and catalog rows for the tag are listed as kept, because no route removes them. Without a browser port (the Lab) the edit is deployed through the route and the panel leg is a named gap, so the case is degraded there, never pass.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The case refuses a tag it did not mint fresh. Before the first write it requires the minted tag to be unused - no pack, deployed-apps entry or persona on disk, and GET /api/swarm/apps/<tag> answering 404 - and otherwise reports unavailable with nothing written, skipping the final observation and the cleanup. Before this, a tag that was already in use was written into, and the crash path then recorded and deleted whatever was there (pack, manifest, persona, app and that app's agents).
  */
 
 'use strict';
@@ -103,6 +104,24 @@ async function preflight(ports) {
   const packs = await ports.api('GET', PACKS);
   if (packs.status !== 200) return { ok: false, detail: `GET ${PACKS} answered HTTP ${packs.status}: the Bot Forge packs routes are not mounted for this caller.` };
   return { ok: true };
+}
+
+/**
+ * @description Whether the freshly minted tag is unused: no pack, deployed-apps entry or persona on
+ * disk, and no app under it. Anything already there is not this run's, so the case must neither write
+ * into it nor clean it up.
+ * @param {object} ports - api, forge.
+ * @param {string} tag - The minted tag.
+ * @returns {Promise<{ok: boolean, detail?: string}>} Whether the run may write under the tag.
+ */
+async function tagIsFree(ports, tag) {
+  const files = await ports.forge.state(tag);
+  const held = [files.pack === 'present' ? `a pack ${tag}` : '', ...files.manifests.map((name) => `deployed-apps/${name}`),
+    ...files.personas.map((name) => `persona ${name}`)].filter(Boolean);
+  const app = await ports.api('GET', `${APPS}/${tag}`);
+  if (app.status !== 404) held.push(`GET ${APPS}/${tag} answered HTTP ${app.status}, not 404`);
+  if (!held.length) return { ok: true };
+  return { ok: false, detail: `The freshly minted tag ${tag} is already in use (${held.join('; ')}), so the case neither writes under it nor cleans it up.` };
 }
 
 /**
@@ -467,6 +486,10 @@ async function run(ports) {
   const gate = await preflight(ports);
   if (!gate.ok) return common.unavailable(CASE_ID, gate.detail);
   const ctx = { tag: common.mintTag(KEY), agentIds: new Set(), registered: false, prune: {} };
+  // Before the first write: a tag already in use is not this run's, so nothing below may run for it,
+  // including the final observation and the cleanup, which would claim and delete what is there.
+  const free = await tagIsFree(ports, ctx.tag);
+  if (!free.ok) return common.unavailable(CASE_ID, free.detail, { tag: ctx.tag });
   const ledger = new common.CleanupLedger();
   let outcome;
   try {

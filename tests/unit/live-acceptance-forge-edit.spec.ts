@@ -4,9 +4,10 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the Bot Forge edit-in-place live case (scripts/lib/live-acceptance-forge-edit.js). Doubled half: an in-memory deploy route, swarm and Packs panel drive the verdicts - an edit in place passes, and each broken fact fails by name (a re-identified bot, a ticket type that follows the drifted descriptor, a version that does not move exactly one patch, a second manifest, a panel that does not say "Updated in place", a panel that never offers the button or posts the edit and shows no result); the Lab without Chromium is degraded, a non-operator or an unmounted Forge writes nothing, a refused first deploy and every cleanup miss are red, and cleanup removes files first, then the app, then the agents. Real half: the fixture-pack port (host runner forge port -> the container helper's three ops, the docker hop replaced by an in-process call) writes real files the REAL swarm-pack router deploys over loopback HTTP; the case's route-level facts hold there, it goes red when the edit loses its prior emission, its cleanup leaves no pack, manifest, persona, app or agent, and the Lab adapter's forge port writes into the signed-in caller's own packs directory. The live companion is `node scripts/operations/live-acceptance.js forge-edit` on the box.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | A tag the case did not mint fresh is refused before anything is written. Doubled: a pack, a manifest, a persona or an app already under the minted tag each make the case unavailable with no write, deploy, browser session or non-GET call. Real: with the minter's random draw pinned to a tag that already holds a markerless pack, a manifest, a persona and an app with two agents, the real router sees only GETs and every one of them survives byte for byte. Removal refuses a pack folder with another run's marker, no marker or an unreadable pack.json, and leaves the tag's manifest and persona in place each time.
  */
 import express, { type NextFunction, type Request, type Response } from 'express';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -26,6 +27,19 @@ const OWNER = 'fixture|forge-edit-owner';
 const ORIGIN = 'http://127.0.0.1:35457';
 const TAG_RE = /^testlab-live-forge-edit-[0-9a-f]{8}$/;
 const PERSONA_DIR = path.resolve(process.cwd(), 'ai-lab/bot-personas');
+/** The CommonJS crypto module the case's tag minter reads randomBytes from, so a case can pin the tag. */
+const cryptoCjs = requireCjs('node:crypto') as typeof import('node:crypto');
+
+/**
+ * Make the next tag the case mints `testlab-live-forge-edit-<hex>`: only the 4-byte draw the minter
+ * makes is pinned, every other caller keeps the real source.
+ */
+function pinTag(hex: string): () => void {
+  const real = cryptoCjs.randomBytes.bind(cryptoCjs) as (size: number) => Buffer;
+  const spy = vi.spyOn(cryptoCjs, 'randomBytes').mockImplementation(((size: number, ...rest: unknown[]) =>
+    (size === 4 && rest.length === 0 ? Buffer.from(hex, 'hex') : (real as (...a: unknown[]) => Buffer)(size, ...rest))) as typeof cryptoCjs.randomBytes);
+  return () => spy.mockRestore();
+}
 
 /** The breakages a doubled world can carry, one per fact the case judges, plus cleanup faults. */
 interface WorldOptions {
@@ -33,6 +47,8 @@ interface WorldOptions {
   freshIds?: boolean; followDrift?: boolean; bumpBy?: number; siblingManifest?: boolean; notEdited?: boolean;
   toast?: (json: Record<string, unknown>) => string; agentDeleteStatus?: number; stickyPersona?: boolean; createdOwnerDir?: boolean;
   noButton?: boolean; noToast?: boolean;
+  /** Something already under the tag the case mints, before it writes anything. */
+  occupied?: 'pack' | 'manifest' | 'persona' | 'app';
 }
 
 /** What the doubled world holds: the pack on disk, the swarm's apps and agents, and an event log. */
@@ -78,8 +94,10 @@ function swarmRoutes(state: WorldState, options: WorldOptions) {
     'GET /api/swarm/packs': () => ({ status: options.packsStatus ?? 200, json: { packs: [] } }),
     'POST /api/swarm/packs/:name/deploy': ({ params }: { params: Record<string, string> }) => simulatedDeploy(state, options, params.name),
     'GET /api/swarm/apps': () => ({ status: 200, json: { apps: [...state.apps.values()].map((app) => ({ name: app.name })) } }),
-    'GET /api/swarm/apps/:name': ({ params }: { params: Record<string, string> }) => (state.apps.has(params.name)
-      ? { status: 200, json: { app: state.apps.get(params.name) } } : { status: 404, json: { error: 'App not found' } }),
+    'GET /api/swarm/apps/:name': ({ params }: { params: Record<string, string> }) => {
+      if (options.occupied === 'app' && !state.writes.length) return { status: 200, json: { app: { name: params.name, version: '3.0.0', agentIds: [randomUUID()] } } };
+      return state.apps.has(params.name) ? { status: 200, json: { app: state.apps.get(params.name) } } : { status: 404, json: { error: 'App not found' } };
+    },
     'DELETE /api/swarm/apps/:name': ({ params }: { params: Record<string, string> }) => {
       state.events.push('unload-app');
       if (!state.apps.delete(params.name)) return { status: 404, json: { error: 'App not found' } };
@@ -106,8 +124,12 @@ function fakeForge(state: WorldState, options: WorldOptions) {
       if (options.createdOwnerDir) state.ownerDir = 'present';
       return { files: ['pack.json', 'bots/checker.yml', 'bots/worker.yml'], createdOwnerDir: created, createdPacksRoot: false };
     },
-    state: async () => ({ pack: state.revision ? 'present' : 'absent', ownerDir: state.ownerDir, packsRoot: 'present',
-      manifests: [...state.manifests].sort(), personas: [...state.personas].sort() }),
+    state: async (tag: string) => {
+      const held = state.writes.length ? undefined : options.occupied;
+      return { pack: state.revision || held === 'pack' ? 'present' : 'absent', ownerDir: state.ownerDir, packsRoot: 'present',
+        manifests: [...state.manifests, ...(held === 'manifest' ? [`${tag}.yaml`] : [])].sort(),
+        personas: [...state.personas, ...(held === 'persona' ? [`${tag}-worker.yaml`] : [])].sort() };
+    },
     remove: async (_tag: string, prune: { ownerDir?: boolean }) => {
       state.events.push('remove-files');
       state.revision = 0;
@@ -301,6 +323,19 @@ describe('Bot Forge edit-in-place live case, over a doubled deploy route, swarm 
     expect(silent.evidence.edit).toMatchObject({ status: 200, edited: true, version: '1.0.1' });
   });
 
+  it('refuses a minted tag already in use (a pack, a manifest, a persona or an app) and writes, deploys and deletes nothing', async () => {
+    for (const occupied of ['pack', 'manifest', 'persona', 'app'] as const) {
+      const w = world({ occupied });
+      const result = await forgeEdit.run(w.ports);
+      expect(result.state, occupied).toBe('unavailable');
+      expect(result.detail).toContain(`The freshly minted tag ${result.evidence.tag} is already in use (`);
+      expect(result.detail).toContain('so the case neither writes under it nor cleans it up. Nothing was written.');
+      expect([w.state.writes, w.state.deploys, w.state.events, w.sessions]).toEqual([[], 0, [], []]);
+      expect(w.calls.filter((c) => c.method !== 'GET')).toEqual([]);
+      expect(result.cleanup).toEqual({ created: 0, removed: [], kept: [], outstanding: [], errors: [] });
+    }
+  });
+
   it('is degraded from the Lab: the edit goes through the route and the panel leg is a named gap', async () => {
     const w = world({}, true);
     const result = await forgeEdit.run(w.ports);
@@ -390,6 +425,8 @@ describe('the fixture-pack port against real files and the REAL swarm-pack route
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-forge-live-'));
   const saved = process.env.OSHAL_WORKSPACE_ROOT;
   const swarm: SwarmDouble = { apps: new Map(), agents: new Set(), scopes: [] };
+  /** Every request the server received, as `METHOD /path`. */
+  const requests: string[] = [];
   let server: Server;
   let base = '';
 
@@ -399,6 +436,7 @@ describe('the fixture-pack port against real files and the REAL swarm-pack route
     const { createSwarmPackRoutes } = await import('../../src/app/routes/swarm-pack-routes');
     const app = express();
     app.use((req: Request, _res: Response, next: NextFunction) => {
+      requests.push(`${req.method} ${req.path}`);
       if (req.headers.authorization === `Bearer ${TOKEN}`) (req as unknown as { oidc: unknown }).oidc = { user: { sub: OWNER } };
       next();
     });
@@ -471,6 +509,35 @@ describe('the fixture-pack port against real files and the REAL swarm-pack route
     expect(residue(tag)).toEqual({ packs: false, manifests: [], personas: [], apps: 0, agents: 0 });
   });
 
+  it('refuses a minted tag that already holds a pack, a manifest, a persona and an app, and touches none of them', async () => {
+    const tag = 'testlab-live-forge-edit-deadbeef';
+    const packDir = path.join(root, 'packs', common.forgeUserKey(OWNER), tag);
+    const files = { pack: path.join(packDir, 'pack.json'), manifest: path.join(root, 'deployed-apps', `${tag}.yaml`), persona: path.join(PERSONA_DIR, `${tag}-worker.yaml`) };
+    const before = { pack: JSON.stringify({ name: tag, mode: 'swarm', note: 'not this run, and no fixture marker' }), manifest: 'name: pre-existing\n', persona: 'name: pre-existing\n' };
+    const agents = [randomUUID(), randomUUID()];
+    try {
+      for (const key of ['pack', 'manifest', 'persona'] as const) { fs.mkdirSync(path.dirname(files[key]), { recursive: true }); fs.writeFileSync(files[key], before[key]); }
+      swarm.apps.set(tag, { name: tag, version: '3.0.0', status: 'active', manifestPath: files.manifest, description: 'pre-existing', agentIds: agents, manifest: { ticketType: tag } });
+      for (const id of agents) swarm.agents.add(id);
+      requests.length = 0;
+      const restore = pinTag('deadbeef');
+      const result = await forgeEdit.run(hostPorts()).finally(restore);
+      expect(result.evidence.tag).toBe(tag);
+      expect(result.state).toBe('unavailable');
+      expect(result.detail).toContain(`The freshly minted tag ${tag} is already in use (a pack ${tag}; deployed-apps/${tag}.yaml; persona ${tag}-worker.yaml; GET /api/swarm/apps/${tag} answered HTTP 200, not 404)`);
+      expect(result.cleanup).toEqual({ created: 0, removed: [], kept: [], outstanding: [], errors: [] });
+      expect(requests.filter((r) => !r.startsWith('GET '))).toEqual([]);
+      for (const key of ['pack', 'manifest', 'persona'] as const) expect(fs.readFileSync(files[key], 'utf8'), key).toBe(before[key]);
+      expect([swarm.apps.has(tag), ...agents.map((id) => swarm.agents.has(id))]).toEqual([true, true, true]);
+    } finally {
+      // The pre-existing state is this case's own fixture, so the case removes it.
+      fs.rmSync(path.join(root, 'packs'), { recursive: true, force: true });
+      for (const file of [files.manifest, files.persona]) fs.rmSync(file, { force: true });
+      swarm.apps.delete(tag);
+      for (const id of agents) swarm.agents.delete(id);
+    }
+  });
+
   it('writes only a fresh or its own fixture pack, which the real router lists as a deployable swarm pack, and removes only its own', async () => {
     const { forge, api } = hostPorts();
     const tag = common.mintTag('forge-edit');
@@ -481,9 +548,18 @@ describe('the fixture-pack port against real files and the REAL swarm-pack route
     expect(listed).toMatchObject({ mode: 'swarm', ticketType: tag, bots: ['checker', 'worker'], liveAcceptanceFixture: tag });
     const descriptorPath = path.join(root, 'packs', common.forgeUserKey(OWNER), tag, 'pack.json');
     const descriptor = fs.readFileSync(descriptorPath, 'utf8');
-    fs.writeFileSync(descriptorPath, JSON.stringify({ ...JSON.parse(descriptor), liveAcceptanceFixture: 'another-run' }));
-    expect(await forge.remove(tag)).toBe(`pack ${tag} carries another fixture marker; not removed`);
-    expect(fs.existsSync(descriptorPath)).toBe(true);
+    const unmarked = JSON.parse(descriptor) as Record<string, unknown>;
+    delete unmarked.liveAcceptanceFixture;
+    // A manifest and a persona under the tag show that a refused removal touches nothing at all.
+    const others = [path.join(root, 'deployed-apps', `${tag}.yaml`), path.join(PERSONA_DIR, `${tag}-worker.yaml`)];
+    for (const file of others) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, 'name: kept\n'); }
+    // Another run's marker, no marker at all, and a pack.json nobody can read: none proves the folder is this run's.
+    for (const foreign of [JSON.stringify({ ...unmarked, liveAcceptanceFixture: 'another-run' }), JSON.stringify(unmarked), '{ not json']) {
+      fs.writeFileSync(descriptorPath, foreign);
+      expect(await forge.remove(tag)).toBe(`pack ${tag} does not carry this run's fixture marker; nothing was removed`);
+      expect(fs.readFileSync(descriptorPath, 'utf8')).toBe(foreign);
+      for (const file of others) expect(fs.existsSync(file), file).toBe(true);
+    }
     fs.writeFileSync(descriptorPath, descriptor);
     expect(await forge.remove(tag, { ownerDir: true, packsRoot: true })).toBeNull();
     expect(await forge.state(tag)).toEqual({ pack: 'absent', ownerDir: 'absent', packsRoot: 'absent', manifests: [], personas: [] });
