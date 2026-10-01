@@ -218,6 +218,11 @@ MEDIUM items keep 5–11, which is what the cross-references in this file and in
     name the `active` 3% giveback = normal intraday wiggle → premature exit (feeds the #4 churn). **Fix:**
     scale `trailGivebackPct` by the same `volPct` already computed for sizing.
 
+    **CLOSED 2026-09-30 — `trailingExits` giveback scales by asset realized volatility in `portfolio.ts` and `computeExits`.**
+    - *Vol scaling logic:* `trailingExits` ([portfolio.ts:344](../../src/features/trading/services/portfolio.ts#L344)) accepts optional `volPcts?: Map<string, number> | Record<string, number>`. Computes `volMult = Math.max(0.5, Math.min(3, vol / baseVol))` where `baseVol = Number(process.env.TRADING_BASELINE_VOL_PCT || 2)` and sets `requiredGiveback = policy.trailGivebackPct * givebackMult * volMult`. Missing symbols or omitted maps default safely to `volMult = 1`.
+    - *Dispatch integration:* `computeExits` in [trading-dispatch-exits-entries.ts:114](../../src/app/trading-dispatch-exits-entries.ts#L114) fetches 15-day daily bars in batch for all managed held positions via `barsBatch`, computes realized volatility using `calculateRealizedVol`, and passes the resulting `volMap` into `trailingExits`.
+    - *Unit tests:* [tests/unit/trading-vol-scaled-trailing.spec.ts](../../tests/unit/trading-vol-scaled-trailing.spec.ts) (9/9 PASS) verifies unscaled parity when `volPcts` is omitted, widening giveback for high-volatility names (e.g. NVDA), tightening for calm names (e.g. KO), 0.5x floor and 3.0x cap clamps, `Map` and `Record` polymorphism, compounding with thin session `givebackMult`, `TRADING_BASELINE_VOL_PCT` overrides, and ADR-159 unmanaged position immunity.
+
 13. **Stop + daily-halt interaction can lock the book out of the bounce.** `active` = 5% hard stop + 3%
     daily-loss halt + up to 85% deployed across 32 names. A broad ~5% down-day stops out many names *and*
     trips the 3% daily halt, which then blocks re-entry on the recovery. **Fix:** model this in a backtest;
