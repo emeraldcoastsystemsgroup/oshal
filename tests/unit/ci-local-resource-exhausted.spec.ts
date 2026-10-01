@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Guard for run_gate's RESOURCE-EXHAUSTED outcome (BACKLOG "The nightly gate runs against a saturated box"). A scripted host - a /proc/meminfo stand-in the gates rewrite while they run - under the PRODUCTION run_gate, outcome block, gate sequence and traps of scripts/ci-local.sh with the shipped scripts/ci/ci-resource.sh. Proves: a host that stays below the operator's floor keeps a gate from starting and reports it RESOURCE-EXHAUSTED (never PASS, never FAIL, never silent), and a run with only that exits 3; a host that recovers inside the wait is admitted; a gate that fails while the host dips below the floor is RESOURCE-EXHAUSTED and one that passes through the dip is PASS; a failure on a healthy host stays FAIL even when its output says ENOMEM and `cannot allocate memory` (text is not evidence - specs in the unit gate print those words); skip markers inherit their cause; an unset floor is announced and classifies nothing; and the sampler dies with its run, on SIGTERM and on SIGKILL.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | The recovery case flipped the scripted host from a background writer that raced the admission's read (1 failure in 12 runs on an unchanged tree - a nightly false red, the very thing this entry exists to stop). The host now recovers from inside the admission's own sleep, so the case is sequential and asserts the exact `admitted after 1s`.
  */
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -107,10 +108,14 @@ describe("run_gate's RESOURCE-EXHAUSTED outcome (scripts/ci-local.sh + scripts/c
 
   it('admits a gate once the host recovers inside the wait', async () => {
     const c = newCase(200);
-    const script = gatesProbe(['recovering:gate_record']).replace('ci_resource_init\n', 'ci_resource_init\n( sleep 1; set_free 4000 ) &\n');
+    // The host recovers from INSIDE the admission's own wait - its sleep - never from a concurrent
+    // writer: a background writer can truncate the scripted file under the admission's read, which
+    // then claims nothing and admits silently (1 failure in 12 runs). Sequential, so deterministic.
+    const script = gatesProbe(['recovering:gate_record'])
+      .replace('ci_resource_init\n', 'ci_resource_init\nsleep() { set_free 4000; command sleep "$@"; }\n');
     const r = await run(c, script, { ...FLOOR, OSHAL_CI_RESOURCE_WAIT_SECONDS: '10' });
     expect(r.ran).toEqual(['recovering']);
-    expect(r.output).toMatch(/resource-check: recovering admitted after \d+s \(host free 4000MB\)/);
+    expect(r.output).toContain('resource-check: recovering admitted after 1s (host free 4000MB)');
     expect(r.output).toContain('GATE recovering: PASS');
     expect(r.status).toBe(0);
   }, CASE_TIMEOUT);

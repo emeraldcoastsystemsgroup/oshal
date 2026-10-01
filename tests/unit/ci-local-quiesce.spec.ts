@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Guard for the nightly worker quiesce (BACKLOG "The nightly gate runs against a saturated box"; operator decision 2026-09-21). The operator's conditions are each a case, run through the PRODUCTION text of scripts/ci-local.sh - its run-start block, run_gate, on_exit, both trap lines and its end-of-run block - and the shipped scripts/ci helpers, in Git Bash, over a stateful docker stand-in and an Alertmanager stand-in on a real loopback port: only named, running, `oshal.tier=worker`, non-routing-critical containers are stopped; the infrastructure tier, the api and the trading bot never are (also proven against the REAL compose file and the REAL routing-critical list); the stopped workers are restored after a passing gate, after a failing gate, on SIGTERM and on SIGINT; a run killed outright leaves a state file that the next run restores first and reports; a worker that will not start is reported and kept in the state file; and nothing is stopped without the SwarmContainerDown silence unless silencing is explicitly disabled.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | A wildcard in the worker list is a name, never a pattern: --plan read its list with an unquoted expansion, so `--plan '*'` globbed against the working directory and reported decoy file names as containers it would stop, while the run itself refused `*`. One case runs --plan by argument and by setting, and the run, from a directory holding decoys named like eligible workers.
  */
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -102,11 +103,11 @@ function newCase(containers: Record<string, FixtureContainer>): Case {
   return { dir, stateDir, bin, state };
 }
 
-/** @description Run one miniature nightly to completion. */
-async function runNightly(c: Case, gateBody: string, env: Record<string, string>): Promise<{ status: number | null; output: string }> {
+/** @description Run one miniature nightly to completion, optionally from a given working directory. */
+async function runNightly(c: Case, gateBody: string, env: Record<string, string>, cwd?: string): Promise<{ status: number | null; output: string }> {
   const probe = join(c.dir, `nightly-${Date.now()}.sh`);
   writeFileSync(probe, nightlyProbe(gateBody));
-  return runBash([toBash(probe), ...probeArgs(c.stateDir, c.bin)], probeEnv(c.dir, env), join(c.dir, `out-${Date.now()}.log`), CASE_TIMEOUT);
+  return runBash([toBash(probe), ...probeArgs(c.stateDir, c.bin)], probeEnv(c.dir, env), join(c.dir, `out-${Date.now()}.log`), CASE_TIMEOUT, cwd);
 }
 
 /**
@@ -363,5 +364,31 @@ describe('the hand restore (bash scripts/ci/ci-quiesce.sh --resume)', () => {
     expect(statusOf(free.state, 'fixture-worker-a')).toBe('running');
     const nothing = await cli(free, '--resume');
     expect(nothing.output).toContain('nothing to restore');
+  }, CASE_TIMEOUT);
+});
+
+describe('a wildcard in the worker list is a name, never a pattern over the working directory', () => {
+  it('is refused by --plan (argument and setting) and by the run, with decoy files named like eligible workers present', async () => {
+    const c = newCase(fixture());
+    // Decoys named exactly like eligible containers: a glob over the working directory would turn
+    // `*` into a list of real, stoppable names, and the plan would report them as safe to stop.
+    const cwd = join(c.dir, 'cwd');
+    mkdirSync(cwd);
+    for (const decoy of PAUSED) writeFileSync(join(cwd, decoy), 'decoy\n');
+    const env = probeEnv(c.dir, { ...settings('none'), OSHAL_CI_STATE_DIR: toBash(c.stateDir), PATH: `${c.bin};${process.env.PATH ?? ''}` });
+    // Passed through a bash parent, as an operator runs it from Git Bash. Handed straight from node,
+    // the bare `*` is globbed by the MSYS runtime on the NATIVE command line before bash starts (this
+    // case saw exactly that with the fix in place) - a property of native parents, not of the script.
+    const byArgument = await runBash(['-c', 'bash "$1" --plan "*"', 'plan', QUIESCE_HELPER], env, join(c.dir, 'plan-arg.log'), CASE_TIMEOUT, cwd);
+    const bySetting = await runBash([QUIESCE_HELPER, '--plan'], { ...env, OSHAL_CI_QUIESCE_WORKERS: '*' }, join(c.dir, 'plan-env.log'), CASE_TIMEOUT, cwd);
+    for (const plan of [byArgument, bySetting]) {
+      expect(plan.output).toContain('quiesce-plan: * REFUSED (not a supported container name)');
+      expect(plan.output).not.toContain('WOULD STOP');
+    }
+    expect(dockerCalls(c.state), 'a decoy file name reached docker').toEqual([]);
+
+    const run = await runNightly(c, GATE_PASS, settings('none', { OSHAL_CI_QUIESCE_WORKERS: '*' }), cwd);
+    expect(run.output).toContain('quiesce: * REFUSED (not a supported container name)');
+    expect(stops(c)).toEqual([]);
   }, CASE_TIMEOUT);
 });

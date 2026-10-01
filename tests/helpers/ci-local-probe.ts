@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Shared harness for the nightly-gate quiesce and resource-exhausted guards. They run the PRODUCTION text of scripts/ci-local.sh (functions and blocks sliced by their real markers) and its scripts/ci helpers in Git Bash, against a stateful `docker` stand-in first on PATH and an Alertmanager stand-in on a real loopback HTTP port, so the claims are about what the shipped shell actually does. Nothing here can reach the live engine: the stand-in is verified first on PATH inside every probe, and DOCKER_HOST points at a closed loopback port in case anything were to slip past it. Output goes to files, never pipes, so a probe killed mid-gate cannot leave an orphan holding the runner open.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | JSDoc for the exported BASH; runBash takes an optional working directory, so a case can run the standalone --plan from a directory holding decoy files.
  */
 import { execFileSync, spawn } from 'node:child_process';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
@@ -38,6 +39,10 @@ export function resolveBash(): string {
   throw new Error('Git Bash not found; refusing the WSL bash on PATH');
 }
 
+/**
+ * @description The Git Bash every probe runs in, resolved once per spec file. Never WSL's bash:
+ * ci-local.sh and its helpers run under Git Bash on this box, and that is the shell being judged.
+ */
 export const BASH = resolveBash();
 
 /** @description Forward slashes for a path handed to Git Bash. @param p a host path. @returns the path. */
@@ -216,12 +221,13 @@ export function probeEnv(dir: string, extra: Record<string, string>): NodeJS.Pro
  * @param env the environment.
  * @param outFile where stdout and stderr go.
  * @param timeoutMs hard bound; the process is killed past it.
+ * @param cwd working directory for the shell (default: this process's).
  * @returns the exit status and the output.
  */
-export async function runBash(args: string[], env: NodeJS.ProcessEnv, outFile: string, timeoutMs: number): Promise<{ status: number | null; output: string }> {
+export async function runBash(args: string[], env: NodeJS.ProcessEnv, outFile: string, timeoutMs: number, cwd?: string): Promise<{ status: number | null; output: string }> {
   const fd = openSync(outFile, 'w');
   try {
-    const child = spawn(BASH, args, { env, stdio: ['ignore', fd, fd], windowsHide: true });
+    const child = spawn(BASH, args, { env, cwd, stdio: ['ignore', fd, fd], windowsHide: true });
     const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
     const status = await new Promise<number | null>((done) => {
       child.once('error', () => done(null));

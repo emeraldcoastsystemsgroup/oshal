@@ -4,6 +4,7 @@
 # SEQ | AUTHOR | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com | New. Worker quiesce for the nightly gate (operator decision 2026-09-21, BACKLOG "The nightly gate runs against a saturated box"): stop the workers the operator NAMED (OSHAL_CI_QUIESCE_WORKERS) for the run and always restore them. Nothing is stopped unless it is named, carries the `oshal.tier=worker` label (so the infrastructure tier, the api and the monitoring overlay can never qualify), is not a routing-critical agent in scripts/routability-critical-bots.txt (Jarvis's brain, the fallback owner, trading, finance and communications - the trading bot among them, and the bots whose absence makes the stack watchdog bounce the api), and is running. The state file is written BEFORE the first stop, so a run killed mid-way still names everything it may have stopped; every run that takes the lock restores a leftover first, on_exit restores on failure and interruption, and `--resume` restores by hand. A stopped worker fires SwarmContainerDown (intake: auto - one incident with unattended RCA analysis each, and with SELF_HEAL_AUTO_APPLY a restart of the container mid-run), so the run silences exactly that alert for exactly those containers and refuses to stop anything it cannot silence. Restore is `docker start` of exactly what was stopped, batched with oshal-up.sh's knobs: oshal-up.sh itself force-recreates the api and starts every compose service, which is neither "keep the api up" nor "resume what it paused".
+# 2 | maintainer@emeraldcoastsystemsgroup.com | --plan splits its list with `read -r -a`, exactly as the run's selection does. It used an unquoted expansion, so `--plan '*'` globbed against the working directory and reported any file named like an eligible container as WOULD STOP, while the run refused `*` as a name. A plan must never disagree with the run it previews.
 #
 # Sourced by scripts/ci-local.sh after `log` is defined. Also runnable on its own:
 #   bash scripts/ci/ci-quiesce.sh --plan [name ...]   which configured (or given) names WOULD be stopped,
@@ -296,7 +297,7 @@ ci_quiesce_recover_leftover() {
 
 # Standalone entry: --plan (read-only) and --resume (the hand restore after a killed run).
 ci_quiesce_main() {
-  local mode="${1-}" force=0 name list
+  local mode="${1-}" force=0 name list names=()
   shift || true
   [ "${1-}" = --force ] && { force=1; shift; }
   ci_quiesce_settings
@@ -304,9 +305,11 @@ ci_quiesce_main() {
     --plan)
       list="${OSHAL_CI_QUIESCE_WORKERS-}"
       [ "$#" -gt 0 ] && list="$*"
-      [ -n "${list//[[:space:],]/}" ] || { log "quiesce-plan: no names (set OSHAL_CI_QUIESCE_WORKERS or pass names)"; return 2; }
+      # Split exactly as ci_quiesce_select does: read -a never globs, so `*` stays a name and is refused.
+      read -r -a names <<< "${list//,/ }"
+      [ "${#names[@]}" -gt 0 ] || { log "quiesce-plan: no names (set OSHAL_CI_QUIESCE_WORKERS or pass names)"; return 2; }
       ci_quiesce_load_critical || { log "quiesce-plan: the routing-critical list is unreadable; every name would be refused"; return 1; }
-      for name in ${list//,/ }; do
+      for name in "${names[@]}"; do
         if ci_quiesce_eligible "$name"; then log "quiesce-plan: $name WOULD STOP (worker, agent ${CI_QUIESCE_AGENT:-none}, running)"
         else log "quiesce-plan: $name REFUSED ($CI_QUIESCE_REFUSAL)"; fi
       done ;;
