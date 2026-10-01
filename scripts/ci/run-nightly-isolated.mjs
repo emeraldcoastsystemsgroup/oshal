@@ -20,6 +20,7 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com | Include the real Vitest discovery guard for the default tree-walk serial project; it starts no database or test worker of its own.
  * 15 | maintainer@emeraldcoastsystemsgroup.com | The two-tenant isolation proof for provision-tenant.sh joins the fixed isolated set. It starts and destroys its own PostgreSQL, applies each rendered database.sql with the real psql inside that container and connects as each tenant's own role, so it needs Docker and Git Bash and reads no database address - the same shape as the backup round-trip guard beside it.
  * 16 | maintainer@emeraldcoastsystemsgroup.com | The tenant-isolation cluster acceptance's logic spec joins beside it: it runs accept-tenant-isolation.sh, provision-tenant.sh and verify-tenant-isolation.sh in Git Bash against a stateful kubectl stand-in, so it needs Git Bash and reaches no cluster - the same shape as the ci-local guards in this set.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com | The three nightly-saturation guards join the fixed isolated set beside the other ci-local guards: the worker quiesce and the resource-exhausted outcome each run production pieces of scripts/ci-local.sh in Git Bash over stand-ins (a stateful docker, an Alertmanager on loopback, a scripted /proc/meminfo) and reach no engine, and the duration check reads fixture logs only.
  */
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, createWriteStream } from 'node:fs';
@@ -46,6 +47,9 @@ export const NIGHTLY_ISOLATED_SUITES = Object.freeze([
   'tests/unit/ci-local-secret-scan-planted-fixture.spec.ts',
   'tests/unit/ci-local-secret-scan-unreadable-path.spec.ts',
   'tests/unit/ci-gate-streak.spec.ts',
+  'tests/unit/ci-local-quiesce.spec.ts',
+  'tests/unit/ci-local-resource-exhausted.spec.ts',
+  'tests/unit/ci-run-durations.spec.ts',
   'tests/unit/trading-engine-cost-basis-postgres.spec.ts',
   'tests/unit/trading-event-plans.spec.ts',
   'tests/unit/trading-earnings-rules.spec.ts',

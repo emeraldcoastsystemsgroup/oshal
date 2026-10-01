@@ -24,6 +24,7 @@
  * 18 | maintainer@emeraldcoastsystemsgroup.com | Register the database-free Vitest discovery guard beside the tree-walk suites whose default scheduling it protects.
  * 19 | maintainer@emeraldcoastsystemsgroup.com | Register the two-tenant isolation proof for provision-tenant.sh (isolated tier, ADR-035 amendment) on the isolated nightly scenario: it renders two tenants with the shipped script, applies each rendering with the real psql on a PostgreSQL it starts and destroys, and requires a cross-tenant database connection and a cross-tenant row read to be refused. It reads no database address, so the scenario's fixed local runner is the gate that executes it.
  * 20 | maintainer@emeraldcoastsystemsgroup.com | Register the logic spec of the tenant-isolation cluster acceptance (accept-tenant-isolation.sh over a stateful kubectl stand-in: accepts only proven isolation with both created namespaces confirmed deleted, refuses before creating anything) on the same isolated nightly scenario. It needs Git Bash and reaches no cluster.
+ * 21 | maintainer@emeraldcoastsystemsgroup.com | Register the nightly-saturation guards on the isolated nightly scenario: the worker quiesce (only named, running, non-critical workers stop, silenced; restored after pass, fail, SIGTERM, SIGINT, and from the state file after SIGKILL), the RESOURCE-EXHAUSTED outcome (decided by measured host memory, never by words in gate output) and the duration measurement the backlog's done-when is read with. Git Bash and stand-ins only; no engine.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -77,6 +78,9 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/ci-local-secret-scan-planted-fixture.spec.ts' },
     { level: 'integration', path: 'tests/unit/ci-local-secret-scan-unreadable-path.spec.ts' },
     { level: 'unit', path: 'tests/unit/ci-gate-streak.spec.ts' },
+    { level: 'integration', path: 'tests/unit/ci-local-quiesce.spec.ts' },
+    { level: 'integration', path: 'tests/unit/ci-local-resource-exhausted.spec.ts' },
+    { level: 'unit', path: 'tests/unit/ci-run-durations.spec.ts' },
     { level: 'integration', path: 'tests/unit/trading-engine-cost-basis-postgres.spec.ts' },
     { level: 'integration', path: 'tests/unit/trading-event-plans.spec.ts' },
     { level: 'integration', path: 'tests/unit/trading-earnings-rules.spec.ts' },
