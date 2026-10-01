@@ -3,6 +3,8 @@
   OSHAL Node — renderer markup. A Jarvis-style orb you talk to (chat over the
   swarm), plus a config screen (connection + local account logins) and a worker
   activity log (tasks this machine runs for the swarm). Logic lives in renderer.js.
+  Config -> Window: Simple chat swaps the orb for a plain text chat (chat-view.js over the shared
+  simple-chat.js/.css kit, docs/architecture/simple-chat.md); the orb stays the default.
 -->
 <html lang="en">
   <head>
@@ -10,6 +12,7 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src *; media-src 'self' mediastream:" />
     <title>OSHAL Node</title>
     <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="simple-chat.css" />
   </head>
   <body>
     <header class="topbar">
@@ -59,6 +62,9 @@
         <div id="worklog" class="worklog-body"><div class="muted">No tasks yet.</div></div>
       </section>
     </main>
+
+    <!-- ============ Simple chat (Config -> Window: Simple chat) ============ -->
+    <main id="chatView" class="chat-view hidden" aria-label="Simple chat"></main>
 
     <!-- ============ Config screen ============ -->
     <section id="settings" class="settings hidden">
@@ -123,6 +129,15 @@
         </div>
       </div>
 
+      <h2>Window</h2>
+      <p class="hint">Voice orb is the talk-first window. Simple chat is a plain text chat: type in the box at the bottom, and the conversation stays above it. With Simple chat, Full Jarvis opens the simple chat too.</p>
+      <label>Window style
+        <select id="viewMode">
+          <option value="orb">Voice orb (default)</option>
+          <option value="chat">Simple chat</option>
+        </select>
+      </label>
+
       <h2>Full Jarvis</h2>
       <p class="hint">The full swarm cockpit — Jarvis with task history, dynamic visual responses, and (for allowlisted operators) super-admin tools — rendered from the swarm under your signed-in identity. The local worker keeps running either way.</p>
       <div class="row">
@@ -173,6 +188,8 @@
       </div>
     </section>
 
+    <script src="simple-chat.js"></script>
+    <script src="chat-view.js"></script>
     <script src="renderer.js"></script>
   </body>
 </html>

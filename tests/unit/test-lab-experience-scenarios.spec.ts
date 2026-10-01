@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove the experience-shells Lab step classifies a missing page as a deployment gap, a refused page or feed as degraded, a broken page or failed feed as fail, and a healthy pass as pass; and that its registration references suites that exist.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Simple chat joins the entry pages: the healthy pass names 10 pages, and /simple is probed for its sc-root marker.
  */
 import { describe, expect, it } from 'vitest';
 import { existsSync } from 'node:fs';
@@ -17,7 +18,8 @@ const healthyReads = () => EXPERIENCE_JOINED_READS.map(path => ({ path, status: 
 describe('experience shells Lab step', () => {
   it('passes only when every page serves its shell and every joined feed answers', () => {
     const result = classifyExperienceProbe(healthyPages(), healthyReads());
-    expect(result.state).toBe('pass'); expect(result.detail).toContain('9 experience pages');
+    expect(result.state).toBe('pass'); expect(result.detail).toContain('10 experience pages');
+    expect(EXPERIENCE_ENTRY_PAGES).toContainEqual(['/simple', 'sc-root']);
   });
   it('names a 404 page as a deployment gap, not a failure of the shells', () => {
     const pages = healthyPages(); pages[1] = page('/studio', 404, 'not found', 'text/plain');

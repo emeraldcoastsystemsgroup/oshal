@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added /css and /js static aliases so legacy ui-enhanced engineering pages resolve absolute asset references
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Mount a fixed authenticated allowlist for locked local startup dependencies.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | ADR-164 experience shells: resolve the experience directory like cockpitDir (src/ or the image copy) so /portal, /studio, /jarvis, /orbit, /commons, /homebase and /nexus serve from the built container; the dist-relative guess, the layout-prefixed cockpit duplicates and the store-checkout Little Monsters mount are gone, and /little-monsters redirects to the classroom preset.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Serve /simple (simple.html, docs/architecture/simple-chat.md) behind requiresAuth like every experience entry page: the opt-in plain text screen over the caller's Jarvis thread.
  */
 
 import express from 'express';
@@ -41,6 +42,8 @@ const EXPERIENCE_PAGES: ReadonlyArray<readonly [string[], string]> = [
   [['/jarvis', '/jarvis/'], 'jarvis.html'],
   [['/orbit', '/orbit/'], 'orbit.html'],
   [['/commons', '/commons/'], 'commons.html'],
+  // Simple chat (docs/architecture/simple-chat.md): the plain text screen over the caller's Jarvis thread.
+  [['/simple', '/simple/'], 'simple.html'],
 ];
 
 /**

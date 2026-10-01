@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | cockpitBaseUrl (OSHAL_COCKPIT_BASE_URL): sign-in + cockpit must target the swarm's PUBLIC origin when OIDC lives behind a tunnel — the IdP sets the session cookie there, never on the LAN control-plane origin
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Version desktop settings and make the hosted Full-Jarvis surface the default for new/unset profiles without overriding an explicit orb-only choice.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | printServicePort (OSHAL_PRINT_SERVICE_PORT) so a node can advertise its print-to-rag printer alongside a standalone print-drop already holding 631. A non-numeric env value is REJECTED rather than becoming NaN and landing the printer on a random port.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | viewMode (OSHAL_VIEW): 'orb' keeps the voice orb (the default, unchanged); 'chat' shows the simple text chat in this window and opens /simple in the Full Jarvis window (docs/architecture/simple-chat.md). Any other value reads as 'orb'.
  */
 
 import { app } from 'electron';
@@ -73,6 +74,23 @@ export interface OshalChatConfig {
    *  change it when a standalone print-drop already holds 631 on this machine (two instances on
    *  one port is an EADDRINUSE the loser only reports in its log). */
   printServicePort: number;
+  /** Which local window this node shows: 'orb' (the voice orb, the default) or 'chat' (the simple text chat:
+   *  box at the bottom, conversation above). 'chat' also makes the Full Jarvis window open /simple instead of the
+   *  cockpit. Seedable as OSHAL_VIEW; any other value reads as 'orb'. */
+  viewMode: ViewMode;
+}
+
+/** The node's local window style (see OshalChatConfig.viewMode). */
+export type ViewMode = 'orb' | 'chat';
+
+/**
+ * @description Reads a stored, seeded or submitted window style. Only 'chat' selects the simple chat; anything else,
+ * including a value an older or newer build wrote, keeps the orb, so an unknown value can never blank the window.
+ * @param value The candidate value.
+ * @returns The window style to use.
+ */
+export function normalizeViewMode(value: unknown): ViewMode {
+  return value === 'chat' ? 'chat' : 'orb';
 }
 
 export const CURRENT_CONFIG_VERSION = 2;
@@ -101,6 +119,7 @@ const DEFAULT_CONFIG: OshalChatConfig = {
   printServiceEnabled: false,
   printServiceSpoolDir: '',
   printServicePort: 631,
+  viewMode: 'orb',
 };
 
 /**
@@ -123,11 +142,13 @@ export function migrateConfig(
     && !Object.prototype.hasOwnProperty.call(persisted, 'fullJarvisEnabled')
   ) migrated.fullJarvisEnabled = true;
 
-  return {
+  const next: OshalChatConfig = {
     ...migrated,
     ...envSeed,
     configVersion: CURRENT_CONFIG_VERSION,
   };
+  next.viewMode = normalizeViewMode(next.viewMode);
+  return next;
 }
 
 /**
@@ -147,7 +168,7 @@ function readEnvSeed(): Partial<OshalChatConfig> {
     OSHAL_CONTROL_PLANE_URL, OSHAL_SHARED_SECRET, OSHAL_AUTH_HEADER, OSHAL_CLIENT_NAME,
     OSHAL_WORKER_ENABLED, OSHAL_FULL_JARVIS, OSHAL_COCKPIT_PATH, OSHAL_COCKPIT_BASE_URL,
     OSHAL_WAKE_NAME, OSHAL_ENROLLMENT_TOKEN, OSHAL_CLIENT_ID,
-    OSHAL_PRINT_SERVICE, OSHAL_PRINT_SERVICE_DIR, OSHAL_PRINT_SERVICE_PORT,
+    OSHAL_PRINT_SERVICE, OSHAL_PRINT_SERVICE_DIR, OSHAL_PRINT_SERVICE_PORT, OSHAL_VIEW,
   } = process.env;
 
   // A DEVICE-BOUND token names the device it may register as, so when the swarm mints the
@@ -204,6 +225,11 @@ function readEnvSeed(): Partial<OshalChatConfig> {
     // A non-numeric value must not silently become NaN and land the printer on a random port.
     if (Number.isInteger(port) && port > 0 && port < 65536) seed.printServicePort = port;
   }
+  // The installer can start a node in the simple chat. Only the two known values are accepted, so a typo leaves
+  // the stored choice alone instead of silently switching windows.
+  if (OSHAL_VIEW === 'chat' || OSHAL_VIEW === 'orb') {
+    seed.viewMode = OSHAL_VIEW;
+  }
   return seed;
 }
 
@@ -256,6 +282,7 @@ export class ConfigStore {
       ...update,
       configVersion: CURRENT_CONFIG_VERSION,
     };
+    next.viewMode = normalizeViewMode(next.viewMode);
     const dir = dirname(this.filePath);
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });

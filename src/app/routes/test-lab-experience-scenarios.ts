@@ -11,6 +11,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Register the kernel applications' audience-view specs (Security Center, Workflow Studio, DevOps + Vault, Bot Forge, OSHAL Engineering's configuration page, Intelligent Processing, Person model): each serves the real page at its real route with the real kit and proves the company and family cards from the page's own reads, the refusals, the in-frame action, and the full page starting unchanged without an audience or with one it does not provide.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Register the Home build specs (opt-in check-ins over ADR-169, the household, the learner and the classroom, Routines, search, tabs, the agenda, the dialogs and the choices; the data seam) and the central-assistant build specs (the availability route over real HTTP, the data kit, and the Chromium build: Calendar and Travel in context, readback states and meter, the best-match line, the comparison across free weekends, the fit of typed dates, the page's ledger rows, six widths) plus the Duffel normaliser's unit spec.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Register the full-swarm build specs (pure readers; work panels with workflow, Approve and Cancel, the Routines panel, the day focus, visual cards, package facts, membership and the caller's own place, the portal sections and the six-width layout check) as regression tests of the experience scenario, and name them in its description
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Simple chat (docs/architecture/simple-chat.md): /simple joins the entry pages the live step reads (its root marker is sc-root), and the kit, /simple and OSHAL Node Simple chat specs are registered as regression tests.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -18,6 +19,7 @@ import type { Scenario, StepResult } from './test-lab-scenarios';
 export const EXPERIENCE_ENTRY_PAGES: ReadonlyArray<readonly [string, string]> = [
   ['/portal', 'portal-root'], ['/studio', 'id="app"'], ['/jarvis', 'id="app"'], ['/orbit', 'id="app"'], ['/commons', 'id="app"'],
   ['/homebase?preset=family', 'homebase-root'], ['/homebase?preset=classroom', 'homebase-root'], ['/homebase?preset=company', 'homebase-root'], ['/nexus', 'nexus-root'],
+  ['/simple', 'sc-root'],
 ];
 /** The caller-scoped reads every shell joins before it renders anything. */
 export const EXPERIENCE_JOINED_READS = ['/api/auth/user', '/api/swarm/apps/home-plan', '/api/ui/workspaces', '/api/jarvis/tasks', '/api/tickets?limit=1'];
@@ -66,7 +68,7 @@ export async function experienceShellsStep(cookie: string, fetchImpl: typeof fet
 
 export const EXPERIENCE_SCENARIOS: Scenario[] = [{
   id: 'experience-shells', title: 'Experience shells over the live swarm', group: 'tool',
-  description: 'Open the eight experience entry pages (Studio, Jarvis, Orbit, Commons, the Home, Little Monsters and Business homebases, the central assistant) with the initiating session and read the caller-scoped feeds they join. Local suites prove the adapter joins and the Chromium behaviour over an isolated synthetic swarm: catalog and work rendering, pins, the Jarvis ask flow with thread roll and refusal, room threads, homebase modules and honest setup/denial states. The classroom homebase also lists the Little Monsters tools the caller is admitted to (the ribbon profile) and opens them in place. The full-swarm layouts add work panels over the ticket routes (recorded workflow, Approve, Cancel), the Routines panel over the caller’s schedules, a device-local day focus, visual cards, package facts, household or team membership with the caller’s own place, and the portal’s gallery sections.',
+  description: 'Open the experience entry pages (Studio, Jarvis, Orbit, Commons, the Home, Little Monsters and Business homebases, the central assistant, and Simple chat) with the initiating session and read the caller-scoped feeds they join. Local suites prove the adapter joins and the Chromium behaviour over an isolated synthetic swarm: catalog and work rendering, pins, the Jarvis ask flow with thread roll and refusal, room threads, homebase modules and honest setup/denial states. The classroom homebase also lists the Little Monsters tools the caller is admitted to (the ribbon profile) and opens them in place. The full-swarm layouts add work panels over the ticket routes (recorded workflow, Approve, Cancel), the Routines panel over the caller’s schedules, a device-local day focus, visual cards, package facts, household or team membership with the caller’s own place, and the portal’s gallery sections.',
   regressionTests: [
     { level: 'unit', path: 'tests/unit/experience-live-data.spec.ts' },
     { level: 'unit', path: 'tests/unit/test-lab-experience-scenarios.spec.ts' },
@@ -93,6 +95,10 @@ export const EXPERIENCE_SCENARIOS: Scenario[] = [{
     { level: 'browser', path: 'tests/unit/experience-kernel-oshal-engineering-view.spec.ts' },
     { level: 'browser', path: 'tests/unit/experience-kernel-intelligent-processing-view.spec.ts' },
     { level: 'browser', path: 'tests/unit/experience-kernel-person-model-view.spec.ts' },
+    { level: 'unit', path: 'tests/unit/simple-chat-kit.spec.ts' },
+    { level: 'browser', path: 'tests/unit/experience-simple-chat-browser.spec.ts' },
+    { level: 'browser', path: 'tests/unit/oshal-node-simple-chat-browser.spec.ts' },
+    { level: 'unit', path: 'tests/unit/oshal-node-simple-chat-config.spec.ts' },
   ],
   steps: [{ id: 'pages', app: 'cockpit', label: 'Experience pages and their joined reads', run: (cookie) => experienceShellsStep(cookie) }],
 }];

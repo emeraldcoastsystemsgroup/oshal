@@ -17,6 +17,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com | The application panel carries its package facts (a 'facts' detail part for layouts with shell-panels.js); a detail slot can render related applications with another action (select-app navigates instead of opening a panel); pinning in the directory keeps the keyboard on the same application's pin after the grid is rebuilt; appCard is exported for the Commons room grid.
  * 13 | maintainer@emeraldcoastsystemsgroup.com | Household and team membership and the caller's own place for layouts with shell-panels.js: fillPeople reads GET /api/tenants, the chosen tenant's GET /api/tenants/:id/members and the caller's GET /api/location/state once per page; the People panel adds 'Your household or team', the caller's roster row carries their place, and a roster read afterwards names the members it knows.
  * 14 | maintainer@emeraldcoastsystemsgroup.com | 'What is live in this view' lists the reads a layout makes on demand (routines, Workflow Studio definitions, households and teams, the caller's own place, Finance spend, a ticket's workflow) with each one's status once made or 'read when you open it', and says only the caller's own place is shown; a game-like application's panel lists the other games on this swarm (the demo's game room offered them).
+ * 15 | maintainer@emeraldcoastsystemsgroup.com | The experience list gains Simple chat (/simple, docs/architecture/simple-chat.md), the opt-in plain text screen over the caller's Jarvis thread; every other entry is unchanged.
  */
 (() => {
   'use strict';
@@ -37,7 +38,8 @@
     { id: 'family', label: 'Home · family homebase', href: '/homebase?preset=family', skin: 'family', family: 'homebase', tagline: 'Shared life, personal space', palette: 'Cozy sage' },
     { id: 'classroom', label: 'Little Monsters · classroom', href: '/homebase?preset=classroom', skin: 'classroom', family: 'homebase', tagline: 'Teacher and learner views', palette: 'Playful violet' },
     { id: 'company', label: 'Business · company swarm', href: '/homebase?preset=company', skin: 'company', family: 'homebase', tagline: 'Projects, people, workspace', palette: 'Slate & teal' },
-    { id: 'nexus', label: 'Central assistant', href: '/nexus', skin: 'nexus', family: 'assistant', tagline: 'Intent first', palette: 'Luminous cyan' }
+    { id: 'nexus', label: 'Central assistant', href: '/nexus', skin: 'nexus', family: 'assistant', tagline: 'Intent first', palette: 'Luminous cyan' },
+    { id: 'simple', label: 'Simple chat', href: '/simple', skin: 'simple', family: 'assistant', tagline: 'Just type', palette: 'Your theme' }
   ];
   const experienceFor = id => EXPERIENCES.find(e => e.id === id) || null;
   function currentExperience() {

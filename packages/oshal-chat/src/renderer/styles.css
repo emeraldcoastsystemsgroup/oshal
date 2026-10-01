@@ -162,3 +162,19 @@ label.check input { width: auto; margin: 0; }
 .acct-swarm { color: var(--muted); font-size: 12px; }
 .acct-swarm.on { color: var(--ok); }
 .account .ghost-btn { margin-left: 8px; }
+
+/* ============ Simple chat window (Config -> Window: Simple chat) ============
+   The shared simple chat kit (simple-chat.js/.css, byte copies of src/shared/ui) inside the node window, wearing the
+   node palette through the theme tokens the kit reads. Only shown when the node is set to Simple chat. */
+.chat-view {
+  flex: 1; min-height: 0; display: flex; flex-direction: column;
+  --bg-primary: var(--bg); --bg-secondary: rgba(20, 27, 51, 0.6); --bg-card: var(--panel); --border-color: var(--border);
+  --text-primary: var(--text); --text-secondary: var(--muted); --accent-primary: var(--accent); --status-error: var(--err);
+  --sc-on-accent: #06281f;
+}
+.chat-view.hidden { display: none; }
+.chat-view > .sc { flex: 1; min-height: 0; height: auto; }
+.settings select {
+  width: 100%; margin-top: 4px; padding: 8px 10px;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 13px;
+}
