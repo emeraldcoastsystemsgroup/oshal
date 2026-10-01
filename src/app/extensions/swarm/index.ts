@@ -76,6 +76,7 @@
  * 69 | maintainer@emeraldcoastsystemsgroup.com | The controller's own swarm worker wiring (execution handler deps, cost-linking ticket service, worker channels, ticket-terminal check, bid responder, SwarmAgentWorker) moved to ./controller-swarm-worker.ts because this file crossed 800 code lines. Pure move; behaviour unchanged.
  * 70 | maintainer@emeraldcoastsystemsgroup.com | Build-lane planning runs in-process: MultiRoundDispatchService gets isDelegationEnforced (the controller signing configuration) and, once the controller worker's handler deps exist, the project-manager round executor (controller-pm-round-executor.ts).
  * 71 | maintainer@emeraldcoastsystemsgroup.com | Wired the signed build-execution dispatcher (createSignedChildDispatcher) into the swarm processing service, so build execution crosses the signed bot-node hop as the ticket's owner while delegation signing is configured.
+ * 72 | maintainer@emeraldcoastsystemsgroup.com | Verification and consensus review get isDelegationEnforced: under signing they skip the unsigned mesh round every node refuses and use the structural result immediately.
  */
 
 import type { Pool } from 'pg';
@@ -408,6 +409,8 @@ export function createSwarmExtensionBindings(
   const verificationService = new SwarmVerificationService({
     meshTransport,
     workItemRepository,
+    // Under signing every node refuses an unsigned mesh round, so QA uses the structural result.
+    isDelegationEnforced: () => hasDelegationSigningConfiguration(process.env),
   });
 
   // Memory services — per-agent + shared swarm memory backed by ChromaDB via RagService
@@ -419,6 +422,7 @@ export function createSwarmExtensionBindings(
     meshTransport,
     workItemRepository,
     handoverManager: new RALFHandoverManager(),
+    isDelegationEnforced: () => hasDelegationSigningConfiguration(process.env),
   });
 
   // Operational intelligence — created early so competencyRanker can feed routing

@@ -286,20 +286,24 @@ While signing is configured, two more rules apply:
   nothing is published, and planning continues on project-manager's output. A high-complexity ticket
   therefore gets no `TECHNICAL-SPECIFICATION.md`.
 
-### What is still refused, and why it is not this rule
+### What the build pipeline still does not send over this hop
 
-One refusal survives this routing decision, and it is not fixed by naming a different worker.
-(The `task` lane's call-out was the second; it is closed above under
+Build execution crosses this hop ([Build-lane execution targets](#build-lane-execution-targets)) and
+planning runs in-process ([Build-lane planning runs in-process](#build-lane-planning-runs-in-process)).
+The remaining swarm rounds have no signed transport, so while signing is configured they do not run:
+
+- **Planning rounds.** The plan-reviewer round and the Phase-8 architecture round are skipped.
+  Planning continues on project-manager's output, and a high-complexity ticket gets no
+  `TECHNICAL-SPECIFICATION.md`.
+- **QA rounds.** Verification's task-manager round and consensus review's reviewer rounds are
+  skipped. The structural result decides instead: every unit needs a description and acceptance
+  criteria, and the root folder needs a deliverable of the expected kind. Every node refused those
+  rounds before, and the controller then waited 600 s for that same structural result. Guard:
+  `tests/unit/swarm-verification-enforced-fallback.spec.ts`.
+
+(The `task` lane's call-out was the other refusal this page tracked; it is closed above under
 [The `task` call-out](#the-task-call-out-may-not-hand-a-queued-ticket-to-an-unreachable-owner).)
-
-- **The `build` pipeline does not use this hop at all.** The swarm pipeline sends work units over
-  the Redis mesh (`buildExecutionEnvelope` -> `MESH_CHANNELS.agentDirect`), and every bot node wraps
-  its mesh handler in `prohibitUnsignedMeshExecution`, so with a public ring configured it answers
-  `Unsigned Redis mesh execution is prohibited while delegation enforcement is active`. Giving
-  system-architect a node fixes the controller's routing decision; it does not give the swarm
-  pipeline a signed transport.
-
-It is tracked in [the backlog](../BACKLOG.md).
+Carrying these rounds over the signed hop is tracked in [the backlog](../BACKLOG.md).
 
 ## Generate a key pair
 

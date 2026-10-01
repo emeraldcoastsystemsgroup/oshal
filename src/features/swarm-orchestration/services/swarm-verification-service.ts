@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Removed MOCK_OIDC verification bypass — MOCK_OIDC only controls auth, not quality gates. Task-manager agent verification now runs in all modes.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Structural checks trust workspace deliverables over output text heuristics — when real files exist, skip keyword/length string matching.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six, and it decides whether a build produced a deliverable - a wrong root reads an empty directory and escalates a ticket that actually succeeded.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | While delegation signing is configured, verification skips the unsigned task-manager mesh round (every node refuses it, and the controller then waited 600 s for the same structural result) and returns the structural result immediately.
  */
 
 import fs from 'node:fs';
@@ -54,6 +55,11 @@ export interface SwarmVerificationResult {
 export interface SwarmVerificationDeps {
   meshTransport?: MeshTransport;
   workItemRepository?: WorkItemRepository;
+  /**
+   * True while controller delegation signing is configured. Every node refuses an unsigned mesh
+   * envelope then, so the task-manager round is skipped and the structural result is used at once.
+   */
+  isDelegationEnforced?: () => boolean;
 }
 
 /**
@@ -64,10 +70,12 @@ export interface SwarmVerificationDeps {
 export class SwarmVerificationService {
   private readonly meshTransport?: MeshTransport;
   private readonly workItemRepository?: WorkItemRepository;
+  private readonly isDelegationEnforced: () => boolean;
 
   constructor(deps: SwarmVerificationDeps = {}) {
     this.meshTransport = deps.meshTransport;
     this.workItemRepository = deps.workItemRepository;
+    this.isDelegationEnforced = deps.isDelegationEnforced ?? (() => false);
   }
 
   /**
@@ -106,7 +114,9 @@ export class SwarmVerificationService {
     // â”€â”€ Task-manager agent verification (real QA via mesh) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // The task-manager bot reads the actual deliverables and validates against
     // acceptance criteria using its own LLM runtime. No separate API key needed.
-    if (this.meshTransport && this.workItemRepository) {
+    if (this.meshTransport && this.workItemRepository && this.isDelegationEnforced()) {
+      logger.info({ externalId: item.externalId }, 'Delegation signing is configured: the unsigned task-manager round is skipped and the structural result stands');
+    } else if (this.meshTransport && this.workItemRepository) {
       const judgeResult = await this.routeToTaskManager(item, workUnits, selectedAgentId, executionOutput, workspaceTaskId);
       if (judgeResult) {
         return this.logAndReturn(item.externalId, judgeResult, startedAt);
