@@ -62,6 +62,15 @@ browser teardown allowance. Its registration test verifies that the referenced f
 are included in the command. The two Lab scenarios are `artifact-discovery` and
 `jarvis-artifact-handoff`; [the Test Lab guide](../docs/test-lab.md) describes their live effects.
 
+For brand looks in the deck engine (the `brand-look-render` card), run
+`npx vitest run tests/unit/brand-look-render.spec.ts tests/unit/deck-looks-unchanged.spec.ts tests/unit/test-lab-brand-look-registration.spec.ts`.
+The first opens a .pptx, .docx and .xlsx drawn in a brand look and reads the colors and faces back,
+and proves an invalid kit or forged look is refused. The second compares every OOXML part of the ten
+built-in looks, and the picker catalog, with `tests/fixtures/deck-look-digests-2026-10-01.json`,
+which was generated from the renderer before brand looks existed. Regenerate that fixture only for a
+change meant to alter a built-in look: `OSHAL_WRITE_DECK_LOOK_DIGESTS=1 npx vitest run tests/unit/deck-looks-unchanged.spec.ts`.
+No suite touches a database, a route or the network.
+
 Suites that own a fixture browser through `tests/fixtures/isolated-browser.ts` set their hook timeout
 from the fixture's own `BROWSER_HOOK_TIMEOUT_MS`, so the runner's hook deadline can never fire before
 the fixture reaches a verdict about the browser process. The fixture gives that process one exit

@@ -1,6 +1,6 @@
 # ADR-103: AI Office — one themed engine across .pptx, .docx and .xlsx
 
-**Status:** Accepted (2026-07-17)
+**Status:** Accepted (2026-07-17); amended 2026-10-01 (brand looks, see the addendum)
 **Relates to:** ADR-036 (bot-owned apps), ADR-043 (Presentation Studio), ADR-097 (suites)
 
 ## Context
@@ -56,3 +56,31 @@ failure — a standing no-mock violation).
   removed.
 - Graph/OneDrive delivery (save the artifact into the user's real Microsoft 365 via the
   operator's Graph engine) is the intended next seam and is out of scope here.
+
+## Addendum (2026-10-01): brand looks
+
+Approved by the operator as a core change on 2026-09-22. Decision 2 is extended: the ten
+looks are still the only built-in looks, and a caller may also hand the renderers a **brand
+look** built from a brand kit.
+
+- `brandTheme({ base, colors, fonts })` builds a complete look. `base` is one of the ten look
+  ids; `colors` is the kit's five roles (`primary`, `secondary`, `accent`, `dark`, `light`,
+  six-digit hex each); `fonts` is a heading and a body face from `OFFICE_SAFE_FONTS`. `light`
+  becomes the page, `dark` the text and the cover surface, `primary` and `secondary` the two
+  accents, and the chart series run primary, secondary, accent and then eased variants. A brand
+  color is used as text only where it reads at 4.5:1; otherwise the text is black or white. The
+  cover, decoration, corner radius, title casing and mono face come from the base look. The
+  look's id is `brand:<base>`.
+- `resolveTheme`, `docxTheme`, `xlsxTheme` and the three renderers accept a look id or such a
+  look (`DeckRenderOptions.theme` is `DeckThemeId | DeckTheme`). An id resolves as before: an
+  unknown id falls back to the default, and only the ten ids count (an inherited name such as
+  `constructor` is unknown).
+- A look object is checked field by field before anything is drawn. An invalid one throws
+  `BrandLookError` (code `invalid_brand_look`) with a readable reason and is never replaced by
+  the default look, so a refused look produces no file.
+- `tests/unit/brand-look-render.spec.ts` opens a generated .pptx, .docx and .xlsx and reads the
+  brand colors and faces back. `tests/unit/deck-looks-unchanged.spec.ts` compares every OOXML part
+  of the ten looks in all three formats, and the picker catalog, with digests generated from the
+  renderer before this change. Only the package timestamps and pptxgenjs's process-wide chart
+  numbering are normalised.
+- The engine reads no package storage and no route was added: the caller supplies the kit.
