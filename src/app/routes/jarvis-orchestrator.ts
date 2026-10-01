@@ -32,6 +32,7 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com | Fail closed on inactive and duplicate-name concierge rows. A declared bot or workflow fallback must be the sole ACTIVE matching agent inside the app's executable agent_ids; only a metadata-only external chatBot may resolve outside that array, and only when exactly one ACTIVE global row owns the name. This keeps an unrelated lower-id name shadow from replacing a manifest's explicit agent id.
  * 15 | maintainer@emeraldcoastsystemsgroup.com | A dynamically discovered borrowed-concierge route must be discoverable as BOTH the referencing application and the distinct bot-owning application. Checking only owner('bots', id) let a protected surface inherit a shared concierge owner's grant, leaking its name/deep link and, in delegate mode, execution reach. Curated routes retain their historical owner-or-key rule because their keys need not be registered applications.
  * 16 | maintainer@emeraldcoastsystemsgroup.com | Handle unbindable lineage in returnProtectedComplexSummaries: hand off to automatic summarizer when work product is not protected, or write a stated sentence in the thread when protected work product lacks bindable executions.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com | buildCatalogBlock takes the user's words and delegates the text to jarvis-catalog-block.ts, which lists every effective route instead of the first 40 (66 on the live box on 2026-10-01: calendar, finance, rides and 23 more were invisible to routing and to the planner). The routes the ask names lead with their description; the rest are compact; the budget is what the 40 full lines cost.
  *
  * @module jarvis-orchestrator
  */
@@ -66,6 +67,7 @@ import { createOptionalJarvisVisual } from './jarvis-visual-response';
 import { extractJsonObject, extractJarvisDirectives } from './jarvis-directives';
 import { finishTask, findJarvisTaskSessionId, saveTaskPending } from './jarvis-task-store';
 import { publishJarvisTaskCompletion } from './jarvis-task-complete-notify';
+import { renderCatalogBlock } from './jarvis-catalog-block';
 import { captureDeliverableFiles } from './jarvis-deliverable-files';
 import {
   providerRecordsMatchingTrustedIntent,
@@ -623,36 +625,17 @@ export async function loadEffectiveRoutes(ctx: AppContext): Promise<{ routes: Ap
  * box lists its CRM, and a store install joins Jarvis's world the moment it activates (ADR-085) -
  * subject to the same ADR-087 role filter as every other reach path. Without it, Jarvis answered
  * "I don't have that data" about an app running on the same box (operator report, 2026-09-04).
- * Bounded (40 routes, trimmed blurbs); returns '' on failure so a catalog hiccup never blocks the
- * turn - the same degrade contract as buildOpenWorkBlock.
+ * Every route is listed within a fixed budget (jarvis-catalog-block.ts): the ones the ask names
+ * first with their description, the rest compact. Returns '' on failure so a catalog hiccup never
+ * blocks the turn - the same degrade contract as buildOpenWorkBlock.
  * @param ctx - app context (pool for dynamic discovery).
+ * @param ask - The user's words this turn, which decide the order and which entries carry a description.
  * @returns The catalog text block, or '' when it cannot be built.
  */
-export async function buildCatalogBlock(ctx: AppContext): Promise<string> {
+export async function buildCatalogBlock(ctx: AppContext, ask = ''): Promise<string> {
   try {
     const { routes } = await loadEffectiveRoutes(ctx);
-    if (!routes.length) return '';
-    const lines = routes.slice(0, 40).map((r) => {
-      const reach = r.mode === 'delegate'
-        ? 'you can hand work to it'
-        : `point the user to it: ${r.deepLink}`;
-      return `- ${r.key}: ${r.name} - ${r.blurb.slice(0, 180)} (${reach})`;
-    });
-    return [
-      'ASSISTANT CATALOG - the specialists and apps ON THIS DEPLOYMENT. This list is authoritative',
-      'and supersedes any baked-in specialist list in your instructions: installations differ, and',
-      'what is listed here is what exists for this user. When a question belongs to one of these',
-      'domains and you do not hold its data in this turn, never answer with a bare "I do not know" -',
-      'hand the work off, or name the owning app and point the user to it (with its link). These',
-      'are also the "catalog keys" the multi-app plan directive refers to. FRESHNESS: a result',
-      'in OPEN WORK is a record of that past task - it answers questions about that task only.',
-      'For a question about the CURRENT state of a catalog domain (counts, totals, what is in a',
-      'stage or list right now), FILE THE FRESH HANDOFF YOURSELF in this same reply - a data',
-      'read is not outward, so never ask permission first and never lead with the old number;',
-      'say the pull is under way. Point the user at the owning app only when its screen is',
-      'genuinely the better answer - never present an old task result as today\'s numbers.',
-      ...lines,
-    ].join('\n');
+    return renderCatalogBlock(routes, ask);
   } catch (err) {
     logger.warn({ err }, 'jarvis: buildCatalogBlock failed - the turn proceeds without the catalog');
     return '';

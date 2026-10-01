@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the 2026-10-01 fault where Jarvis could not plan a multi-step request: every live turn was 37,816 characters against the bot node's 24,000-character untrusted window, and the multi-app plan guidance, the open work and 23 of the 40 catalog entries sat past the cut. A real authenticated /api/jarvis/ask turn is driven at production size (a 40-entry catalog, eight 1,500-character open-work results, six application tool proposals sized like the live ones, a Haven preamble) and the prompt the model was handed is passed through the REAL prompt containment the node applies; the plan guidance, the last catalog entry, the tool guardrails and the question must all be inside the kept window. The application tool proposals spend their full JSON only on the tools the ask is about.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The catalog lists every route (it was capped at 40), so the production-sized turn now asserts all 40 store apps reach the model alongside the curated routes, with the last catalog line still inside the kept window.
  */
 
 import type { AddressInfo } from 'node:net';
@@ -146,7 +147,9 @@ describe('the multi-app plan guidance reaches the model on a production-sized Ja
     expect(prompt).toContain(OPEN_WORK);
     const catalogLines = prompt.slice(prompt.indexOf('ASSISTANT CATALOG'), prompt.indexOf(PLAN_DIRECTIVE_GUIDANCE))
       .split('\n').filter((line) => line.startsWith('- '));
-    expect(catalogLines.length).toBe(40);
+    // Every route is listed now (the catalog was capped at 40); all 40 store apps must be there.
+    expect(catalogLines.length).toBeGreaterThan(40);
+    for (let i = 0; i < 40; i++) expect(prompt).toContain(`- store-app-${String(i).padStart(2, '0')}: `);
     const kept = containedContent(prompt);
     expect(kept).toContain(QUESTION);
     expect(kept).toContain(PLAN_DIRECTIVE_GUIDANCE);
