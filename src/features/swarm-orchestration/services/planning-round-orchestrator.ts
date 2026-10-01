@@ -16,6 +16,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | The planning-entry and preparation-packet readers and the work-unit builders moved to ./planning-work-units.ts because this file crossed 800 code lines. Pure move; behaviour unchanged.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | The PM planning round carries the root ticket's owner and persisted verified issuer (readRoundOwner) so it can run in-process on the owner's hosted ladder (docs/security/http-delegation.md, "Build-lane planning runs in-process").
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | When the last planning round ran in-process, decomposition reads its reply from memory (planning-output-source.ts): no shared-volume fallback, the plan is recorded as IMPLEMENTATION-PLAN.md only when absent, and a failed round throws PlanningDecompositionError for the queue manager to escalate. Mesh rounds keep the existing parse path.
  */
 
 import { existsSync } from 'fs';
@@ -40,6 +41,7 @@ import type { SwarmProcessedTicketResult } from './swarm-run-store';
 import type { SwarmTicketLifecycleSnapshot } from './ticket-cycle-state-machine';
 import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 import { readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
+import { readInProcessPlanText, recordImplementationPlan } from './planning-output-source';
 import {
   TECHNICAL_SPECIFICATION_FILE,
   buildArchitectureWorkUnit,
@@ -228,7 +230,9 @@ export class PlanningRoundOrchestrator {
       context.planningEntry,
       context.preparationPacket,
     );
-    const planningResult = await this.parsePlanningOutput(input, planningDispatch.finalOutput, artifactPaths.workspacePath);
+    const planningResult = planningDispatch.inProcess
+      ? await this.parseInProcessPlan(input, planningDispatch.finalOutput)
+      : await this.parsePlanningOutput(input, planningDispatch.finalOutput, artifactPaths.workspacePath);
     artifactPaths.implementationPlanPath = planningResult.implementationPlanPath;
 
     if (planningResult.agentAssignments.length > 0) {
@@ -311,7 +315,7 @@ export class PlanningRoundOrchestrator {
     multiRoundDispatch: MultiRoundDispatchService,
     planningEntry: PlanningEntryDetails,
     preparationPacket: PreparationPacketDetails,
-  ): Promise<{ routing: RouteDecision; finalOutput: unknown }> {
+  ): Promise<{ routing: RouteDecision; finalOutput: unknown; inProcess: boolean }> {
     const initialWorkUnits = [buildPlanningWorkUnit(input.item, planningEntry, preparationPacket)];
     // PM always owns planning — bypass routing to prevent keyword-match fallback selecting wrong agents.
     const routing: RouteDecision = {
@@ -335,7 +339,32 @@ export class PlanningRoundOrchestrator {
       logger.warn({ ticketId: input.item.externalId, phase: SWARM_PHASES.PLANNING, missing: planCoverage.missingHandovers }, 'Planning handover coverage incomplete — continuing (handovers are written to the agent workspace)');
     }
 
-    return { routing, finalOutput: result.finalOutput };
+    // The phase output is the last round's; when that round ran in-process it is read from memory.
+    const inProcess = result.rounds[result.rounds.length - 1]?.executedInProcess === true;
+    return { routing, finalOutput: result.finalOutput, inProcess };
+  }
+
+  /**
+   * @description Decomposes the plan an in-process round returned, from memory only, and records it
+   * as IMPLEMENTATION-PLAN.md in the root folder. No file on the shared volume is read: no disk
+   * fallback, and an existing plan file is left untouched.
+   * @param input - Planning execution input.
+   * @param finalOutput - The in-process round's output.
+   * @returns The parsed units and assignments, and the plan path when it was written.
+   * @throws PlanningDecompositionError when the round failed or returned no text.
+   */
+  private async parseInProcessPlan(
+    input: PlanningPhaseExecutionInput,
+    finalOutput: unknown,
+  ): Promise<{ workUnits: DecomposedWorkUnit[]; agentAssignments: AgentAssignment[]; implementationPlanPath: string | undefined }> {
+    const text = readInProcessPlanText(input.item.externalId, finalOutput);
+    const implementationPlanPath = recordImplementationPlan(resolveSharedWorkspaceRoot(), input.workspaceTaskId, text);
+    const parsed = await this.deps.decompositionService.decomposeFromPlanningOutput(text, input.item);
+    logger.info(
+      { externalId: input.item.externalId, unitCount: parsed.workUnits.length, implementationPlanPath, source: 'in-process' },
+      'In-process planning output parsed from memory',
+    );
+    return { ...parsed, implementationPlanPath };
   }
 
   /** @description Parses PM output and enforces the implementation-plan artifact gate. */
