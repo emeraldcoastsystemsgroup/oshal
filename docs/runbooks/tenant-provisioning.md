@@ -5,9 +5,8 @@ one tenant. It covers one tenancy, `isolated`: each tenant gets its own database
 ([ADR-035](../adr/035-multi-tenant-saas-foundation.md), as amended on 2026-09-21). The script
 connects to nothing. It writes two files, and you apply them with `psql` and `kubectl`.
 
-The shared tier is **not commissioned**. `--tenancy=shared` is refused with exit 2 and renders
-nothing. The operator decision of 2026-09-21 says the shared tier is revisited only for "a real
-customer whose economics require sharing one database".
+The shared tier is **not built**. `--tenancy=shared` is refused with exit 2 and renders nothing.
+A shared mode is planned; see [Not built](#not-built).
 
 ## Render
 
@@ -21,7 +20,7 @@ bash scripts/governance/provision-tenant.sh acme --tenancy=isolated \
 | Argument | Required | Meaning |
 |---|---|---|
 | `<name>` | yes | Tenant slug: lower-case letters, digits and hyphens, 1-40 characters. It must start with a letter and must not end with a hyphen. |
-| `--tenancy=isolated` | yes | The only accepted value. `shared` is refused as not commissioned, and any other value is refused as unknown. |
+| `--tenancy=isolated` | yes | The only accepted value. `shared` is refused as not built, and any other value is refused as unknown. |
 | `--db-host=<host>` | yes | The PostgreSQL server that holds the tenant's database. It is written into the ConfigMap. |
 | `--apiserver-cidr=<a.b.c.d/n>` | yes | The kube-apiserver endpoint. Argo's wait sidecar needs it, and a namespace selector cannot match it. |
 | `--out=<dir>` | yes | The directory the two files are written to. If `database.sql` or `namespace.yaml` already exists there, the script refuses and does not overwrite it. |
@@ -152,7 +151,6 @@ tenant's own role and checks the following:
 - The namespace objects match the structure described above. Two tenants' renderings differ
   only in their names. A tenant name that YAML would read as another type, such as `no`, stays a
   string.
-
 - The rendering governs only the databases it creates. The server's other databases keep
   PostgreSQL's default `PUBLIC` `CONNECT`, so the tenant's role can open them: the case connects
   to `postgres` and to the fixture's own database. See [Not built](#not-built).
@@ -174,8 +172,9 @@ database owner already holds those rights.
 stateful kubectl stand-in, with `provision-tenant.sh` and `verify-tenant-isolation.sh` running for
 real. It covers the accepting run, which deletes exactly the two namespaces it created, and the
 cases that must not accept: cross-namespace traffic flowing, a pod that cannot reach itself, a pod
-that never becomes Ready, and an incomplete cleanup. It also covers the refusals that create
-nothing. It reaches no cluster, so it is not cluster evidence.
+that never becomes Ready, and an incomplete cleanup. When the cluster refuses an apply part-way or
+refuses a pod, the tenant's namespace is still deleted, because the script records each namespace
+before it applies it. It also covers the refusals that create nothing. It reaches no cluster, so it is not cluster evidence.
 
 Both suites run in the isolated nightly runner (`npm run test:nightly-isolated`). Both are
 registered in the AI Test Lab under **Isolated nightly regressions**.
@@ -184,15 +183,23 @@ Not proven yet: a run of `accept-tenant-isolation.sh` on a real NetworkPolicy-en
 
 ## Not built
 
-- **Running oshal inside a tenant database.** The rendered database is empty. This script does
-  not apply oshal's migrations to it or provision runtime roles in it. The runtime-role
-  provisioner `scripts/governance/provision-app-role.mjs` requires the exact cluster-wide role
-  names `oshal_app` and `oshal_bot` (lines 253-257), and PostgreSQL roles span the whole server.
-  As built, two tenants' stacks on one server would share those two roles.
-- **Isolation from the server's other databases.** The rendering closes only the tenant's own
-  database. Any other database on the same server that keeps the default `PUBLIC` `CONNECT`
-  (`postgres`, or the control-plane `oshal` database if it shares the server) can be opened by a
-  tenant's role. Closing that means revoking `PUBLIC` `CONNECT` on those databases and granting
-  it to the roles that need it, which changes the control plane's database. It is not done here.
+- **Running oshal inside a tenant database.** The rendered database is empty. This script
+  applies none of oshal's migrations to it and provisions no runtime roles in it.
+- **A shared PostgreSQL server is not tenant-isolated today.** The rendering keeps tenant
+  databases apart from each other, as proven above. A server shared by tenants, or by tenants and
+  the control plane, is still not tenant-isolated, for two reasons:
+  1. oshal's runtime roles are server-wide. `scripts/governance/provision-app-role.mjs` (lines
+     253-257) requires the exact role names `oshal_app` and `oshal_bot`, and a PostgreSQL role
+     spans the whole server. Two tenants' oshal stacks on one server would therefore share both
+     roles, once oshal runs inside tenant databases.
+  2. The server's other databases keep PostgreSQL's default `PUBLIC` `CONNECT`, so a tenant's
+     role can open them. That includes `postgres`, and the control-plane `oshal` database when it
+     is on the same server and keeps that default. The PostgreSQL proof opens `postgres` and a
+     second non-tenant database as a tenant role.
+
+  A shared mode is planned under the backlog enhancement
+  "Tenancy modes: shared, isolated and federated, with per-database, per-set or per-table placement (enhancement, operator 2026-10-01)".
+  That entry also covers a federated mode and per-database, per-set or per-table placement. It
+  starts with an ADR, and none of it is built.
 - **Tenant root entity, realm per tenant and seat licensing.** These are ADR-035 pillars 2-4 and
   remain unbuilt.

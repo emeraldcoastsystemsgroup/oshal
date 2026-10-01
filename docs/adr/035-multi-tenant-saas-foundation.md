@@ -1,6 +1,6 @@
 # ADR 035 — Multi-Tenant SaaS Foundation (Schools as Tenants)
 
-Status: **Accepted as amended** (operator decision 2026-09-21, recorded in [BACKLOG.md](../BACKLOG.md) under **"Two-tier tenant provisioning"**: "ISOLATED-ONLY. ADR-035 is amended and ACCEPTED on that basis"). Proposed 2026-06-12. The amendment is at [the end of this ADR](#amendment-2026-09-21-isolated-only); it replaces pillar 1's pooled database with a database per tenant. The isolated tier's provisioning is built (2026-10-01): [`scripts/governance/provision-tenant.sh`](../../scripts/governance/provision-tenant.sh) renders a tenant's database policy (its own role and its own database, closed to every other role) and namespace policy, and a two-tenant proof on a disposable PostgreSQL shows a cross-tenant database connection and a cross-tenant row read both refused ([runbook](../runbooks/tenant-provisioning.md)). The shared tier is not commissioned: `--tenancy=shared` is refused. (The RLS substrate landed separately as multi-*user* isolation under [ADR-076](076-tenant-aware-rls-and-least-privilege-db-role.md); the tenant root entity, realm-per-tenant provisioning, and seat licensing decided here remain unbuilt.)
+Status: **Accepted as amended** (operator decision 2026-09-21, recorded in [BACKLOG.md](../BACKLOG.md) under **"Two-tier tenant provisioning"**: "ISOLATED-ONLY. ADR-035 is amended and ACCEPTED on that basis"). Proposed 2026-06-12. The amendment is at [the end of this ADR](#amendment-2026-09-21-isolated-only); it replaces pillar 1's pooled database with a database per tenant. The isolated tier's provisioning is built (2026-10-01): [`scripts/governance/provision-tenant.sh`](../../scripts/governance/provision-tenant.sh) renders a tenant's database policy (its own role and its own database, closed to every other role) and namespace policy, and a two-tenant proof on a disposable PostgreSQL shows a cross-tenant database connection and a cross-tenant row read both refused ([runbook](../runbooks/tenant-provisioning.md)). The shared tier is not built: `--tenancy=shared` is refused. A shared mode is planned under the backlog enhancement "Tenancy modes: shared, isolated and federated, with per-database, per-set or per-table placement (enhancement, operator 2026-10-01)", which starts with an ADR; none of it is built. (The RLS substrate landed separately as multi-*user* isolation under [ADR-076](076-tenant-aware-rls-and-least-privilege-db-role.md); the tenant root entity, realm-per-tenant provisioning, and seat licensing decided here remain unbuilt.)
 Supersedes: none. Related: [ADR 034 config-sync](034-bidirectional-config-ownership-sync.md), [ADR swarm-application-manifests](033b-swarm-application-manifests.md), [ADR 030 home-persona-layer](030-home-persona-layer.md)
 
 ## Context
@@ -146,17 +146,20 @@ renders `database.sql` and `namespace.yaml` for one tenant. The SQL gives the te
 database. It revokes `CONNECT`/`TEMPORARY` from `PUBLIC` and from every other grantee, and revokes
 `USAGE`/`CREATE` on the `public` schema from `PUBLIC`. The YAML is the ADR-078 per-tenant
 namespace with a ConfigMap that binds the namespace to its own database. `--tenancy=shared` is
-refused as not commissioned. `tests/unit/provision-tenant-isolation-postgres.spec.ts` applies two
+refused as not built. `tests/unit/provision-tenant-isolation-postgres.spec.ts` applies two
 renderings with the real psql on a disposable PostgreSQL 16. A cross-tenant connection is refused
 in both directions. A cross-tenant row read is refused, from the tenant's own session and with
 the connection layer deliberately drifted open. Re-applying repairs the drift.
 `scripts/governance/accept-tenant-isolation.sh` is the automated cluster acceptance for the
 namespace half; its logic is proven against a kubectl stand-in, and it has not yet run on a real
 cluster. What is not built:
-- running oshal's migrations and runtime roles inside a tenant database (the runtime-role
-  provisioner names the cluster-wide roles `oshal_app` and `oshal_bot`);
-- isolation from the server's other databases, which keep PostgreSQL's default `PUBLIC`
-  `CONNECT`;
+- running oshal's migrations and runtime roles inside a tenant database;
+- tenant isolation on a shared PostgreSQL server. Tenant databases are kept apart from each
+  other, but a server shared by tenants, or by tenants and the control plane, is not
+  tenant-isolated today, for two reasons. oshal's runtime roles `oshal_app` and `oshal_bot` are
+  server-wide (`scripts/governance/provision-app-role.mjs` requires those exact names). And the
+  server's other databases keep PostgreSQL's default `PUBLIC` `CONNECT`, which a tenant's role
+  can use. The shared mode is planned under the backlog enhancement "Tenancy modes: shared, isolated and federated, with per-database, per-set or per-table placement (enhancement, operator 2026-10-01)";
 - pillars 2 to 4.
 
 See the [runbook](../runbooks/tenant-provisioning.md).

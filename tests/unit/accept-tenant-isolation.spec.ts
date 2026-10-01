@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The logic of scripts/governance/accept-tenant-isolation.sh, the automated cluster acceptance for provision-tenant.sh's namespace half, and of the --namespaces parameter it drives verify-tenant-isolation.sh with. SCOPED DOUBLE (real-boundary audit): kubectl and the cluster behind it, replaced by the stateful stand-in tests/fixtures/kubectl-tenant-cluster.sh - a unit run must never reach the live cluster on this box. Everything else runs for real in Git Bash: the acceptance script, provision-tenant.sh rendering both tenants, and verify-tenant-isolation.sh judging the two rendered namespaces, whose policy reads the stand-in answers from the manifest that was actually applied. The claim is the script's wiring, verdicts and cleanup: every kubectl call carries the context; it accepts only when isolation is proven AND both namespaces it created are confirmed gone; it deletes exactly what it created and nothing else; it refuses before creating anything when the cluster, the context or a namespace's absence cannot be established. The real companion is one run on a NetworkPolicy-enforcing cluster (docs/runbooks/tenant-provisioning.md).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard the ORDER of cleanup bookkeeping. The script records a namespace before it applies it, so a half-applied tenant is still deleted, but every apply and run in the stand-in succeeded, so recording only after a successful apply and pod start stayed green. Two cases now drive the stand-in's apply-fails (the namespace exists, the apply exits 1) and run-fails clusters and require exit 1, the failure named, that namespace deleted and nothing left.
  */
 
 import fs from 'node:fs';
@@ -120,6 +121,29 @@ describe('accept-tenant-isolation.sh against an emulated cluster', () => {
     expect(run.out).toContain('never became Ready');
     expect(run.calls.some((call) => / exec /.test(call))).toBe(false);
     expect(namespacesIn(run.calls, DELETED)).toHaveLength(2);
+    expect(run.left).toEqual([]);
+  }, RUN_TIMEOUT_MS);
+
+  it('deletes a tenant whose rendering the cluster refused part-way: the namespace exists, the apply failed', () => {
+    const run = onCluster('apply-fails', [ACCEPT, ...ARGS]);
+    expect(run.status, run.out).toBe(1);
+    const tenants = namespacesIn(run.calls, APPLIED);
+    expect(tenants, 'it stops at the first refused apply').toHaveLength(1);
+    const ns = `oshal-tenant-${tenants[0]}`;
+    expect(run.out).toContain(`FAIL: the cluster refused the rendering of ${ns}`);
+    expect(run.calls.some((call) => / run web /.test(call))).toBe(false);
+    expect(namespacesIn(run.calls, DELETED)).toEqual([ns]);
+    expect(run.left).toEqual([]);
+  }, RUN_TIMEOUT_MS);
+
+  it('deletes a tenant whose pod could not be started', () => {
+    const run = onCluster('run-fails', [ACCEPT, ...ARGS]);
+    expect(run.status, run.out).toBe(1);
+    const tenants = namespacesIn(run.calls, APPLIED);
+    expect(tenants).toHaveLength(1);
+    const ns = `oshal-tenant-${tenants[0]}`;
+    expect(run.out).toContain(`FAIL: could not start pod web in ${ns}`);
+    expect(namespacesIn(run.calls, DELETED)).toEqual([ns]);
     expect(run.left).toEqual([]);
   }, RUN_TIMEOUT_MS);
 

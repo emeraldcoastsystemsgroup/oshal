@@ -5,6 +5,7 @@
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — a STATEFUL kubectl stand-in for tests/unit/accept-tenant-isolation.spec.ts. The acceptance script creates and deletes namespaces, so a stateless stand-in could not tell "cleaned up" from "never created": this one keeps the emulated cluster in a state directory, answers the network-policy reads from the manifest that was actually applied (so a rendering that dropped a grant fails the check), and routes each exec probe by the pod IPs it handed out.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Two failing-write clusters, because no case could tell WHEN the acceptance script records a namespace for cleanup: `apply-fails` creates the namespace and then exits 1, as a partly applied manifest does, and `run-fails` refuses the pod. A script that recorded the namespace only after a successful apply and pod start would leave either namespace behind, and nothing went red.
 #
 # Installed as `kubectl` on the case's PATH. Every call is appended to $OSHAL_TEST_KUBECTL_LOG
 # ("$*", one line) and a leading `--context <ctx>` is honoured. State lives under
@@ -20,6 +21,8 @@
 #   preexisting      every namespace already exists
 #   get-errors       `get namespace` fails with an error that is not NotFound
 #   unreachable      no API server answers
+#   apply-fails      `apply` creates the namespace, then exits 1 (a partly applied manifest)
+#   run-fails        `run` refuses the pod
 
 printf '%s\n' "$*" >> "$OSHAL_TEST_KUBECTL_LOG"
 [ "${1:-}" = "--context" ] && shift 2
@@ -77,10 +80,15 @@ case "$1" in
     [ -n "$ns" ] || { echo "error: no Namespace in $file" >&2; exit 1; }
     cp "$file" "$state/ns/$ns"
     echo "namespace/$ns created"
+    if [ "$mode" = apply-fails ]; then
+      echo "Error from server (Forbidden): error when creating \"$file\": resourcequotas \"oshal-tenant-quota\" is forbidden" >&2
+      exit 1
+    fi
     exit 0 ;;
   run)
     ns="$(arg_after -n "$@")"
     [ -e "$state/ns/$ns" ] || { echo "Error from server (NotFound): namespaces \"$ns\" not found" >&2; exit 1; }
+    [ "$mode" = run-fails ] && { echo "Error from server (Forbidden): pods \"web\" is forbidden: exceeded quota" >&2; exit 1; }
     count="$(find "$state/pod" -type f | wc -l)"
     echo "10.$((count + 1)).0.10" > "$state/pod/$ns"
     echo "pod/web created"

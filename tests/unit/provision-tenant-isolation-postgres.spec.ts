@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The two-tenant proof for the isolated tier (ADR-035 as amended 2026-09-21; BACKLOG "Two-tier tenant provisioning"). scripts/governance/verify-tenant-isolation.sh checks only Kubernetes NetworkPolicy, so nothing attempted a cross-tenant DATABASE connection or a cross-tenant ROW read. Here the shipped provision-tenant.sh renders two tenants in a real Git Bash, the real psql inside a PostgreSQL 16 server this file starts and destroys applies each rendered database.sql, and each tenant's own LOGIN role is then driven over TCP: its own database and rows answer; the other tenant's database refuses the connection in both directions (42501, no CONNECT); a cross-database reference from its own session is refused (0A000); with the connection layer deliberately drifted open the other tenant's rows are still refused at the schema (42501), even rows that tenant granted to PUBLIC; and re-applying the rendered file closes the drift and removes a membership that would let one tenant SET ROLE into the other. No collaborator is doubled: the boundary is the database's own privilege checks against the roles the rendering creates. The shared tier is refused and renders nothing. Never touches the running stack: the server's address is minted at start(). Mutation-checked against the script: dropping the PUBLIC connect revoke reds 3 cases, the schema revoke 1, either membership revoke 1, the other-grantee connect revoke 1, a role name not derived from the tenant 2, and accepting --tenancy=shared 1.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Mutation coverage extended and stated exactly: the missing-password guard, the 16-character minimum, NOINHERIT and CONNECTION LIMIT each red 1 case when removed. Removing the owner's own GRANT CONNECT, TEMPORARY leaves every case green (the owner already holds those rights), so it is not claimed as guarded. New case pinning an as-built limit: the rendering governs only the databases it creates, and the tenant's role still opens the server's other databases ('postgres' and the fixture's own) through PUBLIC's default CONNECT.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The shared-tier refusal case follows the script's reworded refusal (operator decision 2026-10-01): not built, isolated is the only tenancy today, a shared mode is planned under the backlog enhancement. Still exit 2 and nothing written.
  */
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -107,12 +108,13 @@ function objectOf(objects: K8sObject[], kind: string, name: string): K8sObject {
 describe('provision-tenant.sh: what it renders and what it refuses', () => {
   afterAll(() => { for (const dir of scratch.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
-  it('refuses the shared tier as not commissioned and writes nothing', () => {
+  it('refuses the shared tier as not built and writes nothing', () => {
     const out = freshDir('oshal-tenant-shared-');
     const run = provision(['alpha', '--tenancy=shared', ...REQUIRED, `--out=${posix(out)}`]);
     expect(run.status).toBe(2);
-    expect(run.out).toContain('--tenancy=shared is not commissioned');
-    expect(run.out).toContain('isolated-only, a database per tenant');
+    expect(run.out).toContain('--tenancy=shared is not built');
+    expect(run.out).toContain('isolated (a database per tenant) is the only tenancy today');
+    expect(run.out).toContain('A shared mode is planned under the backlog enhancement');
     expect(readdirSync(out)).toEqual([]);
   });
 

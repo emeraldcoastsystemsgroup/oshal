@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — render one tenant's database and namespace policy for the ISOLATED tier only (ADR-035 as amended 2026-09-21: a database per tenant). The database half gives the tenant its own LOGIN role (no superuser, no RLS bypass, no role/database creation, inherits nothing, belongs to no other role and held by none) and its own database owned by that role, with CONNECT and TEMPORARY revoked from PUBLIC and from every other grantee, and USAGE/CREATE on the public schema revoked from PUBLIC inside it - so another tenant's role can neither open the database nor, if that layer ever drifted open, name a table in it. The password is read at apply time (psql variable or OSHAL_TENANT_DB_PASSWORD via \getenv) and never written to disk. Re-applying converges drift. The namespace half is the ADR-078 per-tenant shape (quota, limits, default-deny plus same-tenant NetworkPolicy under the names verify-tenant-isolation.sh asserts, workflow ServiceAccount/RBAC) and a ConfigMap binding the namespace to its own database. --tenancy=shared is refused: that tier is not commissioned. Proven by tests/unit/provision-tenant-isolation-postgres.spec.ts on a disposable PostgreSQL.
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | Split the network and access renderers so every function stays under 50 lines (default-deny, allow-same-tenant with its egress block, workflow RBAC, and the database-binding ConfigMap each render alone; the output is byte-identical). The ConfigMap's comment now says plainly that no password Secret is rendered or created, because nothing in a tenant namespace uses the tenant database yet - it used to promise a runbook step that does not exist.
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | The --tenancy=shared refusal follows the operator decision of 2026-10-01: it no longer says the shared tier is revisited only for a customer whose economics require one database. It says the shared tier is not built, isolated is the only tenancy today, and a shared mode is planned under the backlog enhancement "Tenancy modes: shared, isolated and federated". Behaviour is unchanged: exit 2, nothing written.
 #
 # Usage:
 #   bash scripts/governance/provision-tenant.sh <name> --tenancy=isolated \
@@ -30,7 +31,8 @@
 # --tenancy is required and takes one value today, `isolated`. `shared` is refused: the operator
 # decision of 2026-09-21 (docs/BACKLOG.md "Two-tier tenant provisioning", ADR-035 amendment)
 # records the shared tier as not commissioned. The flag keeps its name so that tier can be added
-# later without changing the interface.
+# later without changing the interface. A shared mode is planned under the backlog enhancement
+# "Tenancy modes: shared, isolated and federated" (operator, 2026-10-01); none of it is built.
 #
 # Exit: 0 rendered. 2 refused: usage, invalid input, the shared tier, or output already present.
 
@@ -84,7 +86,7 @@ parse_args() {
 check_tenancy() {
   case "$TENANCY" in
     isolated) ;;
-    shared) refuse "--tenancy=shared is not commissioned. Operator decision 2026-09-21 (ADR-035 amendment): isolated-only, a database per tenant; the shared tier is revisited only for a real customer whose economics require sharing one database." ;;
+    shared) refuse "--tenancy=shared is not built: isolated (a database per tenant) is the only tenancy today. A shared mode is planned under the backlog enhancement \"Tenancy modes: shared, isolated and federated\" (operator, 2026-10-01); none of it exists yet." ;;
     '') usage; refuse "--tenancy is required (isolated)" ;;
     *) refuse "unknown tenancy '$TENANCY' (isolated)" ;;
   esac
