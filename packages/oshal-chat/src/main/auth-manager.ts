@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Google (Gemini) joins the account list so the swarm-adoptable row is offered for it too. Distinct from the gcloud row below it, which signs into Google CLOUD and writes an ADC file the swarm does not consume. Its login command is the bare `gemini`: the CLI publishes no top-level `auth` subcommand (its yargs surface is `$0 [query..]` plus mcp/extensions/skills/hooks) — `auth` is a built-in SLASH command in the interactive UI, so the terminal has to open on the CLI itself for the browser sign-in to run.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Added the Antigravity account row and made the retired Gemini account-login row local-only.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Corrected the Antigravity boundary after inspecting the real vendor credential: Windows Credential Manager contains the same JSON agy's headless file-storage mode consumes. The row is pushable through the existing authenticated rail, reports real credential presence, and launches the absolute vendor install path even though the installer does not add it to PATH.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Import path follows the rename of antigravity-credential.ts to antigravity-login.ts; no behaviour change.
  */
 
 import { spawn } from 'child_process';
@@ -16,7 +17,7 @@ import { existsSync } from 'fs';
 import { homedir, platform } from 'os';
 import { join } from 'path';
 import { isPushableLogin } from './login-push-core';
-import { antigravityCredentialPresent } from './antigravity-credential';
+import { antigravityCredentialPresent } from './antigravity-login';
 
 /** One local provider the user can sign into on this machine. */
 interface LocalAccount {

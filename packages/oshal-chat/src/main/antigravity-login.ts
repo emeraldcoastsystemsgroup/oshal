@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Read Antigravity's vendor-owned Windows Credential Manager entry without ever placing the secret on argv, disk, or in a log. The returned JSON is handed directly to the existing authenticated login-push rail.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Renamed from antigravity-credential.ts (operator decision 2026-10-01): the module reads the Antigravity login at run time and holds no secret, but its build output's credential-shaped NAME was refused by scripts/npm-publish.sh. No symbol or behaviour change.
  */
 
 import { spawnSync } from 'child_process';
