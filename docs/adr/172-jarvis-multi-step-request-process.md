@@ -1,7 +1,8 @@
 # ADR-172: The Jarvis multi-step request process
 
 Date: 2026-10-01
-Status: **Proposed. Nothing in the Decision is built.**
+Status: **Proposed. Nothing in the Decision is built.** Amended 2026-10-01 with D10 and D11 (ticket workspaces)
+after a read-only investigation of ticket folders and sub-tickets.
 The Context records what exists at core `main` `7bf94478`, which is deployed on the operator's box. The
 ticket figures come from read-only queries of that box's database at 2026-10-01 03:55 UTC, covering the
 previous 30 days.
@@ -149,6 +150,76 @@ The operator wants the production workflow built in Workflow Studio. Today Studi
   it, and Publish stays the operator's action. It knows the 14 catalog node types and does not execute
   workflows.
 
+### Ticket workspaces and sub-tickets today
+
+- **One shared tree.** Every ticket folder is `/app/workspace-shared/<id>` on one volume. It is mounted
+  read-write in the api and all 36 bot nodes, which run as uid 0, and in code-server, which runs as uid 1000.
+- **Which folder a step gets.** A bot-node dispatch names its folder (`workspaceFolderId`) when it is sent.
+  - The build lane maps a child ticket to its root ticket's folder (`queue-manager-workspace-helpers.ts:44-58`),
+    so a ticket family shares one folder. The build and incident lanes also record a root ticket's folder on
+    the ticket (`tickets.workspace_id`, 67 tickets on this box), and the controller's tool executor uses that
+    record before falling back to `<root>/<taskId>` (`tool-executor-service.ts:1034-1043`).
+  - The manifest-worker, incident and graph lanes send the ticket's own id (`dispatch-manifest-worker.ts:1030`,
+    `dispatch-incident-worker.ts:220`, `engine-services-adapter.ts:189`). The manifest worker's multi-owner
+    fan-out instead gives each owner a new `<ticket>--<agent>--<uuid>` folder. Every step of one graph run
+    shares the run ticket's folder.
+  - A protected package bot gets a new folder on every execution (`protected-<sha256(..., executionId)>`; 36 on
+    this box, dated 2026-09-16 to 09-30). It has no native tools, so no file tools and no shell; any
+    application tools it has are brokered per call through the controller.
+- **Who can write files there.** A bot saves results in its folder only if its engine has file tools.
+  - The command-line engines work in the ticket folder with their own file tools, and run only for the
+    deployment operator in demo mode (`assert-cli-tool-boundary.js:49-58`; `cliBrainAvailable`,
+    `user-brain-resolution.ts:87-89`).
+  - On a bot node, a hosted or BYO engine is offered only the read-only tools it is granted, out of four the
+    runtime loads (`bot-node-read-only-tools.ts:52-58`). On this box only Jarvis holds any of them
+    (`conversation-query`, `conversation-fetch`). The runtime loads no file tools (`bot-node-runtime.ts`,
+    change-log entry 18).
+  - `agent_tools` has `write-file` rows for 42 bots and `read-file` rows for 44. Of those, 31 and 38 are switched
+    on. The resolver also requires a grant to be marked installed, and the only such grant belongs to
+    project-manager, which runs in the api.
+  - The kernel tells every non-direct dispatch to write deliverables and a developer handover into its folder
+    (`llm-execution-handler.ts:1013-1020`, `:776-786`), and 22 personas add their own file outputs.
+- **How the next step learns of earlier work.**
+  - A non-direct dispatch gets two handover injections. One is the last five `developer-handovers/*.md` files
+    by filename, 2,000 characters each (`llm-execution-handler.ts:1121-1150`). The other is a summary of every
+    handover with the newest one and the bot's own last one (`buildHandoverLayers`,
+    `llm-execution-handler.ts:736-790`).
+  - Deliverables are not injected, except in the incident lane's revision step, which pastes the reviewer's
+    `deliverables/QUEUE-REVIEW.md` into the worker's prompt (`dispatch-incident-worker.ts:494-526`). Jarvis
+    turns are direct and get none of it.
+  - Manifest-worker, build and Jarvis replies are stored in the database (`chat_messages`, `work_items`). A
+    graph step's reply is discarded by the engine. Token Chase frames in `.tokenchase/` hold the reply text of
+    agentic-loop calls only, each new run in a folder overwrites the earlier frames, and nothing reads them
+    forward.
+- **Sub-tickets.**
+  - The schema has `parent_ticket_id` only. Two code paths create children:
+    - The project manager's decomposition (`queue-manager-dispatch-helpers.ts:485-561`) files them with no
+      owner. It made all 46 children on record: all `build`, the last on 2026-07-20.
+    - `POST /api/tickets` accepts a `parentTicketId` and makes the caller the owner, without checking who owns
+      the parent (`ticket-routes.ts:111-122`). No child on record came that way.
+  - On 2026-07-20 two decomposition children wrote into their parent's folder, and the second child's code
+    imported modules the first had written. The shared folder carried the work while a command-line engine
+    ran it.
+  - The parent is not held while its children run. Roll-up changes only the parent's status; its summary is
+    discarded (`parent-assembly-service.ts:191-211`).
+  - The parent sweep checks every root ticket in `in_process_discovery`, `in_process_design`,
+    `in_process_build` or `approval_required`, whatever its lane, and moves it once a child finishes: to
+    `escalated` if one escalated, to `customer_action` when all are complete, otherwise to `in_process_build`
+    (`sweepStaleParents`, `queue-manager-sweeps.ts:227-262`). A parent that is already complete is not moved.
+  - The decomposition cannot run on this box today. The project manager's last three attempts (2026-09-18 and
+    19) failed with "claude-code unattended execution is disabled". Its child work travels over the Redis mesh,
+    which the bot nodes refuse while delegation signing is enforced; that is inferred from the code and their
+    startup logs, and no refusal has been observed.
+- **The workspace decision of 2026-09-20.** The operator accepted the shared mount deliberately
+  ([workspace-isolation-decision.md](../backlog/workspace-isolation-decision.md)): the kernel hands a bot a
+  workspace bound to its ticket, and tickets are per user.
+  - A shell can read a neighbouring ticket's folder.
+  - The controller's TypeScript file tool refuses a `../` path to a neighbouring folder
+    (`workspace-cross-ticket-traversal.spec.ts`). Its check compares path text only, so it would follow a link
+    planted inside its own folder (`tool-executor-service.ts:1064-1071`).
+  - Two triggers reverse that decision: a second person with tickets on the box, or an installed store package
+    running its own bot.
+
 ### What is wrong
 
 - **G1. Fixed rules take multi-step requests.** A request that mentions inbox, weather, jobs, Walmart or
@@ -164,6 +235,12 @@ The operator wants the production workflow built in Workflow Studio. Today Studi
   line per app, with no per-tool features. It has no way to look further before it plans.
 - **G8. Studio cannot build the fix.** Steps cannot pass results or be decided per request, a workflow cannot
   call another, and Jarvis cannot file into a published workflow.
+- **G9. Bots on bot nodes cannot hand off through files, except on the operator's engine.** Hosted and BYO
+  engines there cannot write the files the kernel and their personas ask for, and package bots start in an
+  empty folder on every run.
+- **G10. Sub-tickets cannot run here and do not carry their owner.** The automatic child path, the project
+  manager's decomposition, is blocked on this box and files children with no owner. A parent neither waits for
+  its children nor receives their results.
 
 ## Decision (proposed)
 
@@ -265,11 +342,16 @@ sync feature of any workflow ... which is represented as a ticket."
 - `sub-process` becomes the call node. It names a published workflow and a mode. Any published workflow is
   callable this way, and the canvas places the node like any other.
 - A call files a child ticket of the called workflow's ticket type. The child:
-  - is owned by the same user as the parent;
+  - carries the parent's owner. Today the decomposition files children with no owner, and `POST /api/tickets`
+    makes the caller the owner.
   - is linked through `parent_ticket_id` and the calling step;
+  - works in its own folder nested in the parent's (D10), which the call fills with the child's instructions
+    and back story;
   - runs with its own gates and receipts.
-- **Sync.** The calling run waits until the child ticket ends, then continues with the child's result. A
-  failed child fails the step.
+- **Sync.** The calling run waits until the child ticket ends, then continues with the child's result, read
+  from the child's folder. The parent sweep moves a root ticket that has children out of `approval_required`
+  and the in-process states once a child finishes. A calling run's waits and its gate pauses therefore both
+  need a state the sweep leaves alone. A failed child then fails the calling step, not the whole parent.
 - **Async.** The calling run continues at once. When the child ends, its outcome is recorded on the parent's
   receipt for that step.
 - The parent's receipt references the child ticket, following ADR-165's gate and child reference. Reading a
@@ -278,11 +360,53 @@ sync feature of any workflow ... which is represented as a ticket."
 - Calls have a depth limit, and a call that would re-enter a workflow already on its own call chain is
   refused, so a cycle cannot spawn tickets without end.
 
+### D10. Nested ticket workspaces
+
+Operator, 2026-10-01: "sub tickets create a sub workspace ie /ticketnumber/ticketnumber/ so they can't see the
+parent directory but the creation of the ticket drops the instructions and back story ... parents can see
+children ... children get instructions."
+
+- **Scope.** This applies to every child ticket, including the decomposition's children, which share their
+  root ticket's folder today.
+- **The folder.** A child ticket's folder is created inside its parent's, `/app/workspace-shared/<parent>/<child>/`,
+  and so on down a chain. The ticket's stored folder record (`tickets.workspace_id`) follows the nested path, so
+  the controller's tool executor resolves the same folder.
+- **The brief.** Creating the child writes its instructions and back story into the child's folder. That is
+  all the child is given.
+- **Confinement.** A child's bot is handed only its own folder, and its file tools (D11) must refuse its
+  parent's and its siblings' folders. This decision does not confine the shell or the command-line engines,
+  which can still reach those folders on the shared mount (decision 8).
+- **The parent's view.** A parent's file tools can read everything beneath its folder, so the parent collects
+  each child's results from the child's folder. Siblings hand work to each other through their parent.
+- **One owner per tree.** Every child path carries its parent's owner: D9 for calls, and the decomposition and
+  `POST /api/tickets` must do the same. One tree then belongs to one user.
+- **The 2026-09-20 decision.** This adds to that decision without reversing it: the mount, the shell's accepted
+  reach and per-ticket assignment are unchanged. Two things are new. Hosted and BYO bots on bot nodes get file
+  tools confined to their ticket's folder and the folders beneath it, and a parent's tools can read its
+  children's folders.
+
+### D11. Every user's bots can read and write their ticket's folder
+
+- **The tools.** The bot runtime loads file read and write tools rooted at the ticket's folder (D10). A hosted
+  or BYO engine can then write the handovers, artifacts and deliverables the kernel and its persona ask for.
+- **The grants.** Each bot also needs a `read-file` and `write-file` grant in `agent_tools` that is switched on
+  and marked installed. Today only project-manager, which runs in the api, has one.
+- **The boundary.** The tools must refuse any path that resolves outside the folder they are rooted at, after
+  following links, for reads and writes alike. The controller's TypeScript file tool meets this only for `../`
+  paths.
+- **Out of scope.** The shell (`execute_command`) and the command-line engines are not part of this decision.
+  They keep their whole-mount reach, and the command-line engines stay under the current rule: the deployment
+  operator only, in demo mode.
+- **Package bots.** Protected package bots are unchanged. They still run without native tools in a new folder per
+  execution, so a call whose child runs on one returns no files in the child's folder.
+- **Roles.** Roles keep deciding which apps a bot may use.
+
 ## Consequences
 
 - **What it fixes.** Every multi-step request runs on one durable process that the operator can see and edit
   in Studio. It leaves receipts, its gates follow declared effects, and Jarvis investigates before it plans.
-  This addresses G1 to G8.
+  This addresses G1 to G8. D9, D10 and D11 address G10, and G9 for hosted and BYO engines on bot nodes;
+  protected package bots are unchanged.
 - **Reuse.** Workflows become building blocks: an app's published workflow can be one step of a Jarvis plan,
   or of any other workflow, and each use leaves its own child ticket.
 - **Cost per request.** A multi-step request costs one planning step plus directory reads before any work
@@ -293,6 +417,12 @@ sync feature of any workflow ... which is represented as a ticket."
 - **Configuration.** A deployment setting binds Jarvis to the published ticket type.
 - **Authorization.** A Studio-published workflow registers as `legacy`. Its steps still reach only the apps
   the requesting user can discover (D3), and they run as that user.
+- **The workspace decision.** D10 and D11 leave the 2026-09-20 decision standing. The mount stays one volume,
+  the shell and the command-line engines keep the reach that decision accepted, and its two reversal triggers
+  still apply. The file tools D11 adds reach only the ticket's own tree, whoever else has tickets or bots on the
+  box.
+- **Build-lane siblings.** They share their root folder today, and under D10 they would hand work to each other
+  through their parent instead.
 
 ## Alternatives considered
 
@@ -317,11 +447,22 @@ sync feature of any workflow ... which is represented as a ticket."
    notification.
 3. Whether the model alone decides that a request has several steps, or whether markers such as "then" and
    numbered lists also count.
-4. Whether the project manager's decomposition path stays available for Jarvis tickets at all.
+4. Whether the project manager's decomposition path stays available for Jarvis tickets at all. Today it cannot
+   run on this box.
 5. Whether `jarvis-request` is published with public scope as platform plumbing now, or after Publish gains a
    protected mode.
 6. Where an async child's result goes when it ends: only onto the parent's receipt, or also as a message to
    the conversation that started the parent.
+7. Whether the 2026-09-20 decision's reversal triggers are met on this box.
+   - The second trigger: does it cover protected package bots? They have run here: 36 `protected-*` execution
+     folders, dated 2026-09-16 to 09-30.
+   - The first trigger: is any other ticket owner here a second person? In the last 30 days the others are the
+     alert service, four guest sessions and test identities.
+   - A yes reopens that decision. D10 and D11 do not close it, because the shell, the command-line engines and
+     the shared mount are unchanged.
+8. Whether children must also be unable to reach their parent's folder through the shell and the command-line
+   engines. That needs one of the mount-level options the 2026-09-20 decision set aside: per-owner subpath
+   mounts, per-owner volumes, or a filesystem jail per bot container.
 
 ## Rollout (slices with done-when)
 
@@ -341,7 +482,10 @@ Each slice is accepted on its own.
   - Done when an engine and real-Postgres test shows a sync call waiting for its child and continuing with
     the child's result.
   - Done when an async call continues at once and records the child's outcome when the child ends.
-  - Done when the child is owned by the parent's owner, the depth limit holds, and a cycle is refused.
+  - Done when the child carries the parent's owner and works in its nested folder (D10), the depth limit
+    holds, and a cycle is refused.
+  - Done when the parent sweep moves neither a sync wait nor a gate pause of a parent that has called a
+    workflow, and an escalated child fails only its calling step.
 - **J5. Receipts and version pinning,** aligned with ADR-165.
   - Done when the ticket view lists every receipt of a finished run, including the gate approver, the pinned
     workflow version and every child ticket.
@@ -355,6 +499,17 @@ Each slice is accepted on its own.
 - **J8. Retire the in-memory plan path** after J6.
   - Done when Jarvis no longer registers `plan-*` workflows and the plan tests cover the published workflow
     instead.
+- **J9. Confined file tools on the bot runtime (D11).** Comes before J4.
+  - Done when a hosted-engine bot writes a deliverable into its ticket folder and a later step on that ticket
+    reads it.
+  - Done when a traversal test on the bot runtime shows the tools can neither read nor write a parent's or a
+    sibling's folder, through a `../` path or through a link inside the ticket folder.
+- **J10. Nested ticket workspaces (D10).** Comes before J4.
+  - Done when a child ticket created under a parent gets `<parent>/<child>/`, with its brief written at
+    creation, and the parent's file tools read the child's deliverables.
+  - Done when the child's file tools can neither read nor write its parent's folder. The shell and the
+    command-line engines are outside D10 and D11.
+  - Done when every child path files the child with its parent's owner.
 
 ## References
 
