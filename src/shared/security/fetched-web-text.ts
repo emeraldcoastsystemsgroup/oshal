@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | One deterministic filter for text fetched from the web before it enters a model prompt (operator decision 2026-09-22: oshal takes no instruction from outside websites). Removes invisible characters, hidden HTML (comments, script/style blocks, elements hidden by attribute, class or inline style), the remaining markup, chat-role markers, chat-template and prompt-structure lookalikes, and instruction-shaped clauses aimed at a model. Text with none of those comes back byte for byte, so a call site changes nothing for ordinary text. It is a first line only: callers still put what remains inside the containment delimiter.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The two character classes are written as escape sequences. Entry 1 had put the invisible and bidi-control characters into the source raw, which nobody can review by eye and is the Trojan Source pattern; the classes match exactly the same characters.
  */
 
 /**
@@ -49,8 +50,8 @@ export interface FetchedTextResult {
 /** Characters that render as nothing (or reorder text) and carry smuggled content. Tab, newline and
  *  carriage return stay. A single variation selector after a character stays (emoji presentation);
  *  runs of them are removed by VARIATION_RUN. */
-const INVISIBLE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F­͏؜ᅟᅠ឴឵᠋-᠏​-‏‪-‮⁠-⁯ㅤ﻿ﾠ￹-￻\u{1D173}-\u{1D17A}\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
-const VARIATION_RUN = /(?<=[︀-️])[︀-️]+/g;
+const INVISIBLE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B-\u200F\u202A-\u202E\u2060-\u206F\u3164\uFEFF\uFFA0\uFFF9-\uFFFB\u{1D173}-\u{1D17A}\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
+const VARIATION_RUN = /(?<=[\uFE00-\uFE0F])[\uFE00-\uFE0F]+/g;
 
 /** A real tag shape (`<name ...>` / `</name>` / `<!--`), not a bare "<" in prose such as "S&P < 4000". */
 const LOOKS_LIKE_HTML = /<(?:[a-zA-Z][a-zA-Z0-9:-]*(?:\s[^<>]*)?\/?>|\/[a-zA-Z][a-zA-Z0-9:-]*\s*>|!--)/;

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Unit tests for the World-Intelligence deterministic core: bias-aware sentiment math, outlet ratings, feed utils (ADR-061).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The breakdown is read through oshal's own OBSERVED outlet ratings (the seed table is deleted): the lean axis buckets by observed lean, reliability-weighting uses observed reliability, an insufficient source joins no bucket and no weight and carries no number, and the rating method travels with the read.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The breakdown describe is split in three (the lean axis and weights, the shape returned, what never enters a bucket) over one shared breakdown, so no block exceeds the 50-line limit. Same cases, same assertions.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -59,8 +60,11 @@ describe('toPerSource', () => {
   });
 });
 
-describe('computeSentimentBreakdown — read through observed ratings', () => {
-  const b = computeSentimentBreakdown(ROWS, RATINGS);
+/** The breakdown of ROWS read through RATINGS, shared by the three blocks below. */
+const BREAKDOWN = computeSentimentBreakdown(ROWS, RATINGS);
+
+describe('computeSentimentBreakdown — the lean axis and the weights', () => {
+  const b = BREAKDOWN;
 
   it('keeps a naive average but it is near-zero/misleading', () => {
     // (-0.4 + 0.3 + 0.1 + 0.15) / 4 = 0.0375
@@ -80,6 +84,11 @@ describe('computeSentimentBreakdown — read through observed ratings', () => {
     // (-.4*.825 + .3*.85 + .1*.95 + .15*.94) / (.825 + .85 + .95 + .94) = 0.161 / 3.565
     expect(b.reliabilityWeighted).toBeCloseTo(0.045, 3);
   });
+});
+
+describe('computeSentimentBreakdown — the shape it returns', () => {
+  const b = BREAKDOWN;
+
   it('keeps the top-level lean fields the feature rollup reads', () => {
     expect(b.balanced).toBe(b.lean.balanced);
     expect(b.consensus).toBe(b.lean.consensus);
@@ -97,6 +106,11 @@ describe('computeSentimentBreakdown — read through observed ratings', () => {
       computedAt: '2026-10-01T00:00:00.000Z', rated: 4, insufficient: 0,
     });
   });
+});
+
+describe('computeSentimentBreakdown — what never enters a bucket', () => {
+  const b = BREAKDOWN;
+
   it('does not let an insufficient or never-compared source into a bucket or a weight', () => {
     const noisy = computeSentimentBreakdown([
       ...ROWS,

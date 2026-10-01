@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for oshal's own OBSERVED outlet ratings (operator decision 2026-09-22: the seed table is deleted, no external license). Pure half: the lean, bucket and reliability arithmetic, the stated minimums below which a source is insufficient and carries no number, the env-overridable parameters, identity resolution that keeps a publisher's history under one id, the identity-only seed that nulls the retired rating props, and the memoized reader (TTL, shared read, a failed read is not served from the memo). The aggregate itself runs on TimescaleDB in world-outlet-ratings-postgres.spec.ts.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The rateOutlet describe is split in two (the minimums that decide rated or insufficient; the arithmetic of a rated source) so neither block exceeds 50 lines. Same cases, same assertions.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -34,7 +35,7 @@ function stats(over: Partial<OutletDivergenceStats> = {}): OutletDivergenceStats
   };
 }
 
-describe('rateOutlet — the observed rating', () => {
+describe('rateOutlet — the minimums decide rated or insufficient', () => {
   it('rates a source above the minimums with its counts and date range', () => {
     expect(rateOutlet(stats(), PARAMS)).toEqual({
       source: 'world:outlet:sample', status: 'rated', lean: 0.3, leanBucket: 'above', reliability: 0.8,
@@ -60,7 +61,9 @@ describe('rateOutlet — the observed rating', () => {
     expect(rateOutlet(stats({ meanDivergence: null }), PARAMS).status).toBe('insufficient');
     expect(rateOutlet(stats({ meanAbsDivergence: null }), PARAMS).status).toBe('insufficient');
   });
+});
 
+describe('rateOutlet — the arithmetic of a rated source', () => {
   it('calls a lean below/above only beyond two standard errors (here 0.2)', () => {
     expect(rateOutlet(stats({ meanDivergence: 0.2 }), PARAMS).leanBucket).toBe('near');
     expect(rateOutlet(stats({ meanDivergence: 0.2001 }), PARAMS).leanBucket).toBe('above');

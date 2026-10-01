@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Real-boundary guard for oshal's own OBSERVED outlet ratings (operator decision 2026-09-22). A private TimescaleDB (the image the stack runs) gets world_metrics, its hypertable and the world_metrics_daily continuous aggregate from the real service, then hand-computed sentiment observations. Proves the divergence aggregate on that head: leave-one-out comparisons on shared subject-days only, exact counts, observations and date range, the window excluding old rows, other metrics ignored, a lone source never compared; the service reads every source through those ratings (rated vs insufficient below the stated minimums); the same rows give the same ratings; and a rating changes only when stored rows change.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Deterministic against the head's own refresh job (verifier, round 2: 2 failed | 6 passed on one run, 8 passed on the next, unchanged code). The policy world-preaggregate.ts adds could materialise these day buckets mid-insert, after which a later row in a materialised bucket is invisible until the next refresh. The spec now stops that job once the service has created it (asserting exactly one) and refreshes the head explicitly after the setup inserts and after the last block's inserts. The long service describe is split in three; the block that adds rows stays last.
  */
 
 /**
@@ -57,6 +58,24 @@ async function observe(entity: string, metric: string, day: string, value: numbe
   await pool.query(`INSERT INTO world_metrics (entity, metric, ts, value, source) VALUES ($1, $2, $3, $4, $5)`, [entity, metric, `${day}T12:00:00Z`, value, source]);
 }
 
+/**
+ * Stop the head's scheduled refresh (the policy world-preaggregate.ts adds). Run on its own clock it
+ * can materialise these buckets in the middle of the inserts, and a row inserted afterwards into a
+ * materialised bucket stays out of the head until the next refresh, so the answer would depend on
+ * timing. The spec refreshes explicitly instead, as the scheduled job would after the rows land.
+ */
+async function stopScheduledRefresh(): Promise<void> {
+  const stopped = await pool.query(
+    `SELECT alter_job(job_id, scheduled => false) FROM timescaledb_information.jobs WHERE proc_name = 'policy_refresh_continuous_aggregate'`,
+  );
+  expect(stopped.rowCount, 'exactly one refresh policy on the head').toBe(1);
+}
+
+/** Bring the head up to date with every stored row, once the inserts are done. */
+async function refreshHead(): Promise<void> {
+  await pool.query(`CALL refresh_continuous_aggregate('world_metrics_daily', NULL, NULL)`);
+}
+
 beforeAll(async () => {
   for (const k of ENV_KEYS) savedEnv[k] = process.env[k];
   process.env.WORLD_OUTLET_RATING_MIN_COMPARISONS = '4';
@@ -74,6 +93,7 @@ beforeAll(async () => {
   // The service builds the hypertable and the daily head exactly as it does on the box.
   const empty = await svc.outletRatings();
   expect(empty.ratings.size).toBe(0);
+  await stopScheduledRefresh();
 
   for (const day of [D1, D2, D3]) {
     await observe('world:topic:s1', 'sentiment', day, 0.6, A);
@@ -89,6 +109,7 @@ beforeAll(async () => {
   await observe('world:topic:s4', 'sentiment', D1, 0.2, V);
   await observe('world:topic:s1', 'mentions', D1, 5, A);
   for (const [src, v] of [[A, 1], [B, -1], [C, -1]] as const) await observe('world:topic:s1', 'sentiment', daysAgo(200), v, src);
+  await refreshHead();
 }, 240_000);
 
 afterAll(async () => {
@@ -128,7 +149,7 @@ describe('the divergence aggregate on the daily head', () => {
   });
 });
 
-describe('the service reads sentiment through the observed ratings', () => {
+describe('the service rates every source from those rows', () => {
   it('rates above the minimums and marks the thin pair insufficient', async () => {
     const set = await svc.outletRatings();
     expect(set).toMatchObject({ method: 'consensus-divergence-v1', windowDays: 90, minComparisons: 4, minSubjects: 2, leanZ: 2 });
@@ -139,6 +160,14 @@ describe('the service reads sentiment through the observed ratings', () => {
     expect(set.ratings.has(V)).toBe(false);
   });
 
+  it('gives the same ratings from the same stored rows', async () => {
+    const first = await svc.outletRatings();
+    const second = await svc.outletRatings();
+    expect([...second.ratings.entries()]).toEqual([...first.ratings.entries()]);
+  });
+});
+
+describe('the subject breakdown is read through the ratings', () => {
   it('builds the subject breakdown from those ratings', async () => {
     const r = await svc.sentimentBreakdown('world:topic:s1', 30) as Record<string, any>;
     expect(r).not.toHaveProperty('political');
@@ -178,20 +207,18 @@ describe('the service reads sentiment through the observed ratings', () => {
     expect(r.bySource.map((s: { bias: string }) => s.bias)).toEqual(['insufficient', 'insufficient']);
     expect(r.ratings).toMatchObject({ rated: 0, insufficient: 2 });
   });
+});
 
-  it('gives the same ratings from the same stored rows', async () => {
-    const first = await svc.outletRatings();
-    const second = await svc.outletRatings();
-    expect([...second.ratings.entries()]).toEqual([...first.ratings.entries()]);
-  });
-
-  it('changes a rating only when stored rows change: the thin source is rated once it has the data', async () => {
+// Last on purpose: it adds rows, and every block above reads the original ones.
+describe('a rating changes only when stored rows change', () => {
+  it('rates the thin source once it has the data, and leaves the others as they were', async () => {
     for (const day of [D2, D3]) {
       await observe('world:topic:s3', 'sentiment', day, 0.5, T);
       await observe('world:topic:s3', 'sentiment', day, -0.5, U);
     }
     await observe('world:topic:s5', 'sentiment', D1, 0.5, T);
     await observe('world:topic:s5', 'sentiment', D1, -0.5, U);
+    await refreshHead();
     const set = await svc.outletRatings();
     expect(set.ratings.get(T)).toMatchObject({ status: 'rated', lean: 1, leanBucket: 'above', reliability: 0.5, comparisons: 4, subjects: 2 });
     expect(set.ratings.get(U)).toMatchObject({ status: 'rated', lean: -1, leanBucket: 'below', reliability: 0.5 });
