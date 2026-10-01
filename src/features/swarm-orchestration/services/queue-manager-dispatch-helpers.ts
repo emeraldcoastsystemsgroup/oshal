@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from queue-manager-service.ts (1000-line cap decomposition): module-level dispatch helpers — planning-role normalization/inference, work-item→capability routing maps, dispatch entry-state resolution, ExternalWorkItem conversion, failed-work-item summarization, non-retryable-error detection, and child-ticket creation from PM planning output. Pure logic + the child-ticket factory; no queue state lives here. queue-manager-service re-exports the previously-public symbols so every existing call site and test is unchanged.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Children created from PM planning inherit the root's owner (and, through the metadata spread, its verified issuer) and record subtaskIndex, subtaskCount and siblingTitles (the other subtasks' titles). Before, every child was ownerless, so it could never run as the root's owner.
  */
 
 import {
@@ -517,6 +518,9 @@ export async function createChildTicketsFromPlanningOutput(
         externalProvider: null,
         externalId: null,
         externalUrl: null,
+        // A child belongs to its root's owner. The parent's verified issuer rides the metadata
+        // spread, and createTicket keeps it only because the owner is set and the queue runs as SYSTEM.
+        ownerSub: parentTicket.ownerSub ?? null,
         metadata: {
           ...parentMetadata,
           workType: unit.workType,
@@ -525,6 +529,10 @@ export async function createChildTicketsFromPlanningOutput(
           subtaskTitle: unit.title,
           pmAssignedRole,
           pmAssignedAgentId,
+          // Planning order: the dispatch gate releases siblings one at a time in this order.
+          subtaskIndex: i + 1,
+          subtaskCount: planningUnits.length,
+          siblingTitles: planningUnits.filter((_, j) => j !== i).map((sibling) => sibling.title),
         },
       });
 
