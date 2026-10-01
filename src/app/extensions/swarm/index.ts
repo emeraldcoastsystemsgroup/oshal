@@ -73,6 +73,7 @@
  * 66 | maintainer@emeraldcoastsystemsgroup.com | Expose the already-wired canonical runtime-params resolver on SwarmExtensionBindings so interactive remote execution can honor the explicit `bot-default` user preference with the same per-bot > fleet > agent_config > registry record the queue stamps.
  * 67 | maintainer@emeraldcoastsystemsgroup.com | Give protected queued `bot-default` degradation an explicit hosted-only ladder mode so an unavailable or SEC-05-ineligible canonical CLI record can fall through without resolving the same marker again.
  * 68 | maintainer@emeraldcoastsystemsgroup.com | Gate the canonical runtime-params resolver on the first persisted provider-switch snapshot settlement so startup cannot stamp a registry fallback before the saved per-bot row loads.
+ * 69 | maintainer@emeraldcoastsystemsgroup.com | The controller's own swarm worker wiring (execution handler deps, cost-linking ticket service, worker channels, ticket-terminal check, bid responder, SwarmAgentWorker) moved to ./controller-swarm-worker.ts because this file crossed 800 code lines. Pure move; behaviour unchanged.
  */
 
 import type { Pool } from 'pg';
@@ -110,16 +111,14 @@ import {
   createAgentConfigRuntimeParamsResolver,
   AgentMemoryService,
   SwarmMemoryService,
-  PersonaLayerStore,
-  MESH_CHANNELS,
   MeshBidBroadcaster,
-  createMeshBidResponder,
   BotNodeClient,
   createRegistryEndpointResolver,
   isControllerInlineContainer,
   type RuntimeParamsResolver,
 } from '@/features/agent-management';
 import { resolveBotNodeEndpoint } from './resolve-bot-node-endpoint';
+import { createControllerSwarmWorker } from './controller-swarm-worker';
 import { RagService } from '@/features/rag';
 import { WorkflowRunHistoryStore } from '@/features/workflow-studio';
 import type { LLMService } from '@/features/llm-provider';
@@ -130,18 +129,16 @@ import { SelectorCompositionService } from '@/features/selector-composition';
 import { BudgetService } from '@/features/cost-governance';
 import { SelfHealAutoApplyEngine } from '@/features/alert-triage';
 import { createSelfHealRemediationExecutor } from '@/app/self-heal-remediation-executor';
-import { createPromptAuthorizationResolver } from '@/app/prompt-authorization-resolver';
 import {
   PlaneTicketWritebackAdapter,
   GitHubTicketWritebackAdapter,
   PostgresSwarmEscalationStore,
   PostgresSwarmRunStore,
-  SwarmAgentWorker,
+  type SwarmAgentWorker,
   SwarmOrchestrationController,
   SwarmTicketProcessingService,
   SwarmVerificationService,
   type SwarmRuntimeReadiness,
-  createLLMExecutionHandler,
   RALFHandoverManager,
   ConsensusReviewService,
   InMemoryMeshTransport,
@@ -189,7 +186,6 @@ import { createOpsIntelligenceRoutes } from './routes/ops-intelligence-routes';
 import { createBotRegistryRoutes } from './routes/bot-registry-routes';
 import { createConfigPropagationRoutes } from './routes/config-propagation-routes';
 import { SwarmBotRegistry, validatePersonaIdentities, getActiveRegistry, isBotAccessibleTo, registryDeclaredProvider, registryHarnessEntry, type SwarmRuntimeIdentity } from './swarm-bot-registry';
-import { resolveHarnessForAgent } from '@/app/composition/provider-runtime';
 import {
   gateRuntimeParamsResolverOnProviderSwitchSnapshot,
   resolveInstalledProviderFallbackOrder,
@@ -205,7 +201,6 @@ import { buildQueueDlqOperatorNotifier } from '@/app/routes/queue-dlq-routes';
 import {
   canUseRuntimeRegistry,
   buildStatusAwareOnlineResolver,
-  buildRuntimeAliasChannels,
   startRuntimeAgentHeartbeat,
 } from './swarm-runtime-registry';
 import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
@@ -563,100 +558,18 @@ export function createSwarmExtensionBindings(
     workItemRepository,
   );
 
-  const personaLayerStore = pool ? new PersonaLayerStore(pool) : undefined;
-
-  const handoverManager = new RALFHandoverManager();
-
-  // Cost-linking ticket service — available to ALL bots (not just PM) so every
-  // bot can create ticket_task_links entries for its cost data (ADR-027).
-  const costLinkingTicketStore = pool ? new PostgresTicketStore(pool) : undefined;
-  const costLinkingTicketService = costLinkingTicketStore ? new TicketService(costLinkingTicketStore) : undefined;
-  const promptAgentToolRepository = pool ? new AgentToolRepository(pool) : undefined;
-
-  // The swarm controller's execution handler only handles envelopes for the PM bot
-  // (local execution via agent.processMessage). All other bots consume their own
-  // envelopes directly via SwarmAgentWorker on their bot-node containers.
-  const executionHandler = agentProfileRepository && getProvider
-    ? createLLMExecutionHandler({
-        resolveProvider: getProvider,
-        agentProfileRepository,
-        personaLayerStore,
-        swarmMemoryService,
-        handoverManager,
-        recordCost: (event) => costTrackingService.recordCost(event),
-        recordMetrics: (event) => agentMetricsServiceInstance.recordExecution(event),
-        ticketService: costLinkingTicketService,
-        resolvePromptAuthorization: createPromptAuthorizationResolver(promptAgentToolRepository),
-        resolveAgentHarness: (agentId: string) => resolveHarnessForAgent(agentId, logger),
-      })
-    : undefined;
-
-  // The swarm controller subscribes only to its own channels (PM direct + broadcast).
-  // Each bot node subscribes to its own channel via its own SwarmAgentWorker.
-  const workerChannels = [
-    MESH_CHANNELS.broadcast,
-    MESH_CHANNELS.capabilities,
-    ...buildRuntimeAliasChannels(runtimeIdentity),
-  ];
-  const workerPrimaryChannel = MESH_CHANNELS.agentDirect(runtimeIdentity.agentId);
-
-  const isTicketTerminal = pool
-    ? async (ticketId: string): Promise<boolean> => {
-        const result = await pool.query(
-          'SELECT status FROM tickets WHERE ticket_id = $1 LIMIT 1',
-          [ticketId],
-        );
-        const status = result.rows[0]?.status as string | undefined;
-        return status === 'complete' || status === 'escalated' || status === 'dead_letter';
-      }
-    : undefined;
-
-  // SP-3 / ADR-083: bid responder — this participant answers BID_REQUEST envelopes with a
-  // self-scored confidence (its OWN routing keywords + required-capability overlap; a
-  // name-token match is only a 0.05 tie-breaker). Shared with bot-node-server so every
-  // swarm participant scores call-outs identically (mesh-bid-responder.ts).
-  const bidResponseHandler = createMeshBidResponder({
+  const { agentWorker, personaLayerStore } = createControllerSwarmWorker({
+    pool,
+    getProvider,
+    agentProfileRepository,
+    swarmMemoryService,
+    costTrackingService,
+    agentMetricsService: agentMetricsServiceInstance,
     meshTransport,
-    agentId: runtimeIdentity.agentId,
-    agentName: runtimeIdentity.agentName,
-    capabilities: runtimeIdentity.capabilities,
-    personaPath: process.env.BOT_PERSONA_FILE,
-  });
-
-  const agentWorker = new SwarmAgentWorker({
-    transport: meshTransport,
     workItemRepository,
-    handler: executionHandler,
-    channel: workerPrimaryChannel,
-    consumerId: runtimeIdentity.agentId,
-    additionalChannels: workerChannels,
-    directHandler: bidResponseHandler,
-    isTicketTerminal,
-    updateTicketStatus: costLinkingTicketService
-      ? (ticketId, status, metadata) => costLinkingTicketService.updateStatus(ticketId, status, metadata)
-      : undefined,
-    recordTicketActivity: costLinkingTicketService
-      ? (ticketId, metadata) => costLinkingTicketService.recordActivity(ticketId, metadata)
-      : undefined,
-    recordTicketAssignment: costLinkingTicketService
-      ? async (ticketId, agentId, metadata) => {
-          const phase = metadata.phase != null ? `phase-${metadata.phase}` : undefined;
-          await Promise.all([
-            costLinkingTicketService.updateTicket(ticketId, { assignedAgentId: agentId }),
-            costLinkingTicketService.assignAgent(ticketId, agentId, 'worker', phase),
-          ]);
-        }
-      : undefined,
+    runtimeIdentity,
+    logger,
   });
-  logger.info(
-    {
-      runtimeAgentId: runtimeIdentity.agentId,
-      runtimeAgentName: runtimeIdentity.agentName,
-      primaryChannel: workerPrimaryChannel,
-      additionalChannels: workerChannels,
-    },
-    'Configured swarm worker channels for runtime identity',
-  );
 
   const agentConfigService = pool ? new AgentConfigService(pool) : undefined;
   // ADR-034 gap-b push-on-dispatch: a resolver over the SAME authoritative agent_config

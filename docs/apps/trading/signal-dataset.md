@@ -11,12 +11,14 @@
 > service [src/features/world-data/world-intelligence-service.ts](../../../src/features/world-data/world-intelligence-service.ts).
 
 ## What already exists (reuse, don't rebuild)
-- **`world_items`** — every pulled news item per entity: outlet, **lean**, **reliability**, title/body,
+- **`world_items`** — every pulled news item per entity: outlet (its `lean`/`reliability` columns are NULL
+  since 2026-10-01: ratings are computed on read, see ADR-061), title/body,
   `pub_date`, **sentiment**, extracted **entities**, classifier model/version, `first_seen_at`, `seen_count`.
   Idempotent by content hash. (The raw substrate.)
 - **`world_metrics`** (TimescaleDB hypertable) — `(entity, metric, ts, value, source)` time-series.
   Today it mainly carries `sentiment` per outlet. **This is where every feature below lands.**
-- **`sentimentBreakdown()`** — bias-aware: naive / balanced / reliability-weighted / by-lean / **consensus**.
+- **`sentimentBreakdown()`** — bias-aware: naive / balanced / reliability-weighted / by-lean / **consensus**,
+  read through oshal's own observed outlet ratings (ADR-061 2026-10-01 update).
 - **`pullStats()`** — `freshRate = new/fetched` per source (= novelty).
 - **Graph** — `world:<type>:<key>` nodes + `moves_with` / `correlates_with` / `in_sector` / co-mention edges.
 - Coverage: 15 macro topics always-on + per-ticker subjects added from the trading universe; 6-hourly refresh.
@@ -42,11 +44,11 @@ written as metrics* so they're a queryable time-series.
 | `mention_count` | # items in the window | attention level |
 | `mention_velocity` | mention_count vs trailing-N baseline (z-score) | **acceleration = "something is happening"** (the event detector) |
 | `novelty` | fresh / total (freshRate) | new news vs recycled — real events are novel |
-| `sentiment_mean` | bias-aware mean (balanced) | direction of the narrative |
+| `sentiment_mean` | mean of the observed below/near/above lean-bucket means (balanced) | direction of the narrative |
 | `sentiment_shift` | sentiment vs trailing baseline (Δ) | **the change matters more than the level** |
 | `sentiment_dispersion` | stdev across outlets | disagreement / uncertainty |
-| `sentiment_consensus` | do left/center/right agree | agreement = conviction (from `sentimentBreakdown`) |
-| `reliability_weighted_sentiment` | trust factual sources | filters noise outlets |
+| `sentiment_consensus` | do sources that usually read below, near and above the others agree | agreement = conviction (from `sentimentBreakdown`) |
+| `reliability_weighted_sentiment` | weight by observed reliability (agreement with the other sources) | filters noise outlets |
 | `event_*` | per-type intensity flags (below) | the *kind* of catalyst |
 | `comention_degree` | # co-mentioned tickers/people (graph degree) | contagion / who-moves-with-whom |
 | `sector_sentiment` / `sector_mention_velocity` | the entity's sector roll-up | is the whole sector moving? |
@@ -74,7 +76,7 @@ mine "which feature combinations actually precede a move," walk-forward, on our 
 - **Intraday pulse (market hours):** every **15–30 min** for the 100 names + indices/sectors — fast enough
   to catch intraday catalysts (today's 6-hourly refresh is too slow for trading). Light pull, deterministic
   sentiment for known items; LLM-classify only **novel, high-attention** items (cost control — `usedLlm` already tracks this).
-- **Deep refresh:** keep the 6-hourly bias-balanced (left/center/right) pull for macro + a daily deep per name.
+- **Deep refresh:** keep the 6-hourly cross-spectrum pull for macro + a daily deep per name.
 - **Labeler:** once daily after the close — compute `fwd_ret_*` for all matured signal timestamps.
 
 ### 5. Provenance & cost

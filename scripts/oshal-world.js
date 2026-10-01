@@ -13,13 +13,14 @@
  *   scripts/oshal-feeds.js (a registered cli tool returning JSON on stdout for a bot to read).
  *
  * Verbs (argv[2]) with a JSON input object (argv[3], the tool's {input}):
- *   sentiment  {entity, days?}                  -> bias-aware sentiment (political+econ+kind)
+ *   sentiment  {entity, days?}                  -> bias-aware sentiment (observed lean axis + per-source ratings)
  *   metric     {entity, metric?, days?}         -> historical metric average
  *   neighbors  {id|entity, depth?}              -> entity graph neighbourhood
  *   pulls      {entity, days?}                  -> pull-rate accounting
  *   entities   {limit?}                         -> known world subjects (what's been ingested)
  *   ingest     {q, entity, label?, sources?, limit?} -> fetch+classify+ingest news (token-guarded)
  * 2026-08-05 ... | maintainer@emeraldcoastsystemsgroup.com | Retired query-string credentials: write verbs now send WORLD_INGEST_TOKEN only in Authorization, so URLs, referrers, and access logs cannot retain it
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Usage text only: the sentiment verb now returns the observed lean axis and per-source observed ratings (the seeded political/econ/kind axes were deleted with the seed table).
  */
 'use strict';
 

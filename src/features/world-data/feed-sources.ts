@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Layer B: query-driven RSS feed registry (news/social/legal/regulatory/medical/web)
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Comment only: the cross-spectrum `site:` list is fixed query configuration, no longer described as one outlet per seeded lean bucket (the seed ratings are deleted; ratings are observed). The fetched URLs are unchanged.
  */
 
 /**
@@ -47,9 +48,10 @@ export interface FeedSource {
 const e = encodeURIComponent;
 
 /** Generic cross-spectrum expansion: for an engine whose `q=` honors the `site:` operator (Google News,
- *  Bing News), pull the SAME subject filtered to one outlet per lean bucket — so the bias-aware read gets
- *  balanced material by construction, not whatever the default ranking surfaces. `buildUrl` takes the
- *  full query string (subject + operators) and returns the feed URL. */
+ *  Bing News), pull the SAME subject filtered to each publisher in the fixed CROSS_SPECTRUM_OUTLETS list —
+ *  so the read always includes those publishers, not only whatever the default ranking surfaces. The
+ *  list is query configuration; how each source reads is rated from observations (outlet-ratings.ts).
+ *  `buildUrl` takes the full query string (subject + operators) and returns the feed URL. */
 function siteVariants(buildUrl: (qq: string) => string, q: string): QueryVariant[] {
   return CROSS_SPECTRUM_OUTLETS
     .filter((o) => o.domain)
@@ -122,8 +124,8 @@ export function feedPlan(src: FeedSource, q: string): QueryVariant[] {
 export const DEFAULT_FEED_IDS = ['google-news', 'bing-news'];
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FINANCE (per-ticker) coverage — for the trading universe. The generic news plan balances POLITICAL
-// bias (left/center/right `site:` filters); a STOCK doesn't need that — it needs topical breadth. So the
+// FINANCE (per-ticker) coverage — for the trading universe. The generic news plan adds fixed
+// cross-spectrum `site:` filters; a STOCK doesn't need those — it needs topical breadth. So the
 // finance plan fans a ticker out across the angles that actually move a name (earnings, analyst actions,
 // corporate actions, catalysts) searched by COMPANY NAME, not "<SYM> stock". This is the "expand the
 // search criteria" lever: ~7 variants/engine × the finance feed set = hundreds of items per name per run.

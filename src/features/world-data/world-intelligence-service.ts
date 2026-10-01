@@ -12,6 +12,8 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Own the memoized TimescaleDB pool's connection 'error' events (ownPoolConnectionErrors) - a server-terminated connection on an unowned pool is an uncaught exception that ends the api process.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Expose a bounded latest-point read that preserves timestamp/source provenance for feed-backed read-only consumers such as the Trading congressional watchlist projection.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Record when a feed point was observed: world_metrics gains a nullable observed_at column (added once, never back-stamped onto existing rows), writeMetric takes an optional observedAt, and writeMetricIfChanged appends a point only when the newest stored value for the same entity/metric/ts/source differs, so a collector re-reading the same disclosure window stops piling identical rows. latestMetricPoints breaks same-ts ties on observed_at and returns it. recentFeedMetricPoints is the bounded "which names did this feed disclose lately" read the Trading disclosure list needs. The congress_* namespace and the quiver-congress source are reserved: ingest() refuses them, and writeMetric only accepts them together.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com  | Read sentiment through oshal's OWN observed outlet ratings (operator decision 2026-09-22: the seed table is deleted, no external license). sentimentBreakdown and rollupFeatures take the rating set from one memoized reader (outlet-observations.ts) over the daily head, and outletRatings() exposes it. No schema change: the ratings are computed from the stored sentiment series on read.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com  | rollupFeatures was already over the 50-line function limit and entry 10 grew it by a line, so its attention, sentiment and catalyst reads move into three private helpers (rollupAttention, rollupSentiment, rollupEvents). Code motion only: the same statements, in the same order, under the same series-gate keys, and the same features written.
  */
 
 /**
@@ -36,7 +38,9 @@ import {
   isReservedCongressSource,
   type WorldContribution,
 } from './world-types';
-import { computeSentimentBreakdown, type SentimentRow } from './sentiment-math';
+import { computeSentimentBreakdown, type SentimentBreakdown, type SentimentRow } from './sentiment-math';
+import { createOutletRatingReader, type OutletRatingReader } from './outlet-observations';
+import type { OutletRatingSet } from './outlet-ratings';
 import {
   METRICS_DAILY_VIEW,
   SUBJECTS_TABLE,
@@ -160,8 +164,17 @@ export class WorldIntelligenceService {
   private archiveReady = false;
   private eventsReady = false;
   private congressTradesReady = false;
+  private ratingReader: OutletRatingReader | null = null;
 
   constructor(private readonly connector: GraphConnector, private readonly tsdb: Pool) {}
+
+  /** oshal's own observed outlet ratings (outlet-ratings.ts), computed from the stored sentiment
+   *  series and reused for one head refresh interval. */
+  async outletRatings(): Promise<OutletRatingSet> {
+    await this.ensureSeries();
+    this.ratingReader ??= createOutletRatingReader(this.tsdb);
+    return this.ratingReader.read();
+  }
 
   /** Lazily ensure the TimescaleDB hypertable for world series exists. */
   private async ensureSeries(): Promise<void> {
@@ -841,13 +854,15 @@ export class WorldIntelligenceService {
   }
 
   /**
-   * Bias-AWARE sentiment for an entity (the whole point). Reads sentiment per OUTLET, maps each outlet
-   * to its lean + reliability, and returns the signals a naive average destroys:
+   * Bias-AWARE sentiment for an entity (the whole point). Reads sentiment per SOURCE, reads each
+   * source through its OBSERVED lean + reliability (outlet-ratings.ts), and returns the signals a
+   * naive average destroys:
    *  - naive:               the misleading simple average (what most tools show)
-   *  - balanced:            mean of the left/center/right means — one lean can't dominate by volume
-   *  - reliabilityWeighted: trusts the factual sources more
-   *  - byLean + consensus:  do the left/center/right actually AGREE? (agreement = the real signal)
-   *  - bySource:            per-outlet, with bias + reliability, so you can see who broke their lean
+   *  - balanced:            mean of the below/near/above lean-bucket means — one habitual slant can't
+   *                         dominate by volume
+   *  - reliabilityWeighted: trusts the sources that track the others more
+   *  - byLean + consensus:  do sources that usually read below, near and above the others AGREE here?
+   *  - bySource:            per-source, with its observed rating, counts and date range
    */
   async sentimentBreakdown(entity: string, days: number): Promise<Record<string, unknown>> {
     await this.ensureSeries();
@@ -864,7 +879,7 @@ export class WorldIntelligenceService {
       .filter((row) => row.avg != null)
       .map((row) => ({ source: String(row.source), points: row.points, avg: Number(row.avg) }));
     // The bias-aware math is PURE + unit-tested in sentiment-math.ts; this method only does the I/O.
-    return { entity, days, ...computeSentimentBreakdown(rows) };
+    return { entity, days, ...computeSentimentBreakdown(rows, await this.outletRatings()) };
   }
 
   /** Per-source average sentiment over the last N HOURS (the rollup's window read; the days-based
@@ -926,7 +941,8 @@ export class WorldIntelligenceService {
    * Metrics written (the derivable-now subset; event_* + price/labels are separate spec items):
    *   mention_count, mention_velocity (vs trailing baseline), novelty (new/total), sentiment_mean
    *   (bias-balanced), sentiment_shift (vs baseline), sentiment_dispersion (stdev across outlets),
-   *   sentiment_consensus (left/center/right agreement), reliability_weighted_sentiment, comention_degree.
+   *   sentiment_consensus (agreement across the observed below/near/above lean buckets),
+   *   reliability_weighted_sentiment (observed reliability), comention_degree.
    *
    * @param entity - world:<type>:<key> to roll up.
    * @param opts - windowHours (default 24), baselineHours (default 168 = 7d), source tag.
@@ -939,56 +955,24 @@ export class WorldIntelligenceService {
     const src = opts.source ?? 'feature-rollup';
 
     // 1) Attention + novelty from the archive: new vs re-sighted items in the window, and the baseline rate.
-    const mq = await runSeriesRead(seriesReadKey('items-attention', entity, win, base), () => this.tsdb.query(
-      `SELECT
-         count(*) FILTER (WHERE first_seen_at >= now() - ($2 || ' hours')::interval)::int AS new_win,
-         count(*) FILTER (WHERE last_seen_at  >= now() - ($2 || ' hours')::interval
-                            AND first_seen_at <  now() - ($2 || ' hours')::interval)::int AS reseen_win,
-         count(*) FILTER (WHERE first_seen_at >= now() - ($3 || ' hours')::interval)::int AS new_base
-       FROM world_items WHERE entity_id=$1`,
-      [entity, String(win), String(base)],
-    ));
-    const newWin = Number(mq.rows[0]?.new_win) || 0;
-    const reseen = Number(mq.rows[0]?.reseen_win) || 0;
-    const newBase = Number(mq.rows[0]?.new_base) || 0;
-    const mentionCount = newWin;
-    const novelty = newWin + reseen ? newWin / (newWin + reseen) : null;
-    const baseAvg = win > 0 ? newBase / (base / win) : 0; // avg new items per window-length over baseline
-    const mentionVelocity = baseAvg > 0 ? mentionCount / baseAvg : (mentionCount > 0 ? 2 : 0); // ratio; >1 = accelerating
-
+    const attention = await this.rollupAttention(entity, win, base);
     // 2) Bias-aware sentiment family for the window, plus the baseline for the shift.
-    const bdWin = computeSentimentBreakdown(await this.perSourceSentimentHours(entity, win));
-    const bdBase = computeSentimentBreakdown(await this.perSourceSentimentHours(entity, base));
-    const sentimentShift = bdWin.balanced != null && bdBase.balanced != null ? bdWin.balanced - bdBase.balanced : null;
-    const dispersion = stdev(bdWin.bySource.map((s) => s.value));
-
+    const sentiment = await this.rollupSentiment(entity, win, base);
     // 3) Contagion: graph co-mention degree.
     let degree = 0;
     try { degree = (await this.neighbors(entity, 1)).length; } catch { degree = 0; }
-
     // 4) Catalysts: the strongest intensity of each event_* type seen in the window (the KIND of news).
-    const eq = await runSeriesRead(seriesReadKey('items-events', entity, win), () => this.tsdb.query(
-      `SELECT event_type, max(event_intensity) AS intensity
-         FROM world_items
-        WHERE entity_id=$1 AND event_type IS NOT NULL
-          AND first_seen_at >= now() - ($2 || ' hours')::interval
-        GROUP BY event_type`,
-      [entity, String(win)],
-    ));
-    const eventFeatures: Record<string, number | null> = {};
-    for (const row of eq.rows as Array<{ event_type: string; intensity: string | number }>) {
-      eventFeatures[`event_${String(row.event_type)}`] = round3(Number(row.intensity));
-    }
+    const eventFeatures = await this.rollupEvents(entity, win);
 
     const features: Record<string, number | null> = {
-      mention_count: mentionCount,
-      mention_velocity: round3(mentionVelocity),
-      novelty: round3(novelty),
-      sentiment_mean: bdWin.balanced,
-      sentiment_shift: round3(sentimentShift),
-      sentiment_dispersion: round3(dispersion),
-      sentiment_consensus: consensusScore(bdWin.consensus),
-      reliability_weighted_sentiment: bdWin.reliabilityWeighted,
+      mention_count: attention.mentionCount,
+      mention_velocity: round3(attention.mentionVelocity),
+      novelty: round3(attention.novelty),
+      sentiment_mean: sentiment.window.balanced,
+      sentiment_shift: round3(sentiment.shift),
+      sentiment_dispersion: round3(sentiment.dispersion),
+      sentiment_consensus: consensusScore(sentiment.window.consensus),
+      reliability_weighted_sentiment: sentiment.window.reliabilityWeighted,
       comention_degree: degree,
       ...eventFeatures,
     };
@@ -1002,6 +986,57 @@ export class WorldIntelligenceService {
       out[metric] = value;
     }
     return out;
+  }
+
+  /** The rollup's attention block: new vs re-sighted items in the window and the baseline new-item rate. */
+  private async rollupAttention(entity: string, win: number, base: number): Promise<{ mentionCount: number; novelty: number | null; mentionVelocity: number }> {
+    const mq = await runSeriesRead(seriesReadKey('items-attention', entity, win, base), () => this.tsdb.query(
+      `SELECT
+         count(*) FILTER (WHERE first_seen_at >= now() - ($2 || ' hours')::interval)::int AS new_win,
+         count(*) FILTER (WHERE last_seen_at  >= now() - ($2 || ' hours')::interval
+                            AND first_seen_at <  now() - ($2 || ' hours')::interval)::int AS reseen_win,
+         count(*) FILTER (WHERE first_seen_at >= now() - ($3 || ' hours')::interval)::int AS new_base
+       FROM world_items WHERE entity_id=$1`,
+      [entity, String(win), String(base)],
+    ));
+    const newWin = Number(mq.rows[0]?.new_win) || 0;
+    const reseen = Number(mq.rows[0]?.reseen_win) || 0;
+    const newBase = Number(mq.rows[0]?.new_base) || 0;
+    const baseAvg = win > 0 ? newBase / (base / win) : 0; // avg new items per window-length over baseline
+    return {
+      mentionCount: newWin,
+      novelty: newWin + reseen ? newWin / (newWin + reseen) : null,
+      mentionVelocity: baseAvg > 0 ? newWin / baseAvg : (newWin > 0 ? 2 : 0), // ratio; >1 = accelerating
+    };
+  }
+
+  /** The rollup's sentiment family: the window and baseline breakdowns read through the observed ratings. */
+  private async rollupSentiment(entity: string, win: number, base: number): Promise<{ window: SentimentBreakdown; shift: number | null; dispersion: number | null }> {
+    const ratings = await this.outletRatings();
+    const bdWin = computeSentimentBreakdown(await this.perSourceSentimentHours(entity, win), ratings);
+    const bdBase = computeSentimentBreakdown(await this.perSourceSentimentHours(entity, base), ratings);
+    return {
+      window: bdWin,
+      shift: bdWin.balanced != null && bdBase.balanced != null ? bdWin.balanced - bdBase.balanced : null,
+      dispersion: stdev(bdWin.bySource.map((s) => s.value)),
+    };
+  }
+
+  /** The rollup's catalysts: the strongest intensity of each event_* type seen in the window. */
+  private async rollupEvents(entity: string, win: number): Promise<Record<string, number | null>> {
+    const eq = await runSeriesRead(seriesReadKey('items-events', entity, win), () => this.tsdb.query(
+      `SELECT event_type, max(event_intensity) AS intensity
+         FROM world_items
+        WHERE entity_id=$1 AND event_type IS NOT NULL
+          AND first_seen_at >= now() - ($2 || ' hours')::interval
+        GROUP BY event_type`,
+      [entity, String(win)],
+    ));
+    const eventFeatures: Record<string, number | null> = {};
+    for (const row of eq.rows as Array<{ event_type: string; intensity: string | number }>) {
+      eventFeatures[`event_${String(row.event_type)}`] = round3(Number(row.intensity));
+    }
+    return eventFeatures;
   }
 
   /** The world subjects already tracked (ingested), most-covered first — the catalog the
