@@ -18,6 +18,7 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | FSD deep-import burn-down: re-exported service members consumers were reaching via deep paths (rca-mode, prompt-layer builders, phase/queue/failure/metrics services, trace analyzer, workflow-pipeline registry, comment formatter, TicketTraceReport). All within the barrel's pre-existing service subgraph — no new import cycle.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Exported SEC-05 prompt containment and authority-binding contracts.
  * 15 | maintainer@emeraldcoastsystemsgroup.com | Export the queued evidence/result contract through the feature boundary.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com   | Exported RoundOwner and LocalRoundExecutor so the app layer can install the in-process build-lane planning executor on MultiRoundDispatchService.
  */
 
 export { SwarmOrchestrationController } from './controllers';
@@ -102,6 +103,8 @@ export {
   type AgentSelectorFn,
   type PhaseDispatchResult,
   type RoundExecutionResult,
+  type RoundOwner,
+  type LocalRoundExecutor,
   ensureInternalTicketForWorkItem,
 } from './services';
 

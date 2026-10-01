@@ -27,6 +27,7 @@
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | Exported SEC-05 prompt containment and authority-binding contracts.
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | Exported assertRunScopedEscalation so the ADR-163 run-scope refusal is reachable through the slice barrel rather than only from the store module
+ * 25 | maintainer@emeraldcoastsystemsgroup.com   | Exported RoundOwner and LocalRoundExecutor so the app layer can install the in-process build-lane planning executor on MultiRoundDispatchService.
  */
 
 export {
@@ -202,6 +203,8 @@ export {
   type AgentSelectorFn,
   type PhaseDispatchResult,
   type RoundExecutionResult,
+  type RoundOwner,
+  type LocalRoundExecutor,
 } from './multi-round-dispatch-service';
 
 // Queue governance

@@ -74,6 +74,7 @@
  * 67 | maintainer@emeraldcoastsystemsgroup.com | Give protected queued `bot-default` degradation an explicit hosted-only ladder mode so an unavailable or SEC-05-ineligible canonical CLI record can fall through without resolving the same marker again.
  * 68 | maintainer@emeraldcoastsystemsgroup.com | Gate the canonical runtime-params resolver on the first persisted provider-switch snapshot settlement so startup cannot stamp a registry fallback before the saved per-bot row loads.
  * 69 | maintainer@emeraldcoastsystemsgroup.com | The controller's own swarm worker wiring (execution handler deps, cost-linking ticket service, worker channels, ticket-terminal check, bid responder, SwarmAgentWorker) moved to ./controller-swarm-worker.ts because this file crossed 800 code lines. Pure move; behaviour unchanged.
+ * 70 | maintainer@emeraldcoastsystemsgroup.com | Build-lane planning runs in-process: MultiRoundDispatchService gets isDelegationEnforced (the controller signing configuration) and, once the controller worker's handler deps exist, the project-manager round executor (controller-pm-round-executor.ts).
  */
 
 import type { Pool } from 'pg';
@@ -119,6 +120,8 @@ import {
 } from '@/features/agent-management';
 import { resolveBotNodeEndpoint } from './resolve-bot-node-endpoint';
 import { createControllerSwarmWorker } from './controller-swarm-worker';
+import { createControllerPmRoundExecutor } from './controller-pm-round-executor';
+import { hasDelegationSigningConfiguration } from '@/shared/security/delegation-http-policy';
 import { RagService } from '@/features/rag';
 import { WorkflowRunHistoryStore } from '@/features/workflow-studio';
 import type { LLMService } from '@/features/llm-provider';
@@ -468,6 +471,9 @@ export function createSwarmExtensionBindings(
     meshService: meshCommunicationService,
     workItemRepository,
     handoverManager: new RALFHandoverManager(),
+    // Under signing every node refuses unsigned mesh execution, so a round no in-process executor
+    // owns is skipped instead of published (docs/security/http-delegation.md).
+    isDelegationEnforced: () => hasDelegationSigningConfiguration(process.env),
     selectAgent: async (ticketId, phase, role, excludeAgentIds) => {
       const onlineResolver = runtimeRegistryService
         ? buildStatusAwareOnlineResolver(runtimeRegistryService, agentProfileRepository)
@@ -558,7 +564,7 @@ export function createSwarmExtensionBindings(
     workItemRepository,
   );
 
-  const { agentWorker, personaLayerStore } = createControllerSwarmWorker({
+  const { agentWorker, personaLayerStore, handlerDeps } = createControllerSwarmWorker({
     pool,
     getProvider,
     agentProfileRepository,
@@ -570,6 +576,11 @@ export function createSwarmExtensionBindings(
     runtimeIdentity,
     logger,
   });
+  // Build-lane planning runs in-process on the root owner's hosted ladder
+  // (docs/security/http-delegation.md, "Build-lane planning runs in-process").
+  if (handlerDeps) {
+    multiRoundDispatch.setLocalRoundExecutor(createControllerPmRoundExecutor({ pool, handlerDeps }));
+  }
 
   const agentConfigService = pool ? new AgentConfigService(pool) : undefined;
   // ADR-034 gap-b push-on-dispatch: a resolver over the SAME authoritative agent_config

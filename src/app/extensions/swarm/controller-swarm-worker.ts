@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from extensions/swarm/index.ts, which had crossed 800 code lines: the controller's own swarm worker wiring (the execution handler deps, the cost-linking ticket service, the worker channels, the ticket-terminal check, the bid responder and the SwarmAgentWorker). Pure move with no behaviour change; the handler deps are returned so later composition can reuse them.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | While delegation signing is configured, the worker's handler is wrapped in prohibitUnsignedMeshExecution, as every bot node's is: docs/security/http-delegation.md already prohibits Redis mesh execution then, and this worker was the one place it still ran. Build-lane planning runs in-process instead. One posture line is logged at boot.
  */
 
 import type { Pool } from 'pg';
@@ -30,6 +31,8 @@ import { PostgresTicketStore, TicketService } from '@/features/ticketing';
 import type { AgentMetricsService, CostTrackingService } from '@/features/operational-intelligence';
 import { createPromptAuthorizationResolver } from '@/app/prompt-authorization-resolver';
 import { resolveHarnessForAgent } from '@/app/composition/provider-runtime';
+import { prohibitUnsignedMeshExecution } from '@/app/bot-node-delegation';
+import { hasDelegationSigningConfiguration } from '@/shared/security/delegation-http-policy';
 import { buildRuntimeAliasChannels } from './swarm-runtime-registry';
 import type { SwarmRuntimeIdentity } from './swarm-bot-registry';
 
@@ -135,6 +138,29 @@ function buildWorkerTicketCallbacks(
 }
 
 /**
+ * @description The controller worker's mesh execution handler. While delegation signing is
+ * configured it refuses unsigned execution, as every bot node's worker does; build-lane planning
+ * runs in-process instead (docs/security/http-delegation.md, "Build-lane planning runs in-process").
+ * @param handlerDeps - The execution handler deps, when a handler can be built.
+ * @param logger - The extension's logger, for the one posture line at boot.
+ * @returns The handler, or undefined without handler deps.
+ */
+function buildControllerMeshHandler(
+  handlerDeps: LLMExecutionHandlerDeps | undefined,
+  logger: CompositionLogger,
+): SwarmAgentWorkerOptions['handler'] {
+  if (!handlerDeps) return undefined;
+  const signing = hasDelegationSigningConfiguration(process.env);
+  logger.info(
+    { delegationSigning: signing },
+    signing
+      ? 'Controller mesh worker refuses unsigned execution: delegation signing is configured'
+      : 'Controller mesh worker executes mesh envelopes: delegation signing is not configured',
+  );
+  return prohibitUnsignedMeshExecution(signing, createLLMExecutionHandler(handlerDeps));
+}
+
+/**
  * @description Creates the controller's SwarmAgentWorker. The controller subscribes only to its own
  * channels (its direct channel, broadcast, capabilities and its runtime aliases); each bot node
  * subscribes to its own channel through its own worker.
@@ -168,7 +194,7 @@ export function createControllerSwarmWorker(deps: ControllerSwarmWorkerDeps): Co
   const agentWorker = new SwarmAgentWorker({
     transport: meshTransport,
     workItemRepository: deps.workItemRepository,
-    handler: handlerDeps ? createLLMExecutionHandler(handlerDeps) : undefined,
+    handler: buildControllerMeshHandler(handlerDeps, logger),
     channel: workerPrimaryChannel,
     consumerId: runtimeIdentity.agentId,
     additionalChannels: workerChannels,

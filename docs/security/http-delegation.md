@@ -173,6 +173,8 @@ Everything below is a bot that resolves to **no** dedicated bot-node endpoint. E
 interactive-only on purpose: its turn runs in-process through `executeBotOrInline`, crossing no
 network hop, so there is nothing for a delegation token to bind to. None of them may own a queued
 ticket type, and after the call-out rule above none of them can acquire one by winning a bid either.
+One queued round runs inline by design, under its own rules: build-lane planning by project-manager,
+specified in [Build-lane planning runs in-process](#build-lane-planning-runs-in-process).
 
 Three groups, three different reasons - do not treat them as one list, and do not "fix" a group by
 flipping `requiresOwnNode` without reading why it is inline:
@@ -220,7 +222,47 @@ cannot own a node, that design has to be specified here first - it must demand t
 verified-issuer binding the signed path demands, keep the `isApplicationExecutionProtected` refusal
 and the deterministic-provider-intent refusal, and it must not reintroduce the localhost
 `/api/send-message` leg, which asserts an arbitrary user subject with a machine credential and no
-issuer.
+issuer. Build-lane planning is the one such case, specified next.
+
+### Build-lane planning runs in-process
+
+The `build` pipeline's Phase-2 planning round belongs to project-manager (`a0…001`), which is
+controller-inline. That round used to cross the Redis mesh to the api's own worker, which ran it on
+project-manager's registry harness: an unattended command-line engine, which the controller refuses
+(SEC-05). No build ticket could be planned, with or without signing.
+
+The round now runs in the controller process (`controller-pm-round-executor.ts`, called by
+`MultiRoundDispatchService`), and these rules decide whether it runs at all:
+
+- **Which round.** Only rounds addressed to project-manager's exact agent id, and only while that
+  id's own registry entry is controller-inline. Any other id, including one the registry does not
+  define, takes the normal path.
+- **Owner and issuer.** The round carries the root ticket's owner subject and the verified issuer
+  persisted with it (`oshalOwnerPrincipalIssuer`, which is written only from a verified request
+  identity or a system copy of one). If either is missing, the round is refused with
+  `pm_hosted_brain_refused` and no model call is made.
+- **Operator-owned roots only.** The owner must be in `OSHAL_OPERATOR_SUBS`; other owners' roots are
+  refused the same way. Their child work would be refused at the bot node in any case, because the
+  demo command-line carve (ADR-127) is operator-only.
+- **Protected applications.** If project-manager is bound to a protected application
+  (`isApplicationExecutionProtected`), the round is refused.
+- **Brain.** The owner's hosted ladder (`resolveUserLlmConnection`, the rungs Jarvis uses): an explicit
+  bring-your-own endpoint first, then, for the operator on a demo box, the deployment's own hosted
+  key. When no rung resolves, the round is refused with `pm_hosted_brain_unavailable`. The call goes
+  through the governed hosted provider and carries no tools, no command-line engine, no connector
+  credential and no deterministic provider intent. It never uses the localhost `/api/send-message`
+  leg. `OSHAL_PM_PLANNING_MAX_TOKENS` (default 16384) bounds the reply.
+- **Output.** The reply is kept in memory, stored on the round's work item, and handed to
+  decomposition from memory.
+
+While signing is configured, two more rules apply:
+
+- The api's mesh worker refuses unsigned execution (`prohibitUnsignedMeshExecution`), as every bot
+  node already does.
+- Multi-round dispatch publishes no execution envelope. A round that no inline executor handles, such
+  as the plan-reviewer round or the Phase-8 architecture round, is skipped: it gets no work item and
+  nothing is published, and planning continues on project-manager's output. A high-complexity ticket
+  therefore gets no `TECHNICAL-SPECIFICATION.md`.
 
 ### What is still refused, and why it is not this rule
 

@@ -15,6 +15,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Follows the rename to assessHandoverCoverage / allHandoversPresent, and stops calling it a failed gate. These two call sites logged 'continuing with warning' immediately after the helper logged that the ticket was blocked - the same execution saying both. Neither gates; both now say coverage and say the phase continues.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | The planning-entry and preparation-packet readers and the work-unit builders moved to ./planning-work-units.ts because this file crossed 800 code lines. Pure move; behaviour unchanged.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | The PM planning round carries the root ticket's owner and persisted verified issuer (readRoundOwner) so it can run in-process on the owner's hosted ladder (docs/security/http-delegation.md, "Build-lane planning runs in-process").
  */
 
 import { existsSync } from 'fs';
@@ -25,7 +26,7 @@ import { SWARM_PHASES } from '@/features/operational-intelligence';
 import type { IntakePlanningMode } from '@/shared/types/intake';
 import { createChildLogger } from '@/shared/logger';
 import type { PhaseGateConfig } from './phase-gate-config';
-import type { MultiRoundDispatchService } from './multi-round-dispatch-service';
+import type { MultiRoundDispatchService, RoundOwner } from './multi-round-dispatch-service';
 import type { SwarmOnlineAgentIdsResolver } from './swarm-ticket-processing-support';
 import type { SwarmCyclePolicy } from './swarm-cycle-policy';
 import { assessHandoverCoverage } from './swarm-ticket-lifecycle-helpers';
@@ -38,6 +39,7 @@ import type { SwarmProcessingInput } from './swarm-ticket-processing-service';
 import type { SwarmProcessedTicketResult } from './swarm-run-store';
 import type { SwarmTicketLifecycleSnapshot } from './ticket-cycle-state-machine';
 import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
+import { readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
 import {
   TECHNICAL_SPECIFICATION_FILE,
   buildArchitectureWorkUnit,
@@ -326,6 +328,7 @@ export class PlanningRoundOrchestrator {
       routing.winner.agentId,
       input.policy,
       input.workspaceTaskId,
+      readRoundOwner(input.item),
     );
     const planCoverage = assessHandoverCoverage(input.item.externalId, result, true);
     if (!planCoverage.passed) {
@@ -510,6 +513,20 @@ function derivePlanningContext(
     planningEntry: derivePlanningEntry(itemMeta),
     preparationPacket: derivePreparationPacket(itemMeta),
   };
+}
+
+/**
+ * @description The root ticket's owner and the verified issuer persisted with it, read from the
+ * queued ticket the work item wraps (buildWorkItem's rawPayload). An in-process planning round
+ * refuses without both.
+ * @param item - The work item for the root ticket.
+ * @returns The owner subject and verified issuer, each null when absent.
+ */
+function readRoundOwner(item: ExternalWorkItem): RoundOwner {
+  const rawPayload = (item as Record<string, unknown>).rawPayload as Record<string, unknown> | undefined;
+  const ownerSub = typeof rawPayload?.ownerSub === 'string' && rawPayload.ownerSub.trim() ? rawPayload.ownerSub : null;
+  const metadata = rawPayload?.metadata as Record<string, unknown> | undefined;
+  return { ownerSub, principalIssuer: readOwnerPrincipalIssuer(metadata) };
 }
 
 /** @description Resolves the workspace path shared by all agents working on a ticket. */
