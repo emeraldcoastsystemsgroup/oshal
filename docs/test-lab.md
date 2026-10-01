@@ -166,6 +166,29 @@ were not provided.") when the credential is absent: the fire must log "congress 
 at ERROR naming `WORLD_POLITICAL_TOKEN`, write no row, and write once the token is set and sent as a
 Bearer credential. That is local evidence; only a pass of the live step shows the installed collector ran.
 
+### World outlet ratings and fetched-text containment
+
+**World outlet ratings: observed by oshal, fetched text filtered** (`world-outlet-ratings`, Tools)
+runs three steps, none of which writes. `live-ratings` reads the outlet rating set the installed world
+store yields from its own stored sentiment and checks that every rated source carries its comparison,
+subject and observation counts at or above the stated minimums and its date range, and that every
+other source carries no number. `live-breakdown` reads the most-covered subject's bias-aware breakdown
+and checks that no seeded axis (`political`, `econ`, `byKind`) comes back and that every source
+carries its rating. `classify-containment` classifies one seeded hostile item through the deployed
+world classifier with a capturing provider and a private one-call budget, so no model is called and
+nothing is fetched, written or spent; it checks the payload never reaches the prompt and the item
+arrives in one `UNTRUSTED_CONTENT` record. With world intelligence off the live steps are degraded;
+with no source above the minimums `live-ratings` is degraded and names them; with
+`WORLD_CLASSIFY_DISABLED` set the containment step is degraded.
+
+Run the linked suites locally with `npm run test:world-ratings`. The real-boundary suite
+(`tests/unit/world-outlet-ratings-postgres.spec.ts`) starts its own TimescaleDB, lets the real service
+build `world_metrics` and its daily head, stores hand-computed observations and proves the divergence
+aggregate, the window, the minimums and that a rating changes only when stored rows change.
+`tests/unit/world-classify-containment.spec.ts` serves a hostile RSS feed from a local server through
+the real fetch and XML parser. That is local evidence; only passes of the live steps show the installed
+store and build behave the same.
+
 ### Token Chase checkpoint and tail replay
 
 **Token Chase checkpoint and tail replay** (`token-chase-checkpoint-replay`, Tools) runs one read-only

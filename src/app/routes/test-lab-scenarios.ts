@@ -112,6 +112,7 @@
  * 60 | maintainer@emeraldcoastsystemsgroup.com | Register ADR-171 structured logging proofs with explicit pending container stdout acceptance.
  * 61 | maintainer@emeraldcoastsystemsgroup.com   | Registered the Jarvis "where am I" card (LOCATION_WHERE_SCENARIOS, test-lab-location-where-scenarios.ts): on the running build's database two synthetic people show that no position points to Settings, Location, a fix inside a saved place names that place, an old fix leads with its age, the other person sees no position, and no answer carries a coordinate; all rows are erased with a zero-row check. The intent, real-Postgres, reporter and registration suites are attached as regressionTests.
  * 62 | maintainer@emeraldcoastsystemsgroup.com   | Registered the deck engine brand-look card (BRAND_LOOK_SCENARIOS, test-lab-brand-look-scenarios.ts): on the installed engine, a synthetic brand look renders a deck, a document and a workbook whose colors and body face are read back, and each renderer refuses a forged look. In memory only; it writes nothing, calls no route and spends nothing.
+ * 63 | maintainer@emeraldcoastsystemsgroup.com   | Registered the world outlet-rating card (WORLD_OUTLET_RATING_SCENARIOS, test-lab-world-outlet-rating-scenarios.ts): two read-only live steps (the observed rating set the installed world store yields, checked against its stated minimums, and the most-covered subject read through it with no seeded axis) and one in-build step that classifies a seeded hostile item through the deployed classifier with a capturing provider and a private budget, so no model is called and nothing is fetched or written. The rating, filter and ingress suites are attached as regressionTests. Guard: tests/unit/world-outlet-rating-test-lab.spec.ts.
  * @module test-lab-scenarios
  */
 
@@ -152,6 +153,7 @@ import { LOCATION_WHERE_SCENARIOS } from './test-lab-location-where-scenarios';
 import { LOCATION_DEVICE_SCENARIOS } from './test-lab-location-device-scenarios';
 import { LOCATION_MAP_SCENARIOS } from './test-lab-location-map-scenarios';
 import { BRAND_LOOK_SCENARIOS } from './test-lab-brand-look-scenarios';
+import { WORLD_OUTLET_RATING_SCENARIOS } from './test-lab-world-outlet-rating-scenarios';
 import { renderCatalogVisual, VISUAL_CATALOG } from './test-lab-visual-catalog';
 import type { AppContext } from '@/app/composition/app-context';
 
@@ -351,6 +353,7 @@ export const SCENARIOS: Scenario[] = [
   ...LOCATION_DEVICE_SCENARIOS,
   ...LOCATION_MAP_SCENARIOS,
   ...BRAND_LOOK_SCENARIOS,
+  ...WORLD_OUTLET_RATING_SCENARIOS,
   // ── Rich visuals — every kind rendered deterministically through the real renderer ──────────
   ...VISUAL_CATALOG.map((entry): Scenario => ({
     id: `visual-${entry.kind}`,

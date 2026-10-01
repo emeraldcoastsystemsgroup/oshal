@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added chat-reply bridge so A2A remote clients get a bot-reasoned conversational reply (ADR-036: the bot owns reasoning + cost)
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | A turn the orchestrator fails WITHOUT throwing (it returns { success: false, error }) now carries that error text in the chat.reply. Only the catch block set it before, so the OSHAL Node showed "The bot returned an empty reply." instead of the reason (operator report 2026-10-01: the controller refusing the fleet-default antigravity-cli harness).
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -30,7 +31,7 @@ export interface RemoteChatOrchestrator {
     taskId: string,
     text: string,
     options: RemoteChatProcessOptions,
-  ): Promise<{ success: boolean; response?: string; usageSummary?: unknown }>;
+  ): Promise<{ success: boolean; response?: string; error?: string; usageSummary?: unknown }>;
 }
 
 /**
@@ -107,6 +108,8 @@ export async function runRemoteChatTurn(
       correlationId: input.correlationId,
       success: Boolean(result.success),
       text: typeof result.response === 'string' ? result.response : '',
+      // A handled failure returns its reason instead of throwing; the client prints `error`, so carry it.
+      ...(!result.success && typeof result.error === 'string' && result.error.trim() ? { error: result.error } : {}),
       usageSummary: result.usageSummary,
     };
   } catch (error) {
