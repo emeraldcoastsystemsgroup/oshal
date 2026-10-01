@@ -1,7 +1,7 @@
 # Three orphan-boundary decisions — evidence and options
 
 **Status:** item 1 is decided (option A, 2026-09-21) and built (2026-09-26); see its section. Items 2
-and 3 are awaiting an operator decision. Nothing here is a to-do for a bot; each item is a
+and 3: see their sections. Nothing here is a to-do for a bot; each item is a
 boundary call with a real trade-off, which is why the 2026-07-29 orphan sweep (PR #26) deliberately
 left the code in place rather than guess.
 

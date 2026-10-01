@@ -52,7 +52,7 @@ from preparation or unit tests alone.
 | 2026-10-01 | Combined home workspace | #fd5d3957 (store), 81e77fcd (store) |
 | 2026-10-01 | ADR-139 Stage 4a — the source direction: a generic "pick an artifact" picker | #431 |
 | 2026-10-01 | ADR-045 graph-tier residuals | #0681d5a9 (core), 4cd6c3b3 (store) |
-| 2026-10-01 | Versioned platform-credential distribution if redistribution returns | #741 |
+| 2026-10-01 | Versioned platform-credential distribution if redistribution returns (not commissioned) | #741 |
 | 2026-10-01 | GitHub-side residue of the 2026-09-12 attribution scrub | #705 |
 | 2026-09-30 | A catalog-less protected app cannot have a working system service (2026-09-16) | #957 |
 | 2026-09-30 | Rate the nine store packages that were under other lanes' claims (2026-09-29) | #12eb8014 (store) |

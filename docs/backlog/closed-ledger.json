@@ -949,7 +949,7 @@
   },
   {
     "date": "2026-10-01",
-    "title": "Versioned platform-credential distribution if redistribution returns",
+    "title": "Versioned platform-credential distribution if redistribution returns (not commissioned)",
     "pr": "741",
     "evidence": "Not commissioned, not built: the operator ruled on 2026-09-21 that a node gets oshal platform credentials, if it ever needs them, by enrolment plus a fetch from the custody broker, never by broadcast. The ruling is recorded in the entry by PR #741 (8be6e4d5). The retired Redis credential pub/sub rail stays disabled (src/app/extensions/swarm/index.ts:1052-1054 on main 7bf94478)."
   },

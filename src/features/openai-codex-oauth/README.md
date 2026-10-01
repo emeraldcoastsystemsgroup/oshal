@@ -57,9 +57,9 @@ Redis credential publication/subscription is disabled. The former unordered upda
 monotonic version or revocation tombstone, so a delayed import message could resurrect credentials
 after sign-out. There is no controller-to-bot raw HTTP or Redis credential transport. Static
 `config-seed` Codex OAuth copies are ignored by active consumers because they cannot rotate or
-represent revocation. Credential distribution by broadcast is not coming back (operator ruling
-2026-09-21): a node that needs oshal platform credentials gets them by enrolment plus a fetch from
-the custody broker.
+represent revocation. Credential distribution by broadcast is not to be re-enabled (operator ruling 2026-09-21,
+PR #741). If a node ever needs oshal platform credentials, the ruled path is enrolment plus a fetch
+from a custody broker; that broker is not built.
 
 Secrets key used:
 
