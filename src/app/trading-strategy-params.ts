@@ -12,6 +12,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — approved strategy-param store (load overlay onto defaults, clamped upsert) for the nightly optimizer + approval gate.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Bootstrap under the SCHEMA_LOCK_KEYS.trading advisory lock. These statements were running unserialised, so two processes sharing one database interleaved `DROP TRIGGER IF EXISTS` / `CREATE TRIGGER`, `CREATE TABLE IF NOT EXISTS` and the check-then-`CREATE POLICY` pair; Postgres answers that with 42710 "already exists" or 23505 on a catalog index, and it failed three trading specs in beforeAll on every unit run without --no-file-parallelism. The lock also moves the module onto the savepoint path, so owner-only DDL under a non-owner runtime role is reported and the requirements asserted instead of aborting the whole bootstrap.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Add meanrevMaxTrendGap to TUNABLE_PARAMS, PARAM_LABELS and BOUNDS so the mean-reversion regime gate (trading-advisor.md item 7) can be tuned and approved on the Tuning page.
  *
  * @module trading-strategy-params
  */
@@ -21,7 +22,7 @@ import { runRuntimeSchemaBootstrap, SCHEMA_LOCK_KEYS } from '@/shared/services/d
 import { DEFAULT_STRATEGY_PARAMS, type StrategyParams } from '@/features/trading';
 
 /** The params the optimizer may tune and the Tuning page may approve. */
-export const TUNABLE_PARAMS: Array<keyof StrategyParams> = ['momentumSma', 'rsiLow', 'rsiHigh', 'donchianWindow', 'ensembleThreshold'];
+export const TUNABLE_PARAMS: Array<keyof StrategyParams> = ['momentumSma', 'rsiLow', 'rsiHigh', 'donchianWindow', 'ensembleThreshold', 'meanrevMaxTrendGap'];
 
 /** Human labels for the UI / recommendation tickets. */
 export const PARAM_LABELS: Record<keyof StrategyParams, string> = {
@@ -30,6 +31,7 @@ export const PARAM_LABELS: Record<keyof StrategyParams, string> = {
   rsiHigh: 'Mean-rev RSI overbought',
   donchianWindow: 'Donchian breakout window',
   ensembleThreshold: 'Ensemble action threshold',
+  meanrevMaxTrendGap: 'Mean-rev max trend gap',
 };
 
 /** Sane bounds per param — every approved/loaded value is clamped so the live engine stays valid. */
@@ -39,6 +41,7 @@ const BOUNDS: Record<keyof StrategyParams, { min: number; max: number; int: bool
   rsiHigh: { min: 51, max: 90, int: true },
   donchianWindow: { min: 5, max: 100, int: true },
   ensembleThreshold: { min: 0.02, max: 0.6, int: false },
+  meanrevMaxTrendGap: { min: 0.01, max: 0.20, int: false },
 };
 
 /** @description Narrow a string to a tunable param key. */
