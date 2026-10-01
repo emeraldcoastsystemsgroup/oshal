@@ -110,6 +110,7 @@
  * 58 | maintainer@emeraldcoastsystemsgroup.com   | Attached completion-result-text to 'jarvis-routing' regressionTests. The 2026-09-29 sweep found a Jarvis answer that is a bare number or true/false never delivered (live case jarvis-cache, 3 of 3): the completion text was stored as the converted Number and the bot-node handler threw reading it. The delivery path is guarded in antigravity-host-tool-loop, already attached here; this adds the unit guard for the rule itself.
  * 59 | maintainer@emeraldcoastsystemsgroup.com   | Registered the ADR-169 L7 location map card (LOCATION_MAP_SCENARIOS, test-lab-location-map-scenarios.ts): a catalog read of the group fence, the amendment's columns and the two triggers on spatial_scans, then three uniquely tagged synthetic people on the real database: two group scans are registered naming their capture sessions, one captured inside a group place and one outside every saved place, each anchored from the GPS its own session recorded; on a later visit a member gets both from mapsNear and opens a group scan, and a stranger, operator-stamped or not, gets nothing and reads neither. Everything created is deleted and a zero-row check runs.
  * 60 | maintainer@emeraldcoastsystemsgroup.com | Register ADR-171 structured logging proofs with explicit pending container stdout acceptance.
+ * 61 | maintainer@emeraldcoastsystemsgroup.com   | Registered the Jarvis "where am I" card (LOCATION_WHERE_SCENARIOS, test-lab-location-where-scenarios.ts): on the running build's database two synthetic people show that no position points to Settings, Location, a fix inside a saved place names that place, an old fix leads with its age, the other person sees no position, and no answer carries a coordinate; all rows are erased with a zero-row check. The intent, real-Postgres, reporter and registration suites are attached as regressionTests.
  * @module test-lab-scenarios
  */
 
@@ -146,6 +147,7 @@ import { LOCATION_STORAGE_SCENARIOS } from './test-lab-location-storage-scenario
 import { LOCATION_CONSENT_SCENARIOS } from './test-lab-location-consent-scenarios';
 import { LOCATION_PLACES_SCENARIOS } from './test-lab-location-places-scenarios';
 import { LOCATION_REMINDERS_SCENARIOS } from './test-lab-location-reminders-scenarios';
+import { LOCATION_WHERE_SCENARIOS } from './test-lab-location-where-scenarios';
 import { LOCATION_DEVICE_SCENARIOS } from './test-lab-location-device-scenarios';
 import { LOCATION_MAP_SCENARIOS } from './test-lab-location-map-scenarios';
 import { renderCatalogVisual, VISUAL_CATALOG } from './test-lab-visual-catalog';
@@ -343,6 +345,7 @@ export const SCENARIOS: Scenario[] = [
   ...LOCATION_CONSENT_SCENARIOS,
   ...LOCATION_PLACES_SCENARIOS,
   ...LOCATION_REMINDERS_SCENARIOS,
+  ...LOCATION_WHERE_SCENARIOS,
   ...LOCATION_DEVICE_SCENARIOS,
   ...LOCATION_MAP_SCENARIOS,
   // ── Rich visuals — every kind rendered deterministically through the real renderer ──────────

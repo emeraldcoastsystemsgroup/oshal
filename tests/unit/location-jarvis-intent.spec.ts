@@ -4,12 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L5, the Jarvis "next time I'm at X" intent without a database: the deterministic parser reads the action, the place phrase, "here"/"this store" and the direction from the sentence shapes the ADR names ("remind me to buy milk next time I'm at the grocery store", "I'm at the grocery store, remind me next time to buy milk", "when I leave home", "next time I'm here", "when I get home"), and declines a time reminder, a sentence with no reminder cue and a sentence with no place clause, so the time-reminder intent keeps them. The place guess turns "the grocery store" into "Grocery store" (grocery), "the office" into "Office" (work), "this store" into "Store" and "here" into "Here". A proposal reply reads yes/no, "call it ..." and "make it 200 m" together. Turn detection admits only an interactive browser session with a verified issuer: the service-secret rail, an asserted-subject header, a personal access token, a TV token, a guest token and a session without an issuer are each refused, and a refused turn answers with the "ask me from your signed-in browser" line without touching a database. A reply with no pending proposal is not a turn.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | "Where am I": the parser takes the live phrasing ("Where am i ... what is my location") and its close variants and declines a calendar, weather or reminder sentence; a browser person gets a where turn, every other rail a where-specific refusal answered without a database; and describeFixAge words a position's age.
  */
 
 import type { Request } from 'express';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
-  clearLocationProposals, detectJarvisLocationTurn, parseLocationReminder, parseProposalReply, placeGuess, runJarvisLocationTurn,
+  clearLocationProposals, describeFixAge, detectJarvisLocationTurn, parseLocationReminder, parseProposalReply, parseWhereAmI, placeGuess,
+  runJarvisLocationTurn,
 } from '@/app/location-jarvis-intent';
 
 const ISSUER = 'https://login.oshal.example.com';
@@ -111,5 +113,37 @@ describe('detectJarvisLocationTurn: only a signed-in browser session', () => {
   it('answers a refused turn without a database', async () => {
     const db = { connect: async () => { throw new Error('the pool must not be reached'); } };
     expect(await runJarvisLocationTurn(db as never, { kind: 'refused' })).toBe('I can set location reminders only from oshal open in your signed-in browser. Ask me there.');
+  });
+});
+
+describe('"where am I": the person\'s own position, asked on its own', () => {
+  it('reads the live phrasing and its close variants', () => {
+    for (const ask of ['Where am i ... what is my location', 'where am I?', 'Where am I right now', 'what\'s my location',
+      'What is my current location?', 'Jarvis, where am I', 'can you tell me where I am', 'do you know my location', 'my location']) {
+      expect(parseWhereAmI(ask)).toBe(true);
+    }
+  });
+
+  it('declines a calendar, weather, reminder or directions sentence', () => {
+    for (const ask of ['where am I meeting Sam tomorrow', 'where am I supposed to be at 3', 'what is the weather where I am',
+      'remind me to buy milk next time I\'m at the grocery store', 'how far is my location from the airport', 'where is my car']) {
+      expect(parseWhereAmI(ask)).toBe(false);
+    }
+  });
+
+  it('is a where turn for the browser person and a where-specific refusal on every other rail', async () => {
+    expect(detectJarvisLocationTurn('where am I?', request(BROWSER), 'conv-1'))
+      .toEqual({ kind: 'where', principal: { sub: 'person-a', principalIssuer: ISSUER } });
+    for (const req of [request(BROWSER, { 'x-service-secret': SECRET }), request({ idToken: 'cli-token', user: { iss: ISSUER, sub: 'person-a' } }), request(null)]) {
+      expect(detectJarvisLocationTurn('where am I?', req, 'conv-1')).toEqual({ kind: 'refused', about: 'where' });
+    }
+    const db = { connect: async () => { throw new Error('the pool must not be reached'); } };
+    expect(await runJarvisLocationTurn(db as never, { kind: 'refused', about: 'where' }))
+      .toBe('I can tell where you are only from oshal open in your signed-in browser. Ask me there.');
+  });
+
+  it('words a position\'s age', () => {
+    expect([20_000, 4 * 60_000, 60 * 60_000, 3 * 3600_000, 50 * 3600_000].map(describeFixAge))
+      .toEqual(['just now', '4 min', '1 hour', '3 hours', '2 days']);
   });
 });
