@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Every case now runs with an empty runner environment (`env: {}`). The case modules read runner inputs such as OSHAL_VERIFY_DEV_NOTES_PROBE from process.env on the host, but inside the api that is the api's environment, and no compose file forwards any OSHAL_VERIFY_* variable to the api. The dev-workspace card used to fall back to it and told operators to set a variable the api never receives. Now it reports the handover ask as host-runner-only, naming the command.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Every loopback reply also carries `byteLength` and `sha256` of its raw body (text decoded from the same bytes), so a case can prove a binary route served exact bytes, and a `files` port answers whether a NAMED probe's file (live-acceptance-common.js FILE_PROBES, never a path) exists in this server's process. Both serve the vids-publish case: the anonymous public read must equal the uploaded MP4, and cleanup must leave no MP4 on disk.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The same two additions as the host runner, for the create-region-edit card: every reply carries its raw body as `bytes` (the case decodes the PNGs Create serves), and `upload` names its file part `file.field` when the case gives one (Create's upload route reads exactly one part, `image`), `file` otherwise. The card never receives the host runner's `--allow-paid` consent, so on a paid image provider it answers a gap naming that command.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | A `forge` port for the Bot Forge edit-in-place card, the same closed fixture-pack set the host runner reaches through its container helper (live-acceptance-common.js forgePackWrite/State/Remove): the tagged pack is written into the signed-in caller's own packs directory under this server's workspace root, and the personas the deploy writes are read and removed under this process's working directory.
  */
 import { createHash } from 'node:crypto';
 import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
@@ -47,11 +48,17 @@ export interface LiveAcceptanceCaseEntry {
   writes: boolean;
 }
 
+/** Parents of the fixture pack that its first write created, so removal may drop them when empty. */
+interface ForgePrune { ownerDir?: boolean; packsRoot?: boolean }
+
 interface CommonModule {
   fixtureWorkspaceState(root: string, id: string): string;
   removeFixtureWorkspace(root: string, id: string, ownerSub: string): string | null;
   fileProbeState(name: string, id: string): 'present' | 'absent';
   receiptLine(receipt: LiveAcceptanceResult['cleanup']): string;
+  forgePackWrite(root: string, sub: string, tag: string, revision: number): { files: string[]; createdOwnerDir: boolean; createdPacksRoot: boolean };
+  forgePackState(root: string, appRoot: string, sub: string, tag: string): Record<string, unknown>;
+  forgePackRemove(root: string, appRoot: string, sub: string, tag: string, prune?: ForgePrune): string | null;
 }
 
 // The cases are plain CommonJS under scripts/lib so the host runner can stage them into a
@@ -107,7 +114,7 @@ async function send(base: string, cookie: string | null, method: string, route: 
  * @description Bind the case ports available inside the server to the initiating caller.
  * @param cookie - The initiating session cookie.
  * @param runtime - Server-derived run context (owner, stores, loopback base).
- * @returns The ports; `anonymous` sends no cookie; `files` answers named probes only; `browser` and `logs` are absent on purpose (host-only).
+ * @returns The ports; `anonymous` sends no cookie; `files` answers named probes only; `forge` writes, reads and removes only the tagged fixture pack; `browser` and `logs` are absent on purpose (host-only).
  */
 export function labPorts(cookie: string, runtime: ScenarioRunContext): Record<string, unknown> {
   const { ctx } = runtime;
@@ -140,6 +147,13 @@ export function labPorts(cookie: string, runtime: ScenarioRunContext): Record<st
     // Named probes only: the case sends a probe name and an id the probe validates, never a path.
     files: {
       state: async (name: string, id: string) => common.fileProbeState(name, id),
+    },
+    // The Bot Forge fixture pack, for the signed-in caller: this server's workspace root and its
+    // working directory, where the deploy route writes personas. A tag and a revision, never a path.
+    forge: {
+      write: async (tag: string, revision: number) => common.forgePackWrite(root, runtime.ownerSub, tag, revision),
+      state: async (tag: string) => common.forgePackState(root, process.cwd(), runtime.ownerSub, tag),
+      remove: async (tag: string, prune?: ForgePrune) => common.forgePackRemove(root, process.cwd(), runtime.ownerSub, tag, prune ?? {}),
     },
   };
 }
