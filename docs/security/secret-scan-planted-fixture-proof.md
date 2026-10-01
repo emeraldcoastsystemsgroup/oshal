@@ -1,8 +1,9 @@
 # Secret-scan planted-fixture proof (fail, then pass)
 
-**Proven 2026-09-21** against `origin/main` 6011ceb6. This is the closure evidence for the
-BACKLOG entry *CI secret-scanner remote mutation proof*, under the operator's 2026-09-20 re-scope
-of it to the local gate.
+**Re-proven 2026-10-01** against `origin/main` d9a6d9e5, the gate as it stands since
+`gate_secrets` began exporting through `export_tree`. First proven 2026-09-21 against 6011ceb6.
+This is the closure evidence for the BACKLOG entry *CI secret-scanner remote mutation proof*,
+under the operator's 2026-09-20 re-scope of it to the local gate.
 
 ## What was owed, and what replaced it
 
@@ -17,42 +18,87 @@ The operator re-scoped it on 2026-09-20: plant the fixture in a throwaway export
 *local* `secret-scan` gate go red, remove it, watch it go green, and never push anything.
 "Linked CI evidence" in the Done-when now means the local gate's own log — this page.
 
+## Why it was re-run
+
+On 2026-09-24 (30e9b7cd) `gate_secrets` stopped exporting with a bare `git archive | tar` and
+began calling `export_tree` from `scripts/ci/ci-export.sh`, the watchdog-bounded export. The guard
+runs the sliced gate text in a bare Git Bash and sources the helpers it needs there; it did not
+source that one, so from then on every stage stopped before the scanner ran. The unchanged guard
+on d9a6d9e5:
+
+```
+<tmp>/oshal-secret-scan-planted-WRs9QW/probe-clean.sh: line 19: export_tree: command not found
+Test Files  1 failed (1)
+     Tests  5 failed | 1 passed (6)
+```
+
+The one case still passing was "never prints the scanned value", which holds trivially when
+nothing is scanned. The guard now sources `ci-purge.sh`, `ci-export.sh` and `ci-secret-scan.sh`,
+the three helpers `scripts/ci-local.sh` loads before any gate runs.
+
+`tests/unit/real-boundary-doctrine.spec.ts` now also finds, from the `name() {` definitions in
+each `scripts/ci/*.sh` file, which helper files the sliced gate text calls, and requires the guard
+to source every one of them. That check needs no Docker. Against the old guard it fails with:
+
+```
+the gate calls export_tree from ci-export.sh; the guard must source it
+Test Files  1 failed (1)
+     Tests  1 failed | 14 passed (15)
+```
+
 ## What runs
 
 `tests/unit/ci-local-secret-scan-planted-fixture.spec.ts`. It slices the production
 `gitleaks_container_scan` and `gate_secrets` function bodies out of `scripts/ci-local.sh` and
-executes them in Git Bash, so the guard runs the nightly's own text rather than a paraphrase of
-it. Four sequential commits of one disposable repository — created under the OS temp directory and
-deleted in `afterAll` — are scanned in turn. The repository carries this repo's **real**
-`.gitleaks.toml`, so the production allowlist is the one under test.
+executes them in Git Bash beside the same three helpers the gate script sources, so the guard runs
+the nightly's own text rather than a paraphrase of it. Four sequential commits of one disposable
+repository — created under the OS temp directory and deleted in `afterAll` — are scanned in turn.
+The repository carries this repo's **real** `.gitleaks.toml`, so the production allowlist is the
+one under test.
 
 The scanner is real. No `docker` stand-in is placed on PATH: `docker run --rm --network none`
-launches `zricethezav/gitleaks:latest`, which on this box reports `v8.30.1`
-(`RepoDigests=[zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f]`).
-The gate uses the floating `:latest` tag, so that version is what this run measured, not a pin.
+launches `zricethezav/gitleaks:latest`, and each scan container is removed when it exits. On this
+box that tag resolves to
+`RepoDigests=[zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f]`,
+the same digest the 2026-09-21 run recorded as `v8.30.1`. The gate uses the floating `:latest`
+tag, so that is what this run measured, not a pin.
+
+Setting `OSHAL_SECRET_SCAN_PROOF_LOG` to a file path makes the guard write each stage's gate exit
+and full output there before its temp directory is deleted. Unset, it writes nothing outside that
+directory. The stage blocks below come from that file.
 
 ```bash
-npx vitest run tests/unit/ci-local-secret-scan-planted-fixture.spec.ts \
+OSHAL_SECRET_SCAN_PROOF_LOG=<file> \
+  npx vitest run tests/unit/ci-local-secret-scan-planted-fixture.spec.ts \
   --no-file-parallelism --reporter=verbose
 ```
+
+Run at 2026-10-01T14:05:21Z:
 
 ```
 Test Files  1 passed (1)
      Tests  6 passed (6)
-  Duration  15.35s
+  Duration  17.72s
 ```
 
 ## The four stages, verbatim
 
-Each block is the gate's own output for one commit, `LOG:` lines being `ci-local.sh`'s `log`
-function and the timestamped lines being the scanner's replayed stderr.
+Each block is the gate's own output for one commit, copied from that run's
+`OSHAL_SECRET_SCAN_PROOF_LOG` file. `LOG:` lines are `ci-local.sh`'s `log` function, the
+`export: OK` line is `export_tree`'s own outcome line, and the timestamped lines are the scanner's
+replayed stderr. Two edits only: the scanner's colour codes and ASCII banner are removed, and the
+temp directory prefix is shortened to `<tmp>/`.
 
 **1. Clean tree — PASS**
 
 ```
+== stage clean: gate exit 0
+LOG:purge: OK <tmp>/oshal-secret-scan-planted-3Ga8rC/state-clean/ci-scan-src (already absent)
+LOG:export: OK <tmp>/oshal-secret-scan-planted-3Ga8rC/state-clean/ci-scan-src (1s)
 LOG:secret-scan: PASS unread=0 of 3 exported files (scanner rc=0)
-1:57PM INF scanned ~48 bytes (48 bytes) in 69.3ms
-1:57PM INF no leaks found
+LOG:purge: OK <tmp>/oshal-secret-scan-planted-3Ga8rC/state-clean/ci-scan-src (2s)
+2:05PM INF scanned ~48 bytes (48 bytes) in 91.3ms
+2:05PM INF no leaks found
 ```
 
 **2. Planted fixture — FAIL.** One file added, holding an AWS-access-key-id-shaped synthetic
@@ -60,9 +106,13 @@ value (the `AKIA` prefix plus sixteen characters, assembled from parts at runtim
 source never carries the contiguous token).
 
 ```
+== stage planted: gate exit 1
+LOG:purge: OK <tmp>/oshal-secret-scan-planted-3Ga8rC/state-planted/ci-scan-src (already absent)
+LOG:export: OK <tmp>/oshal-secret-scan-planted-3Ga8rC/state-planted/ci-scan-src (1s)
 LOG:secret-scan: FAIL scanner rc=1 unread=0 of 4 exported files (findings or scanner error above)
-1:57PM INF scanned ~91 bytes (91 bytes) in 83.2ms
-1:57PM WRN leaks found: 1
+LOG:purge: OK <tmp>/oshal-secret-scan-planted-3Ga8rC/state-planted/ci-scan-src (1s)
+2:05PM INF scanned ~91 bytes (91 bytes) in 180ms
+2:05PM WRN leaks found: 1
 ```
 
 **3. Control — the allowlisted AWS documentation dummy, still PASS.** The planted file is replaced
@@ -71,17 +121,25 @@ still four files and the same shape is still present, so this is what makes the 
 attributable to the planted *value* rather than to the shape or to the extra file.
 
 ```
+== stage allowlisted: gate exit 0
+LOG:purge: OK <tmp>/oshal-secret-scan-planted-3Ga8rC/state-allowlisted/ci-scan-src (already absent)
+LOG:export: OK <tmp>/oshal-secret-scan-planted-3Ga8rC/state-allowlisted/ci-scan-src (1s)
 LOG:secret-scan: PASS unread=0 of 4 exported files (scanner rc=0)
-1:57PM INF scanned ~92 bytes (92 bytes) in 110ms
-1:57PM INF no leaks found
+LOG:purge: OK <tmp>/oshal-secret-scan-planted-3Ga8rC/state-allowlisted/ci-scan-src (1s)
+2:05PM INF scanned ~92 bytes (92 bytes) in 214ms
+2:05PM INF no leaks found
 ```
 
 **4. Fixture removed — PASS again.**
 
 ```
+== stage removed: gate exit 0
+LOG:purge: OK <tmp>/oshal-secret-scan-planted-3Ga8rC/state-removed/ci-scan-src (already absent)
+LOG:export: OK <tmp>/oshal-secret-scan-planted-3Ga8rC/state-removed/ci-scan-src (1s)
 LOG:secret-scan: PASS unread=0 of 3 exported files (scanner rc=0)
-1:57PM INF scanned ~48 bytes (48 bytes) in 208ms
-1:57PM INF no leaks found
+LOG:purge: OK <tmp>/oshal-secret-scan-planted-3Ga8rC/state-removed/ci-scan-src (1s)
+2:05PM INF scanned ~48 bytes (48 bytes) in 68.2ms
+2:05PM INF no leaks found
 ```
 
 The guard also asserts that the planted value never appears in any of the four outputs — the gate
@@ -89,8 +147,10 @@ passes `--redact`, and a proof that prints the thing it planted is not a proof a
 
 ## Mutation evidence: the guard was watched failing
 
-A guard nobody watched fail is a guard nobody knows works. Two mutations were applied to the
-lane's working tree, each reintroducing a real defect shape, and both were restored afterwards.
+A guard nobody watched fail is a guard nobody knows works. Both mutations were re-applied on
+2026-10-01 to the lane's working tree against the current gate, each reintroducing a real defect
+shape, and both were restored afterwards (`git status` showed only the two changed spec files).
+Lines elided from the assertion output are marked `...`.
 
 **Mutation A — the gate stops believing the scanner.** `--exit-code 0` added to the production
 `gitleaks_container_scan` invocation in `scripts/ci-local.sh`, so findings no longer set a failing
@@ -99,8 +159,10 @@ exit code. The scanner still finds the leak; the gate now calls it a PASS:
 ```
 tests/unit/ci-local-secret-scan-planted-fixture.spec.ts >
   goes RED on the planted credential-shaped fixture, with the scanner's own rc in the verdict
-AssertionError: LOG:secret-scan: PASS unread=0 of 4 exported files (scanner rc=0)
-1:55PM WRN leaks found: 1
+AssertionError: ...
+LOG:secret-scan: PASS unread=0 of 4 exported files (scanner rc=0)
+...
+2:04PM WRN leaks found: 1
 : expected +0 to be 1 // Object.is equality
 Test Files  1 failed (1)
      Tests  1 failed | 5 passed (6)
@@ -114,15 +176,17 @@ reports nothing at all on the planted tree:
 ```
 tests/unit/ci-local-secret-scan-planted-fixture.spec.ts >
   goes RED on the planted credential-shaped fixture, with the scanner's own rc in the verdict
-AssertionError: LOG:secret-scan: PASS unread=0 of 4 exported files (scanner rc=0)
-1:56PM INF no leaks found
+AssertionError: ...
+LOG:secret-scan: PASS unread=0 of 4 exported files (scanner rc=0)
+...
+2:04PM INF no leaks found
 : expected +0 to be 1 // Object.is equality
 Test Files  1 failed (1)
      Tests  1 failed | 5 passed (6)
 ```
 
-Both mutations were reverted and the guard re-run green (`Tests  6 passed (6)`) before the change
-was committed.
+Both mutations were reverted and the guard re-run green (`Tests  6 passed (6)`, the run quoted
+above) before the change was committed.
 
 ## No credential entered Git history
 
@@ -135,6 +199,9 @@ was committed.
   parts, the same technique `tests/unit/secret-scanner.spec.ts` already uses for its PEM header.
   That is also why this guard needs **no** entry in the `.gitleaks.toml` fixture allowlist: the
   repo's own secret scan and the pre-push publish gate both pass over this file cleanly.
+- The opt-in proof log holds only what the gate printed, and the gate runs the scanner with
+  `--redact`; the guard's redact case fails the run if the planted value appears in any stage's
+  output. The quoted run's log was checked the same way and does not contain it.
 - Nothing was pushed to a branch, disposable or otherwise, to obtain this evidence, and no hosted
   runner minutes were spent.
 
@@ -150,3 +217,5 @@ was committed.
   image — see [secret-scan-unreadable-path-proof.md](./secret-scan-unreadable-path-proof.md).
 - **Nothing about rule coverage.** One rule (`aws-access-token`) is shown to fire end to end.
   This says nothing about whether any other gitleaks rule would catch any other credential shape.
+- **Not a full `ci-local.sh` run.** Only the `secret-scan` gate's text and its three helpers ran;
+  the other gates, the lock and the run-log wrapper did not.

@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | The planted-fixture fail-then-pass proof for the secret-scan gate, run against the REAL scanner. tests/unit/ci-local-secret-scan.spec.ts puts a stand-in `docker` first on PATH, so zricethezav/gitleaks has never actually run in a guard and nothing proved the gate goes RED on a credential-shaped value or GREEN once it is gone - the one clause the CI secret-scanner entry still owed. This runs the production `gate_secrets` body sliced out of scripts/ci-local.sh over four commits of a disposable repository that carries this repo's real .gitleaks.toml, with the real image: clean PASS, planted FAIL, the allowlisted AWS documentation dummy still PASS (so the FAIL is caused by the planted value and not by the shape), and PASS again after removal. The planted value is synthetic, assembled at runtime so this file never holds the token contiguously, and lives only in a temp directory that is deleted - no credential, real or fixture, enters this repository's history.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Source scripts/ci/ci-export.sh beside the purge and scan helpers. Since 2026-09-24 `gate_secrets` exports through `export_tree` (the watchdog-bounded export), which this probe never defined, so every stage stopped at `export_tree: command not found` before the scanner ran: 5 of 6 cases red, the scanner never reached. The probe now loads the same three helpers scripts/ci-local.sh loads before `gate_secrets` runs. OSHAL_SECRET_SCAN_PROOF_LOG (opt-in, unset by default) writes each stage's exit and gate output to a file, so docs/security/secret-scan-planted-fixture-proof.md quotes the run it cites instead of a hand-made copy.
  */
 
 /**
@@ -28,6 +29,7 @@ import { acquireFixtureSlot, type FixtureSlot } from '../helpers/fixture-slots';
 const ROOT = resolve(__dirname, '../..');
 const CI_SOURCE = readFileSync(join(ROOT, 'scripts', 'ci-local.sh'), 'utf8');
 const PURGE_HELPER = join(ROOT, 'scripts', 'ci', 'ci-purge.sh').replaceAll('\\', '/');
+const EXPORT_HELPER = join(ROOT, 'scripts', 'ci', 'ci-export.sh').replaceAll('\\', '/');
 const SCAN_HELPER = join(ROOT, 'scripts', 'ci', 'ci-secret-scan.sh').replaceAll('\\', '/');
 const SCRATCH = mkdtempSync(join(tmpdir(), 'oshal-secret-scan-planted-'));
 
@@ -51,6 +53,13 @@ interface StageRun {
 
 let slot: FixtureSlot;
 const stages = new Map<string, StageRun>();
+
+/**
+ * Opt-in evidence capture. When set, every stage's exit status and full gate output are written
+ * to this path before the scratch directory is deleted, so the evidence page can quote the run it
+ * cites. Unset (the default), the guard writes nothing outside its own temp directory.
+ */
+const PROOF_LOG = process.env.OSHAL_SECRET_SCAN_PROOF_LOG;
 
 /** @description Locate Git Bash without falling into Windows' WSL launcher. */
 function resolveBash(): string {
@@ -132,13 +141,14 @@ function runGate(sha: string, label: string): StageRun {
     'REPO_DIR="$1"; SOURCE_SHA="$2"; STATE_DIR="$3"',
     'log() { printf \'LOG:%s\\n\' "$*"; }',
     'if ! command -v timeout >/dev/null 2>&1; then timeout() { shift; "$@"; }; fi',
-    '. "$4"', '. "$5"',
+    // The helpers ci-local.sh sources before any gate runs: purge_tree, export_tree, run_secret_scan.
+    '. "$4"', '. "$5"', '. "$6"',
     gateSource(),
     'gate_secrets',
   ].join('\n') + '\n');
   const result = spawnSync(
     BASH,
-    [toBash(probe), toBash(REPO), sha, toBash(stateDir), PURGE_HELPER, SCAN_HELPER],
+    [toBash(probe), toBash(REPO), sha, toBash(stateDir), PURGE_HELPER, EXPORT_HELPER, SCAN_HELPER],
     { encoding: 'utf8', timeout: 600_000 },
   );
   return { status: result.status, output: `${result.stdout ?? ''}${result.stderr ?? ''}` };
@@ -171,6 +181,10 @@ beforeAll(async () => {
 
 afterAll(() => {
   slot?.release();
+  if (PROOF_LOG) {
+    const blocks = [...stages].map(([label, run]) => `== stage ${label}: gate exit ${run.status}\n${run.output}`);
+    writeFileSync(PROOF_LOG, `${blocks.join('\n')}\n`);
+  }
   rmSync(SCRATCH, { recursive: true, force: true });
 });
 
