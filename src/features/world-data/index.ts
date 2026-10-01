@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Created the world-data feature barrel (FSD deep-import burn-down): surfaces the world-intelligence service, feed/firehose ingestion, the collectors (market events, political/insider trades, short interest, gov contracts), and the subject/feed catalogs consumers were reaching via deep paths.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export classifyBudgetSnapshot — the pulse dispatch logs the global classify-budget counters each cycle so LLM burn is visible in the run record.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Export the series-read gate (bound + counters) — the pulse dispatch takes a snapshot either side of its fan-out so the completion record says how many statements it actually put on the series store.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Export analyzeBatch with its ClassifyProvider seam and createClassifyBudget, plus the observed outlet rating types: the Test Lab's world outlet-rating card classifies one seeded item through the deployed classifier with a capturing provider and its own budget (no model call, no spend from the global classify budget), and reads the rating set the service now computes.
  */
 
 /**
@@ -30,7 +31,9 @@ export {
   resetSeriesReadStats,
   type SeriesReadStats,
 } from './world-series-gate';
-export { ingestFeeds, speedReadFirehose, deepDiveFirehose, classifyBudgetSnapshot } from './news-fetcher';
+export { ingestFeeds, speedReadFirehose, deepDiveFirehose, classifyBudgetSnapshot, analyzeBatch, type ClassifyProvider, type FeedItem } from './news-fetcher';
+export { createClassifyBudget } from './classify-budget';
+export type { ObservedOutletRating, OutletRatingSet } from './outlet-ratings';
 export { collectMarketEvents } from './market-events';
 export { collectPoliticalTrades, extractCongressTradeRecords } from './political-trades';
 export { collectInsiderTrades } from './insider-trades';

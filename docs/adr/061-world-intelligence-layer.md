@@ -5,7 +5,8 @@
   capture half of the trading signal dataset; see the dated Updates at the end). The shared world graph +
   series + classified archive, the bias-aware multi-axis sentiment read, multi-source query plans,
   archive/pull-rate/backtest, and the framework registration (tools + `world-analyst` bot + cockpit surface)
-  are all live on `oshal-local-api`. Outlet bias values are SEED placeholders (see Risks).
+  are all live on `oshal-local-api`. Outlet ratings are oshal's own, observed from its stored coverage
+  (2026-10-01 update at the end; the seed table and any external rating license are retired).
 - **Date:** 2026-06-20
 - **Related:** [ADR-058 (Personal-Intelligence Service)](058-personal-intelligence-service-and-ingestion.md)
   (the *personal* sibling — this is the deferred "world graph, its own ADR"),
@@ -55,11 +56,12 @@ OAuth the whole swarm runs on — never a placeholder API key). Lexicon fallback
 
 ### 4. Bias-aware sentiment is the product, not a naive average
 
-Outlets (`outlet-ratings.ts`) carry **kind** (wire/mainstream/broadcast/financial/tech/partisan), a
-**political lean** (−1..+1), an **economic lean** (−1 pro-labor .. +1 pro-market), and **reliability**.
-`/api/world/sentiment` returns the structure a naive average destroys: `political{byLean,balanced,spread,
-consensus}`, `econ{byEcon,...}`, `byKind`, `reliabilityWeighted`, and per-outlet deviation. The axes
-often disagree (e.g. politically "agree" but the financial press flat) — that divergence is the signal.
+Every source carries an **observed lean** and an **observed reliability**, computed by oshal from its
+own stored coverage (the 2026-10-01 update below; there is no hand-typed or licensed rating).
+`/api/world/sentiment` returns the structure a naive average destroys: the lean axis
+`lean{byLean{below,near,above},balanced,spread,consensus}`, `reliabilityWeighted`, and per-source
+values, each with its rating, observation count and date range. Whether sources that usually read
+below, near and above the others agree on a subject is the signal.
 
 ### 5. Record accurately: archive + pull-rate + backtest
 
@@ -89,17 +91,20 @@ mounted in `server.ts`, and the surface is in `config-seed/profiles/oshal-framew
   sector edges + a sentiment series (the relate-join RAG can't do).
 
 **Risks / sharp edges:**
-1. **Outlet bias values are SEED placeholders.** Wrong-but-confident bias is a liability, not a moat.
-   Replace with licensed **Ad Fontes** (numeric bias/reliability) + **AllSides** (categorical) before
-   load-bearing use; keep `provenance`. The **econLean** axis is OUR own dimension — neither vendor
-   rates it, so it needs its own documented rubric/sourcing.
+1. **Outlet ratings are relative to oshal's own coverage.** An observed lean says a source reads
+   persistently above or below the other sources oshal pulled on the same subjects; it is not a
+   political left/right rating, and reliability measures agreement with the other sources, so a
+   source that is right against the crowd scores low. A rating is only as broad as the coverage
+   behind it, which is why each carries its counts and dates and below the minimums shows as
+   insufficient data.
 2. **Classification is nondeterministic** (Claude run-to-run; backtest measured ~0.17 mean drift, ~0.84
    sign agreement) — treat a single score as noisy; trust the aggregates.
 3. **Writes are token-guarded** (`WORLD_INGEST_TOKEN`); the router mounts without OIDC for machine
    feeders, so the cockpit **surface is read-only** (the browser can't hold the token). Ingest is the
    `world_ingest` tool run by the bot/Jarvis, or a future session-authed cockpit action.
-4. **Re-rating an outlet only affects NEW pulls** (slug ids change; read-time `ratingOf` won't rescue
-   already-written facts).
+4. **A source's history is keyed by its world id.** Ratings are computed on read from the stored
+   facts under each source id, so `outletSourceId` must keep resolving a publisher to the same id;
+   a renamed id splits that publisher's history into two sources.
 5. **Entity-extraction quality gates graph value** — the world analogue of ADR-058's resolution risk.
 
 ## Reuses (no new runtime)
@@ -115,7 +120,6 @@ mounted in `server.ts`, and the surface is in `config-seed/profiles/oshal-framew
 - More feed sources — GDELT (global news + tone), SEC EDGAR (filings), FRED (macro series into the join).
 - Surface "ingest a new subject" via a session-authed cockpit endpoint (calls the service server-side).
 - Correlation edges between world metrics and personal data (the cross-layer join).
-- Real licensed outlet-bias datasets (replacing the seed placeholders).
 
 ## Update — automated refresh is deterministic (2026-06-22)
 
@@ -179,8 +183,8 @@ ingest; pulse subject-concurrency is also kept modest (3) to limit contention.
 `WorldIntelligenceService.rollupFeatures(entity)` runs after every refresh (pure DB rollup of `world_items` +
 the sentiment series, concurrent, TSDB-only) and writes the queryable feature vector into `world_metrics`
 (`source='feature-rollup'`, 24h window vs 7d baseline): `mention_count`, `mention_velocity`, `novelty`,
-`sentiment_mean` (bias-balanced), `sentiment_shift`, `sentiment_dispersion`, `sentiment_consensus`,
-`reliability_weighted_sentiment`, `comention_degree`. The trading miner auto-discovers every `world_metrics`
+`sentiment_mean` (balanced across the observed lean buckets), `sentiment_shift`, `sentiment_dispersion`,
+`sentiment_consensus`, `reliability_weighted_sentiment` (observed reliability), `comention_degree`. The trading miner auto-discovers every `world_metrics`
 metric, so these light up its analysis with no change on its side.
 
 ### `event_*` catalyst classifier — the kind of news (dataset §2)
@@ -274,3 +278,50 @@ mostly idle (<5 % CPU) with brief ~150 % bursts per cycle. If it's pinned high i
 - **Pin the deployed image to a SHA.** `oshal-bot:latest` is rebuilt by multiple operators/bots, so a
   recreate can silently jump the running container to a different build. For reproducible deploys, pin
   `OSHAL_BOT_IMAGE` to a specific image digest and bump it deliberately, rather than floating on `:latest`.
+
+## Update — oshal's own outlet ratings (2026-10-01)
+
+Operator decision 2026-09-22: no external rating license, ever; oshal pulls public information and ranks
+it itself. The hand-typed seed table in `outlet-ratings.ts` (lean, economic lean, kind and reliability per
+outlet, "replace with AllSides/Ad Fontes") is deleted, and with it the political axis, the economic axis
+and the outlet-kind breakdown it was the only source of. `outlet-ratings.ts` keeps outlet **identity**
+(canonical id, name, domain, aliases) so a publisher's items keep landing under one id, and the fixed
+cross-spectrum `site:` query lists.
+
+**How a source is rated** (`rateOutlets` in `outlet-ratings.ts`, statistics read by
+`outlet-observations.ts`). Over a trailing window of whole days of the daily sentiment head
+(`world_metrics_daily`, metric `sentiment`), every subject-day that two or more sources scored is a
+comparison. For each comparison the source's divergence is its mean sentiment minus the mean of the
+other sources' means (leave-one-out, so a source never agrees with itself). Then:
+
+| Field | Definition |
+|---|---|
+| `lean` | Mean divergence (sentiment units). Above 0: the source reads persistently more favourable than the others on the same subjects and days; below 0: more critical. |
+| `leanBucket` | `above` / `below` when the mean divergence is more than 2 standard errors from 0, else `near`. |
+| `reliability` | `1 − mean |divergence| / 2`, in [0, 1]: how closely the source tracks the other sources. |
+| `comparisons`, `subjects`, `observations` | Compared subject-days, distinct subjects among them, and the source's sentiment points behind them. |
+| `firstObserved`, `lastObserved` | First and last compared day. |
+| `status` | `insufficient` (no lean, no reliability) below the minimums; `rated` otherwise. |
+
+Defaults, overridable per deployment: `WORLD_OUTLET_RATING_WINDOW_DAYS=90`,
+`WORLD_OUTLET_RATING_MIN_COMPARISONS=20`, `WORLD_OUTLET_RATING_MIN_SUBJECTS=3`; the rating set is
+reused for `WORLD_OUTLET_RATING_TTL_MS` (default 30 minutes, the head's refresh interval). Every
+rating set records its method id (`consensus-divergence-v1`), parameters and computation time, and
+`/api/world/sentiment` returns them as `ratings` beside the per-source ratings, so a reading can be
+reproduced from the stored rows. Ratings are computed on read, so nothing is stamped at ingest:
+`world_items.lean`/`reliability` are written NULL, and outlet graph nodes are written with the retired
+rating props set to null (an Arango UPDATE merges props, so each re-ingested outlet sheds the seeded
+numbers; `POST /api/world/seed-outlets` now seeds identity only and clears the known outlets at once).
+
+**Breakdown shape.** `lean{byLean{below,near,above},balanced,spread,consensus}`, `reliabilityWeighted`
+(observed reliability), `naive`, `bySource[]` (each with `rating`), and `ratings` (method). The
+top-level `balanced`/`byLean`/`spread`/`consensus` fields keep their names and now describe the lean
+axis, so the feature rollup's `sentiment_mean`, `sentiment_consensus` and
+`reliability_weighted_sentiment` are computed from the observed ratings. The `political`, `econ` and
+`byKind` keys are no longer returned.
+
+**Not derivable from stored data yet.** The operator's reliability definition also names how often a
+source's items are contradicted or vanish. Nothing stored records either (an item missing from a later
+feed pull is ordinary rotation, not a retraction), so reliability is consensus agreement only. Guards:
+`tests/unit/world-outlet-ratings.spec.ts` (the pure arithmetic and minimums) and
+`tests/unit/world-outlet-ratings-postgres.spec.ts` (the aggregate on TimescaleDB with a real daily head).

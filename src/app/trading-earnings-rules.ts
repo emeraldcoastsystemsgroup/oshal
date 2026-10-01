@@ -96,6 +96,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Fix round 2: (a) size against the marketable LIMIT the order will carry, not the last print — the engine re-checks notional at refPrice = limit_price, so a cap-bound buy sized off the print exceeded the ceiling at the limit and was refused 422 guardrail_blocked, terminally (self-inflicted); (b) a 5xx from placeDecisionOrder (broker_not_configured, settlement_unknown — both thrown before any venue submission, reservation released) now leaves the rule `classified` to retry under the same requestId instead of permanently disarming the protective miss→sell, and the minted decision is REUSED and repriced across retries so a deferral does not fan out ledger rows; (c) every catch logs the err, the live-gate wait is debug (it ran every full tick), the EDGAR user agent is read per call, and a rule armed after its window opened says so on its timeline.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-136 D5 kernel half: the FORCE-RLS `oshal_trading_event_rules` store (one active rule per book+symbol via a partial unique index), the EDGAR 8-K item-2.02 watcher (held names, in-window only, CIK from the fundamentals lookup), the accountable trading-analyst read (executeBotOrInline → chat_tasks, agent id derived from the ACTIVE bot registry, never a hand-typed second copy), and the mapped action through the one order path as an 'event-rule' decision. Guards the engine does not cross for this shape: TRADING_HALT (placeDecisionOrder never reads it) and the notional ceiling (guardrailViolation skips it when refPrice is 0 — a market order) — hence self-sizing plus a marketable LIMIT. Every external seam (positions, EDGAR JSON, document text, analyst, latest trade, place, calendar, CIK) is injectable so the real-DB spec drives every transition without a venue.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Bootstrap under the SCHEMA_LOCK_KEYS.trading advisory lock. These statements were running unserialised, so two processes sharing one database interleaved `DROP TRIGGER IF EXISTS` / `CREATE TRIGGER`, `CREATE TABLE IF NOT EXISTS` and the check-then-`CREATE POLICY` pair; Postgres answers that with 42710 "already exists" or 23505 on a catalog index, and it failed three trading specs in beforeAll on every unit run without --no-file-parallelism. The lock also moves the module onto the savepoint path, so owner-only DDL under a non-owner runtime role is reported and the requirements asserted instead of aborting the whole bootstrap.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | The fetched filing text reaches the analyst only through the shared fetched-web-text filter (operator decision 2026-09-22: oshal takes no instruction from outside websites). One call in buildEarningsPrompt; ordinary filing text comes back byte for byte, so the prompt is unchanged unless the document carried invisible characters, role markers, prompt-format tokens or a model-directed clause. The bot-node already wraps the whole prompt in the containment delimiter. Guard: tests/unit/trading-analyst-fetched-text.spec.ts.
  *
  * @module trading-earnings-rules
  */
@@ -103,6 +104,7 @@
 import * as crypto from 'crypto';
 import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '@/app/composition/app-context';
+import { neutralizeFetchedText } from '@/shared/security/fetched-web-text';
 import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap, SCHEMA_LOCK_KEYS } from '@/shared/services/database';
 import { BotNodeClient, createRegistryEndpointResolver } from '@/features/agent-management';
 import { getActiveRegistry } from '@/app/extensions/swarm/swarm-bot-registry';
@@ -611,7 +613,8 @@ export function marketableLimit(side: 'buy' | 'sell', price: number): number {
  * model is never invited to reach for a consensus number it does not have.
  * @param symbol - The ticker.
  * @param filing - The detected 8-K.
- * @param docText - The primary document's text (already truncated).
+ * @param docText - The primary document's text (already truncated). It is fetched from the web, so it
+ *   passes through the shared fetched-web-text filter here; ordinary filing text is unchanged.
  * @returns The prompt.
  */
 export function buildEarningsPrompt(symbol: string, filing: RuleFiling, docText: string): string {
@@ -622,7 +625,7 @@ export function buildEarningsPrompt(symbol: string, filing: RuleFiling, docText:
     'Answer with ONE fenced ```json block and nothing else, in this exact shape:',
     '{"verdict":"beat|miss|inline|unclear","revenue":{"current":"","priorYear":"","pct":""},"eps":{"current":"","priorYear":""},"guidance":{"prior":"","comparison":""},"rationale":""}',
     'Use "unclear" whenever the document does not actually contain the numbers — an unread filing must never become a trade.',
-    'FILING TEXT:', docText,
+    'FILING TEXT:', neutralizeFetchedText(docText).text,
   ].join('\n');
 }
 
