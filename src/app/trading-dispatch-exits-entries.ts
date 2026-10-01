@@ -18,13 +18,14 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-052 addendum (paper-to-live parity) — all three functions take the fire's optional ParityControls as a trailing argument; null/absent (every fire while both features are off) takes exactly the pre-existing path. computeExits: with a plan ledger, positions that carry an open plan are judged by splitExitsByPlan on their OWN stored terms (plan-stop / plan-tp / plan-trail / plan-expiry, first in priority) and only unplanned positions reach exitsToRun/trailingExits; the cap trim stays a book-level rule over every position; a failed plan read runs the global rules over the whole book. placeEntries and placePopCatches: a blocked market-wide gap verdict holds the leg before any order and records the would-be buys as 'market-gap' counterfactuals (the scan's are the same wouldBuy set the earnings instrumentation uses, minus the blackout); the scan leg re-underwrites a HELD name's open plan on a fresh buy signal; every buy is placed with the ledger so it stamps its plan.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-052 addendum P6 (idle-cash yield sleeve) — placeEntries, when the fire's armed sleeve has spendable value, sizes each entry as if that value were cash and DEFERS the buys to placeSleeveFunded (trading-dispatch-yield-sleeve.ts), which sells the sleeve first for the shortfall, waits, re-reads the real cash and places the entries in order, clipped to it. No spendable sleeve (every unarmed fire) = the pre-existing placement, statement for statement. The 14-day volatility read moves unchanged into recentVolPct so placeEntries does not grow.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Import shared recentVolPct from @/features/trading instead of local definition.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Volatility-scaled trailing stops (trading-advisor.md item 12): computeExits builds a batch 14-day volMap for held positions via barsBatch and passes it to trailingExits so trail givebacks scale with asset volatility.
  *
  * @module trading-dispatch-exits-entries
  */
 
 import type { AppContext } from './composition-root';
 import {
-  dailyCloses, recentVolPct, latestPrice, exitsToRun, trailingExits, nextPeaks, isShortTermBreakdown, isShortTermPop, sizeEntry, rebalanceTrims, dipExits, symbolBlocklist, barsBatch,
+  dailyCloses, recentVolPct, calculateRealizedVol, latestPrice, exitsToRun, trailingExits, nextPeaks, isShortTermBreakdown, isShortTermPop, sizeEntry, rebalanceTrims, dipExits, symbolBlocklist, barsBatch,
   type MtfDecision, type Position, type TradingMode, type TradingBook, type BrokerAccount, type RiskPolicy, type ExitOrder,
 } from '@/features/trading';
 import { legacyBook } from './trading-books-store';
@@ -109,9 +110,19 @@ export async function computeExits(ctx: AppContext, sub: string, bookOrMode: Tra
   // come first) and only the unplanned rest meet the global rules; null = the whole book, as before.
   const byPlan = parity?.plans ? await splitExitsByPlan(ctx.pool, parity.plans, positions, peaks) : null;
   const ruled = byPlan ? byPlan.unplanned : positions;
+  // Volatility map for ruled positions so trailing stops scale with name volatility (item 12)
+  const volMap = new Map<string, number>();
+  const heldSyms = ruled.filter((p) => p.qty > 0 && !p.unmanaged).map((p) => p.symbol.toUpperCase());
+  if (heldSyms.length > 0) {
+    const dailyBars = await barsBatch(heldSyms, '1Day', 15).catch(() => new Map<string, number[]>());
+    for (const [s, bCloses] of dailyBars) {
+      const v = calculateRealizedVol(bCloses);
+      if (v != null) volMap.set(s, v);
+    }
+  }
   // Order = priority: a full stop/TP wins over trailing, and any full exit wins over a partial cap trim
   // (no point trimming a name we're about to flatten this fire).
-  for (const e of [...(byPlan?.exits ?? []), ...exitsToRun(ruled, policy, stopMult), ...trailingExits(ruled, peaks, policy, stopMult), ...rebalanceTrims(positions, equity, policy)]) {
+  for (const e of [...(byPlan?.exits ?? []), ...exitsToRun(ruled, policy, stopMult), ...trailingExits(ruled, peaks, policy, stopMult, volMap), ...rebalanceTrims(positions, equity, policy)]) {
     const k = e.symbol.toUpperCase();
     if (!bySym.has(k)) bySym.set(k, e);
   }

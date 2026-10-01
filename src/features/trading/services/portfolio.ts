@@ -28,6 +28,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 round 3 — dipExits withholds the extended-hours dip sell for a position marked `unmanaged`: the fifth sell rule in this file, and the one SEQ 9 and SEQ 10 both missed. It is also the one that mattered most, because computeExits RETURNS on it off-hours before exitsToRun, trailingExits and rebalanceTrims are ever reached — so on every pre/post-market fire the only exit rule that ran was the only one still ungated, and a hand-bought share printing TRADING_EXT_DIP_SELL_PCT under its prior regular close was sold out in full against a basis the engine never paid. The rule is close-anchored rather than basis-anchored, but the ORDER it emits is still a full-position sell of a quantity the engine cannot account for. Filtering can only shorten the returned list; a position without the mark is byte-identical to before.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | ADR-168 — MULTI_MARKET_BUCKETS, the single source of the 41-name multi-market extension (developed ex-US, emerging, fixed income, commodities, real estate, currency, digital assets), and SECTOR coverage for every one of those names. Each bucket is NEW: no default-universe name uses it, and the block is spread FIRST into SECTOR so it can never overwrite an existing mapping. A book that trades only DEFAULT_UNIVERSE therefore sizes, caps and tilts exactly as before; the change reaches only a book that holds or scans one of the 41 names, which moves from the shared 'other' bucket to its own market bucket. No dispatch leg reads the extension.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | ADR-052 addendum — ExitOrder's reason union gains the four per-position PLAN doors (plan-stop, plan-tp, plan-trail, plan-expiry) and an optional planId, so an exit taken on a position's own stored plan names the door and the plan it honored on the decision row. Type-only widening: no rule in this file emits a plan door (position-plan.ts does), and every existing exit keeps its exact shape.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | Volatility-scaled trailing stop giveback (trading-advisor.md item 12): trailingExits optionally accepts volPcts (Map or Record) to scale trailGivebackPct by (volPct / baseVol), floored at 0.5x and capped at 3x, so volatile winners are not prematurely shaken out by normal noise.
  *
  * @module portfolio
  */
@@ -336,10 +337,19 @@ export function nextPeaks(positions: Position[], peaks: Map<string, number>): Ma
  * @param positions - Current open positions (need currentPrice + avgEntryPrice).
  * @param peaks - The rolled-forward peak per symbol (see nextPeaks).
  * @param policy - Active risk policy.
+ * @param givebackMult - Multiplier for thin sessions (extended hours).
+ * @param volPcts - Optional per-symbol daily volatility in % (Map or Record) to scale trailGivebackPct.
  * @returns The trailing exits to place (whole-share sells).
  */
-export function trailingExits(positions: Position[], peaks: Map<string, number>, policy: RiskPolicy, givebackMult = 1): ExitOrder[] {
+export function trailingExits(
+  positions: Position[],
+  peaks: Map<string, number>,
+  policy: RiskPolicy,
+  givebackMult = 1,
+  volPcts?: Map<string, number> | Record<string, number>,
+): ExitOrder[] {
   const exits: ExitOrder[] = [];
+  const baseVol = Number(process.env.TRADING_BASELINE_VOL_PCT || 2);
   for (const p of positions) {
     if (!(p.qty > 0) || !(p.avgEntryPrice > 0)) continue;
     if (p.unmanaged) continue;  // ADR-159: no engine basis for this quantity → no engine decision
@@ -349,9 +359,13 @@ export function trailingExits(positions: Position[], peaks: Map<string, number>,
     const peak = peaks.get(sym) ?? p.avgEntryPrice;
     const gainPct = ((cur - p.avgEntryPrice) / p.avgEntryPrice) * 100;
     const givebackPct = peak > 0 ? ((peak - cur) / peak) * 100 : 0;
+    // Volatility-normalized giveback: scale trailGivebackPct by (volPct / baseVol)
+    // so a volatile name gets wider room to breathe without whipsawing out on normal noise.
+    const vol = volPcts instanceof Map ? volPcts.get(sym) : volPcts?.[sym];
+    const volMult = (vol && vol > 0) ? Math.max(0.5, Math.min(3, vol / baseVol)) : 1;
+    const requiredGiveback = policy.trailGivebackPct * givebackMult * volMult;
     // Only armed (in profit past trailArmPct) winners trail — below that the hard stop governs.
-    // givebackMult widens the trail in thin sessions so a wick doesn't book a winner early.
-    if (gainPct >= policy.trailArmPct && givebackPct >= policy.trailGivebackPct * givebackMult) {
+    if (gainPct >= policy.trailArmPct && givebackPct >= requiredGiveback) {
       exits.push({ symbol: p.symbol, qty: p.qty, reason: 'trailing_stop', pnlPct: gainPct });
     }
   }
