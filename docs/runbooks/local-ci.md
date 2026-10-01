@@ -39,6 +39,12 @@ Same gates the retired workflow ran (plus the quickstart-smoke equivalent), same
 The Dockerfile runs `apk upgrade` at build time, so fixable base-OS CVEs (musl/zlib class)
 self-heal on the daily rebuild without manual bumps.
 
+Around the gates, every run logs its **resource check** first (`resource-check: floor ...` or
+`resource-check: NOT CONFIGURED`), and a scheduled run **stops the workers the operator named**
+before `head-src` and restores them before its outcome line. A gate the host could not run is
+reported **RESOURCE-EXHAUSTED**, not FAIL. See
+[Saturated host](#saturated-host-resource-exhausted-and-the-worker-quiesce).
+
 ## How to run
 
 ```bash
@@ -111,6 +117,8 @@ schtasks /create /tn "OSHAL Local CI" /sc daily /st 23:30 /f ^
 - **Green run → no email, no popup.** Summary line in the log only.
 - **Red run → one email** via the api container's `oshal-send-alert.js` (the trading
   watchdog's alert rail). If the api container is down, the failure is log-only.
+- **Starved run → one email** whose subject starts `OSHAL LOCAL CI RESOURCE-EXHAUSTED` when no
+  gate failed on its own merits. The run exits 3, so `LastTaskResult` is 3, not 0 or 1.
 - The hidden launcher waits for the gate and returns its exit code, so Task Scheduler's
   `LastTaskResult` now agrees with the completed run instead of reporting launch success early.
 
@@ -129,6 +137,8 @@ subject, not the fact of the email.
 | `no change from last run (night N)` | Identical failing set. Nothing to do. |
 | `no new failures; FIXED: <gates> (night N)` | Those gates left the failing set **and this run actually ran them**. |
 | `no new failures; N gate(s) DID NOT RUN (night N)` | Gates left the failing set but the run skipped them. **Not proof they pass.** |
+| `...; host saturated, not judged: <gates>` (on any subject) | Those gates were refused, or failed, while the host was below its free-memory floor. They are not evidence about the code either way, and they are never called NEW or FIXED. |
+| `OSHAL LOCAL CI RESOURCE-EXHAUSTED - no code failures (night N); host saturated, ...` | Nothing failed on its own merits; only starved gates. A starved night still counts in the streak and is never used as the baseline for "new". |
 | `all gates green` | The streak is broken. |
 
 Three rules decide that wording, and each exists because its absence produced a false alert:
@@ -158,6 +168,109 @@ would corrupt silently. To see what the current log would produce without waitin
 node scripts/ci/ci-gate-streak.mjs "$LOCALAPPDATA/oshal/ci-local.log"
 ```
 
+## Saturated host: RESOURCE-EXHAUSTED and the worker quiesce
+
+The nightly shares the box with the live swarm. On 2026-09-08 it started with 0.4 GB free of
+15.7 GB: `head-src` took 2144 s and failed, `secret-scan` logged `cannot allocate memory`, and
+`image-build` ran 55+ minutes against 68 s that morning. On 2026-09-30, with the swarm up, eight
+gates ran more than ten times slower than on 2026-09-29 with the swarm stopped (`connectors` 2 s to
+232 s). A red produced that way says nothing about the code. Two mechanisms address it (operator
+decision 2026-09-21). Both read their settings by name from the environment or from the
+checkout's `.env` ([.env.example](../../.env.example), "Local CI nightly").
+
+### The resource check: RESOURCE-EXHAUSTED is its own outcome
+
+[`scripts/ci/ci-resource.sh`](../../scripts/ci/ci-resource.sh) reads the host's available memory
+from `/proc/meminfo`, which under Git Bash describes the Windows host the `unit` gate's node
+workers run on, not the Docker VM. `run_gate` uses it in two places:
+
+- **Before a gate starts.** If free memory is below `OSHAL_CI_MIN_FREE_MB`, the gate waits up to
+  `OSHAL_CI_RESOURCE_WAIT_SECONDS` (default 120) for the host to recover. If the host does not
+  recover, the gate is not started and is logged
+  `GATE x: RESOURCE-EXHAUSTED (Ns; not started: host free ...MB stayed below the ...MB floor ...)`.
+- **While a gate runs.** A background sampler records the lowest free memory every
+  `OSHAL_CI_RESOURCE_SAMPLE_SECONDS` (default 5). If the gate fails and the host was below the floor
+  during it, the gate is logged `RESOURCE-EXHAUSTED (Ns; failed while host free fell to ...)`, not FAIL.
+  A gate that passes through a dip is still PASS. The sampler exits when its run ends or dies.
+
+The classification is by measurement only. Words in a gate's output are not used: the `unit`
+gate's own output contains `ENOMEM` and `cannot allocate memory` from specs that inject those
+faults (`catalog-load-readiness`, `readiness-report`, `ci-local-secret-scan`), so matching words
+would turn real failures into exhaustion. A failure on a healthy host stays FAIL.
+
+Resource-exhausted gates go to their own list. They are never a pass, never a silent skip and never
+a code failure:
+
+- Skip markers inherit the cause of the gate they depend on. If `head-src` was starved,
+  `node-gates-skipped` is RESOURCE-EXHAUSTED. If `image-build` was starved, its three `*-skipped`
+  markers are too.
+- The outcome line names failures and exhaustion separately:
+  `=== LOCAL CI: FAILED gates: a; RESOURCE-EXHAUSTED gates: b ===`, or either section alone.
+- A run with only exhausted gates exits **3**. A run with any real failure exits 1.
+- No image is published from a run with an exhausted gate.
+- The alert subject reads RESOURCE-EXHAUSTED when nothing else failed (see the table above).
+
+With `OSHAL_CI_MIN_FREE_MB` unset, every run logs `resource-check: NOT CONFIGURED` and classifies
+nothing. There is no default floor; what counts as starved is the operator's setting.
+
+### The worker quiesce
+
+[`scripts/ci/ci-quiesce.sh`](../../scripts/ci/ci-quiesce.sh) stops the workers named in
+`OSHAL_CI_QUIESCE_WORKERS` for a `--scheduled` run (or `--quiesce`) and restores exactly those.
+A named container is stopped only if all four of these hold. Anything else is refused, with the
+reason in the log:
+
+1. It exists and is running. The restore never starts a container that was not running.
+2. It carries `oshal.tier=worker`. The infrastructure tier (db, redis, chromadb, tsdb, vault,
+   arangodb, ...) has no tier label, the api is `core`, and the monitoring overlay is unlabelled,
+   so none of them can qualify.
+3. Its `AGENT_ID` is not in [`scripts/routability-critical-bots.txt`](../../scripts/routability-critical-bots.txt).
+   That list covers Jarvis's brain, general-bot, the trading bot, finance and communications. It is
+   also the list the stack watchdog uses to decide whether to bounce the api.
+4. Its name is a plain compose container name.
+
+A stopped worker fires `SwarmContainerDown` (critical, `intake: auto`). Each firing opens an
+incident with unattended RCA, and with `SELF_HEAL_AUTO_APPLY` the container is restarted mid-run.
+So before stopping anything, the run creates an Alertmanager silence for exactly those containers
+at `OSHAL_CI_QUIESCE_ALERTMANAGER_URL`. If the silence cannot be created, nothing is stopped. Set
+the URL to `none` only on a box without the monitoring overlay. The silence initially lasts the
+stale-lock window (`CI_LOCK_STALE_SECONDS`, 4 h). After the restore it is shortened to
+`OSHAL_CI_QUIESCE_RESUME_GRACE_SECONDS` (default 600). If a worker does not come back, its alert
+fires after the grace.
+
+The workers are always restored:
+
+- **At the end of the run**, before the publish decision and the outcome line. A worker that will
+  not start makes the run red with `quiesce-resume-failed`.
+- **On failure or interruption.** `on_exit` restores them on EXIT, INT and TERM, before the run log
+  is copied.
+- **After a run killed outright.** `%LOCALAPPDATA%\oshal\ci-quiesce.state` is written before the
+  first stop. Every later run that takes the lock restores what it names first. Restoring workers
+  that sat down since then makes the run red with `quiesce-leftover-restored`. Workers still down
+  stay in the file.
+- **By hand:** `bash scripts/ci/ci-quiesce.sh --resume`. It refuses while a run holds
+  `ci-local.lock`; `--force` overrides that.
+
+`bash scripts/ci/ci-quiesce.sh --plan [name ...]` shows what a run would stop and why the rest
+would be refused. It only runs `docker inspect`. The restore uses `docker start` on exactly the
+stopped containers, batched with `scripts/oshal-up.sh`'s `OSHAL_UP_BATCH_SIZE` and
+`OSHAL_UP_BATCH_SETTLE` (defaults 5 and 18 s). It does not call `oshal-up.sh` itself, because
+that script force-recreates the api and starts every compose service.
+
+### Proving it on the box
+
+```bash
+bash scripts/operations/ci-quiesce-live-proof.sh                      # read-only: --resource and --plan
+bash scripts/operations/ci-quiesce-live-proof.sh --cycle <worker ...>  # stops and restores, twice
+node scripts/ci/ci-run-durations.mjs --baseline 2026-09-08T10:05:19    # the latest scheduled run vs an idle run
+```
+
+The duration check reads `ci-local.log` and the run's kept `full.log`. It passes only when the
+latest scheduled run completed, has no RESOURCE-EXHAUSTED gate and no `cannot allocate memory`
+line, and every gate took at most ten times its time in the baseline run. The 2026-09-08 10:05
+manual run is the idle-box run the backlog entry cites. Against it, the 2026-09-30 scheduled run
+fails on `lint`, `connectors`, `manifests`, `security-policy` and `repo-separation`.
+
 ## BUG-22 — what is done, and how to continue
 
 [BUG-22](../operations/bug-log.md) is the entry for the standing red streak. **Do not treat a red
@@ -182,8 +295,10 @@ Open, each a `BACKLOG` entry with done-when criteria:
    swarm, Docker Desktop and an editor are up can find **0.4 GB free of 15.7 GB**: `head-src`
    took 2144 s and failed, skipping seven gates; `secret-scan` logged `cannot allocate memory`
    against files it could not read; `image-build` ran 55+ minutes against 68 s earlier the same
-   day. Until resource exhaustion is reported distinctly from gate failure, a red night is not
-   evidence about the code.
+   day. The RESOURCE-EXHAUSTED outcome and the worker quiesce are built
+   ([Saturated host](#saturated-host-resource-exhausted-and-the-worker-quiesce)). Both stay inert
+   until the operator sets `OSHAL_CI_MIN_FREE_MB` and `OSHAL_CI_QUIESCE_WORKERS`. One measured
+   scheduled run (`scripts/ci/ci-run-durations.mjs`) is still owed.
 4. **The purge hang** — `prepare_head_src` can wedge for hours deleting its own previous export.
 
 The suggested order is 2, then 1 — triage is blind without spec-level output, and the trivy
@@ -264,6 +379,12 @@ summary. Evidence only — nothing here names a cause.
   (`agent-profile-persistence` and `firetv-tv-pairing` are commented out with evidence —
   see BACKLOG "CI Playwright e2e suite normalization").
 - Docker Desktop must be running (secret-scan, e2e datastores, image build, trivy).
+- **The runner's own code comes from the working tree, and the gates' code comes from
+  `origin/main`.** The task runs `C:\Projects\oshal\scripts\ci-local-hidden.vbs`, which starts the
+  `scripts/ci-local.sh` beside it. The helpers that script sources come from the same tree. The
+  gates then judge the pinned `origin/main` export. So a merged change to the runner, the quiesce
+  or the resource check runs only from the first 23:30 run after `C:\Projects\oshal` has that
+  commit on disk. Bring the tree forward outside 23:30 to the end of the run (see the next item).
 - **Never edit `scripts/ci-local.sh` while a run holds the lock.** Bash reads a script by byte
   offset; an edit mid-run makes the running shell seek into the wrong place and re-execute a
   block. On 2026-09-09 this caused `image-build` and `unpushed-commits` to run twice and four
