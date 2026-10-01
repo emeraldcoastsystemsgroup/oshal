@@ -14,10 +14,11 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Pin the planted-fixture secret-scan proof as the scanner boundary run that actually happened. Entry 2 pinned the DOUBLE and the audit row that says a real run is still owed; the detection half of that debt is now paid by a guard that runs the real gitleaks image, so this case keeps it real - no stand-in on PATH, the production gate text rather than a paraphrase, a planted token that is never contiguous in the source (which is why it needs no .gitleaks.toml allowlist entry), and an audit row linked to evidence carrying the red verdict verbatim.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Pin the PARTIAL-SCAN proof and retire the last locally reachable `Owed` in the audit. Entry 9 paid the detection half of the scanner debt; the half the gate was actually written for - gitleaks exiting 0 on a tree it could not fully read - was still only a recording. This case keeps the new companion real (no stand-in on PATH, the production scanner function and both gate_secrets lines rather than a paraphrase, both verdict strings, and the floating-tag wording read out of the shipped helper instead of copied into the guard), and the scanner-double case above now requires its row to name that companion rather than to read as owed.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Two more checks on the list the gate runs. Every listed path must exist: tests/cockpit-current-state-probe.spec.ts sat in the list with no such file, and Playwright ignores a filter that matches nothing, so the line ran nothing and failed nothing. And no listed spec may pass by skipping under the CI e2e env: every test.skip/test.fixme/describe.skip in a green spec is found with the TypeScript parser and, when env-driven, evaluated under the env ci.yml and ci-local.sh actually set (read from those files, not copied). A describe- or file-level skip that fires is refused (tests/dynamic-agent-live-e2e.spec.ts skipped everything unless RUN_DYNAMIC_AGENT_E2E=true and has left the list for an unsupported-in-ci disposition); a single test that skips by design must be recorded in tests/e2e-dispositions.json skippedTests. Planted sources prove each rule goes red.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | The planted-fixture case now requires the guard to source every scripts/ci helper whose function the sliced gate text calls. The helper set is derived from the helper files' own definitions rather than listed, and sourcing is checked as the probe does it: the helper's path constant must be on the probe argv and that positional must be dot-sourced, so a helper that is named, or passed but never sourced, is still refused. On 2026-09-24 gate_secrets began calling export_tree from scripts/ci/ci-export.sh; the guard did not source it, so every stage died at `command not found` before the scanner ran and the proof stood red for a week with nothing pointing at the cause. This check needs no Docker, so it names the missing helper in the ordinary unit run.
  */
 
 import { describe, expect, it } from 'vitest';
-import { readFileSync, mkdtempSync, mkdirSync, copyFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdtempSync, mkdirSync, copyFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -108,6 +109,46 @@ const programHandsPlaywright = (): string[] => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+};
+
+/**
+ * @description The scripts/ci helper files whose functions the secret-scan gate text calls. A
+ * guard that slices `gitleaks_container_scan` and `gate_secrets` out of ci-local.sh runs them in a
+ * bare shell, so each helper they reach must be sourced there too; derived from the helpers' own
+ * `name() {` definitions so a new dependency is found without anyone listing it.
+ * @param gate - The text of scripts/ci-local.sh.
+ * @returns Each helper file basename with the gate-called functions it defines.
+ */
+const secretGateHelpers = (gate: string): Array<{ file: string; calls: string[] }> => {
+  const body = ['gitleaks_container_scan', 'gate_secrets'].map((name) => {
+    const start = gate.indexOf(`${name}() {`);
+    expect(start, `${name} is no longer in scripts/ci-local.sh`).toBeGreaterThanOrEqual(0);
+    return gate.slice(start, gate.indexOf('\n}\n', start));
+  }).join('\n');
+  return readdirSync('scripts/ci').filter((file) => file.endsWith('.sh')).map((file) => {
+    const defined = [...read(`scripts/ci/${file}`).matchAll(/^([A-Za-z_]\w*)\(\) \{/gm)].map((m) => m[1]);
+    return { file, calls: defined.filter((fn) => new RegExp(`\\b${fn}\\b`).test(body)) };
+  }).filter((helper) => helper.calls.length > 0);
+};
+
+/**
+ * @description Require the planted-fixture guard to SOURCE one helper in its probe, not just name
+ * it: the helper's path constant must be on the probe's argv, and the positional it arrives on must
+ * be dot-sourced by the probe script. A path that is passed but never sourced leaves the helper's
+ * functions as undefined as an unnamed one does.
+ * @param guard - The text of tests/unit/ci-local-secret-scan-planted-fixture.spec.ts.
+ * @param file - A scripts/ci helper basename the gate text calls into.
+ * @param calls - The gate-called functions that helper defines, named in the failure message.
+ * @returns Nothing; fails the calling case when the helper is not sourced.
+ */
+const expectGuardSources = (guard: string, file: string, calls: string[]): void => {
+  const message = `the gate calls ${calls.join(', ')} from ${file}; the guard must source it`;
+  const constant = new RegExp(`const (\\w+) = join\\(ROOT, 'scripts', 'ci', '${file.replaceAll('.', '\\.')}'\\)`)
+    .exec(guard)?.[1];
+  const argv = /\[toBash\(probe\),([^\]]*)\]/.exec(guard)?.[1].split(',').map((a) => a.trim()) ?? [];
+  const position = constant ? argv.indexOf(constant) + 1 : 0;
+  expect(position, `${message} (its path constant is not on the probe argv)`).toBeGreaterThan(0);
+  expect(guard, `${message} (argv $${position} is never dot-sourced)`).toContain(`'. "$${position}"'`);
 };
 
 describe('real-boundary regression doctrine', () => {
@@ -261,6 +302,12 @@ describe('real-boundary regression doctrine', () => {
     expect(guard, 'only the real image writes its scan line').toContain('scanned ~');
     // It must run the production gate text, not a paraphrase of it.
     expect(guard).toContain("['gitleaks_container_scan', 'gate_secrets']");
+    // ...and every helper that text calls, or each stage dies at `command not found` before the
+    // scanner runs (2026-09-24: export_tree from ci-export.sh, unsourced for a week).
+    const helpers = secretGateHelpers(gate);
+    expect(helpers.map((h) => h.file), 'the gate text no longer reaches its helpers').toEqual(
+      expect.arrayContaining(['ci-export.sh', 'ci-purge.sh', 'ci-secret-scan.sh']));
+    for (const { file, calls } of helpers) expectGuardSources(guard, file, calls);
 
     // Fail, then pass, decided by the scanner's own exit code rather than by the guard.
     expect(guard).toContain('secret-scan: FAIL scanner rc=1 unread=0 of 4 exported files');

@@ -27,7 +27,8 @@ Security posture, hardening guidance, and control evidence for OSHAL.
 - [secret-scan-planted-fixture-proof.md](./secret-scan-planted-fixture-proof.md) — the
   `ci-local.sh` `secret-scan` gate proven to go red on a planted synthetic credential and green
   once it is removed, against the real gitleaks image, with the two mutations that were watched
-  turning the guard red.
+  turning the guard red. Re-run 2026-10-01 after the guard was made to source
+  `scripts/ci/ci-export.sh`, which `gate_secrets` has called since 2026-09-24.
 - [secret-scan-unreadable-path-proof.md](./secret-scan-unreadable-path-proof.md) — the same gate
   proven to refuse a PASS when the real gitleaks image skips a path it cannot read and still exits
   0, which is the 2026-09-10 failure, plus the check that the floating `:latest` tag still writes a
