@@ -163,7 +163,7 @@ describe('bot-node workspace owner binding (ADR-060 enforcement point)', () => {
       const secondResult = await second.handler(envelope({ workspaceTaskId: rootId, externalId: 'child-2', userSub: OWNER_A }));
       expect(secondResult).toMatchObject({ success: true });
       expect(second.createTask).not.toHaveBeenCalled();
-      expect(second.processMessage.mock.calls[0][0]).toBe(rootId);
+      expect((second.processMessage.mock.calls[0] as unknown[])[0]).toBe(rootId);
 
       const foreign = harness({ existing: { id: rootId, userSub: OWNER_A } });
       const foreignResult = await foreign.handler(envelope({ workspaceTaskId: rootId, externalId: 'child-3', userSub: OWNER_B }));

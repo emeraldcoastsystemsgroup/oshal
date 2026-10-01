@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import type { OshalTicketState } from '../../src/entities/ticket';
+import { CreateInternalTicketSchema, type OshalTicketState } from '../../src/entities/ticket';
 import type { InternalTicket } from '../../src/entities/ticket/internal-ticket';
 import { InMemoryTicketStore } from '../../src/features/ticketing/services/in-memory-ticket-store';
 import { TicketService } from '../../src/features/ticketing/services/ticket-service';
@@ -45,16 +45,16 @@ async function family(
   ticketService: TicketService,
   children: Array<{ status: OshalTicketState; ownerSub?: string; subtaskIndex: number | null }>,
 ): Promise<{ parent: InternalTicket; kids: InternalTicket[] }> {
-  const parent = await ticketService.createTicket({
+  const parent = await ticketService.createTicket(CreateInternalTicketSchema.parse({
     title: 'Planned root', description: 'root', ticketType: 'build', status: 'approval_required', ownerSub: OWNER, metadata: {},
-  });
+  }));
   const kids: InternalTicket[] = [];
   for (const [i, child] of children.entries()) {
-    kids.push(await ticketService.createTicket({
+    kids.push(await ticketService.createTicket(CreateInternalTicketSchema.parse({
       title: `Subtask ${i + 1}`, description: 'child', ticketType: 'build', status: child.status,
       parentTicketId: parent.ticketId, ownerSub: child.ownerSub ?? OWNER,
       metadata: child.subtaskIndex === null ? { depth: 1 } : { depth: 1, subtaskIndex: child.subtaskIndex, subtaskCount: children.length },
-    }));
+    })));
   }
   return { parent, kids };
 }

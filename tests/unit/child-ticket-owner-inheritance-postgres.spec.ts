@@ -10,6 +10,7 @@
 import type { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DisposablePostgres } from '../helpers/disposable-postgres';
+import { CreateInternalTicketSchema } from '../../src/entities/ticket';
 import { PostgresTicketStore, TicketService } from '../../src/features/ticketing';
 import { createChildTicketsFromPlanningOutput } from '../../src/features/swarm-orchestration/services/queue-manager-dispatch-helpers';
 import { ensureTicketSchema } from '../../src/shared/services/database';
@@ -43,10 +44,10 @@ let ticketService: TicketService;
  * @returns The root ticket.
  */
 async function fileRoot(ownerSub: string | null) {
-  const create = () => ticketService.createTicket({
+  const create = () => ticketService.createTicket(CreateInternalTicketSchema.parse({
     title: 'Build a two-module CLI', ticketType: 'build', description: 'Two modules.',
     status: 'approved', priority: 'low', labels: [], ownerSub,
-  });
+  }));
   return ownerSub
     ? runWithRequestIdentity({ sub: ownerSub, principalIssuer: ISSUER, isOperator: false }, create)
     : runWithSystemIdentity(create);
