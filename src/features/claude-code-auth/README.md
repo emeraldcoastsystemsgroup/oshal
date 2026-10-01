@@ -44,8 +44,9 @@ Raw credential distribution is disabled on every transport:
   revocation tombstone, so a delayed event could otherwise restore a key after sign-out.
 
 Credentials can exist only in the node's local authentication persistence or a deployment-mounted
-read-only credential file. There is no HTTP or Redis raw import/export path. Re-enabling
-distribution requires a versioned, ordered rail with monotonic revocation tombstones.
+read-only credential file. There is no HTTP or Redis raw import/export path, and credential
+distribution by broadcast is not coming back (operator ruling 2026-09-21): a node that needs oshal
+platform credentials gets them by enrolment plus a fetch from the custody broker.
 
 ### Demo portal fallback (ADR-137 amendment A)
 
