@@ -2,7 +2,9 @@
 
 Date: 2026-10-01
 Status: **Proposed. Nothing in the Decision is built.** Amended 2026-10-01 with D10 and D11 (ticket workspaces)
-after a read-only investigation of ticket folders and sub-tickets.
+after a read-only investigation of ticket folders and sub-tickets. D10 and D11 are deferred to the backlog
+("Sub-ticket workspace isolation", operator decision 2026-10-01) so tickets in tickets can run first on the shared
+folder.
 The Context records what exists at core `main` `7bf94478`, which is deployed on the operator's box. The
 ticket figures come from read-only queries of that box's database at 2026-10-01 03:55 UTC, covering the
 previous 30 days.
