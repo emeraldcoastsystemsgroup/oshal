@@ -38,13 +38,30 @@ the three helpers `scripts/ci-local.sh` loads before any gate runs.
 
 `tests/unit/real-boundary-doctrine.spec.ts` now also finds, from the `name() {` definitions in
 each `scripts/ci/*.sh` file, which helper files the sliced gate text calls, and requires the guard
-to source every one of them. That check needs no Docker. Against the old guard it fails with:
+to source every one of them. It checks sourcing the way the probe does it: the helper's path
+constant must be on the probe's argv, and the positional it arrives on (`$4`, `$5`, ...) must be
+dot-sourced by the probe script. A helper that is only named, or passed but never sourced, is
+refused. That check needs no Docker. Each result below is from a run on 2026-10-01.
+
+Against the old guard on d9a6d9e5, which never names `ci-export.sh`:
 
 ```
-the gate calls export_tree from ci-export.sh; the guard must source it
+AssertionError: the gate calls export_tree from ci-export.sh; the guard must source it (its path constant is not on the probe argv): expected 0 to be greater than 0
 Test Files  1 failed (1)
      Tests  1 failed | 14 passed (15)
 ```
+
+**Mutation C — the helper is passed but not sourced.** In the fixed guard, `ci-export.sh` stays
+named and passed as `$5`, but its `'. "$5"'` line is removed from the probe. Reverted
+afterwards:
+
+```
+AssertionError: the gate calls export_tree from ci-export.sh; the guard must source it (argv $5 is never dot-sourced): expected '/**\n * CHANGE LOG\n * --------------…' to contain '\'. "$5"\''
+Test Files  1 failed (1)
+     Tests  1 failed | 14 passed (15)
+```
+
+With the guard as committed: `Tests  15 passed (15)`.
 
 ## What runs
 
@@ -147,10 +164,12 @@ passes `--redact`, and a proof that prints the thing it planted is not a proof a
 
 ## Mutation evidence: the guard was watched failing
 
-A guard nobody watched fail is a guard nobody knows works. Both mutations were re-applied on
-2026-10-01 to the lane's working tree against the current gate, each reintroducing a real defect
-shape, and both were restored afterwards (`git status` showed only the two changed spec files).
-Lines elided from the assertion output are marked `...`.
+A guard nobody watched fail is a guard nobody knows works. Mutations A and B break the gate and
+are caught by this guard's verdicts. Both were re-applied on 2026-10-01 to the lane's working tree
+against the current gate, each reintroducing a real defect shape, and both were restored
+afterwards (`git status` showed only the two changed spec files). Mutation C breaks the guard's
+own helper sourcing and is caught by the doctrine check; it is recorded above, under *Why it was
+re-run*. Lines elided from the assertion output are marked `...`.
 
 **Mutation A — the gate stops believing the scanner.** `--exit-code 0` added to the production
 `gitleaks_container_scan` invocation in `scripts/ci-local.sh`, so findings no longer set a failing
@@ -185,8 +204,8 @@ Test Files  1 failed (1)
      Tests  1 failed | 5 passed (6)
 ```
 
-Both mutations were reverted and the guard re-run green (`Tests  6 passed (6)`, the run quoted
-above) before the change was committed.
+Mutations A and B were reverted and the guard re-run green (`Tests  6 passed (6)`, the run
+quoted above) before the change was committed.
 
 ## No credential entered Git history
 
