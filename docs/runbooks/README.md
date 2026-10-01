@@ -84,6 +84,12 @@ OSHAL pipelines and surfaces. One file per procedure.
 
 ## Enable / operate a feature
 
+- [tenant-provisioning.md](./tenant-provisioning.md) — rendering one tenant's database and
+  namespace policy with `scripts/governance/provision-tenant.sh` (isolated tier only: a database per
+  tenant; `--tenancy=shared` is refused as not built), applying it with `psql` and
+  `kubectl`, what each rendered statement closes, the two-tenant proof that a cross-tenant database
+  connection and a cross-tenant row read are both refused, the automated cluster acceptance
+  (`scripts/governance/accept-tenant-isolation.sh`), and what is not built yet.
 - [jarvis-calling-setup.md](./jarvis-calling-setup.md) — the configuration-only Jarvis calling
   screen (`/api/jarvis/calling/settings`): selecting one connected Twilio account, the transfer
   phone, limits and the owner opt-in; why a saved configuration still reports
