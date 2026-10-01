@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Barrel split landed (TODO-BOUNDARY-FINDING resolved): the llm-provider barrels no longer re-export harness modules, so every "barrel re-export" edge left the allowlist; the new '@/features/llm-provider/harness' sub-barrel is now a tracked forbidden module whose SOLE sanctioned importer is provider-runtime.ts. Added a named barrel-boundary regression test that scans both barrels' import specifiers directly (graph-independent), so a reintroduced harness re-export goes red even if the walker changes.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | BACKLOG "Bot runtime consolidation": half (b) re-anchored on the consolidated runtime switch — the any-bot branch now exits instead of exec'ing the legacy server, so bot-node is the leading `if`, and the selectable set is the single CANONICAL_BOT_RUNTIMES declaration with a fail-closed default. The behavioural proof (the shell actually refusing an unknown value) is tests/unit/bot-runtime-consolidation.spec.ts.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Fixes a RED main by sanctioning two edges, each checked rather than waved through - this pin exists to force exactly that review. (1) antigravity-cli-harness-adapter joins the graph in the SAME shape as its three siblings: imported only by the harness barrel, extending base-cli-harness-adapter, reached through harness-adapter. It is a declared sibling of gemini-cli in the HarnessType union and it imports and is gated by assertAuditedAutonomousHarness, so the fail-closed unattended posture covers it like every other CLI - verified in the adapter, not taken from its comment. (2) manifest-bot-runtime-defaults imports resolveRuntimeModelName and resolveRuntimeProviderName from provider-runtime and nothing else, which is precisely the config-helper category the block above already sanctions for app-runtime-factory and tool-runtime-context. Neither edge reaches harness RUNTIME from the controller.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | The sanctioned resolveHarnessForAgent importer moved with the controller worker wiring from extensions/swarm/index.ts to extensions/swarm/controller-swarm-worker.ts (a pure move; index.ts had crossed 800 code lines). Same single edge, new file name; no new importer of the harness stack.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -48,7 +49,8 @@ function isForbidden(rel: string): boolean {
  * codex-packer, registered with container 'oshal-api' in the bot registry)
  * run inline in the api container and the dispatcher invokes the codex CLI in-process for
  * them. resolveHarnessForAgent() in provider-runtime.ts is that path's harness resolution,
- * so the swarm extension composition (src/app/extensions/swarm/index.ts) may import it.
+ * so the swarm extension's controller-worker composition
+ * (src/app/extensions/swarm/controller-swarm-worker.ts) may import it.
  * provider-runtime.ts in turn hard-imports every harness adapter (HARNESS_FACTORIES is
  * typed Record<HarnessType, HarnessFactory>), which is why the adapters below appear on
  * the controller graph at all.
@@ -69,7 +71,7 @@ const SANCTIONED_FORBIDDEN_EDGES: Record<string, string[]> = {
     'src/app/composition/manifest-bot-runtime-defaults.ts',
     'src/app/composition/tool-runtime-context.ts',
     // SANCTIONED inline-persona dispatch (resolveHarnessForAgent — see block comment above):
-    'src/app/extensions/swarm/index.ts',
+    'src/app/extensions/swarm/controller-swarm-worker.ts',
   ],
   // The harness entry-point barrel: provider-runtime.ts is its ONE sanctioned importer.
   'src/features/llm-provider/harness/index.ts': [
