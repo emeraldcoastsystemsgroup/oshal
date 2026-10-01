@@ -976,5 +976,11 @@
     "title": "Session cleanup left on the operator's box (2026-09-06)",
     "pr": "776",
     "evidence": "The operator decided on 2026-09-21 to turn the node print service off (PR #776). printServiceEnabled is false in this machine's node config, and nothing listens on 631-633 (re-checked 2026-10-01). The orphaned operator PAT f17a2172 was revoked on 2026-09-14, and the box's token list still reports revoked: true."
+  },
+  {
+    "date": "2026-10-01",
+    "title": "CI secret-scanner remote mutation proof",
+    "pr": "975",
+    "evidence": "Closed on the operator's 2026-09-20 re-scope to the local secret-scan gate. docs/security/secret-scan-planted-fixture-proof.md records the 2026-10-01 re-run (core #975, ce998b00) of tests/unit/ci-local-secret-scan-planted-fixture.spec.ts against the real zricethezav/gitleaks:latest image: clean PASS, planted FAIL scanner rc=1 (leaks found: 1), allowlisted control PASS, fixture removed PASS. The guard now sources scripts/ci/ci-export.sh, and tests/unit/real-boundary-doctrine.spec.ts requires it to source every helper the gate calls. The planted value is synthetic, lives only in a temporary repository that is never pushed, and is redacted from every output."
   }
 ]
