@@ -45,6 +45,22 @@ full framework ribbon) under a **verified OIDC session**:
 The local orb is hidden while the cockpit is open and returns only if the cockpit closes or cannot
 open; the worker keeps pulling tasks regardless of which surface is in front.
 
+## Simple chat window
+
+For a node that should be a plain text bot, set **Config → Window style → Simple chat** (or seed it with
+`OSHAL_VIEW=chat`). The orb stays the default; nothing changes for a node that never selects this.
+
+- **This window** shows a simple chat in place of the orb: the box at the bottom, the conversation above it, a short
+  help card with example prompts the first time, and nothing else. Turns use the node's existing chat route and the
+  reply arrives on the usual poll, with no speech. The history stays on this computer (the last 200 turns), because
+  that route has no history read. Swarm tasks this machine runs show in the history as short notes.
+- **The Full Jarvis window** opens the hosted simple chat at `/simple` instead of the cockpit. `/simple` is the same
+  conversation as Jarvis and the experience shells, so its history comes from the swarm.
+
+`OSHAL_VIEW` accepts `chat` or `orb`; any other value leaves the saved choice alone. The renderer's
+`simple-chat.js`/`.css` are byte copies of the shared kit in `src/shared/ui/`, and a spec fails if they differ. See
+[simple-chat.md](../../docs/architecture/simple-chat.md).
+
 ## Native background wake word (page closed)
 
 OSHAL Node can remain in the system tray and listen for one exact local phrase while the hosted

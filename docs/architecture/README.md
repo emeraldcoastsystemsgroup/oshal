@@ -32,6 +32,9 @@ The guiding model is:
     Little Monsters and Business homebases, the central assistant): the routes, the caller-scoped
     contracts each screen reads, what is deliberately absent, device-local preferences and the
     registered verification
+- [simple-chat.md](./simple-chat.md)
+  - one plain text screen, opt-in everywhere: the simple chat contract, the assessment of every platform and
+    application text screen against it, the opt-in design (`/simple` and OSHAL Node's Simple chat) and the phases
 - [global-search-deep-link-contract.md](./global-search-deep-link-contract.md)
   - the per-source deep-link contract for `/api/search` (which URL each result kind opens, which kinds
     declare no surface and why), the adapter-owned isolation rules, and the measured before/after
