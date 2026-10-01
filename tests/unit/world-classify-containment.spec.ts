@@ -66,7 +66,8 @@ const budget = () => createClassifyBudget({ perHour: 50, perDay: 50, now: () => 
 function record(prompt: string): { source: string; content: string } {
   const blocks = prompt.match(/<UNTRUSTED_CONTENT>[\s\S]*?<\/UNTRUSTED_CONTENT>/g) ?? [];
   expect(blocks).toHaveLength(1);
-  return JSON.parse(blocks[0].slice('<UNTRUSTED_CONTENT>'.length, -'</UNTRUSTED_CONTENT>'.length)) as { source: string; content: string };
+  const block = blocks[0] ?? '';
+  return JSON.parse(block.slice('<UNTRUSTED_CONTENT>'.length, -'</UNTRUSTED_CONTENT>'.length)) as { source: string; content: string };
 }
 
 const localSource = (): FeedSource => ({ id: 'local-feed', name: 'Local', category: 'news', outletField: 'source', url: () => feedUrl });

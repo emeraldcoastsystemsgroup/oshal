@@ -178,7 +178,7 @@ describe('createOutletRatingReader — one read per refresh interval', () => {
   });
 
   it('passes the window to the query', async () => {
-    const query = vi.fn(async () => ({ rows: [] }));
+    const query = vi.fn(async (_sql: string, _params: unknown[]) => ({ rows: [] }));
     await createOutletRatingReader({ query } as unknown as Pool, { WORLD_OUTLET_RATING_WINDOW_DAYS: '45' }).read();
     expect(query.mock.calls[0]?.[1]).toEqual([45]);
   });
