@@ -18,6 +18,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com | The two ADR-052 addendum parity guards join the fixed isolated set: the per-position exit-plan table spec and the parity fire spec. Each starts and destroys its own PostgreSQL and reads no database address, the same shape as the trading guards above, so this runner - which blanks every database variable it passes down - is the gate that executes them.
  * 13 | maintainer@emeraldcoastsystemsgroup.com | The ADR-052 addendum P6 yield-sleeve fire spec joins the fixed isolated set beside the parity fire spec. It starts and destroys its own PostgreSQL and reads no database address, the same shape as the trading guards above.
  * 14 | maintainer@emeraldcoastsystemsgroup.com | Include the real Vitest discovery guard for the default tree-walk serial project; it starts no database or test worker of its own.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com | The two-tenant isolation proof for provision-tenant.sh joins the fixed isolated set. It starts and destroys its own PostgreSQL, applies each rendered database.sql with the real psql inside that container and connects as each tenant's own role, so it needs Docker and Git Bash and reads no database address - the same shape as the backup round-trip guard beside it.
  */
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, createWriteStream } from 'node:fs';
@@ -52,6 +53,7 @@ export const NIGHTLY_ISOLATED_SUITES = Object.freeze([
   'tests/unit/trading-position-plans-postgres.spec.ts',
   'tests/unit/trading-parity-fire.spec.ts',
   'tests/unit/trading-dispatch-yield-sleeve-fire.spec.ts',
+  'tests/unit/provision-tenant-isolation-postgres.spec.ts',
 ]);
 
 /**

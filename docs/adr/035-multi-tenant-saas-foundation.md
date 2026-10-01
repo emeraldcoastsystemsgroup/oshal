@@ -1,6 +1,6 @@
 # ADR 035 — Multi-Tenant SaaS Foundation (Schools as Tenants)
 
-Status: **Accepted as amended** (operator decision 2026-09-21, recorded in [BACKLOG.md](../BACKLOG.md) under **"Two-tier tenant provisioning"**: "ISOLATED-ONLY. ADR-035 is amended and ACCEPTED on that basis"). Proposed 2026-06-12. The amendment is at [the end of this ADR](#amendment-2026-09-21-isolated-only); it replaces pillar 1's pooled database with a database per tenant. Nothing is built yet: no tenant provisioning script exists (`provision-tenant.sh` is that entry's done-when). (The RLS substrate landed separately as multi-*user* isolation under [ADR-076](076-tenant-aware-rls-and-least-privilege-db-role.md); the tenant root entity, realm-per-tenant provisioning, and seat licensing decided here remain unbuilt.)
+Status: **Accepted as amended** (operator decision 2026-09-21, recorded in [BACKLOG.md](../BACKLOG.md) under **"Two-tier tenant provisioning"**: "ISOLATED-ONLY. ADR-035 is amended and ACCEPTED on that basis"). Proposed 2026-06-12. The amendment is at [the end of this ADR](#amendment-2026-09-21-isolated-only); it replaces pillar 1's pooled database with a database per tenant. The isolated tier's provisioning is built (2026-10-01): [`scripts/governance/provision-tenant.sh`](../../scripts/governance/provision-tenant.sh) renders a tenant's database policy (its own role and its own database, closed to every other role) and namespace policy, and a two-tenant proof on a disposable PostgreSQL shows a cross-tenant database connection and a cross-tenant row read both refused ([runbook](../runbooks/tenant-provisioning.md)). The shared tier is not commissioned: `--tenancy=shared` is refused. (The RLS substrate landed separately as multi-*user* isolation under [ADR-076](076-tenant-aware-rls-and-least-privilege-db-role.md); the tenant root entity, realm-per-tenant provisioning, and seat licensing decided here remain unbuilt.)
 Supersedes: none. Related: [ADR 034 config-sync](034-bidirectional-config-ownership-sync.md), [ADR swarm-application-manifests](033b-swarm-application-manifests.md), [ADR 030 home-persona-layer](030-home-persona-layer.md)
 
 ## Context
@@ -139,6 +139,20 @@ What that changes in the decision above:
 - **The isolation proof** has to attempt a cross-tenant database connection and a cross-tenant row
   read and show both refused. `scripts/governance/verify-tenant-isolation.sh` checks only
   Kubernetes NetworkPolicy, so it does not cover this.
+
+**As built (2026-10-01).** `scripts/governance/provision-tenant.sh <name> --tenancy=isolated`
+renders `database.sql` and `namespace.yaml` for one tenant. The SQL gives the tenant its own
+`LOGIN` role, with no superuser, no RLS bypass and no memberships either way, and its own
+database. It revokes `CONNECT`/`TEMPORARY` from `PUBLIC` and from every other grantee, and revokes
+`USAGE`/`CREATE` on the `public` schema from `PUBLIC`. The YAML is the ADR-078 per-tenant
+namespace with a ConfigMap that binds the namespace to its own database. `--tenancy=shared` is
+refused as not commissioned. `tests/unit/provision-tenant-isolation-postgres.spec.ts` applies two
+renderings with the real psql on a disposable PostgreSQL 16. A cross-tenant connection is refused
+in both directions. A cross-tenant row read is refused, from the tenant's own session and with
+the connection layer deliberately drifted open. Re-applying repairs the drift. What is not built:
+running oshal's migrations and runtime roles inside a tenant database (the runtime-role
+provisioner names the cluster-wide roles `oshal_app` and `oshal_bot`), and pillars 2 to 4. See the
+[runbook](../runbooks/tenant-provisioning.md).
 
 The decision does not address pillars 2 to 5, the async/workflow section or the phased plan. It
 also records that this ADR's context, "the schools/SaaS path", is one "the operator's 2026-08-01
