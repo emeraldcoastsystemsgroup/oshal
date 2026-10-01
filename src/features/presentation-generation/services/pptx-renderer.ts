@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — real .pptx rendering via pptxgenjs (the missing half of PresentationEngine, which only produced slide DATA). Replaces Presenton: structured slides -> a downloadable PowerPoint file.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Themed rendering. Was: one hardcoded navy cover + one bullet layout, no template selection anywhere (the `templateId` on the request was never read). Now: resolves one of ten themes, defines its real slide masters, parses each slide's content, and composes a layout per slide from the twenty available. Signature stays (title, slides) so existing callers are unaffected.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Brand looks (backlog 2026-09-14, approved 2026-09-22): options.theme may now be a brand look from brandTheme (DeckRenderOptions.theme widened), drawn in its exact colors and faces; an invalid look is refused by resolveTheme before anything is drawn. Code path unchanged — the ten built-in looks render part-for-part as before (tests/unit/deck-looks-unchanged.spec.ts).
  */
 
 import pptxgen from 'pptxgenjs';
@@ -132,7 +133,9 @@ function applyMetadata(pptx: pptxgen, title: string, theme: DeckTheme): void {
  *   `slide-content-parser`. A slide with no `layout` is composed automatically from the shape
  *   of its content.
  * @param options - theme + deck-level options. Omitted → the default theme, auto-layout on.
+ *   `theme` is a built-in look id or a brand look from `brandTheme`.
  * @returns the .pptx file as a Buffer.
+ * @throws BrandLookError when `theme` is a look object that fails validation — nothing is drawn.
  */
 export async function renderPptx(
   title: string, slides: RenderableSlide[], options: DeckRenderOptions = {},

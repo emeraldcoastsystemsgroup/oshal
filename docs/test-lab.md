@@ -895,6 +895,15 @@ ESPN kept apart, and `espn_s2` absent from every log event and returned value. R
 `npx vitest run tests/unit/fantasy-leagues-espn-client.spec.ts tests/unit/kernel-skills.spec.ts`.
 Reading a real league is an operator acceptance step behind a signed-in session.
 
+**Brand looks in the deck engine (deck-generation kernel skill)** (`brand-look-render`, Tools)
+uses the server's own deck engine to build a brand look from a synthetic kit
+([ADR-103](adr/103-ai-office-one-themed-engine.md) addendum). It renders a deck, a document and a
+workbook in memory, reads the kit's primary color, text color and body face back out of each file,
+then hands each renderer a forged look and requires a refusal. A missing value or a drawn forged look
+fails the step and names the format. It writes nothing, calls no route and spends nothing. Its linked
+suites also compare every part of the ten built-in looks with digests generated before brand looks
+existed. Run them with the command in [tests/README.md](../tests/README.md).
+
 Eligible offline package Node suites now use a disposable runner with Run/Cancel controls and
 durable versioned history. See [package test execution](testing/package-test-execution.md) for
 supported prerequisites, current-user authorization, isolation and local regression commands.

@@ -4,104 +4,26 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the ten deck themes. Replaces the hardcoded navy-cover/black-bullets look that every generated deck shared. A theme is the whole look and feel (palette + typography + cover treatment + slide decoration), consumed by slide-masters + every layout so the deck is coherent end to end.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Brand looks (backlog 2026-09-14, approved as a core change 2026-09-22). resolveTheme accepts a built-in look id OR a custom look object: an id resolves exactly as before (an unknown id falls back to the default, now by own key so 'constructor' is unknown too), and an object is checked field by field by checkedLook and drawn exactly, or refused with a BrandLookError — never swapped for the default. The look shape types moved to @/shared/types (re-exported here unchanged) so DeckRenderOptions.theme can carry a look; the ten looks' data is unchanged.
  */
 
-import type { DeckThemeId } from '@/shared/types';
+import type {
+  BrandLookId, DeckTheme, DeckThemeId, ThemeFonts, ThemePalette, CoverStyle, DecorStyle,
+} from '@/shared/types';
+import { BrandLookError, lookFace, lookHex, lookRecord, lookText } from './look-rules';
 
-/**
- * @description Typography for a theme. Fonts are restricted to the faces that ship with
- * Microsoft Office on BOTH Windows and macOS (Calibri, Cambria, Candara, Century Gothic,
- * Consolas, Constantia, Corbel, Garamond, Georgia, Trebuchet MS, Arial, Courier New).
- * This is deliberate: a webfont would silently substitute when the user opens the .pptx on
- * their desktop, which wrecks every line break the renderer laid out. No exceptions.
- */
-export interface ThemeFonts {
-  /** Slide titles, cover title, big numbers. */
-  heading: string;
-  /** Bullets, body copy, captions. */
-  body: string;
-  /** Labels, kickers, eyebrow text, code. */
-  mono: string;
-}
+export type { BrandLookId, DeckTheme, ThemeFonts, ThemePalette, CoverStyle, DecorStyle };
+export { OFFICE_SAFE_FONTS, BrandLookError, isBrandLookError } from './look-rules';
 
-/**
- * @description A theme's colors. Hex WITHOUT the leading '#' — pptxgenjs wants bare hex.
- * `deep*` are the inverted feature surfaces (cover / section / statement slides); `canvas*`
- * and `ink*` are the normal content slides.
- */
-export interface ThemePalette {
-  /** Content-slide background. */
-  canvas: string;
-  /** Panels, tiles, table banding — one step off `canvas`. */
-  canvasAlt: string;
-  /** Primary text on `canvas`. */
-  ink: string;
-  /** Secondary text on `canvas`. */
-  inkSoft: string;
-  /** Primary accent — rules, chips, chart series 1. */
-  accent: string;
-  /** Secondary accent — contrast panel, chart series 2. */
-  accent2: string;
-  /** Hairlines and borders. */
-  line: string;
-  /** Feature-surface background (cover / section / statement). */
-  deep: string;
-  /** Primary text on `deep`. */
-  deepInk: string;
-  /** Secondary text on `deep`. */
-  deepInkSoft: string;
-}
-
-/** How the cover slide is composed. */
-export type CoverStyle =
-  | 'wash'   // translucent accent blooms over the deep surface
-  | 'block'  // hard color block, oversized type
-  | 'rule'   // restrained: hairline rule above the title
-  | 'grid'   // technical dot-grid field
-  | 'band'   // horizontal accent band behind the title
-  | 'split'; // vertical split: deep panel + canvas panel
-
-/** How content slides are decorated. */
-export type DecorStyle =
-  | 'bar'     // accent bar under the slide title
-  | 'rule'    // full-width hairline under the title band
-  | 'chip'    // rounded accent chip beside the title
-  | 'grid'    // dot grid + mono eyebrow
-  | 'sidebar' // narrow accent spine down the left edge
-  | 'none';
-
-/**
- * @description A complete deck theme.
- */
-export interface DeckTheme {
-  /** Stable id (the value callers pass as `theme`). */
-  id: DeckThemeId;
-  /** Display name for the picker. */
-  name: string;
-  /** One-line pitch shown under the name in the picker. */
-  blurb: string;
-  /** Short "when to use this" cue. */
-  mood: string;
-  fonts: ThemeFonts;
-  colors: ThemePalette;
-  /** Six chart series colors, ordered. */
-  chartColors: string[];
-  cover: CoverStyle;
-  decor: DecorStyle;
-  /** Corner rounding in inches for tiles/panels. 0 = sharp. */
-  radius: number;
-  /** Uppercase slide titles (Swiss / cyber voices). */
-  headingCase: 'none' | 'upper';
-  /** True when content slides sit on a dark canvas. */
-  darkCanvas: boolean;
-}
+/** One of the ten built-in looks: a DeckTheme whose id is a picker id. */
+type BuiltInLook = DeckTheme & { id: DeckThemeId };
 
 /**
  * @description All ten themes, in picker order. Four dark-canvas (midnight, aurora,
  * blueprint, neon) and six light-canvas, so the set spans real use: a boardroom read-out and
  * a conference keynote should not look like the same deck recolored.
  */
-export const DECK_THEMES: Record<DeckThemeId, DeckTheme> = {
+export const DECK_THEMES: Record<DeckThemeId, BuiltInLook> = {
   midnight: {
     id: 'midnight',
     name: 'Midnight',
@@ -251,15 +173,18 @@ export const DEFAULT_THEME_ID: DeckThemeId = 'midnight';
 export const THEME_IDS = Object.keys(DECK_THEMES) as DeckThemeId[];
 
 /**
- * @description Resolve a caller-supplied theme name to a real theme. Never throws — an
- * unknown or missing name falls back to the default, because a bad theme string is not a
- * reason to fail a deck the user is waiting on.
- * @param id - candidate theme id from a request body, directive, or persona.
- * @returns the matching theme, or the default theme.
+ * @description Resolve a caller-supplied look to the one to draw. A string is a built-in look
+ * id and never throws: an unknown or missing id falls back to the default, because a bad theme
+ * string is not a reason to fail a deck the user is waiting on. An object is a custom look (from
+ * `brandTheme`): it is checked by `checkedLook` and drawn exactly as given, or refused.
+ * @param look - a built-in look id from a request body, directive or persona; or a brand look.
+ * @returns the matching built-in look or the default for a string; the checked look for an object.
+ * @throws BrandLookError when an object is not a complete, valid brand look — it never becomes
+ * the default look.
  */
-export function resolveTheme(id?: string | null): DeckTheme {
-  const key = String(id ?? '').trim().toLowerCase();
-  return DECK_THEMES[key as DeckThemeId] ?? DECK_THEMES[DEFAULT_THEME_ID];
+export function resolveTheme(look?: string | DeckTheme | null): DeckTheme {
+  if (look !== null && typeof look === 'object') return checkedLook(look);
+  return builtInLook(String(look ?? '').trim().toLowerCase()) ?? DECK_THEMES[DEFAULT_THEME_ID];
 }
 
 /**
@@ -270,6 +195,79 @@ export function resolveTheme(id?: string | null): DeckTheme {
  */
 export function isThemeId(id: unknown): id is DeckThemeId {
   return typeof id === 'string' && Object.prototype.hasOwnProperty.call(DECK_THEMES, id);
+}
+
+/**
+ * @description The built-in look an exact id names. Own keys only, so an inherited property
+ * name such as 'constructor' names no look.
+ * @param id - candidate id, compared exactly.
+ * @returns the built-in look, or undefined.
+ */
+export function builtInLook(id: unknown): BuiltInLook | undefined {
+  return isThemeId(id) ? DECK_THEMES[id] : undefined;
+}
+
+/** Every field a complete look carries. */
+const LOOK_FIELDS = [
+  'id', 'name', 'blurb', 'mood', 'fonts', 'colors', 'chartColors', 'cover', 'decor', 'radius', 'headingCase', 'darkCanvas',
+] as const;
+/** Every palette role a complete look colors. */
+const PALETTE_FIELDS: ReadonlyArray<keyof ThemePalette> = [
+  'canvas', 'canvasAlt', 'ink', 'inkSoft', 'accent', 'accent2', 'line', 'deep', 'deepInk', 'deepInkSoft',
+];
+/** The structure a brand look inherits from its base look, unchanged. */
+const INHERITED = ['cover', 'decor', 'radius', 'headingCase'] as const;
+
+/**
+ * @description The built-in look a brand look's id names (`brand:<id>`).
+ * @param id - the look's id.
+ * @returns the base look.
+ * @throws BrandLookError when the id is not `brand:` plus a built-in look id.
+ */
+function brandBase(id: unknown): BuiltInLook {
+  const match = typeof id === 'string' ? /^brand:([a-z]+)$/.exec(id) : null;
+  const base = match ? builtInLook(match[1]) : undefined;
+  if (!base) throw new BrandLookError('the look id must be "brand:" followed by one of the ten built-in looks');
+  return base;
+}
+
+/**
+ * @description Check a custom look object and return a frozen copy to draw. A custom look is a
+ * brand look: its id names the built-in look whose structure it keeps, so its cover,
+ * decoration, corner radius and title casing must equal that look's; every color, chart color
+ * included, is six-digit hex; every face is Office-safe; its text fields are bounded single
+ * lines. A built-in look object is returned as itself.
+ * @param look - the object a caller handed the renderer.
+ * @returns the look to draw.
+ * @throws BrandLookError naming the first field that is wrong.
+ */
+export function checkedLook(look: object): DeckTheme {
+  const builtIn = Object.values(DECK_THEMES).find((t) => t === look);
+  if (builtIn) return builtIn;
+  const t = lookRecord(look, LOOK_FIELDS, 'The look');
+  const base = brandBase(t.id);
+  const fonts = lookRecord(t.fonts, ['heading', 'body', 'mono'], 'The look fonts');
+  const colors = lookRecord(t.colors, PALETTE_FIELDS, 'The look colors');
+  if (!Array.isArray(t.chartColors) || t.chartColors.length !== 6) throw new BrandLookError('the look needs exactly six chart colors');
+  for (const key of INHERITED) {
+    if (t[key] !== base[key]) throw new BrandLookError(`the look's ${key} must be the ${base.name} look's`);
+  }
+  if (typeof t.darkCanvas !== 'boolean') throw new BrandLookError('the look must say whether its canvas is dark');
+  const palette = Object.fromEntries(PALETTE_FIELDS.map((k) => [k, lookHex(colors[k], `The look's ${k} color`, false)]));
+  return Object.freeze({
+    id: `brand:${base.id}` as BrandLookId,
+    name: lookText(t.name, 80, 'The look name'),
+    blurb: lookText(t.blurb, 200, 'The look blurb'),
+    mood: lookText(t.mood, 120, 'The look mood'),
+    fonts: Object.freeze({
+      heading: lookFace(fonts.heading, 'The heading font'), body: lookFace(fonts.body, 'The body font'),
+      mono: lookFace(fonts.mono, 'The mono font'),
+    }),
+    colors: Object.freeze(palette as unknown as ThemePalette),
+    chartColors: Object.freeze(t.chartColors.map((c, i) => lookHex(c, `Chart color ${i + 1}`, false))) as string[],
+    cover: base.cover, decor: base.decor, radius: base.radius, headingCase: base.headingCase,
+    darkCanvas: t.darkCanvas,
+  });
 }
 
 /**

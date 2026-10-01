@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial presentation domain types for presentation-bot
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Real template system: DeckThemeId (10 look-and-feel themes) + SlideLayoutId (20 layouts) + SlideData (the structured payload a layout renders). Previously `templateId` was decorative — nothing downstream read it and every deck rendered identically.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Brand looks (backlog 2026-09-14, approved as a core change 2026-09-22): the look shape (DeckTheme, ThemeFonts, ThemePalette, CoverStyle, DecorStyle) moves here unchanged from the presentation-generation slice, so DeckRenderOptions.theme can name either a built-in look id or a validated brand look; BrandLookId (`brand:<base look>`) is the id such a look carries. The ten built-in looks and their ids are unchanged.
  */
 
 /**
@@ -23,6 +24,101 @@ export type DeckThemeId =
   | 'paper'       // academic — off-white, ink, generous margins, Garamond
   | 'neon'        // cyber — near-black, magenta/cyan glow bars
   | 'sandstone';  // warm neutral + terracotta, editorial serif
+
+/**
+ * @description The id a brand look carries (built by `brandTheme` in presentation-generation):
+ * `brand:` plus the built-in look whose structure it keeps. It is never a picker id, so a
+ * generated file's record names the look as a brand look and still says which layout drew it.
+ */
+export type BrandLookId = `brand:${DeckThemeId}`;
+
+/**
+ * @description Typography for a theme. Fonts are restricted to the faces that ship with
+ * Microsoft Office on BOTH Windows and macOS (Calibri, Cambria, Candara, Century Gothic,
+ * Consolas, Constantia, Corbel, Garamond, Georgia, Trebuchet MS, Arial, Courier New).
+ * This is deliberate: a webfont would silently substitute when the user opens the .pptx on
+ * their desktop, which wrecks every line break the renderer laid out. No exceptions.
+ */
+export interface ThemeFonts {
+  /** Slide titles, cover title, big numbers. */
+  heading: string;
+  /** Bullets, body copy, captions. */
+  body: string;
+  /** Labels, kickers, eyebrow text, code. */
+  mono: string;
+}
+
+/**
+ * @description A theme's colors. Hex WITHOUT the leading '#' — pptxgenjs wants bare hex.
+ * `deep*` are the inverted feature surfaces (cover / section / statement slides); `canvas*`
+ * and `ink*` are the normal content slides.
+ */
+export interface ThemePalette {
+  /** Content-slide background. */
+  canvas: string;
+  /** Panels, tiles, table banding — one step off `canvas`. */
+  canvasAlt: string;
+  /** Primary text on `canvas`. */
+  ink: string;
+  /** Secondary text on `canvas`. */
+  inkSoft: string;
+  /** Primary accent — rules, chips, chart series 1. */
+  accent: string;
+  /** Secondary accent — contrast panel, chart series 2. */
+  accent2: string;
+  /** Hairlines and borders. */
+  line: string;
+  /** Feature-surface background (cover / section / statement). */
+  deep: string;
+  /** Primary text on `deep`. */
+  deepInk: string;
+  /** Secondary text on `deep`. */
+  deepInkSoft: string;
+}
+
+/** How the cover slide is composed. */
+export type CoverStyle =
+  | 'wash'   // translucent accent blooms over the deep surface
+  | 'block'  // hard color block, oversized type
+  | 'rule'   // restrained: hairline rule above the title
+  | 'grid'   // technical dot-grid field
+  | 'band'   // horizontal accent band behind the title
+  | 'split'; // vertical split: deep panel + canvas panel
+
+/** How content slides are decorated. */
+export type DecorStyle =
+  | 'bar'     // accent bar under the slide title
+  | 'rule'    // full-width hairline under the title band
+  | 'chip'    // rounded accent chip beside the title
+  | 'grid'    // dot grid + mono eyebrow
+  | 'sidebar' // narrow accent spine down the left edge
+  | 'none';
+
+/**
+ * @description A complete deck theme — one of the ten built-in looks, or a brand look.
+ */
+export interface DeckTheme {
+  /** Stable id: a built-in look id (the value callers pass as `theme`), or `brand:<base>`. */
+  id: DeckThemeId | BrandLookId;
+  /** Display name for the picker. */
+  name: string;
+  /** One-line pitch shown under the name in the picker. */
+  blurb: string;
+  /** Short "when to use this" cue. */
+  mood: string;
+  fonts: ThemeFonts;
+  colors: ThemePalette;
+  /** Six chart series colors, ordered. */
+  chartColors: string[];
+  cover: CoverStyle;
+  decor: DecorStyle;
+  /** Corner rounding in inches for tiles/panels. 0 = sharp. */
+  radius: number;
+  /** Uppercase slide titles (Swiss / cyber voices). */
+  headingCase: 'none' | 'upper';
+  /** True when content slides sit on a dark canvas. */
+  darkCanvas: boolean;
+}
 
 /**
  * @description The twenty slide layouts. A layout decides how a slide's parsed content is
@@ -104,8 +200,12 @@ export interface RenderableSlide {
  * @description Deck-level render options — the "template selection" that was missing.
  */
 export interface DeckRenderOptions {
-  /** Look and feel. Defaults to `midnight`. */
-  theme?: DeckThemeId;
+  /**
+   * Look and feel: a built-in look id, or a brand look built by `brandTheme`. Defaults to
+   * `midnight`, and an unknown id falls back to it; a look object that fails validation is
+   * refused (the render throws) and is never replaced by the default.
+   */
+  theme?: DeckThemeId | DeckTheme;
   /** Cover subtitle — the one line under the deck title. */
   subtitle?: string;
   /** Cover byline / presenter / date line. */
