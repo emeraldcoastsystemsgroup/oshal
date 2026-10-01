@@ -74,7 +74,8 @@ Legend: `[x]` done+merged · `[~]` in flight (bot assigned) · `[ ]` queued (non
   (registry rows with no persona and no container), the seeded `graph-query` tool retargeted off dead
   Memgraph/Cypher onto `/api/graph`+AQL, a `uses:` declaration guard added CI-side, and `subgraph()`
   resolved as won't-build with a named revisit trigger. ONE item promoted to an open operator
-  decision: `world-data` reaches the graph without being a kernel skill.
+  decision: `world-data` reaches the graph without being a kernel skill. Decided option A 2026-09-21
+  and built 2026-09-26 (core 0681d5a9, store 4cd6c3b3).
   <sub>superseded — the 2026-07-24 note this replaced, kept for context:</sub> the swarm operational graph + one domain carve so processes can
   reason across apps. Done-when: one real ingestion + NL-query path over the existing connector.
 - [ ] **Chat-channel surfaces** — Telegram inbound shipped → Discord / WhatsApp inbound so processes

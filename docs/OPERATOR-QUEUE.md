@@ -5,7 +5,7 @@
 be overwritten. An entry disappears from this file automatically once its backlog heading is gone
 or its body records that it was built.
 
-Counts are generated, never typed: **69 decisions**, **46 live proofs**.
+Counts are generated, never typed: **48 decisions**, **42 live proofs**.
 
 To comment, write under an entry in this file and tell me, or just say the entry name.
 
@@ -35,7 +35,7 @@ A lane's bad redaction printed ALPACA_SECRET, ALPACA_PAPER_SECRET_KEY and ALPACA
 
 ---
 
-## Decisions — 69
+## Decisions — 48
 
 Each of these is blocked on a judgement only you can make. No code is waiting on anything else.
 
@@ -53,12 +53,8 @@ Each of these is blocked on a judgement only you can make. No code is waiting on
   Do you want the optional acoustic prosody tone sidecar (ADR-100 Phase 4) built? If yes, approve the speech-emotion model and where it runs (a new sidecar container). If no, this entry closes as won't-build.
 - **Content atomizer, share cards, and judged A/B (held)** *(L, store)*
   Should the content atomizer, then branded share cards, then judge-scored A/B be built (in that order), or should this entry be dropped?
-- **Drone relay chains (store package `drone-relay`, ADR-155)** *(L, both)*
-  Answer ADR-155 Q1-Q6. Provide two ESP32-C6 boards for the bench and height range test (hardware doc §5), and later three drones for R5. Approve the core PR that adds the relay role (DRONE_RELAY_ROLE=relay) to src/app/drone-node-server.ts.
 - **HTML5 Game Generator package (held)** *(L, both)*
   Should the HTML5 Game Generator package (a dedicated bot-node that emits a self-contained, CSP-safe browser game) be built now, or dropped?
-- **Marketing suite — core dependencies (package work is in the store)** *(L, both)*
-  Approve starting three core connector changes: (1) Resend gets a `headers` field limited to List-Unsubscribe/List-Unsubscribe-Post plus a bounded batch send; (2) PostHog gets a bounded stats resource; (3) read-only spend connectors for Google Ads, Microsoft Advertising, Meta and LinkedIn Ads. For the live proofs, also register those ads apps under maintainer@emeraldcoastsystemsgroup.com and confirm a Resend-verified sending domain.
 - **SEC-06 application-store route, ownership, and CI closure** *(M, store)*
   SEC-06 cannot close as written without paid CI. Choose one: (a) approve billed GitHub Actions runs of the store Security workflow on PRs/main, make 'SEC-06 required store security gate' a required check on the protected branch, and accept one billed fail-then-pass fixture run per gate; or (b) rewrite the SEC-06 done-when so the manual framework-coupled runner and local gates (scripts/security/run-framework-coupled-tests.mjs plus the disposable-PostgreSQL jobs run locally) count as closure evidence, and drop the branch-protection requirement.
 - **World Intelligence licensed outlet ratings** *(M, both)*
@@ -81,8 +77,6 @@ Each of these is blocked on a judgement only you can make. No code is waiting on
   From the intended chat, DM /start to the configured Telegram bot, capture that chat's id, add TELEGRAM_CHAT_ID to the core .env, then redeploy with scripts/oshal-deploy.sh so the api container picks up the env. After that, one finished creative episode can prove delivery.
 - **The ESPN "Log in + push" button has not reached a running node** *(S, n/a)*
   Install or restart the node on @oshal/chat 0.4.0 (npm latest or a local `npm run build`). Under Config → Accounts use ESPN Fantasy 'Log in + push' with your ESPN account, then confirm /utilities shows ESPN Fantasy connected and /api/sports-edge/fantasy/status reads your private league.
-- **Warn before an unrenewable connection lapses** *(S, both)*
-  Pick the warning window (for example, lapses within N days with no refresh token) and where it shows: a third 'Expiring' pill on the Identity Hub cards, or the Access review only.
 
 ### Device, edge, spatial, and operations domains
 
@@ -90,13 +84,8 @@ Each of these is blocked on a judgement only you can make. No code is waiting on
   Which FlashForge model do you own, and what is its LAN IP? Finder or Adventurer 3/4 use the TCP 8899 protocol with .gx uploads. An Adventurer 5M or 5M Pro uses HTTP 8898, or Moonraker in open mode. If it is a 5M in Moonraker open mode, can scan-to-print's existing Moonraker adapter be reused?
 - **Camera real-device follow-ups** *(L, both)*
   Which cameras can be used for the proof? The verified-TLS (COHN) path needs a GoPro HERO12 or later. A HERO9 can only do AP mode over plain HTTP, so either supply a HERO12+ or say that HERO9 AP-mode BLE provisioning is an acceptable GoPro proof. The second-brand proof also needs either a Canon body with CCAPI enabled (this requires Canon developer-program approval) or an ONVIF IP camera on the LAN.
-- **DevOps cockpit Phase 2 slice 1: NATed node round trip** *(S, core)*
-  Provide a NATed test node to verify self-registration and round-trip work execution across the Headscale / connection rail. (Later slices — topology discovery, Connect-Vault, Terraform/k8s context discovery, and credential-brokered specialists — moved to `ROADMAP.md`).
-
 - **Drone physical payloads and peer coordination** *(L, both)*
   Is an approved physical MAVLink airframe available — flight controller plus companion computer, with a camera or gimbal, ESCs that report telemetry, and an LED payload? The multi-node self-realign mission needs a second airframe. Please also name the safe test site. Until that hardware exists, only sim-side code can be written.
-- **Headscale as standard practice, so an off-LAN node can actually join** *(S, core)*
-  Decide: should Headscale be default-on in the bring-up, or stay opt-in but fail loudly? Then run the documented off-LAN path (join the overlay, enrol as an edge node, reach the API) from a machine on a different network, or provide one.
 - **Native iOS Spaces scanner** *(M, both)*
   On a Mac with Xcode, run xcodegen against clients/ios-spaces-scanner/project.yml, set your Apple Developer Team ID and a bundle ID you control, and build to a LiDAR iPhone (the 15 Pro Max). Pair it with a token minted in ?app=spaces and upload one room scan. Please send back the build log and the scanId, then try one expired or other-user token to confirm it is refused.
 - **No remote node is registered: the shared secret is retired and nodes were never re-enrolled** *(S, core)*
@@ -123,20 +112,12 @@ Each of these is blocked on a judgement only you can make. No code is waiting on
   Do you approve (a) one paid workflow_dispatch run of the Security or CI secret-scan job on a disposable branch, and (b) pushing a synthetic secret-shaped fixture to the public oshal repo past the pre-push publish gate, with the branch deleted afterwards? Or do you re-scope the done-when to a planted-fixture fail-then-pass of the local `ci-local.sh` secret-scan gate?
 - **Codeless k8s install — first live-cluster proof (ADR-129)** *(n/a, core)*
   (1) Provide a fresh second machine, not the dev laptop, with kubectl, helm and a reachable cluster, and run `oshal-install.sh --mode 4` (or `oshal-install.ps1 -Kubernetes`) through to /welcome, a model connection and a jarvis turn. (2) Run `bash scripts/publish-chart.sh` with a GHCR token that has write:packages. (3) Flip ghcr.io/emeraldcoastsystemsgroup/charts/oshal to public in the GitHub UI so `helm show chart oci://ghcr.io/emeraldcoastsystemsgroup/charts/oshal` works anonymously.
-- **DB-backed alert specs borrow the operator's database** *(S, core)*
-  Approve deleting the alert-spec fixture rows from oshal-local-db (oshal_incident rows where primary_target='probe-target' OR primary_target LIKE 'cut-%' OR dedup_key LIKE 'zz-incident-reopen-%', plus their oshal_incident_member and oshal_alert_event rows). Then run `bash scripts/ci-local.sh` so it records `GATE alert-residue: PASS`.
 - **Dev-box disk reclamation** *(S, core)*
   Name the orphan restore database, or approve an agent listing the databases in oshal-local-db so you can confirm which one it is. Then approve dropping exactly that one and a scoped OSHAL image/volume cleanup, with `docker system df` captured before and after.
-- **GitHub-side residue of the 2026-09-12 attribution scrub** *(n/a, n/a)*
-  Either file a GitHub Support request to purge the unreachable objects and the closed-PR refs/pull/N/head refs (for example core #426 and #430) for oshal, oshal-applications and oshal-app-private, or record in docs/BACKLOG.md that the GitHub-side residue of the 2026-09-12 scrub is accepted.
 - **Hugging Face lane — first real completion through the router** *(S, core)*
   Create a Hugging Face access token with Inference Providers permission on the business account (maintainer@emeraldcoastsystemsgroup.com) and put it in .env as HF_TOKEN. An agent can then recreate the api, run scripts/evidence/prove-free-tier-live.ts, and cite the dated result in the audit row.
-- **Installer and chat-channel strings still use the retired standalone product name** *(M, core)*
-  For boxes installed under the old names, choose one: (a) rename in place on upgrade (remove the 'Open Swarm cockpit (<port>)' firewall rule and the 'Open Swarm Node' Desktop shortcut, then create the oshal-named ones), or (b) leave existing installs alone and use the new names only on fresh installs.
 - **Monitoring overlay does not survive an ungraceful engine stop (BUG-21 tail)** *(M, core)*
   Decide what may run `scripts/monitoring-liveness-check.sh --strict` unattended while the stack watchdog stays paused. For example, an observe-only scheduled task that exits quietly when the engine is down and never starts Docker. Also authorize one deliberate ungraceful Docker VM stop on the dev box, so the fix can be proven across the restart boundary.
-- **Rides map and fare follow-ups** *(M, both)*
-  Decide three things: (1) accept straight-line × 1.3 road factor as keyless routing, or provide an OSRM/Valhalla endpoint for OSHAL_ROUTING_URL; (2) Google Maps: OSM only with no key, or a billing-enabled browser key restricted to your referrer; (3) approve installing rides 1.3.0 on the box. The code work (a durable geocode cache and a configurable geocoder) follows from these.
 - **Strategy Studio and Bot Forge conversational parity — Studio half PROVEN 2026-09-06** *(n/a, core)*
   Do you want Bot Forge edit-in-place for existing packs (re-emit the same pack, not a duplicate)? If not, close the entry as Studio-proven per docs/apps/trading/studio-parity-proof.md.
 - **The nightly gate has been red for 46 consecutive runs — trivy is a budget decision, not a fix** *(S, core)*
@@ -152,12 +133,6 @@ Each of these is blocked on a judgement only you can make. No code is waiting on
   Accept or amend ADR-140, and decide the actuate gate: should every physical action ask for confirmation each time, or may you pre-authorize an exact operation on a specific device?
 - **AI Office: draw a deck, document or workbook in a brand kit's exact colors and fonts (2026-09-14)** *(L, both)*
   Approve widening the core presentation-generation renderers (resolveTheme/docxTheme/xlsxTheme plus a brandTheme validator) so AI Office can render a Create brand kit's exact colors and fonts. Otherwise the nearest-built-in-look approximation stays and this entry is parked.
-- **Codex swarm-side OAuth — the token exchange fails at the last step (2026-09-08)** *(M, core)*
-  Approve, and personally do, one supervised /start → browser → :1455 sign-in with your OpenAI account. Before that, an agent adds diagnostics to the token exchange (the error's underlying cause and timing) and aligns the authorize URL with the Codex CLI (originator=codex_cli and its scope). Each attempt risks rate-limiting or flagging the account, so no agent may retry on its own.
-- **Deploy modes — `codebase` vs `codeless` development posture (ADR-137 amendment A)** *(L, core)*
-  Pick the defect tracker a codeless swarm files to: GitHub Issues on a named repo (reusing the GitHub adapters in src/features/intake and swarm-orchestration) or a Bugzilla instance. Register or provide its credential under maintainer@emeraldcoastsystemsgroup.com, confirm the env name (an OSHAL_DEPLOY_MODE axis or a sibling OSHAL_DEV_POSTURE), and accept or amend ADR-137.
-- **Session cleanup left on the operator's box (2026-09-06)** *(S, n/a)*
-  Should this machine's node printer stay enabled (printServiceEnabled true, port 633, advertising on the LAN), or be turned off?
 - **Swarm root — the three pieces ADR-148 did not build** *(S, core)*
   Decide: should a MOCK_OIDC install promote its installer-configured identity (the OSHAL_OPERATOR_EMAILS / MOCK_OIDC_SUB it writes) to swarm root at install time, or should it stay break-glass-only until someone claims root on /users? That second option should be recorded as a decision in ADR-148. Also approve deploying the /users invite/disable controls so they can be verified on the box.
 - **The node-resident printer needs installer support to work on a fresh machine** *(M, core)*
@@ -179,19 +154,10 @@ Each of these is blocked on a judgement only you can make. No code is waiting on
   Name the non-local Vault target (host or k8s cluster), choose the unseal/key-custody model (Shamir share holders, or cloud-KMS auto-unseal and which KMS account), and name the TLS certificate source and the backup destination. With those, an agent can build the AppRole client path, the persistent+TLS Vault config and the rotation/recovery runbook; the restart/unseal and issue/use/revoke proof then runs on that target.
 - **Seeding-repair hygiene tail (2026-08-12)** *(M, core)*
   Revoke or rotate the Claude OAuth credential in config-seed/claude-credentials.json (sign that session out at claude.ai, or confirm the subscription cancellation killed it), then approve deleting the file from the working tree. That also removes it from the ./config-seed bind mount.
-- **The SEC/CORE/APP hardening-track identifiers have no definition anywhere in the repo** *(M, core)*
-  Define or retire the SEC/CORE/APP track scheme? To define it, supply the overnight campaign's original status matrix. SEC-02, SEC-03, CORE-02/03/04/07 and APP-01/03/04 have no source in either repo, and the entry forbids inferring them. To retire it, approve removing the IDs from ~258 files, including the user-facing APP-02 409 text in app-store-remote.ts:252 and docs/runbooks/update-check.md:80.
 - **Two-tier tenant provisioning** *(L, core)*
   Accept or amend ADR-035, which is still Proposed. Should provision-tenant.sh offer both --tenancy=isolated and --tenancy=shared, or isolated only? If shared stays, approve the core change that adds a tenant-scoped Postgres service identity, replacing the operator-equivalent system context under ADR-076.
 - **Vault cloud secrets engines** *(M, core)*
   Provide either (a) an AWS account plus an IAM principal the Vault AWS secrets engine may hold, or (b) a Kubernetes cluster plus a service account for the Vault k8s engine. Also name the least-privilege policy the issued short-TTL role should carry.
-- **Versioned platform-credential distribution if redistribution returns** *(L, core)*
-  Decide whether platform credentials must cross node-local storage boundaries again. If not, close this entry as not commissioned, since the disabled rail is the steady state. If so, commission the signed, versioned, tombstoned rail.
-
-### Shared product experience
-
-- **Combined home workspace** *(M, both)*
-  Should the combined home workspace be an ADR-141 group with a fixed member list (communication, social, career, storage, media, home all required, and it will not activate unless all six are installed)? That is store-only. Or do you approve a core change adding optional group members, so `/cockpit/?app=workspace` shows whichever of those apps are enabled? Please also confirm which store packages count as 'communication' and 'media'.
 
 ### Trading and market systems
 
@@ -199,26 +165,10 @@ Each of these is blocked on a judgement only you can make. No code is waiting on
   Create a Kalshi demo-exchange (demo.kalshi.co) API key, paste it into a second Kalshi connector card on /utilities and mark it default, so one paper order can be placed, filled and settled.
 - **SK Hynix sleeve graduation** *(S, core)*
   Is SKHY still held on the live Schwab book, and do you want it graduated now? If yes: approve removing SKHYV:0,SKHY:0 from TRADING_CORE_SYMBOLS in .env (then redeploy), and choose how the lot gets an engine basis under ADR-159. Options: commission an 'adopt at a stated cost basis' action, or book the SKHYV to SKHY conversion as an operator-confirmed manualClose. Without one of these it will be monitored as unmanaged rather than traded normally.
-- **Trading watchdog hardening — the rest of the checks (ADR-134 D3.7)** *(M, core)*
-  Pick one: (a) should the live autopilot rest venue-side GTC stop orders for the names it manages, so the watchdog can reconcile against them? That changes the live-money order path. Or (b) keep market-order exits and accept 'held past the stop' plus the loop-health beat as the coverage check, and rewrite this done-when without the venue-stop clause? The quote volume/recency corroboration half is agent work either way.
-
-### Video, character, and creative automation
-
-- **Flow UI-automation video provider** *(L, core)*
-  Decide whether Flow UI automation should be built at all, given ADR-070 lists it as a ToS-gray non-goal. If yes, amend ADR-070 and provide a dedicated fixed-geometry Windows host with Chrome signed into a Google Flow account the automation may drive.
-- **Free ComfyUI storyboard provider** *(M, core)*
-  Is the GPU box running ComfyUI and reachable from the api container? If so, provide its base URL (COMFYUI_URL, e.g. over Tailscale). Also export a text-to-image storyboard workflow as API-format JSON with a %PROMPT% placeholder, to pin as COMFYUI_STORYBOARD_WORKFLOW.
-
-### Workflow, agent, and model runtime
-
-- **A protected dispatch refuses on a controller with no delegation signing material (2026-09-15)** *(S, n/a)*
-  Generate one Ed25519 JWK keypair. In the host .env set OSHAL_DELEGATION_SIGNING_KID=<kid> and OSHAL_DELEGATION_SIGNING_PRIVATE_KEY=<private JWK> (controller only), and OSHAL_DELEGATION_PUBLIC_KEYS={"<kid>":<public JWK>} (the bot-node *bot-env ring). Deploy with scripts/oshal-deploy.sh, then re-ask the trading question (ticket aaa86e48 shape) and confirm it answers instead of escalating.
-- **ADR-045 graph-tier residuals** *(S, both)*
-  Decide the world-data boundary (docs/architecture/three-orphan-boundary-decisions.md section 1). Option A: promote world-data to a kernel skill, meaning a registry entry, a build-anchor export and 'uses: world-data' in the world manifest (the recommended option). Option B: move the slice into the world package. Once you pick one, an agent can land it and close the entry.
 
 ---
 
-## Live proofs — 46
+## Live proofs — 42
 
 These are built and guarded but unproven in the real world. Each needs a real run, a real
 credential, a second machine, or a real device — something no test can stand in for.
@@ -236,7 +186,6 @@ credential, a second machine, or a real device — something no test can stand i
   Run one Jarvis mic session with speaker recognition on, name one voice, and allow modeling for it in the consent panel. Then an agent can run the ambient-recall Lab scenario and check for an ambient_person_asks row with a chat_tasks cost row under a0000000-0000-0000-0000-000000000055.
 - **Editable CAD Studio and scan-to-design workflow**
 - **Game Show core dependencies**
-- **Person-model maintenance never runs on a box that restarts daily**
 - **YouTube archive slice adoption**
 - **print-drop swarm adoption (print-to-swarm / print-to-RAG)**
 
@@ -257,9 +206,6 @@ credential, a second machine, or a real device — something no test can stand i
 - **Bot-recreate thundering herd**
 - **Cockpit startup: remove blocking external script dependencies**
 - **Container-health collection without cAdvisor names**
-- **Data-model explorer: deployed — prove it on the box**
-  Sign in to the deployed stack as an operator and open /data-model. Check that the Apps view draws, Tables lists core's tables, and Stores shows the ArangoDB, ChromaDB and Redis cards. Then run the 'Data model explorer' Test Lab card and post its counts (tables, views, apps, integration links, unowned relations) in COLLABORATE.md or the deploy runbook.
-- **World Intelligence: the market-hours pulse saturates the series store (2026-09-14)**
 
 ### Promotion, deployment, and regression proof
 
@@ -300,7 +246,6 @@ credential, a second machine, or a real device — something no test can stand i
 
 ### Shared product experience
 
-- **ADR-139 Stage 4a — the source direction: a generic "pick an artifact" picker**
 - **ADR-139 Stage 4b ? the NL leg ("Jarvis, send this to X")**
 - **Jarvis media-input deployment proof**
 - **Top-level workspaces for complete applications**
