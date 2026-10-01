@@ -34,8 +34,8 @@ from preparation or unit tests alone.
 | Status | Count | Meaning |
 |---|---|---|
 | IN PROGRESS | **0** | being worked in the current session |
-| OPEN — actionable | **14** | no decision, no live box needed; can be closed by an agent |
-| OPEN — needs operator | **62** | a decision, credential, account or purchase only the operator can make |
+| OPEN — actionable | **13** | no decision, no live box needed; can be closed by an agent |
+| OPEN — needs operator | **63** | a decision, credential, account or purchase only the operator can make |
 | OPEN — needs live proof | **72** | needs the running box, a deploy, hardware, or a human at a browser |
 | OPEN — blocked | **8** | waiting on something outside this repo |
 | OPEN — needs review | **0** | the triage could not decide; somebody has to read it |
@@ -635,14 +635,16 @@ from preparation or unit tests alone.
   from the layers the truncated scan missed, so the bump set is complete as shipped.
 
 ### The nightly gate runs against a saturated box, so its results are not trustworthy
-- **Status:** OPEN — actionable
+- **Status:** OPEN — needs operator
 
-- **Remaining:** the 2026-09-08 run is the clearest evidence yet that the gate is measuring the host, not the code. It started at 23:30 while the full swarm, Docker Desktop and an editor were running; the box had **0.4 GB free of 15.7 GB**. `head-src` (a `git archive` plus `npm ci`) took **2144 s** and failed, which skipped seven gates including `unit` and `e2e-green`; `secret-scan` then logged `cannot allocate memory` against dozens of files it could not even read; `image-build` ran **55+ minutes** against the 68 s it took in the 10:28 manual run the same day; and the docker daemon returned `500` to an unrelated `docker ps` while it was in flight. A gate that cannot allocate memory does not report on the code — it reports on the host, and it does so in the same red that a real defect would use. Decided by the operator 2026-09-21, nothing built. Left: have the nightly launcher stop the `oshal.tier=worker` containers and restore them through `oshal-up.sh`, including after a crashed run. Add a `resource-exhausted` classification to `run_gate`. Then measure one scheduled run with no "cannot allocate memory" and per-gate durations within an order of magnitude of an idle box.
+- **Remaining:** the 2026-09-08 run is the clearest evidence yet that the gate is measuring the host, not the code. It started at 23:30 while the full swarm, Docker Desktop and an editor were running; the box had **0.4 GB free of 15.7 GB**. `head-src` (a `git archive` plus `npm ci`) took **2144 s** and failed, which skipped seven gates including `unit` and `e2e-green`; `secret-scan` then logged `cannot allocate memory` against dozens of files it could not even read; `image-build` ran **55+ minutes** against the 68 s it took in the 10:28 manual run the same day; and the docker daemon returned `500` to an unrelated `docker ps` while it was in flight. A gate that cannot allocate memory does not report on the code — it reports on the host, and it does so in the same red that a real defect would use. Built in core #984 (`8a552066`, 2026-10-01): a gate does not start while host free memory stays below `OSHAL_CI_MIN_FREE_MB`, and a gate that fails while the host was measured below that floor is reported `RESOURCE-EXHAUSTED` (decided by measured memory, never by words in the output); a night with only exhausted gates exits 3, never publishes the image, and alerts as `OSHAL LOCAL CI RESOURCE-EXHAUSTED`. `scripts/ci/ci-quiesce.sh` stops only the containers named in `OSHAL_CI_QUIESCE_WORKERS` that are running, labelled `oshal.tier=worker` and not routing-critical, silences their `SwarmContainerDown` alert first (if the silence fails, nothing is stopped), and restores exactly those with `docker start` at the end of the run, in the exit trap, and from a state file after a hard kill (`bash scripts/ci/ci-quiesce.sh --resume` by hand). With none of the three settings set the feature does nothing. Left: (1) the operator sets `OSHAL_CI_MIN_FREE_MB`, `OSHAL_CI_QUIESCE_WORKERS` and `OSHAL_CI_QUIESCE_ALERTMANAGER_URL` in `.env`, done when `bash scripts/ci/ci-quiesce.sh --plan` lists the intended workers as WOULD STOP and a night logs `resource-check: floor ...`; (2) in a deploy window, `bash scripts/operations/ci-quiesce-live-proof.sh --cycle <worker>` prints `LIVE PROOF: N of N checks passed`; (3) one measured scheduled night after (1): `node scripts/ci/ci-run-durations.mjs --baseline 2026-09-08T10:05:19` exits 0. The nightly runs `scripts/ci-local.sh` from the working tree of `C:/Projects/oshal`, so that checkout must be on `main` at 23:30 for the merged script to run.
 - **Done when:** a scheduled run completes without any `cannot allocate memory` in its log and with per-gate durations within the same order of magnitude as a manual run on an idle box; and resource-exhaustion failures are reported as a distinct outcome from gate failures, so an out-of-memory night can never again be read as a code regression.
 - **Decision (operator, 2026-09-21): AUTO-QUIESCE the worker tier for the run, and LABEL resource
-  exhaustion as its own outcome.** The nightly's own launcher stops the `oshal.tier=worker`
-  containers before the run and restores them afterwards (`scripts/oshal-up.sh`), guarded so a
-  crashed or killed run still restores the tier; the datastores, the api and the monitoring overlay
+  exhaustion as its own outcome.** The nightly's own launcher stops the operator-named, running, non-routing-critical
+  `oshal.tier=worker` containers (the trading bot carries the worker label, so the label alone is
+  unsafe), silences their SwarmContainerDown alert first, and restores exactly those with batched
+  `docker start` (not `scripts/oshal-up.sh`, which force-recreates the api), guarded so a crashed or
+  killed run still restores them; the datastores, the api and the monitoring overlay
   stay up, so overnight scheduled tasks and the cockpit keep working. `run_gate`
   (`scripts/ci-local.sh:162`) gains a distinct `resource-exhausted` classification so an
   out-of-memory night can never be read as a code regression. **Not** chosen, and why, from
