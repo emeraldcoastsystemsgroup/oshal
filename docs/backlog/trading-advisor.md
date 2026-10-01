@@ -186,6 +186,11 @@ MEDIUM items keep 5–11, which is what the cross-references in this file and in
    HOLD. **Fix:** gate `meanrev` to apply only in range-bound regimes (e.g. a low ADX / low trend-strength
    filter), and let the trend algos own trending regimes. This is the highest-leverage signal change.
 
+   **CLOSED 2026-10-01 — gated `meanrev` to range-bound regimes (`|gap vs SMA| <= maxGap`) in `algorithms.ts`.**
+   - *Regime gating logic:* In [algorithms.ts:128](../../src/features/trading/services/algorithms.ts#L128), `meanrev` evaluates trend gap `gap = (close - sma) / sma` against `maxGap = ctx.params?.meanrevMaxTrendGap ?? DEFAULT_STRATEGY_PARAMS.meanrevMaxTrendGap` (default 0.04). In a steep trending selloff (`gap < -maxGap`), oversold RSI (< 35) is a falling knife, so `meanrev` stands down (`return null`), letting `momentum` and `donchian` decisively vote `sell` without vote dilution. In a steep breakout rally (`gap > maxGap`), overbought RSI (> 65) is strong continuation, so `meanrev` stands down (`return null`), avoiding fading the breakout. In range-bound regimes (`|gap| <= maxGap`), `meanrev` fires normally.
+   - *Tunables & Optimizer:* Added `meanrevMaxTrendGap` to `StrategyParams`, `DEFAULT_STRATEGY_PARAMS` (0.04), `TUNABLE_PARAMS`, `PARAM_LABELS`, and `BOUNDS` [0.01, 0.20] in [trading-strategy-params.ts](../../src/app/trading-strategy-params.ts), and added grid candidates `[0.02, 0.03, 0.04, 0.05, 0.06]` to `GRID` in [trading-optimize-dispatch.ts](../../src/app/trading-optimize-dispatch.ts).
+   - *Unit tests:* [tests/unit/trading-meanrev-regime-gate.spec.ts](../../tests/unit/trading-meanrev-regime-gate.spec.ts) (7/7 PASS) verifies firing in range-bound oversold/overbought conditions, standing down during trending selloffs (with momentum + donchian producing an undiluted `sell` ensemble decision), standing down during trending breakouts (undiluted `buy` ensemble decision), StrategyParams overrides, fail-soft on short history, and parameter clamping.
+
 8. **Hand-picked, uncalibrated confidence multipliers.** `momentum` confidence = `|gap| * 12`
    (saturates at an ~8.3% gap), `gravity` = `|d| * 2`, `donchian` = a flat `0.7`, `meanrev` scales off
    RSI distance ([algorithms.ts:99-102](../../src/features/trading/services/algorithms.ts#L99)). These

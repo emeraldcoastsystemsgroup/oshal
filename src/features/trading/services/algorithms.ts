@@ -25,6 +25,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — deterministic algo engine: momentum/gravity/donchian/meanrev pure functions, market-gravity mass derivation, and a weighted-vote ensemble. No LLM, no randomness.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-096 shadow indicators: SHADOW_ALGORITHMS (macd/bollinger/atr-channel/adx/stochastic/volsurge on OHLCV bars) + scoreSymbolShadow/shadowAlgoNames. Deliberately OUTSIDE the voting registry — recorded nightly, zero effect on live votes until operator promotion.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Gate mean-reversion to range-bound regimes (trading-advisor.md item 7): meanrev stands down during steep trend selloffs (gap < -meanrevMaxTrendGap) or breakout rallies (gap > meanrevMaxTrendGap), letting momentum and donchian own trending regimes without meanrev diluting the vote.
  *
  * @module algorithms
  */
@@ -59,9 +60,11 @@ export interface StrategyParams {
   rsiHigh: number;            // mean-rev: RSI overbought band (sell above)
   donchianWindow: number;     // donchian: breakout/breakdown lookback
   ensembleThreshold: number;  // ensemble: |score| an action must clear (else hold)
+  meanrevMaxTrendGap: number; // mean-rev: max allowed trend gap vs SMA before standing down (default 0.04)
 }
 export const DEFAULT_STRATEGY_PARAMS: StrategyParams = {
   momentumSma: 20, rsiLow: 35, rsiHigh: 65, donchianWindow: 20, ensembleThreshold: 0.15,
+  meanrevMaxTrendGap: 0.04,
 };
 
 /** A market-gravity mass (single-ticker form). Exported so Gravity 2 (gravity-world.ts) can build
@@ -116,19 +119,40 @@ export function displacement(masses: Mass[], t = 0): number {
 
 /* ── the algorithms: (closes, indexCloses?) → AlgoSignal | null ────────────────
  * null = "no call" — the algo only votes when it fires. The symbol rides on `closes`. */
-export interface AlgoContext { symbol: string; indexCloses?: number[]; indexName?: string; params?: StrategyParams }
+export interface AlgoContext { symbol: string; indexCloses?: number[]; indexName?: string; params?: Partial<StrategyParams> }
 type AlgoFn = (closes: number[], ctx: AlgoContext) => AlgoSignal | null;
 
 const ALGORITHMS: Record<string, AlgoFn> = {
   momentum: (c, ctx) => { const w = ctx.params?.momentumSma ?? DEFAULT_STRATEGY_PARAMS.momentumSma; const i = c.length - 1; const m = sma(c, i, w); if (m == null) return null; const g = (c[i] - m) / m; return { algo: 'momentum', dir: g >= 0 ? 'up' : 'down', confidence: Math.min(1, Math.abs(g) * 12), basis: `close vs SMA${w} ${(g * 100).toFixed(1)}%` }; },
   gravity: (c, ctx) => { const masses = deriveMasses(ctx.symbol, c, ctx.indexCloses, ctx.indexName); const d = displacement(masses, 0); if (Math.abs(d) < 0.01) return null; return { algo: 'gravity', dir: d > 0 ? 'up' : 'down', confidence: Math.min(1, Math.abs(d) * 2), basis: `${masses.length} masses → ${(d * 100).toFixed(1)}%` }; },
   donchian: (c, ctx) => { const w = ctx.params?.donchianWindow ?? DEFAULT_STRATEGY_PARAMS.donchianWindow; const i = c.length - 1; if (i < w) return null; let hi = -Infinity, lo = Infinity; for (let k = i - w; k < i; k++) { hi = Math.max(hi, c[k]); lo = Math.min(lo, c[k]); } if (c[i] > hi) return { algo: 'donchian', dir: 'up', confidence: 0.7, basis: `${w}d breakout high` }; if (c[i] < lo) return { algo: 'donchian', dir: 'down', confidence: 0.7, basis: `${w}d breakdown low` }; return null; },
-  meanrev: (c, ctx) => { const lo = ctx.params?.rsiLow ?? DEFAULT_STRATEGY_PARAMS.rsiLow; const hi = ctx.params?.rsiHigh ?? DEFAULT_STRATEGY_PARAMS.rsiHigh; const i = c.length - 1; const r = rsi(c, i, 14); if (r == null) return null; if (r < lo) return { algo: 'meanrev', dir: 'up', confidence: Math.min(1, (lo - r) / Math.max(1, lo)), basis: `RSI ${r.toFixed(0)} oversold` }; if (r > hi) return { algo: 'meanrev', dir: 'down', confidence: Math.min(1, (r - hi) / Math.max(1, 100 - hi)), basis: `RSI ${r.toFixed(0)} overbought` }; return null; },
+  meanrev: (c, ctx) => {
+    const lo = ctx.params?.rsiLow ?? DEFAULT_STRATEGY_PARAMS.rsiLow;
+    const hi = ctx.params?.rsiHigh ?? DEFAULT_STRATEGY_PARAMS.rsiHigh;
+    const maxGap = ctx.params?.meanrevMaxTrendGap ?? DEFAULT_STRATEGY_PARAMS.meanrevMaxTrendGap;
+    const i = c.length - 1;
+    const r = rsi(c, i, 14);
+    if (r == null) return null;
+    const w = ctx.params?.momentumSma ?? DEFAULT_STRATEGY_PARAMS.momentumSma;
+    const m = sma(c, i, w);
+    if (m == null) return null;
+    const gap = (c[i] - m) / m;
+    // Item 7: Gate mean-reversion to range-bound regimes (|gap| <= maxGap).
+    // In a steep selloff (gap < -maxGap), oversold RSI is a falling knife — let momentum/donchian own it.
+    if (r < lo && gap >= -maxGap) {
+      return { algo: 'meanrev', dir: 'up', confidence: Math.min(1, (lo - r) / Math.max(1, lo)), basis: `RSI ${r.toFixed(0)} oversold` };
+    }
+    // In a steep breakout (gap > maxGap), overbought RSI is strong continuation — do not fade the trend.
+    if (r > hi && gap <= maxGap) {
+      return { algo: 'meanrev', dir: 'down', confidence: Math.min(1, (r - hi) / Math.max(1, 100 - hi)), basis: `RSI ${r.toFixed(0)} overbought` };
+    }
+    return null;
+  },
 };
 
 /** Run every algorithm over the series; drop the ones that don't fire. Deterministic.
  *  `params` (optional) overrides the tunable constants; omitted = DEFAULT_STRATEGY_PARAMS (today's behavior). */
-export function scoreSymbol(symbol: string, closes: number[], indexCloses?: number[], indexName = 'SPY', params?: StrategyParams): AlgoSignal[] {
+export function scoreSymbol(symbol: string, closes: number[], indexCloses?: number[], indexName = 'SPY', params?: Partial<StrategyParams>): AlgoSignal[] {
   const ctx: AlgoContext = { symbol, indexCloses, indexName, params };
   return Object.values(ALGORITHMS).map((fn) => fn(closes, ctx)).filter((s): s is AlgoSignal => s != null);
 }
