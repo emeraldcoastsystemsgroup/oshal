@@ -1,6 +1,6 @@
 # Operator Backlog: Human Actionable Checklist
 
-*Status: Updated 2026-09-30*  
+*Status: Updated 2026-10-01*  
 *Scope: External Credentials, Hardware, Accounts, and Governance Decisions.*
 
 ---
@@ -59,4 +59,3 @@ The remaining items genuinely require external human accounts, hardware, or thir
 
 ### D. Governance & Corporate Policy
 * [ ] **PteroSim License:** Explicit decision to accept proprietary simulator EULA (`PTEROSIM_ACCEPT_EULA=Y`) or close item as declined.
-* [ ] **Paid News/Bias Ratings:** Decision on whether to purchase commercial Ad Fontes / AllSides datasets or rely on public media data feeds.

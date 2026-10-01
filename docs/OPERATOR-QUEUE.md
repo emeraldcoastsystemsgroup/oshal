@@ -5,7 +5,7 @@
 be overwritten. An entry disappears from this file automatically once its backlog heading is gone
 or its body records that it was built.
 
-Counts are generated, never typed: **48 decisions**, **42 live proofs**.
+Counts are generated, never typed: **47 decisions**, **42 live proofs**.
 
 To comment, write under an entry in this file and tell me, or just say the entry name.
 
@@ -35,7 +35,7 @@ A lane's bad redaction printed ALPACA_SECRET, ALPACA_PAPER_SECRET_KEY and ALPACA
 
 ---
 
-## Decisions — 48
+## Decisions — 47
 
 Each of these is blocked on a judgement only you can make. No code is waiting on anything else.
 
@@ -108,8 +108,6 @@ Each of these is blocked on a judgement only you can make. No code is waiting on
 
 - **ADR-134 PR4 hardening tail — schema half DEFERRED (operator decision 2026-09-07)** *(L, core)*
   Should the ADR-134 schema hardening (book_id NOT NULL on orders/signals/decisions, dropping the legacy per-mode indexes and three fill triggers, the config CHECK and the deploy rollback floor) be taken now, even though it is roll-forward-only on the live money ledger? The other options are to keep it deferred, or to approve the cheaper books-aware watchdog detector for book-less rows instead.
-- **CI secret-scanner remote mutation proof** *(S, core)*
-  Do you approve (a) one paid workflow_dispatch run of the Security or CI secret-scan job on a disposable branch, and (b) pushing a synthetic secret-shaped fixture to the public oshal repo past the pre-push publish gate, with the branch deleted afterwards? Or do you re-scope the done-when to a planted-fixture fail-then-pass of the local `ci-local.sh` secret-scan gate?
 - **Codeless k8s install — first live-cluster proof (ADR-129)** *(n/a, core)*
   (1) Provide a fresh second machine, not the dev laptop, with kubectl, helm and a reachable cluster, and run `oshal-install.sh --mode 4` (or `oshal-install.ps1 -Kubernetes`) through to /welcome, a model connection and a jarvis turn. (2) Run `bash scripts/publish-chart.sh` with a GHCR token that has write:packages. (3) Flip ghcr.io/emeraldcoastsystemsgroup/charts/oshal to public in the GitHub UI so `helm show chart oci://ghcr.io/emeraldcoastsystemsgroup/charts/oshal` works anonymously.
 - **Dev-box disk reclamation** *(S, core)*
