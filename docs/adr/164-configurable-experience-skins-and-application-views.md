@@ -514,3 +514,90 @@ audience-specific views are allowed:
 
 Changes to backend behavior, permission policy or shared persistence beyond existing contracts
 require separate explicit approval. They are not implicit implementation details of this ADR.
+
+## Amendment — experiences are applications (operator, 2026-10-02)
+
+**Status:** Proposed amendment; slice 1 implemented, slices 2–3 in the backlog.
+
+### Context
+
+The cockpit header carries an **Experiences** menu (Studio, Jarvis, Orbit, Commons, Home · family,
+Little Monsters · classroom, Business · company swarm, Central assistant) as hardcoded links in
+`src/pages/cockpit/index.html`; the shells live in core `src/experience/` and their presets in
+`homebase-config.js`. Every signed-in person on every deployment gets the same menu. On the
+G-Squared dev droplet a plain CRM rep could open the operator cockpit from the logo link or the
+focused rail's platform hub and find the first-run strip, Workflow Studio, Optimizer, Budgets and
+an Explore-apps directory of 54 installed packages, most answering 403.
+
+The operator's direction: an experience is an **application** — a new application installed on
+the portal that exposes the experience with a few screens of its own, requires the other
+applications it composes, and, with the classic toolbar hidden, shows just its own screens;
+experiences are skins that define new and join existing swarm functionality and display it
+differently from the out-of-the-box swarm layout. The core swarm is the simple UX; experiences
+are deployments on it.
+
+### D11. An experience is a package with an `experience:` block
+
+A developer builds an experience as an ordinary store package (ADR-085): its own screens under
+`ui/` served by its routes, its skin as `ui/<id>.css`, its members as `dependencies` (required /
+optional tiers), its own authorization catalog (who may **open** the experience), and the ADR-145
+`summary:` probe. The new manifest block, behind the kernel skill `experience` (the compatibility
+floor, so an older core refuses the package instead of ignoring the block):
+
+```yaml
+uses: [application-authorization, experience]
+experience:
+  version: 1
+  entry: /api/home-swarm/app     # the package's own full-page screen
+  shell: page                     # page = no rail, hub or logo door; rail = the focused ribbon of its own tiles
+  skin: family                    # ui/family.css shipped by the package, or a core theme id
+  label: Home
+```
+
+The core owns the shell mechanics only (D4): rendering `entry` full-bleed under `shell: page`,
+applying the skin, hosting member surfaces in same-origin frames with `?audience=` (D6), the
+`app-navigate` message contract, and the data seams members already expose (home-plan, `summary:`
+probes, `GET /api/ui/profile?name=<member>`). Member data keeps flowing through the members' own
+routes and catalogs; the experience grants nothing (D10).
+
+### D12. Discovery is installation × authorization; the operator cockpit is an operator experience
+
+The switcher, `/portal` and the header list only experiences that are **installed** and that the
+caller can **discover** (`canDiscover`, the rule every application already follows). The plain
+`/cockpit/` rail and the core-resident entry pages are the operator's experiences and are offered
+to operators. One discoverable experience → no switcher and no door. A deployment therefore needs
+no flag to be "a single product": a CRM-only install shows the CRM to its staff because that is
+the only experience they can see.
+
+### D13. Shell modes and skins are declared, not URL hacks
+
+`shell: page | rail` replaces the `?kiosk=1` approximation (which also hides a package's own
+bottom tiles). A packaged skin is registered by the `experience.skin` declaration and offered by
+the switcher; `EXPERIENCE_THEMES` stops being a hardcoded list. The built-in presets (Home,
+Business, Classroom) and the core entry pages become the first experience packages.
+
+### Delivery slices
+
+1. **Shell lock (implemented with this amendment).** On a deployment whose landing names an
+   application (`LANDING_PATH` / `HOST_APP_MAP` → `/cockpit/?app=<name>`), a non-operator is
+   redirected from the plain cockpit document and every experience entry page to that landing
+   (`src/app/experience-shell-lock.ts`, `cockpit-static-routes.ts`), and the ribbon withholds the
+   platform hub, repoints the logo and hides the Experiences menu (`RibbonNav.js`, inputs on the
+   `/api/ui/profile` response). Operators, focused `?app=` requests, assets and deployments without
+   a focused landing are unchanged. This is D12 for the degenerate case of one experience, not a
+   per-deployment flag. Done when: the `experience-shell-lock`, `cockpit-shell-lock-routes` and
+   `ribbon-shell-lock` specs are green and a throwaway non-operator on a focused-landing box is
+   redirected from `/cockpit/` and `/portal`, sees no hub and no Experiences menu.
+2. **The experience contract.** `experience:` block + `experience` kernel skill + loader
+   validation; `shell: page`; packaged skin registration; the switcher and `/portal` built from
+   installed, discoverable experience packages; `GET /api/swarm/apps` and `/applications`
+   discoverable-only for non-operators; developer documentation with a worked example package.
+   Done when: a package with only the block above installs, appears in the switcher for a caller
+   holding its role and not for one who does not, renders full-bleed in its skin, and the
+   hardcoded header links are gone.
+3. **Built-in experiences become packages.** Home, Business, Classroom, Studio, Jarvis, Orbit,
+   Commons and Nexus ship as experience packages (reference implementations); `src/experience/`
+   keeps only shell engines. Done when: the core cockpit lists no experience it did not install.
+
+Changes to backend behaviour, permission policy or shared persistence remain outside this
+amendment, as the ADR states.

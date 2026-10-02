@@ -18,6 +18,7 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | app-navigate may carry a `query` (sanitizeToolQuery: k=v&k=v, URL-safe, bounded) that the view controller appends to that tool's OWN iframeUrl — so the Create front door can open AI Office on a purpose (kind/starter/theme). A query onto the already-active tile re-renders it. Nothing here can point a frame anywhere but the tile's own URL.
  * 14 | maintainer@emeraldcoastsystemsgroup.com | Delegate explicitly marked default-sidebar pages to admitted top workspaces while keeping active pages, focused app navigation and registered iframe targets available.
  * 16 | maintainer@emeraldcoastsystemsgroup.com | Platform tools: add 'tool-channels' (Chat channels) — the self-serve page for Discord, Telegram, SMS and WhatsApp (link a chat identity with a one-time code, unlink it, and for an operator paste the deployment's Discord bot token). A static page under src/pages/cockpit/tools/ like Notifications; nothing in the cockpit linked the channel routes before, so "cockpit → Channels" in the docs pointed at a page that did not exist.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com | Shell lock (ADR-164 amendment, 2026-10-02): a non-operator on a deployment whose landing names an application gets no platform hub, a logo that returns to that application and no Experiences menu — the deployment is that application's product for them. Inputs ride the profile response (landingApp, operator); resolveShellLock is the pure, exported decision.
  * 15 | maintainer@emeraldcoastsystemsgroup.com | ADR-149 locked tiles: a synthesised profile item may carry `locked` (the target package is not discoverable for this person). The item is forwarded into the view, rendered in the existing guest-disabled treatment (lock glyph, dimmed) with the kernel's role-guidance link on the button, and a click follows that link top-level — where the 403 page would have sent the person — instead of opening a dead frame. ribbonTilePresentation is the pure, exported decision so it can be tested against real view shapes.
  */
 
@@ -158,6 +159,18 @@ function resolveStudentMode() {
   } catch {
     return false;
   }
+}
+
+/**
+ * @description Shell lock (ADR-164 amendment, 2026-10-02): a deployment whose landing names an
+ * application is that application's product for everyone who is not an operator — no platform
+ * hub, no logo door to the operator cockpit, no Experiences menu. Operators keep every door.
+ * Pure and exported so the decision is unit-tested beside the server's redirect.
+ * @param {{isOperator: boolean, landingApp: string|null|undefined}} input - Caller and deployment.
+ * @returns {boolean} True when the operator doors must not render.
+ */
+export function resolveShellLock({ isOperator, landingApp }) {
+  return !isOperator && typeof landingApp === 'string' && landingApp.length > 0;
 }
 
 /** Convert a glob like `lm-class-*` to a RegExp matcher. */
@@ -316,16 +329,36 @@ export class RibbonNav {
     this.hidePlatformChrome = !!resolveRequestedProfileName()
       && this.profile?.ribbon?.showPlatformTools !== true
       && !this.studentMode;
-    if (this.hidePlatformChrome) this._appendPlatformHub();
+    // The server's answer wins when it gave one (the same operator check its redirect uses);
+    // the whoami read stays the fallback for an older profile response.
+    this.shellLocked = resolveShellLock({ isOperator: this.profileOperator ?? this.isOperator, landingApp: this.landingApp });
+    if (this.hidePlatformChrome && !this.shellLocked) this._appendPlatformHub();
+    if (this.shellLocked) this._applyShellLock();
 
     logger.info('Ribbon initialised with profile', {
       profile: this.profile?.name,
       defaultView: this.activeView,
       viewCount: this.views.length,
       hidePlatformChrome: this.hidePlatformChrome,
+      shellLocked: this.shellLocked,
     });
     this.render();
     this._loadToolViews();
+  }
+
+  /**
+   * @description Close the operator doors for a locked shell: the logo returns to the landing
+   * application instead of the operator cockpit, and the header's Experiences entries are hidden.
+   * The server redirects those surfaces anyway; this keeps the doors from being drawn.
+   * @returns {void}
+   */
+  _applyShellLock() {
+    const home = document.getElementById('cockpitHomeLink');
+    if (home) {
+      home.setAttribute('href', `/cockpit/?app=${encodeURIComponent(this.landingApp)}`);
+      home.setAttribute('aria-label', `${this.profile?.displayName || this.landingApp} — home`);
+    }
+    for (const el of document.querySelectorAll('[data-experience], [data-experiences-label]')) el.hidden = true;
   }
 
   /**
@@ -442,8 +475,14 @@ export class RibbonNav {
       const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
+      // Shell lock inputs ride the profile response: the deployment's landing application and
+      // the server's own operator verdict for this caller.
+      this.landingApp = typeof data.landingApp === 'string' && data.landingApp ? data.landingApp : null;
+      this.profileOperator = typeof data.operator === 'boolean' ? data.operator : null;
       return data.profile;
     } catch (err) {
+      this.landingApp = null;
+      this.profileOperator = null;
       logger.warn('Failed to fetch UI profile; rendering full framework ribbon', { error: err?.message });
       return {
         name: 'framework-fallback',

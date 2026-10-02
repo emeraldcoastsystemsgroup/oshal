@@ -11,6 +11,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Register the kernel applications' audience-view specs (Security Center, Workflow Studio, DevOps + Vault, Bot Forge, OSHAL Engineering's configuration page, Intelligent Processing, Person model): each serves the real page at its real route with the real kit and proves the company and family cards from the page's own reads, the refusals, the in-frame action, and the full page starting unchanged without an audience or with one it does not provide.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Register the Home build specs (opt-in check-ins over ADR-169, the household, the learner and the classroom, Routines, search, tabs, the agenda, the dialogs and the choices; the data seam) and the central-assistant build specs (the availability route over real HTTP, the data kit, and the Chromium build: Calendar and Travel in context, readback states and meter, the best-match line, the comparison across free weekends, the fit of typed dates, the page's ledger rows, six widths) plus the Duffel normaliser's unit spec.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Register the full-swarm build specs (pure readers; work panels with workflow, Approve and Cancel, the Routines panel, the day focus, visual cards, package facts, membership and the caller's own place, the portal sections and the six-width layout check) as regression tests of the experience scenario, and name them in its description
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Shell lock (ADR-164 amendment): the pure redirect decision, the cockpit document and experience pages behind a real listener, and the ribbon's door decision are registered as regression tests of the experience scenario.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Simple chat (docs/architecture/simple-chat.md): /simple joins the entry pages the live step reads (its root marker is sc-root), and the kit, /simple and OSHAL Node Simple chat specs are registered as regression tests.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
@@ -72,6 +73,9 @@ export const EXPERIENCE_SCENARIOS: Scenario[] = [{
   regressionTests: [
     { level: 'unit', path: 'tests/unit/experience-live-data.spec.ts' },
     { level: 'unit', path: 'tests/unit/test-lab-experience-scenarios.spec.ts' },
+    { level: 'unit', path: 'tests/unit/experience-shell-lock.spec.ts' },
+    { level: 'integration', path: 'tests/unit/cockpit-shell-lock-routes.spec.ts' },
+    { level: 'unit', path: 'tests/unit/ribbon-shell-lock.spec.ts' },
     { level: 'browser', path: 'tests/unit/experience-layouts-browser.spec.ts' },
     { level: 'browser', path: 'tests/unit/app-view-kit-browser.spec.ts' },
     { level: 'browser', path: 'tests/unit/experience-full-swarm-gaps.spec.ts' },
