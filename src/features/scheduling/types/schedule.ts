@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added ownerSub (per-user scoping) + ListSchedulesFilter so calendar surfaces filter on their app queue and the caller's own schedules
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Add the internal manifest-service-route task-data shape while retaining legacy prompt payloads. Exactly one mode is valid, so deterministic package jobs no longer need a fake prompt merely to enter the scheduler.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | First-class `timezone` and `once` on the schedule record + create input. Both are optional and default to prior behaviour (no tz = process clock, once=false = recurring), so every existing schedule is untouched. `timezone` fixes cron firing in the container clock instead of the user's; `once` makes a one-shot a real state the runner pauses after firing, replacing the fragile "cron with no year" encoding that recurred annually.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | ManifestScheduleOverride: an operator's standing on/off and cron for one application-manifest schedule (keyed `<app>-<scheduleId>`), stored beside the records and applied whenever the manifest registers the schedule, so a change made on an application's schedule screen survives a restart, a reload and a toggle of the application.
  */
 
 import { z } from 'zod';
@@ -175,3 +176,22 @@ export interface ScheduleDispatchResult {
   taskId?: string;
   error?: string;
 }
+
+/**
+ * @description An operator's standing control over one application-manifest schedule, keyed
+ * `<app>-<scheduleId>` (the id the manifest registrar uses). `enabled: false` keeps the schedule
+ * from firing; `cron` replaces the manifest's cadence. Either may be absent, meaning the manifest's
+ * own value. It is stored beside the schedule records and applied every time the manifest registers
+ * the schedule, so it survives a restart, an application reload and an application toggle.
+ */
+export const ManifestScheduleOverrideSchema = z.object({
+  enabled: z.boolean().optional(),
+  cron: z.string().min(1).optional(),
+  updatedBy: z.string().min(1).nullable(),
+  updatedAt: z.string().datetime(),
+});
+
+/**
+ * @description An operator's standing control over one application-manifest schedule.
+ */
+export type ManifestScheduleOverride = z.infer<typeof ManifestScheduleOverrideSchema>;
