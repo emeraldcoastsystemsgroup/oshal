@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Reconcile failover accountability fixtures with request-scoped capability snapshots and the fail-closed autonomous CLI boundary.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Prove protected single-shot reasoning never advances to a fallback after either a recoverable thrown error or a primary runtime-failure banner.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Prove a host-tools-only turn never enters failover after a recoverable primary error or a primary failure banner (the world classifier's dispatch shape over web-fetched text).
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -108,6 +109,30 @@ describe('any-bot ProviderFailoverProvider', () => {
 
     await expect(provider.generateResponse([], { singleShotToolless: true }))
       .rejects.toMatchObject({ code: 'DIRECT_REASONING_UNAVAILABLE' });
+    expect(primary.generateResponse).toHaveBeenCalledTimes(1);
+    expect(fallback.generateResponse).not.toHaveBeenCalled();
+  });
+
+  // A host-tools-only turn (an interactive dispatch; the world classifier's shape for web-fetched text)
+  // chose its primary for what it does NOT hold. A fallback rung may hold a tool loop of its own, so the
+  // chain is never entered for it — the same single-provider contract as protected single-shot work.
+  it('does not fail over a host-tools-only turn after a recoverable primary error', async () => {
+    const primaryError = Object.assign(new Error('provider 429 quota exhausted'), { code: 'DIRECT_REASONING_UNAVAILABLE' });
+    const primary = { generateResponse: vi.fn(async () => { throw primaryError; }) };
+    const fallback = { generateResponse: vi.fn(async () => ({ content: 'must not run' })) };
+    const provider = new ProviderFailoverProvider({ primary, fallback, primaryName: 'antigravity-cli', fallbackName: 'openai-codex' });
+
+    await expect(provider.generateResponse([], { hostToolsOnly: true })).rejects.toBe(primaryError);
+    expect(primary.generateResponse).toHaveBeenCalledTimes(1);
+    expect(fallback.generateResponse).not.toHaveBeenCalled();
+  });
+
+  it('does not fail over a host-tools-only turn after a primary failure banner', async () => {
+    const primary = { generateResponse: vi.fn(async () => ({ content: 'Cline CLI task failed: provider runtime unavailable', provider: 'antigravity-cli' })) };
+    const fallback = { generateResponse: vi.fn(async () => ({ content: 'must not run' })) };
+    const provider = new ProviderFailoverProvider({ primary, fallback, primaryName: 'antigravity-cli', fallbackName: 'openai-codex' });
+
+    await expect(provider.generateResponse([], { hostToolsOnly: true })).rejects.toMatchObject({ code: 'DIRECT_REASONING_UNAVAILABLE' });
     expect(primary.generateResponse).toHaveBeenCalledTimes(1);
     expect(fallback.generateResponse).not.toHaveBeenCalled();
   });

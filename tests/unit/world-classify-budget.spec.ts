@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the world classify re-enable (2026-06-29 burn class): the pure budget's window arithmetic, its fail-closed cap handling, AND the analyzeBatch wiring — a counting fake provider proves a capped budget stops real provider CALLS (not source substrings) while every denied item still gets a lexicon-shaped result.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The per-pulse slice: the chunk past the cap is denied and admitted again after beginPulse while hour and day keep counting; no cap = unchanged behaviour; explicit zero fails closed; analyzeBatch makes exactly the cap's calls per fire.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -88,5 +89,45 @@ describe('analyzeBatch consumes the global budget per chunk', () => {
     expect(calls()).toBe(0);
     expect(out).toHaveLength(5);
     expect(out.every((r) => r.s === null && r.entities.length === 0 && r.event === null)).toBe(true);
+  });
+});
+
+// ── per-pulse slice — the 2026-10-02 overrun: an hour's calls inside one pulse ─────────────────────
+describe('classify-budget per-pulse slice', () => {
+  it('denies the chunk past the per-pulse cap and admits again after beginPulse, while the hour and day keep counting', () => {
+    const b = createClassifyBudget({ perHour: 100, perDay: 100, perPulse: 2, now: () => 30 * DAY });
+    expect(b.tryTake()).toBe(true);
+    expect(b.tryTake()).toBe(true);
+    expect(b.tryTake()).toBe(false);          // third call of this pulse → denied
+    expect(b.snapshot()).toMatchObject({ pulseUsed: 2, pulseCap: 2, hourUsed: 2, dayUsed: 2, denied: 1 });
+    b.beginPulse();                           // the next fire
+    expect(b.tryTake()).toBe(true);
+    expect(b.snapshot()).toMatchObject({ pulseUsed: 1, pulseCap: 2, hourUsed: 3, dayUsed: 3 });
+  });
+
+  it('without a per-pulse cap the budget behaves exactly as before (pulseCap null, pulse never denies)', () => {
+    const b = createClassifyBudget({ perHour: 3, perDay: 100, now: () => 0 });
+    expect([b.tryTake(), b.tryTake(), b.tryTake(), b.tryTake()]).toEqual([true, true, true, false]);
+    expect(b.snapshot()).toMatchObject({ pulseUsed: 3, pulseCap: null, hourUsed: 3, denied: 1 });
+  });
+
+  it('an explicit zero per-pulse cap fails CLOSED (no LLM), like the other caps', () => {
+    const b = createClassifyBudget({ perHour: 100, perDay: 100, perPulse: 0, now: () => 0 });
+    expect(b.tryTake()).toBe(false);
+    b.beginPulse();
+    expect(b.tryTake()).toBe(false);
+  });
+
+  it('analyzeBatch: a fire with three chunks and a per-pulse cap of two makes exactly two calls; the next fire two more', async () => {
+    const { provider, calls } = countingProvider();
+    const budget = createClassifyBudget({ perHour: 100, perDay: 100, perPulse: 2, now: () => 0 });
+    const first = await analyzeBatch(items(25), 'NVIDIA', { providers: [provider], budget });
+    expect(calls()).toBe(2);
+    expect(first).toHaveLength(25);
+    expect(first[24]).toEqual({ s: null, entities: [], event: null }); // the third chunk fell back to lexicon
+    budget.beginPulse();
+    await analyzeBatch(items(25), 'NVIDIA', { providers: [provider], budget });
+    expect(calls()).toBe(4);
+    expect(budget.snapshot()).toMatchObject({ pulseUsed: 2, hourUsed: 4, dayUsed: 4 });
   });
 });

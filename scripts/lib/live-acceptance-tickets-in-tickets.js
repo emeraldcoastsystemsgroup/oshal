@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review fixes before the first live run. The preflight also refuses while any build ticket is in an in-process state, not only when one is queued. A filing whose reply was lost (a timeout after the insert) is found by the title only this run minted, so it is still cleaned up. The root id and the cleanup-only command are reported as soon as the root is filed, and an interrupted run cancels its tickets through the runner's interrupt hook. A cleanup-only entry point (`cleanupRoot`) finishes an interrupted run by its root id. A cleanup that throws is recorded, not lost.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The run also judges the cockpit surfaces over the finished tree, before cleanup: the ticket hierarchy must list the root with exactly its children beneath it, each child's detail must name the root as its parent, and the code-server handoff for the root folder must redirect onto that folder. Asked by the operator after the first live pass: the pipeline was proven, the surfaces a person opens were not.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The api port the case runs on retries a call that threw (a 30 s timeout while the api is stalled by its own background jobs) up to three times, a pause apart, for GET, PUT and DELETE; a POST is never repeated (a filing whose reply was lost is found by its tag). Runs 4 and 6 passed every check and lost their verdict to one such timeout each; the stalls are a backlog entry for the jobs' owners.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The tickets-in-tickets live case: files one tagged build root as the operator and requires it to be planned in-process (in_process_discovery, then approval_required with planning_complete, IMPLEMENTATION-PLAN.md in its folder), decomposed into 2-5 owned children in planning order, each child run to completion one at a time by a build-lane bot over the signed hop, and the root assembled to customer_action, with no plan-reviewer or Phase-8 round. Cleanup cancels, waits for in-flight node calls, removes the work items and other leftovers anchored to the root, the children, the shadow tickets and the root with its folder, and proves each gone.
  */
 
@@ -28,7 +29,7 @@ const BUILD_TARGETS = Object.freeze(new Set([
 const REGRESSION_TESTS = Object.freeze([
   'controller-pm-planning-node-postgres', 'planning-output-source', 'child-ticket-owner-inheritance-postgres',
   'build-child-dispatch-gate', 'signed-swarm-child-dispatch', 'swarm-verification-enforced-fallback',
-  'internal-machinery-scoping', 'bot-node-workspace-owner-binding',
+  'internal-machinery-scoping', 'bot-node-workspace-owner-binding', 'queue-manager-claim-reentrancy',
 ].map((name) => Object.freeze({ level: 'unit', path: `tests/unit/${name}.spec.ts` })));
 const DEFAULT_BUDGETS = Object.freeze({
   claimBudgetMs: 180_000, planningBudgetMs: 1_200_000, childBudgetMs: 1_500_000,
@@ -41,6 +42,32 @@ const RELEASES_NEXT = new Set(['complete', 'customer_action', 'cancelled']);
 const KEPT_ROWS = 'cost rows (the <ticket>::<agent> rollups and oshal_cost_events), Arango ticket nodes, queued-principal rows and mesh stream entries have no removal route';
 /** Build-ticket states that share the build lane and its nodes with this run; any of them defers the run. */
 const BUSY_STATES = Object.freeze(['approved', 'in_process_discovery', 'in_process_design', 'in_process_build', 'in_process_deploy', 'in_process_test', 'in_process_release']);
+/** How many times a GET, PUT or DELETE that threw is tried before the throw is surfaced. */
+const API_ATTEMPTS = 3;
+
+/**
+ * @description The case's api port over the runner's: a GET, PUT or DELETE that throws (a timeout
+ * while the api is stalled) is tried again a pause apart; a POST is sent once.
+ * @param {object} io - Ports, with budgets.
+ * @returns {Function} The port.
+ */
+function tolerantApi(io) {
+  const api = io.api;
+  return async (method, route, body, options) => {
+    if (method === 'POST') return api(method, route, body, options);
+    let lastError;
+    for (let attempt = 1; attempt <= API_ATTEMPTS; attempt += 1) {
+      try {
+        return await api(method, route, body, options);
+      } catch (error) {
+        lastError = error;
+      }
+      if (attempt < API_ATTEMPTS) await io.sleep(io.budgets.recheckPauseMs);
+    }
+    throw lastError;
+  };
+}
+
 /** A lower-case ticket UUID, the only root id a cleanup-only run accepts. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -480,7 +507,7 @@ async function cleanupRecorded(io, rootId, snap, ledger) {
 async function run(ports, options = {}) {
   const missing = common.missingPorts(ports, NEEDS);
   if (missing.length) return common.unavailable(CASE_ID, `This runner has no ${missing.join('/')} port.`);
-  const io = { ...common.withClock(ports), budgets: common.budgetsFrom(DEFAULT_BUDGETS, options) };
+  const io = withTolerantApi({ ...common.withClock(ports), budgets: common.budgetsFrom(DEFAULT_BUDGETS, options) });
   const gap = await preflight(io);
   if (gap) return common.unavailable(CASE_ID, `${gap}.`);
   const ledger = new common.CleanupLedger();
@@ -500,6 +527,15 @@ async function run(ports, options = {}) {
 }
 
 /**
+ * @description The ports with the tolerant api port in place of the runner's.
+ * @param {object} io - Ports with budgets.
+ * @returns {object} The same ports, api replaced.
+ */
+function withTolerantApi(io) {
+  return { ...io, api: tolerantApi(io) };
+}
+
+/**
  * @description Finish an interrupted run by its root id: the same cleanup under the same anchors,
  * so only a root this caller filed under this case's tag can be touched.
  * @param {object} ports - api, sql, ownerSub, files.
@@ -513,7 +549,7 @@ async function cleanupRoot(ports, rootId, options = {}) {
   if (typeof rootId !== 'string' || !UUID_RE.test(rootId)) {
     return common.finish(CASE_ID, { state: 'fail', detail: `${String(rootId).slice(0, 60)} is not a lower-case ticket UUID.` }, new common.CleanupLedger(), {});
   }
-  const io = { ...common.withClock(ports), budgets: common.budgetsFrom(DEFAULT_BUDGETS, options) };
+  const io = withTolerantApi({ ...common.withClock(ports), budgets: common.budgetsFrom(DEFAULT_BUDGETS, options) });
   const ledger = new common.CleanupLedger();
   ledger.created('ticket', rootId, 'the build root of an earlier run');
   const removed = await cleanupRecorded(io, rootId, null, ledger);

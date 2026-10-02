@@ -4,15 +4,16 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extract pure feed helpers (hash/slug/date/lexicon) from news-fetcher so they're unit-testable without the Claude provider import
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Comments only: news-fetcher no longer builds a model provider (world classify runs on the swarm bot rail since 2026-10-02), so the header, the HashableItem note and the lexicon note stop naming the Claude provider.
  */
 
 /**
  * Pure feed helpers — no network, no LLM, no @/ side-effect imports — so they unit-test in isolation
- * (news-fetcher itself instantiates the Claude provider at module load). See ADR-061.
+ * (news-fetcher itself pulls the feed parser and the containment wrapper at module load). See ADR-061.
  */
 import { createHash } from 'crypto';
 
-/** Minimal item shape for hashing (avoids importing FeedItem → news-fetcher → the Claude provider). */
+/** Minimal item shape for hashing (avoids importing FeedItem → news-fetcher and its module graph). */
 export interface HashableItem { outlet: string; title: string; link: string; }
 
 /**
@@ -38,7 +39,7 @@ export function pubIso(raw: string): string | null {
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
-// Lexicon fallback — ONLY used if the Claude call genuinely fails. Real sentiment comes from the swarm creds.
+// Lexicon fallback — used when no classify backend is registered, the budget denies the chunk, or the classify call fails. Model sentiment comes from the registered backend (the swarm bot rail).
 const POS = ['surge', 'soar', 'beat', 'growth', 'win', 'record', 'strong', 'gain', 'rally', 'breakthrough', 'success', 'approve', 'boost', 'rise', 'profit', 'optimis', 'upgrade'];
 const NEG = ['plunge', 'fall', 'miss', 'loss', 'weak', 'decline', 'lawsuit', 'scandal', 'probe', 'crash', 'cut', 'layoff', 'fraud', 'warn', 'drop', 'slump', 'risk', 'fear', 'concern', 'antitrust', 'downgrade'];
 

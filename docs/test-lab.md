@@ -186,8 +186,15 @@ Run the linked suites locally with `npm run test:world-ratings`. The real-bounda
 build `world_metrics` and its daily head, stores hand-computed observations and proves the divergence
 aggregate, the window, the minimums and that a rating changes only when stored rows change.
 `tests/unit/world-classify-containment.spec.ts` serves a hostile RSS feed from a local server through
-the real fetch and XML parser. That is local evidence; only passes of the live steps show the installed
-store and build behave the same.
+the real fetch and XML parser. The card's linked suites also include the classify backend's guards,
+the swarm-rail guard (`tests/unit/world-classify-swarm-rail.spec.ts`, in process with the chokepoint
+as a recorder: one owned turn per chunk to the classify bot, in the direct shape a bot node runs
+host-tools-only, and no model provider built by `news-fetcher`) and the signed-hop guard
+(`tests/unit/world-classify-delegation.spec.ts`: the same dispatch through the real chokepoint and a
+real signing bot-node client to a local HTTP bot-node double, arriving signed for the owner's verified
+issuer); no step of this card runs that backend on the deployed box, so its live proof is the one
+[the real-boundary audit](governance/real-boundary-regression-audit.md) records as owed. That is local
+evidence; only passes of the live steps show the installed store and build behave the same.
 
 Live, 2026-10-01 (core `a6de96c5`, world 1.3.0): `POST /api/test-lab/run {"scenarioId":"world-outlet-ratings"}`
 as the operator returned `state: pass` on all three steps. `live-ratings`: "3052 source(s) rated, 23568

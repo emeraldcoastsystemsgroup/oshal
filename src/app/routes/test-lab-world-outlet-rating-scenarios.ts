@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | AI Test Lab card for oshal's own observed outlet ratings and the shared fetched-web-text filter on the world classifier (BACKLOG "World Intelligence licensed outlet ratings"; operator decision 2026-09-22). Three steps, none of which writes: (1) reads the rating set the installed world store yields and checks every rated source carries its counts and dates above the stated minimums and every other source carries no number; (2) reads the most-covered subject's bias-aware breakdown and checks no seeded axis comes back and every source carries its rating; (3) classifies one seeded hostile item through the deployed classifier with a capturing provider and a private budget (no model call, no network, no spend) and checks the payload never reaches the prompt and the item arrives in one UNTRUSTED_CONTENT record.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Attach tests/unit/world-classify-swarm-rail.spec.ts and tests/unit/world-classify-delegation.spec.ts: the deployed classifier reasons on the swarm's accounted bot rail (createWorldClassifyProvider through executeBotOrInline) as an owned, tool-less turn that carries the owner's verified issuer over the signed bot-node hop, never on a controller-local CLI provider.
  *
  * @module routes/test-lab-world-outlet-rating-scenarios
  */
@@ -173,6 +174,10 @@ export const WORLD_OUTLET_RATING_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/world-classify-containment.spec.ts' },
     { level: 'unit', path: 'tests/unit/trading-analyst-fetched-text.spec.ts' },
     { level: 'unit', path: 'tests/unit/world-outlet-rating-test-lab.spec.ts' },
+    // The classifier reasons on the swarm's accounted bot rail, never on a controller-local CLI provider.
+    { level: 'unit', path: 'tests/unit/world-classify-swarm-rail.spec.ts' },
+    // The same dispatch through the real chokepoint and a real signing client: it leaves with the owner's verified issuer.
+    { level: 'integration', path: 'tests/unit/world-classify-delegation.spec.ts' },
   ],
   steps: [
     { id: 'live-ratings', app: APP, label: RATINGS_LABEL, run: async () => observedRatingsStep(createWorldIntelligenceService()) },

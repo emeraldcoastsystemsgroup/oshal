@@ -52,9 +52,11 @@
  * 47 | maintainer@emeraldcoastsystemsgroup.com   | CV-3: a ticket whose planner returned zero work units escalates instead of parking at approval_required. The park had no automatic exit - the ticket produced nothing and waited indefinitely for a human with no indication anything was wrong - so labelling it (CKR-12) did not move it. The reason planner_returned_no_work moved with the writer, out of APPROVAL_REQUIRED_REASONS and into the new ESCALATION_REASONS, which leaves exactly one approval_required writer in this file.
  * 48 | maintainer@emeraldcoastsystemsgroup.com   | Thread the queue's DeadLetterService into manifest dispatch so typed deterministic refusals can terminate atomically instead of collapsing to generic escalation.
  * 49 | maintainer@emeraldcoastsystemsgroup.com | Pass optional evidence/result binding to the canonical manifest-worker dispatcher.
+ * 50 | maintainer@emeraldcoastsystemsgroup.com   | One approved ticket is claimed once. After an event-loop stall two poll ticks ran back to back, both read the same approved ticket, and the loser's claim conflict (TicketStatusConflictError) was handled as a dispatch failure: it rolled the ticket back to approved while the winner's planning was still running on a node, the next tick claimed it a third time, planning ran twice, and the first round came back to a ticket with no active orchestration (live, 2026-10-02 14:29-14:31 UTC). Now a tick that fires while a cycle is still running is skipped; dispatchTicket takes the active slot before its first await and refuses a ticket already in the set; a claim-time status conflict logs and returns without rolling anything back, since the ticket is wherever the committed transition left it.
  */
 
 import type { InternalTicket } from '@/entities/ticket';
+import { TicketStatusConflictError } from '@/entities/ticket';
 import type { IMessageStore } from '@/entities/message';
 import type { ITaskStore } from '@/entities/task';
 import type { TicketService } from '@/features/ticketing';
@@ -272,6 +274,8 @@ export interface QueueManagerPipelineDeps {
  */
 export class QueueManagerService {
   private intervalRef: ReturnType<typeof setInterval> | null = null;
+  /** True while a poll cycle runs; a tick that fires meanwhile is skipped, so one ticket is never claimed twice. */
+  private pollCycleInProgress = false;
   private readonly activeTicketIds = new Set<string>();
   /** @description Tracks when each active ticket entered dispatch, for stuck-slot detection. */
   private readonly dispatchStartTimes = new Map<string, number>();
@@ -476,6 +480,20 @@ export class QueueManagerService {
    * @returns Nothing
    */
   private async pollCycle(): Promise<void> {
+    if (this.pollCycleInProgress) {
+      logger.warn({ active: this.activeTicketIds.size }, 'Poll cycle still running — skipping this tick so one ticket is never claimed twice');
+      return;
+    }
+    this.pollCycleInProgress = true;
+    try {
+      await this.runPollCycle();
+    } finally {
+      this.pollCycleInProgress = false;
+    }
+  }
+
+  /** @description One poll cycle's body; pollCycle guards it against overlapping ticks. */
+  private async runPollCycle(): Promise<void> {
     const startedAt = Date.now();
     const available = this.maxConcurrent - this.activeTicketIds.size;
 
@@ -809,14 +827,20 @@ export class QueueManagerService {
    */
   private async dispatchTicket(ticket: InternalTicket): Promise<void> {
     const { ticketId, title } = ticket;
+    // The active slot is taken before the first await, so a concurrent claim of the same ticket
+    // (two poll ticks after a stall) finds it taken and leaves instead of racing the transition.
+    if (this.activeTicketIds.has(ticketId)) {
+      logger.warn({ ticketId }, 'Ticket is already being dispatched — a concurrent claim is skipped');
+      return;
+    }
+    this.activeTicketIds.add(ticketId);
+    this.dispatchStartTimes.set(ticketId, Date.now());
     // Check if this root ticket already has children (was already planned).
     // If so, skip re-planning and go straight to build.
     const existingChildren = !ticket.parentTicketId
       ? await this.ticketService.listTickets({ parentTicketId: ticketId }).catch(() => [])
       : [];
     const dispatchState = resolveDispatchEntryState(ticket, existingChildren.length > 0);
-    this.activeTicketIds.add(ticketId);
-    this.dispatchStartTimes.set(ticketId, Date.now());
     const attemptNumber = (this.dispatchCounts.get(ticketId) ?? 0) + 1;
     this.dispatchCounts.set(ticketId, attemptNumber);
     logger.info({ ticketId, title, attempt: attemptNumber }, 'Claiming approved ticket for swarm dispatch');
@@ -1133,6 +1157,17 @@ export class QueueManagerService {
         }
       }
     } catch (err) {
+      // The claim lost to a transition another actor committed (a cancel, or a concurrent claim):
+      // the ticket is wherever that transition left it, and rolling it back to approved would
+      // re-dispatch work that is already running.
+      if (err instanceof TicketStatusConflictError) {
+        logger.warn(
+          { ticketId, expected: err.expectedStatus, found: err.actualStatus },
+          'Claim lost to a concurrent status transition — leaving the ticket as that transition left it, no rollback',
+        );
+        return;
+      }
+
       // Graceful handling for runtime unavailability — don't roll back preparation work
       if (err instanceof SwarmRuntimeUnavailableError) {
         logger.warn(

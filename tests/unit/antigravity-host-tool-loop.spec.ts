@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Seam guard for the 2026-09-27 live defect (automated case jarvis-cross-thread-recall): a Jarvis recall ask on the Antigravity brain ran 10 min 45 s and died on a headless read_file denial, because agy chased the answer with its own tools instead of the host loop's. Crosses the real boundary chain - the bot-node handler's direct marker, the REAL AgenticController XML loop over a REAL ToolRegistry, the REAL AntigravityProvider and AntigravityCLIWrapper, and a REAL child process (tests/fixtures/fake-agy-host-loop.cjs) spawned with the wrapper's own argv, cwd and env - and asserts from inside that child what agy is handed on every turn: the tool-less host agent in the private HOME, an empty permission allow list, one --add-dir equal to the task workspace, --sandbox, no accept-edits, no bypass flag, no MCP config and no .agents folder in the workspace. The recall tools run through the registry for the calling owner. A workspace task turn (no marker) keeps its existing shape, and a denied native read now names its tool and target.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Regression guard for the 2026-09-29 live defect (live case jarvis-cache, 3 of 3 answers lost): a Jarvis answer that is a bare number or true/false never reached the caller. This file already held the real agentic loop and the real bot-node handler, but apart - the task double of the loop discarded saved messages and the handler read a canned reply - so the value that crossed between them was never exercised. The new cases wire them: the real handler calls the real TaskController message path (processMessage, processWithAgenticMode, addMessage) over in-memory stores, which runs the real loop, parser and provider against the stand-in agy child, and the handler reads back what the loop saved. Asserted for 5, 3.14, true and false: the saved completion text and the delivered content are the string the model wrote. A second block pins the handler alone against a number, a boolean and an unreadable value as message text.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | A host-tools-only turn whose allowlist holds only the completion floor ends at the first denied tool request with one provider call and no tool run (the world classifier's unattended shape over fetched text).
  */
 
 import { spawn } from 'node:child_process';
@@ -182,6 +183,33 @@ describe('Antigravity inside the agentic host tool loop', () => {
     await expect(antigravityProvider().generateResponse([{ role: 'user', content: 'recall' }], {
       workspaceDir: workspace, extraEnv: { OSHAL_USER_SUB: OWNER },
     })).rejects.toThrow(/denied tool calls: view_file: permission check failed for read_file "\/app\/server\/app\.js"/);
+  }, 30_000);
+
+  it('a host-tools-only turn with nothing but the completion floor ends at the first tool request instead of looping', async () => {
+    // The world classifier's shape: fetched text, no grants. A model that reaches for a tool anyway must cost
+    // ONE provider call, not a `continue` per refusal up to maxTurns.
+    const taskId = 'world-classify-fixture';
+    const workspace = path.join(scratch, 'workspaces', taskId);
+    fs.mkdirSync(workspace, { recursive: true });
+    const calls: Array<{ tool: string; owner: unknown; input: unknown }> = [];
+    const brain = { generateResponse: vi.fn(async () => ({ content: '<conversation_query><query>nvidia</query></conversation_query>', provider: 'antigravity-cli' })) };
+    const loop = new AgenticController({
+      bedrockProvider: null, clineProvider: null, claudeCodeProvider: null, codexProvider: null,
+      antigravityProvider: brain, getCurrentProvider: () => 'antigravity-cli',
+    }, recallRegistry(calls), { broadcast() {} }, {
+      getTask: async () => ({ id: taskId, workspace_dir: workspace, source: 'swarm-dispatch', messages: [] }),
+      addMessage: async () => undefined, updateMetrics: async () => undefined,
+    });
+
+    const result = await loop.processAgenticTask(taskId, 'Classify these items.', [], {}, {
+      source: 'swarm-dispatch', hostToolsOnly: true, extraEnv: { OSHAL_USER_SUB: OWNER },
+      allowedTools: ['attempt_completion'], authorizedScopes: ['control:attempt_completion'],
+    });
+
+    expect(result).toMatchObject({ success: false, turns: 1 });
+    expect(String(result.result?.error ?? result.error)).toMatch(/conversation_query.*host-tools-only turn with no granted tools/);
+    expect(brain.generateResponse).toHaveBeenCalledTimes(1);
+    expect(calls).toEqual([]);
   }, 30_000);
 });
 
