@@ -885,8 +885,8 @@ from preparation or unit tests alone.
 ### Seeding-repair hygiene tail (2026-08-12)
 - **Status:** OPEN — needs operator
 
-- **Remaining:** (1) rotate whatever `config-seed/claude-credentials.json` holds, then delete it — 25 KB of credential material, world-readable perms, zero consumers since the SEC-05 closure ("never revive a static config-seed token copy"); (2) mirror the eight `requiresOwnNode` entries that exist only in `swarm-bot-registry-local.ts` into the canonical registry (finance-analyst, identity-advisor, social-writer, storage-assistant, deck-builder, trading-analyst, communications-bot, weather-bot — "register in BOTH"); (3) point `WORLD_CLASSIFY_PROVIDERS` at a hosted provider so world classify stops degrading to lexicon-only (its 27 controller CLI refusals per 2h are BY DESIGN — never weaken `assertAuditedAutonomousHarness`).
-- **Done when:** the credential file is rotated + gone from the tree and the bind mount, both registries agree on `requiresOwnNode` membership (guarded), and world-classify batch runs complete on a hosted lane with entity/event output in the world store.
+- **Remaining:** (1) rotate whatever `config-seed/claude-credentials.json` holds, then delete it — 25 KB of credential material, world-readable perms, zero consumers since the SEC-05 closure ("never revive a static config-seed token copy"); (2) mirror the eight `requiresOwnNode` entries that exist only in `swarm-bot-registry-local.ts` into the canonical registry (finance-analyst, identity-advisor, social-writer, storage-assistant, deck-builder, trading-analyst, communications-bot, weather-bot — "register in BOTH"); (3) prove world classify live on the swarm's accounted rail: the rail was built 2026-10-02 (the decision's clause 3 below) and what remains is that clause's own done-when, a classify batch that completes with entity/event output in the world store on a box with no world-specific provider configured (the controller CLI refusals that left the old path lexicon-only, 27 per 2h when this entry was filed, are BY DESIGN — never weaken `assertAuditedAutonomousHarness`).
+- **Done when:** the credential file is rotated + gone from the tree and the bind mount, both registries agree on `requiresOwnNode` membership (guarded), and a world-classify batch completes with entity/event output in the world store on a box with no world-specific provider configured (the done-when of the 2026-09-21 decision's clause 3 below).
 - **Decision (operator, 2026-09-21), in three parts.**
   **(1) The credential file: the operator revokes, then the file is deleted.** `config-seed/claude-credentials.json`
   is 25 KB last modified 2026-07-23, untracked (`.gitignore:132`), excluded from the image
@@ -917,6 +917,30 @@ from preparation or unit tests alone.
   output in the world store on a box with no world-specific provider configured at all.
   (PM proposed adding a hosted provider to world classify's own list; the operator rejected the shape
   and gave the principle instead.)
+  **Built 2026-10-02; the live done-when is still open.** World classify now runs through
+  `executeBotOrInline` to the classify bot (`src/app/world-classify-provider.ts`; `WORLD_CLASSIFY_BOT`,
+  default general-bot), one turn per chunk, and news-fetcher builds no provider of its own. Each turn
+  is stamped with the classify bot's canonical provider record (the swarm default when nothing names
+  another). `WORLD_CLASSIFY_PROVIDERS` is retired (setting it logs one warning and selects nothing);
+  the per-application override the decision above kept is the optional `WORLD_CLASSIFY_PROVIDER_ID` /
+  `WORLD_CLASSIFY_MODEL` stamp instead. The prompt carries text fetched from the web, so the turn goes
+  out in the direct shape a bot node runs host-tools-only (a CLI brain gets no native tools; to a bot
+  with its own node the instruction rides the server-authored `pattern` channel and the items the
+  `text`), and a CLI provider with no tool-less mode is refused before dispatch: today only
+  `antigravity-cli` runs tool-less; codex and claude-code have no such mode. What prompted the build:
+  `world_items` held no model-classified item since 2026-08-06 20:02 UTC (0 of 432,687 September
+  items; 0 entities and 0 catalysts in the 14 days before 2026-10-02).
+  **Decision (operator, 2026-10-02): the classify calls carry the operator's identity.** A bot node
+  admits an unbrokered CLI provider only for the deployment operator's own request on a DEMO
+  deployment (ADR-127) and refuses it for an owner-less request on purpose, and the world schedules
+  are framework-scope with no owner, so the rail alone would have moved the same refusal one hop.
+  Every classify call therefore carries `WORLD_CLASSIFY_OWNER_SUB`, defaulting on a DEMO box to the
+  sole configured `OSHAL_OPERATOR_SUBS` entry; for that operator the node admits a CLI swarm default
+  under the existing carve, and cost lands under that subject. A signed bot-node hop also needs the
+  owner's verified issuer: `WORLD_CLASSIFY_OWNER_ISSUER`, else the single active record the
+  verified-principal directory (`oshal_verified_principals`) holds for the subject. With no owner, or
+  a signed hop and no verified issuer, nothing is registered or dispatched (lexicon only, the reason
+  logged once). No refusal is weakened.
 
 ### Bot-endpoint delegated identity
 - **Status:** OPEN — needs operator

@@ -12,10 +12,11 @@
  *      bias-aware classification all apply identically), and
  *  (d) returns a run summary; the `world_pulls` ledger is the per-run record (its whole purpose).
  *
- * The classify step runs the swarm's Claude creds in-process exactly like the interactive world route
- * already does — this path introduces no NEW controller-side LLM call, it triggers the established one
- * on a timer instead of on a bot tool call. Work is bounded: at most MAX_SUBJECTS subjects per fire,
- * LIMIT items per feed variant.
+ * The classify step runs on the swarm's accounted bot rail: the first fire registers the platform's
+ * classify backend (world-classify-provider.ts — one direct turn per chunk to the classify bot on its
+ * configured provider, the swarm default), so the controller makes no model call of its own. Work is
+ * bounded: at most MAX_SUBJECTS subjects per fire, LIMIT items per feed variant, and the global
+ * classify budget.
  *
  * The shared scheduler stays generic: schedule-runtime only branches here when isWorldSchedule matches.
  *
@@ -27,6 +28,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Log the global classify-budget snapshot in the completion line — the 2026-06-29 burn ran 9 HOURS before a human noticed because spend was invisible; now every cycle's record says how much of the LLM budget the world layer has used and whether it was denied any.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Bound the rollup fan-out from config (WORLD_ROLLUP_CONCURRENCY, default 4 instead of a compiled-in 8) and record what each fire costs the series store: entity count, statements issued, statements coalesced and wall time at INFO, plus a WARN once a pulse crosses a configured fraction of its window. On 2026-09-14 the 184-entity fan-out put 19 concurrent aggregates on oshal-local-tsdb (282% CPU) because an abandoned dispatch keeps running while the next fire starts, and the only evidence a human had was pg_stat_activity while it was happening.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Run the depth cycle's feed collectors (market events, congress, insider, short volume, gov contracts) BEFORE the sequential subject sweep instead of after it. They sat behind a sweep that took about 33 minutes on 2026-06-26 (that run's congress rows carry ts 00:33 UTC, the write time the collector stamped before seq 2 of political-trades.ts, for the 00:00 UTC fire), while the scheduler abandons a dispatch after 240 s and the run then lives only as long as the api process, so a restart inside the sweep can end it before the collectors; running them first removes that exposure. It is not shown to be why no congress row was written after 06-26: the default congress feed answered HTTP 401 on 2026-09-28 (political-trades.ts seq 4), and a run that reached the collector while the feed answered 401 wrote nothing either, so the series store cannot tell the two apart. A collector turned off by WORLD_EVENTS_ENABLED / WORLD_FLOW_ENABLED / WORLD_GOV_ENABLED now logs a WARN on every depth fire instead of being skipped silently.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Each fire makes sure the platform's classify backend is registered (ensureWorldClassifyRail(ctx), once per process; boot registers it first): the accountable bot rail on the swarm's configured provider under an accountable owner, so classification inside ingestFeeds / the firehose deep dive stops depending on a controller-local CLI provider SEC-05 refuses. The context parameter is used for the first time; the header and the dispatch JSDoc now describe the as-built rail instead of "the swarm's Claude creds in-process".
  *
  * @module world-schedule-dispatch
  */
@@ -50,6 +52,7 @@ import {
 } from '@/features/world-data';
 import { DEFAULT_UNIVERSE } from '@/features/trading';
 import { createChildLogger } from '@/shared/logger';
+import { ensureWorldClassifyRail } from './world-classify-provider';
 
 const logger = createChildLogger({ module: 'world-schedule-dispatch' });
 
@@ -318,18 +321,23 @@ async function collectDepthSignals(svc: WorldService, scheduleId: string, env: N
  *    fan-out, so deep breadth still runs continuously while any single pulse stays short. Concurrent.
  *  - DEPTH REFRESH (`...refresh`, every 6h): topics/macro + tracked NON-ticker subjects only (tickers are
  *    owned by the pulse). Sequential, but small — finishes in minutes.
- * Re-ingests each deterministically (no LLM decides whether to loop); classification uses the swarm
- * Claude creds inside ingestFeeds, exactly like the interactive route.
- * @param _ctx - App context (unused; the world service builds its own graph + TSDB handles).
+ * Re-ingests each deterministically (no LLM decides whether to loop); classification inside ingestFeeds
+ * runs on the platform backend registered below — the accountable bot rail on the swarm's configured
+ * provider — never on a controller-local model provider.
+ * @param ctx - App context: the chokepoint's pool (budget gate) and inline orchestrator ride with the
+ *   classify backend; the world service builds its own graph + TSDB handles.
  * @param schedule - The due schedule record (taskData may carry sources/limit/maxSubjects overrides).
  * @returns Dispatch result for scheduler accounting.
  */
-export async function dispatchWorldSchedule(_ctx: AppContext, schedule: ScheduleRecord): Promise<ScheduleDispatchResult> {
+export async function dispatchWorldSchedule(ctx: AppContext, schedule: ScheduleRecord): Promise<ScheduleDispatchResult> {
   const svc = createWorldIntelligenceService();
   if (!svc) {
     logger.info({ scheduleId: schedule.id }, 'world refresh skipped — world intelligence disabled (ENABLE_WORLD_INTELLIGENCE / ARANGO_URL / TSDB_URL)');
     return { success: true, scheduleId: schedule.id };
   }
+  // The classify backend is the platform's (operator decision 2026-09-21). Boot registers it; this is the
+  // same once-per-process call, so a dispatcher driven without server.ts still classifies on the rail.
+  await ensureWorldClassifyRail(ctx);
 
   const startedAt = Date.now();
   const seriesBefore = seriesReadStats();

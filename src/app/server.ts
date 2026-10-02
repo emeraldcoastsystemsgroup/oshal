@@ -209,6 +209,7 @@
  * 193 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L3: mounted /api/location (routes/location-routes.ts): browser ingest, the person's location consent and the step-up ceremony. The service-secret rail is refused (401) before requiresAuth, so a machine caller never reaches a location handler whatever session rides along; the router itself admits only an interactive browser session with a verified issuer and runs every statement as that person with is_operator off.
  * 194 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L5: the /api/location mount passes the location fire dispatch-recovery sweep interval (OSHAL_LOCATION_DISPATCH_SWEEP_SEC, default 60 s, 0 off), so claimed reminder fires a crash left undelivered are dispatched under their actor; the router itself starts no timer unless asked.
  * 195 | maintainer@emeraldcoastsystemsgroup.com   | The remote-client routes get the per-bot provider lookup (getChatProvider: ctx.getProvider), so an OSHAL Node chat turn whose bot is a CLI the controller refuses runs on that node (remote-client-node-chat.ts).
+ * 196 | maintainer@emeraldcoastsystemsgroup.com   | Register the world classify rail at boot (ensureWorldClassifyRail): classification reasons on the swarm's accounted bot rail under an accountable owner (operator decisions 2026-09-21 and 2026-10-02), and the World package's own ingest routes are on it from their first request rather than after the first scheduled pulse.
  */
 
 require('dotenv').config();
@@ -362,6 +363,7 @@ import {
   mountSystemAuxiliaryRoutes,
 } from './server-auxiliary-routes';
 import { createScheduleController } from './schedule-runtime';
+import { ensureWorldClassifyRail } from './world-classify-provider';
 import { startSeriesReconciler } from '@/app/series-orchestrator';
 import { startVideoPump } from '@/app/series-pump';
 import { startAmbientReviewRuntime } from './ambient-review-runtime';
@@ -448,6 +450,10 @@ function createApp(): express.Application {
   app.use(internalMeshLimiter);
 
   const ctx = createAppContext();
+  // World classify reasons on the swarm's accounted bot rail (operator decisions 2026-09-21 and
+  // 2026-10-02). Registered at boot so the World package's own ingest routes are on the rail from
+  // their first request, not only after the first scheduled pulse.
+  void ensureWorldClassifyRail(ctx);
   const refusalStore = new PostgresRefusalStore(ctx.pool, waitForBootstrapComplete);
   configureRefusalRecorder(refusalStore);
   void refusalStore.ready().catch(error => logger.error({ err: error },

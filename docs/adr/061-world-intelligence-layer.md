@@ -6,7 +6,10 @@
   series + classified archive, the bias-aware multi-axis sentiment read, multi-source query plans,
   archive/pull-rate/backtest, and the framework registration (tools + `world-analyst` bot + cockpit surface)
   are all live on `oshal-local-api`. Outlet ratings are oshal's own, observed from its stored coverage
-  (2026-10-01 update at the end; the seed table and any external rating license are retired).
+  (2026-10-01 update at the end; the seed table and any external rating license are retired). The
+  classify backend is the swarm's accounted bot rail (amended 2026-10-02, "Classify provider" under
+  Operations & tuning): built and locally tested, live proof owed at the next deploy. On the deployed
+  box no item had been model-classified since 2026-08-06 when that was read on 2026-10-02.
 - **Date:** 2026-06-20
 - **Related:** [ADR-058 (Personal-Intelligence Service)](058-personal-intelligence-service-and-ingestion.md)
   (the *personal* sibling — this is the deferred "world graph, its own ADR"),
@@ -51,8 +54,15 @@ input by construction**, not whatever the default ranking surfaces. Reddit (one 
 
 ### 3. Classification on the swarm's own creds
 
-Sentiment + entity extraction run in ONE batched Claude call via `ClaudeCodeCliProvider` (the host
-OAuth the whole swarm runs on — never a placeholder API key). Lexicon fallback only if that call fails.
+Sentiment + entity extraction run in ONE batched classify call per chunk on the swarm's own configured
+provider — never a placeholder API key. Since 2026-10-02 that call is a turn to the classify bot on the
+swarm's accounted rail ("Classify provider" under Operations & tuning below). The lexicon scores a
+chunk instead when its call fails or is refused, when the classify budget denies it, when classify is
+switched off, or when no backend is registered.
+
+*Until 2026-10-02 (history):* the call was a Claude call made inside the api process via
+`ClaudeCodeCliProvider` (the host OAuth the whole swarm ran on), with the lexicon as the fallback when
+that call failed.
 
 ### 4. Bias-aware sentiment is the product, not a naive average
 
@@ -97,8 +107,9 @@ mounted in `server.ts`, and the surface is in `config-seed/profiles/oshal-framew
    source that is right against the crowd scores low. A rating is only as broad as the coverage
    behind it, which is why each carries its counts and dates and below the minimums shows as
    insufficient data.
-2. **Classification is nondeterministic** (Claude run-to-run; backtest measured ~0.17 mean drift, ~0.84
-   sign agreement) — treat a single score as noisy; trust the aggregates.
+2. **Classification is nondeterministic** (model run-to-run; the backtest of the original in-process
+   Claude classifier measured ~0.17 mean drift, ~0.84 sign agreement, and this ADR records no backtest
+   of the bot rail) — treat a single score as noisy; trust the aggregates.
 3. **Writes are token-guarded** (`WORLD_INGEST_TOKEN`); the router mounts without OIDC for machine
    feeders, so the cockpit **surface is read-only** (the browser can't hold the token). Ingest is the
    `world_ingest` tool run by the bot/Jarvis, or a future session-authed cockpit action.
@@ -110,7 +121,9 @@ mounted in `server.ts`, and the surface is in `config-seed/profiles/oshal-framew
 ## Reuses (no new runtime)
 
 - Graph → ADR-045 `getTenantGraph('world')`; series → TimescaleDB (`oshal-tsdb`).
-- Classification → `ClaudeCodeCliProvider` (host OAuth), the same creds every bot runs on.
+- Classification → since 2026-10-02 the swarm's accounted bot rail: `executeBotOrInline` to the
+  classify bot, on that bot's canonical provider record ("Classify provider" below). *Until then
+  (history):* `ClaudeCodeCliProvider` (host OAuth) inside the api process, the same creds every bot ran on.
 - App/tool/surface registration → the swarm-app manifest framework + the `oshal-feeds.js` cli-tool pattern.
 - Start-flag gating → `ENABLE_WORLD_INTELLIGENCE`.
 
@@ -132,7 +145,9 @@ The refresh is now a **deterministic scheduler branch** ([src/app/world-schedule
 mirroring the trading-autopilot pattern. On each fire it enumerates the tracked subjects
 (`svc.listEntities`) and re-pulls + classifies each through the same `ingestFeeds` core the
 `/api/world/ingest-news` route uses — no LLM decides whether to loop. Bounded to 30 subjects and 15
-items/variant per fire; classification still runs the swarm Claude creds inside `ingestFeeds`. Wired in
+items/variant per fire; classification at that date still ran the swarm Claude creds inside
+`ingestFeeds` (history: since 2026-10-02 `ingestFeeds` classifies through the registered backend, see
+"Classify provider" below). Wired in
 [src/app/schedule-runtime.ts](../../src/app/schedule-runtime.ts) ahead of the orchestrator fallback
 (`isWorldSchedule` → `dispatchWorldSchedule`). Live-verified: a forced fire repopulated `world_pulls`
 across the tracked subjects.
@@ -188,8 +203,9 @@ the sentiment series, concurrent, TSDB-only) and writes the queryable feature ve
 metric, so these light up its analysis with no change on its side.
 
 ### `event_*` catalyst classifier — the kind of news (dataset §2)
-The analyzer pass now also tags each item's **dominant catalyst + intensity** in the SAME batched Claude call
-(no extra cost): `event_earnings/guidance/ma/rating/legal_reg/product/exec/macro/supply`. Stored on
+The analyzer pass now also tags each item's **dominant catalyst + intensity** in the SAME batched classify call
+(no extra call; a Claude call in the api process until 2026-10-02, a turn on the classify bot rail since):
+`event_earnings/guidance/ma/rating/legal_reg/product/exec/macro/supply`. Stored on
 `world_items` (`event_type`/`event_intensity`, additive guarded columns + index — `world_items` is
 runtime-created, so changes use `ADD COLUMN IF NOT EXISTS`); `classifierVersion` bumped to `world-analyze-v2`;
 `rollupFeatures` writes `event_<type>` (max intensity per type per window) to `world_metrics`. Makes "earnings +
@@ -211,70 +227,169 @@ oshal-api`).
 ## Operations & tuning — the classify (deep-dive) cost
 
 The two-tier ingest is **speed-read** (cheap, every feed, lexicon) plus **deep-dive** (metered LLM
-classify: real sentiment + entities + `event_*` catalyst). Deep-dive spawns one LLM CLI subprocess
-per chunk and is the only meaningful CPU cost in the world layer. Everything below is env-tunable on
-`oshal-api` (no rebuild) and lives in `docker-compose.oshal-local.yml`.
+classify: real sentiment + entities + `event_*` catalyst). Deep-dive makes one classify call per
+chunk. Since 2026-10-02 that call is a turn dispatched to the classify bot (next section), so the api
+process starts no model CLI of its own. *Until 2026-10-02 (history):* each chunk spawned one LLM CLI
+subprocess inside `oshal-api`, which was the only meaningful CPU cost in the world layer. Everything
+below is env-tunable on `oshal-api` (no rebuild) and lives in `docker-compose.oshal-local.yml`.
 
-### Classify provider — Codex by default, never a billed API
+### Classify provider — the swarm's accounted rail (amended 2026-10-02)
 
-`WORLD_CLASSIFY_PROVIDERS` selects the backend (`codex` default, or `claude`, comma-separated to spread
-across both). It must stay on a **CLI provider whose creds are already mounted** — `codex` runs on the
-operator's ChatGPT plan creds (`~/.codex/auth.json`), so classify is **$0 in API billing**. Do **not**
-route classify to a direct-API provider (Anthropic/OpenAI key) without an explicit cost decision — that
-turns a free background job into per-token spend.
+**As built 2026-10-02 (operator decision 2026-09-21, "the principle of one").** The world index is a
+swarm service, so its classifier reasons the way every other swarm job does: each chunk is ONE owned,
+direct turn through `executeBotOrInline` to a registered bot
+([world-classify-provider.ts](../../src/app/world-classify-provider.ts)). The controller builds no
+model provider of its own; `news-fetcher.ts` calls only the backend the app layer registers (at boot,
+and from each world schedule fire while it is still unregistered). Locally tested; the live proof is
+owed at the next deploy ([real-boundary audit](../governance/real-boundary-regression-audit.md), guards
+`tests/unit/world-classify-swarm-rail.spec.ts` and `tests/unit/world-classify-delegation.spec.ts`).
 
-> **Codex gotcha — writable home.** Modern Codex initializes an in-process app-server that writes PATH
-> aliases and refreshes its token, so `~/.codex` **must be mounted read-write**. The shared compose
-> anchor `x-codex-auth-volume` is `:/root/.codex:rw`. If it regresses to `:ro`, every classify dies with
-> `exited 1` / `failed to initialize ... Read-only file system (os error 30)` and silently falls back to
-> lexicon (no LLM value). Codex is slower than a hosted API (~30–40 s/chunk incl. its ~11 K-token
-> preamble), so the classify timeout is 120 s (`WORLD_CLASSIFY_CODEX_TIMEOUT_MS`, `news-fetcher.ts`) —
-> a stale image built with the old 30 s default cuts every call off; rebuild from current source.
+What one classify turn is:
+
+- **To which bot.** `WORLD_CLASSIFY_BOT` (default `general-bot`).
+- **On which provider.** The turn is stamped with the classify bot's **canonical provider record**,
+  the record a queued dispatch to that bot carries: the swarm default when nothing names another. It
+  is not the owner's personal brain. `WORLD_CLASSIFY_PROVIDER_ID` (with an optional
+  `WORLD_CLASSIFY_MODEL`) stamps an explicit provider instead, which the node reconciles onto
+  ([ADR-034](034-bidirectional-config-ownership-sync.md)). A stamp that names no provider is refused:
+  nothing is dispatched unstamped.
+- **Holding no tools of its own.** The prompt carries text fetched from the web, so the turn goes out
+  in the direct shape a bot node runs host-tools-only: a CLI brain gets no native tools, and the
+  node's own loop brokers only the tools the classify bot is granted. A CLI provider with no tool-less
+  mode is refused before anything is sent. Today `antigravity-cli` is the only CLI that runs
+  tool-less; codex and claude-code have no such mode, so a record or an explicit stamp that names one
+  sends every chunk back to lexicon. A hosted provider id is admitted.
+- **Instruction and data on separate channels.** To a bot with its own node the classify instruction
+  rides the server-authored `pattern` channel and the `text` is only the subject line and the
+  contained items. An inline bot has no pattern channel, so there the instruction leads the text.
+- **On whose account (operator decision 2026-10-02).** The world schedules are framework-scope and
+  carry no owner, and a bot node admits an unbrokered CLI provider only for the deployment operator's
+  own request on a DEMO deployment
+  ([ADR-127](127-demo-mode-cli-brain-and-user-provider-preference.md)). Every classify call therefore
+  carries an accountable owner: `WORLD_CLASSIFY_OWNER_SUB`, else on a DEMO box the sole configured
+  `OSHAL_OPERATOR_SUBS` entry (with none or several, no owner is guessed). The call runs under that
+  owner's request identity with operator privilege off, and as an owned, direct turn it passes the
+  chokepoint's execute-entitlement check and the owner's cost-governance budget gate like any other
+  bot call.
+- **With which issuer.** A signed bot-node hop needs more than a subject, so the dispatch also carries
+  the owner's **verified issuer**: `WORLD_CLASSIFY_OWNER_ISSUER`, else the single active record the
+  verified-principal directory (`oshal_verified_principals`) holds for that subject. Several records,
+  none, or an unreadable directory yield no issuer; none is guessed.
+- **Recorded where.** The node records the turn's cost in `chat_tasks` under the classify bot's agent
+  id with the owner as `owner_sub` (task id `world-classify-<uuid>::<agent id>`). An item a model
+  scored is archived with `classifier_model` set to the backend's name (`swarm:<bot>`, so
+  `swarm:general-bot` by default) and `used_llm = true`; an item the lexicon scored carries `lexicon`.
+
+With no owner, or with a signed hop and no verified issuer, nothing is registered or dispatched: the
+index classifies by lexicon (sentiment only, no entities or catalysts). `world-classify-provider` logs
+the reason once, `news-fetcher` logs once that no backend is registered, and registration is retried
+at most once a minute, so an owner who signs in later is picked up without a restart. No refusal is
+weakened. The budget caps below still bound every call.
+
+| Env | Effect | Default |
+|---|---|---|
+| `WORLD_CLASSIFY_BOT` | The registered bot that classifies. A name that is not in the active registry fails every chunk (lexicon). | `general-bot` |
+| `WORLD_CLASSIFY_OWNER_SUB` | The accountable owner every classify call carries. Blank on a DEMO box with exactly one `OSHAL_OPERATOR_SUBS` entry means that operator; blank anywhere else means no owner (lexicon only). | blank |
+| `WORLD_CLASSIFY_OWNER_ISSUER` | The owner's verified issuer, needed when the bot-node hop is signed. Blank means the single active verified-principal record for that subject. | blank |
+| `WORLD_CLASSIFY_PROVIDER_ID` | An explicit provider stamp for the node to reconcile onto. Blank means the classify bot's canonical provider record (the swarm default). | blank |
+| `WORLD_CLASSIFY_MODEL` | The model for `WORLD_CLASSIFY_PROVIDER_ID`; read only when that is set. | blank |
+| `WORLD_CLASSIFY_CALL_TIMEOUT_MS` | The ceiling for one chunk's turn; a call that outlives it is abandoned and the chunk falls back to lexicon. A value under 10000 is ignored. | `120000` |
+| `WORLD_CLASSIFY_PROVIDERS` | Retired: it selects nothing. Compose forwards it with no default only so that setting it logs one warning. | blank |
+
+*History.* Until 2026-10-02 `WORLD_CLASSIFY_PROVIDERS` selected the in-process Claude Code / Codex CLI
+providers that `news-fetcher.ts` built inside the api process. That stopped working when the
+controller's unattended-CLI refusal (SEC-05) landed: every chunk was refused and fell back to lexicon,
+and from 2026-08-06 no item was model-classified (read from the deployed box on 2026-10-02, when the
+api was logging ~55 refusal warns per pulse). This section also used to promise that classify was
+"$0 in API billing", because it ran on a CLI whose subscription login was already mounted, and warned
+against routing it to a direct-API provider without an explicit cost decision. That promise is not a
+property of this layer any more: what a classify turn costs follows from the provider the classify
+bot's record names, and each turn's recorded cost is in `chat_tasks`.
+
+> **History (until 2026-10-02) — the Codex gotcha, writable home.** Modern Codex initializes an
+> in-process app-server that writes PATH aliases and refreshes its token, so `~/.codex` must be mounted
+> read-write (the shared compose anchor `x-codex-auth-volume` is `:/root/.codex:rw`). While classify
+> ran the Codex CLI inside the api process, a regression to `:ro` made every classify die with
+> `exited 1` / `failed to initialize ... Read-only file system (os error 30)` and silently fall back to
+> lexicon (no LLM value). Codex was slower than a hosted API (~30–40 s/chunk incl. its ~11 K-token
+> preamble), so its classify timeout was 120 s (`WORLD_CLASSIFY_CODEX_TIMEOUT_MS` in `news-fetcher.ts`,
+> beside `WORLD_CLASSIFY_CODEX_MODEL` for its model), and a stale image built with the old 30 s default
+> cut every call off. No code reads either variable now and compose no longer forwards
+> `WORLD_CLASSIFY_CODEX_MODEL`; the rail refuses Codex for classification (it has no tool-less mode),
+> and the per-call ceiling is `WORLD_CLASSIFY_CALL_TIMEOUT_MS`.
 
 ### Throttle knobs (highest-leverage first)
 
 | Env | Effect | Default |
 |---|---|---|
-| `WORLD_CLASSIFY_BUDGET_PER_HOUR` | **The hard ceiling** — max LLM classify calls per clock hour across ALL world paths (per-subject ingest + deep-dive + backtests). Exhausted → lexicon until the window rolls. Explicit `0` = no LLM. | `60` |
+| `WORLD_CLASSIFY_BUDGET_PER_HOUR` | **The hard ceiling** — max LLM classify calls per clock hour across ALL world paths (per-subject ingest + deep-dive + backtests). Exhausted → lexicon until the window rolls. Explicit `0` = no LLM. The default sits under the Security Center's activity-burst threshold (`SECURITY_AGENT_BURST_THRESHOLD`, 50 tasks an hour per agent), because on the bot rail each classify call is one task row for the classify bot; it was `60` until 2026-10-02. | `40` |
 | `WORLD_CLASSIFY_BUDGET_PER_DAY` | Same bucket's per-UTC-day backstop — bounds even a day of catch-up storms. | `400` |
-| `WORLD_PULSE_DEEP_SLICE` | **The dominant steady-state cost** — how many names get the full classify fan-out per pulse (rotates, so all are still covered over more pulses). `0` = all-lean (minimal classify). | `2` |
+| `WORLD_PULSE_DEEP_SLICE` | **The dominant steady-state cost** — how many names get the full classify fan-out per pulse (rotates, so all are still covered over more pulses). `1` is the smallest slice that takes effect: as built `0` is read as unset and resolves to the code default of 12 in `world-schedule-dispatch.ts`, not to all-lean. | `2` |
 | `WORLD_DEEPDIVE_BUDGET` | Max deep-dive items classified per cycle. | `3` |
 | `WORLD_FIREHOSE_EVERY_N_PULSES` | Run the publisher firehose (+ its classify) every Nth pulse. | `8` |
 | `WORLD_FIREHOSE_LIMIT` | Firehose feeds pulled per run. | `6` |
-| `WORLD_DEEPDIVE_ENABLED` | `false` kills deep-dive entirely (world intel falls back to lexicon — zero LLM cost). | `true` |
+| `WORLD_DEEPDIVE_ENABLED` | `false` skips the firehose deep-dive entirely (its items keep their speed-read lexicon score). The per-subject ingest still classifies new items; `WORLD_CLASSIFY_DISABLED=true` is the switch that stops every classify call. | `true` |
 
-> **`WORLD_CLASSIFY_CONCURRENCY` does NOT bound total LLM load** — it only limits per-subject chunk
-> concurrency; total concurrent CLI calls = subjects × chunks via `PULSE_SUBJECT_CONCURRENCY` /
-> `FEATURE_ROLLUP_CONCURRENCY` in `world-schedule-dispatch.ts`. What bounds total CALLS is the
-> global classify budget above (2026-08-01, `classify-budget.ts` + `analyzeBatch`, guard
-> `tests/unit/world-classify-budget.spec.ts`): every LLM classify call takes a token from one shared
+> **`WORLD_CLASSIFY_CONCURRENCY` does NOT bound total LLM load** — it only limits one subject's chunk
+> concurrency; total concurrent classify calls = subjects in flight × chunks, and the pulse refreshes
+> `PULSE_SUBJECT_CONCURRENCY` subjects at once (`world-schedule-dispatch.ts`). What bounds total CALLS
+> is the global classify budget above (2026-08-01, `classify-budget.ts` + `analyzeBatch`, guard
+> `tests/unit/world-classify-budget.spec.ts`): every classify call takes a token from one shared
 > hour/day bucket, fail-closed to lexicon, denials logged once per window and counted in the pulse
 > completion record (`classifyBudget` in the `world refresh complete` line). This is the guard the
-> 2026-06-29 burn (27 CLI spawns/min for 9 h) proved missing. Two companion changes made each call
-> cheap enough to fit the pulse window: `MAX_THINKING_TOKENS=0` on the classify spawn + a minified
-> JSON instruction (measured on an in-container 8-item haiku chunk: 39.3 s / 4,277 output tokens →
-> 5.1 s / 414, same classification quality — the answer was the final ~350 tokens all along).
+> 2026-06-29 burn (27 CLI spawns/min for 9 h, when each classify call was a CLI process started in the
+> api) proved missing. *History:* two companion changes made each of those in-process CLI calls cheap
+> enough to fit the pulse window: `MAX_THINKING_TOKENS=0` on the classify spawn, which went away with
+> that spawn on 2026-10-02, and a minified JSON instruction, which the classify prompt still carries
+> (measured then on an in-container 8-item haiku chunk: 39.3 s / 4,277 output tokens → 5.1 s / 414,
+> same classification quality — the answer was the final ~350 tokens all along). This ADR records no
+> per-call timing for the bot rail.
 
 ### "oshal-api is grinding" — triage
 
-Deep-dive is a **continuous schedule**, not a finite job; it never "finishes." Tuned (slice 2) it sits
-mostly idle (<5 % CPU) with brief ~150 % bursts per cycle. If it's pinned high instead:
-`docker logs oshal-local-api | grep -E 'timed out after|exited 1|batch analyze failed|Read-only file system|Schedule dispatch timed out'`.
-- `Read-only file system` → the Codex home mount regressed to `:ro` (or a recreate dropped the rebuilt image).
-- Repeated `timed out` + `Schedule dispatch timed out`, climbing CPU/mem → classify volume too high:
-  lower `WORLD_PULSE_DEEP_SLICE` (→ 1 or 0) first, then `WORLD_DEEPDIVE_BUDGET`.
-- Mem oscillating (not climbing) is the concurrent CLI processes, not a leak.
+Deep-dive is a **continuous schedule**, not a finite job; it never "finishes." Since 2026-10-02 the api
+starts no model CLI for classify (each chunk is a turn on the classify bot), so classify trouble is
+read from the api log:
+`docker logs oshal-local-api 2>&1 | grep -E 'world classify|batch analyze failed|Schedule dispatch timed out'`.
+- `world classify registered on the swarm bot rail` (info) is the healthy line: the backend is registered.
+- `world classify has no accountable owner` or `no single verified issuer is on record`
+  (`world-classify-provider` logs the first reason it meets, once), and `world classify has no platform
+  backend registered` (once, from `news-fetcher`) → the rail is not registered and the index is on
+  lexicon. Set `WORLD_CLASSIFY_OWNER_SUB` / `WORLD_CLASSIFY_OWNER_ISSUER`, or have the owner sign in once.
+- `batch analyze failed` (one per failed chunk, the cause in `err`) → `has no tool-less mode`: the
+  stamp names a CLI the rail refuses; `is not in the active registry`: `WORLD_CLASSIFY_BOT` names no
+  registered bot; `no provider record resolves`: the classify bot has no canonical record and no
+  explicit stamp is set; `exceeded …ms`: the turn outlived `WORLD_CLASSIFY_CALL_TIMEOUT_MS`. Any other
+  cause comes from the chokepoint or the bot node (an entitlement or cost-governance refusal for the
+  owner, a signing refusal, or the node refusing or failing the turn): read `err`, then that node's log.
+- `world classify budget exhausted` → the hour or day cap bit; chunks are on lexicon until the window rolls.
+- Repeated `Schedule dispatch timed out` → fires are overrunning the scheduler's dispatch timeout. To
+  cut classify volume lower `WORLD_PULSE_DEEP_SLICE` (→ 1) first, then `WORLD_DEEPDIVE_BUDGET`.
+
+*Until 2026-10-02 (history):* classify ran as CLI subprocesses inside `oshal-api`. Tuned (slice 2) the
+container sat mostly idle (<5 % CPU) with brief ~150 % bursts per cycle. When it was pinned high
+instead, the grep was
+`'timed out after|exited 1|batch analyze failed|Read-only file system|Schedule dispatch timed out'`:
+`Read-only file system` meant the Codex home mount had regressed to `:ro` (or a recreate had dropped
+the rebuilt image); repeated `timed out` + `Schedule dispatch timed out` with climbing CPU/mem meant
+classify volume was too high (lower `WORLD_PULSE_DEEP_SLICE` first, then `WORLD_DEEPDIVE_BUDGET`); and
+memory that oscillated without climbing was the concurrent CLI processes, not a leak.
 
 ### Known follow-ups
 
-- **Global classify-concurrency cap.** `WORLD_CLASSIFY_CONCURRENCY` only bounds per-subject chunks;
-  total concurrent CLI calls = subjects × chunks via the hardcoded `PULSE_SUBJECT_CONCURRENCY` /
-  `FEATURE_ROLLUP_CONCURRENCY`. Make both env-configurable and add a single global semaphore so total
-  classify load has one principled knob instead of relying on `WORLD_PULSE_DEEP_SLICE` to throttle volume.
-- **Classify parser robustness.** Occasional `CodexCliProvider: no agent_message in output` (Codex returns
-  a shape the JSONL parser doesn't match) drops that chunk to lexicon. Low rate, non-fatal, but the parser
-  in `codex-cli-provider.ts` should tolerate more output shapes (e.g. fenced/code-block JSON, reasoning-only
-  turns) before falling back.
+- **Global classify-concurrency cap.** `WORLD_CLASSIFY_CONCURRENCY` only bounds one subject's chunks;
+  total concurrent classify calls = subjects in flight × chunks, and the pulse's subject fan-out
+  (`PULSE_SUBJECT_CONCURRENCY` in `world-schedule-dispatch.ts`) is hardcoded. Make it env-configurable
+  and add a single global semaphore so total classify load has one principled knob instead of relying
+  on `WORLD_PULSE_DEEP_SLICE` to throttle volume. (The rollup fan-out this bullet also named makes no
+  classify call; it became `WORLD_ROLLUP_CONCURRENCY` on 2026-09-14.)
+- **Classify parser robustness (history; no longer a world-classify follow-up).** Until 2026-10-02 an
+  occasional `CodexCliProvider: no agent_message in output` (Codex returning a shape the JSONL parser
+  in `codex-cli-provider.ts` did not match) dropped that chunk to lexicon, and the follow-up was to
+  make that parser tolerate more output shapes (e.g. fenced/code-block JSON, reasoning-only turns).
+  World classify no longer calls that provider: the rail refuses Codex (it has no tool-less mode), and
+  the reply is read by `analyzeChunk` in `news-fetcher.ts`, which takes the bracketed JSON array out of
+  the reply text and leaves the chunk on lexicon when there is none or it does not parse.
 - **Pin the deployed image to a SHA.** `oshal-bot:latest` is rebuilt by multiple operators/bots, so a
   recreate can silently jump the running container to a different build. For reproducible deploys, pin
   `OSHAL_BOT_IMAGE` to a specific image digest and bump it deliberately, rather than floating on `:latest`.
