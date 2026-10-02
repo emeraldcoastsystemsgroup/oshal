@@ -16,6 +16,7 @@ import { LLMService } from '../../src/features/llm-provider/services/llm-service
 import { HarnessLLMBridge } from '../../src/features/llm-provider/services/harness-adapter';
 import { AntigravityCliHarnessAdapter } from '../../src/features/llm-provider/services/antigravity-cli-harness-adapter';
 import {
+  NODE_CHAT_ANSWER_RULES,
   NODE_PROMPT_BUDGET_CHARS,
   NodeExecutorProvider,
   composeNodePrompt,
@@ -69,7 +70,8 @@ describe('composeNodePrompt', () => {
       { role: 'user', content: 'first question' }, { role: 'assistant', content: [{ type: 'text', text: 'first answer' }] },
       { role: 'user', content: 'second question' },
     ]);
-    expect(prompt).toBe('## System instructions\nBe brief.\n\n## Conversation so far\nUser: first question\nAssistant: first answer\n\n## Request\nsecond question');
+    expect(prompt).toBe(NODE_CHAT_ANSWER_RULES + '\n\n## System instructions\nBe brief.\n\n## Conversation so far\nUser: first question\nAssistant: first answer\n\n## Request\nsecond question');
+    expect(prompt.startsWith('## How to answer\n')).toBe(true);
   });
 
   it('stays under the node budget, dropping the OLDEST turns and capping the system prompt', () => {
@@ -80,13 +82,16 @@ describe('composeNodePrompt', () => {
     expect(prompt).toContain('turn 59 ');
     expect(prompt).not.toContain('turn 0 ');
     expect(prompt.split('## System instructions\n')[1].indexOf('\n\n')).toBeLessThanOrEqual(4_000);
+    expect(prompt.startsWith(NODE_CHAT_ANSWER_RULES)).toBe(true);
   });
 
   it('never cuts the latest message: the system slice and older turns give way, and a message that cannot fit is refused with the limit', () => {
-    const latest = 'Q'.repeat(NODE_PROMPT_BUDGET_CHARS - 300);
+    // The answer rules always lead the prompt, so the room for the latest message is the budget less the rules.
+    const latest = 'Q'.repeat(NODE_PROMPT_BUDGET_CHARS - NODE_CHAT_ANSWER_RULES.length - 300);
     const prompt = composeNodePrompt('S'.repeat(3_000), [{ role: 'user', content: 'older' }, { role: 'assistant', content: 'reply' }, { role: 'user', content: latest }]);
     expect(prompt.length).toBeLessThanOrEqual(NODE_PROMPT_BUDGET_CHARS);
     expect(prompt.endsWith('## Request\n' + latest)).toBe(true);
+    expect(prompt.startsWith(NODE_CHAT_ANSWER_RULES)).toBe(true);
     expect(prompt).not.toContain('older');
     expect(() => composeNodePrompt('', [{ role: 'user', content: 'Q'.repeat(NODE_PROMPT_BUDGET_CHARS + 1) }])).toThrow(/takes at most \d+ in one turn/);
   });
