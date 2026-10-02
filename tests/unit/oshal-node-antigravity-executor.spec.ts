@@ -65,8 +65,8 @@ describe('finding agy', () => {
 
 describe('the headless command line', () => {
   it('passes the prompt through -p with JSON output and an 8-minute print timeout (inside the 10-minute swarm wait), the model only when named, and never skips permissions', () => {
-    expect(buildAntigravityArgs('hi')).toEqual(['-p', 'hi', '--output-format', 'json', '--print-timeout', '8m']);
-    expect(buildAntigravityArgs('hi', 'gemini-3.8-flash-low')).toEqual(['-p', 'hi', '--output-format', 'json', '--print-timeout', '8m', '--model', 'gemini-3.8-flash-low']);
+    expect(buildAntigravityArgs('hi')).toEqual(['-p', 'hi', '--output-format', 'json', '--print-timeout', '8m', '--sandbox']);
+    expect(buildAntigravityArgs('hi', 'gemini-3.8-flash-low')).toEqual(['-p', 'hi', '--output-format', 'json', '--print-timeout', '8m', '--sandbox', '--model', 'gemini-3.8-flash-low']);
     expect(buildAntigravityArgs('hi', 'm').join(' ')).not.toContain('dangerously');
   });
 });

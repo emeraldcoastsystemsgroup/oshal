@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | The OSHAL Node runs its own chat turns locally (operator, 2026-10-01: "it executes the stuff locally"). When the bot behind a node's chat resolves to a CLI harness the controller refuses to run unattended (the fleet default is antigravity-cli), and the requesting node advertises the matching local executor, the turn's model call is handed to THAT node: NodeExecutorProvider queues one mcp.call-tool task on the node's own durable task queue (origin 'node-chat') and waits for its result. The TaskOrchestrator still owns the conversation (history, persistence, usage); only the model call runs on the node, with the person's own CLI sign-in. No other node is ever asked, and a node without the executor keeps the controller path unchanged.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review fixes: a stale node-chat claim (claimed longer than the deadline) is expired through the journal's settle path before a new turn is queued, so one lost settle cannot block every later turn; the turn's task is withdrawn when the controller stops waiting, so a stale run never answers nobody; a transient poll error is retried, not fatal; the bot's model travels to the node; the prompt budget never cuts the person's own latest message (the system slice and older turns give way, and a message that still cannot fit is refused with the limit named).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The handed-off prompt opens with NODE_CHAT_ANSWER_RULES (reply directly, in plain text, run no commands or tools), before any persona text: the first live hand-off ran a 60-second agentic session on the person's computer and returned a narration instead of an answer. The rules are never cut by the budget.
  */
 import { randomUUID } from 'node:crypto';
 import {
@@ -27,6 +28,13 @@ export const NODE_CHAT_TOOL_BY_HARNESS: Readonly<Record<string, string>> = Objec
 /** Under the node's Windows command-line cap for the prompt argument (MAX_ANTIGRAVITY_PROMPT_CHARS is 24,000). */
 export const NODE_PROMPT_BUDGET_CHARS = 20_000;
 const SYSTEM_BUDGET_CHARS = 4_000;
+/** How the CLI must answer a chat turn: as a reply, not as an agent. It comes first, before any persona text. */
+export const NODE_CHAT_ANSWER_RULES = [
+  '## How to answer',
+  'This is one chat message from the person who owns this computer. Reply to it directly, in plain text, in their language.',
+  'Do not run commands, read or write files, browse, or use any tool: everything you need is in this prompt, and a reply that',
+  'describes work you started is not an answer. If the persona below mentions tools, ignore that for this reply.',
+].join('\n');
 const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_POLL_MS = 1_000;
 
@@ -86,7 +94,8 @@ function messageText(content: unknown): string {
  */
 export function composeNodePrompt(systemPrompt: string | undefined, messages: ReadonlyArray<{ role?: string; content?: unknown }>, budget = NODE_PROMPT_BUDGET_CHARS): string {
   const system = String(systemPrompt || '').trim().slice(0, SYSTEM_BUDGET_CHARS);
-  const head = system ? `## System instructions\n${system}\n\n` : '';
+  const rules = `${NODE_CHAT_ANSWER_RULES}\n\n`;
+  const head = rules + (system ? `## System instructions\n${system}\n\n` : '');
   const turns = messages
     .filter((m) => m && (m.role === 'user' || m.role === 'assistant'))
     .map((m) => ({ role: m.role === 'user' ? 'User' : 'Assistant', text: messageText(m.content).trim() }))
@@ -94,12 +103,12 @@ export function composeNodePrompt(systemPrompt: string | undefined, messages: Re
   const last = turns.pop();
   const request = `## Request\n${last ? last.text : ''}`;
   const requestChars = request.length - '## Request\n'.length;
-  const maxRequest = budget - '## System instructions\n\n\n'.length - '## Request\n'.length;
+  const maxRequest = budget - rules.length - '## System instructions\n\n\n'.length - '## Request\n'.length;
   if (requestChars > maxRequest) {
     throw new Error(`Your message is ${requestChars} characters; this computer's CLI takes at most ${maxRequest} in one turn. Please shorten it.`);
   }
-  const systemRoom = Math.max(0, budget - request.length - '## System instructions\n\n\n'.length);
-  const headFits = head && head.length + request.length > budget ? `## System instructions\n${system.slice(0, systemRoom)}\n\n` : head;
+  const systemRoom = Math.max(0, budget - rules.length - request.length - '## System instructions\n\n\n'.length);
+  const headFits = head.length + request.length > budget ? rules + (systemRoom > 0 && system ? `## System instructions\n${system.slice(0, systemRoom)}\n\n` : '') : head;
   let room = budget - headFits.length - request.length - 40;
   const kept: string[] = [];
   for (let i = turns.length - 1; i >= 0 && room > 0; i -= 1) {

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Antigravity CLI executor for the OSHAL Node: run a prompt through `agy` on THIS machine with the person's own Antigravity sign-in (the swarm's fleet-default AI since 2026-09-22; the swarm's controller refuses to run any CLI unattended, so the node's chat turns are handed here). The prompt is passed as the `-p` argument (agy's stream-json stdin mode is for multi-turn NDJSON and needs stream-json output, which this one-shot executor does not parse): spawned without a shell so it arrives intact, and capped under the Windows command-line limit. The JSON envelope is judged with the swarm adapter's rule (status SUCCESS or absent, a non-empty response, exit 0). `--dangerously-skip-permissions` is never passed, and every run gets a throwaway working directory.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review fixes: agy's print timeout is 8 minutes and the kill follows 45 seconds later, both inside the swarm's 10-minute wait, so the node reports agy's own outcome before the swarm gives up; the header no longer claims agy cannot read stdin (its stream-json stdin mode exists; this one-shot executor uses -p).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | agy runs with --sandbox: a tool attempt is auto-denied and reported (verified live: "a tool required the escalate_admin permission that headless mode cannot prompt for, so it was auto-denied") instead of running a command on this computer.
  */
 
 import { spawn } from 'child_process';
@@ -68,7 +69,9 @@ export function antigravityInstalled(
  * @returns The arguments for `agy`.
  */
 export function buildAntigravityArgs(prompt: string, model?: string): string[] {
-  const args = ['-p', prompt, '--output-format', 'json', '--print-timeout', `${PRINT_TIMEOUT_MINUTES}m`];
+  // --sandbox: a chat reply needs no tool; if the model reaches for one anyway, headless agy auto-denies it and reports
+  // that instead of running a command on the person's computer.
+  const args = ['-p', prompt, '--output-format', 'json', '--print-timeout', `${PRINT_TIMEOUT_MINUTES}m`, '--sandbox'];
   if (model) args.push('--model', model);
   return args;
 }
