@@ -113,21 +113,31 @@ Verification is policy-aware and supports retries, regression accounting, escala
 
 ## Live proof: tickets in tickets (2026-10-02)
 
-`node scripts/operations/live-acceptance.js tickets-in-tickets` on the preview deploy of `4d244b8a`
-(image `4d143ab0355d`, delegation signing configured) printed `PASS tickets-in-tickets` at 01:31 UTC:
+`node scripts/operations/live-acceptance.js tickets-in-tickets` printed `PASS tickets-in-tickets` four
+times on 2026-10-02, the first at 01:31 UTC on the preview deploy of `4d244b8a` and the latest on `main`
+`1848fb4f` (image `051aa9f82c5b`, delegation signing configured) at 19:11 UTC:
 
-- Root `d81ef2e5` filed 01:24:51 as the operator, claimed 01:25:15, planned on system-architect's node
-  (`antigravity-cli / gemini-3.8-flash-low`, the installed fleet default) and parked at
-  `approval_required` (`planning_complete`) at 01:26:59 with two owned children in planning order.
-- Child 1 (code-developer) ran 01:27:15 to 01:28:06; child 2 (test-engineer) ran 01:28:15 to 01:30:42,
-  only after child 1 was complete; each over the signed hop, on the same configured engine, with its
-  unit work item completed and its handover and deliverables in the root folder. The root assembled to
-  `customer_action` at 01:30:42. Activity: 3 requests, 432,472 input tokens, cost 0 on the subscription.
+- Root `ee42ab93` filed 19:07:26 as the operator, claimed 19:07:56, planned on system-architect's node
+  (`antigravity-cli / gemini-3.8-flash-low`, the installed fleet default) in 61 s and parked at
+  `approval_required` (`planning_complete`) at 19:08:57 with two owned children in planning order.
+- Child 1 (code-developer, "Build the Slugify Module with Word Hyphenation and Lower-Casing") ran from
+  19:09:26; child 2 (test-engineer, "Build the Slugify Test Suite with Vitest") only after child 1 was
+  complete; each over the signed hop, on the same configured engine, with its unit work item completed
+  and its handover and deliverables in the root folder (159 files). The root assembled to
+  `customer_action` at 19:11:25. Activity: 3 requests, 322,939 input tokens, cost 0 on the subscription.
+- Before cleanup the cockpit hierarchy listed the root with exactly its children, each child detail
+  named the root as its parent, and `/code?folder=/workspace/<root>` redirected onto the root folder.
 - Cleanup receipt: removed 7 (the root, both children, the root folder, three shadow tickets), kept 1
   (cost rows), outstanding 0, errors 0; residue 0 in every table the run touches; the folder gone.
 
-Two earlier runs that day failed at planning while the round still used a hosted API key (503, then a
-429 request quota); that path is gone (`controller-pm-round-executor.ts`).
+The runs between those passes each failed on a box condition the case names, and each became a fix the
+same day: a re-read answered during a database lock (#1004), a planning reply without its decomposition
+section while the node had written `IMPLEMENTATION-PLAN.md` (#1006), api event-loop stalls of one to six
+minutes (#1007, #1009), and one approved root claimed twice after such a stall (#1010). One further run
+(19:00 UTC, same code) got a one-turn planning answer with no decomposition and no plan file from the
+node's engine, which the case fails by name ("one child titled like the root"); the next run passed.
+Two runs before the first pass failed at planning while the round still used a hosted API key (503,
+then a 429 request quota); that path is gone (`controller-pm-round-executor.ts`).
 
 ## Design Alignment Summary
 
