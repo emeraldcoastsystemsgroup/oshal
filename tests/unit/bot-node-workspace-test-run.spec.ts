@@ -169,7 +169,7 @@ describe('the workspace-tests/run intent', () => {
   it('the executor demands an exact owner and answers the run as JSON with no provider record', async () => {
     const deps = { runWorkspaceTests: async (id: string) => ({ ran: true, command: 'npm test', exitCode: 0, passed: 3, failed: 0, failedTests: [], outputTail: '', durationMs: 5, folder: id }) } as never;
     await expect(executeTrustedProviderIntent({ ...WORKSPACE_TESTS_INTENT, workspaceFolderId: FOLDER }, { userSub: '', creds: {} }, deps)).rejects.toThrow();
-    const result = await executeTrustedProviderIntent({ ...WORKSPACE_TESTS_INTENT, workspaceFolderId: FOLDER }, { userSub: '106925151779924703909', creds: {} }, deps);
+    const result = await executeTrustedProviderIntent({ ...WORKSPACE_TESTS_INTENT, workspaceFolderId: FOLDER }, { userSub: '100000000000000000001', creds: {} }, deps);
     expect(result.providerRecords).toEqual([]);
     expect(JSON.parse(result.completion)).toMatchObject({ ran: true, passed: 3, folder: FOLDER });
   });
