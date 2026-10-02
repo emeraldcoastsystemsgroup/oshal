@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | AI Test Lab registration for the storyboard image rail (BACKLOG "Free ComfyUI storyboard provider"). Which rail renders a storyboard still decides whether the stage costs money per image and whether it can serve anybody but the operator, and nothing in the cockpit said which one this deployment would pick. The live step reads the selection and probes the free GPU rail's own health, so an operator can see that the FREE rail is standing by - or exactly which of url / workflow / reachability is missing - without submitting a frame. Read-only: it generates no image, submits no job and spends nothing.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-130 amendment 2026-10-02 (the bot-level rule: the render bot's own effective harness picks the image rail). The rail readback now awaits selectStoryboardImageProvider - the function the resolver itself uses - instead of re-deriving the default, so it names the render bot and the harness it followed and reports a refused selection ("<bot> runs <harness>, which cannot make images") as a fail. New explicit-only card storyboard-antigravity-render: as the signed-in caller, it requires the resolved rail to be antigravity-cli, renders ONE frame through it (a generated 256 x 256 red-circle anchor and a "make the circle blue, change nothing else" brief) on a tagged sbimg-testlab-live-storyboard-<8 hex> task workspace, requires a real PNG back plus the bot's receipt that generate_image reached DONE, and removes exactly that workspace (proven gone). It spends one model turn on the operator's subscription, so it never runs from "run all". The new guards are attached as regressionTests.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The render card lists tests/unit/image-turn-prompt-framing.spec.ts among its regressionTests: the card renders through the framed image turn (the SEC-05 carve for image turns, ADR-130 amendment b), and only the live case module's REGRESSION_TESTS carried that guard.
  *
  * @module routes/test-lab-storyboard-scenarios
  */
@@ -198,6 +199,7 @@ export const STORYBOARD_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/storyboard-antigravity-image-turn.spec.ts' },
     { level: 'unit', path: 'tests/unit/storyboard-cli-image-wiring.spec.ts' },
     { level: 'unit', path: 'tests/unit/storyboard-test-lab-render.spec.ts' },
+    { level: 'unit', path: 'tests/unit/image-turn-prompt-framing.spec.ts' },
   ],
   steps: [{ id: 'render', app: APP, label: RENDER_LABEL, run: renderStep }],
 }];

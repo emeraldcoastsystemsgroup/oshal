@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the explicit-only Test Lab card storyboard-antigravity-render (ADR-130 amendment 2026-10-02, the bot-level rule), the step the live-acceptance case storyboard-agy drives on the box. The card, the selection, the resolver, the antigravity-cli provider, its receipt check, the JPEG-to-PNG conversion and the workspace cleanup are real on a temporary shared root; the render-bot reader is a fixture (the real reader is pinned in storyboard-image-default.spec.ts) and the executor double plays the bot node's part exactly as agy-image-turn.js leaves it (output.jpg plus its receipt) and reports what the node reports (the provider it ran on and its ADR-034 reconcile), because the bot half is pinned through a real child process in storyboard-antigravity-image-turn.spec.ts. Cases: a pass renders one frame from a generated 256 x 256 anchor on a tagged sbimg-testlab-live-storyboard-<8 hex> workspace, carries the render bot and its harness, and removes exactly that folder; a render bot on another rail and a non-operator caller are degraded with nothing dispatched; an output without its receipt is a fail, and its workspace is still removed; a turn the bot reports as run on another provider, or as a 'corrected' reconcile (a switched bot), is a fail; the readback card names the render bot and harness it followed and fails a harness that cannot make images.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The card must list the image-turn framing guard (tests/unit/image-turn-prompt-framing.spec.ts) and every spec the live case module storyboard-agy names in its REGRESSION_TESTS, so the card and the case that drives it on the box never list different guards again.
  */
 
 import { createHash } from 'node:crypto';
@@ -17,6 +18,10 @@ import { STORYBOARD_SCENARIOS } from '../../src/app/routes/test-lab-storyboard-s
 import { registerStoryboardRenderBotReader } from '../../src/features/video-generation/services/storyboard-image-default';
 import { registerCliStoryboardImageExecutor, type CliStoryboardRenderRequest } from '../../src/features/video-generation/services/storyboard-cli-image-executor';
 import type { ScenarioRunContext, StepResult } from '../../src/app/routes/test-lab-scenarios';
+
+// The live case that drives this card on the box is plain CommonJS under scripts/lib (staged into a container by the host runner).
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const storyboardAgyCase = require('../../scripts/lib/live-acceptance-storyboard-agy.js') as { CARD_ID: string; REGRESSION_TESTS: ReadonlyArray<{ level: string; path: string }> };
 
 const OPERATOR = 'operator-sub-1';
 const ENV_KEYS = ['STORYBOARD_IMAGE_PROVIDER', 'DEMO_MODE', 'OSHAL_OPERATOR_SUBS', 'OSHAL_WORKSPACE_ROOT', 'COMFYUI_URL', 'COMFYUI_STORYBOARD_WORKFLOW'] as const;
@@ -63,11 +68,17 @@ afterEach(() => {
 });
 
 describe('Test Lab: storyboard-antigravity-render', () => {
-  it('is explicit-only and lists the guards of the seams it crosses', () => {
+  it('is explicit-only and lists the guards of the seams it crosses, including the image-turn framing and everything its live case names', () => {
     const render = card('storyboard-antigravity-render');
     expect(render.explicitOnly).toBe(true);
-    expect(render.regressionTests?.map((t) => t.path)).toEqual(expect.arrayContaining([
-      'tests/unit/storyboard-antigravity-image-turn.spec.ts', 'tests/unit/storyboard-image-default.spec.ts', 'tests/unit/storyboard-test-lab-render.spec.ts']));
+    const listed = render.regressionTests?.map((t) => t.path) ?? [];
+    expect(listed).toEqual(expect.arrayContaining([
+      'tests/unit/storyboard-antigravity-image-turn.spec.ts', 'tests/unit/storyboard-image-default.spec.ts', 'tests/unit/storyboard-test-lab-render.spec.ts',
+      'tests/unit/image-turn-prompt-framing.spec.ts']));
+    // The live case storyboard-agy runs this very card on the box: the card lists every guard the case lists.
+    expect(storyboardAgyCase.CARD_ID).toBe('storyboard-antigravity-render');
+    expect(listed).toEqual(expect.arrayContaining(storyboardAgyCase.REGRESSION_TESTS.map((t) => t.path)));
+    for (const test of render.regressionTests ?? []) expect(fs.existsSync(test.path), test.path).toBe(true);
   });
 
   it('renders one frame on the antigravity rail from a generated anchor and removes exactly its workspace', async () => {
