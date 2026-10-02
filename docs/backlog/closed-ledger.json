@@ -816,12 +816,6 @@
     "evidence": "IPO event play execution monitors SEC EDGAR filings, cancels entries on ring-fenced tickers, manages post-fill exit fences, and places bracket orders; guarded by trading-event-plans.spec.ts (15/15 pass)."
   },
   {
-    "title": "The build/swarm pipeline has no signed transport - every work unit rides the Redis mesh",
-    "date": "2026-09-24",
-    "pr": "main",
-    "evidence": "Signed HTTP delegation dispatches all core manifest-worker ticket types over signed bot node endpoints with replay-bounded tokens, refusing unauthenticated inline paths; guarded by signed-delegation-core-ticket-types.spec.ts (22/22 pass)."
-  },
-  {
     "title": "Connector marketplace live brokered reads",
     "date": "2026-09-24",
     "pr": "main",
@@ -994,5 +988,11 @@
     "title": "Strategy Studio and Bot Forge conversational parity — Studio half PROVEN 2026-09-06",
     "pr": "979",
     "evidence": "Studio half proven live 2026-09-06 (docs/apps/trading/studio-parity-proof.md). Forge half: node scripts/operations/live-acceptance.js forge-edit PASSED on the box on 2026-10-01, core a6de96c5 (carries #979, 0a5786cf) on image a61932b7a9cb: the edit of pack testlab-live-forge-edit-466f0790 kept both agentIds and its ticket type, moved the version 1.0.0 -> 1.0.1 with edited: true, left one manifest loaded from the same path with one app, and the Packs panel said \"Updated in place\"; cleanup removed 8, kept 2 (the authorization posture row and catalog snapshot, tracked by \"Authorization posture rows and catalog snapshots for a removed app are never deleted\"), outstanding 0, errors 0. Recorded in docs/apps/bot-forge-edit-in-place.md."
+  },
+  {
+    "date": "2026-10-02",
+    "title": "The build/swarm pipeline has no signed transport - every work unit rides the Redis mesh",
+    "pr": "986",
+    "evidence": "Live run 3 on the preview deploy of 4d244b8a: PASS tickets-in-tickets at 01:31 UTC (root d81ef2e5 planned on system-architect's node under the installed fleet default, two children run one at a time over the signed hop by code-developer and test-engineer, root assembled to customer_action; cleanup removed 7, outstanding 0, errors 0, residue 0). Recorded in src/features/swarm-orchestration/README.md (\"Live proof: tickets in tickets\"). Guards: controller-pm-planning-node-postgres, planning-output-source, child-ticket-owner-inheritance-postgres, build-child-dispatch-gate, signed-swarm-child-dispatch, swarm-verification-enforced-fallback, live-acceptance-tickets-in-tickets."
   }
 ]

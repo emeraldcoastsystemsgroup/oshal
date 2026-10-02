@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Queue DLQ: a dead_letter parent parks its approved children in 'escalated' (same treatment as an escalated parent) so quarantining a poison root doesn't leave dispatchable orphans.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Review fix (DLQ child wedge): the orphan-sweep allTerminal predicate now counts 'dead_letter' as terminal, so a parent whose children are all terminal (including a quarantined child) triggers assembly/escalation-propagation instead of wedging in an active state with no recovery sweep.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Kept GitHub request-only intake tickets in backlog even when their ticket type maps to an auto-start workflow.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Child dispatch gate: a child owned by someone other than its parent's owner is cancelled (child_owner_mismatch) and never dispatched; siblings with a subtaskIndex are released one at a time in planning order, held while an earlier sibling is unfinished or still in the active set. Children without a subtaskIndex are unaffected (ADR-031 amendment).
  */
 
 import { type OshalTicketState, type InternalTicket } from '@/entities/ticket';
@@ -167,10 +168,12 @@ export async function sweepAutoStartTickets(deps: QueueSweepDeps): Promise<void>
 
 /**
  * @description Blocks approved child tickets from auto-dispatching until the parent
- * has cleared discovery/planning and explicitly entered build.
+ * has cleared discovery/planning and explicitly entered build. A child owned by someone other
+ * than its parent's owner is cancelled and never dispatched, and siblings with a planning order
+ * are released one at a time in that order.
  * @param ticket - The approved candidate ticket.
  * @param deps - Queue sweep dependencies.
- * @returns True when the child must not dispatch yet (or was parked terminal).
+ * @returns True when the child must not dispatch yet (or was parked terminal or cancelled).
  */
 export async function isDispatchBlockedByParentState(ticket: InternalTicket, deps: QueueSweepDeps): Promise<boolean> {
   if (!ticket.parentTicketId) {
@@ -182,8 +185,12 @@ export async function isDispatchBlockedByParentState(ticket: InternalTicket, dep
     return false;
   }
 
+  if (await cancelChildOwnedByAnother(ticket, parent, deps)) {
+    return true;
+  }
+
   if (PARENT_READY_FOR_CHILD_DISPATCH_STATES.has(parent.status)) {
-    return false;
+    return isHeldBehindEarlierSibling(ticket, deps);
   }
 
   const terminalChildStatus = terminalChildStatusForParentState(parent.status);
@@ -216,6 +223,72 @@ export async function isDispatchBlockedByParentState(ticket: InternalTicket, dep
     'Approved child ticket is waiting on parent build approval',
   );
   return true;
+}
+
+/** Sibling states that release the next sibling: the same set parent assembly counts as done. */
+const SIBLING_DONE_STATES = new Set<string>(['complete', 'customer_action', 'cancelled']);
+
+/**
+ * @description Cancels a child whose owner differs from its parent's owner, before anything is
+ * written for it. It is cancelled rather than escalated: parent assembly escalates a parent with
+ * an escalated child, and POST /api/tickets accepts any parentTicketId, so escalating would let
+ * a caller escalate someone else's root.
+ * @param ticket - The approved child.
+ * @param parent - Its parent ticket.
+ * @param deps - Queue sweep dependencies.
+ * @returns True when the child was cancelled.
+ */
+async function cancelChildOwnedByAnother(ticket: InternalTicket, parent: InternalTicket, deps: QueueSweepDeps): Promise<boolean> {
+  if ((ticket.ownerSub ?? null) === (parent.ownerSub ?? null)) return false;
+  logger.warn(
+    { ticketId: ticket.ticketId, parentTicketId: parent.ticketId },
+    'Child ticket owner differs from its parent owner - cancelling it; it is never dispatched',
+  );
+  await deps.ticketService.updateStatus(ticket.ticketId, 'cancelled', {
+    reason: 'child_owner_mismatch',
+    source: 'queue-parent-gate',
+    parentTicketId: parent.ticketId,
+  }).catch((err) => {
+    logger.error({ err, ticketId: ticket.ticketId, parentTicketId: parent.ticketId }, 'Failed to cancel a child owned by someone other than its parent owner');
+  });
+  return true;
+}
+
+/**
+ * @description Holds a child while an earlier sibling (lower subtaskIndex) is unfinished or still
+ * in flight. Siblings share their root's folder and one node-side task, and a later subtask can
+ * build on an earlier one's output, so they run one at a time in planning order. The active set
+ * matters because a child can read complete from its work item while its pipeline still verifies.
+ * Children without a subtaskIndex are not held.
+ * @param ticket - The approved child.
+ * @param deps - Queue sweep dependencies.
+ * @returns True when the child must wait.
+ */
+async function isHeldBehindEarlierSibling(ticket: InternalTicket, deps: QueueSweepDeps): Promise<boolean> {
+  const index = readSubtaskIndex(ticket.metadata);
+  if (index === null || index <= 1 || !ticket.parentTicketId) return false;
+  const siblings = await deps.ticketService.listTickets({ parentTicketId: ticket.parentTicketId });
+  const waitingOn = siblings.find((sibling) => {
+    const siblingIndex = readSubtaskIndex(sibling.metadata);
+    return sibling.ticketId !== ticket.ticketId && siblingIndex !== null && siblingIndex < index
+      && (!SIBLING_DONE_STATES.has(sibling.status) || deps.activeTicketIds.has(sibling.ticketId));
+  });
+  if (!waitingOn) return false;
+  logger.info(
+    { ticketId: ticket.ticketId, parentTicketId: ticket.parentTicketId, subtaskIndex: index, waitingOn: waitingOn.ticketId, waitingOnStatus: waitingOn.status },
+    'Child ticket waits for an earlier sibling - siblings run one at a time in planning order',
+  );
+  return true;
+}
+
+/**
+ * @description A ticket's 1-based planning order, from its metadata.
+ * @param metadata - Ticket metadata.
+ * @returns The subtask index, or null when absent or invalid.
+ */
+function readSubtaskIndex(metadata: unknown): number | null {
+  const value = Number((metadata as Record<string, unknown> | null | undefined)?.subtaskIndex);
+  return Number.isInteger(value) && value >= 1 ? value : null;
 }
 
 /**

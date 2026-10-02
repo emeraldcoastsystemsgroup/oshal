@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Targeted consensus-review delivery onto per-agent direct mesh channels instead of the shared execution stream
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | WS3: Add ensureReviewWorkItem() — durable work item row created before dispatch so swarm-agent-worker can persist reviewer verdicts (mirrors swarm-verification-service pattern)
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | While delegation signing is configured, a reviewer round skips the unsigned mesh publish (every node refuses it, and the controller then waited 600 s for the same structural verdict) and returns the structural verdict immediately.
  */
 
 import { randomUUID } from 'crypto';
@@ -60,6 +61,11 @@ export interface ConsensusReviewDeps {
   meshTransport?: MeshTransport;
   workItemRepository?: WorkItemRepository;
   handoverManager?: RALFHandoverManager;
+  /**
+   * True while controller delegation signing is configured. Every node refuses an unsigned mesh
+   * envelope then, so a reviewer round is skipped and its structural verdict is used at once.
+   */
+  isDelegationEnforced?: () => boolean;
 }
 
 /**
@@ -84,12 +90,14 @@ export class ConsensusReviewService {
   private readonly meshTransport?: MeshTransport;
   private readonly workItemRepository?: WorkItemRepository;
   private readonly handoverManager: RALFHandoverManager;
+  private readonly isDelegationEnforced: () => boolean;
   private readonly roundOrchestrator = new PhaseRoundOrchestrator();
 
   constructor(deps: ConsensusReviewDeps = {}) {
     this.meshTransport = deps.meshTransport;
     this.workItemRepository = deps.workItemRepository;
     this.handoverManager = deps.handoverManager ?? new RALFHandoverManager();
+    this.isDelegationEnforced = deps.isDelegationEnforced ?? (() => false);
   }
 
   /**
@@ -189,7 +197,7 @@ export class ConsensusReviewService {
     round: number,
     workspaceTaskId?: string,
   ): Promise<ReviewerVerdict> {
-    if (!this.meshTransport || !this.workItemRepository) {
+    if (!this.meshTransport || !this.workItemRepository || this.isDelegationEnforced()) {
       return this.buildStructuralVerdict(reviewer, round, executionVerification);
     }
 

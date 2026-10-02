@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Idle-timeout directive (adversarial-review follow-up): OUTPUT_MAX_WAIT_MS raised 30min→2h (env-tunable) so output-waiting never gives up before a bot's 60-min idle ceiling.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | CV-4: the handover read uses the WORKSPACE task id, not the ticket id. readAgentHandover(agentId, workspaceTaskId) names its second parameter explicitly and both call sites passed ticketId, so wherever the two differ the read looked in a directory the handover was never written to and reported a missing handover for a round that wrote one. It is the change that makes the coverage check capable of passing at all; without it the signal was noise. Falls back to ticketId when no workspace id was threaded through, which is the pre-existing behaviour.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | Build-lane planning runs in-process (docs/security/http-delegation.md). A LocalRoundExecutor installed with setLocalRoundExecutor runs the rounds it handles in the controller process: the round's work item is marked assigned, the result comes back from memory and is stored on the item (completed, or failed as {status:'failed', error}), and nothing is published or polled. While isDelegationEnforced() is true, a round no local executor handles is skipped (no work item, no publish) and the phase keeps the previous round's output. executePhaseWithRounds takes the root's owner (RoundOwner). The round loop and executeOneRound were split into helpers to stay under 50 lines; the mesh path is unchanged.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -20,12 +21,14 @@ import { taskSubdirs } from '@/shared/workspace-task-dirs';
 import {
   PhaseRoundOrchestrator,
   type RoundAssignment,
+  type RoundEntry,
 } from './phase-round-orchestrator';
 import type { MeshEnvelope, MeshCommunicationService } from '@/features/agent-management';
 import type { WorkItemRepository } from '@/entities/work-item';
 import type { RALFHandoverManager } from './ralf-handover-manager';
 import type { DecomposedWorkUnit } from './ticket-decomposition-service';
 import type { SwarmCyclePolicy } from './swarm-cycle-policy';
+import type { EnvelopeExecutionResult } from './swarm-agent-worker';
 import { buildExecutionEnvelope, sleep } from './swarm-ticket-processing-support';
 import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
@@ -72,6 +75,8 @@ export interface RoundExecutionResult {
   output: unknown;
   handoverValidated: boolean;
   durationMs: number;
+  /** True when the round ran in the controller process through the local round executor. */
+  executedInProcess?: boolean;
 }
 
 /**
@@ -83,6 +88,29 @@ export interface PhaseDispatchResult {
   finalOutput: unknown;
   allRoundsComplete: boolean;
   allHandoversPresent: boolean;
+}
+
+/**
+ * @description The owner a round runs for, read from the queued root ticket. Both values come from
+ * persisted, server-written ticket fields and never from a request body.
+ */
+export interface RoundOwner {
+  /** The root ticket's owner subject, or null for an ownerless ticket. */
+  ownerSub: string | null;
+  /** The verified issuer persisted with the ticket (`oshalOwnerPrincipalIssuer`), or null. */
+  principalIssuer: string | null;
+}
+
+/**
+ * @description Runs a round in the controller process instead of publishing it to the mesh. The one
+ * implementation is build-lane planning (docs/security/http-delegation.md, "Build-lane planning runs
+ * in-process").
+ */
+export interface LocalRoundExecutor {
+  /** True when this executor owns rounds addressed to the agent. */
+  handles(agentId: string): boolean;
+  /** Runs the round envelope for the owner and returns its execution result. */
+  execute(envelope: MeshEnvelope, owner: RoundOwner): Promise<EnvelopeExecutionResult>;
 }
 
 /**
@@ -119,7 +147,30 @@ export interface MultiRoundDispatchDeps {
   handoverManager?: RALFHandoverManager;
   selectAgent: AgentSelectorFn;
   recordAgentAssignment?: RecordAgentAssignmentFn;
+  /**
+   * True while controller delegation signing is configured. Every bot node refuses an unsigned mesh
+   * execution then, so a round no local executor handles is skipped instead of published.
+   */
+  isDelegationEnforced?: () => boolean;
 }
+
+/** One round's inputs, threaded through the round helpers. */
+interface RoundArgs {
+  runId: string;
+  ticketId: string;
+  phase: number;
+  round: number;
+  agentId: string;
+  role: string;
+  workUnits: DecomposedWorkUnit[];
+  previousOutput: unknown;
+  policy: SwarmCyclePolicy;
+  workspaceTaskId?: string;
+  owner?: RoundOwner;
+}
+
+/** The inputs every round of one phase shares. */
+type PhaseArgs = Omit<RoundArgs, 'round' | 'agentId' | 'role' | 'previousOutput'>;
 
 /**
  * @description Orchestrates multi-round dispatch within each phase using PhaseRoundOrchestrator.
@@ -136,6 +187,8 @@ export class MultiRoundDispatchService {
   private readonly handoverManager?: RALFHandoverManager;
   private readonly selectAgent: AgentSelectorFn;
   private readonly recordAgentAssignment?: RecordAgentAssignmentFn;
+  private readonly isDelegationEnforced: () => boolean;
+  private localRoundExecutor?: LocalRoundExecutor;
 
   /**
    * @description Wire the service to its collaborators, retaining the mesh transport,
@@ -148,6 +201,17 @@ export class MultiRoundDispatchService {
     this.handoverManager = deps.handoverManager;
     this.selectAgent = deps.selectAgent;
     this.recordAgentAssignment = deps.recordAgentAssignment;
+    this.isDelegationEnforced = deps.isDelegationEnforced ?? (() => false);
+  }
+
+  /**
+   * @description Installs the executor that runs some rounds in the controller process. Set once at
+   * composition, after the controller worker's handler deps exist.
+   * @param executor - The local round executor, or undefined to route every round over the mesh.
+   * @returns Nothing.
+   */
+  setLocalRoundExecutor(executor: LocalRoundExecutor | undefined): void {
+    this.localRoundExecutor = executor;
   }
 
   /**
@@ -161,6 +225,8 @@ export class MultiRoundDispatchService {
    * @param workUnits - Work units to dispatch
    * @param primaryAgentId - Pre-selected primary agent (from routing)
    * @param policy - Cycle policy for timeouts
+   * @param workspaceTaskId - Shared workspace folder id (defaults to the ticket id)
+   * @param owner - The root ticket's owner and verified issuer, for a round run in-process
    * @returns Phase dispatch result with per-round outputs
    */
   async executePhaseWithRounds(
@@ -171,10 +237,12 @@ export class MultiRoundDispatchService {
     primaryAgentId: string,
     policy: SwarmCyclePolicy,
     workspaceTaskId?: string,
+    owner?: RoundOwner,
   ): Promise<PhaseDispatchResult> {
     const phaseRoles = PHASE_ROLE_MAP[phase];
+    const phaseArgs: PhaseArgs = { runId, ticketId, phase, workUnits, policy, workspaceTaskId, owner };
     if (!phaseRoles) {
-      return this.executeSingleRound(runId, ticketId, phase, workUnits, primaryAgentId, policy, workspaceTaskId);
+      return this.executeSingleRound(phaseArgs, primaryAgentId);
     }
 
     const reviewerAgentId = await this.resolveReviewerAgent(
@@ -192,56 +260,7 @@ export class MultiRoundDispatchService {
       'Multi-round phase initialized',
     );
 
-    const rounds: RoundExecutionResult[] = [];
-    let finalOutput: unknown = undefined;
-    let allComplete = false;
-
-    for (let roundIdx = 0; roundIdx < assignments.length; roundIdx++) {
-      const currentAgent = this.orchestrator.getCurrentRoundAgent(ticketId, phase);
-      if (!currentAgent) {
-        logger.warn({ ticketId, phase, roundIdx }, 'No current round agent — breaking');
-        break;
-      }
-
-      const roundResult = await this.executeOneRound(
-        runId, ticketId, phase, currentAgent.round,
-        currentAgent.agentId, currentAgent.role,
-        workUnits, finalOutput, policy, workspaceTaskId,
-      );
-      rounds.push(roundResult);
-      finalOutput = roundResult.output;
-
-      // Detect failed execution output — cline exit code 1 or agent error
-      const outputIsFailure = finalOutput != null
-        && typeof finalOutput === 'object'
-        && (finalOutput as Record<string, unknown>).status === 'failed';
-      if (outputIsFailure) {
-        const failError = (finalOutput as Record<string, unknown>).error ?? 'unknown';
-        logger.error(
-          { ticketId, phase, round: currentAgent.round, agentId: currentAgent.agentId, error: failError },
-          'Round output indicates execution failure — aborting phase instead of advancing',
-        );
-        break;
-      }
-
-      const outputSummary = finalOutput == null
-        ? '(no output received — execution may have timed out)'
-        : typeof finalOutput === 'string' ? finalOutput.slice(0, 500) : JSON.stringify(finalOutput).slice(0, 500);
-      const completionResult = this.orchestrator.completeRound(
-        ticketId, phase, currentAgent.agentId,
-        outputSummary,
-      );
-
-      if (completionResult.action === 'PHASE_COMPLETE') {
-        allComplete = true;
-        break;
-      }
-      if (completionResult.action === 'FAILED') {
-        logger.error({ ticketId, phase, round: currentAgent.round }, 'Round failed — aborting phase');
-        break;
-      }
-    }
-
+    const { rounds, finalOutput, allComplete } = await this.runRounds(phaseArgs, assignments.length);
     this.orchestrator.clearState(ticketId, phase);
 
     const allHandoversPresent = rounds.every((r) => r.handoverValidated);
@@ -257,23 +276,101 @@ export class MultiRoundDispatchService {
   }
 
   /**
-   * @description Execute a single-round phase (for phases 1 and 7).
+   * @description Runs the initialized rounds in order. A skipped round ends the phase and leaves the
+   * previous round's output as the phase output.
+   * @param phaseArgs - The inputs every round of this phase shares.
+   * @param roundCount - How many rounds were initialized.
+   * @returns The rounds that ran, the final output, and whether the phase completed.
    */
-  private async executeSingleRound(
-    runId: string,
+  private async runRounds(
+    phaseArgs: PhaseArgs,
+    roundCount: number,
+  ): Promise<{ rounds: RoundExecutionResult[]; finalOutput: unknown; allComplete: boolean }> {
+    const { ticketId, phase } = phaseArgs;
+    const rounds: RoundExecutionResult[] = [];
+    let finalOutput: unknown = undefined;
+
+    for (let roundIdx = 0; roundIdx < roundCount; roundIdx++) {
+      const currentAgent = this.orchestrator.getCurrentRoundAgent(ticketId, phase);
+      if (!currentAgent) {
+        logger.warn({ ticketId, phase, roundIdx }, 'No current round agent — breaking');
+        break;
+      }
+
+      const roundResult = await this.executeOneRound({
+        ...phaseArgs,
+        round: currentAgent.round,
+        agentId: currentAgent.agentId,
+        role: currentAgent.role,
+        previousOutput: finalOutput,
+      });
+      if (!roundResult) break;
+      rounds.push(roundResult);
+      finalOutput = roundResult.output;
+
+      const next = this.advanceAfterRound(ticketId, phase, currentAgent, finalOutput);
+      if (next === 'complete') return { rounds, finalOutput, allComplete: true };
+      if (next === 'stop') break;
+    }
+    return { rounds, finalOutput, allComplete: false };
+  }
+
+  /**
+   * @description Decides what follows a finished round: the next round, phase completion, or a stop.
+   * @param ticketId - External ticket identifier.
+   * @param phase - Phase number.
+   * @param currentAgent - The round entry that just finished.
+   * @param finalOutput - That round's output.
+   * @returns 'next', 'complete' or 'stop'.
+   */
+  private advanceAfterRound(
     ticketId: string,
     phase: number,
-    workUnits: DecomposedWorkUnit[],
-    agentId: string,
-    policy: SwarmCyclePolicy,
-    workspaceTaskId?: string,
-  ): Promise<PhaseDispatchResult> {
-    const roundResult = await this.executeOneRound(
-      runId, ticketId, phase, 1, agentId, 'primary', workUnits, undefined, policy, workspaceTaskId,
+    currentAgent: RoundEntry,
+    finalOutput: unknown,
+  ): 'next' | 'complete' | 'stop' {
+    // Detect failed execution output — cline exit code 1 or agent error
+    if (isFailedRoundOutput(finalOutput)) {
+      const failError = (finalOutput as Record<string, unknown>).error ?? 'unknown';
+      logger.error(
+        { ticketId, phase, round: currentAgent.round, agentId: currentAgent.agentId, error: failError },
+        'Round output indicates execution failure — aborting phase instead of advancing',
+      );
+      return 'stop';
+    }
+
+    const outputSummary = finalOutput == null
+      ? '(no output received — execution may have timed out)'
+      : typeof finalOutput === 'string' ? finalOutput.slice(0, 500) : JSON.stringify(finalOutput).slice(0, 500);
+    const completionResult = this.orchestrator.completeRound(
+      ticketId, phase, currentAgent.agentId,
+      outputSummary,
     );
 
+    if (completionResult.action === 'PHASE_COMPLETE') return 'complete';
+    if (completionResult.action === 'FAILED') {
+      logger.error({ ticketId, phase, round: currentAgent.round }, 'Round failed — aborting phase');
+      return 'stop';
+    }
+    return 'next';
+  }
+
+  /**
+   * @description Execute a single-round phase (for phases 1 and 7).
+   * @param phaseArgs - The phase inputs.
+   * @param agentId - The agent that owns the round.
+   * @returns The phase result; empty when the round was skipped under signing.
+   */
+  private async executeSingleRound(phaseArgs: PhaseArgs, agentId: string): Promise<PhaseDispatchResult> {
+    const roundResult = await this.executeOneRound({
+      ...phaseArgs, round: 1, agentId, role: 'primary', previousOutput: undefined,
+    });
+    if (!roundResult) {
+      return { phase: phaseArgs.phase, rounds: [], finalOutput: undefined, allRoundsComplete: false, allHandoversPresent: true };
+    }
+
     return {
-      phase,
+      phase: phaseArgs.phase,
       rounds: [roundResult],
       finalOutput: roundResult.output,
       allRoundsComplete: true,
@@ -282,90 +379,209 @@ export class MultiRoundDispatchService {
   }
 
   /**
-   * @description Execute one round: dispatch envelope, await output, validate handover.
+   * @description Execute one round: run it in-process when a local executor owns the agent, otherwise
+   * dispatch the envelope over the mesh and await its output; then validate the handover. While
+   * signing is configured a round no local executor owns is skipped, because every bot node refuses
+   * an unsigned mesh execution.
+   * @param args - The round's inputs.
+   * @returns The round result, or null when the round was skipped.
    */
-  private async executeOneRound(
-    runId: string,
-    ticketId: string,
-    phase: number,
-    round: number,
-    agentId: string,
-    role: string,
-    workUnits: DecomposedWorkUnit[],
-    previousOutput: unknown,
-    policy: SwarmCyclePolicy,
-    workspaceTaskId?: string,
-  ): Promise<RoundExecutionResult> {
+  private async executeOneRound(args: RoundArgs): Promise<RoundExecutionResult | null> {
+    const { ticketId, phase, round, agentId, role } = args;
+    const local = this.localRoundExecutor?.handles(agentId) ? this.localRoundExecutor : undefined;
+    if (!local && this.isDelegationEnforced()) {
+      logger.warn(
+        { ticketId, phase, round, agentId, role },
+        'Round skipped: delegation signing forbids an unsigned mesh execution and no in-process executor owns this agent',
+      );
+      return null;
+    }
+
     const startedAt = Date.now();
     const roundContext = this.orchestrator.buildRoundContext(ticketId, phase);
-
     logger.info(
-      { ticketId, phase, round, agentId, role, workUnitCount: workUnits.length },
+      { ticketId, phase, round, agentId, role, workUnitCount: args.workUnits.length, inProcess: Boolean(local) },
       'Dispatching round',
     );
 
     // Each round gets a unique unitId so output polling can distinguish Round 1 from Round 2.
     // Without this, the poll finds Round 1's completed output before Round 2 even starts.
     const roundUnitId = `${ticketId}-phase-${phase}-round-${round}`;
-
     const envelope = this.buildRoundEnvelope(
-      runId, ticketId, phase, round, agentId, role, workUnits, previousOutput, roundContext, workspaceTaskId,
+      args.runId, ticketId, phase, round, agentId, role, args.workUnits, args.previousOutput, roundContext, args.workspaceTaskId,
     );
     // Inject roundUnitId into envelope so the worker stores output on the correct work item
     (envelope.payload as Record<string, unknown>).roundUnitId = roundUnitId;
 
-    // Dedup guard: skip creation if a pending/assigned/completed work item already exists for this round.
-    // Without this guard, every retry cycle adds a new duplicate row in the DB.
-    if (this.workItemRepository) {
-      try {
-        const existingItems = await this.workItemRepository.findByExternalIdAnyProvider(ticketId);
-        const matchingRoundItem = existingItems.find(
-          (wi) => (wi as { unitId?: string }).unitId === roundUnitId,
-        );
-        const alreadyExists = matchingRoundItem
-          && (matchingRoundItem.status === 'pending' || matchingRoundItem.status === 'assigned');
-        const alreadyCompleted = matchingRoundItem
-          && (matchingRoundItem.status === 'completed' || matchingRoundItem.status === 'failed');
-        if (alreadyCompleted) {
-          logger.info({ ticketId, phase, round, roundUnitId, status: matchingRoundItem.status }, 'Skipping work item creation — round already completed (dedup)');
-        } else if (alreadyExists) {
-          logger.info({ ticketId, phase, round, roundUnitId }, 'Skipping work item creation — existing pending/assigned item found (dedup)');
-        } else {
-          await this.workItemRepository.create({
-            swarmRunId: runId,
-            externalId: ticketId,
-            provider: 'direct',
-            unitId: roundUnitId,
-            title: `${PHASE_DISPLAY_NAMES[phase] ?? `Phase ${phase}`} Round ${round}: ${workUnits[0]?.title ?? ticketId}`,
-            description: workUnits[0]?.description ?? '',
-            labels: [],
-            acceptanceCriteria: [],
-            depth: 0,
-          });
-          logger.info({ ticketId, phase, round, roundUnitId }, 'Pre-created per-round work item for output tracking');
-        }
-      } catch (err) {
-        logger.warn({ ticketId, roundUnitId, err: (err as Error).message }, 'Failed to pre-create round work item');
+    const workItemId = await this.ensureRoundWorkItem(args, roundUnitId);
+    const output = local
+      ? await this.executeRoundInProcess(local, envelope, args, workItemId)
+      : await this.dispatchRoundOverMesh(envelope, args, roundUnitId);
+    const handoverValidated = this.resolveHandoverValidated(args);
+    const durationMs = Date.now() - startedAt;
+
+    logger.info(
+      { ticketId, phase, round, agentId, role, durationMs, handoverValidated, hasOutput: output !== undefined, inProcess: Boolean(local) },
+      'Round completed',
+    );
+
+    return { agentId, role, round, output, handoverValidated, durationMs, ...(local ? { executedInProcess: true } : {}) };
+  }
+
+  /**
+   * @description Pre-creates the round's work item for output tracking, unless one already exists.
+   * Dedup guard: skip creation if a pending/assigned/completed work item already exists for this round.
+   * Without this guard, every retry cycle adds a new duplicate row in the DB.
+   * @param args - The round's inputs.
+   * @param roundUnitId - The round's work-item unit id.
+   * @returns The round's work item id, or undefined without a repository or on a write failure.
+   */
+  private async ensureRoundWorkItem(args: RoundArgs, roundUnitId: string): Promise<string | undefined> {
+    if (!this.workItemRepository) return undefined;
+    const { runId, ticketId, phase, round, workUnits } = args;
+    try {
+      const existingItems = await this.workItemRepository.findByExternalIdAnyProvider(ticketId);
+      const matchingRoundItem = existingItems.find(
+        (wi) => (wi as { unitId?: string }).unitId === roundUnitId,
+      );
+      const alreadyExists = matchingRoundItem
+        && (matchingRoundItem.status === 'pending' || matchingRoundItem.status === 'assigned');
+      const alreadyCompleted = matchingRoundItem
+        && (matchingRoundItem.status === 'completed' || matchingRoundItem.status === 'failed');
+      if (alreadyCompleted) {
+        logger.info({ ticketId, phase, round, roundUnitId, status: matchingRoundItem.status }, 'Skipping work item creation — round already completed (dedup)');
+        return matchingRoundItem.workItemId;
       }
-    }
-
-    await this.meshService.send(envelope);
-
-    // Record every agent that touches this ticket
-    if (this.recordAgentAssignment) {
-      this.recordAgentAssignment(ticketId, agentId, role, `phase-${phase}`).catch((err) => {
-        logger.warn({ err: (err as Error).message, ticketId, agentId, role }, 'Failed to record agent assignment (non-fatal)');
+      if (alreadyExists) {
+        logger.info({ ticketId, phase, round, roundUnitId }, 'Skipping work item creation — existing pending/assigned item found (dedup)');
+        return matchingRoundItem.workItemId;
+      }
+      const created = await this.workItemRepository.create({
+        swarmRunId: runId,
+        externalId: ticketId,
+        provider: 'direct',
+        unitId: roundUnitId,
+        title: `${PHASE_DISPLAY_NAMES[phase] ?? `Phase ${phase}`} Round ${round}: ${workUnits[0]?.title ?? ticketId}`,
+        description: workUnits[0]?.description ?? '',
+        labels: [],
+        acceptanceCriteria: [],
+        depth: 0,
       });
+      logger.info({ ticketId, phase, round, roundUnitId }, 'Pre-created per-round work item for output tracking');
+      return created.workItemId;
+    } catch (err) {
+      logger.warn({ ticketId, roundUnitId, err: (err as Error).message }, 'Failed to pre-create round work item');
+      return undefined;
     }
+  }
 
-    const output = await this.awaitRoundOutput(ticketId, policy, roundUnitId);
+  /**
+   * @description Runs the round through the local executor and records the result on its work item.
+   * The output is returned from memory; a stored row is never read back to stand in for it.
+   * @param executor - The local round executor that owns the agent.
+   * @param envelope - The round envelope.
+   * @param args - The round's inputs.
+   * @param workItemId - The round's work item, when one exists.
+   * @returns The round output, or `{ status: 'failed', error }` when the run failed.
+   */
+  private async executeRoundInProcess(
+    executor: LocalRoundExecutor,
+    envelope: MeshEnvelope,
+    args: RoundArgs,
+    workItemId: string | undefined,
+  ): Promise<unknown> {
+    const owner: RoundOwner = args.owner ?? { ownerSub: null, principalIssuer: null };
+    await this.markRoundWorkItem(workItemId, 'assigned', args.agentId);
+    this.recordRoundAssignment(args);
+    if (owner.ownerSub) (envelope.payload as Record<string, unknown>).ownerSub = owner.ownerSub;
+
+    let result: EnvelopeExecutionResult;
+    try {
+      result = await executor.execute(envelope, owner);
+    } catch (err) {
+      logger.error({ err, ticketId: args.ticketId, phase: args.phase, round: args.round }, 'In-process round threw');
+      result = { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+    const persisted = result.success
+      ? result.output
+      : { status: 'failed', error: result.error ?? 'Unknown in-process round error', output: result.output ?? null };
+    await this.storeRoundOutput(workItemId, persisted, result.success, args.agentId);
+    return persisted;
+  }
+
+  /**
+   * @description Dispatches the round envelope over the mesh and waits for the worker's stored output.
+   * @param envelope - The round envelope.
+   * @param args - The round's inputs.
+   * @param roundUnitId - The round's work-item unit id.
+   * @returns The output the worker stored, or undefined on timeout.
+   */
+  private async dispatchRoundOverMesh(envelope: MeshEnvelope, args: RoundArgs, roundUnitId: string): Promise<unknown> {
+    await this.meshService.send(envelope);
+    this.recordRoundAssignment(args);
+    return this.awaitRoundOutput(args.ticketId, args.policy, roundUnitId);
+  }
+
+  /**
+   * @description Record every agent that touches this ticket. Fire-and-forget: a failure is logged.
+   * @param args - The round's inputs.
+   * @returns Nothing.
+   */
+  private recordRoundAssignment(args: RoundArgs): void {
+    if (!this.recordAgentAssignment) return;
+    const { ticketId, agentId, role, phase } = args;
+    this.recordAgentAssignment(ticketId, agentId, role, `phase-${phase}`).catch((err) => {
+      logger.warn({ err: (err as Error).message, ticketId, agentId, role }, 'Failed to record agent assignment (non-fatal)');
+    });
+  }
+
+  /**
+   * @description Sets the round work item's status; a write failure is logged, never thrown.
+   * @param workItemId - The round's work item, when one exists.
+   * @param status - The new status.
+   * @param agentId - The agent running the round.
+   * @returns Resolves once the write finished or failed.
+   */
+  private async markRoundWorkItem(workItemId: string | undefined, status: 'assigned', agentId: string): Promise<void> {
+    if (!workItemId || !this.workItemRepository) return;
+    try {
+      await this.workItemRepository.updateStatus(workItemId, status, agentId);
+    } catch (err) {
+      logger.error({ err, workItemId, status }, 'Failed to mark the in-process round work item');
+    }
+  }
+
+  /**
+   * @description Stores an in-process round's output and terminal status on its work item.
+   * @param workItemId - The round's work item, when one exists.
+   * @param output - The output to store.
+   * @param succeeded - Whether the run succeeded.
+   * @param agentId - The agent that ran the round.
+   * @returns Resolves once the writes finished or failed.
+   */
+  private async storeRoundOutput(workItemId: string | undefined, output: unknown, succeeded: boolean, agentId: string): Promise<void> {
+    if (!workItemId || !this.workItemRepository) return;
+    try {
+      await this.workItemRepository.setExecutionOutput(workItemId, output);
+      await this.workItemRepository.updateStatus(workItemId, succeeded ? 'completed' : 'failed', agentId);
+    } catch (err) {
+      logger.error({ err, workItemId }, 'Failed to store the in-process round output');
+    }
+  }
+
+  /**
+   * @description Validates the round's handover, strictly then relaxed.
+   * @param args - The round's inputs.
+   * @returns True when a handover for the round was found.
+   */
+  private resolveHandoverValidated(args: RoundArgs): boolean {
+    const { ticketId, phase, round, agentId } = args;
     // CV-4: readAgentHandover's second parameter is the WORKSPACE task id, and this passed the
     // ticket id. Where the two differ the read looked in a directory the handover was never
     // written to, so handoverValidated was false for reasons that had nothing to do with the
     // agent — which is what made the coverage check incapable of passing at all.
-    const handoverTaskId = workspaceTaskId ?? ticketId;
+    const handoverTaskId = args.workspaceTaskId ?? ticketId;
     let handoverValidated = this.validateHandover(handoverTaskId, agentId, phase, round);
-    const durationMs = Date.now() - startedAt;
 
     // Handover enforcement: if no handover found in root workspace developer-handovers/,
     // log a hard warning. The QM checks this and can return the ticket.
@@ -381,13 +597,7 @@ export class MultiRoundDispatchService {
         logger.info({ ticketId, phase, round }, 'Handover found on relaxed check');
       }
     }
-
-    logger.info(
-      { ticketId, phase, round, agentId, role, durationMs, handoverValidated, hasOutput: output !== undefined },
-      'Round completed',
-    );
-
-    return { agentId, role, round, output, handoverValidated, durationMs };
+    return handoverValidated;
   }
 
   /**
@@ -604,4 +814,15 @@ export class MultiRoundDispatchService {
       return fallback;
     }
   }
+}
+
+/**
+ * @description True for a round output that records a failed execution (`{ status: 'failed' }`).
+ * @param output - A round output.
+ * @returns Whether the output is a failure record.
+ */
+function isFailedRoundOutput(output: unknown): boolean {
+  return output != null
+    && typeof output === 'object'
+    && (output as Record<string, unknown>).status === 'failed';
 }

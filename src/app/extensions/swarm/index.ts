@@ -74,6 +74,10 @@
  * 67 | maintainer@emeraldcoastsystemsgroup.com | Give protected queued `bot-default` degradation an explicit hosted-only ladder mode so an unavailable or SEC-05-ineligible canonical CLI record can fall through without resolving the same marker again.
  * 68 | maintainer@emeraldcoastsystemsgroup.com | Gate the canonical runtime-params resolver on the first persisted provider-switch snapshot settlement so startup cannot stamp a registry fallback before the saved per-bot row loads.
  * 69 | maintainer@emeraldcoastsystemsgroup.com | The controller's own swarm worker wiring (execution handler deps, cost-linking ticket service, worker channels, ticket-terminal check, bid responder, SwarmAgentWorker) moved to ./controller-swarm-worker.ts because this file crossed 800 code lines. Pure move; behaviour unchanged.
+ * 70 | maintainer@emeraldcoastsystemsgroup.com | Build-lane planning runs in-process: MultiRoundDispatchService gets isDelegationEnforced (the controller signing configuration) and, once the controller worker's handler deps exist, the project-manager round executor (controller-pm-round-executor.ts).
+ * 71 | maintainer@emeraldcoastsystemsgroup.com | Wired the signed build-execution dispatcher (createSignedChildDispatcher) into the swarm processing service, so build execution crosses the signed bot-node hop as the ticket's owner while delegation signing is configured.
+ * 72 | maintainer@emeraldcoastsystemsgroup.com | Verification and consensus review get isDelegationEnforced: under signing they skip the unsigned mesh round every node refuses and use the structural result immediately.
+ * 73 | maintainer@emeraldcoastsystemsgroup.com | The build-lane planning executor is wired with the signed BotNodeClient and the push-on-dispatch resolver instead of the worker's handler deps: the round now crosses the signed hop to the configured planning node (OSHAL_PM_PLANNING_NODE), where the installed provider switch rows choose the engine, and no longer runs on a hosted connection inside the api.
  */
 
 import type { Pool } from 'pg';
@@ -119,6 +123,8 @@ import {
 } from '@/features/agent-management';
 import { resolveBotNodeEndpoint } from './resolve-bot-node-endpoint';
 import { createControllerSwarmWorker } from './controller-swarm-worker';
+import { createControllerPmRoundExecutor } from './controller-pm-round-executor';
+import { hasDelegationSigningConfiguration } from '@/shared/security/delegation-http-policy';
 import { RagService } from '@/features/rag';
 import { WorkflowRunHistoryStore } from '@/features/workflow-studio';
 import type { LLMService } from '@/features/llm-provider';
@@ -159,6 +165,7 @@ import {
   PhaseRoutingService,
   buildTaskCallOutResolver,
   PostgresSubtaskLifecycleStore,
+  createSignedChildDispatcher,
 } from '@/features/swarm-orchestration';
 import { ConfigSyncService } from '@/features/config-sync';
 import { TicketService, PostgresTicketStore, WorkspaceService, PostgresWorkspaceStore } from '@/features/ticketing';
@@ -403,6 +410,8 @@ export function createSwarmExtensionBindings(
   const verificationService = new SwarmVerificationService({
     meshTransport,
     workItemRepository,
+    // Under signing every node refuses an unsigned mesh round, so QA uses the structural result.
+    isDelegationEnforced: () => hasDelegationSigningConfiguration(process.env),
   });
 
   // Memory services — per-agent + shared swarm memory backed by ChromaDB via RagService
@@ -414,6 +423,7 @@ export function createSwarmExtensionBindings(
     meshTransport,
     workItemRepository,
     handoverManager: new RALFHandoverManager(),
+    isDelegationEnforced: () => hasDelegationSigningConfiguration(process.env),
   });
 
   // Operational intelligence — created early so competencyRanker can feed routing
@@ -468,6 +478,9 @@ export function createSwarmExtensionBindings(
     meshService: meshCommunicationService,
     workItemRepository,
     handoverManager: new RALFHandoverManager(),
+    // Under signing every node refuses unsigned mesh execution, so a round no in-process executor
+    // owns is skipped instead of published (docs/security/http-delegation.md).
+    isDelegationEnforced: () => hasDelegationSigningConfiguration(process.env),
     selectAgent: async (ticketId, phase, role, excludeAgentIds) => {
       const onlineResolver = runtimeRegistryService
         ? buildStatusAwareOnlineResolver(runtimeRegistryService, agentProfileRepository)
@@ -558,7 +571,7 @@ export function createSwarmExtensionBindings(
     workItemRepository,
   );
 
-  const { agentWorker, personaLayerStore } = createControllerSwarmWorker({
+  const { agentWorker, personaLayerStore, handlerDeps } = createControllerSwarmWorker({
     pool,
     getProvider,
     agentProfileRepository,
@@ -721,6 +734,20 @@ export function createSwarmExtensionBindings(
     }
   };
   const botNodeClient = new BotNodeClient(codexResolveEndpoint);
+  // Build-lane planning crosses the same signed hop to the configured planning node, whose engine
+  // the installed provider switch rows choose (docs/security/http-delegation.md, "Build-lane
+  // planning runs on a build-lane node").
+  multiRoundDispatch.setLocalRoundExecutor(createControllerPmRoundExecutor({ botNodeClient, runtimeParamsResolver }));
+  // While signing is configured, build execution crosses the signed bot-node hop as the ticket's
+  // owner, only to the build-lane allowlist (docs/security/http-delegation.md, "Worker routing").
+  if (ticketService) {
+    swarmProcessingService.setSignedChildDispatch(createSignedChildDispatcher({
+      botNodeClient,
+      workItemRepository,
+      runtimeParamsResolver,
+      readTicketStatus: async (ticketId) => (await ticketService.getTicket(ticketId))?.status ?? null,
+    }));
+  }
 
   // Run-history recorder for the 'graph' dispatch path (studio Runs panel). Telemetry only —
   // every recorder method is non-throwing, so it can never gate or break a dispatch.

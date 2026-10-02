@@ -27,6 +27,9 @@
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | Exported SEC-05 prompt containment and authority-binding contracts.
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | Exported assertRunScopedEscalation so the ADR-163 run-scope refusal is reachable through the slice barrel rather than only from the store module
+ * 25 | maintainer@emeraldcoastsystemsgroup.com   | Exported RoundOwner and LocalRoundExecutor so the app layer can install the in-process build-lane planning executor on MultiRoundDispatchService.
+ * 26 | maintainer@emeraldcoastsystemsgroup.com   | Exported createSignedChildDispatcher, BUILD_EXECUTION_TARGETS and their types for the composition root.
+ * 27 | maintainer@emeraldcoastsystemsgroup.com   | Exported pushOnDispatchFields and DispatchConfigFields so the app layer's build-lane planning dispatch carries the same push-on-dispatch fields as every other signed dispatch.
  */
 
 export {
@@ -202,7 +205,19 @@ export {
   type AgentSelectorFn,
   type PhaseDispatchResult,
   type RoundExecutionResult,
+  type RoundOwner,
+  type LocalRoundExecutor,
 } from './multi-round-dispatch-service';
+export {
+  createSignedChildDispatcher,
+  BUILD_EXECUTION_TARGETS,
+  type SignedChildDispatcher,
+  type SignedChildDispatchDeps,
+  type SignedChildDispatchInput,
+} from './signed-child-dispatch';
+
+// Push-on-dispatch config fields, for the app layer's own signed dispatches (build-lane planning).
+export { pushOnDispatchFields } from './dispatch-manifest-worker';
 
 // Queue governance
 export {

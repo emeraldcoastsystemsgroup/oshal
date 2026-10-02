@@ -14,6 +14,8 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | The Create provider fixture advertises costConsentVersion 1, matching the required server-enforced cost-cap contract.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Require the handover words and exact index path in the host command, and prove the Lab ignores both api-environment inputs before any model turn.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | The registry gains the forge-edit case (explicit-only: it writes a tagged pack, deploys and edits it, and removes it).
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | The tickets-in-tickets card: its key in the registered order, its REGRESSION_TESTS on the card, and the Lab's new `files.dir` port listing a build root folder by name only, refusing an unknown probe and a non-UUID id.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | The Lab's named statements run under the owner's identity without operator rights, as the host runner's container helper runs them.
  */
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -23,6 +25,7 @@ import { describe, expect, it } from 'vitest';
 import { SCENARIOS, scenariosForRun, type ScenarioRunContext } from '@/app/routes/test-lab-scenarios';
 import { LIVE_ACCEPTANCE_SCENARIOS } from '@/app/routes/test-lab-live-acceptance-scenarios';
 import { LIVE_ACCEPTANCE_CASES, labPorts, runLiveAcceptanceCase } from '@/app/routes/test-lab-live-acceptance';
+import { getRequestIdentity, runWithRequestIdentity } from '@/shared/services/database/request-identity';
 import type { AppContext } from '@/app/composition/app-context';
 import { assertImageHttpPorts, type ImageHttpPorts } from '../fixtures/live-acceptance-http';
 
@@ -53,7 +56,48 @@ async function labFileProbe(ports: { files: { state: (n: string, id: string) => 
   }
 }
 
+/**
+ * @description The Lab's `files.dir` port against a real folder under a temporary workspace root.
+ * @param ports - The Lab ports.
+ * @param root - The workspace root the ports list under.
+ * @returns Resolves once the probe listed names, reported a missing folder and refused bad input.
+ */
+async function labDirProbe(ports: { files: { dir: (n: string, id: string) => Promise<{ path: string; exists: boolean; files: string[] }> } }, root: string): Promise<void> {
+  const id = '1b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e';
+  expect(await ports.files.dir('build.root', id)).toMatchObject({ exists: false, files: [] });
+  mkdirSync(path.join(root, id, 'deliverables', 'src'), { recursive: true });
+  writeFileSync(path.join(root, id, 'IMPLEMENTATION-PLAN.md'), 'plan');
+  writeFileSync(path.join(root, id, 'deliverables', 'src', 'slugify.ts'), 'code');
+  const listing = await ports.files.dir('build.root', id);
+  expect(listing).toMatchObject({ path: path.join(path.resolve(root), id), exists: true, files: ['IMPLEMENTATION-PLAN.md', 'deliverables/src/slugify.ts'] });
+  await expect(ports.files.dir('/etc', id)).rejects.toThrow('unknown live-acceptance directory probe');
+  await expect(ports.files.dir('build.root', '../escape')).rejects.toThrow('invalid id for directory probe');
+}
+
 describe('live-acceptance Test Lab cards', () => {
+  it('lists a build root folder by name only through the Lab files port, refusing paths and bad ids', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'lab-live-acceptance-dir-'));
+    const saved = process.env.OSHAL_WORKSPACE_ROOT;
+    process.env.OSHAL_WORKSPACE_ROOT = root;
+    try {
+      const ports = labPorts('sid=fixture', { ownerSub: 'fixture|lab-owner', issuer: 'https://issuer.example', apiBaseUrl: 'http://127.0.0.1:5000', ctx: {} as AppContext } as ScenarioRunContext);
+      await labDirProbe(ports as never, root);
+    } finally {
+      if (saved === undefined) delete process.env.OSHAL_WORKSPACE_ROOT; else process.env.OSHAL_WORKSPACE_ROOT = saved;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('lists the specs guarding each live seam on the tickets-in-tickets card', () => {
+    const card = LIVE_ACCEPTANCE_SCENARIOS.find((s) => s.id === 'live-acceptance-tickets-in-tickets');
+    const paths = (card?.regressionTests ?? []).map((t) => t.path);
+    for (const name of ['controller-pm-planning-node-postgres', 'planning-output-source', 'child-ticket-owner-inheritance-postgres',
+      'build-child-dispatch-gate', 'signed-swarm-child-dispatch', 'swarm-verification-enforced-fallback']) {
+      expect(paths).toContain(`tests/unit/${name}.spec.ts`);
+    }
+    expect(paths).toContain('tests/unit/live-acceptance-tickets-in-tickets.spec.ts');
+  });
+
   it('carries binary bodies and multipart image fields over real HTTP as the Lab caller', async () => {
     await assertImageHttpPorts(apiBaseUrl => labPorts('sid=fixture', {
       ownerSub: 'fixture|lab-owner', issuer: 'https://issuer.example', apiBaseUrl, ctx: {} as AppContext,
@@ -62,7 +106,7 @@ describe('live-acceptance Test Lab cards', () => {
 
   it('registers one explicit-only card per case, with its host command and suites on disk', () => {
     expect(LIVE_ACCEPTANCE_SCENARIOS).toHaveLength(LIVE_ACCEPTANCE_CASES.length);
-    expect(LIVE_ACCEPTANCE_CASES.map((c) => c.module.KEY)).toEqual(['response-renderer', 'congress', 'dev-workspace', 'floater', 'linkedin', 'commerce', 'lm-class-material', 'jarvis-cache', 'trading-parity', 'vids-publish', 'token-chase-replay', 'create-region-edit', 'forge-edit']);
+    expect(LIVE_ACCEPTANCE_CASES.map((c) => c.module.KEY)).toEqual(['response-renderer', 'congress', 'dev-workspace', 'floater', 'linkedin', 'commerce', 'lm-class-material', 'jarvis-cache', 'trading-parity', 'vids-publish', 'token-chase-replay', 'create-region-edit', 'forge-edit', 'tickets-in-tickets']);
     for (const scenario of LIVE_ACCEPTANCE_SCENARIOS) {
       const key = scenario.id.replace(/^live-acceptance-/, '');
       expect(SCENARIOS.filter((s) => s.id === scenario.id)).toEqual([scenario]);
@@ -144,12 +188,15 @@ describe('live-acceptance Test Lab cards', () => {
       return new Response('{}', { status: 404, headers: { 'content-type': 'application/json' } });
     }) as typeof fetch;
     const queries: string[] = [];
+    const identities: Array<{ sub: string | null; isOperator: boolean } | undefined> = [];
     const runtime = { ownerSub: 'fixture|lab-owner', issuer: 'https://issuer.example', apiBaseUrl: 'http://127.0.0.1:5000',
-      ctx: { pool: { query: async (text: string) => { queries.push(text); return { rows: [] }; } }, ticketService: { getTicket: async () => null, deleteTicket: async () => undefined } } as unknown as AppContext } as ScenarioRunContext;
+      ctx: { pool: { query: async (text: string) => { queries.push(text); identities.push(getRequestIdentity()); return { rows: [] }; } }, ticketService: { getTicket: async () => null, deleteTicket: async () => undefined } } as unknown as AppContext } as ScenarioRunContext;
     try {
       const ports = labPorts('sid=abc', runtime) as { sql: (n: string, p: unknown[]) => Promise<unknown>; browser?: unknown; logs?: unknown };
-      await ports.sql('linkedin.draft-residue', ['fixture|lab-owner', 't']);
+      // The Lab caller is an operator; the statements still run as the owner without operator rights.
+      await runWithRequestIdentity({ sub: 'fixture|lab-owner', isOperator: true }, () => ports.sql('linkedin.draft-residue', ['fixture|lab-owner', 't']));
       expect(queries[0]).toContain('FROM social_content_drafts WHERE user_sub = $1');
+      expect(identities[0]).toMatchObject({ sub: 'fixture|lab-owner', isOperator: false });
       expect(ports.browser).toBeUndefined();
       expect(ports.logs).toBeUndefined();
       const step = await runLiveAcceptanceCase('floater', 'sid=abc', runtime);

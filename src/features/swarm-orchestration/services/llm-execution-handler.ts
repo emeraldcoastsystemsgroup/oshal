@@ -40,6 +40,8 @@
  * 35 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 audit: preserve exact envelope subjects and bind memory retrieval to non-operator owner/tenant/workspace context.
  * 36 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. This is the SECOND chain in this file - step 1 converged the one that tells the bot where its workspace is (line ~1007) and left this one, which reads the handovers back out of it. The two disagreeing means a bot writes a handover the next round cannot find.
  * 37 | maintainer@emeraldcoastsystemsgroup.com   | Cost/metrics accounting (TokenCapturingProvider, the recorder types and helpers, the envelope owner/tenant readers, the ADR-027 ticket linker) moved to ./swarm-execution-accounting.ts and the filesystem persona layer to ./swarm-file-persona-layer.ts, because this file crossed 800 code lines. Pure move; the moved types and buildFilePersonaLayer are re-exported from here so no import changes.
+ * 38 | maintainer@emeraldcoastsystemsgroup.com   | LLMExecutionHandlerDeps.inlineFilePersona: the in-process hosted planning round (no file tools) gets its persona embedded instead of a read_file instruction it cannot obey. Default off; existing callers unchanged.
+ * 39 | maintainer@emeraldcoastsystemsgroup.com   | inlineFilePersona removed with the in-process hosted planning round it served; planning now crosses the signed hop to a node, which reads its persona file as every bot does.
  */
 
 import { createChildLogger } from '@/shared/logger';

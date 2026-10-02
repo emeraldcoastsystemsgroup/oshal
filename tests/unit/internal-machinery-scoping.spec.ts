@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | K7+K8 guard (BACKLOG kernel audit 2026-07-29). K7: the internal-machinery bots (build pipeline, QA, research, security triage, vault broker, remote-worker rail) shipped with NO accessRoles, and ADR-087's omitted=open made them live Jarvis / inbound-A2A call-out candidates with the shared workspace mounted rw — security-analyst's route was operator-gated while its IDENTITY was not, so a call-out reached it around the gate. This spec walks a NAMED machinery list and asserts, through the REAL roleCanAccess/isBotAccessibleTo functions, that every definition in BOTH registries declares valid roles that DENY the 'jarvis' caller — dropping a declaration or widening it goes red the same way the runtime would open up. The wave-2 CONSTRAINT is pinned as its own case: general-bot (the ADR-083 task-lane fallback) MUST keep 'jarvis' or every Jarvis task ticket strands. K8: the core-pinned remote-worker identities (apply-operator, linkedin-profile-operator — dispatched by browser-task-dispatch/profile-studio-dispatch) must exist in BOTH registries under one name, so a kernel filter or the default lineup can never silently drop an identity core code dispatches to.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | documentation-writer joins the machinery list: it takes requiresOwnNode for build-lane execution over the signed hop, and with an endpoint and no accessRoles it would have become a Jarvis task call-out candidate.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -24,6 +25,8 @@ const INTERNAL_MACHINERY = [
   'security-analyst', 'vault-bot',
   // K7/K8: desktop-driving remote-worker rail
   'apply-operator', 'linkedin-profile-operator',
+  // Build-lane execution over the signed hop: documentation-writer owns a node now (requiresOwnNode)
+  'documentation-writer',
 ] as const;
 
 /** Core-code-pinned identities that MUST resolve identically in both registries (K8). */
