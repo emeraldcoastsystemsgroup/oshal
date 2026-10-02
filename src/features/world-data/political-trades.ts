@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Preserve transaction dates by aggregating per ticker/day and writing dated metric points, so downstream watchlists can show the feed-backed disclosure date instead of the collector's observation time.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Key every point on the disclosure ReportDate and refuse a row without a real calendar ReportDate. Seq 2 used `TransactionDate || ReportDate`, so the day the Trading watchlist labels "disclosed" was the trade day, up to ~45 days before the trade became public. Each point now also records when the collector read the feed (observed_at), and a re-run writes only points whose value changed: the 6-hourly depth cycle re-read the whole 90-day window and appended an identical copy of every point each time.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The default feed is no longer keyless: on 2026-09-28 GET https://api.quiverquant.com/beta/live/congresstrading answered HTTP 401 {"detail":"Authentication credentials were not provided."} to this collector's exact request, and "Invalid token." once any Bearer credential was sent. Forward WORLD_POLITICAL_TOKEN as `Authorization: Bearer <token>`, log a 401/403 at ERROR as a refusal that names the setting (and whether one was configured), never the token, and report the feed outcome (ok / refused / failed / world-disabled) in the result so the depth-cycle line says what happened instead of "collected" with zero tickers.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | congressFeedTarget(): which feed a run reads and where (WORLD_POLITICAL_URL, else Quiver when WORLD_POLITICAL_TOKEN is set, else the free community mirror), shared by the fetch and the World sources screen. A whitespace-only token now counts as unset, as the request header already treated it. The module comment described the Quiver feed as the only source; it now describes all three and names the free feed's `filer_name` field, which the normalizer does not read yet (every free-feed row is stored with representative "Unknown"; BACKLOG "Political-trades (STOCK Act) signal").
  */
 
 /**
@@ -18,10 +19,13 @@
  * every point is keyed on the disclosure (report) day: that is the first day the information existed
  * publicly, so a series keyed on the trade day would claim knowledge weeks before anyone had it.
  *
- * Source: Quiver Quantitative's live congress-trading endpoint. It needs an API token
- * (WORLD_POLITICAL_TOKEN, sent as a Bearer credential): without one it answers HTTP 401, which is logged
- * as a refusal naming that setting. We aggregate recent disclosures per ticker and report day into
- * world_metrics (the miner auto-discovers them):
+ * Source, chosen per run by congressFeedTarget(): WORLD_POLITICAL_URL when set; otherwise Quiver
+ * Quantitative's live congress-trading endpoint when WORLD_POLITICAL_TOKEN is set (sent as a Bearer
+ * credential; a 401/403 is logged as a refusal naming that setting); otherwise a free community-maintained
+ * mirror of the House and Senate STOCK Act filings. Rows keep the `quiver-congress` source label on every
+ * path. The free mirror names the member in `filer_name`, which the normalizer below does not read yet,
+ * so its rows are stored with representative "Unknown". We aggregate recent disclosures per ticker and
+ * report day into world_metrics (the miner auto-discovers them):
  *   congress_buys / congress_sells (counts), congress_net (buys−sells),
  *   congress_sentiment ((buys−sells)/total, [-1,1]), congress_notional (summed lower-bound $).
  * This collector is the only writer of that namespace: world contributions refuse `congress_*` facts and
@@ -305,6 +309,20 @@ function feedHeaders(token: string): Record<string, string> {
 }
 
 /**
+ * @description Which congress feed a run reads, and where: the WORLD_POLITICAL_URL override, else Quiver
+ * when a token is configured, else the free community mirror. Read at call time, like the fetch.
+ * @param env - Environment carrying WORLD_POLITICAL_URL / WORLD_POLITICAL_TOKEN.
+ * @returns The mode, the URL, and whether a token is configured (never the token).
+ */
+export function congressFeedTarget(env: NodeJS.ProcessEnv = process.env): { mode: 'custom' | 'quiver' | 'free'; url: string; tokenConfigured: boolean } {
+  const tokenConfigured = Boolean((env[TOKEN_SETTING] || '').trim());
+  if (env.WORLD_POLITICAL_URL) return { mode: 'custom', url: env.WORLD_POLITICAL_URL, tokenConfigured };
+  return tokenConfigured
+    ? { mode: 'quiver', url: DEFAULT_CONGRESS_URL, tokenConfigured }
+    : { mode: 'free', url: DEFAULT_FREE_CONGRESS_URL, tokenConfigured };
+}
+
+/**
  * @description Fetch the live disclosure feed. The URL, UA and credential are read at call time so an
  * operator override (WORLD_POLITICAL_URL / WORLD_POLITICAL_UA / WORLD_POLITICAL_TOKEN) applies to the
  * next run. A 401/403 means the credential is missing or rejected: it is logged at ERROR naming the
@@ -312,7 +330,7 @@ function feedHeaders(token: string): Record<string, string> {
  * @returns The rows (`ok`), or `refused` / `failed` with nothing to write.
  */
 async function fetchCongressTrades(): Promise<FeedRead> {
-  const url = process.env.WORLD_POLITICAL_URL || (process.env[TOKEN_SETTING] ? DEFAULT_CONGRESS_URL : DEFAULT_FREE_CONGRESS_URL);
+  const url = congressFeedTarget().url;
   const token = (process.env[TOKEN_SETTING] || '').trim();
   try {
     const res = await fetch(url, { headers: feedHeaders(token), signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });

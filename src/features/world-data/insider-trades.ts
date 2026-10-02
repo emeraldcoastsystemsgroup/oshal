@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — corporate insider (SEC Form 4) trade signal via openinsider, aggregated per ticker into world_metrics. The strongest informed-money tell: officers/directors trading their OWN company.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export INSIDER_URLS (the openinsider pages read, or the WORLD_INSIDER_URLS override) so the World sources screen names where this collector reads.
  */
 
 /**
@@ -26,7 +27,7 @@ const logger = createChildLogger({ module: 'insider-trades' });
 const INSIDER_UA = process.env.WORLD_INSIDER_UA
   || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
 /** openinsider pages to read (purchases + sales, ≥$25k). Override via WORLD_INSIDER_URLS (comma-sep). */
-const INSIDER_URLS = (process.env.WORLD_INSIDER_URLS
+export const INSIDER_URLS = (process.env.WORLD_INSIDER_URLS
   || 'http://openinsider.com/latest-insider-purchases-25k,http://openinsider.com/latest-insider-sales-25k')
   .split(',').map((s) => s.trim()).filter(Boolean);
 

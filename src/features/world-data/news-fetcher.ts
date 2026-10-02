@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | The classify backend is the platform's, not this module's (operator decision 2026-09-21, "the principle of one"): the in-process Claude Code / Codex CLI providers and the WORLD_CLASSIFY_PROVIDERS list are gone — SEC-05 refused every one of those chunks unattended, so no item had been model-classified since 2026-08-06 while ~55 warns per pulse said so. configureWorldClassify registers the backends the app layer resolves (the accountable bot rail on the swarm's configured provider, src/app/world-classify-provider.ts); with none registered analyzeBatch classifies by lexicon and warns once. classifier_model is stamped with the backend that scored the item (or `lexicon`), no longer a fixed model name on lexicon rows. A set WORLD_CLASSIFY_PROVIDERS is reported once as retired.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | The classify instruction says to use no tools and run nothing: on the bot rail the turn is host-tools-only, and a model that reaches for a tool anyway ends the chunk (lexicon) instead of looping.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | The classify budget gains a per-fire slice (WORLD_CLASSIFY_BUDGET_PER_PULSE, default 4) and beginClassifyPulse resets it: on the bot rail a call takes ~10 s, and on 2026-10-02 the first ticker pulse of the hour spent all 40 hourly calls and overran the scheduler's 240 s dispatch budget three times.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | ingestFeeds honours the operator's source switches (World sources screen): a switched-off feed is not fetched for any caller — the scheduled pulses and depth refresh, and an explicit ingest request — and appears in perSource as `skipped: 'switched-off'` so a caller can see why it got nothing from it.
  */
 
 /**
@@ -369,7 +370,7 @@ async function analyzeChunk(items: FeedItem[], subject: string, provider: Classi
 
 export interface FeedIngestResult {
   perSource: Array<{
-    source: string; category?: string; error?: string;
+    source: string; category?: string; error?: string; skipped?: 'switched-off';
     variants?: number; fetched?: number; unique?: number; newItems?: number; ingested: number;
   }>;
   usedLlm: boolean;
@@ -387,9 +388,14 @@ export async function ingestFeeds(
   sourceIds: string[] = DEFAULT_FEED_IDS,
   opts: { limit?: number; light?: boolean; ticker?: { symbol: string; name: string; lean?: boolean } } = {},
 ): Promise<FeedIngestResult> {
-  const sources = sourceIds.map(feedSource).filter((s): s is FeedSource => Boolean(s));
+  // The operator's switches (World sources screen) apply to every caller; a switched-off feed is
+  // reported, not silently dropped.
+  const switchedOff = await svc.sourceControl().switchedOff();
+  const sources = sourceIds.filter((id) => !switchedOff.has(id)).map(feedSource).filter((s): s is FeedSource => Boolean(s));
   const now = new Date().toISOString();
-  const perSource: FeedIngestResult['perSource'] = [];
+  const perSource: FeedIngestResult['perSource'] = sourceIds
+    .filter((id) => switchedOff.has(id))
+    .map((id) => ({ source: id, skipped: 'switched-off' as const, ingested: 0 }));
   let usedLlm = false;
 
   const subjectSlug = slugifyEntity(entityLabel);

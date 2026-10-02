@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Real-boundary guard for "the congress collector never runs in the world depth cycle". The depth fire (`app:world-world-refresh`, the store world manifest's `world-refresh` schedule) is dispatched through the real dispatchWorldSchedule, which calls the real collectPoliticalTrades, which reads a real local HTTP feed and writes a private TimescaleDB through the real world service. The subject sweep is held open (it never finishes until the spec releases it) — the shape of a sweep that an api restart ends: the collector must already have written observed congress_* rows by the time the first subject starts. Also proves the pulse never calls the flow collectors, a flag-disabled collector is logged at WARN on every depth fire, and one collector failing does not stop the congress collector or the sweep.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The feed credential across the same boundary. On 2026-09-28 the default congress feed answered HTTP 401 {"detail":"Authentication credentials were not provided."} to the collector's request, so a depth fire that reaches the collector can still write nothing. The local feed now answers exactly that when the configured credential is absent: the fire must log the refusal at ERROR naming WORLD_POLITICAL_TOKEN, report `feed: 'refused'` on the depth line, write no row and still run the sweep; with WORLD_POLITICAL_TOKEN set, the same fire sends it as a Bearer credential and writes.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The operator source switches (World sources screen) across the same real series store: a switched-off collector is skipped with a WARN naming it and recorded as skipped, then runs again once switched on; a .env-flag skip is recorded with the flag as reason; a pulse leaves out one switched-off firehose feed and the whole pass when the firehose is switched off (the firehose speed read and deep dive are recorders here, like the sweep); the real ingest step never fetches a switched-off feed and reports it skipped; and the inventory carries switch, last-24-hour pulls and last run, never an override's query string.
  */
 
 /**
@@ -13,11 +14,11 @@
  * runs). What is doubled, and why: the subject sweep's `ingestFeeds` (it pulls public news feeds and
  * classifies them — here it only records the subject and waits on a gate), the four sibling collectors
  * (market events, insider, short volume, gov contracts — each calls a public endpoint; they record the
- * order they ran in), the graph connector (no depth path touches it; it throws if one does), and the
+ * order they ran in), the firehose speed read and deep dive (they record which feeds a pulse handed them), the graph connector (no depth path touches it; it throws if one does), and the
  * logger (a recorder, so the skip/failure lines can be asserted).
  */
 
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { Pool } from 'pg';
@@ -70,11 +71,18 @@ vi.mock('@/features/world-data', async (importOriginal) => {
     collectInsiderTrades: sibling('insider trades', { tickers: 0, trades: 0 }),
     collectShortInterest: sibling('short interest', { day: null, tickers: 0 }),
     collectGovContracts: sibling('gov contracts', { tickers: 0, totalNotional: 0 }),
+    speedReadFirehose: async (_svc: unknown, feeds: Array<{ id: string }>) => {
+      h.events.push(`firehose:${feeds.map((f) => f.id).join(',')}`);
+      return { perFeed: [] };
+    },
+    deepDiveFirehose: async () => ({ deepened: 0 }),
   };
 });
 
 import { WorldIntelligenceService } from '@/features/world-data/world-intelligence-service';
 import { dispatchWorldSchedule, isTickerPulse, isWorldSchedule } from '@/app/world-schedule-dispatch';
+import { ingestFeeds as realIngestFeeds } from '@/features/world-data/news-fetcher';
+import { describeWorldSources, isWorldSourceId } from '@/features/world-data/world-source-inventory';
 
 const DAY_MS = 86_400_000;
 const daysAgo = (n: number): string => new Date(Date.now() - n * DAY_MS).toISOString().slice(0, 10);
@@ -247,4 +255,102 @@ describe('world depth fire → congress collector → world_metrics (real Timesc
     expect(await observedCongressRows(), 'MSFT: five new observed metrics').toBe(before + 5);
     expect(JSON.stringify(h.logs)).not.toContain(TOKEN);
   }, 120_000);
+});
+
+// ── operator source switches (World sources screen) ─────────────────────────────────────────────
+describe('operator source switches across the real series store', () => {
+  const touched = new Set<string>();
+  /** Switch a source through the same store the screen writes, remembering it for cleanup. */
+  const setSwitch = async (id: string, enabled: boolean): Promise<void> => {
+    touched.add(id);
+    await (h.svc as WorldIntelligenceService).sourceControl().setSwitch(id, enabled, 'fixture-operator-sub');
+  };
+  const control = () => (h.svc as WorldIntelligenceService).sourceControl();
+
+  afterEach(async () => {
+    for (const id of touched) await control().setSwitch(id, true, 'fixture-operator-sub');
+    touched.clear();
+    process.env.WORLD_FIREHOSE_ENABLED = 'false';
+    vi.unstubAllGlobals();
+  });
+
+  it('a switched-off collector is skipped with a WARN naming it, recorded as skipped, and runs again once switched back on', async () => {
+    await setSwitch('congress-trades', false);
+    await setSwitch('gov-contracts', false);
+    await expect(dispatchWorldSchedule(ctx, schedule(DEPTH_TASK))).resolves.toMatchObject({ success: true });
+    expect(h.events.slice(0, h.events.findIndex((e) => e.startsWith('sweep:')))).toEqual(['market events', 'insider trades', 'short interest']);
+    expect(logged('congress trades collector skipped — switched off on the World sources screen', 'warn')[0]?.obj).toMatchObject({ sourceId: 'congress-trades' });
+    expect(logged('gov contracts collector skipped — switched off on the World sources screen', 'warn')[0]?.obj).toMatchObject({ sourceId: 'gov-contracts' });
+    expect(logged('world refresh complete', 'info')[0]?.obj).toMatchObject({ switchedOff: ['congress-trades', 'gov-contracts'] });
+    const runs = new Map((await control().collectorRuns()).map((r) => [r.collector, r]));
+    expect(runs.get('congress-trades')).toMatchObject({ outcome: 'skipped', detail: { reason: 'switched off' } });
+    expect(runs.get('insider-trades')).toMatchObject({ outcome: 'ok' });
+
+    h.events.length = 0;
+    h.logs.length = 0;
+    await setSwitch('congress-trades', true);
+    await expect(dispatchWorldSchedule(ctx, schedule(DEPTH_TASK))).resolves.toMatchObject({ success: true });
+    expect(h.events).toContain('congress-feed');
+    expect((await control().collectorRuns()).find((r) => r.collector === 'congress-trades')).toMatchObject({ outcome: 'ok', detail: { feed: 'ok' } });
+  }, 120_000);
+
+  it('a collector a .env flag turned off is recorded as skipped with the flag as the reason', async () => {
+    process.env.WORLD_FLOW_ENABLED = 'false';
+    await expect(dispatchWorldSchedule(ctx, schedule(DEPTH_TASK))).resolves.toMatchObject({ success: true });
+    const runs = new Map((await control().collectorRuns()).map((r) => [r.collector, r]));
+    for (const id of ['congress-trades', 'insider-trades', 'short-interest', 'gov-contracts']) {
+      expect(runs.get(id), id).toMatchObject({ outcome: 'skipped', detail: { reason: 'WORLD_FLOW_ENABLED=false' } });
+    }
+  }, 120_000);
+
+  it('a pulse leaves out one switched-off firehose feed, and the whole pass when the firehose is switched off', async () => {
+    process.env.WORLD_FIREHOSE_ENABLED = 'true';
+    await setSwitch('fh-cnbc-top', false);
+    await expect(dispatchWorldSchedule(ctx, schedule(PULSE_TASK))).resolves.toMatchObject({ success: true });
+    const read = h.events.find((e) => e.startsWith('firehose:'));
+    expect(read).toBeDefined();
+    expect(read).not.toContain('fh-cnbc-top');
+    expect(read).toContain('fh-wsj-markets');
+
+    h.events.length = 0;
+    await setSwitch('firehose', false);
+    await expect(dispatchWorldSchedule(ctx, schedule(PULSE_TASK))).resolves.toMatchObject({ success: true });
+    expect(h.events.some((e) => e.startsWith('firehose:'))).toBe(false);
+  }, 180_000);
+
+  it('the ingest step does not fetch a switched-off feed for any caller and reports it as skipped', async () => {
+    const fetched: string[] = [];
+    vi.stubGlobal('fetch', async (url: string | URL) => {
+      fetched.push(String(url));
+      return new Response('<rss><channel></channel></rss>', { status: 200, headers: { 'content-type': 'application/rss+xml' } });
+    });
+    await setSwitch('google-news', false);
+    const result = await realIngestFeeds(h.svc as WorldIntelligenceService, 'grid storage', 'world:topic:grid-storage', 'Grid storage', ['google-news', 'bing-news'], { light: true });
+    expect(fetched.some((u) => u.includes('news.google.com'))).toBe(false);
+    expect(fetched.some((u) => u.includes('bing.com/news'))).toBe(true);
+    expect(result.perSource).toContainEqual({ source: 'google-news', skipped: 'switched-off', ingested: 0 });
+  }, 60_000);
+
+  it('the inventory shows each source with its switch, last-24-hour pulls and last run, and never an override query string', async () => {
+    const svc = h.svc as WorldIntelligenceService;
+    await svc.logPull({ entityId: 'world:topic:fixture', feedId: 'google-news', category: 'news', fetched: 7, uniqueItems: 7, newItems: 3, classified: 0, usedLlm: false, variants: [] } as never);
+    await setSwitch('reddit', false);
+    const saved = process.env.WORLD_POLITICAL_URL;
+    process.env.WORLD_POLITICAL_URL = 'https://feeds.example.test/congress.json?apikey=fixture-secret-value';
+    try {
+      const { sources } = await describeWorldSources(control());
+      const byId = new Map(sources.map((s) => [s.id, s]));
+      expect(byId.get('google-news')).toMatchObject({ kind: 'feed', switchedOn: true, pulling: true });
+      expect(byId.get('google-news')?.last24h).toMatchObject({ pulls: 1, fetched: 7, newItems: 3 });
+      expect(byId.get('reddit')).toMatchObject({ switchedOn: false, pulling: false, switch: { updatedBy: 'fixture-operator-sub' } });
+      expect(byId.get('yahoo-finance')?.urls[0]).toContain('{SYMBOL}');
+      expect(byId.get('firehose')).toMatchObject({ kind: 'firehose', gates: [{ name: 'WORLD_FIREHOSE_ENABLED', on: false }], configuredOn: false });
+      const congress = byId.get('congress-trades');
+      expect(congress?.urls).toEqual(['https://feeds.example.test/congress.json']);
+      expect(JSON.stringify(sources)).not.toContain('fixture-secret-value');
+      expect(isWorldSourceId('congress-trades') && isWorldSourceId('fh-bls') && !isWorldSourceId('not-a-source')).toBe(true);
+    } finally {
+      process.env.WORLD_POLITICAL_URL = saved;
+    }
+  }, 60_000);
 });

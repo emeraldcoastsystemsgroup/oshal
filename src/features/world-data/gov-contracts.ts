@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — federal contract-award signal (USAspending) per universe company into world_metrics. "Trade the names getting free money from the gov." First gov-contracting contributor to World Knowledge.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export USA_URL (the USAspending award search endpoint) so the World sources screen names where this collector reads.
  */
 
 /**
@@ -24,7 +25,8 @@ import { createChildLogger } from '@/shared/logger';
 
 const logger = createChildLogger({ module: 'gov-contracts' });
 
-const USA_URL = 'https://api.usaspending.gov/api/v2/search/spending_by_award/';
+/** USAspending's award search (POST, one request per universe ticker). */
+export const USA_URL = 'https://api.usaspending.gov/api/v2/search/spending_by_award/';
 /** Lookback window (days) over award action dates (default 180). */
 const GOV_DAYS = Math.max(30, Number(process.env.WORLD_GOV_DAYS) || 180);
 

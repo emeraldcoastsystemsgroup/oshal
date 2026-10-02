@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — FORWARD market-events calendar (vs the reactive event_* news tags): scheduled earnings (Nasdaq), FOMC meetings, jobs report. So the trading gate knows what's COMING (don't hold into earnings; expect FOMC/jobs volatility), not just what already broke.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export NASDAQ_EARNINGS_URL (the earnings calendar endpoint) so the World sources screen names where this collector reads.
  */
 
 /**
@@ -28,6 +29,8 @@ import { createChildLogger } from '@/shared/logger';
 const logger = createChildLogger({ module: 'market-events' });
 
 /** Nasdaq blocks the feeds UA; it serves the calendar JSON to a browser UA. Overridable. */
+/** The Nasdaq earnings calendar endpoint this collector reads (one request per day ahead, `?date=`). */
+export const NASDAQ_EARNINGS_URL = 'https://api.nasdaq.com/api/calendar/earnings';
 const NASDAQ_UA = process.env.WORLD_EARNINGS_UA || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)';
 /** How many days ahead to scan the earnings calendar (default 14). */
 const EARNINGS_LOOKAHEAD = Math.max(1, Number(process.env.WORLD_EARNINGS_DAYS) || 14);
@@ -76,7 +79,7 @@ async function fetchNasdaqEarnings(date: string): Promise<Set<string>> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 12_000);
   try {
-    const res = await fetch(`https://api.nasdaq.com/api/calendar/earnings?date=${date}`, {
+    const res = await fetch(`${NASDAQ_EARNINGS_URL}?date=${date}`, {
       headers: { 'User-Agent': NASDAQ_UA, Accept: 'application/json' }, signal: ctrl.signal,
     });
     if (!res.ok) return new Set();

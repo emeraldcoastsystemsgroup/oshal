@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the ingest half of oshal's own outlet ratings (operator decision 2026-09-22: the seed table is deleted). A real publisher feed served by a local HTTP server runs through the real speed-read and deep-dive engines with a capturing world service. Proves nothing stamps a rating at ingest: every archive row carries lean and reliability NULL, the outlet node written to the shared graph carries every retired rating prop as null (so a re-ingest clears the seeded numbers) and no number, and the publisher still resolves to the canonical id its history is stored under.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the classifier_model stamp, which changed with no test when the classify backend became the platform's: the stamp names what scored that item. A fake backend registered through the production configureWorldClassify scores one item of a chunk. The per-subject ingest (a registry news source, its request answered by the local feed) archives that item under the backend's name with usedLlm true and the item the backend left unscored as lexicon with usedLlm false; with no backend registered every row is lexicon; the deep dive hands markDeepened and its per-entity archive row the backend's name for the model-scored item, and markDeepened lexicon for the other. The recording world service keeps the markDeepened payloads for this. Red when the engine stamps one fixed model name on every row.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The service double answers sourceControl() with no switched-off sources, since ingestFeeds now reads the operator switches first.
  */
 
 /**
@@ -63,6 +64,9 @@ function recordingService(queue: Array<{ itemHash: string; title: string; descri
     recentUndeepened: async () => queue,
     markDeepened: async (itemHash: string, r: DeepenedRecord) => { deepened.set(itemHash, r); },
     ingest: async (c: WorldContribution) => { ingested.push(c); return { nodes: c.entities.length, edges: c.edges.length, facts: c.facts.length }; },
+    // No operator switches: every requested feed is pulled (the switches are proven on the real store in
+    // world-depth-collectors-postgres.spec.ts).
+    sourceControl: () => ({ switchedOff: async () => new Set<string>() }),
   } as unknown as WorldIntelligenceService;
   return { svc, archived, ingested, deepened };
 }

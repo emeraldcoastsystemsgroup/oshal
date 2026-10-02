@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Record when a feed point was observed: world_metrics gains a nullable observed_at column (added once, never back-stamped onto existing rows), writeMetric takes an optional observedAt, and writeMetricIfChanged appends a point only when the newest stored value for the same entity/metric/ts/source differs, so a collector re-reading the same disclosure window stops piling identical rows. latestMetricPoints breaks same-ts ties on observed_at and returns it. recentFeedMetricPoints is the bounded "which names did this feed disclose lately" read the Trading disclosure list needs. The congress_* namespace and the quiver-congress source are reserved: ingest() refuses them, and writeMetric only accepts them together.
  * 10 | maintainer@emeraldcoastsystemsgroup.com  | Read sentiment through oshal's OWN observed outlet ratings (operator decision 2026-09-22: the seed table is deleted, no external license). sentimentBreakdown and rollupFeatures take the rating set from one memoized reader (outlet-observations.ts) over the daily head, and outletRatings() exposes it. No schema change: the ratings are computed from the stored sentiment series on read.
  * 11 | maintainer@emeraldcoastsystemsgroup.com  | rollupFeatures was already over the 50-line function limit and entry 10 grew it by a line, so its attention, sentiment and catalyst reads move into three private helpers (rollupAttention, rollupSentiment, rollupEvents). Code motion only: the same statements, in the same order, under the same series-gate keys, and the same features written.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | sourceControl(): the operator source switches and collector run record (world-source-control.ts) on this service's series-store pool, one instance per pool.
  */
 
 /**
@@ -28,6 +29,7 @@
  */
 import { Pool } from 'pg';
 import { readWorldCoverage } from './world-coverage-read';
+import { worldSourceControl, type WorldSourceControl } from './world-source-control';
 import { createGraphConnector, type GraphConnector, type GraphNode, type GraphEdge } from '@/features/graph';
 import { createChildLogger } from '@/shared/logger';
 import { ownPoolConnectionErrors } from '@/shared/services/database';
@@ -160,6 +162,8 @@ export interface ArchivedItem {
 export class WorldIntelligenceService {
   /** Shared archive coverage only; unlike historical readers this never bootstraps a schema. */
   async coverageSnapshot(subjects?: readonly string[]) { return readWorldCoverage(this.tsdb, new Date(), subjects); }
+  /** The operator's source switches and the collector run record, on this service's series store. */
+  sourceControl(): WorldSourceControl { return worldSourceControl(this.tsdb); }
   private seriesReady = false;
   private archiveReady = false;
   private eventsReady = false;
