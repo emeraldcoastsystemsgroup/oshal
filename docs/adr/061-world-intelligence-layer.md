@@ -240,8 +240,10 @@ swarm service, so its classifier reasons the way every other swarm job does: eac
 direct turn through `executeBotOrInline` to a registered bot
 ([world-classify-provider.ts](../../src/app/world-classify-provider.ts)). The controller builds no
 model provider of its own; `news-fetcher.ts` calls only the backend the app layer registers (at boot,
-and from each world schedule fire while it is still unregistered). Locally tested; the live proof is
-owed at the next deploy ([real-boundary audit](../governance/real-boundary-regression-audit.md), guards
+and from each world schedule fire while it is still unregistered). Proven live 2026-10-02 15:10 UTC on
+image e7ed7abafd9d (main cb651516): 54 model-classified items stamped `swarm:general-bot` in the first
+nine minutes after boot, 54 with entities and 12 with a catalyst, 14 owned `chat_tasks` rows, no
+refusal warn ([real-boundary audit](../governance/real-boundary-regression-audit.md), guards
 `tests/unit/world-classify-swarm-rail.spec.ts` and `tests/unit/world-classify-delegation.spec.ts`).
 
 What one classify turn is:
