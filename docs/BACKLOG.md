@@ -34,9 +34,9 @@ from preparation or unit tests alone.
 | Status | Count | Meaning |
 |---|---|---|
 | IN PROGRESS | **0** | being worked in the current session |
-| OPEN — actionable | **21** | no decision, no live box needed; can be closed by an agent |
-| OPEN — needs operator | **69** | a decision, credential, account or purchase only the operator can make |
-| OPEN — needs live proof | **70** | needs the running box, a deploy, hardware, or a human at a browser |
+| OPEN — actionable | **16** | no decision, no live box needed; can be closed by an agent |
+| OPEN — needs operator | **70** | a decision, credential, account or purchase only the operator can make |
+| OPEN — needs live proof | **74** | needs the running box, a deploy, hardware, or a human at a browser |
 | OPEN — blocked | **8** | waiting on something outside this repo |
 | OPEN — needs review | **0** | the triage could not decide; somebody has to read it |
 | OPEN — untriaged | **0** | filed after the 2026-09-15 triage; has no verdict yet |
@@ -163,24 +163,16 @@ from preparation or unit tests alone.
 - **Done when:** both `package-test-sandbox.spec.ts` browser-profile/environment cases pass on the image; a Create browser recipe reaches a result in the installed Lab after deployment; and the batch path admits `browser` without stranding the existing `integration,unit` selector.
 
 ### Test Lab package runs cancel themselves when an all-package authority re-check runs past 5 s (2026-10-01)
-- **Status:** OPEN — actionable
-- **Remaining:** Resolve every run-path authority check for the run's own application only. Today none of them is scoped:
-  - **Interactive runs.** POST /runs, GET /runs/:id and cancel pass no app (`src/app/routes/test-lab-run-routes.ts:46-53`). In `src/app/routes/test-lab-run-service.ts`, `start`, `read`, `cancel`, the 2 s watch (`:85-107`) and `revalidate` (`:116`) reuse that unscoped context. `revalidate` also feeds the sandbox's 1 s `current()` (`installed-app-test-catalog.ts:324`).
-  - **Scheduled `*` batches.** They resolve unscoped too (`test-lab-schedule-service.ts:155`).
-
-  Each unscoped check walks every active manifest (`test-lab-wiring.ts:67-78`) and calls `effective()` for each of the 66 protected apps.
-  - **Cost.** Measured 2026-10-02 00:00 UTC, that is about 1,250 main-database transactions per resolution: 8,333 for three unscoped run reads, against 539 for three app-scoped reads and 930 idle.
-  - **Latency depends on load.** At VM load 5.5 a resolution takes 0.5-1.3 s. Under the 2026-10-01 evening load it took about 2 s alone and 3.6-4.2 s at 3-4 concurrent resolutions. App-scoped reads answered in 70-320 ms under both.
-  - **What a slow check does.** A timeout or throw counts as a denial. The run watch and the final revalidate cap a resolution at 5 s (`test-lab-run-service.ts:41`). The sandbox caps the lease pulse and the resolution together at 5 s (`package-test-execution.ts:44`). The run is aborted and its result is replaced with "Access or the installed test changed during execution. Output was withheld."
-
-  On 2026-10-01 this ended Little Monsters tutor-shared-renderer (run 51686d6e, which had passed three times on 09-29/09-30) and presentations brand-render (run 0bca0435):
-  - Neither had a cancel request: both kept a result, and both are `stale:false`.
-  - Unscoped resolutions were at or past the cap at the time; brand-render's two run reads answered 503 about 5.2 s after they arrived.
-  - Which check fired is not logged. Log the reason (which check, and timeout vs error vs denial) where it is swallowed: `test-lab-run-service.ts:82` and `:105`, and `package-test-execution.ts:45`.
+- **Status:** OPEN — needs live proof · code half merged (core #996, `a8ef355c`); awaits the box runs under the evening load after a deploy that carries it
+- **Implemented (core PR #996, merged as `a8ef355c` on 2026-10-02):** every run-path authority check (start, read, cancel, the 2 s watch, revalidation and the sandbox's 1 s pulse) decides only the run's own application. A read resolves the caller's identity first, then that run's app. Wildcard schedule batches resolve every app only for discovery. Refusals are logged with check, outcome (denied | timeout | error) and reason, in modules `test-lab-runs` and `package-test-execution`. The 5 s cap and every fail-closed outcome are unchanged.
+- **Local evidence (reproduced by the verifier):** `tests/unit/test-lab-run-history.spec.ts` gave 16/16 on the disposable PostgreSQL run store, and 7 failed | 9 passed on main source with the same 503 and `cancelled` shape. `test-lab-wiring` gave 5/5 and `test-lab-schedule-wiring` gave 8/8, each red on main source (2 failed each). The verifier's mutations went red: an own-app denial ignored, an own-app timeout treated as allowed, and a scoped resolution that walks every app. A cross-app check (not committed) showed a caller with access only to another app gets 404 on read and cancel, and only the run's app is decided.
+- **Remaining:** the box half only, after a deploy that carries `a8ef355c`, run under the evening load (career refresh chain and world pulse):
+  - `node scripts/operations/live-acceptance.js package-run` (new automated case, also the Lab card `live-acceptance-package-run`). Done when it prints PASS: the presentations `brand-render` run ends `passed` with executed tests, and every `GET /api/test-lab/runs/:id` answers 200 in under 1000 ms. presentations 2.13.0 or later must be installed, or the case reports UNAVAILABLE and writes nothing. Record the core image and the package version.
+  - `node scripts/operations/live-acceptance.js response-renderer`. Done when it prints PASS, with its Tutor half executing tests rather than ending degraded or cancelled.
 - **Done when:**
-  - **Regression case.** A new case in `tests/unit/test-lab-run-history.spec.ts` runs on the real Postgres run store (`tests/fixtures/test-lab-runs.ts`). Its resolver answers at once for the run's app and takes over 5 s without one. The slow behaviour is switched on after the run is admitted and held.
-    - With the fix: the held run finishes `passed` with output, `GET /runs/:id` answers 200 during the hold, and every in-flight authority call names the run's app.
-    - On a6de96c5 the same case is red: the run ends `cancelled` with output withheld, and reads during the hold answer 503.
+  - **Regression case (met, core #996 `a8ef355c`).** A new case in `tests/unit/test-lab-run-history.spec.ts` runs on the real Postgres run store (`tests/fixtures/test-lab-runs.ts`). Its resolver answers at once for the run's app and takes over 5 s without one. The slow behaviour is switched on after the run is admitted and held.
+    - With the fix: the held run finishes `passed` with output, `GET /runs/:id` answers 200 during the hold, and every in-flight authority call names the run's app. (Met: 16/16.)
+    - On a6de96c5 the same case is red: the run ends `cancelled` with output withheld, and reads during the hold answer 503. (Met: the touched source is byte-identical on a6de96c5 and a88a8a63; there it gave 7 failed, 503 after 5003 ms, run `cancelled`.)
   - **Live box**, while the evening career chain and world pulse are running:
     - `GET /api/test-lab/runs/:id` answers in under 1 s.
     - `node scripts/operations/live-acceptance.js response-renderer` passes its Tutor half.
@@ -1413,27 +1405,20 @@ from preparation or unit tests alone.
 - **Status:** OPEN — needs live proof
 
 - **Current evidence (2026-09-29):** core PR #943 (`71bba7ce`, merged as `2b40b1c7`) carries the trusted runtime-composed producing bot id through the real execution handler, task/controller and filesystem capture into replay. No envelope, payload or frame identity fallback was added. Focused guards pass 36/36; dropping the production identity or substituting the untrusted target each produces two failures. Provider/task/transport boundaries are explicitly doubled. Source/server checks, independent review and actual committed-HEAD pre-push pass; Test Lab registration and guidance are updated.
-- **Remaining:** #943 is deployed (first live with the `9188b020` deploy, 2026-10-01 03:17 UTC; deployed `a6de96c5` carries it). On 2026-10-01 (`a6de96c5`) `node scripts/operations/live-acceptance.js token-chase-replay` answered UNAVAILABLE: it picked `jarvis-deade9ca-f851-44ff-a0a9-9124f228f9c7`, captured on `c6cf0f94` before #943 went live, whose frames name no producing bot ("the producing bot (unknown) has no reachable bot node"; nothing written). That case defect is filed as "Token Chase replay acceptance picks a capture that names no producing bot". Left, after that fix: prove replay on the installed build: `node scripts/operations/live-acceptance.js token-chase-replay` answers PASS, and with `TOKEN_CHASE_OWNER_STORE_SNAPSHOT=on` on one bot node and a run captured there, the same command with `--expect-store-bound` answers PASS with the store version bound and reproduced. Neither installed acceptance run is claimed by the local tests.
+- **Remaining:** #943 is deployed (first live with the `9188b020` deploy, 2026-10-01 03:17 UTC; deployed `a6de96c5` carries it). On 2026-10-01 (`a6de96c5`) `node scripts/operations/live-acceptance.js token-chase-replay` answered UNAVAILABLE: it picked `jarvis-deade9ca-f851-44ff-a0a9-9124f228f9c7`, captured on `c6cf0f94` before #943 went live, whose frames name no producing bot ("the producing bot (unknown) has no reachable bot node"; nothing written). That case defect is filed as "Token Chase replay acceptance picks a capture that names no producing bot" and is fixed in core #992 (merged as `5a031384` on 2026-10-02, not yet deployed). Left, after #992 is deployed: prove replay on the installed build: `node scripts/operations/live-acceptance.js token-chase-replay` answers PASS, and with `TOKEN_CHASE_OWNER_STORE_SNAPSHOT=on` on one bot node and a run captured there, the same command with `--expect-store-bound` answers PASS with the store version bound and reproduced. Neither installed acceptance run is claimed by the local tests.
 - **Done when:** no-edit replay reproduces artifacts/store version, genuinely live reads are marked non-replayable, and replay always runs on an accountable bot node rather than the controller.
 
 ### Token Chase replay acceptance picks a capture that names no producing bot
-- **Status:** OPEN — actionable
-- **Remaining:** The `token-chase-replay` case (`scripts/lib/live-acceptance-token-chase-replay.js`) scans up to 30 captured runs newest first and uses the first question-tool run for the tail replay. `classifyRun` (line 130) never checks that the run's frames name the bot that produced them, although `readRun` reads `agentId` (line 157).
-  - On 2026-10-01 (core a6de96c5) the 12 newest captures named their bot but consumed no tool result.
-  - The scan therefore picked `jarvis-deade9ca-f851-44ff-a0a9-9124f228f9c7`. Its final checkpoint was written at 01:19:24Z on c6cf0f94, before #943 (71bba7ce) went live with the 9188b020 deploy at 03:17Z.
-  - All 3 of its frames have `agentId` null. The controller refused the tail (`token-chase-tail-replay-service.ts` lines 190-193), and the case answered UNAVAILABLE "the producing bot (unknown)".
-  - Having found a run, the case never started the tagged run it starts when no usable run is captured.
-  - The next run in the scan window (captured 10-01 00:20Z) is also an identity-less question-tool run.
-
-  **Fix:** `classifyRun` classifies a run in which any frame names no producing bot as `other`, with that reason. No backfill, as #943 requires.
-
-  **Guard:** a new case in `tests/unit/live-acceptance-token-chase-replay.spec.ts` whose newest question-tool run has frames with `agentId: null`. The doubled frame detail (line 120) hard-codes `agentId`, and the doubled tail route replays any run. So either give the double a per-run `agentId` and make its tail route refuse a start frame with no `agentId`, as the controller does, or capture the run in the real-lane section (`realDeployment`) with a turn that passes no `agentId`. It must go red on today's code.
+- **Status:** OPEN — needs live proof · code half merged (core #992, `5a031384`); awaits the box run after a deploy that carries it
+- **Remaining:** Core PR #992 (merged as `5a031384` on 2026-10-02) makes `classifyRun` classify a run any of whose frames names no producing bot as `other`, with the reason `frame <seq> names no producing bot, so no accountable bot node can replay the run`. The scan lists such a run in `evidence.skipped` and uses an older run that names its bot, or starts its own tagged run on oshal-assistant. No identity is backfilled, as #943 requires.
+  - **Guard:** the real-lane case in `tests/unit/live-acceptance-token-chase-replay.spec.ts`. The run is captured through the real loop with no `agentId`, read through the real read service, and its tail is refused by the real controller tail service. Red on the unchanged module: Tests 2 failed | 17 passed (19), with the live "(unknown)" verdict. Green: Tests 19 passed (19). The verifier reproduced both.
+  - **Left:** after a deploy that carries `5a031384`, run `node scripts/operations/live-acceptance.js token-chase-replay` from the core checkout on the box. Done when the detail does not contain "the producing bot (unknown)", and the evidence shows either a non-null `reproduced.agentId`, or a non-null `started` with cleanup outstanding 0. Captures from before #943 may appear in `evidence.skipped`.
 - **Done when:**
-  - In the spec, the identity-less run is listed in `evidence.skipped` with the no-identity reason.
-  - In the spec, the case posts its own tagged run to `/api/tasks/<tag>/messages` on oshal-assistant, removes it, and its detail never contains "producing bot (unknown)".
-  - The new spec case is red before the change and green after.
+  - In the spec, the identity-less run is listed in `evidence.skipped` with the no-identity reason. (Met, core #992 `5a031384`.)
+  - In the spec, the case posts its own tagged run to `/api/tasks/<tag>/messages` on oshal-assistant, removes it, and its detail never contains "producing bot (unknown)". (Met, core #992 `5a031384`.)
+  - The new spec case is red before the change and green after. (Met, core #992 `5a031384`: 2 failed on the unchanged module, 19/19 with the fix.)
   - On the box, `node scripts/operations/live-acceptance.js token-chase-replay` never reports "the producing bot (unknown)". Its evidence shows either a non-null `reproduced.agentId`, or a non-null `started` with cleanup outstanding 0.
-  - `evidence.skipped` keeps only its first 10 entries, so the skipped identity-less runs need not appear in the box output.
+  - `evidence.skipped` keeps only its first 10 entries, so the skipped identity-less runs need not appear in the box output. (Unchanged behaviour: `exercise()` slices `found.skipped` to 10.)
   - The PASS itself stays tracked under "Workspace-bound checkpoint and tail replay".
 
 ### Token Chase debugger
@@ -1492,34 +1477,30 @@ from preparation or unit tests alone.
 - **Status:** OPEN — needs operator
 
 - **Delivered (2026-09-28/30):** Worker migration merged with fail-closed schema validation and audit logging; controller provider shell-out is verified absent. Verified with unit specs (`tests/unit/career-rail-draft.spec.ts` 12/12, `tests/unit/career-rail-enforce-posture.spec.ts` 5/5).
-- **Remaining:** The two-user isolation and cost attribution proof needs the operator to supply a second real identity with its own provider access on the deployed box. The whole-workflow proof `node scripts/operations/career-rail-live-proof.js --complete` ran on the box on 2026-10-01 (core `a6de96c5`, career-hunter 1.27.0) and failed: "Run c203d69e-1266-4729-910d-cac6b29493bd was still running after 1800s (22 rail calls admitted); the proof cancelled it. CLEANUP INCOMPLETE". Diagnosed as a proof defect plus a package defect, filed as "Career rail `--complete` proof stops watching when its held POST drops (~300 s), and a cancelled career run leaves its Python engine running (2026-10-01)"; `--complete` passes only after both fixes. `--worker-loss --announced-window` has no box run on record ([real-boundary audit](governance/real-boundary-regression-audit.md), career rail rows).
+- **Remaining:** The two-user isolation and cost attribution proof needs the operator to supply a second real identity with its own provider access on the deployed box. The whole-workflow proof `node scripts/operations/career-rail-live-proof.js --complete` ran on the box on 2026-10-01 (core `a6de96c5`, career-hunter 1.27.0) and failed: "Run c203d69e-1266-4729-910d-cac6b29493bd was still running after 1800s (22 rail calls admitted); the proof cancelled it. CLEANUP INCOMPLETE". Diagnosed as a proof defect plus a package defect, filed as "Career rail `--complete` proof stops watching when its held POST drops (~300 s), and a cancelled career run leaves its Python engine running (2026-10-01)". Both fixes are merged: the proof half in core #993 (`a88a8a63`) and the engine-cancel half in store #405 (`e93bfd43`, career-hunter 1.27.1, not staged); `--complete` passes only once both are on the box and the box run prints PASS. `--worker-loss --announced-window` has no box run on record ([real-boundary audit](governance/real-boundary-regression-audit.md), career rail rows).
 - **Done when:** a real Career bot-node completes the workflow, the controller performs no provider shell-out, worker loss terminates visibly, and two-user isolation/cost attribution pass. Track app ownership in [`career-hunter`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/career-hunter).
 
 ### Career rail `--complete` proof stops watching when its held POST drops (~300 s), and a cancelled career run leaves its Python engine running (2026-10-01)
-- **Status:** OPEN — actionable
+- **Status:** OPEN — needs live proof · both fixes merged (core #993 `a88a8a63`, store #405 `e93bfd43`); awaits career-hunter 1.27.1 staged, a core deploy and the box run
 
-- **Remaining:** Two fixes, then one live run.
-  1. **Core, `scripts/operations/career-rail-live-proof.js`.** `observeRun` stops watching when the held-open `POST /api/career-hunter/run/score` settles, and that route answers only when the engine run ends.
-     - The proof's in-container `fetch` (Node 20.20.2, bundled undici 6.24.1) drops a request that has had no response headers once undici's default 300 s `headersTimeout` expires. That gives status 0.
-     - undici counts that timeout in 499 ms timer ticks, so the drop comes after more than 300 s of wall time. A replica in the same container on 2026-10-01 dropped at 308.5 s with `UND_ERR_HEADERS_TIMEOUT`.
-     - On 2026-10-01 the drop hit run c203d69e 311–314 s in, while the run was still going. The proof then printed its budget ("still running after 1800s") instead of the elapsed time.
-     - Fix: keep polling `GET /runs` until the run is terminal or the budget is spent, record a status-0 POST as a dropped transport, and print the measured time.
-  2. **Store, career-hunter 1.27.0.** On Linux, `bin/oshal-jobhunter.js` starts Python with `detached: true`, which gives it its own session and process group.
-     - Cancel, the runner deadline and the lease-loss fence send `process.kill(-wrapperPid, 'SIGKILL')`, which reaches only the wrapper.
-     - Run c203d69e's engine survived the 23:02:24Z cancel and sent 7 more rail requests, all refused `rail_grant_revoked`.
-     - Because the engine held the inherited stdout/stderr pipes, the run stayed `running` until the engine exited at 23:04:26.959Z. Until then it held the owner's `user-store` and the `global:corpus-write` slots.
-     - That engine is still a zombie under the api's node PID 1.
-     - Fix: keep Python in the wrapper's process group when the wrapper runs under the runner's adopted lease.
+- **Remaining:** Both fixes are merged; one deploy and one live run are left.
+  1. **Core, `scripts/operations/career-rail-live-proof.js`: DONE in core PR #993 (merged as `a88a8a63` on 2026-10-02).** On 2026-10-01 the proof's in-container `fetch` (undici's default 300 s `headersTimeout`) dropped the held-open `POST /api/career-hunter/run/score` 311–314 s into run c203d69e, and `observeRun` stopped watching. Now `observeRun` records a rejected POST as a dropped transport (`routeStatus` 0, `postDropped {afterMs, code, error}`) and keeps polling `GET /runs` until the run is terminal or the budget is spent. Every verdict on an observed run states the measured time by which the run had ended (`elapsedMs`), and the timed-out verdict prints the measured time beside the budget. A real-transport spec case runs the proof's `bearerApi` against a loopback server with Node's dispatcher `headersTimeout` at 1 s and gets a real `UND_ERR_HEADERS_TIMEOUT`.
+  2. **Store, career-hunter: DONE in store PR #405 (merged as `e93bfd43` on 2026-10-02, career-hunter 1.27.1, not staged).** On 1.27.0, Python started with `detached: true`, so cancel, the runner deadline and the lease-loss fence reached only the wrapper; run c203d69e's engine survived the cancel and kept the run `running` and its slots held. As built: under the runner's adopted lease the engine runs inside the wrapper's process group whenever `/proc` proves the wrapper leads it, and the wrapper's own deadline and lease-loss fence kill the rest of its group and spare the wrapper (`lib/career-process-group.js`). Direct CLI runs are unchanged. No `authorization.yaml`, route or migration change.
   3. **Constraints on the live run.**
      - The manual `score` verb passes no `--limit` and no `--first-seen-days`, so it scores the owner's whole unscored in-lane backlog with keyword fit of 40 or more. That is not the 150 postings the proof's budget comment assumes.
      - `--complete` passes only if that whole run ends `succeeded` within the 1800 s budget. On 2026-10-01 the engine's first rail call came about 130 s after the run started, and 22 calls completed over the next 137 s.
      - A manual `score` also holds `global:corpus-write` and the owner's `user-store`. On 2026-10-01 that made the 18:00 CT evening chain's shared scrape return `ok:false` and the owner's per-user match fail.
      - The chain starts in the 18:00–18:14 CT cron window and stays in flight long after it: `GET /api/career-hunter/run/refresh` still answered `running: true` at 23:53 UTC (18:53 CT).
      - Start the proof only when that route answers `running: false`, and early enough that it ends before 18:00 CT. The host allows a `--complete` proof up to 56 min (`hostTimeoutMs`).
+     - The proof now enforces the first half: every mode exits 2 with nothing started unless `GET /api/career-hunter/run/refresh` answers `running: false` (core PR #993). Finishing before 18:00 CT is still chosen by whoever starts the run.
+  4. **Left (deploy window).**
+     - Stage career-hunter 1.27.1 from store main (`e93bfd43` or later). It carries no catalog revision. Done when the package loads active and `GET /api/career-hunter/runs` answers the operator.
+     - Deploy core main at or after `a88a8a63`.
+     - Then run `OSHAL_VERIFY_ENV_FILE=C:/Projects/oshal/.env OSHAL_VERIFY_API_CONTAINER=oshal-local-api node scripts/operations/career-rail-live-proof.js --complete`. Done when it prints "career-worker-rail-complete PASS" with no "CLEANUP INCOMPLETE". If the held POST drops again, the evidence shows `postDropped` with the undici code and the verdict still rests on `GET /runs`.
 
 - **Done when:**
-  - A case in `tests/unit/career-rail-live-proof.spec.ts` rejects the POST with status 0 mid-run while the run later ends `succeeded`. The proof passes and reports elapsed time. This case is red today.
-  - A Linux career-hunter test launches the real wrapper through the runner with a stand-in engine and cancels the run. Within 5 s the stand-in has exited and the run is `cancelled`. The test reads the stand-in's `/proc` state, not `kill(pid, 0)`, because an orphan stays a zombie where node is PID 1. This test is red today.
+  - A case in `tests/unit/career-rail-live-proof.spec.ts` rejects the POST with status 0 mid-run while the run later ends `succeeded`. The proof passes and reports elapsed time. This case is red today. (Met, core #993 `a88a8a63`: red on the unchanged proof with "was still running after 1800s (23 rail calls admitted)"; green at Tests 43 passed (43); reproduced by the verifier.)
+  - A Linux career-hunter test launches the real wrapper through the runner with a stand-in engine and cancels the run. Within 5 s the stand-in has exited and the run is `cancelled`. The test reads the stand-in's `/proc` state, not `kill(pid, 0)`, because an orphan stays a zombie where node is PID 1. This test is red today. (Met, store #405 `e93bfd43`: `career-hunter/tests/career-cancel-engine-tree.test.mjs`, red on store main b715b129 with "engine 31: state S" and green 11/11 on the branch, both in a disposable Linux node container; it also covers the runner deadline and the lease-loss fence with the wrapper frozen; reproduced by the verifier.)
   - `node scripts/operations/career-rail-live-proof.js --complete` prints PASS on the box with no cleanup errors.
 
 ### Apply recipe runner and learned cache
@@ -1823,7 +1804,7 @@ from preparation or unit tests alone.
 ### Create visual workspace and integrated editing — active parallel track
 - **Status:** OPEN — needs live proof
 
-- **Current region-edit evidence (2026-09-29):** core [#936](https://github.com/emeraldcoastsystemsgroup/oshal/pull/936) is merged at `ecd409be`; reviewed provider-cost consent and bounded region-edit acceptance are on main. The paired store candidate `5552181f` is committed but not published: its canonical compilation and focused API/PostgreSQL/browser checks passed with a synthetic provider, while the strict whole-store publication gate remains outstanding. Promotion of that exact package, installed owner-bound UI/provider execution, accepted-canvas preservation and canonical accounting evidence remain required. These receipts do not close the advanced editor or claim a live image-provider run. On 2026-10-01 (core `a6de96c5`, Create 1.9.3 installed) `node scripts/operations/live-acceptance.js create-region-edit` answered UNAVAILABLE: "Create does not advertise costConsentVersion 1 ... Nothing was written." Landing the store half is filed as "Create region-edit cost consent: land Create 1.9.4 so live case create-region-edit can run".
+- **Current region-edit evidence (2026-09-29):** core [#936](https://github.com/emeraldcoastsystemsgroup/oshal/pull/936) is merged at `ecd409be`; reviewed provider-cost consent and bounded region-edit acceptance are on main. The paired store candidate `5552181f` is committed but not published: its canonical compilation and focused API/PostgreSQL/browser checks passed with a synthetic provider, while the strict whole-store publication gate remains outstanding. Promotion of that exact package, installed owner-bound UI/provider execution, accepted-canvas preservation and canonical accounting evidence remain required. These receipts do not close the advanced editor or claim a live image-provider run. On 2026-10-01 (core `a6de96c5`, Create 1.9.3 installed) `node scripts/operations/live-acceptance.js create-region-edit` answered UNAVAILABLE: "Create does not advertise costConsentVersion 1 ... Nothing was written." Landing the store half is filed as "Create region-edit cost consent: land Create 1.9.4 so live case create-region-edit can run"; it merged as store #407 (`971169d5`, Create 1.9.4) on 2026-10-02 and is not staged.
 
 - **Current template release:** Create 1.6.0 at `54c1e789` delivers eight original editable image templates, real previews, filtering and safe new-project selection. The [release record](releases/create-templates-2026-09-13.md) records 37 new plus 93 retained local checks, 16 registered Lab cases, five installed runs totaling 58 checks, native standalone editing/export and strict preservation. A recovered origin stall remains separate. The [Create product brief](https://github.com/emeraldcoastsystemsgroup/oshal-applications/blob/feat/package-test-catalog-pilots/create/PRODUCT.md) defines the requested “Canva but better” direction. The parallel [Video editor plan](https://github.com/emeraldcoastsystemsgroup/oshal-applications/blob/feat/package-test-catalog-pilots/video/EDITOR-PLAN.md) has an isolated FFmpeg trim/join/title/audio proof; the timeline UI, persistence and export-job workflow remain open.
 - **Requested:** Canva-style page layout and a shared generate, manually edit, point/annotate, regenerate and edit-again workflow. Basic image text/crop/filters and video trim/splice/audio come before advanced layers and professional editing depth.
@@ -1833,22 +1814,23 @@ from preparation or unit tests alone.
 - **Done when:** each remaining phase works through the installed Create entry, preserves edits and accepted revisions, exports real media, and registers meaningful tests in AI Test Lab. The delivered manual image slice does not close the full advanced-editor roadmap.
 
 ### Create region-edit cost consent: land Create 1.9.4 so live case create-region-edit can run
-- **Status:** OPEN — actionable
+- **Status:** OPEN — needs operator · store half merged (store #407, `971169d5`, Create 1.9.4); awaits staging, a provider choice and the box run
 - **Remaining:**
-  1. Store: rebase the unpushed local commit `5552181f` onto store main. It is on branch `codex/create-region-provider-consent` in the scratchpad lane clone `career-rail-complete-store`, based on `fec688f4`. `git merge-tree --trivial-merge` against main shows no conflicts.
+  1. Store: DONE as store PR #407 (merged as `971169d5` on 2026-10-02). It cherry-picks `5552181f` onto store main `613c2ad1`, with no `authorization.yaml` change.
      - What it changes: it bumps Create to 1.9.4, and `GET /api/create/region-edit-provider` gains `costConsentVersion: 1`. `POST .../region-edits` accepts an optional `maxCostClass` (`free` | `paid`), and a malformed value answers 400 `invalid_region_cost_cap`. The cap is checked against the provider resolved after queueing. A refusal reads back as edit `failed` / `region_edit_cost_cap_exceeded`; the POST itself still answers 202.
-     - Tests: its code and tests already passed on 2026-09-29 on identical code (compiled HTTP 7/7, real PostgreSQL 22/22, Chromium 6/6, synthetic provider; recorded in core PR #936). Re-run those three suites on the rebased head by hand: `create/tests/region-edit-api.test.mjs`, `create/tests/region-edit-postgres.test.mjs` and `create/tests/browser/create-region-edit-proof.mjs`. Store CI's create job runs only `tests/*.test.js`, so neither CI nor the pre-push gate runs them.
-     - Landing: push through the intact store pre-push. It needs its Career PostgreSQL/Python 3.11 and Embodied MuJoCo prerequisites, or the operator's explicit `OSHAL_STORE_CI_ALLOW_SKIPS=1`. Then open a PR and merge it.
-  2. Operator: stage create 1.9.4 on the box. The box runs 1.9.3, which is byte-identical to store main, so re-staging main changes nothing.
+     - Verifier re-run on head `46a42d31`: region-edit-api 7/7 (5/7 against main's 1.9.3 route), region-edit-postgres 22/22 (14/22 with the post-queue cost-cap call removed), Chromium proof 6/6 (5/6 when the post-save cost class is sent instead of the click-time snapshot), create CI job 23/23; both fixtures `cleanupVerified: true`. Store CI's create job runs only `tests/*.test.js`, so the three region-edit suites are run by hand.
+  2. Operator: stage Create 1.9.4 on the box from store main (`971169d5` or later). The box runs 1.9.3. Done when the box's `GET /api/create/region-edit-provider` returns `costConsentVersion: 1`.
   3. Operator: choose a region-edit image provider.
      - Today: `STORYBOARD_IMAGE_PROVIDER` is empty in the api and `DEMO_MODE` is on, so the resolver returns `codex-cli`. Create refuses `codex-cli` by design (`configured: false`), and 1.9.4 keeps that refusal.
      - Ready now: `openrouter` (paid; `OPENROUTER_API_KEY` is set). A paid run needs `--allow-paid`.
      - Needs setup first: `comfyui` is free but needs `COMFYUI_URL`, `COMFYUI_STORYBOARD_WORKFLOW` (both unset) and a reachable box. `codex` is paid and needs a platform OpenAI key, which is absent from the env, the global config and the seed secrets.
      - Not possible: `vertex` cannot serve Create, which passes no Google token.
      - The selector is set in `.env` and passed to the api by `docker-compose.oshal-local.yml:330`. It applies to the whole deployment and is shared with Video storyboards.
+     - Done when the box's `GET /api/create/region-edit-provider` returns `configured: true`.
+  4. PM, live, after items 2 and 3: run `node scripts/operations/live-acceptance.js create-region-edit`, adding `--allow-paid` only for a paid provider.
   No core change is needed.
 - **Done when:**
-  - Store main's `create/oshal-app.yaml` is 1.9.4 or later, and its region-edit provider handler returns `costConsentVersion: 1`.
+  - Store main's `create/oshal-app.yaml` is 1.9.4 or later, and its region-edit provider handler returns `costConsentVersion: 1`. (Met, store #407 `971169d5`: store main's `create/oshal-app.yaml` reads `version: 1.9.4` and the compiled route returns `costConsentVersion: 1`.)
   - The box's `GET /api/create/region-edit-provider` returns `costConsentVersion: 1` and `configured: true`.
   - `node scripts/operations/live-acceptance.js create-region-edit` (with `--allow-paid` only for a paid provider) reports PASS with cleanup `outstanding: []` and `errors: []`. The case keeps its two uploaded images as `kept` by design.
 
@@ -1879,16 +1861,19 @@ from preparation or unit tests alone.
 - **Done when:** the operator picks an option and the ADR records it; a kernel-suite case shows an activated tick's analyst call admitted and spending as the owner; the venture live walk passes `oneRunPerSlot` and `costGate`.
 
 ### Venture Plan's schema setup sometimes deadlocks at boot (2026-10-01)
-- **Status:** OPEN — actionable
+- **Status:** OPEN — needs live proof · code half merged (store #406, `613c2ad1`, venture-plan 1.5.1); awaits the install and the boot-log check
 
-- **Remaining:** Store, `venture-plan`. At some api boots the package's schema setup logs an ERROR from `venture-rebaseline-routes`, "venture rebaseline schema bootstrap failed", with `DatabaseError: deadlock detected`, followed by `venture schema ready` with 13 tables.
-  - **Boots that deadlocked:** 2026-09-28 02:01:14 UTC, "same second as vids' migration", recovered `venture schema ready` at 02:01:15 (`COLLABORATE.md:25376`); the 2026-10-01 22:31 UTC boot (venture-plan 1.4.4) and 22:40 UTC boot (1.5.0) (`COLLABORATE.md:30278`); and the 2026-10-02 00:08 UTC boot (1.5.0): api log `00:09:06.150Z` level 50, code `40P01`, "while updating tuple ... in relation \"pg_proc\"", then `00:09:06.414Z` `venture schema ready` (`tables: 13`). That container has since been replaced, so the 00:09 lines can no longer be re-read.
-  - **A boot that did not:** the api recreated at 2026-10-02T00:35:40Z (image revision 7abf6736, installed venture-plan `oshal-app.yaml` still `version: 1.5.0`) logged two `venture schema ready` lines (`tables: 13`) at `00:36:01.603Z` and `00:36:01.616Z`, and `docker logs oshal-local-api` holds 0 `deadlock` lines and 0 "venture rebaseline schema bootstrap failed" lines. The deadlock is intermittent.
-  - **Where the two runs come from:** the package starts the same whole bootstrap (`ensureVentureSchema`: `SCHEMA_SQL`, which includes six `CREATE OR REPLACE FUNCTION` statements, plus the owner RLS policies) twice at mount, once from each router, with nothing shared between the two calls: `src-routes/venture-routes.ts:832` and `src-routes/venture-rebaseline-routes.ts:154` (through `ensureRebaselineSchema`, `:182-184`). In the sightings the rebaseline router's run is the one that fails.
-  - **Not established:** which statement holds the other side of the deadlock. The 00:09 line names only a `pg_proc` tuple, and the 2026-09-28 sighting fell in the same second as vids' migration (`COLLABORATE.md:25376`).
+- **Remaining:** Store, `venture-plan` 1.5.1 (store PR #406, merged as `613c2ad1` on 2026-10-02). The code half is fixed: `ensureVentureSchema` passes a package-owned `lockKey` (`VENTURE_SCHEMA_LOCK_KEY` = 47129001), so the kernel applies the bootstrap in one transaction behind `pg_advisory_xact_lock`. The two runs one api boot starts (`createVentureRoutes` and `createVentureRebaselineRoutes`, called in one synchronous mounter loop) now go one at a time.
+  - **The other side of the deadlock is now established.** `venture-plan/tests/venture-schema-postgres.test.mjs` reproduced it on 1.5.0 against a disposable PostgreSQL: one run holds the SHARE lock that `CREATE INDEX IF NOT EXISTS` takes on `venture_fx_assumptions` and waits for the `pg_proc` row of `venture_validate_fx_owner`, while the other run has replaced that row and waits for ACCESS EXCLUSIVE on the table (`DROP TRIGGER`).
+  - **Red and green (reproduced by the verifier).** On 1.5.0, installed-database boots failed 9 of 20 with 40P01, detail "AccessExclusiveLock on relation (venture_fx_assumptions) ... ShareLock on transaction", and first-install boots failed 20 of 20 with 23505 on `pg_type`. On 1.5.1, 0 of 20 boots failed in each mode. A bare guard in `venture-plan/tests/venture-store.test.js` pins the lock key in the store gate; the disposable-PostgreSQL suite itself is run by hand (`OSHAL_CORE_ROOT=<core checkout> node --test venture-plan/tests/venture-schema-postgres.test.mjs`), as the store's other `*-postgres.test.mjs` suites are, and is registered as the Test Lab case `schema-bootstrap-postgres`.
+  - **Left (deploy window):** sync the shared store checkout to main (`613c2ad1` or later) and install venture-plan 1.5.1 with `bash scripts/deploy-store-package.sh venture-plan` from core (one api stop/start). `authorization.yaml` is unchanged, so `GET /api/authorization/catalog-migrations?app=venture-plan` should list nothing pending. Then, for that boot and at least one more api restart in the window:
+    - `docker logs oshal-local-api 2>&1 | grep -c "venture rebaseline schema bootstrap failed"` → 0
+    - `docker logs oshal-local-api 2>&1 | grep -c "venture schema bootstrap failed"` → 0
+    - `docker logs oshal-local-api 2>&1 | grep -c "deadlock detected"` → 0
+    - `docker logs oshal-local-api 2>&1 | grep -c "venture schema ready"` → 2 per boot
 - **Done when:**
-  - A store spec runs the package's two concurrent `ensureVentureSchema` calls, as `venture-routes.ts:832` and `venture-rebaseline-routes.ts:154`/`:182-184` start them, against a disposable PostgreSQL. It reproduces `40P01` on store b715b129 (red) and passes after the fix (green). Whether that spec can reproduce the deadlock on b715b129 has not been tried; if it cannot, this entry is updated to say so and to name what the guard is instead before it closes.
-  - Every api boot in the first deploy window after the fix is staged logs no "venture rebaseline schema bootstrap failed" line.
+  - A store spec runs the package's two concurrent `ensureVentureSchema` calls, as the two routers start them, against a disposable PostgreSQL. It reproduces `40P01` on b715b129 (red) and passes after the fix (green). (Met, store #406 `613c2ad1`.)
+  - Every api boot in the first deploy window after venture-plan 1.5.1 is installed logs no "venture rebaseline schema bootstrap failed", "venture schema bootstrap failed" or "deadlock detected" line, and logs two `venture schema ready` lines.
 
 ### check-service-activations.mjs reads only the block form of authorization:
 - **Status:** OPEN — actionable
@@ -2150,8 +2135,9 @@ refused a forged look and produced no file."). The package case `brand-render` (
 presentations 2.13.0) has not completed a run: run `0bca0435` (started 23:12:53 UTC through `POST /api/test-lab/runs`)
 was cancelled after 21 s with "Access or the installed test changed during execution. Output was withheld."
 (`stale: false`, no test output), the run-service defect filed as "Test Lab package runs cancel themselves when an
-all-package authority re-check runs past 5 s (2026-10-01)". Left: a `brand-render` run that ends `passed`, recorded
-with the core image and package version above. Store #402 changes no authorization file (presentations ships no catalog),
+all-package authority re-check runs past 5 s (2026-10-01)", fixed in core #996 (merged as `a8ef355c`, not yet deployed).
+Left: a `brand-render` run that ends `passed`, recorded with the core image and package version above. The brand-render
+run is automated as `node scripts/operations/live-acceptance.js package-run`, to run after a deploy that carries `a8ef355c`. Store #402 changes no authorization file (presentations ships no catalog),
 although 2.13.0 adds `POST /brand-look`.
 
 **Done when:**
