@@ -95,39 +95,66 @@ function startSmtpServer(rejectRecipient = false): Promise<SmtpFixture> {
   });
 }
 
-describe('smtp-mailer over the real nodemailer transport', () => {
-  const saved: Partial<Record<(typeof SMTP_KEYS)[number], string>> = {};
-  let fixture: SmtpFixture | null = null;
+const savedEnv: Partial<Record<(typeof SMTP_KEYS)[number], string>> = {};
+let fixture: SmtpFixture | null = null;
 
-  beforeEach(() => {
-    for (const key of SMTP_KEYS) { saved[key] = process.env[key]; delete process.env[key]; }
-  });
+/**
+ * @description Starts every case unconfigured, remembering the caller's SMTP settings.
+ * @returns Nothing.
+ */
+function clearSmtpEnv(): void {
+  for (const key of SMTP_KEYS) { savedEnv[key] = process.env[key]; delete process.env[key]; }
+}
 
-  afterEach(async () => {
-    for (const key of SMTP_KEYS) {
-      if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key];
-    }
-    if (fixture) await new Promise<void>((resolve) => fixture!.server.close(() => resolve()));
-    fixture = null;
-  });
-
-  /** Points the mailer at the loopback server: plain SMTP, no credentials. */
-  function pointAt(port: number): void {
-    process.env.SMTP_HOST = '127.0.0.1';
-    process.env.SMTP_PORT = String(port);
-    process.env.SMTP_FROM = FROM;
+/**
+ * @description Restores the caller's SMTP settings and stops the loopback server.
+ * @returns Resolves once the server has closed.
+ */
+async function restoreSmtpEnv(): Promise<void> {
+  for (const key of SMTP_KEYS) {
+    if (savedEnv[key] === undefined) delete process.env[key]; else process.env[key] = savedEnv[key];
   }
+  const running = fixture;
+  fixture = null;
+  if (running) await new Promise<void>((resolve) => running.server.close(() => resolve()));
+}
+
+/**
+ * @description Points the mailer at the loopback server: plain SMTP, no credentials.
+ * @param port - The loopback server's port.
+ * @returns Nothing.
+ */
+function pointAt(port: number): void {
+  process.env.SMTP_HOST = '127.0.0.1';
+  process.env.SMTP_PORT = String(port);
+  process.env.SMTP_FROM = FROM;
+}
+
+/**
+ * @description Starts a loopback SMTP server for one case and registers it for teardown.
+ * @param rejectRecipient - Whether every RCPT TO is refused.
+ * @returns The running server fixture.
+ */
+async function listen(rejectRecipient = false): Promise<SmtpFixture> {
+  const started = await startSmtpServer(rejectRecipient);
+  fixture = started;
+  return started;
+}
+
+describe('smtp-mailer over the real nodemailer transport', () => {
+  beforeEach(clearSmtpEnv);
+  afterEach(restoreSmtpEnv);
 
   it('delivers the envelope, headers and both bodies through a real SMTP conversation', async () => {
-    fixture = await startSmtpServer();
-    pointAt(fixture.port);
+    const smtp = await listen();
+    pointAt(smtp.port);
     const result = await sendTransactionalMail({
       to: TO, subject: 'Reset your oshal password', text: 'Open the one-time link to continue.',
       html: '<p>Open the one-time link to continue.</p>',
     });
     expect(result).toEqual({ ok: true });
-    expect(fixture.sessions).toHaveLength(1);
-    const [session] = fixture.sessions;
+    expect(smtp.sessions).toHaveLength(1);
+    const [session] = smtp.sessions;
     expect(session.commands.some((c) => c.startsWith(`MAIL FROM:<${FROM}>`))).toBe(true);
     expect(session.commands).toContain(`RCPT TO:<${TO}>`);
     expect(session.data).toContain('Subject: Reset your oshal password');
@@ -138,20 +165,20 @@ describe('smtp-mailer over the real nodemailer transport', () => {
   });
 
   it('resolves a refused recipient as ok:false with the server reply instead of throwing', async () => {
-    fixture = await startSmtpServer(true);
-    pointAt(fixture.port);
+    const smtp = await listen(true);
+    pointAt(smtp.port);
     const result = await sendTransactionalMail({ to: TO, subject: 'Invitation', text: 'Join.' });
     expect(result.ok).toBe(false);
     expect(result.detail).toMatch(/550/);
-    expect(fixture.sessions[0].data).toBe('');
+    expect(smtp.sessions[0].data).toBe('');
   });
 
   it('never dials when SMTP is not configured', async () => {
-    fixture = await startSmtpServer();
-    process.env.SMTP_PORT = String(fixture.port);
+    const smtp = await listen();
+    process.env.SMTP_PORT = String(smtp.port);
     expect(smtpConfigured()).toBe(false);
     const result = await sendTransactionalMail({ to: TO, subject: 'Invitation', text: 'Join.' });
     expect(result).toEqual({ ok: false, detail: 'SMTP is not configured (set SMTP_HOST / SMTP_FROM)' });
-    expect(fixture.sessions).toHaveLength(0);
+    expect(smtp.sessions).toHaveLength(0);
   });
 });

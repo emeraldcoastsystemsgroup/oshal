@@ -42,6 +42,7 @@
 # 35 | maintainer@emeraldcoastsystemsgroup.com   | Gate the JavaScript runtime against console/Winston regressions and run the real structured-logging proofs against selected source.
 # 36 | maintainer@emeraldcoastsystemsgroup.com   | Integrate init_run_log and finish_run_log from scripts/ci/ci-run-log.sh to retain per-run logs in ci-runs/<ts>-XXXXXX/full.log.
 # 37 | maintainer@emeraldcoastsystemsgroup.com   | The nightly stops measuring the host as if it were the code (BACKLOG "The nightly gate runs against a saturated box"; operator decision 2026-09-21). (1) run_gate gains a third outcome, RESOURCE-EXHAUSTED, decided by measurement in scripts/ci/ci-resource.sh: a gate is not started while host free memory stays below OSHAL_CI_MIN_FREE_MB, and a gate that fails while the host was measured below it is resource-exhausted rather than FAIL. Those gates go to EXHAUSTED_GATES, never FAILED_GATES: the outcome line names them separately, skip markers inherit the cause of the gate they depend on, the image is never published from such a run, the alert subject says RESOURCE-EXHAUSTED, and a run whose only problem is exhaustion exits 3 (not 0, not 1). (2) Scheduled runs (and --quiesce) stop the workers the operator named in OSHAL_CI_QUIESCE_WORKERS through scripts/ci/ci-quiesce.sh - only running `oshal.tier=worker` containers that are not routing-critical, with their SwarmContainerDown alert silenced - and restore exactly those: at the end of the run, in on_exit on failure or interruption, and, for a run killed outright, from the state file at the start of the next run that takes the lock. The stale-lock window becomes CI_LOCK_STALE_SECONDS so the silence is sized by the same bound.
+# 38 | maintainer@emeraldcoastsystemsgroup.com   | gate_trivy posture kept current after the 2026-10-02 red (29 findings, all fixed, no new budget line). The comment now records the trap that red exposed: gate_image builds with the Docker build cache, so the `apk upgrade` / `apk add` layers stay CACHED and a published Alpine fix never lands by itself; an OS fix is taken with a version floor in Dockerfile.oshal's `apk add`. Comment only, no behaviour change.
 # =============================================================================
 #
 # Usage:  bash scripts/ci-local.sh [--scheduled] [--head] [--skip-e2e] [--skip-image] [--install]
@@ -663,7 +664,15 @@ gate_smoke() {
 #     actionable rather than a wall of noise: every finding it still reports has a published
 #     upstream release, so the FIRST response is always to take that release, not to write a line
 #     in .trivyignore. The 2026-09-21 red was eleven findings and eight of them were this tree's
-#     own dependencies, all fixable by a minor bump.
+#     own dependencies, all fixable by a minor bump. The 2026-10-02 red was 29 findings and all 29
+#     were fixed with no new budget line: lockfile updates, three package.json changes (the joi
+#     override, nodemailer ^10, an image-size override), a swap of npm's own bundled deps inside
+#     npm's tree (Dockerfile.oshal), and Alpine version floors.
+#   * An Alpine fix does NOT arrive by itself. gate_image builds with the Docker build cache, so
+#     Dockerfile.oshal's `apk upgrade` and `apk add` layers stay CACHED until something above them
+#     changes or the cache is pruned (the 2026-10-02 build log shows both CACHED while v3.23/main
+#     already carried the fixes). Take an OS fix with a version floor in that `apk add`: it changes
+#     the layer, so the next build re-runs it, and apk fails the build if the index cannot meet it.
 #   * The gate still FAILS the run (--exit-code 1 below). It was not downgraded to advisory and the
 #     base image was not rebased - node:20-alpine is already the slim base, and distroless would
 #     take away the shell scripts/bot-entrypoint.sh needs.

@@ -46,6 +46,26 @@ CVE-2026-1526 exp:2026-12-20
 CVE-2026-2229 exp:2026-12-20
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────
+# Retired 2026-10-02. The 04:30 UTC nightly scanned a88a8a63 and reported 29 findings outside
+# this budget (9 Alpine, 20 node). Every one had a published fix that node 20 can take, so all 29
+# were FIXED and none was budgeted, in the order the posture above sets:
+#   * In-range lockfile updates: axios 1.18.0 → 1.20.0 (seven advisories), engine.io 6.6.9 →
+#     6.6.11, and brace-expansion 1.1.18 → 1.1.21 (under minimatch@3) and 2.1.4 → 2.1.7 (under
+#     readdir-glob).
+#   * Range bumps in package.json: the joi override 17.13.4 → 17.13.8 (the exact override was the
+#     only thing holding express-openid-connect's ^17.13.3 back); nodemailer ^9.1.0 → ^10.0.13, a
+#     major, whose one caller (src/features/notifications/services/smtp-mailer.ts) is proven against
+#     it over a real loopback SMTP conversation by tests/unit/smtp-mailer-transport.spec.ts; and a
+#     new image-size ^2.0.4 override, a major swap under pptxgenjs 4.0.1 whose dist never requires
+#     image-size (its only sizeOf code is commented out).
+#   * npm's OWN bundled brace-expansion 5.0.9 and undici 6.28.0: no npm release that runs on node 20
+#     carries the fix, but the fixed releases sit inside the ranges npm's tree declares, so
+#     Dockerfile.oshal swaps them in npm's tree and fails the build if the swap does not land.
+#   * Alpine pcre2 10.48-r0 and the python3 3.12.14-r0 family: already fixed in v3.23/main, but the
+#     nightly's apk layers were CACHED and kept the old builds. Dockerfile.oshal now carries version
+#     floors, which re-run the layer and fail the build when the index cannot satisfy them.
+# The regression guard for the lockfile half is tests/unit/dependency-security-baseline.spec.ts.
+#
 # Retired 2026-09-21. Eleven findings were FIXED rather than budgeted, which is the order the
 # posture above requires: fix first, budget last. Eight were the rest of the 46-run red streak —
 # multer 2.2.0 → 2.4.0, js-yaml 4.3.0 → 4.3.2, nodemailer 9.0.3 → 9.1.1, sharp 0.35.3 → 0.35.4,

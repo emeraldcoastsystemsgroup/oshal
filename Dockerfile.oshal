@@ -126,10 +126,11 @@ FROM antigravity-runtime AS oshal-runtime
 # Patch the base OS at build time: alpine ships CVE fixes (musl, zlib, ...)
 # faster than the node base image re-tags them (2026-07-09: musl 1.2.5-r21 and
 # zlib 1.3.1-r2 carried 3 fixable HIGHs the Trivy gate caught). This layer re-runs
-# only when the base digest or this line changes: the nightly rebuild reuses its
-# cached result (the 2026-10-02 nightly build log shows it, and the `apk add`
-# below, as CACHED), so a fixable OS CVE does NOT self-heal on a rebuild. A
-# published OS fix is taken with a version floor in the `apk add` below.
+# only when its build-cache entry is gone (a new base digest, a changed line, or a
+# builder prune). Otherwise the nightly rebuild reuses it: the 2026-10-02 nightly
+# build log shows it, and the `apk add` below, as CACHED. So a fixable OS CVE does
+# NOT reliably self-heal on a rebuild; a published OS fix is taken with a version
+# floor in the `apk add` below.
 RUN apk upgrade --no-cache
 
 # Build metadata — override at build time:
