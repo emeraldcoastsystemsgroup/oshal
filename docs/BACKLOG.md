@@ -1176,7 +1176,9 @@ from preparation or unit tests alone.
 
 - **Today:** while signing is configured, verification's task-manager round and consensus review's reviewer
   rounds are skipped. The structural result decides instead (docs/security/http-delegation.md, "What the
-  build pipeline still does not send over this hop").
+  build pipeline still does not send over this hop"). Since 2026-10-02 the executed test run of code work does
+  cross the hop (the `workspace-tests/run` deterministic intent to test-engineer's node) and a red or unrun
+  suite fails the child; the two agent rounds are what remain.
 - **Remaining:** dispatch the task-manager and reviewer rounds over the signed hop as the ticket's owner.
 - **Done when:** both hold:
   - Under signing, both rounds are dispatched to their reviewer bots over the signed hop as the ticket's owner.

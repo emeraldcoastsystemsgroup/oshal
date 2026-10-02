@@ -102,6 +102,22 @@ export {
   type SwarmVerificationResult,
 } from './swarm-verification-service';
 export {
+  TESTED_WORK_TYPES,
+  MAX_FAILING_TEST_NAMES,
+  parseTestOutput,
+  workspaceTestVerdict,
+  type WorkspaceTestRun,
+  type WorkspaceTestRunRequest,
+  type WorkspaceTestRunner,
+  type WorkspaceTestVerdict,
+  type ParsedTestOutput,
+} from './workspace-test-run';
+export {
+  createNodeWorkspaceTestRunner,
+  WORKSPACE_TESTS_INTENT,
+  type NodeWorkspaceTestRunnerDeps,
+} from './node-workspace-test-runner';
+export {
   InMemoryMeshTransport,
   SwarmEscalationError,
   buildExecutionEnvelope,

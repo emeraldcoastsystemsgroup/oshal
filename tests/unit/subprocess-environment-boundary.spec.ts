@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard secret-free content/MCP child environments and permanent retirement of the unauthenticated dashboard runner plus residual SmartThings/GCP credential subprocesses.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Mutation-guard every remediated active runtime source against reintroducing whole-process environment inheritance.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The bot node's workspace test run (src/app/bot-node-workspace-test-run.ts) joins the launcher inventory: its child environment is built from scratch.
  */
 
 import fs from 'node:fs';
@@ -84,6 +85,7 @@ describe('subprocess credential containment', () => {
       'any-bot/server/services/tools/smart-home/smartthingsToolKit.js',
       'any-bot/server/services/tools/gcp/gcpToolKit.js',
       'src/app/apply-submit.ts',
+      'src/app/bot-node-workspace-test-run.ts',
       'src/app/routes/content-routes.ts',
       'src/app/routes/gov-contracting-cron.ts',
       'src/features/chat-orchestration/services/tool-executor-service.ts',

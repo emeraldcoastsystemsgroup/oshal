@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Structural checks trust workspace deliverables over output text heuristics — when real files exist, skip keyword/length string matching.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six, and it decides whether a build produced a deliverable - a wrong root reads an empty directory and escalates a ticket that actually succeeded.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | While delegation signing is configured, verification skips the unsigned task-manager mesh round (every node refuses it, and the controller then waited 600 s for the same structural result) and returns the structural result immediately.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | After the structural pass, code work (implementation, testing) has its tests RUN where the deliverables live, through the wired WorkspaceTestRunner (the producing bot's node over the signed hop), and the run decides: a red run or one that could not happen fails the child with regression to build, naming the failing tests, and a green run's counts join the findings. A build ticket reached customer_action with a failing test in its deliverables because files existing was the whole check.
  */
 
 import fs from 'node:fs';
@@ -24,6 +25,7 @@ import { MESH_CHANNELS, type MeshTransport } from '@/features/agent-management';
 import { createChildLogger } from '@/shared/logger';
 import { taskSubdirs } from '@/shared/workspace-task-dirs';
 import type { DecomposedWorkUnit, WorkUnitType } from './ticket-decomposition-service';
+import { TESTED_WORK_TYPES, workspaceTestVerdict, type WorkspaceTestRunner } from './workspace-test-run';
 import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const logger = createChildLogger({ module: 'swarm-verification-service' });
@@ -60,6 +62,11 @@ export interface SwarmVerificationDeps {
    * envelope then, so the task-manager round is skipped and the structural result is used at once.
    */
   isDelegationEnforced?: () => boolean;
+  /**
+   * Runs a ticket's tests where its deliverables live. When wired, code work (implementation,
+   * testing) passes verification only on an executed, green run.
+   */
+  runWorkspaceTests?: WorkspaceTestRunner;
 }
 
 /**
@@ -71,11 +78,24 @@ export class SwarmVerificationService {
   private readonly meshTransport?: MeshTransport;
   private readonly workItemRepository?: WorkItemRepository;
   private readonly isDelegationEnforced: () => boolean;
+  private runWorkspaceTests?: WorkspaceTestRunner;
 
   constructor(deps: SwarmVerificationDeps = {}) {
     this.meshTransport = deps.meshTransport;
     this.workItemRepository = deps.workItemRepository;
     this.isDelegationEnforced = deps.isDelegationEnforced ?? (() => false);
+    this.runWorkspaceTests = deps.runWorkspaceTests;
+  }
+
+  /**
+   * @description Wires the test runner after construction: the bot-node client it needs is built
+   * later in the composition root than this service.
+   * @param runner - The runner.
+   * @returns Nothing.
+   */
+  setWorkspaceTestRunner(runner: WorkspaceTestRunner): void {
+    this.runWorkspaceTests = runner;
+    logger.info('Workspace test runner wired into SwarmVerificationService: code work passes only on an executed, green run');
   }
 
   /**
@@ -106,10 +126,19 @@ export class SwarmVerificationService {
     );
 
     // â”€â”€ Structural pre-filter (fast, deterministic) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    const structuralResult = runStructuralChecks(item, workUnits, selectedAgentId, executionOutput, workspaceTaskId);
-    if (structuralResult.status === 'failed') {
-      return this.logAndReturn(item.externalId, structuralResult, startedAt);
+    const structural = runStructuralChecks(item, workUnits, selectedAgentId, executionOutput, workspaceTaskId);
+    if (structural.status === 'failed') {
+      return this.logAndReturn(item.externalId, structural, startedAt);
     }
+
+    // ── Executed tests (the run decides; files existing is not a pass) ──────────
+    const testGate = await this.runTestGate(item, workUnits, selectedAgentId, workspaceTaskId);
+    if (testGate?.status === 'failed') {
+      return this.logAndReturn(item.externalId, testGate, startedAt);
+    }
+    const structuralResult: SwarmVerificationResult = testGate
+      ? { ...structural, findings: [...structural.findings, ...testGate.findings] }
+      : structural;
 
     // â”€â”€ Task-manager agent verification (real QA via mesh) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // The task-manager bot reads the actual deliverables and validates against
@@ -125,6 +154,41 @@ export class SwarmVerificationService {
     }
 
     return this.logAndReturn(item.externalId, structuralResult, startedAt);
+  }
+
+  /**
+   * @description Runs the ticket's tests through the wired runner when the work is code. The
+   * exit code decides, the counts are evidence, and a run that could not happen fails too: a
+   * missing toolchain or an unreachable node is not a pass.
+   * @param item - Ticket being verified
+   * @param workUnits - Work units with their work types
+   * @param selectedAgentId - The bot that produced the deliverables
+   * @param workspaceTaskId - The root folder the deliverables live in
+   * @returns The run's verdict, or undefined when no runner is wired or the work is not code
+   */
+  private async runTestGate(
+    item: ExternalWorkItem,
+    workUnits: DecomposedWorkUnit[],
+    selectedAgentId: string,
+    workspaceTaskId?: string,
+  ): Promise<SwarmVerificationResult | undefined> {
+    if (!this.runWorkspaceTests || !workspaceTaskId) return undefined;
+    if (!workUnits.some((unit) => TESTED_WORK_TYPES.has(unit.workType ?? ''))) return undefined;
+    const startedAt = Date.now();
+    let verdict;
+    try {
+      verdict = workspaceTestVerdict(await this.runWorkspaceTests({ ticketId: item.externalId, workspaceTaskId, agentId: selectedAgentId }));
+    } catch (err) {
+      logger.error({ err, externalId: item.externalId, selectedAgentId }, 'Workspace test run threw; the child fails as not run');
+      verdict = workspaceTestVerdict({ ran: false, command: null, exitCode: null, passed: 0, failed: 0, failedTests: [], reason: `runner-unreachable: ${err instanceof Error ? err.message : String(err)}`, outputTail: '', durationMs: Date.now() - startedAt });
+    }
+    logger.info({ externalId: item.externalId, selectedAgentId, status: verdict.status, findings: verdict.findings, durationMs: Date.now() - startedAt }, 'Workspace test gate');
+    return {
+      status: verdict.status,
+      summary: verdict.status === 'passed' ? verdict.summary : `Verification failed for ${item.externalId}: ${verdict.summary}`,
+      findings: verdict.findings,
+      ...(verdict.status === 'failed' ? { regressionTarget: 'build' as const } : {}),
+    };
   }
 
   /**
