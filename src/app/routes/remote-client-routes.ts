@@ -24,6 +24,7 @@
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | Extract mesh task validation and owner-scoped injection checks into a focused module, keeping this route file below the 1,000-physical-line governance limit.
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | Preserve exact device owner and trusted machine-chat subjects during reassignment, node-token rotation, and detached chat identity; empty still clears/falls back, but case and whitespace no longer rebind work or credentials to another principal.
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | The device LIST now tells a session caller who each computer is bound to. A node's enrolment is judged on coming up OWNED, and the only cockpit surface that lists computers showed name, status and heartbeat - so a node that enrolled and a node whose enrolment silently left it bound to nobody rendered identically, and the one thing that decides whether work reaches it was invisible. Each record a SESSION caller receives now carries `ownership` (describeDeviceOwnership against the verified caller): viewer-relative, labelled, and carrying no subject id. Machine callers - the node daemon and the platform dispatchers - keep the exact record shape they parse today.
+ * 22 | maintainer@emeraldcoastsystemsgroup.com   | A node's chat turn runs on that node when the bot resolves to a CLI harness the controller refuses and the node advertises the matching executor (resolveNodeTurnProvider, remote-client-node-chat.ts); every other turn is unchanged (OSHAL Node runs its own chat turns locally (operator, 2026-10-01)).
  */
 
 import { randomUUID } from 'crypto';
@@ -81,6 +82,7 @@ import {
 import { registerRemoteClientWorkspaceRoutes } from './remote-client-workspace-routes';
 import { registerRemoteClientPrintRoutes } from './remote-client-print-routes';
 import { mayInjectRemoteTask, toRemoteTaskEnvelope } from './remote-client-mesh-task';
+import { resolveNodeTurnProvider } from './remote-client-node-chat';
 export { buildRemoteTaskCostEvent } from './remote-client-task-operations';
 export { taskWorkspaceFolder } from './remote-client-workspace-routes';
 const logger = createChildLogger({ module: 'remote-client-routes' });
@@ -139,6 +141,8 @@ interface RemoteClientRouteOptions {
   recordCostOnce?: RecordRemoteTaskCostOnce;
   /** Explicit test seam; production constructs the PostgreSQL service from pool. */
   taskJournalService?: RemoteTaskJournalService;
+  /** The provider the orchestrator would use for a bot, so a node's chat turn can run on that node when it is a CLI. */
+  getChatProvider?: (agentId: string) => { getProviderName(): string; getModel?: () => string | undefined };
 }
 
 interface RemoteClientRouteContext {
@@ -148,6 +152,7 @@ interface RemoteClientRouteContext {
   orchestrator?: RemoteChatOrchestrator;
   workItemRepository?: RemoteTaskResultLandingRepository;
   recordCostOnce?: RecordRemoteTaskCostOnce;
+  getChatProvider?: (agentId: string) => { getProviderName(): string; getModel?: () => string | undefined };
   meshSubscriptionsByClient: Map<string, { agentId: string; subscription: MeshSubscription }>;
   startedAtByClient: Map<string, string>;
 }
@@ -179,6 +184,7 @@ function createRouteContext(options: RemoteClientRouteOptions): RemoteClientRout
     orchestrator: options.orchestrator,
     workItemRepository: options.workItemRepository,
     recordCostOnce: options.recordCostOnce,
+    getChatProvider: options.getChatProvider,
     meshSubscriptionsByClient: new Map<string, { agentId: string; subscription: MeshSubscription }>(),
     startedAtByClient: new Map<string, string>(),
   };
@@ -752,6 +758,11 @@ async function handleChatTurn(req: Request, res: Response, context: RemoteClient
     const userSub = isMachineCaller(req)
       ? (payload.userSub || '')
       : (getCaller(req).sub ?? '');
+    // The node runs its own turn when the bot is a CLI the controller refuses and the node has that executor.
+    const turnProvider = resolveNodeTurnProvider({
+      getChatProvider: context.getChatProvider, capabilities: client.capabilities, queue: registry,
+      clientId, agentId, chatTaskId: taskId, userSub: userSub || undefined,
+    });
     const runTurn = () => runRemoteChatTurn(orchestrator, {
       clientId,
       agentId,
@@ -759,6 +770,7 @@ async function handleChatTurn(req: Request, res: Response, context: RemoteClient
       text: payload.text,
       correlationId,
       userSub: userSub || undefined,
+      turnProvider,
     })
       .then((reply) => deliverChatReply(clientId, client, agentId, reply))
       .catch((error) => {
