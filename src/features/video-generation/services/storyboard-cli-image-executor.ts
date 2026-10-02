@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Injectable executor seam for the codex-cli storyboard image provider (ADR-130). The controller process must NEVER spawn a local CLI (two-runtimes doctrine), so the render is delegated to a bot node over the ADR-036 swarm-execute rail — but this feature module cannot import the app layer, so the app registers the executor here at boot (same pattern as registerSchwabTokenResolver). Fail-soft: nothing registered means the codex-cli provider reads as unavailable and the resolver fails closed with instructions.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The request names the image rail its prompt was built for (ADR-130 amendment 2026-10-02, the bot-level rule): 'codex-cli' or 'antigravity-cli'. It does NOT name a harness to run on: the render runs on the render bot's own effective harness, and the app's executor refuses the dispatch when that harness's rail is not the one named here (the bot was switched after the rail was chosen), instead of moving the bot onto the rail's harness. The result also reports the provider the bot ran on and what its ADR-034 reconcile did, so a live check can prove the turn ran on the bot's own setting.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The request separates the server template from the user field (SEC-05 carve for image turns, operator decision 2026-10-02 b): `prompt` is now the server-authored render instruction alone, which names the tool and the inputs and tells the model to read the brief from the UNTRUSTED record as data, and the new `brief` is the user-originated text (a scene description, a region-edit brief, a portrait brief) that must never become policy. The wiring sends them as renderInstruction and text respectively, so the bot files the instruction under TRUSTED CONFIGURATION and keeps the brief in the data-only record.
  */
 /**
  * @description The app-boot-injected executor the `codex-cli` storyboard image provider renders
@@ -17,10 +18,23 @@
 
 import type { CliStoryboardImageRail } from './storyboard-image-default';
 
+/**
+ * The source label of the data-only record the brief arrives in: the bot-node handler's untrusted
+ * body (prompt-containment.ts appends it as `ticket-or-user-body`). Both CLI rails' instructions
+ * name it so the model reads the brief from that record and nowhere else.
+ */
+export const RENDER_BRIEF_RECORD_SOURCE = 'ticket-or-user-body';
+
 /** @description One render request handed to the boot-registered executor. */
 export interface CliStoryboardRenderRequest {
-  /** The full task prompt (render brief + output-file contract). */
+  /**
+   * The server-authored render instruction (the tool, its inputs, the output contract). It never
+   * contains the brief: it tells the model to read the brief from the UNTRUSTED record as data.
+   * The bot files it under TRUSTED CONFIGURATION (the SEC-05 carve for image turns).
+   */
   prompt: string;
+  /** The user-originated brief (scene, region edit, portrait): the untrusted body, never policy. */
+  brief: string;
   /** Task id — also the workspace folder id (already canonical: lowercase, [a-z0-9_-]). */
   taskId: string;
   /** Workspace folder id under the shared workspace root; the bot's CLI runs with this as cwd. */

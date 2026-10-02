@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | The Lab's `files` port gains `dir`: a named directory probe's listing under this server's shared workspace root, for the tickets-in-tickets case.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | LiveAcceptanceCaseModule gains the optional REGRESSION_TESTS list a case module may export.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | The Lab's named statements run as the owner WITHOUT operator rights, the way the host runner's container helper runs them, so row-level security scopes them the same from both entry points. The Lab caller is an operator, and the request identity it ran under stamped is_operator on, which admitted every row to the statements' own predicates.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | The `api` port honours a case's per-call `timeoutMs` (the options' fourth argument) exactly as the host runner's port does: the storyboard-agy case bounds its one blocking POST /api/test-lab/run by the render budget (STORYBOARD_CLI_IMAGE_TIMEOUT_MS plus a margin), and from the Lab that call still aborted at the 30 s default because this adapter read only `options.headers`. The default stays CALL_TIMEOUT_MS; a non-positive or non-numeric value is ignored; `anonymous` and the other ports are unchanged.
  */
 import { createHash } from 'node:crypto';
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
@@ -94,6 +95,20 @@ const LAB_STATE: Record<LiveAcceptanceResult['state'], State> = { pass: 'pass', 
 /** One loopback reply in the shape the case modules read; `bytes` is the raw body, and the digest and length are of it. */
 interface CallResult { status: number; json: Record<string, unknown>; text: string; contentType: string; location: string | null; bytes: Buffer; byteLength: number; sha256: string }
 
+/** The options a case may pass a JSON port: extra headers, and for `api` one call's own budget. */
+interface JsonCallOptions { headers?: Record<string, string>; timeoutMs?: unknown }
+
+/**
+ * @description One call's own budget (a case that blocks on a long server-side step, such as the
+ * storyboard render), else the default. The same rule as the host runner's `callTimeout`.
+ * @param options - The case's options for this call.
+ * @returns The milliseconds the call's abort signal is armed with.
+ */
+function callTimeout(options: JsonCallOptions = {}): number {
+  const budget = options.timeoutMs;
+  return typeof budget === 'number' && Number.isFinite(budget) && budget > 0 ? budget : CALL_TIMEOUT_MS;
+}
+
 /**
  * @description One loopback request to the running server as the initiating signed-in caller.
  * @param base - The server's own loopback base URL (server-derived, never from the request body).
@@ -101,11 +116,12 @@ interface CallResult { status: number; json: Record<string, unknown>; text: stri
  * @param method - HTTP method.
  * @param route - API path beginning with a slash.
  * @param init - Body and extra headers.
+ * @param timeoutMs - This call's budget; the default is the per-call ceiling.
  * @returns The status, parsed JSON (empty object when not JSON), text, content type, redirect target, and the raw body with its byte length and sha256.
  */
-async function send(base: string, cookie: string | null, method: string, route: string, init: { body?: string | FormData; headers?: Record<string, string> }): Promise<CallResult> {
+async function send(base: string, cookie: string | null, method: string, route: string, init: { body?: string | FormData; headers?: Record<string, string> }, timeoutMs = CALL_TIMEOUT_MS): Promise<CallResult> {
   const response = await fetch(`${base}${route}`, {
-    method, redirect: 'manual', signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
+    method, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs),
     headers: { ...(init.headers || {}), ...(cookie === null ? {} : { cookie }) }, ...(init.body === undefined ? {} : { body: init.body }),
   });
   const raw = Buffer.from(await response.arrayBuffer().catch(() => new ArrayBuffer(0)));
@@ -127,14 +143,15 @@ export function labPorts(cookie: string, runtime: ScenarioRunContext): Record<st
   const { ctx } = runtime;
   const base = runtime.apiBaseUrl;
   const root = resolveSharedWorkspaceRoot();
-  const jsonInit = (body?: unknown, options: { headers?: Record<string, string> } = {}) => ({
+  const jsonInit = (body?: unknown, options: JsonCallOptions = {}) => ({
     headers: { ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...(options.headers || {}) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   return {
     ownerSub: runtime.ownerSub,
     origin: base,
-    api: (method: string, route: string, body?: unknown, options?: { headers?: Record<string, string> }) => send(base, cookie, method, route, jsonInit(body, options)),
-    anonymous: (method: string, route: string, body?: unknown, options?: { headers?: Record<string, string> }) => send(base, null, method, route, jsonInit(body, options)),
+    // One call may carry its own budget (the storyboard render blocks for the whole render); every other call keeps the default.
+    api: (method: string, route: string, body?: unknown, options?: JsonCallOptions) => send(base, cookie, method, route, jsonInit(body, options), callTimeout(options)),
+    anonymous: (method: string, route: string, body?: unknown, options?: JsonCallOptions) => send(base, null, method, route, jsonInit(body, options)),
     upload: (route: string, fields: Record<string, string>, file: { name: string; type: string; bytes: Buffer; field?: string }) => {
       const form = new FormData();
       for (const [name, value] of Object.entries(fields || {})) form.append(name, String(value));

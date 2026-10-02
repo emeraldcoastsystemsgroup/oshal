@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Judge and ledger of the storyboard-agy live-acceptance case (ADR-130 amendment 2026-10-02, the bot-level rule), over a fake api port. Pass needs the card's step to pass with a PNG of at least 64 x 64 from antigravity-cli, a generate_image DONE receipt, the bot's report that it ran antigravity-cli and a 'match' reconcile (its own setting, never switched); a degraded card (the render bot on another rail, or not the operator) is unavailable; a missing receipt, a non-PNG, another provider, a 'corrected' or unreported reconcile, or a card that failed is a fail; a render workspace the card did not remove turns the case red, and a workspace outside the card's tag is a cleanup error. The case posts exactly one Lab run for the card and nothing else.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The case's one POST /api/test-lab/run carries the render dispatch budget plus the margin as its own `timeoutMs` (480 s by default; STORYBOARD_CLI_IMAGE_TIMEOUT_MS when set; a non-positive or non-numeric value falls back), and names the image-turn framing suite among its regression tests.
  */
 import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
@@ -36,6 +37,17 @@ describe('storyboard-agy live acceptance', () => {
     expect(result.cleanup.kept[0]).toContain(`bot-task-record ${TASK}`);
     expect(api.calls.map((c) => `${c.method} ${c.path}`)).toEqual(['POST /api/test-lab/run']);
     expect(api.calls[0].body).toEqual({ scenarioId: 'storyboard-antigravity-render' });
+    // The one call blocks for the whole render: it carries the render budget plus the margin, not the runner's 30 s default.
+    expect(api.calls[0].options).toEqual({ timeoutMs: 480_000 });
+  });
+
+  it('budgets its one call from the render dispatch budget the api holds the bot to, plus a margin', () => {
+    expect(agy.renderCallTimeoutMs({})).toBe(agy.DEFAULT_RENDER_BUDGET_MS + agy.RENDER_CALL_MARGIN_MS);
+    expect(agy.renderCallTimeoutMs({})).toBe(480_000);
+    expect(agy.renderCallTimeoutMs({ STORYBOARD_CLI_IMAGE_TIMEOUT_MS: '300000' })).toBe(360_000);
+    expect(agy.renderCallTimeoutMs({ STORYBOARD_CLI_IMAGE_TIMEOUT_MS: '0' })).toBe(480_000);
+    expect(agy.renderCallTimeoutMs({ STORYBOARD_CLI_IMAGE_TIMEOUT_MS: 'soon' })).toBe(480_000);
+    expect(agy.REGRESSION_TESTS.map((t: { path: string }) => t.path)).toContain('tests/unit/image-turn-prompt-framing.spec.ts');
   });
 
   it.each([

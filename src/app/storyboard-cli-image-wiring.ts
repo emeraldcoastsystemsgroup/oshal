@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Boot wiring for the ADR-130 codex-cli storyboard image provider: registers the bot-node render executor into the video-generation feature (registerCliStoryboardImageExecutor, Schwab-resolver pattern) so the controller itself never spawns a CLI. The render runs as one agentic swarm-execute task on a dedicated bot node — SEC-05's demo carve (DEMO_MODE + operator sub) authorizes the spawn there, on the threaded userSub, never here.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The render dispatch names the codex harness (providerId 'openai-codex', the ADR-034 carried record) instead of riding whatever the render bot happens to be running. ADR-130 assumed the bot's boot provider WAS codex; since ADR-162 the fleet default is a switch row, and on the demo box that row is claude-code — so an unstamped render ran on the Claude Code CLI, which has no image generation, and every series storyboard died at frame 1 with NO_IMAGE_CAPABILITY (measured live 2026-09-21 on b1f0f28e: general-bot effectiveProvider claude-code, providerSource fleet-default). With the stamp the bot reconciles its active provider to codex before the spawn (bot-node-dispatch-config), or refuses fail-closed if it cannot. No model is pinned: the render still rides the bot's CODEX_MODEL. Guard: tests/unit/storyboard-cli-image-wiring.spec.ts.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-130 amendment 2026-10-02, the bot-level rule (operator: the bot's own setting wins; "ok lets go with your recommendation"). Entry 2's fixed 'openai-codex' stamp is removed: a render no longer moves the render bot onto an image harness. The rail is chosen from the render bot's own canonical provider record, the record its text turns carry (its own switch row, else the fleet default, else its agent_config record or registry declaration; ctx.swarm.runtimeParamsResolver), and the dispatch is stamped with exactly that record, so the bot's ADR-034 reconcile is a match on its own setting and never a switch. At dispatch the executor re-reads the record and refuses before any network call when no record resolves, when the bot's harness cannot make images ("<bot> runs <harness>, which cannot make images; ..."), or when its rail is not the one the render was prepared for (the bot was switched in between, or STORYBOARD_IMAGE_PROVIDER names the other CLI rail). The stamp carries an EMPTY fallback chain, so a failover rung can never run a rail's prompt on a harness it was not written for. Every render is marked imageTurn (the Antigravity wrapper hands back generate_image's output; other harnesses ignore it). The result carries the provider the bot ran on and its providerConfigAction, so the live case can require 'match'. Boot also registers the render-bot reader the image selection follows. wireCliStoryboardImageExecutor takes the runtime-params resolver as a getter, read per call.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 carve for image turns (operator decision 2026-10-02 b): the dispatch sends the request's `brief` as the bot's `text` (the untrusted body) and the server-authored `prompt` as `renderInstruction`, the carrier the bot files under TRUSTED CONFIGURATION on an image turn. Nothing else about the dispatch changes: the bot's own record, the empty fallback chain and imageTurn stay.
  */
 /**
  * @description Wires the CLI storyboard image rails (codex-cli, antigravity-cli) to a real bot node at boot.
@@ -145,7 +146,10 @@ async function renderOnOwnHarness(
   }
   try {
     const result = await client.execute(agentId, {
-      text: request.prompt,
+      // SEC-05 carve for image turns: the brief is the untrusted body, the server-authored
+      // instruction its own carrier, which the bot files under TRUSTED CONFIGURATION.
+      text: request.brief,
+      renderInstruction: request.prompt,
       taskId: request.taskId,
       workspaceFolderId: request.workspaceFolderId,
       agentId,

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the ADR-130 codex-cli render WIRING (the half storyboard-codex-cli-provider.spec.ts doubles). Pins that the boot-registered executor dispatches the render with providerId 'openai-codex' as its ADR-034 carried record, and — running the REAL bot-side parse + reconcile over the captured request — that a render bot parked on another harness (the demo box's claude-code fleet-default row) is switched onto codex before the spawn, while the unstamped legacy shape leaves the runtime untouched, which is exactly how the live storyboard died with NO_IMAGE_CAPABILITY on 2026-09-21. Also pins the bot/timeout knobs, the userSub threading, and that a bot failure is surfaced (never thrown). BotNodeClient is the double: it is the HTTP hop to the node; the request it is handed is the boundary under test.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-130 amendment 2026-10-02, the bot-level rule: entry 1's fixed codex stamp and its "switched onto codex" case are gone, because a render must never move the render bot off its own setting. The executor now reads the render bot's canonical provider record through the REAL canonical resolver (the swarm extension's createAgentConfigRuntimeParamsResolver over the REAL ProviderSwitchSnapshot and registry readers; tests/fixtures/storyboard-render-bot-switch.ts) and stamps exactly that record with an empty fallback chain. Through the REAL bot-side parseCarriedDispatchConfig + reconcileDispatchProviderConfig, a bot on antigravity-cli (fleet default) and a bot whose own row says openai-codex (while the fleet says antigravity-cli) each reconcile as 'match' with no setActiveProvider call. Refused before any dispatch, naming the bot and the harness: a bot on claude-code (row or fleet), a bot with no record, an unread snapshot, a process with no resolver, and a rail other than the bot's own (STORYBOARD_IMAGE_PROVIDER naming the other CLI rail, or the bot switched since the rail was chosen). The empty chain makes the REAL post-execution check refuse a turn that ran on the fleet row's fallback rung. Boot registers the render-bot reader the selection follows; the knobs, the imageTurn hop and the refusal/throw surfacing are kept.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 carve for image turns (operator decision 2026-10-02 b): the dispatch sends the request's `brief` as the bot's `text` and its server-authored `prompt` as `renderInstruction`; the fixture request carries both.
  */
 
 import fs from 'node:fs';
@@ -58,6 +59,7 @@ const FLEET_AGY = switchRow('fleet-default', 'antigravity-cli', { modelId: 'gemi
 
 const RENDER: CliStoryboardRenderRequest = {
   prompt: 'You are a headless image-rendering task. Call your generate_image tool exactly once.',
+  brief: 'a red circle on white',
   taskId: 'sbimg-11111111-2222-4333-8444-555555555555',
   workspaceFolderId: 'sbimg-11111111-2222-4333-8444-555555555555',
   userSub: 'operator-sub-1',
@@ -125,7 +127,8 @@ describe('storyboard render wiring: the render runs on the render bot\'s own har
     const { agentId, request } = captured.executions[0];
     expect(agentId).toBe(RENDER_BOT);
     expect(request).toMatchObject({
-      text: RENDER.prompt, taskId: RENDER.taskId, workspaceFolderId: RENDER.workspaceFolderId, agentId: RENDER_BOT,
+      // SEC-05 carve for image turns: the brief is the untrusted text, the instruction its own carrier.
+      text: RENDER.brief, renderInstruction: RENDER.prompt, taskId: RENDER.taskId, workspaceFolderId: RENDER.workspaceFolderId, agentId: RENDER_BOT,
       agenticMode: true, userSub: RENDER.userSub, imageTurn: true,
       providerId: 'antigravity-cli', model: 'gemini-3.8-flash-low', providerConfigRequired: true, fallbackOrder: [],
     });

@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: define the explicit persisted-tool to any-bot runtime capability map; unknown names fail closed and completion remains a side-effect-free control capability.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Bind the read-only question tools. Every name this map held was a shell, a file write or an infrastructure CLI, so the only thing a granted bot could be advertised was a way to ACT; the tools that let one ANSWER - retrieval, the caller's own graph, and the caller's own conversation history - had no binding at all and were denied here as unmapped no matter what the operator granted. The three added names resolve to the handlers bot-node-read-only-tools.ts registers on the bot-node registry. Deliberately absent: rag-ingestion, whose sibling name differs by one word and which WRITES.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Bind the exact conversation-fetch capability beside conversation-query so the persisted tool assignment cannot advertise a handler that the bot-node registry does not expose.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The image-turn tool table (ADR-130 amendment 2026-10-02, SEC-05 carve for image turns): the native image tool an image turn's authority rebind may name, per harness the render bot runs. The 2026-10-02 live render was refused by the model itself because the only text naming generate_image sat inside a data-only record under an authority of [attempt_completion]; the rebind must name the tool the server-authored instruction asks for. Only a tool proven live is listed (agy's generate_image, the name any-bot's agy-image-turn.js collects from). The codex CLI's native image generation produced images on 2026-08-22 but its tool name was never recorded, so a codex image turn carries no image tool here.
  */
 
 /** Side-effect-free protocol control understood by AgenticController. */
@@ -54,4 +55,26 @@ export function anyBotRuntimeToolFor(persistedName: string): string | undefined 
 /** @description Exact operation scope required for one runtime tool invocation. */
 export function anyBotRuntimeToolScope(runtimeTool: string): string {
   return `tool:${runtimeTool}`;
+}
+
+/**
+ * The native image tool an image turn (ADR-130) names in its authority rebind, per harness. A
+ * harness absent here has no recorded image tool: its image turns keep the completion floor alone.
+ * The antigravity entry is the name agy showed in the 2026-10-02 headless proof and the one
+ * any-bot/server/services/codebase/agy-image-turn.js (Guard A) requires to reach DONE.
+ */
+const IMAGE_TURN_TOOL_BY_HARNESS: Readonly<Record<string, string>> = Object.freeze({
+  'antigravity-cli': 'generate_image',
+});
+
+/**
+ * @description The native image tool an image turn may invoke on a harness, or undefined when no
+ * tool has been recorded for it. Read by the bot-node handler to widen an image turn's authority
+ * to exactly that tool beside the completion floor; it is never read for any other turn.
+ * @param harness - The provider id the render bot runs, as its runtime record names it.
+ * @returns The exact tool name, or undefined.
+ */
+export function anyBotImageTurnToolFor(harness: string | null | undefined): string | undefined {
+  const key = String(harness ?? '').trim().toLowerCase();
+  return key ? IMAGE_TURN_TOOL_BY_HARNESS[key] : undefined;
 }

@@ -18,9 +18,15 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | The Lab's named statements run under the owner's identity without operator rights, as the host runner's container helper runs them.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | The registry gains the package-run case (explicit-only: it starts a package sandbox run and keeps its run-history row).
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | The registration list ends with storyboard-agy (the storyboard render on the render bot's own antigravity harness, ADR-130 amendment 2026-10-02).
+ * 16 | maintainer@emeraldcoastsystemsgroup.com   | The Lab's `api` port honours a case's per-call `timeoutMs` as the host runner's does, over a real loopback listener that answers late: the call bounded at 80 ms is aborted by the adapter's own signal (its headers and cookie still sent), while the same call without the option, or with a non-positive or non-numeric budget, is still pending well past it and answers when the listener does (the 30 s default applies). The storyboard-agy card run from the Lab aborted at 30 s because the adapter read only `options.headers`. The file also references the dom.iterable lib: tsconfig.tests.json's lib is DOM without DOM.Iterable, so `form.keys()` in the Create upload case (entry 7) did not typecheck.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com   | The timeoutMs guard no longer races its abort against loopback connection setup: on a loaded host the 80 ms budget fired before the request reached the listener (red once, green on the same tree a minute later). The bounded call now carries 500 ms against a listener that answers at 3 s, its arrival at the listener is awaited (bounded, named failure) before the header and cookie assertion because Node delivers an expired timer before it polls the socket, the wall-clock upper bound is gone (a default-budget call resolves 200 at 3 s, so the TimeoutError name alone proves the per-call signal), the defaults' still-pending probe sits at 1 s past the case budget, and the case declares its own 20 s timeout.
  */
+/// <reference lib="dom.iterable" />
 import { createHash } from 'node:crypto';
+import { once } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -76,7 +82,67 @@ async function labDirProbe(ports: { files: { dir: (n: string, id: string) => Pro
   await expect(ports.files.dir('build.root', '../escape')).rejects.toThrow('invalid id for directory probe');
 }
 
+/** A real loopback listener that records every request and answers each one late, after `answerAfterMs`. */
+async function lateListener(answerAfterMs: number): Promise<{ server: Server; base: string; seen: Array<{ url: string; cookie: string | undefined; marker: string | undefined }> }> {
+  const seen: Array<{ url: string; cookie: string | undefined; marker: string | undefined }> = [];
+  const server = createServer((req, res) => {
+    seen.push({ url: String(req.url), cookie: req.headers.cookie, marker: typeof req.headers['x-case'] === 'string' ? req.headers['x-case'] : undefined });
+    setTimeout(() => {
+      if (res.destroyed || res.socket?.destroyed) return;
+      res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}');
+    }, answerAfterMs);
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  return { server, base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, seen };
+}
+
+/**
+ * @description Resolves once the listener has read its next request. Armed BEFORE the call is issued, and awaited
+ * instead of assumed: Node runs every expired timer before it polls the sockets, so on a loaded host the client's
+ * abort can be delivered ahead of the server-side read of a request the client had already sent.
+ * @param server - The loopback listener.
+ * @param withinMs - How long the request may take to arrive before this rejects with a named failure.
+ * @returns Resolves on the listener's next `request` event.
+ */
+function nextRequest(server: Server, withinMs: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const late = setTimeout(() => reject(new Error(`no request reached the listener within ${withinMs} ms`)), withinMs);
+    server.once('request', () => { clearTimeout(late); resolve(); });
+  });
+}
+
 describe('live-acceptance Test Lab cards', () => {
+  it('bounds one Lab api call by the case\'s own timeoutMs and every other call by the default, over a real loopback listener', async () => {
+    // The listener answers 200 at 3 s: a call under the 30 s default resolves, so only the adapter's own per-call signal
+    // can produce a TimeoutError here. The bounded call's budget outlasts loopback connection setup on a loaded host.
+    const { server, base, seen } = await lateListener(3_000);
+    const runtime = { ownerSub: 'fixture|lab-owner', issuer: 'https://issuer.example', apiBaseUrl: base, ctx: {} as AppContext } as ScenarioRunContext;
+    const ports = labPorts('sid=abc', runtime) as { api: (m: string, r: string, b?: unknown, o?: Record<string, unknown>) => Promise<{ status: number; json: Record<string, unknown> }> };
+    const settled = (call: Promise<unknown>) => Promise.race([call.then(() => 'answered', (err: Error) => `rejected ${err.name}`), new Promise((resolve) => setTimeout(() => resolve('still pending'), 1_000))]);
+    try {
+      // The storyboard-agy case's one blocking call carries its own budget: the adapter's signal aborts it, headers and cookie still sent.
+      const arrived = nextRequest(server, 2_000);
+      await expect(ports.api('POST', '/api/test-lab/run', { scenarioId: 'storyboard-antigravity-render' }, { timeoutMs: 500, headers: { 'x-case': 'storyboard-agy' } }))
+        .rejects.toMatchObject({ name: 'TimeoutError' });
+      await arrived;
+      expect(seen[0]).toEqual({ url: '/api/test-lab/run', cookie: 'sid=abc', marker: 'storyboard-agy' });
+      // Without the option, and with a budget that is not a positive number, the 30 s default applies: still pending well past the case budget, then answered.
+      const defaults = [
+        ports.api('POST', '/api/test-lab/run', { scenarioId: 'storyboard-antigravity-render' }),
+        ports.api('GET', '/api/version', undefined, { timeoutMs: -5 }),
+        ports.api('GET', '/api/version', undefined, { timeoutMs: 'soon' }),
+      ];
+      for (const call of defaults) call.catch(() => undefined);
+      expect(await Promise.all(defaults.map(settled))).toEqual(['still pending', 'still pending', 'still pending']);
+      expect((await Promise.all(defaults)).map((reply) => [reply.status, reply.json])).toEqual([[200, { ok: true }], [200, { ok: true }], [200, { ok: true }]]);
+      expect(seen.map((s) => s.cookie)).toEqual(['sid=abc', 'sid=abc', 'sid=abc', 'sid=abc']);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }, 20_000);
+
   it('lists a build root folder by name only through the Lab files port, refusing paths and bad ids', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'lab-live-acceptance-dir-'));
     const saved = process.env.OSHAL_WORKSPACE_ROOT;

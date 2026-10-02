@@ -36,6 +36,7 @@
  * 31 | maintainer@emeraldcoastsystemsgroup.com | Mark a protected direct request as single-shot/tool-less only when its server-resolved application tool set is empty. The autonomous-CLI preflight is deferred only for that candidate, then re-run after authorization resolution with a dedicated hosted-single-shot proof; nonempty brokered tools retain the existing refusal/bridge path. This lets a Cline-backed bot use its configured backing model for one hosted reasoning call without treating the request as BYO or entering Cline's native tool loop.
  * 32 | maintainer@emeraldcoastsystemsgroup.com | Resolve zero-cost runtime usage through the shared provider/model pricing registry before recording or relaying it. Protected Gemini single-shot usage now reaches the ledger as a catalog estimate with an input/output split, while an actual nonzero provider total still wins and an unknown model remains zero instead of receiving an invented rate; execution attribution stays on the actual runtime provider.
  * 33 | maintainer@emeraldcoastsystemsgroup.com | Forward the payload's imageTurn marker into the TaskController options (ADR-130 amendment 2026-10-02). Only a literal true is forwarded. It is set by the storyboard render executor; the Antigravity wrapper uses it to collect generate_image's output from its private HOME into the task workspace before the HOME is removed, and refuses it on a host-tools-only or bridged turn. Every other provider ignores it. An image turn's prompt is also assembled verbatim, like a direct call (no persona layers, swarm memory, handover or ticket scaffolding, which told the render to write handovers and deliverables while its own prompt forbids creating files), but it is NOT marked hostToolsOnly: the image tool is the CLI's own.
+ * 34 | maintainer@emeraldcoastsystemsgroup.com | SEC-05 carve for image turns, server-authored instruction only (operator decision 2026-10-02 b; ADR-130 amendment). The live render of 2026-10-02 19:00 was refused by the model: the only text naming generate_image sat inside the data-only UNTRUSTED_CONTENT record, under an authority rebind of ["attempt_completion"], so the model read the render as an injection and never called the tool (the same text rendered in a repro after three turns of deliberation: variance, not a rule). On an image turn the render instruction now arrives in its own carrier (payload.renderInstruction, written by the storyboard providers in the api process and validated at the HTTP boundary), is placed under TRUSTED CONFIGURATION as [trusted-config source="image-render-instruction"], and the harness's own image tool (anyBotImageTurnToolFor: generate_image on antigravity-cli) joins attempt_completion in that turn's allowed_tools and authorized_scopes. The brief, the one user-originated field, still travels as payload.text and stays inside the UNTRUSTED record; the instruction tells the model to read it from there as data. An image turn without the carrier is refused before any task exists, and no other turn reads either field. Guard: tests/unit/image-turn-prompt-framing.spec.ts.
  */
 
 /**
@@ -69,7 +70,9 @@ import {
   RALFHandoverManager,
   type EnvelopeExecutionResult,
   type CostRecordFn,
+  type PromptAuthorityBinding,
   type PromptAuthorizationResolver,
+  type TrustedPromptConfiguration,
 } from '@/features/swarm-orchestration';
 import type { TicketService } from '@/features/ticketing';
 import {
@@ -91,10 +94,56 @@ import {
   type DispatchConfigRuntime,
 } from './bot-node-dispatch-config';
 import { demoModeEnabled, isDeploymentOperatorSub } from '@/shared/deployment-mode';
+import { anyBotImageTurnToolFor, anyBotRuntimeToolScope } from '@/shared/llm-runtime';
 import { isUnbrokeredAutonomousProvider, resolveUsageCost } from '@/features/llm-provider';
 import { getProtectedBotExecution } from './bot-node-protected-context';
 
 const logger = createChildLogger({ module: 'bot-node-execution-handler' });
+
+/** The trusted-config source label an image turn's server-authored render instruction is filed under. */
+export const IMAGE_RENDER_INSTRUCTION_SOURCE = 'image-render-instruction';
+
+/**
+ * @description The server-authored render instruction an image turn carries (ADR-130; the SEC-05
+ * carve for image turns). It is read on an image turn only. The field is written by the storyboard
+ * image providers in the api process and validated at the bot's HTTP boundary
+ * (parseBotNodePromptCarrier), so what reaches here is server configuration, never a user field:
+ * the user's brief travels separately as the untrusted body. An image turn without it is refused
+ * before a task or workspace exists, because the alternative is to render from the data-only
+ * record alone, which is exactly the shape the model refused live on 2026-10-02.
+ * @param payload - The envelope payload.
+ * @returns The instruction text.
+ */
+function readImageTurnInstruction(payload: Record<string, unknown> | undefined): string {
+  const value = payload?.renderInstruction;
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error('An image turn requires the server-authored render instruction (renderInstruction); refusing to render from the untrusted body alone');
+  }
+  return value;
+}
+
+/**
+ * @description An image turn's authority: the harness's own native image tool beside what the
+ * resolver granted (the completion floor), with its exact operation scope, so the final rebind
+ * names the tool the trusted instruction asks for. A harness with no recorded image tool keeps
+ * the resolved binding unchanged and says so in the log; nothing else is widened.
+ * @param binding - The resolved server authority for this execution.
+ * @param harness - The provider the bot runs this turn on.
+ * @param taskId - For the log line.
+ * @returns The binding, widened by the one image tool when the harness has one.
+ */
+function grantImageTurnTool(binding: PromptAuthorityBinding, harness: string, taskId: string): PromptAuthorityBinding {
+  const tool = anyBotImageTurnToolFor(harness);
+  if (!tool) {
+    logger.warn({ taskId, harness }, 'Image turn on a harness with no recorded image tool: the authority keeps the completion floor alone');
+    return binding;
+  }
+  return {
+    ...binding,
+    allowedTools: [...binding.allowedTools, tool],
+    scopes: [...binding.scopes, anyBotRuntimeToolScope(tool)],
+  };
+}
 /**
  * @description ADR-127: the ONE carve in which an autonomous CLI harness may execute at a bot node.
  * Requires BOTH a demo deployment AND an operator-owned request. A missing identity is refused on
@@ -296,6 +345,9 @@ export function createBotNodeExecutionHandler(
     // a concurrent dispatch would silently change a running task's provider + mis-attribute its cost).
     activeExecutions += 1;
     try {
+      // SEC-05 carve for image turns: the server-authored instruction is its own carrier, read here
+      // and nowhere else; the brief stays the (untrusted) text. Refused before any task exists.
+      const renderInstruction = imageTurn ? readImageTurnInstruction(payload) : null;
       if (hasProviderIntent && !providerIntent) throw new Error('Invalid trusted provider intent');
       if (hasCredentialCarrier && !providerIntent) {
         throw new Error('Connector credentials require a validated deterministic provider intent');
@@ -420,7 +472,7 @@ export function createBotNodeExecutionHandler(
         const awarenessLayer = buildSwarmAwarenessLayer(envelope, agentId);
         if (awarenessLayer) personaLayers.push(awarenessLayer);
       }
-      const promptAuthority = await resolvePromptAuthorityBinding({
+      const resolvedAuthority = await resolvePromptAuthorityBinding({
         userSub: userSub ?? null,
         ticketId: ticketExternalId ?? workspaceFolderId,
         workloadId: agentId,
@@ -428,6 +480,11 @@ export function createBotNodeExecutionHandler(
         layers: personaLayers,
         resolver: protectedExecution ? deps.resolveBrokeredPromptAuthorization : deps.resolvePromptAuthorization,
       });
+      // An image turn's rebind names the harness's own image tool beside the completion floor, so
+      // the trusted instruction and the authority agree. Every other turn keeps the resolved binding.
+      const promptAuthority = imageTurn
+        ? grantImageTurnTool(resolvedAuthority, normalizedSelectedProvider, taskId)
+        : resolvedAuthority;
       const singleShotToolless = Boolean(
         protectedSingleShotCandidate
         && promptAuthority.allowedTools.length === 0
@@ -442,16 +499,24 @@ export function createBotNodeExecutionHandler(
         });
       }
       const skillProfilePattern = typeof payload?.pattern === 'string' ? payload.pattern.trim() : '';
+      // Server-authored configuration, in order: the image turn's render instruction (the carve),
+      // then the controller-resolved skill profile. Both are server text; neither is the user's.
+      const trustedConfiguration: TrustedPromptConfiguration[] = [
+        ...(renderInstruction ? [{ source: IMAGE_RENDER_INSTRUCTION_SOURCE, content: renderInstruction }] : []),
+        ...(skillProfilePattern ? [{ source: 'resolved-skill-profile', content: skillProfilePattern }] : []),
+      ];
+      // The text is always the untrusted body: on an image turn it is the brief, the one
+      // user-originated field, which the trusted instruction tells the model to read as data.
       const assembledPrompt = assemblePromptForAnyBot(
         personaLayers,
         verbatimPrompt ? String(payload?.text ?? '') : buildUserMessage(envelope),
         promptAuthority,
-        skillProfilePattern ? [{ source: 'resolved-skill-profile', content: skillProfilePattern }] : [],
+        trustedConfiguration,
       );
       const layerCount = personaLayers.length;
 
       logger.info(
-        { correlationId: envelope.correlationId, agentId, taskId, direct, layerCount, promptLength: assembledPrompt.length },
+        { correlationId: envelope.correlationId, agentId, taskId, direct, imageTurn, layerCount, promptLength: assembledPrompt.length },
         'Executing envelope via any-bot provider (in-process)',
       );
 

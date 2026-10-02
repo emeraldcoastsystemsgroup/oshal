@@ -14,6 +14,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | A `forge` port for the Bot Forge edit-in-place case (live-acceptance-forge-edit.js): write revision 1 or 2 of the tagged fixture pack into the operator's own packs directory, read what exists for the tag (pack, deployed-apps entries, persona files) and remove it, all through the in-container helper's three pool-free forge ops. The case sends a forge-edit tag and a revision, never a path or pack content.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | The `files` port gains `dir`: a named directory probe's listing in the api container (names only, never a path from the case), for the tickets-in-tickets case.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | A run that files live fixtures can be interrupted: SIGINT/SIGTERM run what the case registered through the `onInterrupt` port (cancel its tickets, say how to finish), release the helper and exit 130; a `note` port lets a case report ids as it goes. `--cleanup-root=<id>` finishes an interrupted run of one case by its root id through the case's `cleanupRoot`. A crashed case prints NO RECEIPT instead of a receipt of zeros.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | A case may pass `timeoutMs` in the `api` port's options (fourth argument) to bound ONE call beyond the 30 s default: the storyboard-agy case's single POST /api/test-lab/run blocks for the whole render (the api runs the step inline; the bot dispatch budget is 420 s), and on 2026-10-02 the case crashed "aborted due to timeout" about 45 s in, before the render had answered. The default stays CALL_TIMEOUT_MS; a non-positive or non-numeric value is ignored; the other ports are unchanged.
  */
 
 'use strict';
@@ -72,16 +73,18 @@ function caseOptions(args) {
 
 /**
  * @description Bearer JSON and multipart HTTP ports against the box, as the token's owner, plus an
- * `anonymous` JSON port that sends no credential at all.
+ * `anonymous` JSON port that sends no credential at all. The `api` port's options may carry
+ * `timeoutMs` to bound that one call beyond the 30 s default (a case whose single call blocks on a
+ * long server-side step, such as a render); every other call keeps the default.
  * @param {string} base - The box's base URL.
  * @param {string} token - The operator PAT (kept in this closure; never printed).
  * @param {typeof fetch} [fetchImpl] - Fetch (a seam for the header-handling tests).
  * @returns {{api: Function, anonymous: Function, upload: Function, raw: Function}} The ports.
  */
 function httpPorts(base, token, fetchImpl = fetch) {
-  const send = async (method, route, init, withToken = true) => {
+  const send = async (method, route, init, withToken = true, timeoutMs = CALL_TIMEOUT_MS) => {
     const headers = { ...(init.headers || {}), ...(withToken ? { authorization: `Bearer ${token}` } : {}) };
-    const response = await fetchImpl(`${base}${route}`, { method, redirect: 'manual', signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
+    const response = await fetchImpl(`${base}${route}`, { method, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs),
       ...init, headers });
     const raw = Buffer.from(await response.arrayBuffer().catch(() => new ArrayBuffer(0)));
     const text = new TextDecoder().decode(raw);
@@ -94,8 +97,10 @@ function httpPorts(base, token, fetchImpl = fetch) {
   const jsonInit = (body, options = {}) => ({
     headers: { ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...(options.headers || {}) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  // One call's own budget (a case that blocks on a long server-side step), else the default.
+  const callTimeout = (options = {}) => (Number.isFinite(options.timeoutMs) && options.timeoutMs > 0 ? options.timeoutMs : CALL_TIMEOUT_MS);
   return {
-    api: (method, route, body, options) => send(method, route, jsonInit(body, options)),
+    api: (method, route, body, options) => send(method, route, jsonInit(body, options), true, callTimeout(options)),
     anonymous: (method, route, body, options) => send(method, route, jsonInit(body, options), false),
     upload: (route, fields, file) => {
       const form = new FormData();

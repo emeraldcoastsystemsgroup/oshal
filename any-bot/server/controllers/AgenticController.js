@@ -18,6 +18,7 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com  | The completion text is the literal result the model wrote, always a string (completion-result-text.js). The attempt_completion branch stored toolInput.result, which ToolUseParser has already converted: an answer of 5 was saved as the number 5 and an answer of true as a Boolean, and the bot-node handler threw "m.text.trim is not a function" reading the message back, so a Jarvis ask for "just the number" lost its answer (live case jarvis-cache, 2026-09-29, 3 of 3). An answer of 0 or false fell through to the raw XML reply instead. The conversion the parser applies to real tool parameters is unchanged.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | A host-tools-only turn whose allowlist holds nothing but the completion floor ends at the first denied tool request instead of answering 'continue' up to maxTurns: there is nothing to broker, each refusal would buy another provider call, and on the world classifier's unattended turns the fetched content would otherwise set that multiplier (one budget token could buy 25 spawns).
  * 15 | maintainer@emeraldcoastsystemsgroup.com  | Forward the caller's imageTurn marker to the provider call of this loop (ADR-130 amendment 2026-10-02). A storyboard render dispatched onto the Antigravity harness sets it; the Antigravity wrapper then collects generate_image's output into the task workspace before its private HOME is removed. Providers without image turns ignore it.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com  | Image turns receive no system prompt (SEC-05 carve for image turns, operator decision 2026-10-02 b). This loop prepended the persona prefix and the full Cline system prompt ("1 tools: attempt_completion", the XML tool protocol, "ALWAYS use attempt_completion", the assembled prompt embedded again as "Current task") in front of the bot-node handler's trust-separated image-turn prompt; the live render of 2026-10-02 19:00 then read the render as an injection and was refused by Guard A with no generate_image step. On options.imageTurn the provider now receives the assembled prompt alone: no persona, no Cline or minimal prompt, no roster. The tool catalogue, the allowlist checks and every other turn are unchanged; the host-tools-only and ordinary turns keep their prompts exactly.
  */
 
 /**
@@ -220,13 +221,19 @@ class AgenticController {
     );
     const availableTools = dispatchCapabilities.definitions;
 
+    // SEC-05 carve for image turns (ADR-130): the bot-node handler's trust-separated prompt is the
+    // whole of what the provider receives. No persona prefix, no Cline or minimal system prompt:
+    // the live render of 2026-10-02 read "1 tools: attempt_completion" in front of a data-only
+    // record naming generate_image and refused the render as an injection.
+    const imageTurn = options.imageTurn === true;
+
     // Detect if this is a simple conversation or complex task
-    const needsFullPrompt = requiresFullPrompt(userMessage);
-    
+    const needsFullPrompt = !imageTurn && requiresFullPrompt(userMessage);
+
     // Get system prompt - use minimal for simple messages, full for complex tasks
-    
+
     // DEBUG: Log token configuration without exposing token material.
-    
+
     const agentId = process.env.AGENT_ID || 'Agent';
     
     // Extract identity for minimal prompt
@@ -241,7 +248,9 @@ class AgenticController {
       logger.warn(`⚠️ NO persona config found or no perspective field`);
     }
     
-    const systemPrompt = needsFullPrompt
+    const systemPrompt = imageTurn
+      ? ''
+      : needsFullPrompt
       ? getClineSystemPrompt({
           taskId: taskId,
           currentWorkingDirectory: task.workspace_dir || '/app/workspace',
@@ -354,7 +363,11 @@ class AgenticController {
     }
 
     let finalSystemPrompt;
-    if (personaConfig && !isDashboardChat) {
+    if (imageTurn) {
+      // An image turn's provider receives the assembled image-turn prompt alone (see above).
+      finalSystemPrompt = '';
+      logger.info(`Image turn for task ${taskId}: no persona prefix and no system prompt; the provider receives the assembled image-turn prompt alone`);
+    } else if (personaConfig && !isDashboardChat) {
       // Tickets: Full persona with orchestration behavior
       finalSystemPrompt = personaConfig.systemPromptPrefix + systemPrompt;
       logger.info(`Ticket processing: Using FULL persona with orchestration behavior`);
@@ -372,7 +385,7 @@ class AgenticController {
       logger.info(`[AgenticController] ✅ {{SWARM_ROSTER}} replaced in finalSystemPrompt`);
     }
 
-    logger.info(`Using ${needsFullPrompt ? 'FULL' : 'MINIMAL'} system prompt for: "${userMessage.substring(0, 50)}..."`);
+    logger.info(`Using ${imageTurn ? 'NO' : needsFullPrompt ? 'FULL' : 'MINIMAL'} system prompt for: "${userMessage.substring(0, 50)}..."`);
     
     try {
       while (!isComplete && turnCount < this.maxTurns) {
