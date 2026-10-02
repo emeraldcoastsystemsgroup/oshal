@@ -17,6 +17,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | The planning-entry and preparation-packet readers and the work-unit builders moved to ./planning-work-units.ts because this file crossed 800 code lines. Pure move; behaviour unchanged.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | The PM planning round carries the root ticket's owner and persisted verified issuer (readRoundOwner) so it can run in-process on the owner's hosted ladder (docs/security/http-delegation.md, "Build-lane planning runs in-process").
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | When the last planning round ran in-process, decomposition reads its reply from memory (planning-output-source.ts): no shared-volume fallback, the plan is recorded as IMPLEMENTATION-PLAN.md only when absent, and a failed round throws PlanningDecompositionError for the queue manager to escalate. Mesh rounds keep the existing parse path.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com   | parseInProcessPlan takes the round's start time: a reply without the decomposition section is decomposed from the IMPLEMENTATION-PLAN.md the planning node wrote during the round (readFreshPlanFile); an older file is still never read, and a reply that carries the section is recorded and parsed as before.
  */
 
 import { existsSync } from 'fs';
@@ -41,7 +42,7 @@ import type { SwarmProcessedTicketResult } from './swarm-run-store';
 import type { SwarmTicketLifecycleSnapshot } from './ticket-cycle-state-machine';
 import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 import { readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
-import { readInProcessPlanText, recordImplementationPlan } from './planning-output-source';
+import { hasSubtaskDecomposition, readFreshPlanFile, readInProcessPlanText, recordImplementationPlan } from './planning-output-source';
 import {
   TECHNICAL_SPECIFICATION_FILE,
   buildArchitectureWorkUnit,
@@ -224,6 +225,7 @@ export class PlanningRoundOrchestrator {
     }
 
     const artifactPaths = await this.runArchitectureIfEnabled(input, multiRoundDispatch, context.planningEntry);
+    const planningStartedAt = Date.now();
     const planningDispatch = await this.runPlanningRounds(
       input,
       multiRoundDispatch,
@@ -231,7 +233,7 @@ export class PlanningRoundOrchestrator {
       context.preparationPacket,
     );
     const planningResult = planningDispatch.inProcess
-      ? await this.parseInProcessPlan(input, planningDispatch.finalOutput)
+      ? await this.parseInProcessPlan(input, planningDispatch.finalOutput, planningStartedAt)
       : await this.parsePlanningOutput(input, planningDispatch.finalOutput, artifactPaths.workspacePath);
     artifactPaths.implementationPlanPath = planningResult.implementationPlanPath;
 
@@ -350,19 +352,27 @@ export class PlanningRoundOrchestrator {
    * fallback, and an existing plan file is left untouched.
    * @param input - Planning execution input.
    * @param finalOutput - The in-process round's output.
+   * @param roundStartedAt - When the planning round was dispatched (epoch ms); a plan file the
+   *   planning node wrote after it stands in for a reply that carries no decomposition section.
    * @returns The parsed units and assignments, and the plan path when it was written.
    * @throws PlanningDecompositionError when the round failed or returned no text.
    */
   private async parseInProcessPlan(
     input: PlanningPhaseExecutionInput,
     finalOutput: unknown,
+    roundStartedAt: number,
   ): Promise<{ workUnits: DecomposedWorkUnit[]; agentAssignments: AgentAssignment[]; implementationPlanPath: string | undefined }> {
-    const text = readInProcessPlanText(input.item.externalId, finalOutput);
-    const implementationPlanPath = recordImplementationPlan(resolveSharedWorkspaceRoot(), input.workspaceTaskId, text);
+    const reply = readInProcessPlanText(input.item.externalId, finalOutput);
+    const workspaceRoot = resolveSharedWorkspaceRoot();
+    const fromFile = hasSubtaskDecomposition(reply) ? undefined : readFreshPlanFile(workspaceRoot, input.workspaceTaskId, roundStartedAt);
+    const text = fromFile ?? reply;
+    const implementationPlanPath = fromFile
+      ? join(workspaceRoot, input.workspaceTaskId, IMPLEMENTATION_PLAN_FILE)
+      : recordImplementationPlan(workspaceRoot, input.workspaceTaskId, reply);
     const parsed = await this.deps.decompositionService.decomposeFromPlanningOutput(text, input.item);
     logger.info(
-      { externalId: input.item.externalId, unitCount: parsed.workUnits.length, implementationPlanPath, source: 'in-process' },
-      'In-process planning output parsed from memory',
+      { externalId: input.item.externalId, unitCount: parsed.workUnits.length, implementationPlanPath, source: fromFile ? 'plan-file-written-during-round' : 'in-process' },
+      'In-process planning output parsed',
     );
     return { ...parsed, implementationPlanPath };
   }

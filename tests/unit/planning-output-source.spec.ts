@@ -4,9 +4,10 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the in-process plan being read from memory (planning-output-source.ts). Drives the real PlanningRoundOrchestrator and the real TicketDecompositionService over a real temp workspace root, with the multi-round dispatch doubled to return an in-process round. Proves planted plan files on the shared volume are neither read nor overwritten, that a failed round escalates by name with no file written, and that mesh rounds keep the existing disk fallback.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Two cases for the plan file: one written during the round stands in for a reply without the decomposition section; one written before the round is still never read. Planted files are backdated, as anything planted before the round is.
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -64,8 +65,8 @@ function phaseResult(output: unknown, inProcess: boolean): PhaseDispatchResult {
  * @param result - What the planning phase returns.
  * @returns The orchestrator.
  */
-function orchestrator(result: PhaseDispatchResult): PlanningRoundOrchestrator {
-  const dispatch = { executePhaseWithRounds: async () => result } as unknown as MultiRoundDispatchService;
+function orchestrator(result: PhaseDispatchResult, onRound?: () => void): PlanningRoundOrchestrator {
+  const dispatch = { executePhaseWithRounds: async () => { onRound?.(); return result; } } as unknown as MultiRoundDispatchService;
   return new PlanningRoundOrchestrator({
     decompositionService: new TicketDecompositionService(),
     getMultiRoundDispatch: () => dispatch,
@@ -84,8 +85,8 @@ function rootItem(): ExternalWorkItem {
   } as unknown as ExternalWorkItem;
 }
 
-function plan(result: PhaseDispatchResult) {
-  return orchestrator(result).execute({
+function plan(result: PhaseDispatchResult, onRound?: () => void) {
+  return orchestrator(result, onRound).execute({
     runId: 'run-1', item: rootItem(), input: {} as never, policy: {} as never,
     phaseGate: { complexity: 'low' } as never, workspaceTaskId: ROOT_ID,
   });
@@ -101,8 +102,15 @@ function plantFiles(): string[] {
   for (const file of planted) {
     mkdirSync(join(file, '..'), { recursive: true });
     writeFileSync(file, PLANTED, 'utf8');
+    backdate(file);
   }
   return planted;
+}
+
+/** Makes a file predate the round about to run, as anything planted before it does. */
+function backdate(file: string): void {
+  const past = new Date(Date.now() - 60_000);
+  utimesSync(file, past, past);
 }
 
 beforeEach(() => {
@@ -120,7 +128,7 @@ afterEach(() => {
   rmSync(workspaceRoot, { recursive: true, force: true });
 });
 
-describe('an in-process plan is read from memory and recorded, never read back from the shared volume', () => {
+describe('an in-process plan is read from memory, or from the plan file written during the round, never from anything older', () => {
   it('decomposes the in-memory reply into its subtasks with their assignments, and records it byte for byte', async () => {
     const result = await plan(phaseResult({ agentId: PM, taskId: `${ROOT_ID}::${PM}`, content: PLAN }, true));
 
@@ -158,6 +166,31 @@ describe('an in-process plan is read from memory and recorded, never read back f
     expect(result.workUnits.map((unit) => unit.title)).toContain('Build the CSV parser module');
     expect(JSON.stringify(result.workUnits)).not.toContain('Planted');
     expect(readFileSync(plantedPlan, 'utf8')).toBe(PLANTED);
+  });
+
+  it('a reply without the section is decomposed from the plan file the node wrote during the round', async () => {
+    const planFile = join(workspaceRoot, ROOT_ID, 'IMPLEMENTATION-PLAN.md');
+    const result = await plan(phaseResult({ agentId: PM, content: 'Wrote the plan to IMPLEMENTATION-PLAN.md.' }, true), () => { writeFileSync(planFile, PLAN, 'utf8'); });
+
+    expect(result.workUnits.map((unit) => unit.title)).toEqual([
+      'Build the CSV parser module', 'Build the schema validator module', 'Write unit tests for both modules',
+    ]);
+    expect(result.agentAssignments?.map((a) => a.suggestedAgentId)).toEqual(['code-developer', 'code-developer', 'test-engineer']);
+    expect(result.artifactPaths.implementationPlanPath).toBe(planFile);
+    expect(readFileSync(planFile, 'utf8')).toBe(PLAN);
+  });
+
+  it('a plan file written before the round is not read for a reply without the section', async () => {
+    const planFile = join(workspaceRoot, ROOT_ID, 'IMPLEMENTATION-PLAN.md');
+    writeFileSync(planFile, PLAN, 'utf8');
+    backdate(planFile);
+    const reply = 'Wrote the plan to IMPLEMENTATION-PLAN.md.';
+    const result = await plan(phaseResult({ agentId: PM, content: reply }, true));
+
+    expect(result.workUnits).toHaveLength(1);
+    expect(result.workUnits[0].description).toBe(reply);
+    expect(readFileSync(planFile, 'utf8')).toBe(PLAN);
+    expect(result.artifactPaths.implementationPlanPath).toBeUndefined();
   });
 
   it('a failed in-process round escalates by name and writes no file', async () => {
