@@ -22,6 +22,7 @@
  * 17 | maintainer@emeraldcoastsystemsgroup.com | Expose only the activation-scoped fixed-name package tool registration port.
  * 18 | maintainer@emeraldcoastsystemsgroup.com | Expose the fixed read-only Yahoo inbox reader (`imapMail`) — the outlookMail seam shape: core resolves the caller's personal app-password grant and spends it on the fixed imap.mail.yahoo.com:993, packages receive only MailSummary metadata.
  * 19 | maintainer@emeraldcoastsystemsgroup.com | Expose the fixed one-recipient Outlook send (`outlookMailSend`) so an installed package can mail a lead from a named shared mailbox (Sales heads-up emails) without a token, a Graph proxy or a mailbox guess.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com | `outlookMailSend` also takes `provider: 'google'` (Gmail API), so a test box without a Microsoft app registration can run a package's whole mail process on a Google account.
  */
 
 import type { Pool } from 'pg';
@@ -118,9 +119,10 @@ export interface AppContext {
    */
   outlookMailSync?: OutlookMailSyncReader;
   /**
-   * Fixed one-recipient Outlook send for trusted application packages (sales heads-up emails):
-   * the named user's own personal grant, exact login-email match, Mail.Send required, Reply-To
-   * resolved in core from another user's own grant. Same token-safe seam shape as outlookMail.
+   * Fixed one-recipient mail send for trusted application packages (sales heads-up emails):
+   * the named user's own personal grant, exact login-email match, the delegated send scope
+   * required, Reply-To resolved in core from another user's own grant. `provider: 'google'`
+   * sends the same message through Gmail. Same token-safe seam shape as outlookMail.
    */
   outlookMailSend?: OutlookMailSender;
   /**

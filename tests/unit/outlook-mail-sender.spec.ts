@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Boundary guards for the fixed Outlook send seam: sender grant selection fails closed, Mail.Send is required, one bounded recipient, Reply-To resolved in core, the exact Graph payload, and no token or provider body in any result.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Google provider: the Gmail endpoint and gmail.send scope, the raw RFC 2822 message (To, Reply-To, RFC 2047 subject, text+HTML alternative), fail-closed selection among google grants, and Reply-To resolved across providers.
  */
 /**
  * Security boundary tests for the fixed Outlook send operation exposed to app packages.
@@ -154,5 +155,93 @@ describe('Outlook sender Reply-To and provider outcomes', () => {
     await expect(down.send(message)).resolves.toEqual({ status: 'unavailable', replyTo: 'none' });
     const refused = sender({ [SUB]: [connection()] }, vi.fn() as unknown as typeof fetch, null);
     await expect(refused.send(message)).resolves.toEqual({ status: 'reconnect_required', replyTo: 'none' });
+  });
+});
+
+const GMAIL_SCOPES = 'openid email https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send';
+const googleConnection = (over: Partial<ConnectionRow> = {}): ConnectionRow => connection({
+  connection_id: 'google-info', provider: 'google', account_email: 'info@gsquared.test', account_key: 'info@gsquared.test', scopes: GMAIL_SCOPES, ...over,
+});
+
+/** Connections keyed by user then provider, so the fake honours the provider the seam asks for. */
+function multi(rows: Record<string, Partial<Record<string, ConnectionRow[]>>>, fetchImpl: typeof fetch, token: string | null = 'actor-token') {
+  const getAccessToken = vi.fn(async () => token);
+  const send = createOutlookMailSender({} as never, {
+    listConnections: async (_pool, userSub, provider) => rows[userSub]?.[provider] ?? [],
+    getAccessToken,
+    fetchImpl,
+  });
+  return { send, getAccessToken };
+}
+
+/** Decode the base64url raw message Gmail receives into headers and body. */
+function decodeRaw(init: RequestInit): { headers: Record<string, string>; body: string } {
+  const raw = Buffer.from(JSON.parse(String(init.body)).raw, 'base64url').toString('utf8');
+  const [head, ...rest] = raw.split('\r\n\r\n');
+  const headers: Record<string, string> = {};
+  for (const line of head.split('\r\n')) { const i = line.indexOf(':'); headers[line.slice(0, i)] = line.slice(i + 1).trim(); }
+  return { headers, body: rest.join('\r\n\r\n') };
+}
+
+describe('Google provider', () => {
+  it('sends through the Gmail endpoint with a raw RFC 2822 text+HTML alternative, Reply-To and the exact google grant', async () => {
+    const fetchImpl = vi.fn(async () => graphResponse(200)) as unknown as typeof fetch;
+    const rows = {
+      [SUB]: { google: [googleConnection({ connection_id: 'other', account_email: 'other@gsquared.test' }), googleConnection()], outlook: [connection()] },
+      [BDO]: { google: [googleConnection({ connection_id: 'google-bdo', user_sub: BDO, account_email: 'ben@gsquared.test' })] },
+    };
+    const { send, getAccessToken } = multi(rows, fetchImpl);
+    await expect(send({ ...message, loginEmail: 'info@gsquared.test', provider: 'google', html: '<p>Hello</p>', replyToUserSub: BDO }))
+      .resolves.toEqual({ status: 'sent', replyTo: 'set' });
+    expect(getAccessToken).toHaveBeenCalledWith(expect.anything(), SUB, 'google', { tenantId: 'personal', connectionId: 'google-info' });
+    const [url, init] = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://gmail.googleapis.com/gmail/v1/users/me/messages/send');
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer actor-token');
+    const { headers, body } = decodeRaw(init);
+    expect(headers.To).toBe('owner@carrier.example');
+    expect(headers['Reply-To']).toBe('ben@gsquared.test');
+    expect(headers.Subject).toBe('Heads up');
+    expect(headers['Content-Type']).toMatch(/^multipart\/alternative; boundary="oshal_[0-9a-f]{16}"$/);
+    const boundary = headers['Content-Type'].match(/boundary="([^"]+)"/)![1];
+    const parts = body.split(`--${boundary}`).filter((p) => p.trim() && p.trim() !== '--');
+    expect(parts).toHaveLength(2);
+    const decodePart = (part: string) => Buffer.from(part.split('\r\n\r\n')[1].replace(/\s+/g, ''), 'base64').toString('utf8');
+    expect(parts[0]).toContain('Content-Type: text/plain; charset="UTF-8"');
+    expect(decodePart(parts[0])).toBe('Hello');
+    expect(parts[1]).toContain('Content-Type: text/html; charset="UTF-8"');
+    expect(decodePart(parts[1])).toBe('<p>Hello</p>');
+  });
+
+  it('requires gmail.send, fails closed on the login email, and maps a Google 403 to reconnect_required', async () => {
+    const fetchImpl = vi.fn(async () => graphResponse(403)) as unknown as typeof fetch;
+    const readOnly = multi({ [SUB]: { google: [googleConnection({ scopes: 'openid email https://www.googleapis.com/auth/gmail.readonly' })] } }, fetchImpl);
+    await expect(readOnly.send({ ...message, loginEmail: 'info@gsquared.test', provider: 'google' })).resolves.toEqual({ status: 'missing_scope', replyTo: 'none' });
+    const outlookOnly = multi({ [SUB]: { outlook: [connection({ account_email: 'info@gsquared.test' })] } }, fetchImpl);
+    await expect(outlookOnly.send({ ...message, loginEmail: 'info@gsquared.test', provider: 'google' })).resolves.toEqual({ status: 'not_connected', replyTo: 'none' });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    const refused = multi({ [SUB]: { google: [googleConnection()] } }, fetchImpl);
+    await expect(refused.send({ ...message, loginEmail: 'info@gsquared.test', provider: 'google' })).resolves.toEqual({ status: 'reconnect_required', replyTo: 'none' });
+    expect(outlookMailSenderInternals.hasGmailSendScope('gmail.send')).toBe(true);
+    expect(outlookMailSenderInternals.hasGmailSendScope('Mail.Send')).toBe(false);
+  });
+
+  it('encodes a non-ASCII subject as an RFC 2047 word and sends a plain text-only message without a boundary', async () => {
+    const fetchImpl = vi.fn(async () => graphResponse(200)) as unknown as typeof fetch;
+    const { send } = multi({ [SUB]: { google: [googleConnection()] } }, fetchImpl);
+    await send({ ...message, loginEmail: 'info@gsquared.test', provider: 'google', subject: 'Félicitations' });
+    const { headers, body } = decodeRaw(((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit])[1]);
+    expect(headers.Subject).toBe(`=?UTF-8?B?${Buffer.from('Félicitations', 'utf8').toString('base64')}?=`);
+    expect(headers['Content-Type']).toBe('text/plain; charset="UTF-8"');
+    expect(headers['Reply-To']).toBeUndefined();
+    expect(Buffer.from(body.replace(/\s+/g, ''), 'base64').toString('utf8')).toBe('Hello');
+    expect(outlookMailSenderInternals.headerWord('plain ascii')).toBe('plain ascii');
+  });
+
+  it('resolves Reply-To across providers: an Outlook sender with a BDO who only connected Google', async () => {
+    const fetchImpl = vi.fn(async () => graphResponse()) as unknown as typeof fetch;
+    const { send } = multi({ [SUB]: { outlook: [connection()] }, [BDO]: { google: [googleConnection({ connection_id: 'google-bdo', user_sub: BDO, account_email: 'ben@gsquared.test' })] } }, fetchImpl);
+    await expect(send({ ...message, replyToUserSub: BDO })).resolves.toEqual({ status: 'sent', replyTo: 'set' });
+    const body = JSON.parse(String(((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit])[1].body));
+    expect(body.message.replyTo).toEqual([{ emailAddress: { address: 'ben@gsquared.test' } }]);
   });
 });
