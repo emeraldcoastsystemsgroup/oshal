@@ -29,7 +29,7 @@ const BUILD_TARGETS = Object.freeze(new Set([
 const REGRESSION_TESTS = Object.freeze([
   'controller-pm-planning-node-postgres', 'planning-output-source', 'child-ticket-owner-inheritance-postgres',
   'build-child-dispatch-gate', 'signed-swarm-child-dispatch', 'swarm-verification-enforced-fallback',
-  'internal-machinery-scoping', 'bot-node-workspace-owner-binding',
+  'internal-machinery-scoping', 'bot-node-workspace-owner-binding', 'queue-manager-claim-reentrancy',
 ].map((name) => Object.freeze({ level: 'unit', path: `tests/unit/${name}.spec.ts` })));
 const DEFAULT_BUDGETS = Object.freeze({
   claimBudgetMs: 180_000, planningBudgetMs: 1_200_000, childBudgetMs: 1_500_000,
