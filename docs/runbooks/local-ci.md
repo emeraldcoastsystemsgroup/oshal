@@ -295,8 +295,15 @@ Done:
 
 Open, each a `BACKLOG` entry with done-when criteria:
 
-1. **`trivy`** — a CVE-budget decision, not a code fix. The last report on disk is from
-   2026-07-09, so the current finding set is not actually known. Capture a fresh report first.
+1. **`trivy`** — a CVE-budget decision (operator, 2026-09-21): the gate stays a gate, published
+   fixes are taken first, and only what cannot move goes in `.trivyignore` with a reason and an
+   `exp:` no more than 90 days out. The posture is written above `gate_trivy` in
+   `scripts/ci-local.sh`. The 2026-10-02 nightly report (image from `a88a8a63`) had 29 findings
+   outside the budget; all 29 were fixed on branch `trivy-1002` and none was budgeted. Against an
+   image built from that branch, the gate's own invocation reports `Total: 3 (HIGH: 3,
+   CRITICAL: 0)` without the budget (the three cline `undici` 5.29.0 lines, `exp:2026-12-20`) and
+   exits 0 with it. Left: a scheduled nightly that judges `trivy` (not RESOURCE-EXHAUSTED) and
+   logs it PASS.
 2. **`unit` + `e2e-green`** — never triaged. No run log preserves *which* specs fail:
    `ci-local.log` keeps only per-gate PASS/FAIL and `ci-local-last-run.log` is overwritten each
    night. Start with one `bash scripts/ci-local.sh --head` on an idle box, keeping the output.
@@ -310,8 +317,8 @@ Open, each a `BACKLOG` entry with done-when criteria:
    scheduled run (`scripts/ci/ci-run-durations.mjs`) is still owed.
 4. **The purge hang** — `prepare_head_src` can wedge for hours deleting its own previous export.
 
-The suggested order is 2, then 1 — triage is blind without spec-level output, and the trivy
-decision needs a current report. 3 gates the trustworthiness of both.
+The suggested order was 2, then 1 — triage is blind without spec-level output; item 1 now has
+its current report (2026-10-02). 3 gates the trustworthiness of both.
 
 ### First kept run — 2026-09-14 (reduced gate, loaded host)
 
