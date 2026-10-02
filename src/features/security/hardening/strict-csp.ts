@@ -6,6 +6,8 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial strict-CSP builder, opt-in and returning `false` (no CSP at all) by default.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | DEFAULT POSTURE FLIP: cspFromEnv now returns the strict directive set in REPORT-ONLY mode by default instead of `false`, so every response actually carries a policy and the violation collector starts learning the real allowlist without an env act. Report-only is non-blocking by construction, so no surface can break; enforcement still requires OSHAL_STRICT_CSP=on, and OSHAL_CSP=off is the kill switch that restores "no header at all". Added cspMode (the three-way posture, one place), buildStrictCsp hardening (frame-src/worker-src/manifest-src/media-src + upgrade-insecure-requests, and object-src/base-uri/form-action pinned), and shouldLogCspReport — a bounded dedupe so report-only on a cockpit full of inline scripts cannot flood the log with the same violation. Guard: tests/unit/web-hardening-csp-body.spec.ts asserts the POLICY (directives + which header), not a string.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Reconcile inline guidance with the default report-only posture: operators observe the default (or pin it explicitly) before enforcement; cspFromEnv is the full three-mode wrapper, not an off-by-default opt-in wrapper.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | cspFromEnv leaves upgrade-insecure-requests off the REPORT-ONLY header. Browsers ignore that directive on a report-only policy (it cannot upgrade a request it is not allowed to enforce) and Chromium logs a console error saying so on every page load, so under the default posture every cockpit surface opened with a console error and tests/app-surface-validation.spec.ts failed all 23 surfaces on it. Enforce mode still carries the directive; buildStrictCsp is unchanged.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Clarify the wrapper contract: report-only omits the upgrade directive, including when explicitly pinned over enforcement.
  */
 
 /**
@@ -171,9 +173,10 @@ export type CspHelmetValue =
  * `contentSecurityPolicy` option. Posture comes from {@link cspMode}:
  *
  *  - 'disabled'    (OSHAL_CSP=off)        -> `false`: no CSP header at all.
- *  - 'report-only' (the DEFAULT)          -> the strict directive set on the NON-BLOCKING
+ *  - 'report-only' (the DEFAULT)          -> the strict directive set without
+ *                                            upgrade-insecure-requests on the NON-BLOCKING
  *                                            `Content-Security-Policy-Report-Only` header.
- *  - 'enforce'     (OSHAL_STRICT_CSP=on)  -> the same directives on the BLOCKING header.
+ *  - 'enforce'     (OSHAL_STRICT_CSP=on)  -> the full directive set on the BLOCKING header.
  *
  * Pass a per-request nonce (from middleware) so inline scripts you have stamped can run.
  * Without a nonce, inline scripts are reported (report-only) or blocked (enforce) — which is
@@ -192,11 +195,17 @@ export function cspFromEnv(
   const mode = cspMode(env);
   if (mode === 'disabled') return false;
 
+  const directives = buildStrictCsp({
+    ...opts,
+    reportUri: opts.reportUri ?? env.OSHAL_CSP_REPORT_URI ?? DEFAULT_CSP_REPORT_URI,
+  });
+  // A report-only policy cannot upgrade anything: browsers ignore upgrade-insecure-requests
+  // there and Chromium logs a console error saying so on every page load. Only the blocking
+  // header carries it, so the directive takes effect exactly when enforcement does.
+  if (mode === 'report-only') delete directives['upgrade-insecure-requests'];
+
   return {
-    directives: buildStrictCsp({
-      ...opts,
-      reportUri: opts.reportUri ?? env.OSHAL_CSP_REPORT_URI ?? DEFAULT_CSP_REPORT_URI,
-    }),
+    directives,
     reportOnly: mode === 'report-only',
     // We supply a full directive set; do not merge helmet's defaults on top.
     useDefaults: false,
