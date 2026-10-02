@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for build-lane planning running in-process (docs/security/http-delegation.md, "Build-lane planning runs in-process"). Drives the real MultiRoundDispatchService, the real project-manager round executor, the real swarm execution handler and the governed hosted provider against a real local OpenAI-compatible endpoint, with round output on real Postgres work_items. Covers the run, every named refusal, skipped rounds under signing, the unchanged mesh path without signing, and the controller worker refusing an unsigned mesh envelope.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The endpoint can wall the next request with HTTP 503 "high demand"; a walled round is replayed on the same endpoint and completes with one cost row.
  */
 
 /** Disposable local PostgreSQL only. Never consumes DATABASE_URL or deployment credentials. */
@@ -60,6 +61,8 @@ const wireRequests: RecordedRequest[] = [];
 const costEvents: Array<Parameters<CostRecordFn>[0]> = [];
 let endpoint: Server;
 let baseUrl: string;
+/** How many of the next requests the endpoint refuses with a 503 high-demand wall. */
+let wallNext = 0;
 let fixturePg: DisposablePostgres;
 let pool: Pool;
 let workItems: WorkItemRepository;
@@ -114,6 +117,12 @@ async function startEndpoint(): Promise<Server> {
       if (authorization !== `Bearer ${ENDPOINT_KEY}`) {
         res.writeHead(401, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ error: 'unauthorized' }));
+        return;
+      }
+      if (wallNext > 0) {
+        wallNext -= 1;
+        res.writeHead(503, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: { code: 503, message: 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', status: 'UNAVAILABLE' } }));
         return;
       }
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -262,6 +271,20 @@ describe('build-lane planning runs in-process on the root owner hosted brain (re
       agentId: PM_PLANNING_AGENT_ID, providerId: `byo-hosted:${MODEL}`, modelId: MODEL, ownerSub: OPERATOR,
       taskId: `${ticketId}::${PM_PLANNING_AGENT_ID}`, inputTokens: 900, outputTokens: 300,
     });
+  }, 60_000);
+
+  it('replays one 503 high-demand wall on the same endpoint and still completes the round with one cost row', async () => {
+    const transport = new QueueMeshTransport();
+    const ticketId = freshTicketId();
+    wallNext = 1;
+    const result = await planningRound(dispatchService(transport, true, executorDeps()), ticketId, { ownerSub: OPERATOR, principalIssuer: ISSUER });
+
+    expect(wireRequests).toHaveLength(2);
+    expect(wireRequests.every((request) => request.authorization === `Bearer ${ENDPOINT_KEY}`)).toBe(true);
+    expect(result.finalOutput).toMatchObject({ agentId: PM_PLANNING_AGENT_ID, content: PLAN });
+    expect((await roundItems(ticketId)).get(`${ticketId}-phase-2-round-1`)?.status).toBe('completed');
+    expect(costEvents).toHaveLength(1);
+    expect(transport.published).toHaveLength(0);
   }, 60_000);
 
   it.each([

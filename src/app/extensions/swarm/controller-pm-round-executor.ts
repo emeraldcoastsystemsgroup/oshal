@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Build-lane planning runs in-process (docs/security/http-delegation.md, "Build-lane planning runs in-process"). project-manager's Phase-2 round used to cross the mesh to the api worker, which ran it on an unattended command-line harness the controller refuses (SEC-05), so no build ticket could be planned. This executor runs the round in the controller process on the root owner's hosted ladder, only for operator-owned roots that carry a verified issuer, with no tools and a note saying so on the turn, and refuses by name otherwise.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The planning round's provider opts into the same-endpoint retry (429/402/503 high-demand wall replayed on the same endpoint, bounded by the existing plan). The first live run escalated its root on one HTTP 503 "high demand" from the hosted endpoint; the planning round has no rotation and no later attempt, so a single blip cost the whole ticket.
  */
 
 import type { Pool } from 'pg';
@@ -217,7 +218,7 @@ async function resolveBrain(
 function planningHandlerDeps(deps: ControllerPmRoundExecutorDeps, connection: ByoHostedConnection): LLMExecutionHandlerDeps {
   const maxTokens = deps.maxTokens ?? (Number(process.env.OSHAL_PM_PLANNING_MAX_TOKENS) || DEFAULT_PM_PLANNING_MAX_TOKENS);
   const provider = new PlanningTurnProvider(
-    createGovernedByoHostedProvider(connection, deps.pool, { agentId: PM_PLANNING_AGENT_ID }),
+    createGovernedByoHostedProvider(connection, deps.pool, { agentId: PM_PLANNING_AGENT_ID, sameEndpointRetry: true }),
     maxTokens,
   );
   return {

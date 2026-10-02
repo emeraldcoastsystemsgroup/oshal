@@ -276,7 +276,10 @@ The round now runs in the controller process (`controller-pm-round-executor.ts`,
   key. When no rung resolves, the round is refused with `pm_hosted_brain_unavailable`. The call goes
   through the governed hosted provider and carries no tools, no command-line engine, no connector
   credential and no deterministic provider intent. It never uses the localhost `/api/send-message`
-  leg. `OSHAL_PM_PLANNING_MAX_TOKENS` (default 16384) bounds the reply.
+  leg. `OSHAL_PM_PLANNING_MAX_TOKENS` (default 16384) bounds the reply. A retryable wall from
+  that endpoint (HTTP 429/402/503 "high demand") is replayed on the same endpoint under the
+  same-endpoint retry plan (`OSHAL_BYO_RETRY_*`) before the round fails; the round has no rotation
+  and no later attempt, so one blip must not cost the whole ticket.
 - **Output.** The reply is kept in memory, stored on the round's work item, and handed to
   decomposition from memory.
 
