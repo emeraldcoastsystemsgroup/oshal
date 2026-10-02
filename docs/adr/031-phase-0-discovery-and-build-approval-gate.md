@@ -162,8 +162,8 @@ are released and who a child belongs to.
   because parent assembly escalates a parent with an escalated child, and `POST /api/tickets`
   accepts any `parentTicketId`.
 
-Build-lane planning now runs in-process (docs/security/http-delegation.md, "Build-lane planning runs
-in-process"). A mesh worker that records a round result for a ticket also writes that ticket's
+Build-lane planning now crosses the signed hop to the configured planning node
+  (docs/security/http-delegation.md, "Build-lane planning runs on a build-lane node"). A mesh worker that records a round result for a ticket also writes that ticket's
 terminal state (`updateTicketTerminalState` in `swarm-agent-worker.ts`); an in-process planning
 round is not recorded by a worker, so it does not write the root's status.
 

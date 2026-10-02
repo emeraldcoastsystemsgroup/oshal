@@ -1116,13 +1116,14 @@ from preparation or unit tests alone.
   itself still sent planning and child execution over the mesh, which every node refuses while signing is
   configured, and its planning round ran on a command-line harness the controller refuses.
 - **Built (tickets-in-tickets branch):**
-  - Planning runs in-process on the root owner's hosted ladder for operator-owned roots with a verified
-    issuer (docs/security/http-delegation.md, "Build-lane planning runs in-process").
+  - Planning is sent over the signed hop to the configured planning node (OSHAL_PM_PLANNING_NODE, default
+    system-architect) for operator-owned roots with a verified issuer; the node's installed provider switch
+    rows choose the engine (docs/security/http-delegation.md, "Build-lane planning runs on a build-lane node").
   - The plan is decomposed from memory and recorded once as `IMPLEMENTATION-PLAN.md`.
   - Children carry the root's owner and issuer and run one at a time in planning order.
   - Execution crosses the signed hop to the nine build-lane targets ("Build-lane execution targets").
   - Under signing, QA uses the structural result.
-  - Guards: controller-pm-hosted-brain-postgres, planning-output-source,
+  - Guards: controller-pm-planning-node-postgres, planning-output-source,
     child-ticket-owner-inheritance-postgres, build-child-dispatch-gate, signed-swarm-child-dispatch and
     swarm-verification-enforced-fallback.
 - **Remaining:** deploy the branch and run the live case.

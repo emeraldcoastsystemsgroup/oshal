@@ -41,6 +41,7 @@
  * 36 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. This is the SECOND chain in this file - step 1 converged the one that tells the bot where its workspace is (line ~1007) and left this one, which reads the handovers back out of it. The two disagreeing means a bot writes a handover the next round cannot find.
  * 37 | maintainer@emeraldcoastsystemsgroup.com   | Cost/metrics accounting (TokenCapturingProvider, the recorder types and helpers, the envelope owner/tenant readers, the ADR-027 ticket linker) moved to ./swarm-execution-accounting.ts and the filesystem persona layer to ./swarm-file-persona-layer.ts, because this file crossed 800 code lines. Pure move; the moved types and buildFilePersonaLayer are re-exported from here so no import changes.
  * 38 | maintainer@emeraldcoastsystemsgroup.com   | LLMExecutionHandlerDeps.inlineFilePersona: the in-process hosted planning round (no file tools) gets its persona embedded instead of a read_file instruction it cannot obey. Default off; existing callers unchanged.
+ * 39 | maintainer@emeraldcoastsystemsgroup.com   | inlineFilePersona removed with the in-process hosted planning round it served; planning now crosses the signed hop to a node, which reads its persona file as every bot does.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -122,12 +123,6 @@ export interface LLMExecutionHandlerDeps {
    * via `harnessType` in SwarmBotDefinition without changing the execution handler.
    */
   resolveAgentHarness?: (agentId: string) => LLMService | null;
-  /**
-   * @description Embed the filesystem persona in the prompt instead of writing a context file and
-   * telling the agent to open it with read_file. Set for the in-process hosted planning round, whose
-   * brain has no file tools. Default false, which keeps the api worker and the bot nodes unchanged.
-   */
-  inlineFilePersona?: boolean;
 }
 
 /**
@@ -179,7 +174,7 @@ export function createLLMExecutionHandler(
       const payloadType = payload?.type ? String(payload.type) : '';
       const reviewRole = payload?.role ? String(payload.role) : 'reviewer';
       const filePersonaLayer = buildPhasePersonaOverride(payloadType, agentId, agentDisplayName, reviewRole)
-        ?? buildFilePersonaLayer(agentId, agentDisplayName, workspaceFolderId, personaDir, { inline: deps.inlineFilePersona === true });
+        ?? buildFilePersonaLayer(agentId, agentDisplayName, workspaceFolderId, personaDir);
       if (filePersonaLayer) personaLayers.unshift(filePersonaLayer);
 
       // Swarm memory injection — cross-ticket learnings

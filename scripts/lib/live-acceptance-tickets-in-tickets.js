@@ -25,7 +25,7 @@ const BUILD_TARGETS = Object.freeze(new Set([
 ]));
 /** The specs that guard each seam this case crosses live; the Lab card lists them. */
 const REGRESSION_TESTS = Object.freeze([
-  'controller-pm-hosted-brain-postgres', 'planning-output-source', 'child-ticket-owner-inheritance-postgres',
+  'controller-pm-planning-node-postgres', 'planning-output-source', 'child-ticket-owner-inheritance-postgres',
   'build-child-dispatch-gate', 'signed-swarm-child-dispatch', 'swarm-verification-enforced-fallback',
   'internal-machinery-scoping', 'bot-node-workspace-owner-binding',
 ].map((name) => Object.freeze({ level: 'unit', path: `tests/unit/${name}.spec.ts` })));

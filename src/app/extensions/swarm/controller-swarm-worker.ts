@@ -140,7 +140,8 @@ function buildWorkerTicketCallbacks(
 /**
  * @description The controller worker's mesh execution handler. While delegation signing is
  * configured it refuses unsigned execution, as every bot node's worker does; build-lane planning
- * runs in-process instead (docs/security/http-delegation.md, "Build-lane planning runs in-process").
+ * crosses the signed hop to a build-lane node instead (docs/security/http-delegation.md, "Build-lane
+ * planning runs on a build-lane node").
  * @param handlerDeps - The execution handler deps, when a handler can be built.
  * @param logger - The extension's logger, for the one posture line at boot.
  * @returns The handler, or undefined without handler deps.

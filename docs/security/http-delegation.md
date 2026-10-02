@@ -105,7 +105,7 @@ by a kernel-resident manifest in `swarm-apps/`:
 
 | Ticket type | Declared in | Pipeline | Worker (reviewer) | Routing under signing |
 | --- | --- | --- | --- | --- |
-| `build` | `WORKFLOW_PIPELINES`, `swarm-apps/oshal-engineering.yaml` | `swarm` | system-architect | Planning runs in-process (see [Build-lane planning runs in-process](#build-lane-planning-runs-in-process)); execution crosses the signed hop to a [build-lane target](#build-lane-execution-targets). |
+| `build` | `WORKFLOW_PIPELINES`, `swarm-apps/oshal-engineering.yaml` | `swarm` | system-architect | Planning crosses the signed hop to the configured planning node (see [Build-lane planning runs on a build-lane node](#build-lane-planning-runs-on-a-build-lane-node)); execution crosses the signed hop to a [build-lane target](#build-lane-execution-targets). |
 | `incident` | `WORKFLOW_PIPELINES`, `swarm-apps/intelligent-operations.yaml` | `incident-rca` | rca-specialist (queue-bot) | Dedicated nodes `oshal-local-rca-specialist` / `oshal-local-queue-bot`. |
 | `intelligent-processing` | `swarm-apps/intelligent-processing.yaml` | `incident-rca` | rca-specialist (queue-bot) | Same two nodes. |
 | `oshal-dev` | `swarm-apps/oshal-dev.yaml` | manifest-worker | oshal-developer | Dedicated node `oshal-developer` (already `requiresOwnNode`). |
@@ -199,7 +199,7 @@ interactive-only on purpose: its turn runs in-process through `executeBotOrInlin
 network hop, so there is nothing for a delegation token to bind to. None of them may own a queued
 ticket type, and after the call-out rule above none of them can acquire one by winning a bid either.
 One queued round runs inline by design, under its own rules: build-lane planning by project-manager,
-specified in [Build-lane planning runs in-process](#build-lane-planning-runs-in-process).
+specified in [Build-lane planning runs on a build-lane node](#build-lane-planning-runs-on-a-build-lane-node).
 
 Three groups, three different reasons - do not treat them as one list, and do not "fix" a group by
 flipping `requiresOwnNode` without reading why it is inline:
@@ -249,37 +249,38 @@ and the deterministic-provider-intent refusal, and it must not reintroduce the l
 `/api/send-message` leg, which asserts an arbitrary user subject with a machine credential and no
 issuer. Build-lane planning is the one such case, specified next.
 
-### Build-lane planning runs in-process
+### Build-lane planning runs on a build-lane node
 
 The `build` pipeline's Phase-2 planning round belongs to project-manager (`a0…001`), which is
 controller-inline. That round used to cross the Redis mesh to the api's own worker, which ran it on
 project-manager's registry harness: an unattended command-line engine, which the controller refuses
 (SEC-05). No build ticket could be planned, with or without signing.
 
-The round now runs in the controller process (`controller-pm-round-executor.ts`, called by
-`MultiRoundDispatchService`), and these rules decide whether it runs at all:
+The round is now sent over the signed bot-node hop (`controller-pm-round-executor.ts`, called by
+`MultiRoundDispatchService`) to a build-lane node, where the installed provider switch rows (per-bot
+row, then the fleet default) choose the engine, exactly as they do for every child. Nothing in the
+controller names a provider, a model or a key for it. These rules decide whether it runs at all:
 
 - **Which round.** Only rounds addressed to project-manager's exact agent id, and only while that
   id's own registry entry is controller-inline. Any other id, including one the registry does not
   define, takes the normal path.
+- **Which node.** `OSHAL_PM_PLANNING_NODE` names a bot by registry name (default `system-architect`,
+  the build-lane node with the decomposition capability). The bot must own a node and be on the
+  build-lane execution allowlist below; otherwise the round is refused naming the setting.
 - **Owner and issuer.** The round carries the root ticket's owner subject and the verified issuer
   persisted with it (`oshalOwnerPrincipalIssuer`, which is written only from a verified request
   identity or a system copy of one). If either is missing, the round is refused with
-  `pm_hosted_brain_refused` and no model call is made.
+  `pm_planning_refused` and no token is issued.
 - **Operator-owned roots only.** The owner must be in `OSHAL_OPERATOR_SUBS`; other owners' roots are
-  refused the same way. Their child work would be refused at the bot node in any case, because the
-  demo command-line carve (ADR-127) is operator-only.
-- **Protected applications.** If project-manager is bound to a protected application
-  (`isApplicationExecutionProtected`), the round is refused.
-- **Brain.** The owner's hosted ladder (`resolveUserLlmConnection`, the rungs Jarvis uses): an explicit
-  bring-your-own endpoint first, then, for the operator on a demo box, the deployment's own hosted
-  key. When no rung resolves, the round is refused with `pm_hosted_brain_unavailable`. The call goes
-  through the governed hosted provider and carries no tools, no command-line engine, no connector
-  credential and no deterministic provider intent. It never uses the localhost `/api/send-message`
-  leg. `OSHAL_PM_PLANNING_MAX_TOKENS` (default 16384) bounds the reply. A retryable wall from
-  that endpoint (HTTP 429/402/503 "high demand") is replayed on the same endpoint under the
-  same-endpoint retry plan (`OSHAL_BYO_RETRY_*`) before the round fails; the round has no rotation
-  and no later attempt, so one blip must not cost the whole ticket.
+  refused the same way. Their work would be refused at the bot node in any case, because the demo
+  command-line carve (ADR-127) is operator-only.
+- **Protected applications.** If project-manager or the planning node's bot is bound to a protected
+  application (`isApplicationExecutionProtected`), the round is refused.
+- **The request.** The planning prompt the mesh worker would have built, plus a note that the queue
+  decomposes the reply (the node's engine may also write the plan file). It is signed and bound to
+  the owner and issuer like a child's execution, carries the push-on-dispatch config fields, and
+  carries no credential, endpoint or model choice. A node that reports a failed execution, or one
+  that cannot be reached, is a named failure (`pm_planning_node_failed`), never a mesh fallback.
 - **Output.** The reply is kept in memory, stored on the round's work item, and handed to
   decomposition from memory.
 
@@ -295,7 +296,7 @@ While signing is configured, two more rules apply:
 ### What the build pipeline still does not send over this hop
 
 Build execution crosses this hop ([Build-lane execution targets](#build-lane-execution-targets)) and
-planning runs in-process ([Build-lane planning runs in-process](#build-lane-planning-runs-in-process)).
+planning crosses the signed hop to the configured planning node ([Build-lane planning runs on a build-lane node](#build-lane-planning-runs-on-a-build-lane-node)).
 The remaining swarm rounds have no signed transport, so while signing is configured they do not run:
 
 - **Planning rounds.** The plan-reviewer round and the Phase-8 architecture round are skipped.

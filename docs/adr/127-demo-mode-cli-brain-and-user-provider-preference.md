@@ -229,8 +229,10 @@ Scope:
 - Only the build-lane execution targets can be reached this way: the seven build specialists,
   system-architect and general-bot. Any other target is refused before a delegation token is issued.
 - A child whose owner differs from its root's owner is cancelled before it is dispatched.
-- Planning itself never uses a command-line engine. It runs in the controller on the owner's hosted
-  ladder (docs/security/http-delegation.md, "Build-lane planning runs in-process").
+- Planning runs the same way as the children: project-manager's round is sent over the signed hop to
+  the configured planning node (`OSHAL_PM_PLANNING_NODE`, default system-architect), whose installed
+  provider switch rows choose the engine; under this carve that is the operator's own command-line
+  engine (docs/security/http-delegation.md, "Build-lane planning runs on a build-lane node").
 
 Accepted exposure (operator decision, 2026-10-01): the engine runs inside the bot container's
 environment, which holds provider keys, the service secret and the database URL. Scrubbing that

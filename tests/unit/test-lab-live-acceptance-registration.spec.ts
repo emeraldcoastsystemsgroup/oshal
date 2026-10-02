@@ -91,7 +91,7 @@ describe('live-acceptance Test Lab cards', () => {
   it('lists the specs guarding each live seam on the tickets-in-tickets card', () => {
     const card = LIVE_ACCEPTANCE_SCENARIOS.find((s) => s.id === 'live-acceptance-tickets-in-tickets');
     const paths = (card?.regressionTests ?? []).map((t) => t.path);
-    for (const name of ['controller-pm-hosted-brain-postgres', 'planning-output-source', 'child-ticket-owner-inheritance-postgres',
+    for (const name of ['controller-pm-planning-node-postgres', 'planning-output-source', 'child-ticket-owner-inheritance-postgres',
       'build-child-dispatch-gate', 'signed-swarm-child-dispatch', 'swarm-verification-enforced-fallback']) {
       expect(paths).toContain(`tests/unit/${name}.spec.ts`);
     }

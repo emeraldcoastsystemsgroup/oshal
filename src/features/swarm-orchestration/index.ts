@@ -20,6 +20,7 @@
  * 15 | maintainer@emeraldcoastsystemsgroup.com | Export the queued evidence/result contract through the feature boundary.
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | Exported RoundOwner and LocalRoundExecutor so the app layer can install the in-process build-lane planning executor on MultiRoundDispatchService.
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Exported createSignedChildDispatcher, BUILD_EXECUTION_TARGETS and their types for the composition root.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com   | Exported pushOnDispatchFields for the build-lane planning dispatch in the app layer.
  */
 
 export { SwarmOrchestrationController } from './controllers';
@@ -108,6 +109,7 @@ export {
   type LocalRoundExecutor,
   createSignedChildDispatcher,
   BUILD_EXECUTION_TARGETS,
+  pushOnDispatchFields,
   type SignedChildDispatcher,
   type SignedChildDispatchDeps,
   type SignedChildDispatchInput,

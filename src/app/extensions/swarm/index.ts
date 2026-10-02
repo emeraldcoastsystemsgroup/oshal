@@ -77,6 +77,7 @@
  * 70 | maintainer@emeraldcoastsystemsgroup.com | Build-lane planning runs in-process: MultiRoundDispatchService gets isDelegationEnforced (the controller signing configuration) and, once the controller worker's handler deps exist, the project-manager round executor (controller-pm-round-executor.ts).
  * 71 | maintainer@emeraldcoastsystemsgroup.com | Wired the signed build-execution dispatcher (createSignedChildDispatcher) into the swarm processing service, so build execution crosses the signed bot-node hop as the ticket's owner while delegation signing is configured.
  * 72 | maintainer@emeraldcoastsystemsgroup.com | Verification and consensus review get isDelegationEnforced: under signing they skip the unsigned mesh round every node refuses and use the structural result immediately.
+ * 73 | maintainer@emeraldcoastsystemsgroup.com | The build-lane planning executor is wired with the signed BotNodeClient and the push-on-dispatch resolver instead of the worker's handler deps: the round now crosses the signed hop to the configured planning node (OSHAL_PM_PLANNING_NODE), where the installed provider switch rows choose the engine, and no longer runs on a hosted connection inside the api.
  */
 
 import type { Pool } from 'pg';
@@ -582,11 +583,6 @@ export function createSwarmExtensionBindings(
     runtimeIdentity,
     logger,
   });
-  // Build-lane planning runs in-process on the root owner's hosted ladder
-  // (docs/security/http-delegation.md, "Build-lane planning runs in-process").
-  if (handlerDeps) {
-    multiRoundDispatch.setLocalRoundExecutor(createControllerPmRoundExecutor({ pool, handlerDeps }));
-  }
 
   const agentConfigService = pool ? new AgentConfigService(pool) : undefined;
   // ADR-034 gap-b push-on-dispatch: a resolver over the SAME authoritative agent_config
@@ -738,6 +734,10 @@ export function createSwarmExtensionBindings(
     }
   };
   const botNodeClient = new BotNodeClient(codexResolveEndpoint);
+  // Build-lane planning crosses the same signed hop to the configured planning node, whose engine
+  // the installed provider switch rows choose (docs/security/http-delegation.md, "Build-lane
+  // planning runs on a build-lane node").
+  multiRoundDispatch.setLocalRoundExecutor(createControllerPmRoundExecutor({ botNodeClient, runtimeParamsResolver }));
   // While signing is configured, build execution crosses the signed bot-node hop as the ticket's
   // owner, only to the build-lane allowlist (docs/security/http-delegation.md, "Worker routing").
   if (ticketService) {
