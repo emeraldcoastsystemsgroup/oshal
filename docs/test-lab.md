@@ -227,11 +227,15 @@ envelope target, payload identity or frame. Missing runtime identity stays null 
 refused; another owner cannot read/replay the run or reuse its workspace. Authorization, issuer and
 owner-store enforcement are not replaced or newly proven by those doubles.
 
-This source correction is not installed acceptance. After coordinated deployment, the existing
-`node scripts/operations/live-acceptance.js token-chase-replay` must pass on a newly captured run.
-The separate run with `TOKEN_CHASE_OWNER_STORE_SNAPSHOT=on` on one bot and `--expect-store-bound`
-must also pass with the store bound and reproduced. Old captures with no producing identity are
-not backfilled from request input, and neither installed run is claimed by this local guard.
+This source correction is not installed acceptance. On the installed build the first run has
+passed. On 2026-10-02, core `bbf062ce` on image `9d9bbd02607c`,
+`node scripts/operations/live-acceptance.js token-chase-replay` printed PASS on its own newly captured
+tagged run. The no-edit tail ran on the producing bot node (`reproduced.agentId` set), with the
+artifacts reproduced, the live read refused and its consuming frame non-replayable, and cleanup
+outstanding 0. The separate run with `TOKEN_CHASE_OWNER_STORE_SNAPSHOT=on` on one bot and
+`--expect-store-bound` must still pass with the store bound and reproduced. Old captures with no
+producing identity are not backfilled from request input, and neither installed run is claimed by
+this local guard.
 
 ### Market-data stream (ADR-143)
 
@@ -981,7 +985,11 @@ suites also compare every part of the ten built-in looks with digests generated 
 existed. Run them with the command in [tests/README.md](../tests/README.md). Live, 2026-10-01 (core
 `a6de96c5`): `POST /api/test-lab/run {"scenarioId":"brand-look-render"}` returned `state: pass` with "A deck, a
 document and a workbook drawn in a synthetic brand look carry its colors and body face; each renderer refused a
-forged look and produced no file."
+forged look and produced no file." The presentations 2.13.0 package case `brand-render` drives the compiled
+AI Office route with this engine and reads a kit's colors and faces back out of a generated deck, document and
+workbook, and requires the record to name the look `brand:<base>`. It passed live on 2026-10-02 (core `bbf062ce`, image `9d9bbd02607c`):
+`node scripts/operations/live-acceptance.js package-run` printed PASS, and Lab run `0c48d3ab` ended `passed`
+with 5 tests executed and 0 failed.
 
 Eligible offline package Node suites now use a disposable runner with Run/Cancel controls and
 durable versioned history. See [package test execution](testing/package-test-execution.md) for

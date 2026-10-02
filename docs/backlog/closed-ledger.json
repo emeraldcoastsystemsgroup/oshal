@@ -994,5 +994,17 @@
     "title": "The build/swarm pipeline has no signed transport - every work unit rides the Redis mesh",
     "pr": "986",
     "evidence": "Live run 3 on the preview deploy of 4d244b8a: PASS tickets-in-tickets at 01:31 UTC (root d81ef2e5 planned on system-architect's node under the installed fleet default, two children run one at a time over the signed hop by code-developer and test-engineer, root assembled to customer_action; cleanup removed 7, outstanding 0, errors 0, residue 0). Recorded in src/features/swarm-orchestration/README.md (\"Live proof: tickets in tickets\"). Guards: controller-pm-planning-node-postgres, planning-output-source, child-ticket-owner-inheritance-postgres, build-child-dispatch-gate, signed-swarm-child-dispatch, swarm-verification-enforced-fallback, live-acceptance-tickets-in-tickets."
+  },
+  {
+    "date": "2026-10-02",
+    "title": "Token Chase replay acceptance picks a capture that names no producing bot",
+    "pr": "992",
+    "evidence": "Spec half (core #992, 5a031384): the real-lane case in tests/unit/live-acceptance-token-chase-replay.spec.ts lists the identity-less run in evidence.skipped and posts its own tagged run on oshal-assistant; red on the unchanged module (Tests 2 failed | 17 passed (19)), green 19/19. Live on 2026-10-02, core bbf062ce (carries 5a031384) on image 9d9bbd02607c: node scripts/operations/live-acceptance.js token-chase-replay (09:02:50-09:03:15Z) printed \"PASS token-chase-replay (token-chase-tail-replay-live)\" and \"live-acceptance: 1 case(s) - 1 pass, 0 fail, 0 degraded, 0 unavailable\", exit 0. The detail does not contain \"the producing bot (unknown)\" (grep -c 0); reproduced.agentId and started.agentId are a0000000-0000-0000-0000-000000000050 on the case's own tagged run testlab-live-token-chase-replay-a853cd55; cleanup removed 1, outstanding 0, errors 0. Recorded in docs/governance/real-boundary-regression-audit.md (token-chase-replay rows) and docs/test-lab.md. The store-bound replay stays under \"Workspace-bound checkpoint and tail replay\"."
+  },
+  {
+    "date": "2026-10-02",
+    "title": "AI Office: draw a deck, document or workbook in a brand kit's exact colors and fonts (2026-09-14)",
+    "pr": "978, 996, 402 (store)",
+    "evidence": "Core #978 (bc4ffcda) on main bbf062ce: resolveTheme, docxTheme and xlsxTheme take a look id or a look (deck-themes.ts:185, office-themes.ts:108 and 139), DeckRenderOptions.theme is DeckThemeId | DeckTheme (presentation-types.ts:208), brandTheme validates a kit on a built-in base (brand-theme.ts:157), and an invalid look throws BrandLookError invalid_brand_look and is never defaulted; #978 changes no package.json and adds no route. Re-run on bbf062ce on 2026-10-02: npx vitest run tests/unit/brand-look-render.spec.ts tests/unit/deck-looks-unchanged.spec.ts gave Test Files 2 passed (2), Tests 20 passed (20). Store #402 (f05f11cb, presentations 2.13.0) sends the caller's Create kit and names the look brand:<base>. Live: core card brand-look-render state pass on 2026-10-01 (a6de96c5, image a61932b7a9cb); package case brand-render (app:presentations:test:brand-render) on 2026-10-02 through node scripts/operations/live-acceptance.js package-run on core bbf062ce (carries #996 a8ef355c), image 9d9bbd02607c, presentations 2.13.0: Lab run 0c48d3ab ended passed, 5 tests executed, 0 failed, exit 0. Recorded in docs/adr/103-ai-office-one-themed-engine.md (addendum) and docs/test-lab.md."
   }
 ]
