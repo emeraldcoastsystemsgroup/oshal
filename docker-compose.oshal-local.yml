@@ -48,6 +48,7 @@
 # 40 | maintainer@emeraldcoastsystemsgroup.com | ADR-052 addendum P6 (idle-cash yield sleeve): forward TRADING_YIELD_SLEEVE (the mode-aware arm), TRADING_YIELD_SLEEVE_FLOAT_PCT (the working float) and TRADING_YIELD_SLEEVE_SYMBOL (the fund) beside the other parity arms. The arm defaults OFF and the other two blank (= the code defaults 5% and SGOV), so an untouched box fires byte-identically. Guard: tests/unit/compose-env-passthrough.spec.ts.
 # 41 | maintainer@emeraldcoastsystemsgroup.com | Forward WORLD_POLITICAL_TOKEN to the api only: the congress disclosure feed (Quiver beta/live/congresstrading, political-trades.ts) answered HTTP 401 without a credential on 2026-09-28, so the collector sends this token as a Bearer header. Blank by default (the collector then logs a refusal naming the setting); kept off x-bot-env so no bot container carries it. Guard: tests/unit/compose-env-passthrough.spec.ts.
 # 42 | maintainer@emeraldcoastsystemsgroup.com | Forward OSHAL_DEV_WORKSPACE_INDEX_ENABLED beside the ADR-077 dev-console gates it sits behind. The dev-workspace-index store package's route and Jarvis tool read it from process.env in the api, and compose forwarded only OSHAL_DEV_CONSOLE_ENABLED and OSHAL_SUPERADMIN_SUBS, so setting it in .env could not enable the package (found by the deploy lane 2026-09-28). Default false, so an untouched box is unchanged. Guard: tests/unit/compose-env-passthrough.spec.ts.
+# 43 | maintainer@emeraldcoastsystemsgroup.com   | World classify on the swarm's accounted rail (operator decisions 2026-09-21 and 2026-10-02). WORLD_CLASSIFY_PROVIDERS (an in-process claude/codex CLI list the controller refused unattended, so no item was model-classified from 2026-08-06) selects nothing now; it is forwarded with no default only so news-fetcher can warn an operator who still sets it. Forwarded for the rail: WORLD_CLASSIFY_BOT (the classify bot, default general-bot), WORLD_CLASSIFY_OWNER_SUB (the accountable owner every call carries; blank on a DEMO box with exactly one operator means that operator), WORLD_CLASSIFY_OWNER_ISSUER (that owner's verified issuer, needed when the bot-node hop is signed; blank = the single active verified-principal record for the subject), the optional WORLD_CLASSIFY_PROVIDER_ID / WORLD_CLASSIFY_MODEL stamp (blank = the classify bot's canonical provider record, the swarm default) and WORLD_CLASSIFY_CALL_TIMEOUT_MS (one chunk's ceiling, default 120000). WORLD_CLASSIFY_CODEX_MODEL is no longer forwarded: nothing reads it. Guard for the rail knobs: tests/unit/compose-env-passthrough.spec.ts.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -1174,22 +1175,51 @@ services:
       # Speed-read (cheap, all feeds) vs deep-dive (metered LLM). Deep-dive budget is allocated across feeds
       # by a learned novelty signal; per-feed wall-clock budget isolates slow feeds; classify is chunked.
       # (History: an earlier note here said re-enable required moving classify off the agent CLI —
-      # each call was timing out at 120s. Measured false as of 2026-08-01: with MAX_THINKING_TOKENS=0
-      # + minified JSON a chunk completes in ~5s, and re-enabled live classify ran 14 spawns with 0
-      # timeouts. The CLI path stays; total calls are bounded by WORLD_CLASSIFY_BUDGET_* below.)
+      # each call was timing out at 120s. Measured false on 2026-08-01: with MAX_THINKING_TOKENS=0
+      # + minified JSON a chunk completed in ~5s, and re-enabled live classify ran 14 spawns with 0
+      # timeouts. That in-process CLI path is gone since 2026-10-02: the controller refuses an unattended
+      # CLI (SEC-05), so no item had been model-classified since 2026-08-06. Classify now runs on the bot
+      # rail described below; total calls are still bounded by WORLD_CLASSIFY_BUDGET_* below.)
       WORLD_DEEPDIVE_ENABLED: ${WORLD_DEEPDIVE_ENABLED:-true}
       WORLD_DEEPDIVE_BUDGET: ${WORLD_DEEPDIVE_BUDGET:-3}
       WORLD_DEEPDIVE_METER: ${WORLD_DEEPDIVE_METER:-true}
       WORLD_FEED_BUDGET_MS: ${WORLD_FEED_BUDGET_MS:-45000}
       WORLD_CLASSIFY_CHUNK: ${WORLD_CLASSIFY_CHUNK:-8}
       WORLD_CLASSIFY_CONCURRENCY: ${WORLD_CLASSIFY_CONCURRENCY:-1}
-      # Classify provider(s), chunks round-robin. Default is claude ALONE: codex is the intended cheap
-      # indexer but is currently broken in the container (read-only-fs app-server) — a codex default
-      # silently lexicon-degrades every chunk routed to it. Set "codex,claude" once codex is fixed.
-      WORLD_CLASSIFY_PROVIDERS: ${WORLD_CLASSIFY_PROVIDERS:-claude}
+      # Classify backend (operator decision 2026-09-21, "the principle of one"): the world index is a swarm
+      # service, so classification runs on the accounted bot rail (src/app/world-classify-provider.ts) — one
+      # owned, direct turn per chunk through executeBotOrInline to the classify bot. WORLD_CLASSIFY_BOT picks
+      # the registered bot (default general-bot). Each turn is stamped with that bot's CANONICAL provider
+      # record (the swarm default when nothing names another) unless WORLD_CLASSIFY_PROVIDER_ID /
+      # WORLD_CLASSIFY_MODEL name one for the node to reconcile onto (the model must be the node's own).
+      # TOOL-LESS: the prompt carries text fetched from the web, so the turn goes out in the interactive shape
+      # a node runs host-tools-only (the CLI brain gets no native tools), with an EMPTY fallback chain, only to a
+      # bot on its own node that holds no auto-executable tool grant. The provider must be in the admissible set
+      # — the node runtimes that honour that marker, today antigravity-cli alone; a catalog id runs on a node's
+      # Cline CLI with native tools, codex and claude-code have no tool-less mode — so any other stamp sends
+      # every chunk back to lexicon. NOTE: on a DEMO box the default render rail (STORYBOARD_IMAGE_PROVIDER
+      # unset) also uses general-bot, pinned to openai-codex; a node refuses a differently stamped dispatch
+      # while one is in flight, so point WORLD_CLASSIFY_BOT at another node to keep the two apart.
+      # WHOSE work it is (operator decision 2026-10-02): the world schedules are framework-scope, and a bot
+      # node admits an unbrokered CLI provider only for the deployment operator's own request on a DEMO box
+      # (ADR-127). Every classify call therefore carries WORLD_CLASSIFY_OWNER_SUB; blank on a DEMO box with
+      # exactly one OSHAL_OPERATOR_SUBS entry means that operator. A signed bot-node hop also needs that
+      # owner's verified issuer. With no owner, or a signed hop and no verified issuer, nothing is dispatched
+      # (lexicon only; the reason is logged once). WORLD_CLASSIFY_CALL_TIMEOUT_MS bounds one chunk's turn
+      # (default 120000).
+      WORLD_CLASSIFY_BOT: ${WORLD_CLASSIFY_BOT:-general-bot}
+      WORLD_CLASSIFY_OWNER_SUB: ${WORLD_CLASSIFY_OWNER_SUB:-}
+      # The owner's verified issuer; blank = the single ACTIVE record the verified-principal directory holds for that subject.
+      WORLD_CLASSIFY_OWNER_ISSUER: ${WORLD_CLASSIFY_OWNER_ISSUER:-}
+      WORLD_CLASSIFY_PROVIDER_ID: ${WORLD_CLASSIFY_PROVIDER_ID:-}
+      WORLD_CLASSIFY_MODEL: ${WORLD_CLASSIFY_MODEL:-}
+      WORLD_CLASSIFY_CALL_TIMEOUT_MS: ${WORLD_CLASSIFY_CALL_TIMEOUT_MS:-120000}
+      # Retired; forwarded only so news-fetcher can warn an operator who still sets it.
+      WORLD_CLASSIFY_PROVIDERS: ${WORLD_CLASSIFY_PROVIDERS:-}
       # Token-burn controls. WORLD_CLASSIFY_DISABLED=true → no LLM at all (free lexicon; keeps every non-LLM
       # signal). WORLD_PULSE_DEEP_SLICE = how many names get the full fan-out per pulse (the dominant LLM
-      # cost); lower = cheaper, 0 = all-lean.
+      # cost); lower = cheaper. 1 is the smallest slice that takes effect: as built 0 is read as unset and
+      # resolves to the code default of 12 (world-schedule-dispatch.ts), not to all-lean.
       WORLD_CLASSIFY_DISABLED: ${WORLD_CLASSIFY_DISABLED:-false}
       WORLD_PULSE_DEEP_SLICE: ${WORLD_PULSE_DEEP_SLICE:-2}
       # SERIES-STORE load controls (2026-09-14). The pulse rolls features up for 184 entities, four
@@ -1207,10 +1237,11 @@ services:
       # GLOBAL classify-call ceiling (the 2026-06-29 burn guard): max LLM classify calls per clock hour /
       # UTC day across ALL world paths (per-subject ingest + firehose deep-dive + backtests). Exhausted →
       # lexicon fallback until the window rolls; denials are logged once per window and counted in the
-      # pulse completion record. Explicit 0 = no LLM (same effect as WORLD_CLASSIFY_DISABLED).
-      WORLD_CLASSIFY_BUDGET_PER_HOUR: ${WORLD_CLASSIFY_BUDGET_PER_HOUR:-60}
+      # pulse completion record. Explicit 0 = no LLM (same effect as WORLD_CLASSIFY_DISABLED). The hourly
+      # default stays under the Security Center's activity-burst threshold (SECURITY_AGENT_BURST_THRESHOLD,
+      # 50 tasks an hour per agent): each classify call is one task row for the classify bot.
+      WORLD_CLASSIFY_BUDGET_PER_HOUR: ${WORLD_CLASSIFY_BUDGET_PER_HOUR:-40}
       WORLD_CLASSIFY_BUDGET_PER_DAY: ${WORLD_CLASSIFY_BUDGET_PER_DAY:-400}
-      WORLD_CLASSIFY_CODEX_MODEL: ${WORLD_CLASSIFY_CODEX_MODEL:-}
       # Forward market-events calendar (earnings via Nasdaq, FOMC schedule, jobs report) on the 6h depth cycle.
       WORLD_EVENTS_ENABLED: ${WORLD_EVENTS_ENABLED:-true}
       WORLD_EARNINGS_DAYS: ${WORLD_EARNINGS_DAYS:-14}

@@ -210,7 +210,7 @@ schedule that files a ticket a bot then works is marked as such.
 
 | Process | Cadence | Mechanism | Model per run | Tier |
 |---|---|---|---|---|
-| World ticker pulse | every 5 min, 08-23 Mon-Fri (192 pulses a day) | feed pull, content-hash dedupe, classifier on new items only, lexicon fallback | Haiku (`WORLD_SENTIMENT_MODEL`), 10 items per call, budget 60 calls an hour and 400 a day, then lexicon | T1 with a T0 fallback |
+| World ticker pulse | every 5 min, 08-23 Mon-Fri (192 pulses a day) | feed pull, content-hash dedupe, classifier on new items only, lexicon fallback | the swarm default through the classify bot (ADR-061, since 2026-10-02; Haiku through an in-process CLI before that), up to `WORLD_CLASSIFY_CHUNK` items per call, budget 40 calls an hour and 400 a day, then lexicon | T1 with a T0 fallback |
 | World refresh | every 6 h | same engine, depth fan-out over topics, macro and the stock universe | same budget | T1 |
 | Trading autopilot tick | every 5 min by default | sleeve maths and orders in code; files a `trading-decision` ticket already `complete` (a record) | 0 | T0 |
 | Trading assess, research, review, swing | schedule-driven | code; record ticket | 0 | T0 |
@@ -364,7 +364,7 @@ fewer operations, fixed styles, rather than the feature disappearing. Token numb
 | LoRA Studio | train and validate a character | T2 director explains scorecards; ComfyUI and kohya local; paid escalation gated | identical; training already runs on the GPU box | built as the reduced edition |
 | AI Office | deck, document, workbook | T2 outline and Guide edits on a hosted model | T2 outline on a 20B-class local model; the starter catalog is the T0 fallback | outline on the hosted comms bot |
 | Little Monsters | tutoring turn | T3 hosted per turn | T2 local explanations; mastery tracking, sequencing and closed-form grading in code; a smaller activity set | T3 hosted |
-| World intelligence | headline classification | Haiku at T1 inside the 400-a-day budget | a 1B to 4B local classifier or an embedding model; lexicon fallback unchanged | Haiku, budgeted |
+| World intelligence | headline classification | the swarm default at T1 inside the 400-a-day budget (Haiku until 2026-10-02) | a 1B to 4B local classifier or an embedding model; lexicon fallback unchanged | Haiku, budgeted |
 | Social | daily digest | T3 hosted per user | T2 local summary over signals ranked in code | T3 hosted |
 | Video | generate | Veo, paid, approval-gated | ComfyUI local, DeckToVideo | both exist |
 
@@ -525,7 +525,7 @@ grep -oE "is[A-Z][A-Za-z]+Schedule\(" src/app/schedule-runtime.ts | sort -u
 for f in src/app/*-dispatch.ts; do printf "%s model:%s ticket:%s\n" "$f" \
   "$(grep -c 'executeBotOrInline\|BotNodeClient\|inline-bot' $f)" "$(grep -c 'createTicket' $f)"; done
 # world classifier defaults
-grep -nE "CLASSIFIER_MODEL\s*=|CLASSIFY_CHUNK\s*=|BUDGET_PER_HOUR|BUDGET_PER_DAY" src/features/world-data/news-fetcher.ts
+grep -nE "CLASSIFY_CHUNK\s*=|BUDGET_PER_HOUR|BUDGET_PER_DAY" src/features/world-data/news-fetcher.ts
 # generation backends, exact strings only (the word "stability" alone is a false positive)
 grep -rliE "stability\.ai|api\.stability|stable-diffusion|sdxl|replicate\.(com|run)|comfyui|COMFY|images/generations|gpt-image" \
   --include=*.ts ../oshal-applications/*/src-routes src

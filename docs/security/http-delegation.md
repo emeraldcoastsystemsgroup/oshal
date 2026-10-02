@@ -385,6 +385,18 @@ owner subject and therefore stop at delegation issuance until they persist and r
 the verified issuer (or are explicitly redesigned as platform-system work). Do not fill
 the missing issuer from an untrusted job payload or a deployment-wide default.
 
+World classify (2026-10-02, `src/app/world-classify-provider.ts`) is the one background caller that
+restores an issuer today, and only from a verified source: the single ACTIVE row the
+verified-principal directory (`oshal_verified_principals`, written by the sign-in boundary alone)
+holds for the accountable owner's subject. With no row, or with two issuers for the same subject,
+it restores nothing and the signed hop is not attempted (the rail stays unregistered, lexicon
+only). `WORLD_CLASSIFY_OWNER_ISSUER` can name the issuer explicitly; it is operator configuration,
+not verification, so the rail logs it as operator-asserted unless the directory holds that same
+record. The owner is re-read at most once a minute, so a principal disabled in the directory stops
+being signed for at the next chunk. Guard: `tests/unit/world-classify-delegation.spec.ts` drives the
+real `BotNodeClient` with signing on and shows the dispatch leaving with `principal_iss` bound, and
+refused before network I/O without it.
+
 ## Rotation
 
 Rotation is overlap-first so in-flight tokens remain verifiable:
