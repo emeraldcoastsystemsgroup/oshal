@@ -18,8 +18,9 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | The Lab's named statements run under the owner's identity without operator rights, as the host runner's container helper runs them.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | The registry gains the package-run case (explicit-only: it starts a package sandbox run and keeps its run-history row).
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | The registration list ends with storyboard-agy (the storyboard render on the render bot's own antigravity harness, ADR-130 amendment 2026-10-02).
- * 16 | maintainer@emeraldcoastsystemsgroup.com   | The Lab's `api` port honours a case's per-call `timeoutMs` as the host runner's does, over a real loopback listener that answers late: the call bounded at 80 ms is aborted by the adapter's own signal (its headers and cookie still sent), while the same call without the option, or with a non-positive or non-numeric budget, is still pending well past it and answers when the listener does (the 30 s default applies). The storyboard-agy card run from the Lab aborted at 30 s because the adapter read only `options.headers`.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com   | The Lab's `api` port honours a case's per-call `timeoutMs` as the host runner's does, over a real loopback listener that answers late: the call bounded at 80 ms is aborted by the adapter's own signal (its headers and cookie still sent), while the same call without the option, or with a non-positive or non-numeric budget, is still pending well past it and answers when the listener does (the 30 s default applies). The storyboard-agy card run from the Lab aborted at 30 s because the adapter read only `options.headers`. The file also references the dom.iterable lib: tsconfig.tests.json's lib is DOM without DOM.Iterable, so `form.keys()` in the Create upload case (entry 7) did not typecheck.
  */
+/// <reference lib="dom.iterable" />
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
