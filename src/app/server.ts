@@ -208,6 +208,7 @@
  * 192 | maintainer@emeraldcoastsystemsgroup.com   | Mount authenticated, synthetic-only phone-call simulation at /api/voice-sim (serviceSecretOr(requiresAuth) inside the router, with a trusted-service user binding) beside Jarvis without enabling live dialing.
  * 193 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L3: mounted /api/location (routes/location-routes.ts): browser ingest, the person's location consent and the step-up ceremony. The service-secret rail is refused (401) before requiresAuth, so a machine caller never reaches a location handler whatever session rides along; the router itself admits only an interactive browser session with a verified issuer and runs every statement as that person with is_operator off.
  * 194 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L5: the /api/location mount passes the location fire dispatch-recovery sweep interval (OSHAL_LOCATION_DISPATCH_SWEEP_SEC, default 60 s, 0 off), so claimed reminder fires a crash left undelivered are dispatched under their actor; the router itself starts no timer unless asked.
+ * 195 | maintainer@emeraldcoastsystemsgroup.com   | The remote-client routes get the per-bot provider lookup (getChatProvider: ctx.getProvider), so an OSHAL Node chat turn whose bot is a CLI the controller refuses runs on that node (remote-client-node-chat.ts).
  */
 
 require('dotenv').config();
@@ -1485,6 +1486,8 @@ function createApp(): express.Application {
     meshCommunicationService: ctx.swarm.meshCommunicationService,
     runtimeRegistryService: ctx.swarm.runtimeRegistryService,
     orchestrator: ctx.orchestrator,
+    // The per-bot provider lookup, so an OSHAL Node chat turn whose bot is a CLI the controller refuses runs on that node.
+    getChatProvider: ctx.getProvider,
     // Task-result landing: the journal outbox awaits this repository directly;
     // remoteTaskResult mesh delivery is a compatibility notification, not the durability boundary.
     workItemRepository: ctx.swarm.workItemRepository,

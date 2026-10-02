@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Wire remote-client task HTTP operations and settlement side effects to the PostgreSQL-authoritative journal, with readiness gating, identity-preserving RLS access, immediate outbox draining, and outboxId-based cost deduplication.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Await strict idempotent work-item landing inside settlement outbox publication, so a transient database failure prevents delivered_at and is retried instead of being lost behind a mesh ACK.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Fail settlement publication closed when the work-item landing repository is absent; direct enqueuers are represented by a configured repository returning no matching item, never by skipping the durability boundary.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | buildRemoteTaskCostEvent skips a node's own chat turn (envelope input.origin 'node-chat'): the TaskOrchestrator meters that turn on its conversation, so the settlement must not record the same tokens again.
  */
 
 import type { Request, RequestHandler, Response, Router } from 'express';
@@ -209,6 +210,9 @@ export function buildRemoteTaskCostEvent(
 ): CostEvent | null {
   const agentId = sourceTask?.fromAgentId;
   if (!agentId) return null;
+  // A node's own chat turn (origin node-chat) is metered by the TaskOrchestrator on its conversation; a second row
+  // here would count the same tokens twice.
+  if (toRecord(sourceTask.input)?.origin === 'node-chat') return null;
   const output = toRecord(result.output) ?? {};
   const usage = toRecord(output.usage) ?? {};
   const inputTokens = Number(usage.inputTokens ?? usage.input_tokens ?? 0) || 0;

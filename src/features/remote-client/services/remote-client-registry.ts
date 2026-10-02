@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Bound idempotency history per client without evicting queued, in-flight, or recently terminal task IDs. Expired terminal entries are pruned after a conservative retention window; when only protected entries fill the cap, new work is rejected instead of risking duplicate execution.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Deep-clone task envelopes and first terminal results at storage and return boundaries so caller mutation cannot rewrite the authoritative command or completion after acceptance.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Remove process-memory task authority: all task APIs are async PostgreSQL-journal proxies, startup fails closed, and registration/owner changes use the durable owner guard while presence and swarm-message queues remain in memory.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | getActiveTask(clientId): the claimed task with its claim time and input, so the node-chat path can expire a claim a node never settled (the journal has no lease).
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -286,6 +287,20 @@ export class RemoteClientRegistryService {
     record.taskQueueDepth = Math.max(0, record.taskQueueDepth - 1);
     record.activeTaskId = outcome.task.taskId;
     return { ...structuredClone(outcome.task.envelope), status: 'claimed' };
+  }
+
+  /**
+   * @description The task a client is running now (status 'claimed'), with when it was claimed and its input. Lets the
+   * node-chat path expire a claim the node never settled, since the journal itself has no lease.
+   * @param clientId - Client whose queue is read.
+   * @returns The active task, or null.
+   */
+  async getActiveTask(clientId: string): Promise<{ taskId: string; correlationId: string; claimedAt: string | null; input?: Record<string, unknown> } | null> {
+    const record = this.requireClient(clientId);
+    const activeId = record.activeTaskId;
+    const task = activeId ? await this.requireTaskJournal().getTask(activeId) : null;
+    if (!task || task.clientId !== clientId || task.status !== 'claimed') return null;
+    return { taskId: task.taskId, correlationId: task.correlationId, claimedAt: task.claimedAt, input: structuredClone(task.envelope.input ?? {}) };
   }
 
   /**

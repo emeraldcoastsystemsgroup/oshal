@@ -25,6 +25,7 @@
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | Guard protected package execution with current caller policy, restricted business identity and durable node ownership.
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | Every finished turn now appends its usage to the oshal_cost_events ledger (deps.costLedger, per-model rows under the owner sub) beside the chat_tasks rollup. The ledger is what BudgetService's trailing-window caps sum, and nothing on the inline path wrote it — recordUsage only bumps chat_tasks lifetime totals — so the HARD cap at the bot-invocation chokepoint could never see the spend its own inline branch produced. The provider is resolved once per turn so the ledger row names the provider that actually ran (BYO vs registry), and the append is non-fatal: a ledger failure logs at ERROR and never fails the chat turn.
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | options.byoLlmRetry (an EXPLICITLY chosen BYO endpoint, operator decision 2026-09-22) is handed to createGovernedByoHostedProvider so the same-endpoint replay wraps the PROVIDER CALL inside this turn: the user message is saved once, handleError broadcasts once, tools never re-run. The first build wrapped processMessage from the routes and re-did all three per attempt.
+ * 23 | maintainer@emeraldcoastsystemsgroup.com   | resolveProvider honours options.turnProvider (an LLMService the entry point resolved for this turn) before the BYO connection and getProvider (OSHAL Node runs its own chat turns locally (operator, 2026-10-01)).
  */
 import { runWithApplicationExecution } from '@/shared/application-authorization-execution';
 
@@ -40,7 +41,7 @@ import type { IMessageStore } from '@/entities/message';
 import {
   createGovernedByoHostedProvider,
   resolveUsageCost,
-  type LLMService,
+  LLMService,
   type LLMToolDefinition,
   type LLMResponse,
   readBrainFallback,
@@ -342,6 +343,12 @@ export class TaskOrchestrator {
    * @returns The provider to run this turn on.
    */
   private resolveProvider(options: ProcessMessageOptions): LLMService {
+    // A provider the entry point resolved for this one turn wins: the OSHAL Node chat route uses it to run the model
+    // call on the requesting node when the controller refuses the bot's CLI harness. It is set server-side only.
+    if (options.turnProvider instanceof LLMService) {
+      logger.info({ agentId: options.agentId, provider: options.turnProvider.getProviderName() }, 'Turn runs on the provider its entry point resolved');
+      return options.turnProvider;
+    }
     const connection = options.byoLlmConnection;
     if (connection) {
       // Model only — the endpoint host is logged inside the provider; the key is never logged.

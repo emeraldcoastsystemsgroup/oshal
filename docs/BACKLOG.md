@@ -36,7 +36,7 @@ from preparation or unit tests alone.
 | IN PROGRESS | **0** | being worked in the current session |
 | OPEN — actionable | **13** | no decision, no live box needed; can be closed by an agent |
 | OPEN — needs operator | **63** | a decision, credential, account or purchase only the operator can make |
-| OPEN — needs live proof | **72** | needs the running box, a deploy, hardware, or a human at a browser |
+| OPEN — needs live proof | **73** | needs the running box, a deploy, hardware, or a human at a browser |
 | OPEN — blocked | **8** | waiting on something outside this repo |
 | OPEN — needs review | **0** | the triage could not decide; somebody has to read it |
 | OPEN — untriaged | **0** | filed after the 2026-09-15 triage; has no verdict yet |
@@ -63,11 +63,10 @@ from preparation or unit tests alone.
 | 2026-09-29 | Kernel route-auth spec red on main: expects more kernel route declarations than exist (2026-09-29) | #938 |
 | 2026-09-29 | One parts model across Circuit Lab, Animatronics and Embodied (2026-09-14) | #224 (store), 270 (store) |
 
-**⚠ 4 entries carry a status outside the vocabulary:**
+**⚠ 3 entries carry a status outside the vocabulary:**
 - Sub-ticket workspace isolation (ADR-172 D10, D11) → "OPEN — deferred by operator decision 2026-10-01"
 - Command-line engine runs: scrub the bot environment → "OPEN — accepted risk for now (operator decision 2026-10-01, ADR-172 tickets-in-tickets plan, D3)"
 - Sub-tickets that run in parallel or sync (branching ticket flows) → "OPEN — deferred by operator decision 2026-10-01; tickets in tickets first runs siblings one at a"
-- Node app — the built-in chat cannot answer: the remote chat route never resolves a hosted brain → "OPEN — needs operator decision (operator chose to backlog it, 2026-10-01; the error-text half shipped)"
 <!-- END GENERATED: backlog-status -->
 
 ## Promotion, deployment, and regression proof
@@ -1918,11 +1917,11 @@ from preparation or unit tests alone.
 - **Done when:** a Windows machine with no oshal checkout runs a freshly downloaded `install-oshal-node.cmd`, the node appears owned under "Your computers" on `/cockpit/tools/devices.html`, its Config screen's "Log in + push" opens a console running `claude auth login` from the PUBLISHED build, and the in-node print service is reachable — recorded in the real-boundary audit as the first bare-machine proof of the npm path.
 
 ### Node app — the built-in chat cannot answer: the remote chat route never resolves a hosted brain
-- **Status:** OPEN — needs operator decision (operator chose to backlog it, 2026-10-01; the error-text half shipped)
+- **Status:** OPEN — needs live proof
 
-- **Remaining:** `POST /api/remote-clients/:clientId/chat` runs the node's turn on the controller through `runRemoteChatTurn` (`remote-client-chat-bridge.ts`) with no `byoLlmConnection`, so `TaskOrchestrator` falls back to `getProvider(DEFAULT_CHAT_AGENT_ID)`. Through the api's `BOT_NAME` registry fallback that resolves via the provider switch, and when the fleet-default switch row names a CLI harness (on this box, 2026-10-01: `antigravity-cli`) the controller's unattended-execution policy refuses every turn. `/api/send-message` avoids this by resolving the caller's hosted brain first (its in-process branch in `message-routes.ts`). Since 2026-10-01 the refusal text reaches the node instead of "The bot returned an empty reply." (`tests/unit/remote-client-chat-reply-error.spec.ts`). Meanwhile the node's Full Jarvis window in Simple chat mode (`/simple`, which posts to `/api/jarvis/ask`) answers. ADR-161 lists this bridge among the call sites that are not admitted.
-- **Options:** (B) For session (device-bound node token) callers only, resolve the caller's hosted brain in the route in the same order as the `/api/send-message` in-process branch (entitlement, admission, hosted-brain lookup, inline turn with recovery) and pass it as `byoLlmConnection`. Decide whether a node token may spend its owner's hosted lanes (bounded by the budget cap and token revocation), and record the bridge as an admitted caller in ADR-161. Shared-secret and sub-less turns keep no lookup. (C) Also dispatch a turn whose target agent has a bot-node endpoint through `executeBot`, and point the node at Jarvis: the same brain as the Jarvis page, but a node token could then start bot-node runs, and it changes what the node chat talks to.
-- **Done when:** an OSHAL Node turn on the deployed box returns text from the chosen path and the api log shows no "unattended execution is disabled" line for it; a loopback spec over the real router with a device-bound node token proves the hosted (or bot-node) path, the no-hosted-brain and budget refusals as readable `reply.error`, and that shared-secret and sub-less turns never resolve a brain; the spec is registered on the remote-node Test Lab card.
+- **Built 2026-10-01 (operator decision: the node runs its own chat turns locally).** `POST /api/remote-clients/:clientId/chat` still runs the turn through the controller's `TaskOrchestrator`, which keeps the conversation (history, persistence, usage). When the bot's provider resolves to a CLI harness the controller refuses unattended (`harness:antigravity-cli`, `codex-cli`, `claude-code`) and the requesting node advertises the matching executor, only the model call is handed back to that node as one `mcp.call-tool` task (`input.origin: node-chat`) on its own durable queue (`src/app/routes/remote-client-node-chat.ts`); the node runs `agy` / `codex` / `claude` with the person's own sign-in (`packages/oshal-chat/src/main/antigravity-executor.ts`, @oshal/chat 0.5.1) and its answer is the reply. A stale node-chat claim is expired through the journal's settle path, a timed-out turn withdraws its task, and the settlement never meters a node-chat turn a second time. Options B (hosted brain for node-token callers) and C (route to Jarvis on its bot node) were not built.
+- **Remaining:** the live proof on a computer with `agy` signed in: one OSHAL Node chat turn answered by the node. Also open: the swarm-configured model is not carried to the node yet (the resolved provider exposes no model accessor), so the node runs `ANTIGRAVITY_MODEL` or agy's own default.
+- **Done when:** on the deployed box an OSHAL Node turn returns text through its own executor, the api log shows `Node chat turn handed to the requesting node` and `Node chat turn answered` for it and no `unattended execution is disabled` line, and the `chat_tasks` row for that turn exists once (no second settlement cost row). The loopback spec `tests/unit/remote-client-node-chat.spec.ts` stays green and is registered on the remote-node Test Lab card.
 
 ### Node app — one-click installer for macOS and Linux
 - **Status:** OPEN — needs live proof · Code and autostart completed and guarded by tests/unit/node-installer-platforms.spec.ts and node-installer-posix-autostart.spec.ts. Awaiting live proof: bare-machine run on real macOS and Linux machines.
