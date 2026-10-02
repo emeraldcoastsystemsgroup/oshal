@@ -32,7 +32,7 @@ const REGRESSION_TESTS = Object.freeze([
 ].map((name) => Object.freeze({ level: 'unit', path: `tests/unit/${name}.spec.ts` })));
 const DEFAULT_BUDGETS = Object.freeze({
   claimBudgetMs: 180_000, planningBudgetMs: 1_200_000, childBudgetMs: 1_500_000,
-  settleBudgetMs: 3_900_000, residueWaitMs: 120_000, pollMs: 15_000,
+  settleBudgetMs: 3_900_000, residueWaitMs: 120_000, pollMs: 15_000, recheckPauseMs: 20_000,
 });
 const CHILDREN = Object.freeze({ min: 2, max: 5 });
 const ROOT_FAILED = new Set(['escalated', 'dead_letter', 'cancelled']);
@@ -474,7 +474,7 @@ async function cleanupRecorded(io, rootId, snap, ledger) {
  * @param {object} ports - api, sql, ownerSub, files (and the clock in tests; `note` and
  *   `onInterrupt` when the runner binds them).
  * @param {object} [options] - Budget overrides (`claimBudgetMs`, `planningBudgetMs`, `childBudgetMs`,
- *   `settleBudgetMs`, `residueWaitMs`, `pollMs`) and `tag` (tests only).
+ *   `settleBudgetMs`, `residueWaitMs`, `pollMs`, `recheckPauseMs`) and `tag` (tests only).
  * @returns {Promise<object>} The result with its cleanup receipt.
  */
 async function run(ports, options = {}) {

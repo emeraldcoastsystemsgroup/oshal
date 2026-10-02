@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The settle re-read tells a ticket that is readable again (HTTP 200) from one that could not be re-checked (401, 403, 5xx): live run 4 hit an api-wide 401 during its settle wait and reported three deleted tickets as "readable again".
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The re-reads after the settle wait retry an inconclusive answer (a timeout, 401, 403 or 5xx) up to four times, a pause apart, before recording it: live run 6 passed every check and removed everything, and one re-read timed out at 30 s while the api was stalled by its own background jobs. A ticket that answers 200 is still an error at once; an answer that stays inconclusive is still an error, with the attempt count.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Cleanup for the tickets-in-tickets live case, in order: cancel what is unfinished; wait until no child's unit work item is still assigned (a node call cannot be aborted, and its engine writes the root folder until it returns), keeping everything in place if the wait runs out; delete the leftovers anchored to the root (work items, their swarm runs, governance, DLQ and escalation rows); delete the children; delete the shadow tickets the pipeline upserted for the run's ids (ownerless, so through the operator's list); delete the root only when its linked workspace is the one this run created (deleting the root removes that workspace's folder); then, after a settle wait, prove every id gone, the residue zero and the folder removed.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review fixes before the first live run. The node wait also covers the root's in-process planning round, whose return writes the plan file. Every step records through the ledger, so one failed call no longer abandons the rest or hides the misses; a cancel that did not land is an error. The root, and with it the folder, is deleted only when every child was verified gone, and only when the tree read proves the root is this case's own. Shadow tickets are read in pages and re-checked after the deletes. The residue check covers only what was removed, so a deliberate keep is not also reported as a return.
  */
@@ -18,6 +19,50 @@ const TERMINAL = new Set(['complete', 'customer_action', 'cancelled', 'escalated
 const TITLE_PREFIX = 'testlab-live-tickets-in-tickets-';
 /** Shadow tickets are read in pages of this size, so one read never carries the whole backlog. */
 const SHADOW_PAGE = 200;
+/** How many times an inconclusive re-read is tried before it is recorded as an error. */
+const RECHECK_ATTEMPTS = 4;
+
+/**
+ * @description Run a read that may fail while the api is stalled, retrying a throw a pause apart.
+ * @param {object} io - Ports, with budgets.
+ * @param {() => Promise<unknown>} action - The read.
+ * @returns {Promise<unknown>} The first answer that did not throw.
+ * @throws The last error when every attempt threw.
+ */
+async function retrying(io, action) {
+  let lastError;
+  for (let attempt = 1; attempt <= RECHECK_ATTEMPTS; attempt += 1) {
+    try {
+      return await action();
+    } catch (error) {
+      lastError = error;
+    }
+    if (attempt < RECHECK_ATTEMPTS) await io.sleep(io.budgets.recheckPauseMs);
+  }
+  throw lastError;
+}
+
+/**
+ * @description Re-read a deleted ticket after the settle wait. 404 and 200 are answers; a throw,
+ * 401, 403 or 5xx says nothing about the ticket and is tried again a pause apart.
+ * @param {object} io - Ports, with budgets.
+ * @param {string} id - The ticket.
+ * @returns {Promise<{status: number|null, error: string|null}>} The last answer.
+ */
+async function rereadTicket(io, id) {
+  let last = { status: null, error: null };
+  for (let attempt = 1; attempt <= RECHECK_ATTEMPTS; attempt += 1) {
+    try {
+      const res = await io.api('GET', `/api/tickets/${id}`);
+      last = { status: res.status, error: null };
+      if (res.status === 404 || res.status === 200) return last;
+    } catch (error) {
+      last = { status: null, error: common.errorText(error) };
+    }
+    if (attempt < RECHECK_ATTEMPTS) await io.sleep(io.budgets.recheckPauseMs);
+  }
+  return last;
+}
 
 /**
  * @description The run's tickets as they stand: the root and its children.
@@ -214,25 +259,25 @@ async function confirmGone(io, rootId, runIds, ledger) {
   await io.sleep(io.budgets.residueWaitMs);
   for (const id of runIds.filter((candidate) => removedTicket(ledger, candidate))) {
     await ledger.attempt(`ticket ${id} residue`, async () => {
-      const after = await io.api('GET', `/api/tickets/${id}`);
+      const after = await rereadTicket(io, id);
       if (after.status === 404) return null;
       if (after.status === 200) return `ticket ${id} is readable again after the settle wait`;
-      return `ticket ${id} could not be re-checked after the settle wait (HTTP ${after.status})`;
+      return `ticket ${id} could not be re-checked after the settle wait (${after.error || `HTTP ${after.status}`}, ${RECHECK_ATTEMPTS} attempts)`;
     });
   }
   if (!removedTicket(ledger, rootId)) return {};
   let residue = {};
   await ledger.attempt('row residue', async () => {
-    residue = (await io.sql('tickets-in-tickets.residue', [io.ownerSub, runIds])).rows[0] || {};
+    residue = (await retrying(io, () => io.sql('tickets-in-tickets.residue', [io.ownerSub, runIds]))).rows[0] || {};
     const left = Object.entries(residue).filter(([, count]) => Number(count) > 0);
     return left.length ? `rows remain after the settle wait: ${left.map(([name, count]) => `${name} ${count}`).join(', ')}` : null;
   });
   await ledger.attempt('shadow-ticket residue', async () => {
-    const left = await listShadows(io, runIds);
+    const left = await retrying(io, () => listShadows(io, runIds));
     return left.length ? `${left.length} shadow ticket(s) remain for the run's ids after the settle wait` : null;
   });
   await ledger.attempt('root folder residue', async () => {
-    const folder = await io.files.dir('build.root', rootId);
+    const folder = await retrying(io, () => io.files.dir('build.root', rootId));
     if (folder.exists) return 'the root folder still exists after the root was deleted';
     ledger.removed('workspace-folder', rootId);
     return null;
