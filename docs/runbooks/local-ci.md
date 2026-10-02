@@ -265,6 +265,15 @@ bash scripts/operations/ci-quiesce-live-proof.sh --cycle <worker ...>  # stops a
 node scripts/ci/ci-run-durations.mjs --baseline 2026-09-08T10:05:19    # the latest scheduled run vs an idle run
 ```
 
+Run these from the checkout whose `.env` holds the settings: they are read from `$REPO_DIR/.env`
+(`scripts/ci/ci-config.sh`). From a clone without one, `--cycle` refuses before stopping anything
+(`OSHAL_CI_QUIESCE_ALERTMANAGER_URL is not set ... Nothing stopped.`).
+
+Recorded on the box after the 2026-10-01 deploy of `a6de96c5`: the read-only run printed
+`LIVE PROOF: 15 of 15 checks passed`, and `--cycle oshal-local-weather-bot` from `C:/Projects/oshal`
+printed `LIVE PROOF: 9 of 9 checks passed` with the alert silence disabled
+(`OSHAL_CI_QUIESCE_ALERTMANAGER_URL=none`). No measured scheduled run exists yet.
+
 The duration check reads `ci-local.log` and the run's kept `full.log`. It passes only when the
 latest scheduled run completed, has no RESOURCE-EXHAUSTED gate and no `cannot allocate memory`
 line, and every gate took at most ten times its time in the baseline run. The 2026-09-08 10:05

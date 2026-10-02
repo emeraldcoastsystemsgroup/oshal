@@ -5,7 +5,7 @@
 be overwritten. An entry disappears from this file automatically once its backlog heading is gone
 or its body records that it was built.
 
-Counts are generated, never typed: **47 decisions**, **42 live proofs**.
+Counts are generated, never typed: **46 decisions**, **42 live proofs**.
 
 To comment, write under an entry in this file and tell me, or just say the entry name.
 
@@ -35,7 +35,7 @@ A lane's bad redaction printed ALPACA_SECRET, ALPACA_PAPER_SECRET_KEY and ALPACA
 
 ---
 
-## Decisions — 47
+## Decisions — 46
 
 Each of these is blocked on a judgement only you can make. No code is waiting on anything else.
 
@@ -116,8 +116,6 @@ Each of these is blocked on a judgement only you can make. No code is waiting on
   Create a Hugging Face access token with Inference Providers permission on the business account (maintainer@emeraldcoastsystemsgroup.com) and put it in .env as HF_TOKEN. An agent can then recreate the api, run scripts/evidence/prove-free-tier-live.ts, and cite the dated result in the audit row.
 - **Monitoring overlay does not survive an ungraceful engine stop (BUG-21 tail)** *(M, core)*
   Decide what may run `scripts/monitoring-liveness-check.sh --strict` unattended while the stack watchdog stays paused. For example, an observe-only scheduled task that exits quietly when the engine is down and never starts Docker. Also authorize one deliberate ungraceful Docker VM stop on the dev box, so the fix can be proven across the restart boundary.
-- **Strategy Studio and Bot Forge conversational parity — Studio half PROVEN 2026-09-06** *(n/a, core)*
-  Do you want Bot Forge edit-in-place for existing packs (re-emit the same pack, not a duplicate)? If not, close the entry as Studio-proven per docs/apps/trading/studio-parity-proof.md.
 - **The nightly gate has been red for 46 consecutive runs — trivy is a budget decision, not a fix** *(S, core)*
   Pick the trivy gate posture: (a) a CVE budget file with a severity floor, allowlisted CVE ids and expiry dates, (b) rebase the image onto a base image with fewer findings, or (c) make the gate advisory: it reports findings and does not fail. After that an agent can capture a fresh report and write the posture into ci-local.sh.
 - **The nightly gate runs against a saturated box, so its results are not trustworthy** *(n/a, core)*
