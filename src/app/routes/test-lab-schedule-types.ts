@@ -5,8 +5,9 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Define exact-owner catalog schedules and bounded batch evidence without credentials or executable request fields.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Allow current scheduled visibility to use an exact server-owned package selector.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Schedule resolvers take the shared per-check authority scope, so a run started by a batch is re-checked for its own application only.
  */
-import type { TestLabPrincipal, TestLabRunContext, TestLabRunSelection, TestLabRunState } from './test-lab-run-types';
+import type { TestLabAuthority, TestLabAuthorityScope, TestLabPrincipal, TestLabRunContext, TestLabRunSelection, TestLabRunState } from './test-lab-run-types';
 
 export type TestLabCadence = 'hourly' | 'daily' | 'weekly';
 export interface TestLabScheduleInput { appName: string; levels: Array<'unit' | 'integration'>; cadence: TestLabCadence }
@@ -39,8 +40,8 @@ export interface TestLabScheduleStore {
   finish(batch: TestLabScheduleBatch, state: TestLabScheduleBatch['state'], summary: TestLabBatchSummary): Promise<void>;
   history(actor: TestLabPrincipal, id: string): Promise<TestLabScheduleBatch[]>;
 }
-export type TestLabScheduleContext = () => Promise<TestLabRunContext>;
-export type TestLabScheduledContext = (actor: TestLabPrincipal, appName?: string) => Promise<TestLabRunContext>;
+export type TestLabScheduleContext = TestLabAuthority;
+export type TestLabScheduledContext = (actor: TestLabPrincipal, appName?: TestLabAuthorityScope) => Promise<TestLabRunContext>;
 export type TestLabScheduledSelection = Omit<TestLabRunSelection, 'requestId'> & { appName: string };
 
 /** @description Resolve only documented local cadences; no cron expressions or arbitrary dispatch payloads exist.

@@ -47,6 +47,23 @@ access and current registration before, during and after execution. History read
 and cancellation use the same exact owner and current application visibility.
 Swarm administrator status does not grant access to business records.
 
+Each of those checks decides only the run's own application. That covers the start,
+a read or cancellation, the 2 s watch, the revalidation before and after the
+runner, and the sandbox's 1 s pulse. A read first resolves only the caller's
+identity, to find the owned run, and then that run's application. Only an
+unfiltered history read still resolves every installed application. A check that
+does not answer within 5 s still counts as a refusal. A denial, a timeout or an
+error for the run's application cancels the run and withholds its output, and so do
+losing access to that application and a changed installed test.
+
+The controller logs each refusal under module `test-lab-runs`, with the run id,
+application and case. Each entry names the check (`watch`, `revalidate` or
+`sandbox`), the outcome (`denied`, `timeout` or `error`) and a reason, for example
+`application-unavailable`, `installed-test-changed`, `operator-required`,
+`authority-unanswered`, `authority-failed` or `run-cancelling`. The sandbox logs its
+own refusal under `package-test-execution`, with the execution id and phase
+(`before-launch`, `pulse` or `before-publish`).
+
 ## Execution and evidence boundaries
 
 - Only registered file lists and resource limits are accepted. The HTTP request
@@ -295,8 +312,11 @@ current account and permissions before restoring controls.
 
 Each cycle discovers current registrations again, so new eligible installed cases
 are included without maintaining a list. It runs at most 100 suites sequentially
-through the same durable Run service. Batch history distinguishes assertion
-results, unavailable prerequisites, deferred work and inventory drift. A completed
+through the same durable Run service. A batch over all applications resolves
+every application only to discover its cases. Each case's start, its polls and
+the run's own checks decide that case's application alone. Batch history
+distinguishes assertion results, unavailable prerequisites, deferred work and
+inventory drift. A completed
 batch can contain failed suites; completion is not a passing test result.
 Canonical `tests/**/*.test.*` and `tests/**/*.spec.*` files missing from package
 runner declarations are reported as registration drift. Helper files are excluded

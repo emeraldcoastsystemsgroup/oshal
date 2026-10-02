@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Carry the saved package selector through fresh scheduled visibility resolution.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Ask the run-wiring readiness per schedule operation. Chaining off it once inherited a boot-time bootstrap failure permanently, so schedule reads stayed dead after the bootstrap itself recovered.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Start the poll timer independently of the boot-time bootstrap attempt. Reads already recovered per operation, but the timer was started inside that one attempt's continuation, so a single lost boot acquire left local scheduling stopped until the process restarted.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Carry the per-check scope (one application, or the owner's identity alone) through scheduled visibility, so a wildcard batch's case checks decide only that case's application.
  */
 import type { AppContext } from './app-context';
 import type { AuthorizationActor } from '@/shared/application-authorization';
@@ -16,7 +17,7 @@ import { runWithSystemIdentity } from '@/shared/services/database/request-identi
 import { registerShutdownHook } from '@/shared/services/shutdown-hooks';
 import { createRetryableReady } from '@/shared/services/database';
 import type { TestLabRunService } from '../routes/test-lab-run-service';
-import type { TestLabPrincipal } from '../routes/test-lab-run-types';
+import type { TestLabAuthorityScope, TestLabPrincipal } from '../routes/test-lab-run-types';
 import { TestLabScheduleService } from '../routes/test-lab-schedule-service';
 import { PostgresTestLabScheduleStore } from '../routes/test-lab-schedule-store';
 import { ensureTestLabScheduleSchema } from '../routes/test-lab-schedule-schema';
@@ -42,7 +43,7 @@ export async function resolveTestLabScheduledActor(ports: TestLabScheduledActorP
 /** @description Start catalog scheduling, each cycle carrying its own schema readiness, and stop it through the existing shutdown lifecycle. */
 export function createTestLabScheduleWiring(options: {
   ctx: AppContext; apps: SwarmAppService; runs: TestLabRunService; ready(): Promise<unknown>;
-  authorization: TestLabScheduledActorPorts; visible: (actor: AuthorizationActor, appName?: string) => Promise<Map<string, string>>;
+  authorization: TestLabScheduledActorPorts; visible: (actor: AuthorizationActor, appName?: TestLabAuthorityScope) => Promise<Map<string, string>>;
 }): TestLabScheduleService {
   const ready = createRetryableReady(async () => {
     await options.ready();

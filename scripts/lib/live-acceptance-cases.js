@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Register the create-region-edit case (live-acceptance-create-region-edit.js) for "Create visual workspace and integrated editing": one tagged Create project, one image-provider call (paid only with the host runner's --allow-paid) and one accepted revision, the project removed, so the card is explicit-only.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Register the forge-edit case (live-acceptance-forge-edit.js) for "Strategy Studio and Bot Forge conversational parity" (the Forge half): one tagged two-bot pack written, deployed, edited and deployed again through the Packs panel, then the pack, manifest, personas, app and both agents removed. No model turn; it writes, so the card is explicit-only.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | The tickets-in-tickets case: one tagged build root planned in-process, its children run one at a time over the signed hop, and the root assembled; spends model turns and writes tickets, so its Lab card is explicit-only.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Register the package-run case (live-acceptance-package-run.js) for the Test Lab run-path authority scope: the installed presentations brand-render case run through the durable run route, every run read timed against 1 s. No model turn; it writes the Lab's run-history row and starts a package sandbox, so the card is explicit-only.
  */
 
 'use strict';
@@ -33,6 +34,7 @@ const CASES = Object.freeze([
   { module: require('./live-acceptance-create-region-edit.js'), backlog: 'Create visual workspace and integrated editing', spendsModel: true, writes: true },
   { module: require('./live-acceptance-forge-edit.js'), backlog: 'Strategy Studio and Bot Forge conversational parity', spendsModel: false, writes: true },
   { module: require('./live-acceptance-tickets-in-tickets.js'), backlog: 'The build/swarm pipeline has no signed transport - every work unit rides the Redis mesh', spendsModel: true, writes: true },
+  { module: require('./live-acceptance-package-run.js'), backlog: 'Test Lab package runs cancel themselves when an all-package authority re-check runs past 5 s (2026-10-01)', spendsModel: false, writes: true },
 ]);
 
 /**
