@@ -4,8 +4,10 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the ADR-130 codex-cli render WIRING (the half storyboard-codex-cli-provider.spec.ts doubles). Pins that the boot-registered executor dispatches the render with providerId 'openai-codex' as its ADR-034 carried record, and — running the REAL bot-side parse + reconcile over the captured request — that a render bot parked on another harness (the demo box's claude-code fleet-default row) is switched onto codex before the spawn, while the unstamped legacy shape leaves the runtime untouched, which is exactly how the live storyboard died with NO_IMAGE_CAPABILITY on 2026-09-21. Also pins the bot/timeout knobs, the userSub threading, and that a bot failure is surfaced (never thrown). BotNodeClient is the double: it is the HTTP hop to the node; the request it is handed is the boundary under test.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-130 amendment 2026-10-02: the dispatch carries the rail's own harness. A codex-cli render still stamps 'openai-codex'; an antigravity-cli render stamps 'antigravity-cli', and the REAL bot-side parse + reconcile switches a render bot parked on claude-code onto antigravity-cli before the spawn. Every render is marked imageTurn. A harness outside the two CLI rails is refused before any dispatch. Boot also registers the swarm-default reader: with the switch snapshot reporting an antigravity-cli fleet row, the demo image default selects antigravity-cli.
  */
 
+import fs from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const captured = vi.hoisted(() => ({
@@ -41,7 +43,9 @@ vi.mock('@/shared/logger', () => ({
   },
 }));
 
-import { CODEX_CLI_RENDER_PROVIDER_ID, wireCliStoryboardImageExecutor } from '../../src/app/storyboard-cli-image-wiring';
+import { ANTIGRAVITY_CLI_RENDER_PROVIDER_ID, CODEX_CLI_RENDER_PROVIDER_ID, wireCliStoryboardImageExecutor } from '../../src/app/storyboard-cli-image-wiring';
+import { setInstalledProviderSwitchSnapshot } from '../../src/app/composition/provider-switch-runtime';
+import { registerStoryboardSwarmDefaultReader, selectStoryboardImageProvider } from '../../src/features/video-generation/services/storyboard-image-default';
 import {
   parseCarriedDispatchConfig,
   reconcileDispatchProviderConfig,
@@ -63,6 +67,7 @@ const RENDER: CliStoryboardRenderRequest = {
   taskId: 'sbimg-11111111-2222-4333-8444-555555555555',
   workspaceFolderId: 'sbimg-11111111-2222-4333-8444-555555555555',
   userSub: 'operator-sub-1',
+  harness: 'openai-codex',
 };
 
 /** A bot-node runtime seam whose active provider is whatever its switch row last said. */
@@ -123,6 +128,7 @@ describe('codex-cli storyboard render wiring (ADR-130 on the ADR-162 fleet)', ()
       agenticMode: true,
       userSub: RENDER.userSub,
       providerId: CODEX_CLI_RENDER_PROVIDER_ID,
+      imageTurn: true,
     });
     expect(CODEX_CLI_RENDER_PROVIDER_ID).toBe('openai-codex');
     // The model is the render bot's CODEX_MODEL, never a per-call pin (ADR-130 "Model").
@@ -173,8 +179,52 @@ describe('codex-cli storyboard render wiring (ADR-130 on the ADR-162 fleet)', ()
       agentId: 'a0000000-0000-0000-0000-000000000042',
       providerId: CODEX_CLI_RENDER_PROVIDER_ID,
     });
-    expect(logged.find((l) => l.message === 'codex-cli storyboard image executor registered')?.fields)
+    expect(logged.find((l) => l.message === 'cli storyboard image executor registered')?.fields)
       .toMatchObject({ agentId: 'a0000000-0000-0000-0000-000000000042', timeoutMs: 90_000 });
+  });
+
+  it('an antigravity-cli render carries the Antigravity harness, and a bot parked on claude-code is switched onto it', async () => {
+    await wireAndRender({ ...RENDER, harness: 'antigravity-cli' });
+    const body = captured.executions[0].request as { providerId?: unknown; imageTurn?: unknown };
+    expect(body).toMatchObject({ providerId: ANTIGRAVITY_CLI_RENDER_PROVIDER_ID, imageTurn: true, agenticMode: true });
+    expect(ANTIGRAVITY_CLI_RENDER_PROVIDER_ID).toBe('antigravity-cli');
+
+    const carried = parseCarriedDispatchConfig(body);
+    expect(carried).toEqual({ providerId: 'antigravity-cli' });
+    const runtime = runtimeParkedOn('claude-code');
+    const outcome = reconcileDispatchProviderConfig(carried, runtime, { taskId: RENDER.taskId }, QUIET_LOG);
+    expect(outcome.action).toBe('corrected');
+    expect(runtime.switches).toEqual([['antigravity-cli', undefined]]);
+  });
+
+  it('refuses a harness outside the two CLI rails before any dispatch', async () => {
+    const result = await wireAndRender({ ...RENDER, harness: 'claude-code' as never });
+    expect(result).toEqual({ success: false, responseText: '', error: "unknown render harness 'claude-code'" });
+    expect(captured.executions).toEqual([]);
+  });
+
+  it('boot registers the swarm-default reader the demo image default follows', () => {
+    const savedDemo = process.env.DEMO_MODE;
+    process.env.DEMO_MODE = 'true';
+    try {
+      wireCliStoryboardImageExecutor();
+      setInstalledProviderSwitchSnapshot({ status: () => ({ loaded: true, loadedAt: null, rowCount: 1, lastError: null,
+        fleetDefault: { scopeId: 'fleet-default', providerId: 'antigravity-cli', modelId: null, updatedBy: null, updatedAt: null } }) } as never);
+      expect(selectStoryboardImageProvider()).toMatchObject({ ok: true, id: 'antigravity-cli', source: 'swarm-default' });
+    } finally {
+      setInstalledProviderSwitchSnapshot(null);
+      registerStoryboardSwarmDefaultReader(null);
+      if (savedDemo === undefined) delete process.env.DEMO_MODE; else process.env.DEMO_MODE = savedDemo;
+    }
+  });
+
+  it('the bot-node HTTP hop forwards only a literal-true imageTurn into the execution envelope', () => {
+    const source = fs.readFileSync(new URL('../../src/app/bot-node-server.ts', import.meta.url), 'utf8');
+    const routeStart = source.indexOf("app.post(\n    '/api/swarm-execute'");
+    const route = source.slice(routeStart, source.indexOf("app.post('/api/token-chase/replay-call'", routeStart));
+    expect(routeStart).toBeGreaterThan(-1);
+    expect(route).toContain('...(body.imageTurn === true ? { imageTurn: true } : {}),');
+    expect(route.indexOf('body.imageTurn === true')).toBeGreaterThan(route.indexOf('payload: {'));
   });
 
   it('defaults to general-bot and the 7-minute deadline when the knobs are unset', async () => {

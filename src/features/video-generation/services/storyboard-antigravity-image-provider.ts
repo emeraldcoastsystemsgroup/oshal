@@ -1,0 +1,168 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | antigravity-cli storyboard image provider (ADR-130 amendment 2026-10-02): renders on the swarm's Antigravity harness through the same boot-registered bot-node executor and the same ADR-127 demo carve as codex-cli (DEMO_MODE + an operator caller, decided again at the bot). Proven headless 2026-10-02 (agy 1.2.8): generate_image edits an image named by an absolute ImagePaths entry and writes a JPEG into agy's private HOME, and a prompt that does not name the tool gets an image drawn with code instead. So the prompt names generate_image, passes the staged anchor's absolute path, and forbids code, commands, files and anything the brief does not ask for (the proof's edit added an unrequested crosshair). The bot hands the tool's image back as output.png or output.jpg with a receipt (agy-image-turn.js); this provider accepts exactly one output, verifies it against the receipt (tool generate_image, state DONE, same file, same sha256, bytes of the stated format), converts a JPEG to PNG because the storyboard cropper decodes PNG, and reports the real source format.
+ */
+/**
+ * @description The antigravity-cli storyboard image rail: the swarm's Antigravity harness rendering
+ * one still on a bot node, for the deployment operator in demo mode (ADR-127, ADR-130).
+ *
+ * @module features/video-generation/services/storyboard-antigravity-image-provider
+ */
+
+import * as fs from 'fs';
+import * as path from 'path';
+import { createHash, randomUUID } from 'crypto';
+import { createChildLogger } from '@/shared/logger';
+import { demoModeEnabled, isDeploymentOperatorSub } from '@/shared/deployment-mode';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
+import { resolveCliStoryboardImageExecutor } from './storyboard-cli-image-executor';
+import type { StoryboardImageProvider, StoryboardImageResult } from './storyboard-image-providers';
+
+const logger = createChildLogger({ module: 'storyboard-antigravity-image-provider' });
+
+/** The ImageName every render asks generate_image for (agy writes it as storyboard_frame_<epoch-ms>). */
+export const ANTIGRAVITY_IMAGE_NAME = 'storyboard-frame';
+/** The receipt the bot writes beside the output (any-bot/server/services/codebase/agy-image-turn.js). */
+export const ANTIGRAVITY_IMAGE_RECEIPT = 'output.image-turn.json';
+/** The output name per real format, as the bot writes it. */
+const OUTPUT_BY_MIME: Readonly<Record<'image/png' | 'image/jpeg', string>> = Object.freeze({ 'image/png': 'output.png', 'image/jpeg': 'output.jpg' });
+/** A task workspace id this rail mints or accepts: canonical, as the bot node requires. */
+const RENDER_TASK_ID = /^sbimg-[a-z0-9-]{8,80}$/;
+
+/** @description The bot's collection evidence, as written to the receipt. */
+interface ImageTurnReceipt { tool: string; toolState: string; file: string; mimeType: string; bytes: number; sha256: string; locator: string }
+
+/**
+ * @description The real image format of a buffer, by its leading bytes.
+ * @param {Buffer} bytes - The image bytes.
+ * @returns {'image/png' | 'image/jpeg' | null} The format, or null when it is neither.
+ */
+export function sniffStoryboardImageMime(bytes: Buffer): 'image/png' | 'image/jpeg' | null {
+  if (bytes.length >= 8 && bytes.readUInt32BE(0) === 0x89504e47 && bytes.readUInt32BE(4) === 0x0d0a1a0a) return 'image/png';
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+  return null;
+}
+
+/**
+ * @description The fixed render prompt for the antigravity-cli rail. The brief and the anchor path
+ * travel as JSON string values of the tool's inputs, so they are data, never instructions.
+ * @param {string} brief - The frame/portrait brief from the calling surface.
+ * @param {string | null} anchorPath - The staged reference image's absolute path, or null.
+ * @returns {string} The full task prompt.
+ */
+export function buildAntigravityRenderPrompt(brief: string, anchorPath: string | null): string {
+  const inputs = [
+    ...(anchorPath ? [`ImagePaths = ${JSON.stringify([anchorPath])}`] : []),
+    `Prompt = ${JSON.stringify(brief)}`,
+    `ImageName = ${JSON.stringify(ANTIGRAVITY_IMAGE_NAME)}`,
+  ];
+  return 'You are a headless image-rendering task.\n'
+    + `Call your generate_image tool exactly once with these inputs: ${inputs.join(', ')}.\n`
+    + (anchorPath ? 'The image at ImagePaths is the reference: keep its exact characters, likeness, art style and world.\n' : '')
+    + 'Render only what the Prompt asks for. Change nothing else and add nothing it does not ask for: no extra marks, outlines, crosshairs, borders, labels or text.\n'
+    + 'Do not write code, do not run terminal commands, do not create or edit files, and do not draw the image yourself; use only the generate_image tool.\n'
+    + 'When the tool returns, reply with exactly: RENDERED\n'
+    + 'If you cannot call generate_image, reply with exactly: NO_IMAGE_CAPABILITY';
+}
+
+/**
+ * @description Stage the anchor in the task workspace under the name its bytes deserve.
+ * @param {string} dir - The task workspace.
+ * @param {Buffer} anchor - The reference frame.
+ * @returns {Promise<string>} The anchor's absolute path, which the prompt hands to generate_image.
+ */
+async function stageAnchor(dir: string, anchor: Buffer): Promise<string> {
+  const file = path.join(dir, sniffStoryboardImageMime(anchor) === 'image/jpeg' ? 'anchor.jpg' : 'anchor.png');
+  await fs.promises.writeFile(file, anchor);
+  return file;
+}
+
+/**
+ * @description Read the bot's receipt, or explain why it cannot be used.
+ * @param {string} dir - The task workspace.
+ * @returns {Promise<ImageTurnReceipt>} The parsed receipt.
+ */
+async function readReceipt(dir: string): Promise<ImageTurnReceipt> {
+  let receipt: ImageTurnReceipt;
+  try {
+    receipt = JSON.parse(await fs.promises.readFile(path.join(dir, ANTIGRAVITY_IMAGE_RECEIPT), 'utf8')) as ImageTurnReceipt;
+  } catch (err) {
+    logger.error({ err, stack: (err as Error).stack, dir }, 'antigravity-cli render left no readable image-turn receipt');
+    throw new Error('antigravity-cli image provider: the render left an image but no readable image-turn receipt — refusing an image the bot did not collect from generate_image');
+  }
+  if (!receipt || receipt.tool !== 'generate_image' || receipt.toolState !== 'DONE') {
+    throw new Error('antigravity-cli image provider: the image-turn receipt does not name a generate_image step that reached DONE');
+  }
+  return receipt;
+}
+
+/**
+ * @description The one image the bot collected, verified against its receipt and normalized to PNG.
+ * @param {string} dir - The task workspace.
+ * @returns {Promise<{png: Buffer, mimeType: 'image/png' | 'image/jpeg', receipt: ImageTurnReceipt}>} The verified image.
+ */
+async function readCollectedImage(dir: string): Promise<{ png: Buffer; mimeType: 'image/png' | 'image/jpeg'; receipt: ImageTurnReceipt }> {
+  const present = Object.values(OUTPUT_BY_MIME).filter((name) => fs.existsSync(path.join(dir, name)));
+  if (!present.length) throw new Error('antigravity-cli image provider: the render task completed without handing back a generate_image output');
+  if (present.length > 1) throw new Error(`antigravity-cli image provider: the task workspace holds ${present.join(' and ')} — refusing to guess which one generate_image produced`);
+  const bytes = await fs.promises.readFile(path.join(dir, present[0]));
+  const mimeType = sniffStoryboardImageMime(bytes);
+  const receipt = await readReceipt(dir);
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  if (!mimeType || OUTPUT_BY_MIME[mimeType] !== present[0] || receipt.file !== present[0] || receipt.mimeType !== mimeType || receipt.sha256 !== sha256) {
+    throw new Error(`antigravity-cli image provider: ${present[0]} does not match its image-turn receipt (format or digest) — refusing it`);
+  }
+  if (mimeType === 'image/png') return { png: bytes, mimeType, receipt };
+  // The storyboard cropper decodes PNG only; generate_image answers JPEG (proven 2026-10-02).
+  const { default: sharp } = await import('sharp');
+  return { png: await sharp(bytes).png().toBuffer(), mimeType, receipt };
+}
+
+/**
+ * @description antigravity-cli provider — the swarm's Antigravity harness rendering on a bot node.
+ * Same executor, same demo carve and same cost posture as codex-cli: subscription-included, the bot
+ * records its own usage in chat_tasks, so costUsd is null here (never double-recorded).
+ * @param {string | undefined} userSub - The REAL calling user's sub, threaded to the bot-side gates.
+ * @param {{taskId?: string}} [options] - A caller-chosen render task id (the Test Lab's tagged live
+ *   render, so it can remove exactly the workspace it made); minted per call when omitted.
+ * @returns {StoryboardImageProvider} The provider.
+ */
+export function createAntigravityCliImageProvider(userSub?: string, options: { taskId?: string } = {}): StoryboardImageProvider {
+  const gatesPass = (): boolean =>
+    Boolean(resolveCliStoryboardImageExecutor()) && demoModeEnabled() && isDeploymentOperatorSub(userSub);
+  const generateWithMeta = async (prompt: string, anchor: Buffer | null): Promise<StoryboardImageResult> => {
+    const executor = resolveCliStoryboardImageExecutor();
+    if (!executor || !userSub) {
+      throw new Error('antigravity-cli image provider: no boot-registered executor or no caller identity — the surface must pass userSub and the app must wire the executor at boot.');
+    }
+    const id = options.taskId ?? `sbimg-${randomUUID()}`;
+    if (!RENDER_TASK_ID.test(id)) throw new Error('antigravity-cli image provider: the render task id is not a canonical sbimg- workspace id');
+    const dir = path.join(resolveSharedWorkspaceRoot(), id);
+    await fs.promises.mkdir(dir, { recursive: true });
+    const anchorPath = anchor ? await stageAnchor(dir, anchor) : null;
+    const started = Date.now();
+    const result = await executor({ prompt: buildAntigravityRenderPrompt(prompt, anchorPath), taskId: id, workspaceFolderId: id, userSub, harness: 'antigravity-cli' });
+    if (!result.success) {
+      throw new Error(`antigravity-cli image provider: render task failed — ${(result.error || result.responseText || 'no detail').slice(0, 300)}`);
+    }
+    const collected = await readCollectedImage(dir);
+    logger.info({ taskId: id, sourceMimeType: collected.mimeType, locator: collected.receipt.locator, bytes: collected.png.length, durationMs: Date.now() - started }, 'antigravity-cli storyboard frame rendered');
+    return {
+      image: collected.png, costUsd: null, model: result.model || 'antigravity-cli', sourceMimeType: collected.mimeType,
+      cliRender: { taskId: id, tool: collected.receipt.tool, toolState: collected.receipt.toolState, locator: collected.receipt.locator, sha256: collected.receipt.sha256 },
+    };
+  };
+  return {
+    id: 'antigravity-cli',
+    costClass: 'free', // subscription-included: no per-image bill; plan capacity, not credit
+    available: async () => gatesPass(),
+    generate: async (prompt, anchor) => (await generateWithMeta(prompt, anchor)).image,
+    generateWithMeta,
+    healthCheck: async () => (gatesPass()
+      ? { ok: true, detail: 'demo-mode CLI rendering via the swarm Antigravity harness (bot-node generate_image, subscription-included)' }
+      : { ok: false, detail: 'demo-mode CLI rendering unavailable — needs DEMO_MODE=true, an operator caller (OSHAL_OPERATOR_SUBS) passed as userSub, and the boot-registered executor' }),
+  };
+}

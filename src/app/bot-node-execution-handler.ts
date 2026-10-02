@@ -35,6 +35,7 @@
  * 30 | maintainer@emeraldcoastsystemsgroup.com | Bind agentic capture to the producing bot identity supplied by runtime composition, never an envelope target or payload/frame field. Without that trusted identity capture remains unbound and tail replay keeps failing closed.
  * 31 | maintainer@emeraldcoastsystemsgroup.com | Mark a protected direct request as single-shot/tool-less only when its server-resolved application tool set is empty. The autonomous-CLI preflight is deferred only for that candidate, then re-run after authorization resolution with a dedicated hosted-single-shot proof; nonempty brokered tools retain the existing refusal/bridge path. This lets a Cline-backed bot use its configured backing model for one hosted reasoning call without treating the request as BYO or entering Cline's native tool loop.
  * 32 | maintainer@emeraldcoastsystemsgroup.com | Resolve zero-cost runtime usage through the shared provider/model pricing registry before recording or relaying it. Protected Gemini single-shot usage now reaches the ledger as a catalog estimate with an input/output split, while an actual nonzero provider total still wins and an unknown model remains zero instead of receiving an invented rate; execution attribution stays on the actual runtime provider.
+ * 33 | maintainer@emeraldcoastsystemsgroup.com | Forward the payload's imageTurn marker into the TaskController options (ADR-130 amendment 2026-10-02). Only a literal true is forwarded. It is set by the storyboard render executor; the Antigravity wrapper uses it to collect generate_image's output from its private HOME into the task workspace before the HOME is removed, and refuses it on a host-tools-only or bridged turn. Every other provider ignores it. An image turn's prompt is also assembled verbatim, like a direct call (no persona layers, swarm memory, handover or ticket scaffolding, which told the render to write handovers and deliverables while its own prompt forbids creating files), but it is NOT marked hostToolsOnly: the image tool is the CLI's own.
  */
 
 /**
@@ -232,6 +233,11 @@ export function createBotNodeExecutionHandler(
     // orchestration layers (handover / awareness / swarm-memory). A lean reasoner
     // persona correctly treats that ticket scaffolding as out-of-place noise.
     const direct = payload?.direct === true;
+    // ADR-130 storyboard render: the server-authored render prompt goes to the bot verbatim (no
+    // ticket/handover scaffolding, which would contradict "create no files"), yet the CLI keeps its
+    // workspace-task shape because the image tool is one of its own (unlike hostToolsOnly).
+    const imageTurn = payload?.imageTurn === true;
+    const verbatimPrompt = direct || imageTurn;
     const agenticMode = payload?.agenticMode !== undefined ? Boolean(payload.agenticMode) : true;
     const runtimeAgentId = normalizeRuntimeIdentity(deps.runtimeAgentId, 256);
     // Exact authenticated owner identity. This binds memory, workspaces, and audited
@@ -392,12 +398,12 @@ export function createBotNodeExecutionHandler(
       // no file-persona "read your context" scaffolding, and no phase/handover
       // execution framing — all of which a reasoner reads as out-of-place noise
       // (it flags them as a prompt injection against its real role).
-      const profile = !direct && deps.agentProfileRepository
+      const profile = !verbatimPrompt && deps.agentProfileRepository
         ? await deps.agentProfileRepository.getAgentProfile(agentId) : null;
-      const personaLayers = direct
+      const personaLayers = verbatimPrompt
         ? []
         : await loadPersonaLayers(agentId, envelope, deps.personaLayerStore);
-      if (!direct) {
+      if (!verbatimPrompt) {
         const agentDisplayName = profile?.name || agentId;
         const payloadType = payload?.type ? String(payload.type) : '';
         const reviewRole = payload?.role ? String(payload.role) : 'reviewer';
@@ -438,7 +444,7 @@ export function createBotNodeExecutionHandler(
       const skillProfilePattern = typeof payload?.pattern === 'string' ? payload.pattern.trim() : '';
       const assembledPrompt = assemblePromptForAnyBot(
         personaLayers,
-        direct ? String(payload?.text ?? '') : buildUserMessage(envelope),
+        verbatimPrompt ? String(payload?.text ?? '') : buildUserMessage(envelope),
         promptAuthority,
         skillProfilePattern ? [{ source: 'resolved-skill-profile', content: skillProfilePattern }] : [],
       );
@@ -492,6 +498,8 @@ export function createBotNodeExecutionHandler(
           // An interactive turn's tools are brokered by the agentic loop itself; a CLI brain gets none
           // of its own (AntigravityProvider runs agy tool-less). Protected work keeps its bridge path.
           ...(direct && !protectedExecution ? { hostToolsOnly: true } : {}),
+          // A storyboard render (ADR-130): the Antigravity wrapper collects generate_image's output.
+          ...(imageTurn ? { imageTurn: true } : {}),
           source: 'swarm-dispatch',
           allowedTools: [...promptAuthority.allowedTools],
           authorizedScopes: [...promptAuthority.scopes],

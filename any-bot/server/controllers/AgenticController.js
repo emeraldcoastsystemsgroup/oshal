@@ -16,6 +16,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com  | Token Chase workspace-bound checkpoint (BACKLOG "Workspace-bound checkpoint and tail replay"): the loop now PRODUCES the provenance the capture lane previously only accepted from options nobody set. Each executed (or failed) tool call is recorded through turn-provenance.js and drained into the next frame's per-frame `pins`, so a live read marks that frame non-replayable; the run-level options.workspaceCommit/ownerStoreVersion pass-through is gone (the capture lane commits the tree and versions the store itself); and a finally block writes the end-of-run checkpoint (final.json) on completion, max-turns and error alike. Every addition is a no-op with TOKEN_CHASE_CAPTURE off.
  * 12 | maintainer@emeraldcoastsystemsgroup.com  | Forward the caller's hostToolsOnly marker to the provider call of this loop (and only this call). This loop brokers every tool it offers - the model answers with an XML call, the loop runs it through the request-scoped registry and returns the result - so an interactive (direct) turn needs nothing native from a CLI brain. AntigravityProvider uses it to run agy with no native tools; every other provider ignores it.
  * 13 | maintainer@emeraldcoastsystemsgroup.com  | The completion text is the literal result the model wrote, always a string (completion-result-text.js). The attempt_completion branch stored toolInput.result, which ToolUseParser has already converted: an answer of 5 was saved as the number 5 and an answer of true as a Boolean, and the bot-node handler threw "m.text.trim is not a function" reading the message back, so a Jarvis ask for "just the number" lost its answer (live case jarvis-cache, 2026-09-29, 3 of 3). An answer of 0 or false fell through to the raw XML reply instead. The conversion the parser applies to real tool parameters is unchanged.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com  | Forward the caller's imageTurn marker to the provider call of this loop (ADR-130 amendment 2026-10-02). A storyboard render dispatched onto the Antigravity harness sets it; the Antigravity wrapper then collects generate_image's output into the task workspace before its private HOME is removed. Providers without image turns ignore it.
  */
 
 /**
@@ -456,6 +457,8 @@ class AgenticController {
             // This loop brokers every tool it offers; the CLI brain needs none of its own for an
             // interactive turn (bot-node-execution-handler sets the marker for direct dispatches).
             hostToolsOnly: options.hostToolsOnly === true,
+            // A storyboard render on the Antigravity harness (the bot-node handler forwards the marker).
+            imageTurn: options.imageTurn === true,
           });
         } catch (llmError) {
           // If Bedrock failed for dashboard chat AND cline-cli is available, fall back

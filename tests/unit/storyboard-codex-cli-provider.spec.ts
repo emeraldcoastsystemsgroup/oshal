@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the ADR-130 codex-cli storyboard image provider. Pins: (1) the demo-aware default — env unset resolves to codex-cli ONLY under DEMO_MODE (with executor + operator sub), and stays codex otherwise; (2) the SEC-shaped availability gates — no executor, no DEMO_MODE, non-operator sub, or missing userSub each read unavailable and selection fails closed with the demo-carve hint; (3) the render round-trip against the REAL shared-workspace filesystem — anchor staged for the executor, prompt carries the anchor step + output contract, PNG read back and magic-checked, non-PNG and missing-file both throw. The executor is doubled (it IS the app-boot injection seam); the filesystem and resolver are real.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-130 amendment 2026-10-02: the codex-cli render request names its harness ('openai-codex'), which the executor stamps on the dispatch. The demo-default case registers no swarm-default reader, which keeps codex-cli (the swarm-default mapping is pinned in storyboard-image-default.spec.ts).
  */
 
 import * as fs from 'fs';
@@ -138,6 +139,7 @@ describe('codex-cli storyboard image provider (ADR-130)', () => {
     expect(captured).toHaveLength(1);
     const req = captured[0];
     expect(req.userSub).toBe(OPERATOR_SUB);
+    expect(req.harness).toBe('openai-codex');
     expect(req.workspaceFolderId).toMatch(/^sbimg-[a-z0-9-]+$/);
     expect(req.prompt).toContain('./anchor.png');
     expect(req.prompt).toContain('a red circle on white');

@@ -9,6 +9,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export storyboard-frames — the stage that turns a screenwriter's per-scene camera line into the still image the renderer animates.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Export storyboard-image-cost — canonical spend capture for image generation (chat_tasks + oshal_cost_events), part of the media-generation kernel-skill surface so packages record cost without importing operational-intelligence.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Export storyboard-cli-image-executor — the app-boot injection seam for the ADR-130 codex-cli image provider (register/resolve; the feature never imports the app layer).
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Export storyboard-antigravity-image-provider (the antigravity-cli rail) and storyboard-image-default (the swarm-default image selection and its app-boot reader seam), ADR-130 amendment 2026-10-02.
  *
  * @module video-generation/services
  */
@@ -17,6 +18,8 @@ export * from './storyboard';
 export * from './storyboard-frames';
 export * from './storyboard-image-providers';
 export * from './storyboard-cli-image-executor';
+export * from './storyboard-antigravity-image-provider';
+export * from './storyboard-image-default';
 export * from './storyboard-image-cost';
 export * from './veo-client';
 export * from './image-client';

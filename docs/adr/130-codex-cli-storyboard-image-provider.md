@@ -1,6 +1,6 @@
 # ADR-130 — codex-cli storyboard image provider (demo-mode rendering on the swarm's own harness)
 
-**Status:** Accepted
+**Status:** Accepted; amended 2026-10-02 (the demo default follows the swarm default; antigravity-cli rail)
 **Date:** 2026-08-22
 **Extends:** ADR-082 (storyboard provider family), ADR-127 (demo-mode CLI carve), ADR-036 (bot-owned execution)
 
@@ -91,3 +91,80 @@ swarm-execute rail — and it is the default when the deployment runs in demo mo
 - The prompt-injection surface is unchanged in kind: briefs reach the same CLI the swarm already
   feeds with chat and ticket text, under the same demo-carve confinement; portrait briefs are
   catalog-built with fail-closed id validation.
+
+## Amendment — 2026-10-02: the image default follows the swarm default
+
+Operator decisions, 2026-10-02: "our settings should have swarm default as the default. that is
+antigravity", then "Prove first, then build". The proof ran the same day on the render bot
+(agy 1.2.8, the wrapper's own unbridged task-turn argv, private HOME): a prompt that names the
+`generate_image` tool, with the source image as an absolute `ImagePaths` entry, produced a tool
+step `generate_image` ACTIVE → DONE in about 10 s and a 1024 x 1024 JPEG at
+`$HOME/.gemini/antigravity-cli/brain/<conversation>/<name>_<epoch-ms>.jpg`, nothing in the work
+directory. A prompt that did not name the tool got an image drawn with code instead, and the edit
+added a mark nobody asked for.
+
+**Decision.**
+
+- **A sixth sibling, `antigravity-cli`** (`storyboard-antigravity-image-provider.ts`), beside
+  `codex-cli`: the same boot-registered bot-node executor, the same availability gates (executor +
+  `DEMO_MODE` + an operator caller) and, at the bot, the same single ADR-127 carve — nothing
+  broader. Its prompt names `generate_image`, passes the staged anchor's absolute path as
+  `ImagePaths`, and forbids code, commands, files and anything the brief does not ask for. Cost
+  class `free` (subscription-included), `costUsd: null`, exactly as codex-cli.
+- **The demo default follows the swarm default.** `STORYBOARD_IMAGE_PROVIDER` is still the explicit
+  override and always wins. With it unset and `DEMO_MODE` on, the fleet-default row of the
+  provider switch (ADR-162) picks the rail:
+
+  | Swarm default (fleet-default row) | Image rail |
+  |---|---|
+  | `antigravity-cli` | `antigravity-cli` |
+  | `openai-codex`, `codex-cli` | `codex-cli` |
+  | no fleet-default row (or no switch store in the process) | `codex-cli` (this ADR's original default) |
+  | any other harness (`claude-code`, `cline`, a Cline-backed id, …) | refused: "the swarm default `<harness>` cannot make images; set STORYBOARD_IMAGE_PROVIDER" |
+  | switch not loaded yet | refused, naming the override |
+
+  A refusal never falls back to a paid rail. **The non-demo default is unchanged: `codex`.**
+  Selection lives in one function, `selectStoryboardImageProvider`, which the resolver and the
+  Test Lab readback both call. The feature does not import the app layer: the app registers a
+  reader at boot (`readFleetDefaultHarness` over the installed switch snapshot), and the resolver
+  reads it on every call, so a fleet switch moves the image rail at the snapshot's own refresh
+  (`OSHAL_PROVIDER_SWITCH_REFRESH_MS`, 30 s by default) with no restart.
+- **The render dispatch carries the chosen rail's harness** — `openai-codex` for codex-cli,
+  `antigravity-cli` for antigravity-cli — as its ADR-034 record, instead of the fixed
+  `openai-codex`. Every render is marked `imageTurn`, and its prompt reaches the bot verbatim (no
+  ticket or handover scaffolding), without the host-tools-only marker.
+- **Two guards on the bot side** (`any-bot/server/services/codebase/agy-image-turn.js`, run by the
+  wrapper before it deletes the private HOME):
+  - *Collection.* The image `generate_image` wrote is found through the path the tool reported in
+    its own step output, or failing that the newest `<name>_<epoch-ms>` image directly in a
+    conversation folder of the private brain; it is copied into the task workspace as `output.png`
+    or `output.jpg` by its real bytes, with a receipt (`output.image-turn.json`: tool, state, file,
+    mime type, bytes, sha256, locator). The provider accepts exactly one output, checks it against
+    the receipt, converts a JPEG to PNG (the frame cropper decodes PNG only) and reports the real
+    source format.
+  - *Guard A.* Nothing is collected unless the turn's stream shows a `generate_image` tool step
+    that reached DONE, the file is a regular PNG or JPEG inside the private brain directory written
+    during the turn, and the workspace does not already hold an output or a receipt. An image
+    drawn with code, a run_command-only turn, a tool step that ended in ERROR, a file older than
+    the turn and a path outside the brain are all refused, and the turn fails.
+- **Store Create** accepts the operator-only `antigravity-cli` rail (operator decision
+  2026-10-02, "Allow it for me now"): its region edit needs the provider to report itself
+  available for the caller, so anyone but the operator is told "not configured" and nothing else
+  is tried. The command-line transport still does not carry Create's application permission to the
+  bot, so the rail serves the operator only; `codex-cli` stays refused.
+
+**Consequences.**
+
+- With the fleet default `antigravity-cli` and `DEMO_MODE` on, the resolver selects
+  `antigravity-cli` for every consumer that passes the caller's sub: Video Studio's storyboard
+  stage, Create's region edit, and Portrait Studio, which refuses only `codex-cli` by name. Any
+  caller but the operator gets the not-configured refusal. None of these has rendered on the box
+  yet (see the live proof below).
+- Guards: `tests/unit/storyboard-image-default.spec.ts` (mapping, override, fail-closed, the real
+  switch snapshot), `tests/unit/storyboard-antigravity-image-turn.spec.ts` (the real bot-node
+  chain and wrapper against a stand-in `agy` child on the real filesystem; Guard A),
+  `tests/unit/storyboard-cli-image-wiring.spec.ts` (the carried harness and the real reconcile),
+  `tests/unit/storyboard-test-lab-render.spec.ts` (the live card).
+- Live proof on the box is the automated case `node scripts/operations/live-acceptance.js
+  storyboard-agy` (Lab card `storyboard-swarm-default-render`): one frame on the resolved default,
+  `generate_image` DONE, a real PNG, its workspace removed. It has not run on the box yet.

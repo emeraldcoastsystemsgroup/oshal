@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Injectable executor seam for the codex-cli storyboard image provider (ADR-130). The controller process must NEVER spawn a local CLI (two-runtimes doctrine), so the render is delegated to a bot node over the ADR-036 swarm-execute rail — but this feature module cannot import the app layer, so the app registers the executor here at boot (same pattern as registerSchwabTokenResolver). Fail-soft: nothing registered means the codex-cli provider reads as unavailable and the resolver fails closed with instructions.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The request names the harness the render runs on (ADR-130 amendment 2026-10-02): 'openai-codex' for the codex-cli rail, 'antigravity-cli' for the antigravity-cli rail. The app's executor stamps it as the dispatch's ADR-034 carried record instead of a fixed codex id, so the render bot reconciles onto the rail the provider was chosen for.
  */
 /**
  * @description The app-boot-injected executor the `codex-cli` storyboard image provider renders
@@ -13,6 +14,12 @@
  *
  * @module features/video-generation/services/storyboard-cli-image-executor
  */
+
+/** @description The bot-node harness a CLI render runs on: one per CLI image rail. */
+export type CliStoryboardRenderHarness = 'openai-codex' | 'antigravity-cli';
+
+/** @description Every harness a CLI render may name; the executor refuses anything else. */
+export const CLI_STORYBOARD_RENDER_HARNESSES: readonly CliStoryboardRenderHarness[] = Object.freeze(['openai-codex', 'antigravity-cli'] as const);
 
 /** @description One render request handed to the boot-registered executor. */
 export interface CliStoryboardRenderRequest {
@@ -24,6 +31,8 @@ export interface CliStoryboardRenderRequest {
   workspaceFolderId: string;
   /** The REAL calling user's sub. The bot-side SEC-05 gates decide whether a CLI may spawn for it. */
   userSub: string;
+  /** The harness the render must run on; the executor carries it as the dispatch's provider record. */
+  harness: CliStoryboardRenderHarness;
 }
 
 /** @description What the executor reports back. Files travel via the shared volume, never here. */

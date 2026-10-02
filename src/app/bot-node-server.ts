@@ -35,6 +35,7 @@
  * 30 | maintainer@emeraldcoastsystemsgroup.com | Mount POST /api/token-chase/replay-tail (bot-node-token-chase-tail-route.ts) behind authorizeBotNodeCall with the ownership pool and the owner-store snapshotter: the hermetic no-edit tail (BACKLOG "Workspace-bound checkpoint and tail replay") runs on this accountable node, never on the controller.
  * 31 | maintainer@emeraldcoastsystemsgroup.com | The owner-store binding comment now states the opt-in: readOwnerStoreConfig binds the snapshotter only when TOKEN_CHASE_OWNER_STORE_SNAPSHOT is on, so a node holding a vault (PI_STORE_ROOT / JOBHUNTER_STORE_ROOT) no longer copies it on every captured turn by default. Wiring unchanged.
  * 32 | maintainer@emeraldcoastsystemsgroup.com | Validate and forward fallbackOrder with the rest of the signed provider authority on /api/swarm-execute so configured fallback chains survive the HTTP hop intact.
+ * 33 | maintainer@emeraldcoastsystemsgroup.com | Forward imageTurn from /api/swarm-execute into the execution envelope, only when it is a literal true (ADR-130 amendment 2026-10-02: the storyboard render executor marks its dispatch so the Antigravity wrapper hands back generate_image's output).
  */
 
 /**
@@ -366,6 +367,8 @@ async function start(): Promise<void> {
       configVersion?: unknown;
       providerConfigRequired?: unknown;
       fallbackOrder?: unknown;
+      // ADR-130: a storyboard render; only a literal true is forwarded.
+      imageTurn?: unknown;
       // Trusted prompt configuration carried by BotNodeRequest. These are validated before
       // promotion into the envelope; pattern is executable prompt authority, not user content.
       app?: unknown;
@@ -444,6 +447,8 @@ async function start(): Promise<void> {
         // When present, the execution handler routes inference to it (cost tracked
         // under provider 'byo-llm') instead of the bot's configured provider.
         byoLlmConnection: body.byoLlmConnection,
+        // ADR-130 storyboard render: the Antigravity wrapper hands back generate_image's output.
+        ...(body.imageTurn === true ? { imageTurn: true } : {}),
       },
       messageType: 'request' as const,
     };
