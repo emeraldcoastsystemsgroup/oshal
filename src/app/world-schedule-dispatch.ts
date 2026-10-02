@@ -29,6 +29,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Bound the rollup fan-out from config (WORLD_ROLLUP_CONCURRENCY, default 4 instead of a compiled-in 8) and record what each fire costs the series store: entity count, statements issued, statements coalesced and wall time at INFO, plus a WARN once a pulse crosses a configured fraction of its window. On 2026-09-14 the 184-entity fan-out put 19 concurrent aggregates on oshal-local-tsdb (282% CPU) because an abandoned dispatch keeps running while the next fire starts, and the only evidence a human had was pg_stat_activity while it was happening.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Run the depth cycle's feed collectors (market events, congress, insider, short volume, gov contracts) BEFORE the sequential subject sweep instead of after it. They sat behind a sweep that took about 33 minutes on 2026-06-26 (that run's congress rows carry ts 00:33 UTC, the write time the collector stamped before seq 2 of political-trades.ts, for the 00:00 UTC fire), while the scheduler abandons a dispatch after 240 s and the run then lives only as long as the api process, so a restart inside the sweep can end it before the collectors; running them first removes that exposure. It is not shown to be why no congress row was written after 06-26: the default congress feed answered HTTP 401 on 2026-09-28 (political-trades.ts seq 4), and a run that reached the collector while the feed answered 401 wrote nothing either, so the series store cannot tell the two apart. A collector turned off by WORLD_EVENTS_ENABLED / WORLD_FLOW_ENABLED / WORLD_GOV_ENABLED now logs a WARN on every depth fire instead of being skipped silently.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Each fire makes sure the platform's classify backend is registered (ensureWorldClassifyRail(ctx), once per process; boot registers it first): the accountable bot rail on the swarm's configured provider under an accountable owner, so classification inside ingestFeeds / the firehose deep dive stops depending on a controller-local CLI provider SEC-05 refuses. The context parameter is used for the first time; the header and the dispatch JSDoc now describe the as-built rail instead of "the swarm's Claude creds in-process".
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Each fire begins its own slice of the classify budget (beginClassifyPulse, WORLD_CLASSIFY_BUDGET_PER_PULSE): the hour's bot-rail calls spread across the pulses instead of landing in the first one, which overran the 240 s dispatch budget three times on 2026-10-02 and stacked fires.
  *
  * @module world-schedule-dispatch
  */
@@ -45,7 +46,7 @@ import {
   collectGovContracts,
   DEFAULT_FEED_IDS, FINANCE_FEED_IDS, PULSE_FEED_IDS,
   firehoseEnabled, firehoseFeeds, firehoseLimit, firehoseEveryNPulses,
-  deepDiveEnabled, deepDiveBudget, deepDiveMetered, feedBudgetMs, classifyBudgetSnapshot,
+  deepDiveEnabled, deepDiveBudget, deepDiveMetered, feedBudgetMs, classifyBudgetSnapshot, beginClassifyPulse,
   seriesReadStats, seriesReadConcurrency, type SeriesReadStats,
   DEFAULT_WORLD_TOPICS, tickerSubject, type WorldSubject,
   MARKET_SUBJECTS,
@@ -338,6 +339,10 @@ export async function dispatchWorldSchedule(ctx: AppContext, schedule: ScheduleR
   // The classify backend is the platform's (operator decision 2026-09-21). Boot registers it; this is the
   // same once-per-process call, so a dispatcher driven without server.ts still classifies on the rail.
   await ensureWorldClassifyRail(ctx);
+  // This fire's slice of the classify budget (WORLD_CLASSIFY_BUDGET_PER_PULSE): the hour's calls spread
+  // across the pulses instead of landing in the first one, which on 2026-10-02 pushed the ticker pulse
+  // past the scheduler's 240 s dispatch budget three times (an abandoned pulse keeps running and stacks).
+  beginClassifyPulse();
 
   const startedAt = Date.now();
   const seriesBefore = seriesReadStats();

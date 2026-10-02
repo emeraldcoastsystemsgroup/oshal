@@ -22,6 +22,7 @@
  * 2026-09-28 22:30:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin WORLD_POLITICAL_TOKEN (the congress disclosure feed credential) to the api and keep it off every bot: the default feed answered HTTP 401 without it on 2026-09-28, and an unforwarded token is a collector that keeps being refused while the operator believes it is configured.
  * 2026-09-28 22:50:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin OSHAL_DEV_WORKSPACE_INDEX_ENABLED (the dev-workspace-index package flag) and its two ADR-077 gates together: the deploy lane set the flag in .env on 2026-09-28 and the package still answered disabled, because compose forwarded only OSHAL_DEV_CONSOLE_ENABLED and OSHAL_SUPERADMIN_SUBS.
  * 2026-10-02 10:20:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin the world classify rail knobs that replace the retired WORLD_CLASSIFY_PROVIDERS: WORLD_CLASSIFY_BOT, WORLD_CLASSIFY_OWNER_SUB, WORLD_CLASSIFY_OWNER_ISSUER, WORLD_CLASSIFY_CALL_TIMEOUT_MS, WORLD_CLASSIFY_PROVIDER_ID and WORLD_CLASSIFY_MODEL. Unforwarded, an operator who names the classify bot, its accountable owner, that owner's verified issuer, the call ceiling or an explicit provider stamp in .env is silently ignored: the compiled defaults stand, and a box left with no owner (or, on a signed bot-node hop, no verified issuer) classifies by lexicon only.
+ * 2026-10-02 15:50:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin WORLD_CLASSIFY_BUDGET_PER_PULSE (the per-fire slice of the classify budget): unforwarded, the compiled default stands and an operator who tunes the slice in .env after a pulse overran its dispatch budget is silently ignored.
  */
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
@@ -78,6 +79,7 @@ const REQUIRED_ON_API: ReadonlyArray<{ name: string; readBy: string }> = [
   // starts. (WORLD_CLASSIFY_DISABLED / _PROVIDERS were already forwarded; these are their new siblings.)
   { name: 'WORLD_CLASSIFY_BUDGET_PER_HOUR', readBy: 'news-fetcher envCap — the global classify-call hourly ceiling' },
   { name: 'WORLD_CLASSIFY_BUDGET_PER_DAY', readBy: 'news-fetcher envCap — the global classify-call daily ceiling' },
+  { name: 'WORLD_CLASSIFY_BUDGET_PER_PULSE', readBy: 'news-fetcher envCap — the per-fire slice of the classify budget (unforwarded, one pulse can spend the whole hour and overrun its dispatch budget)' },
   // 2026-10-02, world classify on the swarm's accounted rail (operator decision 2026-09-21): which bot
   // classifies and the optional explicit provider stamp. Unforwarded, an operator pointing the world
   // index at another bot or provider in .env is silently ignored and the compiled default (general-bot

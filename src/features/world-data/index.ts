@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Export the series-read gate (bound + counters) — the pulse dispatch takes a snapshot either side of its fan-out so the completion record says how many statements it actually put on the series store.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Export analyzeBatch with its ClassifyProvider seam and createClassifyBudget, plus the observed outlet rating types: the Test Lab's world outlet-rating card classifies one seeded item through the deployed classifier with a capturing provider and its own budget (no model call, no spend from the global classify budget), and reads the rating set the service now computes.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Export configureWorldClassify / worldClassifyConfigured: the app layer registers the platform's classify backend (the accountable bot rail) once per process; news-fetcher no longer builds a provider of its own.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Export beginClassifyPulse: the world schedule dispatcher starts each fire's slice of the classify budget.
  */
 
 /**
@@ -32,7 +33,7 @@ export {
   resetSeriesReadStats,
   type SeriesReadStats,
 } from './world-series-gate';
-export { ingestFeeds, speedReadFirehose, deepDiveFirehose, classifyBudgetSnapshot, analyzeBatch, configureWorldClassify, worldClassifyConfigured, type ClassifyProvider, type FeedItem } from './news-fetcher';
+export { ingestFeeds, speedReadFirehose, deepDiveFirehose, classifyBudgetSnapshot, beginClassifyPulse, analyzeBatch, configureWorldClassify, worldClassifyConfigured, type ClassifyProvider, type FeedItem } from './news-fetcher';
 export { createClassifyBudget } from './classify-budget';
 export type { ObservedOutletRating, OutletRatingSet } from './outlet-ratings';
 export { collectMarketEvents } from './market-events';

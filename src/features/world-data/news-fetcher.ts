@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The classify prompt no longer carries fetched feed text raw: every item goes through the shared fetched-web-text filter before the 240-character cut, the subject is filtered onto one line, and the items reach the model inside one UNTRUSTED_CONTENT record (the containment delimiter the bot-node path already used; this call never had it). The system prompt says the record is data. Prompt format changed → classifier version v4. Guard: tests/unit/world-classify-containment.spec.ts.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | The classify backend is the platform's, not this module's (operator decision 2026-09-21, "the principle of one"): the in-process Claude Code / Codex CLI providers and the WORLD_CLASSIFY_PROVIDERS list are gone — SEC-05 refused every one of those chunks unattended, so no item had been model-classified since 2026-08-06 while ~55 warns per pulse said so. configureWorldClassify registers the backends the app layer resolves (the accountable bot rail on the swarm's configured provider, src/app/world-classify-provider.ts); with none registered analyzeBatch classifies by lexicon and warns once. classifier_model is stamped with the backend that scored the item (or `lexicon`), no longer a fixed model name on lexicon rows. A set WORLD_CLASSIFY_PROVIDERS is reported once as retired.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | The classify instruction says to use no tools and run nothing: on the bot rail the turn is host-tools-only, and a model that reaches for a tool anyway ends the chunk (lexicon) instead of looping.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | The classify budget gains a per-fire slice (WORLD_CLASSIFY_BUDGET_PER_PULSE, default 4) and beginClassifyPulse resets it: on the bot rail a call takes ~10 s, and on 2026-10-02 the first ticker pulse of the hour spent all 40 hourly calls and overran the scheduler's 240 s dispatch budget three times.
  */
 
 /**
@@ -228,7 +229,17 @@ function envCap(name: string, dflt: number): number {
 const CLASSIFY_BUDGET = createClassifyBudget({
   perHour: envCap('WORLD_CLASSIFY_BUDGET_PER_HOUR', 40),
   perDay: envCap('WORLD_CLASSIFY_BUDGET_PER_DAY', 400),
+  // The per-fire slice: on the bot rail a call takes ~10 s, and an hour's worth of calls inside one pulse
+  // pushed it past the scheduler's 240 s dispatch budget (2026-10-02). Four calls ≈ 40 s of model wall.
+  perPulse: envCap('WORLD_CLASSIFY_BUDGET_PER_PULSE', 4),
 });
+
+/** @description Start a new world fire's slice of the classify budget. The schedule dispatcher calls this
+ *  at every fire; the hour and day counters are untouched.
+ *  @returns Nothing. */
+export function beginClassifyPulse(): void {
+  CLASSIFY_BUDGET.beginPulse();
+}
 
 /** @description Current classify-budget counters — the pulse completion log records this so LLM burn is
  *  visible per cycle instead of discovered on the subscription page.
