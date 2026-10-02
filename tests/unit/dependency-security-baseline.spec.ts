@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Split dependency areas into focused suites so every governance-counted test callback remains below fifty physical lines.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Guard the speaker image's complete hash-locked install graph and fail if Docker falls back to unhashed input requirements.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Guard the Electron two-package installer and real Windows capture/user32 acceptance runner so npm runtime packaging and desktop artifacts cannot drift apart.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Guard the root dependency fixes taken for the 2026-10-02 nightly trivy red (axios 1.20.0, engine.io 6.6.10, every brace-expansion copy at its line's fixed release, nodemailer ^10 at 10.0.6+, the joi override at 17.13.7+, the image-size override on ^2 at 2.0.3+), so a lock refresh or a reverted override cannot quietly bring a scanned advisory back between nightly scans.
  */
 
 import { readFileSync } from 'node:fs';
@@ -57,6 +58,56 @@ describe('root dependency security baseline', () => {
     expect(lock.packages['node_modules/xml2js'].version).toBe('0.6.2');
   });
 
+});
+
+/**
+ * @description True when a dotted release is at or above a floor on the SAME major line. A copy on
+ * another major is not judged here; it fails the caller's own major expectation instead.
+ * @param version - Installed version from the lockfile.
+ * @param floor - First fixed release on that major line.
+ * @returns Whether the installed version carries the fix.
+ */
+function atOrAbove(version: string | undefined, floor: string): boolean {
+  const have = (version ?? '').split('.').map(Number);
+  const want = floor.split('.').map(Number);
+  if (have.length !== 3 || have.some(Number.isNaN) || have[0] !== want[0]) return false;
+  return have[1] > want[1] || (have[1] === want[1] && have[2] >= want[2]);
+}
+
+/** First fixed release of brace-expansion on each major line (CVE-2026-102276 and CVE-2026-102278). */
+const BRACE_EXPANSION_FLOORS: Record<number, string> = { 1: '1.1.20', 2: '2.1.6', 3: '3.0.8', 5: '5.0.11' };
+
+describe('trivy 2026-10-02 fixes stay taken', () => {
+  it('keeps the root lock at or above every fixed release the nightly scan asked for', () => {
+    const lock = readJson<PackageLock>('package-lock.json');
+    const floors: Array<[string, string]> = [
+      ['node_modules/axios', '1.20.0'],
+      ['node_modules/engine.io', '6.6.10'],
+      ['node_modules/nodemailer', '10.0.6'],
+      ['node_modules/joi', '17.13.7'],
+      ['node_modules/image-size', '2.0.3'],
+    ];
+    for (const [path, floor] of floors) {
+      expect(atOrAbove(lock.packages[path]?.version, floor), `${path} ${lock.packages[path]?.version} < ${floor}`).toBe(true);
+    }
+    const braceCopies = Object.entries(lock.packages).filter(([path]) => path.endsWith('node_modules/brace-expansion'));
+    expect(braceCopies.length).toBeGreaterThan(0);
+    for (const [path, entry] of braceCopies) {
+      const floor = BRACE_EXPANSION_FLOORS[Number((entry.version ?? '').split('.')[0])];
+      expect(floor, `${path} ${entry.version} is on a major line with no known fix`).toBeDefined();
+      expect(atOrAbove(entry.version, floor), `${path} ${entry.version} < ${floor}`).toBe(true);
+    }
+  });
+
+  it('keeps the manifest from resolving back to a vulnerable release', () => {
+    const manifest = readJson<PackageManifest>('package.json');
+    const overrides = manifest.overrides ?? {};
+    expect(manifest.dependencies?.nodemailer).toMatch(/^\^10\./);
+    expect(atOrAbove(String(manifest.dependencies?.nodemailer).replace(/^\^/, ''), '10.0.6')).toBe(true);
+    expect(atOrAbove(String(overrides.joi), '17.13.7'), `joi override ${String(overrides.joi)}`).toBe(true);
+    expect(String(overrides['image-size'])).toMatch(/^\^2\./);
+    expect(atOrAbove(String(overrides['image-size']).replace(/^\^/, ''), '2.0.3')).toBe(true);
+  });
 });
 
 describe('desktop dependency security baseline', () => {

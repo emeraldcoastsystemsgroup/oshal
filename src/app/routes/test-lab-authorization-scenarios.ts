@@ -24,6 +24,7 @@
  * 19 | maintainer@emeraldcoastsystemsgroup.com | Register the approve -> draft half of the Career rail live acceptance (tests/unit/career-rail-draft.spec.ts, the `--complete` mode's second half over career-hunter 1.27.0's Test Lab application seam) beside the live-proof spec it extends.
  * 20 | maintainer@emeraldcoastsystemsgroup.com | Register exact anonymous package reads with loader and real HTTP enforcement proofs.
  * 21 | maintainer@emeraldcoastsystemsgroup.com | Register scheduled-service activation HTTP/policy and separate disposable PostgreSQL companions, including missing-catalog admission refusal.
+ * 22 | maintainer@emeraldcoastsystemsgroup.com | Register the real-transport SMTP mailer guard (tests/unit/smtp-mailer-transport.spec.ts) beside the forgot-password proof that mocks the same rail: it drives sendTransactionalMail through the real nodemailer over a loopback SMTP conversation, added with the nodemailer 9 -> 10 bump the 2026-10-02 trivy scan required.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -131,6 +132,7 @@ export const AUTHORIZATION_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/local-account-administration.spec.ts' },
     { level: 'browser', path: 'tests/unit/users-administration-browser.spec.ts' },
     { level: 'integration', path: 'tests/unit/local-auth-forgot-password.spec.ts' },
+    { level: 'integration', path: 'tests/unit/smtp-mailer-transport.spec.ts' },
     { level: 'integration', path: 'tests/unit/authorization-audit.spec.ts' },
     { level: 'browser', path: 'tests/unit/authorization-audit-browser.spec.ts' },
     { level: 'integration', path: 'tests/unit/package-grant-plan-postgres.spec.ts' },

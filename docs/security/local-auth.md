@@ -140,4 +140,7 @@ single-use invites, disable-kills-login, admin-gate matrix),
 `local-auth-middleware.spec.ts` (fail-closed construction, injector, 401/redirect split),
 `local-auth-forgot-password.spec.ts` (self-service reset: enumeration-identical answers,
 fire-and-forget delivery, per-IP 429 + silent per-email cap, reset survives TOTP, invite
-not stomped).
+not stomped). That spec mocks the mail rail; `smtp-mailer-transport.spec.ts` covers the rail
+itself, driving `sendTransactionalMail` through the real nodemailer over a loopback SMTP
+conversation (delivery with envelope, headers and both bodies; a refused recipient resolves
+`{ok:false}` with the server's reply; an unconfigured box never dials).
