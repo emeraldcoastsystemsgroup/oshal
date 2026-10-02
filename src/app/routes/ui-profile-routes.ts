@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial UI profile routes — /api/ui/profile, /api/ui/profiles
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Resolve swarm-app manifests first, then fall back to on-disk profile JSONs
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | WARN when an explicitly requested ?name= profile falls back to disk — the silent fallback served a stale pre-carve-out little-monsters.json (4 ribbon items, no Record, no theme) whenever RLS hid the app row, masquerading as the app for days.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Shell lock (ADR-164 amendment, 2026-10-02): the profile response carries `landingApp` (the deployment's focused landing, or null) and `operator` (the server's verdict for this caller) so the ribbon withholds the operator doors with the same inputs the cockpit document route redirects on.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Per-caller visibility for the static rail: synthesised ribbon items that name a registered tool pass through the app's manifest-declared visibility rule with the caller's session, so a surface the app does not admit for this person (a teacher-only tab for a learner) is not offered anywhere the profile is rendered.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-149 rail discoverability: the route has the request, so it resolves the verified actor and binds synthesiseProfile's discovery port to it (runtime.canDiscover + the role-guidance link the 403 page offers). A tile that opens ANOTHER package this person cannot discover now comes back locked instead of a dead frame. An actor that cannot be resolved is logged and the manifest-static rail is served as before — discovery hides, it never authorises; the mount guard stays the authority.
  */
@@ -25,6 +26,12 @@ const logger = createChildLogger({ module: 'ui-profile-routes' });
 export interface UiProfileDiscoveryPorts {
   runtime: Pick<ApplicationAuthorizationRuntime, 'canDiscover'>;
   resolveActor(req: Request): Promise<AuthorizationActor>;
+}
+
+/** The shell-lock ports (ADR-164 amendment): the deployment's landing application for this request and the caller's operator status. */
+export interface UiProfileShellPorts {
+  landingApp(req: Request): string | null;
+  isOperator(req: Request): boolean;
 }
 
 /**
@@ -88,12 +95,16 @@ async function filterRibbonItemsForCaller<T>(items: T[], req: Request): Promise<
  *   target package's discoverability for the signed-in person (locked tiles, kept in place)
  * @returns Express Router
  */
-export function createUiProfileRoutes(service: UIProfileService, swarmApps?: SwarmAppService, discovery?: UiProfileDiscoveryPorts): Router {
+export function createUiProfileRoutes(service: UIProfileService, swarmApps?: SwarmAppService, discovery?: UiProfileDiscoveryPorts, shell?: UiProfileShellPorts): Router {
   const router = Router();
 
   router.get('/profile', async (req: Request, res: Response) => {
     const requested = typeof req.query.name === 'string' ? req.query.name.trim() : '';
     const selected = requested || service.getEnvSelectedName();
+    // Shell lock inputs (ADR-164 amendment): the deployment's landing application and the
+    // server's operator verdict, so the ribbon decides the operator doors the same way the
+    // cockpit document route decides its redirect.
+    const lock = { landingApp: shell?.landingApp(req) ?? null, operator: shell ? shell.isOperator(req) : undefined };
     try {
       // Try manifest synthesis for BOTH request-level and env-selected names.
       // Without this, UI_PROFILE=<app-name> on the server falls through to the
@@ -105,7 +116,7 @@ export function createUiProfileRoutes(service: UIProfileService, swarmApps?: Swa
         if (synthetic) {
           synthetic.ribbon.items = await filterRibbonItemsForCaller(synthetic.ribbon.items, req);
           logger.debug({ selected, source: requested ? 'query' : 'env' }, 'Serving synthesised profile from swarm-app manifest');
-          res.json({ profile: synthetic, requested: selected, source: 'swarm-app', envDefault: service.getEnvSelectedName() });
+          res.json({ profile: synthetic, requested: selected, source: 'swarm-app', envDefault: service.getEnvSelectedName(), ...lock });
           return;
         }
       }
@@ -118,7 +129,7 @@ export function createUiProfileRoutes(service: UIProfileService, swarmApps?: Swa
       } else {
         logger.debug({ selected, resolved: profile.name }, 'Serving UI profile from disk');
       }
-      res.json({ profile, requested: selected, source: 'disk', envDefault: service.getEnvSelectedName() });
+      res.json({ profile, requested: selected, source: 'disk', envDefault: service.getEnvSelectedName(), ...lock });
     } catch (err) {
       logger.error({ err, selected }, 'Failed to load UI profile');
       res.status(500).json({ error: 'Failed to load UI profile' });

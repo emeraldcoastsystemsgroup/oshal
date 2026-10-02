@@ -130,6 +130,14 @@ The directory resolves like the cockpit directory (`src/experience` under the wo
 and `Dockerfile.oshal` copies it into the image. The pages load only same-origin scripts and
 stylesheets under `/experience/…`, so the strict CSP applies unchanged.
 
+**Shell lock (ADR-164 amendment, 2026-10-02).** On a deployment whose landing names an application
+(`LANDING_PATH` or `HOST_APP_MAP` → `/cockpit/?app=<name>`), these entry pages and the plain
+cockpit document are the operator's experiences: a signed-in non-operator who requests one is
+redirected to the landing (`src/app/experience-shell-lock.ts`), and the focused rail withholds the
+platform hub, returns the logo to the landing application and hides the header's Experiences menu
+(inputs `landingApp` and `operator` on `GET /api/ui/profile`). Operators, focused `?app=` requests,
+assets and deployments without a focused landing are unchanged.
+
 ## Verification
 
 - `tests/unit/experience-simple-chat-browser.spec.ts` and `tests/unit/simple-chat-kit.spec.ts`: Simple chat (`/simple`)

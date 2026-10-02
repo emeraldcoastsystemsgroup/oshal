@@ -210,6 +210,7 @@
  * 194 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L5: the /api/location mount passes the location fire dispatch-recovery sweep interval (OSHAL_LOCATION_DISPATCH_SWEEP_SEC, default 60 s, 0 off), so claimed reminder fires a crash left undelivered are dispatched under their actor; the router itself starts no timer unless asked.
  * 195 | maintainer@emeraldcoastsystemsgroup.com   | The remote-client routes get the per-bot provider lookup (getChatProvider: ctx.getProvider), so an OSHAL Node chat turn whose bot is a CLI the controller refuses runs on that node (remote-client-node-chat.ts).
  * 196 | maintainer@emeraldcoastsystemsgroup.com   | Register the world classify rail at boot (ensureWorldClassifyRail): classification reasons on the swarm's accounted bot rail under an accountable owner (operator decisions 2026-09-21 and 2026-10-02), and the World package's own ingest routes are on it from their first request rather than after the first scheduled pulse.
+ * 198 | maintainer@emeraldcoastsystemsgroup.com   | Shell lock (ADR-164 amendment, 2026-10-02): the cockpit document and experience entry pages take the deployment landing + operator ports, and the profile response carries landingApp/operator, so a non-operator on a focused-landing deployment never reaches the operator cockpit by door or by URL.
  * 197 | maintainer@emeraldcoastsystemsgroup.com   | The storyboard CLI image wiring is handed the swarm's canonical runtime-params resolver (read per call): a render runs on the render bot's own effective harness and is stamped with that bot's own provider record, never switched onto an image harness (ADR-130 amendment 2026-10-02, the bot-level rule).
  */
 
@@ -229,6 +230,7 @@ import { registerDebugRoutes } from './routes/debug-routes';
 import { createAuthStateRoutes, mountDemoAuthRoutes } from './routes/auth-state-routes';
 import { createAppContext } from './composition-root';
 import { resolveHostLandingPath } from './host-app-map';
+import { focusedLandingApp } from './experience-shell-lock';
 import { 
   createMessageRoutes, 
   createVisionRoutes,
@@ -899,6 +901,11 @@ function createApp(): express.Application {
   // cockpit still routes a not-yet-onboarded user to /welcome. Registered before the static
   // handler; falls through via next() when onboarding isn't required.
   app.get(['/cockpit', '/cockpit/'], requiresAuth, surfaceOnboardingGuard);
+  // Shell lock (ADR-164 amendment): the landing a non-operator is held to is the same one the
+  // root route resolves — the host map first, then LANDING_PATH.
+  const deploymentLandingPath = (req: import('express').Request): string => resolveHostLandingPath(
+    process.env.HOST_APP_MAP, req.hostname, process.env.LANDING_PATH || '/cockpit/',
+  );
   registerCockpitStaticRoutes({
     app,
     requiresAuth,
@@ -907,6 +914,7 @@ function createApp(): express.Application {
     codiconFontsDir,
     sharedUiCssDir,
     sharedUiJsDir,
+    shellLock: { isOperator, landingPath: deploymentLandingPath },
   });
 
   // Legacy engineering compatibility routes — serves legacy HTML pages and API stubs
@@ -1446,7 +1454,9 @@ function createApp(): express.Application {
     swarmAppService,
     logger,
   });
-  app.use('/api/ui', requiresAuth, createUiProfileRoutes(new UIProfileService(), swarmAppService, { runtime: applicationAuthorization.runtime, resolveActor: applicationAuthorization.resolveActor }));
+  app.use('/api/ui', requiresAuth, createUiProfileRoutes(new UIProfileService(), swarmAppService,
+    { runtime: applicationAuthorization.runtime, resolveActor: applicationAuthorization.resolveActor },
+    { landingApp: (req) => focusedLandingApp(deploymentLandingPath(req)), isOperator }));
   app.use('/api/ui', requiresAuth, createWorkspaceNavigationRoutes({ apps: swarmAppService,
     runtime: applicationAuthorization.runtime, resolveActor: applicationAuthorization.resolveActor, access: appAccessService }));
 
