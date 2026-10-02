@@ -3,6 +3,8 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | vitest always gets an explicit config: the workspace's own when it has one (then its `npm test` is safe), otherwise a generated one in the private HOME passed with --config, run through node. A workspace without a config let vitest search upward from /app/workspace-shared/<root> and load the image's own /app/vite.config.ts (MODULE_NOT_FOUND, exit 1, zero tests), which failed a correct implementation as red (live, 2026-10-02 21:24 UTC).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | vitest always gets an explicit config: the workspace's own when it has one (then its `npm test` is safe), otherwise a generated one in the private HOME passed with --config, run through node. A workspace without a config let vitest search upward from /app/workspace-shared/<root> and load the image's own /app/vite.config.ts (MODULE_NOT_FOUND, exit 1, zero tests), which failed a correct implementation as red (live, 2026-10-02 21:24 UTC).
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The node-side workspace test run behind the `workspace-tests/run` deterministic provider intent: in the ticket's shared workspace folder, with a private HOME and a process environment built from scratch (no node secrets, CI=1 so vitest never watches, colour off so the output parses), it makes a toolchain (`npm install --ignore-scripts` when package.json exists and node_modules does not; the image's global vitest linked in when that cannot run), runs `npm test` or vitest directly, both bounded in time and output, and reports the exit code, the parsed counts, the failing test names and the output tail. There is no command, argument or path from the request: the only input is the workspace id the signed intent carries. A run that cannot happen says why instead of passing.
  */
 
@@ -113,7 +115,7 @@ export async function runWorkspaceTests(workspaceFolderId: string, deps: Workspa
   try {
     const toolchain = await ensureToolchain(workspace, pkg != null, spawnFn, env, deps.imageVitestDir ?? DEFAULT_IMAGE_VITEST_DIR);
     if (!toolchain.ok) return notRun(`no-toolchain: ${toolchain.reason}`, startedAt, toolchain.output);
-    const plan = choosePlan(workspace, toolchain.kind, testScript);
+    const plan = choosePlan(workspace, toolchain.kind, testScript, home);
     logger.info({ workspaceFolderId, toolchain: toolchain.kind, command: plan.label, testFiles }, 'Workspace test run starting');
     const result = await spawnFn({ command: plan.command, args: plan.args, cwd: workspace, env, timeoutMs: RUN_TIMEOUT_MS });
     if (result.timedOut) return notRun('timeout', startedAt, result.output);
@@ -164,19 +166,24 @@ async function ensureToolchain(workspace: string, hasPackage: boolean, spawnFn: 
 }
 
 /**
- * @description The command: the package's own `npm test` when it was installed, otherwise vitest run
- * directly through node (a linked package has no .bin entry), searching deliverables/ unless the
- * workspace's own vitest config decides where tests are.
+ * @description The command. vitest searches for a config upward from its root, and a workspace under
+ * /app/workspace-shared has the image's own /app/vite.config.ts above it, so the run always names a
+ * config: the workspace's own when it has one (its `npm test` is then safe when installed), otherwise
+ * a generated one in the private HOME that points at deliverables/, passed with --config through node.
  * @param workspace - The workspace directory.
  * @param kind - The toolchain.
  * @param testScript - package.json's test script, when any.
+ * @param home - The private directory a generated config may be written to.
  * @returns The command, its args and a label for the record.
  */
-function choosePlan(workspace: string, kind: 'installed' | 'image-vitest', testScript: string | null): { command: string; args: string[]; label: string } {
-  if (kind === 'installed' && testScript) return { ...npmInvocation(['test']), label: 'npm test' };
+function choosePlan(workspace: string, kind: 'installed' | 'image-vitest', testScript: string | null, home: string): { command: string; args: string[]; label: string } {
   const hasConfig = VITEST_CONFIGS.some((name) => fs.existsSync(path.join(workspace, name)));
-  const args = [path.join(workspace, 'node_modules', 'vitest', 'vitest.mjs'), 'run', ...(hasConfig ? [] : ['--dir', 'deliverables'])];
-  return { command: process.execPath, args, label: `vitest run${hasConfig ? '' : ' --dir deliverables'}` };
+  if (hasConfig && kind === 'installed' && testScript) return { ...npmInvocation(['test']), label: 'npm test' };
+  const vitest = path.join(workspace, 'node_modules', 'vitest', 'vitest.mjs');
+  if (hasConfig) return { command: process.execPath, args: [vitest, 'run'], label: 'vitest run' };
+  const config = path.join(home, 'vitest.config.mjs');
+  fs.writeFileSync(config, `export default { test: { root: ${JSON.stringify(workspace)}, dir: 'deliverables', include: ['**/*.{test,spec}.?(c|m)[jt]s?(x)'], passWithNoTests: false } };\n`);
+  return { command: process.execPath, args: [vitest, 'run', '--config', config], label: 'vitest run --config <generated>' };
 }
 
 /**

@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | vitest always gets an explicit config: a workspace without one runs through node with --config pointing at a generated file in the private HOME (never bare npm test, whose vitest would search upward into the image), and a workspace with its own config keeps npm test.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the node-side workspace test run (bot-node-workspace-test-run.ts) and its intent (bot-node-provider-intent.ts). Over a real temp workspace with a recording spawner: the child environment is built from scratch (no node secret, CI=1, colour off, private HOME); npm runs through node's own npm-cli.js with no shell; a workspace with no deliverables or no tests is not run, with the reason; an installed toolchain runs `npm test`; a missing one runs `npm install --ignore-scripts` first; when that fails the image vitest is linked and run through node, without `--dir` when the workspace has its own vitest config; a timeout and a red run report as such with the failing names. The intent parser accepts exactly the controller's shape with a lower-case UUID and nothing else; the executor still demands an exact owner and answers the run as JSON. The real spawn is proven by bot-node-workspace-test-run-real.spec.ts.
  */
 
@@ -85,8 +86,8 @@ describe('the node-side run', () => {
     expect((await runWorkspaceTests(FOLDER, { spawn: spawner({}).spawn, workspaceRoot: root })).reason).toBe('no-tests-declared');
   });
 
-  it('an installed toolchain runs npm test in the workspace with the scrubbed environment and reports the counts', async () => {
-    const ws = workspace({ nodeModulesVitest: true });
+  it('an installed toolchain with its own config runs npm test in the workspace with the scrubbed environment and reports the counts', async () => {
+    const ws = workspace({ nodeModulesVitest: true, config: true });
     const { spawn, requests } = spawner({ run: { exitCode: 0, output: GREEN } });
     const run = await runWorkspaceTests(FOLDER, { spawn, workspaceRoot: root, parentEnv: { PATH: '/usr/bin', SWARM_SERVICE_SECRET: 'never' } });
     expect(requests).toHaveLength(1);
@@ -98,7 +99,7 @@ describe('the node-side run', () => {
   });
 
   it('a missing toolchain is installed without lifecycle scripts, then the tests run', async () => {
-    workspace();
+    workspace({ config: true });
     const { spawn, requests } = spawner({ install: { exitCode: 0 } });
     const run = await runWorkspaceTests(FOLDER, { spawn, workspaceRoot: root });
     expect(requests.map((r) => r.args.filter((a) => !a.endsWith('npm-cli.js')).join(' '))).toEqual(['install --ignore-scripts --no-audit --no-fund --loglevel=error', 'test']);
@@ -107,16 +108,28 @@ describe('the node-side run', () => {
     expect(run.ran).toBe(true);
   });
 
-  it('when the install fails, the image vitest is linked in and run through node; with no vitest config, deliverables/ is searched', async () => {
+  it('a workspace without its own config never runs bare npm test: vitest runs through node with a generated --config in the private HOME', async () => {
+    const ws = workspace({ nodeModulesVitest: true });
+    const { spawn, requests } = spawner({});
+    const run = await runWorkspaceTests(FOLDER, { spawn, workspaceRoot: root });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.command).toBe(process.execPath);
+    expect(requests[0]!.args.slice(0, 3)).toEqual([join(ws, 'node_modules', 'vitest', 'vitest.mjs'), 'run', '--config']);
+    const config = requests[0]!.args[3] as string;
+    expect(config.startsWith(requests[0]!.env.HOME as string)).toBe(true);
+    expect(run.command).toBe('vitest run --config <generated>');
+  });
+
+  it('when the install fails, the image vitest is linked in and run through node with a generated config', async () => {
     const ws = workspace();
     const { spawn, requests } = spawner({ install: { exitCode: 1, output: 'npm ERR! network' } });
     const run = await runWorkspaceTests(FOLDER, { spawn, workspaceRoot: root, imageVitestDir: imageVitest });
     expect(existsSync(join(ws, 'node_modules', 'vitest', 'vitest.mjs'))).toBe(true);
-    expect(requests[1]).toMatchObject({ command: process.execPath, args: [join(ws, 'node_modules', 'vitest', 'vitest.mjs'), 'run', '--dir', 'deliverables'] });
-    expect(run).toMatchObject({ ran: true, command: 'vitest run --dir deliverables', passed: 3 });
+    expect(requests[1]!.args.slice(0, 3)).toEqual([join(ws, 'node_modules', 'vitest', 'vitest.mjs'), 'run', '--config']);
+    expect(run).toMatchObject({ ran: true, command: 'vitest run --config <generated>', passed: 3 });
   });
 
-  it('with its own vitest config the workspace decides where tests are', async () => {
+  it('with its own vitest config and no test script the workspace config decides where tests are', async () => {
     const ws = workspace({ pkg: false, config: true });
     const { spawn, requests } = spawner({});
     await runWorkspaceTests(FOLDER, { spawn, workspaceRoot: root, imageVitestDir: imageVitest });
@@ -131,7 +144,7 @@ describe('the node-side run', () => {
   });
 
   it('a red run reports the failing names and the exit code; a timeout is not run', async () => {
-    workspace({ nodeModulesVitest: true });
+    workspace({ nodeModulesVitest: true, config: true });
     const red = await runWorkspaceTests(FOLDER, { spawn: spawner({ run: { exitCode: 1, output: RED } }).spawn, workspaceRoot: root });
     expect(red).toMatchObject({ ran: true, exitCode: 1, passed: 2, failed: 1, failedTests: ['deliverables/src/slugify.test.ts > slugify > keeps underscores'] });
     const late = await runWorkspaceTests(FOLDER, { spawn: spawner({ run: { exitCode: null as never, output: '', timedOut: true } }).spawn, workspaceRoot: root });
